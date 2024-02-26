@@ -87,6 +87,7 @@ class GpuExecutable : public Executable {
   struct Params {
     std::string asm_text;
     std::vector<uint8_t> binary;
+    absl::flat_hash_map<std::string, std::string> cudnn_compiled_graphs;
     se::GpuComputeCapability gpu_version;
     OwnedThunkSequence executable;
     std::vector<ConstantInfo> constants;
@@ -239,6 +240,8 @@ class GpuExecutable : public Executable {
   //
   // May be empty, in which case we leave compilation up to the GPU driver.
   std::vector<uint8_t> binary_;
+
+  absl::flat_hash_map<std::string, std::string> cudnn_compiled_graphs_;
 
   // The GPU version for compute compatibility check.
   se::GpuComputeCapability gpu_version_;

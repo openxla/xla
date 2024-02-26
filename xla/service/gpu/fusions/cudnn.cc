@@ -30,30 +30,13 @@ absl::StatusOr<FusionEmissionResult> CuDnnFusion::Emit(
 #if GOOGLE_CUDA
   VLOG(3) << fusion.ToString();
 
-  TF_ASSIGN_OR_RETURN(auto gpu_config,
-                      fusion.backend_config<GpuBackendConfig>());
-  if (!gpu_config.fusion_backend_config().has_cudnn_fusion_config() ||
-      !gpu_config.fusion_backend_config()
-           .cudnn_fusion_config()
-           .has_serialized_graph()) {
-    return absl::FailedPreconditionError("cuDNN fusion is not compiled.");
-  }
-  std::string unescaped;
-  std::string error;
-  if (!absl::CUnescape(gpu_config.fusion_backend_config()
-                           .cudnn_fusion_config()
-                           .serialized_graph(),
-                       &unescaped, &error)) {
-    return absl::UnknownError(
-        absl::StrCat("Failed unescaping string: ", error));
-  }
-
   TF_ASSIGN_OR_RETURN(
       auto kernel_arguments,
       KernelArguments::Create(ir_emitter_context.buffer_assignment(), &fusion));
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<CuDnnThunk>(
-      std::move(unescaped), Thunk::ThunkInfo::WithProfileAnnotation(&fusion),
+      GetComputationFingerprint(fusion.fused_instructions_computation(), {}),
+      Thunk::ThunkInfo::WithProfileAnnotation(&fusion),
       kernel_arguments.args()));
   return result;
 #else

@@ -20,10 +20,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-CuDnnThunk::CuDnnThunk(std::string serialized_graph, ThunkInfo thunk_info,
+CuDnnThunk::CuDnnThunk(std::string fingerprint, ThunkInfo thunk_info,
                        absl::Span<const KernelArgument> kernel_arguments)
     : Thunk(Kind::kCuDnn, std::move(thunk_info)),
-      serialized_graph_(std::move(serialized_graph)) {
+      fingerprint_(std::move(fingerprint)) {
   args_.reserve(kernel_arguments.size());
   for (const KernelArgument& kernel_argument : kernel_arguments) {
     args_.push_back(kernel_argument.slice());
@@ -33,9 +33,9 @@ CuDnnThunk::CuDnnThunk(std::string serialized_graph, ThunkInfo thunk_info,
 absl::Status CuDnnThunk::Initialize(const InitializeParams& params) {
   absl::Status ret = absl::OkStatus();
   absl::call_once(once_flag_, [&] {
-    auto result =
-        params.stream->parent()->AsDnn()->DeserializeGraph(serialized_graph_);
-    std::string().swap(serialized_graph_);
+    auto result = params.stream->parent()->AsDnn()->DeserializeGraph(
+        params.src.cudnn_compiled_graphs.at(fingerprint_));
+    std::string().swap(fingerprint_);
     if (result.ok()) {
       graph_ = std::move(*result);
     }

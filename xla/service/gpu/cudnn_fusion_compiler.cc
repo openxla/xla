@@ -329,7 +329,10 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
 
 class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit CuDnnFusionVisitor(const AutotuneConfig& config) : config_(config) {}
+  explicit CuDnnFusionVisitor(
+      se::Stream& stream,
+      absl::flat_hash_map<std::string, std::string>& compilation_cache)
+      : stream_(stream), compilation_cache_(compilation_cache) {}
 
   absl::Status HandleFusion(HloInstruction* hlo) override {
     TF_ASSIGN_OR_RETURN(auto gpu_config,
@@ -340,10 +343,6 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
     }
     int64_t plan_id = -1;
     if (fusion_backend_config.has_cudnn_fusion_config()) {
-      if (fusion_backend_config.cudnn_fusion_config().has_serialized_graph()) {
-        VLOG(4) << "Skipping already serialized " << hlo->ToShortString();
-        return absl::OkStatus();
-      }
       plan_id = fusion_backend_config.cudnn_fusion_config().plan_id();
     }
 
@@ -354,11 +353,9 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
         GetComputationFingerprint(hlo->fused_instructions_computation(), {});
     std::string& cache_entry = compilation_cache_[cache_key];
     if (cache_entry.empty()) {
-      TF_ASSIGN_OR_RETURN(se::Stream * stream, config_.GetStream());
-
       TF_ASSIGN_OR_RETURN(
           se::gpu::CudnnGraph graph,
-          PrepareGraph(*DynCast<HloFusionInstruction>(hlo), *stream));
+          PrepareGraph(*DynCast<HloFusionInstruction>(hlo), stream_));
 
       if (plan_id >= 0) {
         // Build single plan with given ID.
@@ -389,16 +386,15 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
 
       std::vector<uint8_t> serialized_graph;
       RETURN_IF_CUDNN_FRONTEND_ERROR(graph.Graph().serialize(serialized_graph));
-      cache_entry = absl::CEscape(
-          absl::string_view(reinterpret_cast<char*>(serialized_graph.data()),
-                            serialized_graph.size()));
+      cache_entry =
+          std::string(reinterpret_cast<char*>(serialized_graph.data()),
+                      serialized_graph.size());
     } else {
       VLOG(4) << "Cache hit.";
     }
     auto cudnn_config = gpu_config.mutable_fusion_backend_config()
                             ->mutable_cudnn_fusion_config();
     cudnn_config->set_plan_id(plan_id);
-    cudnn_config->set_serialized_graph(cache_entry);
     TF_RETURN_IF_ERROR(hlo->set_backend_config(gpu_config));
 
     MarkAsChanged();
@@ -406,9 +402,8 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  AutotuneConfig config_;
-  // <HLO computation fingerprint, serialized compiled cuDNN graph>.
-  absl::flat_hash_map<std::string, std::string> compilation_cache_;
+  se::Stream& stream_;
+  absl::flat_hash_map<std::string, std::string>& compilation_cache_;
 };
 
 }  // namespace
@@ -417,7 +412,11 @@ absl::StatusOr<bool> CuDnnFusionCompiler::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   XLA_SCOPED_LOGGING_TIMER("cuDNN fusion compiler");
-  return CuDnnFusionVisitor(config_).RunOnModule(module, execution_threads);
+  TF_ASSIGN_OR_RETURN(
+      se::Stream * stream,
+      stream_exec_.GetAllocator()->GetStream(stream_exec_.device_ordinal()));
+  return CuDnnFusionVisitor(*stream, compilation_cache_)
+      .RunOnModule(module, execution_threads);
 }
 
 }  // namespace gpu

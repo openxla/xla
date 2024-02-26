@@ -145,6 +145,7 @@ class Thunk {
   struct ExecutableSource {
     std::string_view text;             // PTX for NVIDIA backend
     absl::Span<const uint8_t> binary;  // CUBIN for NVIDIA backends
+    absl::flat_hash_map<std::string, std::string> cudnn_compiled_graphs;
   };
 
   struct ThunkInfo {

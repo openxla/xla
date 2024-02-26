@@ -121,6 +121,7 @@ limitations under the License.
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/copy_fusion.h"
+#include "xla/service/gpu/cudnn_fusion_compiler.h"
 #include "xla/service/gpu/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/dot_dimension_sorter.h"
 #include "xla/service/gpu/dot_operand_converter.h"
@@ -495,6 +496,7 @@ GpuThunkAotCompilationResult::LoadExecutable(
       GpuExecutable::Create(GpuExecutable::Params{
           /*asm_text=*/proto_.asm_text(),
           /*binary=*/binary,
+          /*cudnn_compiled_graphs=*/{},  // FIXME: load from proto too?
           /*gpu_version=*/gpu_device_info.gpu_compute_capability(),
           /*executable=*/std::move(thunk_sequence),
           /*constants=*/std::move(constants),
@@ -1858,6 +1860,9 @@ GpuCompiler::CompileToBackendResult(
 absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+  CuDnnFusionCompiler cudnn_compiler(*stream_exec);
+  TF_RETURN_IF_ERROR(cudnn_compiler.Run(&*module).status());
+
   const DebugOptions& debug_opts = module->config().debug_options();
   TF_ASSIGN_OR_RETURN(TargetConfig gpu_target_config,
                       GetTargetConfig(options, debug_opts, stream_exec));
@@ -1932,6 +1937,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
               ? std::string()
               : std::move(res.backend_result.asm_text),
           /*binary=*/std::move(res.backend_result.binary),
+          /*cudnn_compiled_graphs=*/
+          std::move(cudnn_compiler.compilation_cache_),
           /*gpu_version=*/gpu_device_info.gpu_compute_capability(),
           /*executable=*/std::move(res.compile_module_results.executable),
           /*constants=*/std::move(res.compile_module_results.constants),

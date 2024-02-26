@@ -153,6 +153,7 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
     : Executable(std::move(params.debug_module)),
       text_(std::move(params.asm_text)),
       binary_(std::move(params.binary)),
+      cudnn_compiled_graphs_(std::move(params.cudnn_compiled_graphs)),
       gpu_version_(params.gpu_version),
       thunks_(std::move(params.executable)),
       execution_stream_ids_(has_module()
@@ -1001,7 +1002,8 @@ absl::Status GpuExecutable::ExecuteThunksOrXlaRuntime(
   ModuleIdentifier unique_id = has_module() ? module().unique_id() : -1;
 
   if (thunks_) {
-    Thunk::ExecutableSource executable_source = {text_, binary_};
+    Thunk::ExecutableSource executable_source = {text_, binary_,
+                                                 cudnn_compiled_graphs_};
     int64_t collective_max_nchannels =
         has_module() ? module_config()
                            .debug_options()

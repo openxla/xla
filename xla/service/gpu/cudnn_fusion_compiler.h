@@ -19,7 +19,6 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/hlo_pass_interface.h"
 
 namespace xla {
@@ -30,8 +29,8 @@ namespace gpu {
 // backend config in serialized form.
 class CuDnnFusionCompiler : public HloModulePass {
  public:
-  explicit CuDnnFusionCompiler(const AutotuneConfig& config)
-      : config_(config) {}
+  explicit CuDnnFusionCompiler(se::StreamExecutor& stream_exec)
+      : stream_exec_(stream_exec) {}
 
   absl::string_view name() const override { return "cudnn-fusion-compiler"; }
 
@@ -40,8 +39,11 @@ class CuDnnFusionCompiler : public HloModulePass {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
 
+  // <HLO computation fingerprint, serialized compiled cuDNN graph>.
+  absl::flat_hash_map<std::string, std::string> compilation_cache_;
+
  private:
-  AutotuneConfig config_;
+  se::StreamExecutor& stream_exec_;
 };
 
 }  // namespace gpu
