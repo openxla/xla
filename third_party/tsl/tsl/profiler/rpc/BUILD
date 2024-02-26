@@ -62,7 +62,7 @@ cc_library(
     hdrs = ["profiler_server.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tensorflow/core/profiler/rpc:__pkg__",
         "//tensorflow/python:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",

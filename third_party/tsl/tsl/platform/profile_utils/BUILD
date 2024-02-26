@@ -15,7 +15,7 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
-        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
+        "@xla//xla/stream_executor:__subpackages__",
         "//tensorflow/core/platform:__subpackages__",
         "//tsl:__pkg__",
         "//tsl/platform/default:__pkg__",

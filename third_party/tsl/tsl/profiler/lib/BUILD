@@ -71,7 +71,7 @@ cc_library(
     visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [
@@ -325,7 +325,7 @@ cc_library(
     srcs = ["profiler_collection.cc"],
     hdrs = ["profiler_collection.h"],
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__",
+        "@xla//xla/backends/profiler/plugin:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [

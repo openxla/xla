@@ -96,7 +96,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tsl/profiler:internal",
     ]),
     deps = [

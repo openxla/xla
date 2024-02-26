@@ -52,7 +52,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tsl/platform/cloud:__pkg__",
         "//tsl/profiler:internal",
     ]),
@@ -186,7 +186,7 @@ cc_library(
     hdrs = ["trace_utils.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+        "@xla//xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -375,7 +375,7 @@ cc_library(
     hdrs = ["file_system_utils.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -390,7 +390,7 @@ cc_library(
     hdrs = ["buffer_pool.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+        "@xla//xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
