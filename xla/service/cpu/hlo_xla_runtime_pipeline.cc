@@ -99,7 +99,7 @@ void AddSparsificationPasses(mlir::OpPassManager& pm, bool new_deallocator,
         mlir::SparseParallelizationStrategy::kDenseOuterLoop;
   }
   // Sparsification set up.
-  pm.addNestedPass<FuncOp>(mlir::createLinalgGeneralizationPass());
+  pm.addNestedPass<FuncOp>(mlir::createLinalgGeneralizeNamedOpsPass());
   pm.addPass(mlir::bufferization::createEmptyTensorEliminationPass());
   pm.addPass(mlir::createSparsificationAndBufferizationPass(
       GetBufferizationOptions(new_deallocator), sparsification_options,
