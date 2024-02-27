@@ -213,6 +213,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
+        "@nanobind",
         "@pybind11",
     ],
 )
@@ -245,6 +246,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = [":friends"],
     deps = [
+        ":nb_class_ptr",
         ":python_ref_manager",
         # placeholder for index annotation deps
         "@com_google_absl//absl/container:inlined_vector",
@@ -255,7 +257,7 @@ cc_library(
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
