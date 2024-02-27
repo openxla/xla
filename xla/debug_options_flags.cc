@@ -234,6 +234,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   // Minimum combined size of matrices in matrix multiplication to
   // be rewritten to cuBLAS or Triton kernel call.
+  // This threshold is a conservative estimate and has been measured
+  // to be always beneficial (up to generally several times faster)
+  // on V100 and H100 GPUs. See openxla/xla #9319 for details.
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
 
