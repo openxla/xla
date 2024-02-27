@@ -823,5 +823,17 @@ absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
          threshold;
 }
 
+bool IsDotSupportedByBackend(const HloInstruction& dot) {
+  // Let us be conservative and only throw float dots at the backend.
+  switch (dot.shape().element_type()) {
+    case F16:
+    case F32:
+    case BF16:
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace gpu
 }  // namespace xla

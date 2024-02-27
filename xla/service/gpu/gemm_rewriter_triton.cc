@@ -682,7 +682,7 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
     TF_ASSIGN_OR_RETURN(bool is_matmul_tiny,
                         IsMatrixMultiplicationTooSmallForRewriting(
                             *dot, gemm_rewrite_size_threshold));
-    if (is_matmul_tiny) {
+    if (is_matmul_tiny && IsDotSupportedByBackend(*dot)) {
       return absl::OkStatus();
     }
 
