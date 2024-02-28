@@ -847,14 +847,15 @@ cc_library(
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
-        "//xla/python/profiler/internal:traceme_wrapper",
+        "@tsl//tsl/platform:macros",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/lib:profiler_session",
+        "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/rpc:profiler_server_impl",
         "@tsl//tsl/profiler/rpc/client:capture_profile",
         "@tsl//tsl/profiler/rpc/client:profiler_client_impl",
-        "@pybind11",
+        "@nanobind",
     ] + select({
         ":gpu_enabled": [
             "//xla/backends/profiler/gpu:device_tracer",
