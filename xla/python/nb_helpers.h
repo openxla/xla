@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_PYTHON_NB_HELPERS_H_
 #define XLA_PYTHON_NB_HELPERS_H_
 
-#include "nanobind/nanobind.h"
+#include "nanobind/nanobind.h"  // from @nanobind
 
 namespace xla {
 

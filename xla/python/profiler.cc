@@ -21,11 +21,11 @@ limitations under the License.
 #include <string_view>
 #include <utility>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/string.h"       // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
 #include "absl/strings/str_cat.h"
+#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"  // from @nanobind  // IWYU pragma: keep
 #include "xla/backends/profiler/plugin/plugin_tracer.h"
 #include "xla/backends/profiler/plugin/profiler_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api.h"

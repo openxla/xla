@@ -17,7 +17,7 @@ limitations under the License.
 #define XLA_PYTHON_WEAKREF_LRU_CACHE_H_
 
 // placeholder for index annotation headers
-#include "nanobind/nanobind.h"
+#include "nanobind/nanobind.h"  // from @nanobind
 
 namespace jax {
 

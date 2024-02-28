@@ -26,10 +26,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "absl/container/inlined_vector.h"
 #include "absl/synchronization/notification.h"
+#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
 #include "pybind11/pytypes.h"  // from @pybind11
 #include "xla/pjrt/lru_cache.h"
 #include "xla/pjrt/status_casters.h"
