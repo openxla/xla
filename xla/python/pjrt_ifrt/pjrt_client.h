@@ -28,8 +28,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/pjrt_ifrt/pjrt_compiler.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/ref_count.h"
 
 namespace xla {
 namespace ifrt {

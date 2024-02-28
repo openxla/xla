@@ -176,6 +176,7 @@ cc_library(
         "//xla/runtime:custom_call",
         "//xla/runtime:tracing",
         "//xla/runtime:type_id",
+        "//xla/tsl/concurrency:async_value",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
@@ -184,7 +185,6 @@ cc_library(
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/concurrency:async_value",
     ],
 )
 

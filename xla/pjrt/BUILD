@@ -506,10 +506,10 @@ xla_cc_test(
         "//xla/client:xla_builder",
         "//xla/service:cpu_plugin",
         "//xla/service:platform_util",
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -574,9 +574,9 @@ cc_library(
     hdrs = ["pjrt_future.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/functional:any_invocable",
-        "@tsl//tsl/concurrency:async_value",
-        "@tsl//tsl/concurrency:ref_count",
     ],
 )
 
