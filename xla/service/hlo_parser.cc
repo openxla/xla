@@ -249,17 +249,18 @@ class HloParserImpl : public HloParser {
   std::string GetError() const { return StrJoin(error_, "\n"); }
 
   // Stand alone parsing utils for various aggregate data types.
-  StatusOr<Shape> ParseShapeOnly();
-  StatusOr<Layout> ParseLayoutOnly();
-  StatusOr<HloSharding> ParseShardingOnly();
-  StatusOr<FrontendAttributes> ParseFrontendAttributesOnly();
-  StatusOr<StatisticsViz> ParseStatisticsVizOnly();
-  StatusOr<std::vector<bool>> ParseParameterReplicationOnly();
-  StatusOr<BoolList> ParseBooleanListOrSingleBooleanOnly();
-  StatusOr<Window> ParseWindowOnly();
-  StatusOr<ConvolutionDimensionNumbers> ParseConvolutionDimensionNumbersOnly();
-  StatusOr<PaddingConfig> ParsePaddingConfigOnly();
-  StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly();
+  absl::StatusOr<Shape> ParseShapeOnly();
+  absl::StatusOr<Layout> ParseLayoutOnly();
+  absl::StatusOr<HloSharding> ParseShardingOnly();
+  absl::StatusOr<FrontendAttributes> ParseFrontendAttributesOnly();
+  absl::StatusOr<StatisticsViz> ParseStatisticsVizOnly();
+  absl::StatusOr<std::vector<bool>> ParseParameterReplicationOnly();
+  absl::StatusOr<BoolList> ParseBooleanListOrSingleBooleanOnly();
+  absl::StatusOr<Window> ParseWindowOnly();
+  absl::StatusOr<ConvolutionDimensionNumbers>
+  ParseConvolutionDimensionNumbersOnly();
+  absl::StatusOr<PaddingConfig> ParsePaddingConfigOnly();
+  absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly();
 
  private:
   // Types of attributes.
@@ -1454,7 +1455,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
     operands = *preset_operands;
   }
   const auto maybe_infer_shape =
-      [&](absl::FunctionRef<StatusOr<Shape>()> infer) {
+      [&](absl::FunctionRef<absl::StatusOr<Shape>()> infer) {
         if (shape.has_value()) {
           return true;
         }
@@ -6529,7 +6530,7 @@ bool HloParserImpl::AddComputation(const std::string& name,
   return true;
 }
 
-StatusOr<Shape> HloParserImpl::ParseShapeOnly() {
+absl::StatusOr<Shape> HloParserImpl::ParseShapeOnly() {
   lexer_.Lex();
   Shape shape;
   if (!ParseShape(&shape)) {
@@ -6541,7 +6542,7 @@ StatusOr<Shape> HloParserImpl::ParseShapeOnly() {
   return shape;
 }
 
-StatusOr<Layout> HloParserImpl::ParseLayoutOnly() {
+absl::StatusOr<Layout> HloParserImpl::ParseLayoutOnly() {
   lexer_.Lex();
   Layout layout;
   if (!ParseLayout(&layout)) {
@@ -6553,7 +6554,7 @@ StatusOr<Layout> HloParserImpl::ParseLayoutOnly() {
   return layout;
 }
 
-StatusOr<HloSharding> HloParserImpl::ParseShardingOnly() {
+absl::StatusOr<HloSharding> HloParserImpl::ParseShardingOnly() {
   lexer_.Lex();
   OpSharding op_sharding;
   if (!ParseSharding(&op_sharding)) {
@@ -6565,7 +6566,8 @@ StatusOr<HloSharding> HloParserImpl::ParseShardingOnly() {
   return HloSharding::FromProto(op_sharding);
 }
 
-StatusOr<FrontendAttributes> HloParserImpl::ParseFrontendAttributesOnly() {
+absl::StatusOr<FrontendAttributes>
+HloParserImpl::ParseFrontendAttributesOnly() {
   lexer_.Lex();
   FrontendAttributes attributes;
   if (!ParseFrontendAttributes(&attributes)) {
@@ -6578,7 +6580,7 @@ StatusOr<FrontendAttributes> HloParserImpl::ParseFrontendAttributesOnly() {
   return attributes;
 }
 
-StatusOr<StatisticsViz> HloParserImpl::ParseStatisticsVizOnly() {
+absl::StatusOr<StatisticsViz> HloParserImpl::ParseStatisticsVizOnly() {
   lexer_.Lex();
   StatisticsViz statistics_viz;
   if (!ParseStatisticsViz(&statistics_viz)) {
@@ -6590,7 +6592,8 @@ StatusOr<StatisticsViz> HloParserImpl::ParseStatisticsVizOnly() {
   return statistics_viz;
 }
 
-StatusOr<std::vector<bool>> HloParserImpl::ParseParameterReplicationOnly() {
+absl::StatusOr<std::vector<bool>>
+HloParserImpl::ParseParameterReplicationOnly() {
   lexer_.Lex();
   ParameterReplication parameter_replication;
   if (!ParseParameterReplication(&parameter_replication)) {
@@ -6605,7 +6608,7 @@ StatusOr<std::vector<bool>> HloParserImpl::ParseParameterReplicationOnly() {
       parameter_replication.replicated_at_leaf_buffers().end());
 }
 
-StatusOr<HloParserImpl::BoolList>
+absl::StatusOr<HloParserImpl::BoolList>
 HloParserImpl::ParseBooleanListOrSingleBooleanOnly() {
   lexer_.Lex();
   BoolList booleans;
@@ -6618,7 +6621,8 @@ HloParserImpl::ParseBooleanListOrSingleBooleanOnly() {
   return booleans;
 }
 
-StatusOr<std::vector<ReplicaGroup>> HloParserImpl::ParseReplicaGroupsOnly() {
+absl::StatusOr<std::vector<ReplicaGroup>>
+HloParserImpl::ParseReplicaGroupsOnly() {
   lexer_.Lex();
   std::vector<ReplicaGroup> replica_groups;
   if (!ParseReplicaGroupsOnly(&replica_groups)) {
@@ -6630,7 +6634,7 @@ StatusOr<std::vector<ReplicaGroup>> HloParserImpl::ParseReplicaGroupsOnly() {
   return replica_groups;
 }
 
-StatusOr<Window> HloParserImpl::ParseWindowOnly() {
+absl::StatusOr<Window> HloParserImpl::ParseWindowOnly() {
   lexer_.Lex();
   Window window;
   if (!ParseWindow(&window, /*expect_outer_curlies=*/false)) {
@@ -6642,7 +6646,7 @@ StatusOr<Window> HloParserImpl::ParseWindowOnly() {
   return window;
 }
 
-StatusOr<ConvolutionDimensionNumbers>
+absl::StatusOr<ConvolutionDimensionNumbers>
 HloParserImpl::ParseConvolutionDimensionNumbersOnly() {
   lexer_.Lex();
   ConvolutionDimensionNumbers dnums;
@@ -6656,7 +6660,7 @@ HloParserImpl::ParseConvolutionDimensionNumbersOnly() {
   return dnums;
 }
 
-StatusOr<PaddingConfig> HloParserImpl::ParsePaddingConfigOnly() {
+absl::StatusOr<PaddingConfig> HloParserImpl::ParsePaddingConfigOnly() {
   lexer_.Lex();
   PaddingConfig padding_config;
   if (!ParsePaddingConfig(&padding_config)) {
@@ -6727,7 +6731,7 @@ bool HloParserImpl::ParseSingleInstruction(HloModule* module) {
 
 }  // namespace
 
-StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
+absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
     absl::string_view str, const HloModuleConfig& config) {
   auto module = std::make_unique<HloModule>(/*name=*/"_", config);
   HloParserImpl parser(str);
@@ -6735,65 +6739,67 @@ StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
   return std::move(module);
 }
 
-StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
+absl::StatusOr<std::unique_ptr<HloModule>> ParseAndReturnUnverifiedModule(
     absl::string_view str) {
   return ParseAndReturnUnverifiedModule(str, HloModuleConfig());
 }
 
-StatusOr<HloSharding> ParseSharding(absl::string_view str) {
+absl::StatusOr<HloSharding> ParseSharding(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseShardingOnly();
 }
 
-StatusOr<FrontendAttributes> ParseFrontendAttributes(absl::string_view str) {
+absl::StatusOr<FrontendAttributes> ParseFrontendAttributes(
+    absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseFrontendAttributesOnly();
 }
 
-StatusOr<StatisticsViz> ParseStatisticsViz(absl::string_view str) {
+absl::StatusOr<StatisticsViz> ParseStatisticsViz(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseStatisticsVizOnly();
 }
 
-StatusOr<std::vector<bool>> ParseParameterReplication(absl::string_view str) {
+absl::StatusOr<std::vector<bool>> ParseParameterReplication(
+    absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseParameterReplicationOnly();
 }
 
-StatusOr<HloParserImpl::BoolList> ParseBooleanListOrSingleBoolean(
+absl::StatusOr<HloParserImpl::BoolList> ParseBooleanListOrSingleBoolean(
     absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseBooleanListOrSingleBooleanOnly();
 }
 
-StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly(
+absl::StatusOr<std::vector<ReplicaGroup>> ParseReplicaGroupsOnly(
     absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseReplicaGroupsOnly();
 }
 
-StatusOr<Window> ParseWindow(absl::string_view str) {
+absl::StatusOr<Window> ParseWindow(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseWindowOnly();
 }
 
-StatusOr<ConvolutionDimensionNumbers> ParseConvolutionDimensionNumbers(
+absl::StatusOr<ConvolutionDimensionNumbers> ParseConvolutionDimensionNumbers(
     absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseConvolutionDimensionNumbersOnly();
 }
 
-StatusOr<PaddingConfig> ParsePaddingConfig(absl::string_view str) {
+absl::StatusOr<PaddingConfig> ParsePaddingConfig(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParsePaddingConfigOnly();
 }
 
-StatusOr<Shape> ParseShape(absl::string_view str) {
+absl::StatusOr<Shape> ParseShape(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseShapeOnly();
 }
 
-StatusOr<Layout> ParseLayout(absl::string_view str) {
+absl::StatusOr<Layout> ParseLayout(absl::string_view str) {
   HloParserImpl parser(str);
   return parser.ParseLayoutOnly();
 }
