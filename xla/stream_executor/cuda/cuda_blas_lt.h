@@ -75,6 +75,7 @@ class BlasLt : public gpu::BlasLt {
         PointerMode pointer_mode = PointerMode::kHost);
 
     cublasComputeType_t compute_type() const;
+    cublasLtEpilogue_t epilogue_type() const;
     cudaDataType_t scale_type() const;
     cublasLtPointerMode_t pointer_mode() const;
     cublasLtMatmulDesc_t get() const { return handle_.get(); }

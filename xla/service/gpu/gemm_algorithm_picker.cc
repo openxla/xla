@@ -75,6 +75,8 @@ absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
       return BlasLt::Epilogue::kGELU;
     case GemmBackendConfig::GELU_AUX:
       return BlasLt::Epilogue::kGELUWithAux;
+    case GemmBackendConfig::RELU_AUX:
+      return BlasLt::Epilogue::kReLUWithAux;
     case GemmBackendConfig::BIAS:
       return BlasLt::Epilogue::kBias;
     case GemmBackendConfig::BIAS_RELU:
@@ -83,6 +85,12 @@ absl::StatusOr<BlasLt::Epilogue> AsBlasLtEpilogue(
       return BlasLt::Epilogue::kBiasThenGELU;
     case GemmBackendConfig::BIAS_GELU_AUX:
       return BlasLt::Epilogue::kBiasThenGELUWithAux;
+    case GemmBackendConfig::BIAS_RELU_AUX:
+      return BlasLt::Epilogue::kBiasThenReLUWithAux;
+    case GemmBackendConfig::D_RELU:
+      return BlasLt::Epilogue::kDReLU;
+    case GemmBackendConfig::D_RELU_BGRAD:
+      return BlasLt::Epilogue::kDReLUBGrad;      
     default:
       return Internal("Unsupported Epilogue.");
   }
@@ -161,25 +169,42 @@ class GemmAutotuner {
         bool has_aux_output,
         gpublas_lt::EpilogueHasAuxiliaryOutput(backend_config.epilogue()));
 
+    // auxiliary buffer is only used for either input or output.
+    TF_ASSIGN_OR_RETURN(bool has_aux_input,
+                        xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(
+                            backend_config.epilogue()));
+
     TF_ASSIGN_OR_RETURN(auto epilogue,
                         AsBlasLtEpilogue(backend_config.epilogue()));
 
     se::DeviceMemoryBase a_scale_buffer, b_scale_buffer, c_scale_buffer,
         d_scale_buffer, d_amax_buffer, bias_buffer, aux_buffer;
 
+    TF_ASSIGN_OR_RETURN(
+        bool is_forward_epilogue,
+        xla::gpu::gpublas_lt::EpilogueForForward(backend_config.epilogue()));
+
     if (has_vector_bias) {
-      TF_ASSIGN_OR_RETURN(
-          bias_buffer,
-          CreateBuffer(gemm->operand(has_matrix_bias ? 3 : 2)->shape()));
+      Shape bias_buffer_shape =
+          is_forward_epilogue ? gemm->operand(has_matrix_bias ? 3 : 2)->shape()
+                              : gemm->shape().tuple_shapes(1);  // DRELU_BGRAD
+
+      TF_ASSIGN_OR_RETURN(bias_buffer, CreateBuffer(bias_buffer_shape));
     }
+
     if (has_aux_output) {
       TF_ASSIGN_OR_RETURN(aux_buffer,
                           CreateBuffer(gemm->shape().tuple_shapes(1)));
     }
+    if (has_aux_input) {
+      // The last operand is for ReLU bitmask for D_RELU epilogue
+      TF_ASSIGN_OR_RETURN(
+          aux_buffer,
+          CreateBuffer(gemm->operand(gemm->operand_count() - 1)->shape()));
+    }
 
     TF_ASSIGN_OR_RETURN(auto plan,
                         BlasLt::GetMatmulPlan(stream_, gemm_config, epilogue));
-
     TF_ASSIGN_OR_RETURN(auto algorithms, plan->GetAlgorithms());
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)

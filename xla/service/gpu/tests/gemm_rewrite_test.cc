@@ -3719,6 +3719,167 @@ ENTRY test {
       )");
 }
 
+TEST_F(CublasLtGemmRewriteTest, ReluActivationWithAux) {
+  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
+    GTEST_SKIP() << "Unsupported blas-lt epilogue on ROCM";
+  }
+
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test {
+  x = f32[128,128] parameter(0)
+  y = f32[128,128] parameter(1)
+  a = f32[128,128] parameter(2)
+  b = f32[128,128] parameter(3)
+  dot = f32[128,128] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  const.0 = f32[] constant(0)
+  bcast.0 = f32[128,128] broadcast(const.0), dimensions={}
+  maximum.1 = f32[128,128] maximum(dot, bcast.0)
+  compare.0 = pred[128,128] compare(dot, bcast.0), direction=GT
+  dot.2 = f32[128,128] dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  select.0 = f32[128,128] select(compare.0, dot.2, bcast.0)
+  ROOT out = (f32[128,128], f32[128,128]) tuple(maximum.1, select.0)
+}
+
+)";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-1, 1e-1}));
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+
+; CHECK-LABEL: ENTRY %test ({{.*}}: f32[128,128], {{.*}}: f32[128,128], {{.*}}: f32[128,128], {{.*}}: f32[128,128]) -> (f32[128,128], f32[128,128]) {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[128,128]{1,0} parameter(0)
+; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[128,128]{1,0} parameter(1)
+; CHECK-NEXT:    [[OUT0:%[^ ]+]] = (f32[128,128]{1,0}, u8[2048]{0}) custom-call([[P0]], [[P1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"RELU_AUX"
+; CHECK:           }
+; CHECK-NEXT:    [[GETT:%[^ ]+]] = f32[128,128]{1,0} get-tuple-element([[OUT0]]), index=0
+; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[128,128]{1,0} parameter(2)
+; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[128,128]{1,0} parameter(3)
+; CHECK-NEXT:    [[GETT1:%[^ ]+]] = u8[2048]{0} get-tuple-element([[OUT0]]), index=1
+; CHECK-NEXT:    [[OUT1:%[^ ]+]] = f32[128,128]{1,0} custom-call([[P2]], [[P3]], [[GETT1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"D_RELU"
+; CHECK:           }
+; CHECK:         ROOT [[OUT:%[^ ]+]] = (f32[128,128]{1,0}, f32[128,128]{1,0}) tuple([[GETT]], [[OUT1]])
+      )");
+}
+
+TEST_F(CublasLtGemmRewriteTest, BiasAddReluActivationWithAux) {
+  if (CudaOrRocmCheck(Switch::False, Switch::True)) {
+    GTEST_SKIP() << "Unsupported blas-lt epilogue on ROCM";
+  }
+
+  const char* hlo_text = R"(
+HloModule test
+
+  apply {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT c = f32[] add(a, b)
+  }
+
+ENTRY test {
+  x = f32[128,128] parameter(0)
+  y = f32[128,128] parameter(1)
+  x1 = f32[128,128] parameter(2)
+  y1 = f32[128,128] parameter(3)
+  bias = f32[128] parameter(4)
+  bbias = f32[128,128] broadcast(bias), dimensions={1}
+  dot = f32[128,128] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  add.0 = f32[128,128] add(dot, bbias)
+  const.0 = f32[] constant(0)
+  bcast.0 = f32[128,128] broadcast(const.0), dimensions={}
+  maximum.1 = f32[128,128] maximum(add.0, bcast.0)
+  compare.0 = pred[128,128] compare(add.0, bcast.0), direction=GT
+  dot.2 = f32[128,128] dot(x1, y1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  select.0 = f32[128,128] select(compare.0, dot.2, bcast.0)
+  c0 = f32[] constant(0)
+  reduce.0 = f32[128] reduce(select.0, c0), dimensions={0}, to_apply=apply
+  ROOT out = (f32[128,128], f32[128]) tuple(maximum.1, reduce.0)
+}
+
+)";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-1, 1e-1}));
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+
+; CHECK-LABEL: ENTRY %test ({{.*}}: f32[128,128], {{.*}}: f32[128,128], {{.*}}: f32[128,128], {{.*}}: f32[128,128], {{.*}}: f32[128]) -> (f32[128,128], f32[128]) {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = f32[128,128]{1,0} parameter(0)
+; CHECK-NEXT:    [[P1:%[^ ]+]] = f32[128,128]{1,0} parameter(1)
+; CHECK-NEXT:    [[BIAS:%[^ ]+]] = f32[128]{0} parameter(4)
+; CHECK-NEXT:    [[OUT0:%[^ ]+]] = (f32[128,128]{1,0}, u8[2048]{0}) custom-call([[P0]], [[P1]], [[BIAS]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"BIAS_RELU_AUX"
+; CHECK:           }
+; CHECK-NEXT:    [[GETT:%[^ ]+]] = f32[128,128]{1,0} get-tuple-element([[OUT0]]), index=0
+; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[128,128]{1,0} parameter(2)
+; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[128,128]{1,0} parameter(3)
+; CHECK-NEXT:    [[GETT1:%[^ ]+]] = u8[2048]{0} get-tuple-element([[OUT0]]), index=1
+; CHECK-NEXT:    [[OUT1:%[^ ]+]] = (f32[128,128]{1,0}, f32[128]{0}) custom-call([[P2]], [[P3]], [[GETT1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"D_RELU_BGRAD"
+; CHECK:           }
+; CHECK:         [[GETT2:%[^ ]+]] = f32[128]{0} get-tuple-element([[OUT1]]), index=1
+; CHECK:         ROOT [[OUT:%[^ ]+]] = (f32[128,128]{1,0}, f32[128]{0}) tuple([[GETT]], [[GETT2]])
+      )");
+}
+
 TEST_F(CublasLtGemmRewriteTest, ApproxGeluActivationBF16) {
   if (!CudaOrRocmCheck(se::CudaComputeCapability::AMPERE, Switch::True)) {
     GTEST_SKIP() << "Padding of GEMM bf16 operands only implemented on "
@@ -5428,6 +5589,226 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
+      )");
+}
+
+TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluWithAuxF8) {
+#if GOOGLE_CUDA && CUDA_VERSION < 12000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
+#endif  // CUDA_VERSION < 12000
+
+#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION < 60000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in ROCm 6.0 and above.";
+#endif  // TF_ROCM_VERSION < 60000
+
+if (CudaOrRocmCheck(Switch::False, Switch::True)) {
+    GTEST_SKIP() << "Unsupported blas-lt epilogue on ROCM";
+}
+
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[128,128] parameter(0)
+      y = <<F8E4M3>>[128,128] parameter(1)
+      x_f32 = f32[128,128] convert(x)
+      y_f32 = f32[128,128] convert(y)
+      x_scale = f32[] parameter(2)
+      y_scale = f32[] parameter(3)
+      x_scale_bcast = f32[128,128] broadcast(x_scale), dimensions={}
+      y_scale_bcast = f32[128,128] broadcast(y_scale), dimensions={}
+      x_unscaled = f32[128,128] multiply(x_f32, x_scale_bcast)
+      y_unscaled = f32[128,128] multiply(y_f32, y_scale_bcast)
+      const.0 = f32[] constant(0)
+      bcast.0 = f32[128,128] broadcast(const.0), dimensions={}
+      dot = f32[128,128] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      maximum.1 = f32[128,128] maximum(dot, bcast.0)
+      compare.0 = pred[128,128] compare(dot, bcast.0), direction=GT
+      a = <<F8E5M2>>[128,128] parameter(4)
+      b = <<F8E4M3>>[128,128] parameter(5)
+      a_f32 = f32[128,128] convert(a)
+      b_f32 = f32[128,128] convert(b)
+      a_scale = f32[] parameter(6)
+      b_scale = f32[] parameter(7)
+      a_scale_bcast = f32[128,128] broadcast(a_scale), dimensions={}
+      b_scale_bcast = f32[128,128] broadcast(b_scale), dimensions={}
+      a_unscaled = f32[128,128] multiply(a_f32, a_scale_bcast)
+      b_unscaled = f32[128,128] multiply(b_f32, b_scale_bcast)
+      dot.2 = f32[128,128] dot(a_unscaled, b_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+      select.0 = f32[128,128] select(compare.0, dot.2, bcast.0)
+      ROOT out = (f32[128,128], f32[128,128]) tuple(maximum.1, select.0)
+          }
+
+)";
+
+  CheckFp8IfSupported(hlo_text);
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocmMI300(), /*f8_rewrite=*/true),
+      R"(
+
+; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: <<F8E5M2>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[]) -> (f32[128,128], f32[128,128]) {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(0)
+; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(1)
+; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} transpose([[P1]]), dimensions={1,0}
+; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
+; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
+; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
+; CHECK-NEXT:    [[OUT0:%[^ ]+]] = (f32[128,128]{1,0}, u8[2048]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C1]], /*index=5*/[[C1]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"RELU_AUX"
+; CHECK:           }
+; CHECK:         [[GETT2:%[^ ]+]] = f32[128,128]{1,0} get-tuple-element([[OUT0]]), index=0
+; CHECK-NEXT:    [[P4:%[^ ]+]] = <<F8E5M2>>[128,128]{1,0} parameter(4)
+; CHECK-NEXT:    [[P5:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(5)
+; CHECK-NEXT:    [[P6:%[^ ]+]] = f32[] parameter(6)
+; CHECK-NEXT:    [[P7:%[^ ]+]] = f32[] parameter(7)
+; CHECK-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
+; CHECK-NEXT:    [[GETT:%[^ ]+]] = u8[2048]{0} get-tuple-element([[OUT0]]), index=1
+; CHECK-NEXT:    [[OUT1:%[^ ]+]] = f32[128,128]{1,0} custom-call([[P4]], [[P5]], [[P6]], [[P7]], [[C2]], /*index=5*/[[C2]], [[GETT]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"D_RELU"
+; CHECK:           }
+; CHECK:         ROOT [[OUT:%[^ ]+]] = (f32[128,128]{1,0}, f32[128,128]{1,0}) tuple([[GETT2]], [[OUT1]])
+      )");
+}
+
+TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDVectorBiasThenReluWithAuxF8) {
+#if GOOGLE_CUDA && CUDA_VERSION < 12000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
+#endif  // CUDA_VERSION < 12000
+
+#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION < 60000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in ROCm 6.0 and above.";
+#endif  // TF_ROCM_VERSION < 60000
+
+if (CudaOrRocmCheck(Switch::False, Switch::True)) {
+    GTEST_SKIP() << "Unsupported blas-lt epilogue on ROCM";
+}
+
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = <<F8E4M3>>[128,128] parameter(0)
+      y = <<F8E4M3>>[128,128] parameter(1)
+      bias = bf16[128] parameter(2)
+      bias_bcast = bf16[128,128] broadcast(bias), dimensions={1}
+      x_bf16 = bf16[128,128] convert(x)
+      y_bf16 = bf16[128,128] convert(y)
+      x_scale = bf16[] parameter(3)
+      y_scale = bf16[] parameter(4)
+      x_scale_bcast = bf16[128,128] broadcast(x_scale), dimensions={}
+      y_scale_bcast = bf16[128,128] broadcast(y_scale), dimensions={}
+      x_unscaled = bf16[128,128] multiply(x_bf16, x_scale_bcast)
+      y_unscaled = bf16[128,128] multiply(y_bf16, y_scale_bcast)
+      const.0 = bf16[] constant(0)
+      bcast.0 = bf16[128,128] broadcast(const.0), dimensions={}
+      dot = bf16[128,128] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot_add = bf16[128,128] add(dot, bias_bcast)
+      maximum.1 = bf16[128,128] maximum(dot_add, bcast.0)
+      compare.0 = pred[128,128] compare(dot_add, bcast.0), direction=GT
+      a = <<F8E5M2>>[128,128] parameter(5)
+      b = <<F8E4M3>>[128,128] parameter(6)
+      a_bf16 = bf16[128,128] convert(a)
+      b_bf16 = bf16[128,128] convert(b)
+      a_scale = bf16[] parameter(7)
+      b_scale = bf16[] parameter(8)
+      a_scale_bcast = bf16[128,128] broadcast(a_scale), dimensions={}
+      b_scale_bcast = bf16[128,128] broadcast(b_scale), dimensions={}
+      a_unscaled = bf16[128,128] multiply(a_bf16, a_scale_bcast)
+      b_unscaled = bf16[128,128] multiply(b_bf16, b_scale_bcast)
+      dot.2 = bf16[128,128] dot(a_unscaled, b_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+      select.0 = bf16[128,128] select(compare.0, dot.2, bcast.0)
+      ROOT out = (bf16[128,128], bf16[128,128]) tuple(maximum.1, select.0)
+          }
+
+)";
+
+  CheckFp8IfSupported(hlo_text);
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocmMI300(), /*f8_rewrite=*/true),
+      R"(
+
+; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: bf16[128], {{.*}}: bf16[], {{.*}}: bf16[], {{.*}}: <<F8E5M2>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: bf16[], {{.*}}: bf16[]) -> (bf16[128,128], bf16[128,128]) {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(0)
+; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(1)
+; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} transpose([[P1]]), dimensions={1,0}
+; CHECK-NEXT:    [[P3:%[^ ]+]] = bf16[] parameter(3)
+; CHECK-NEXT:    [[CVP3:%[^ ]+]] = f32[] convert([[P3]])
+; CHECK-NEXT:    [[P4:%[^ ]+]] = bf16[] parameter(4)
+; CHECK-NEXT:    [[CVP4:%[^ ]+]] = f32[] convert([[P4]])
+; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
+; CHECK-NEXT:    [[BIAS:%[^ ]+]] = bf16[128]{0} parameter(2)
+; CHECK-NEXT:    [[OUT0:%[^ ]+]] = (bf16[128,128]{1,0}, u8[2048]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[CVP3]], [[CVP4]], [[C1]], /*index=5*/[[C1]], [[BIAS]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"BIAS_RELU_AUX"
+; CHECK:           }
+; CHECK:         [[GETT2:%[^ ]+]] = bf16[128,128]{1,0} get-tuple-element([[OUT0]]), index=0
+; CHECK-NEXT:    [[P5:%[^ ]+]] = <<F8E5M2>>[128,128]{1,0} parameter(5)
+; CHECK-NEXT:    [[P6:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(6)
+; CHECK-NEXT:    [[P7:%[^ ]+]] = bf16[] parameter(7)
+; CHECK-NEXT:    [[CVP7:%[^ ]+]] = f32[] convert([[P7]])
+; CHECK-NEXT:    [[P8:%[^ ]+]] = bf16[] parameter(8)
+; CHECK-NEXT:    [[CVP8:%[^ ]+]] = f32[] convert([[P8]])
+; CHECK-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
+; CHECK-NEXT:    [[GETT:%[^ ]+]] = u8[2048]{0} get-tuple-element([[OUT0]]), index=1
+; CHECK-NEXT:    [[OUT1:%[^ ]+]] = bf16[128,128]{1,0} custom-call([[P5]], [[P6]], [[CVP7]], [[CVP8]], [[C2]], /*index=5*/[[C2]], [[GETT]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":0
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"D_RELU"
+; CHECK:           }
+; CHECK:         ROOT [[OUT:%[^ ]+]] = (bf16[128,128]{1,0}, bf16[128,128]{1,0}) tuple([[GETT2]], [[OUT1]])
       )");
 }
 
