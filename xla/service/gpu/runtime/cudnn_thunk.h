@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_RUNTIME_CUDNN_THUNK_H_
 #define XLA_SERVICE_GPU_RUNTIME_CUDNN_THUNK_H_
 
+#include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "absl/base/call_once.h"
@@ -34,8 +34,8 @@ namespace gpu {
 // Wraps executable cuDNN graph objects.
 class CuDnnThunk : public Thunk {
  public:
-  CuDnnThunk(std::string serialized_graph, ThunkInfo,
-             absl::Span<const KernelArgument>);
+  CuDnnThunk(std::unique_ptr<se::dnn::DnnGraph> graph, int64_t plan_id,
+             ThunkInfo, absl::Span<const KernelArgument>);
   CuDnnThunk(const CuDnnThunk&) = delete;
   CuDnnThunk& operator=(const CuDnnThunk&) = delete;
   ~CuDnnThunk() override = default;
@@ -49,8 +49,10 @@ class CuDnnThunk : public Thunk {
   }
 
  private:
+  absl::Status InitializeImpl();
+
   absl::once_flag once_flag_;
-  std::string serialized_graph_;
+  int64_t plan_id_;
   std::unique_ptr<se::dnn::DnnGraph> graph_;
   std::vector<BufferAllocation::Slice> args_;
 };

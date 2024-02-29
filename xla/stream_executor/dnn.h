@@ -1260,6 +1260,8 @@ class DnnGraph {
   virtual absl::Status Build(int64_t plan_id) = 0;
   virtual absl::Status Execute(Stream& stream,
                                absl::Span<DeviceMemoryBase> operands) const = 0;
+  virtual int64_t ExecutionPlanCount() const = 0;
+  virtual int64_t WorkspaceSize() const = 0;
 };
 
 // Suite of operations typically used for implementing Deep/Convolutional Neural

@@ -57,7 +57,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/buffer_comparator.h"
-#include "xla/service/gpu/cudnn_fusion_compiler.h"
+#include "xla/service/gpu/fusions/cudnn.h"
 #include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -530,13 +530,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> CudnnGemmAutotuneExtractor(
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
   backend_config.set_kind(std::string(kCuDnnFusionKind));
-  // Provided a plan ID the autotuner just compiles one plan.
   backend_config.mutable_cudnn_fusion_config()->set_plan_id(plan_id);
   TF_RETURN_IF_ERROR(
       new_module->entry_computation()->root_instruction()->set_backend_config(
           gpu_config));
-  CuDnnFusionCompiler compiler(autotune_config);
-  TF_RETURN_IF_ERROR(compiler.Run(new_module.get()).status());
 
   return new_module;
 }
@@ -554,15 +551,14 @@ bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind) {
   return gpu_config->fusion_backend_config().kind() == kind;
 }
 
-int GetCuDnnPlanCount(const HloInstruction& hlo,
-                      const AutotuneConfig& autotune_config) {
+int GetCuDnnPlanCount(const HloInstruction& hlo) {
   auto gpu_config = hlo.backend_config<GpuBackendConfig>();
   if (!gpu_config.ok() ||
       gpu_config->fusion_backend_config().has_cudnn_fusion_config()) {
     return {};
   }
-  return CuDnnFusionCompiler(autotune_config)
-      .GetAvailablePlanCount(*DynCast<HloFusionInstruction>(&hlo));
+  return CuDnnFusion::GetAvailablePlanCount(
+      *DynCast<HloFusionInstruction>(&hlo));
 }
 
 bool IsCuDnnEnabled(const AutotuneConfig& config,
@@ -598,10 +594,10 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
     if (IsFusionKind(hlo, kTritonGemmFusionKind)) {
       config_count += gemm_config_set.configs.size();
       if (IsCuDnnEnabled(config, debug_opts)) {
-        config_count += GetCuDnnPlanCount(hlo, config);
+        config_count += GetCuDnnPlanCount(hlo);
       }
     } else if (IsFusionKind(hlo, kCuDnnFusionKind)) {
-      config_count += GetCuDnnPlanCount(hlo, config);
+      config_count += GetCuDnnPlanCount(hlo);
     }
   }
   // cuBLAS configs: one per fusion.
@@ -731,7 +727,7 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
            IsCuDnnEnabled(config, debug_opts))) {
-        const int plan_count = GetCuDnnPlanCount(*fusion, config);
+        const int plan_count = GetCuDnnPlanCount(*fusion);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           thread_pool->Schedule([&, fusion, plan_id] {
             log(compile_cudnn_executable(fusion, plan_id));
@@ -773,7 +769,7 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
            IsCuDnnEnabled(config, debug_opts))) {
-        const int plan_count = GetCuDnnPlanCount(*fusion, config);
+        const int plan_count = GetCuDnnPlanCount(*fusion);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           log(compile_cudnn_executable(fusion, plan_id));
         }

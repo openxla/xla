@@ -110,8 +110,11 @@ AutotunerCompileUtil::ProfileExecutable(
       // Treat register allocation error gracefully. If the compilation happens
       // with the driver during execution then the error could surface here.
       // It's enough to check this once here.
+      // Internal Error can be returned from cuDNN compilation if a plan is not
+      // supported.
       if (execution_output.status().code() ==
-          absl::StatusCode::kResourceExhausted) {
+              absl::StatusCode::kResourceExhausted ||
+          execution_output.status().code() == absl::StatusCode::kInternal) {
         return {std::nullopt};
       }
       return execution_output.status();

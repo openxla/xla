@@ -32,6 +32,8 @@ class CuDnnFusion : public FusionInterface {
   absl::StatusOr<FusionEmissionResult> Emit(
       IrEmitterContext& ir_emitter_context,
       const HloFusionInstruction& fusion) const final;
+
+  static int GetAvailablePlanCount(const HloFusionInstruction& hlo);
 };
 }  // namespace gpu
 }  // namespace xla
