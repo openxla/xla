@@ -1784,6 +1784,7 @@ xla_test(
         "//xla:test",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -2518,6 +2519,7 @@ xla_test(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/host:host_platform",
         "//xla/stream_executor/host:host_platform_id",
         "@tsl//tsl/platform:env",
@@ -2735,6 +2737,7 @@ xla_cc_test(
         "//xla/client:client_library",
         "//xla/client:xla_builder",
         "//xla/service:cpu_plugin",
+        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
@@ -2865,6 +2868,7 @@ xla_test(
         "//xla:test",
         "//xla:test_helpers",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service/cpu:onednn_util",
         "@tsl//tsl/platform:platform_port",
     ],
 )

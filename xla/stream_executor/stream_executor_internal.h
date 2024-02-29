@@ -27,7 +27,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
@@ -48,7 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"
-#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 
@@ -221,10 +219,11 @@ class StreamExecutorInterface {
   }
   virtual absl::Status Memset32(Stream* stream, DeviceMemoryBase* location,
                                 uint32_t pattern, uint64_t size) = 0;
-  virtual bool Memcpy(Stream* stream, void* host_dst,
-                      const DeviceMemoryBase& gpu_src, uint64_t size) = 0;
-  virtual bool Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
-                      const void* host_src, uint64_t size) = 0;
+  virtual absl::Status Memcpy(Stream* stream, void* host_dst,
+                              const DeviceMemoryBase& gpu_src,
+                              uint64_t size) = 0;
+  virtual absl::Status Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
+                              const void* host_src, uint64_t size) = 0;
   virtual bool MemcpyDeviceToDevice(Stream* stream, DeviceMemoryBase* gpu_dst,
                                     const DeviceMemoryBase& gpu_src,
                                     uint64_t size) = 0;

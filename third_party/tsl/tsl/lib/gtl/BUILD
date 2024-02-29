@@ -27,7 +27,7 @@ package(
         "//tensorflow/core/tfrt/utils:__pkg__",
         # tensorflow/examples/custom_ops_doc/simple_hash_table uses map_util
         "//tensorflow/examples/custom_ops_doc/simple_hash_table:__pkg__",
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tensorflow/core/lib/gtl:__subpackages__",
         "//tsl/distributed_runtime/rpc:__pkg__",
         "//tsl/profiler/utils:__pkg__",

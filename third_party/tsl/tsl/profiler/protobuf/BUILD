@@ -97,7 +97,7 @@ tf_proto_library(
     srcs = ["profile.proto"],
     cc_api_version = 2,
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//tsl/profiler:internal",
     ]),
 )

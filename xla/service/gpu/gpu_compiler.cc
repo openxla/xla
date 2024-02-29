@@ -229,6 +229,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -449,11 +450,10 @@ GpuThunkAotCompilationResult::LoadExecutable(
   // Build the executable, which should be a thunk sequence.
   TF_ASSIGN_OR_RETURN(
       se::Platform * platform,
-      se::MultiPlatformManager::PlatformWithId(compiler->PlatformId()));
+      se::PlatformManager::PlatformWithId(compiler->PlatformId()));
   std::string platform_name = platform->Name();
   se::DeviceDescription gpu_device_info = stream_exec->GetDeviceDescription();
   mlir::DialectRegistry registry;
-  IrEmitterUnnested::GetDependentDialects(registry);
   auto mlir_context = std::make_unique<mlir::MLIRContext>(registry);
   llvm::LLVMContext llvm_context;
   auto llvm_module = std::make_unique<llvm::Module>("", llvm_context);
@@ -466,7 +466,6 @@ GpuThunkAotCompilationResult::LoadExecutable(
   IrEmitterContext ir_emitter_context(hlo_module.get(), buffer_assignment.get(),
                                       platform_name, gpu_device_info,
                                       mlir_context.get(), llvm_module.get(),
-                                      /*emit_ir_from_hlo=*/true,
                                       /*emit_kernels=*/false);
   auto ir_emitter = IrEmitterUnnested::Create(&ir_emitter_context);
   TF_RETURN_IF_ERROR(
@@ -1825,7 +1824,7 @@ GpuCompiler::CompileToBackendResult(
       module, schedule_metadata.scheduler_mem_limit, gpu_device_info));
 
   TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                      se::MultiPlatformManager::PlatformWithId(PlatformId()));
+                      se::PlatformManager::PlatformWithId(PlatformId()));
 
   // Compile the module
   TF_ASSIGN_OR_RETURN(
@@ -2074,7 +2073,7 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
           .xla_gpu_enable_address_computation_fusion()) {
     HloPassPipeline pipeline("address-computation");
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                        se::MultiPlatformManager::PlatformWithId(PlatformId()));
+                        se::PlatformManager::PlatformWithId(PlatformId()));
     pipeline.AddPass<AddressComputationFusionRewriter>(platform->Name());
     TF_RETURN_IF_ERROR(pipeline.Run(module).status());
   }

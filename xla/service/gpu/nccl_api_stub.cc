@@ -87,13 +87,14 @@ class NcclApiStub final : public NcclApi {
   }
 
   absl::StatusOr<std::vector<OwnedNcclComm>> CommInitRanks(
-      int32_t, const NcclCliqueId&, absl::Span<const DeviceRank>) final {
+      int32_t, const NcclCliqueId&, absl::Span<const DeviceRank>,
+      const Config&) final {
     return UnimplementedError();
   }
 
   absl::StatusOr<std::vector<OwnedNcclComm>> CommSplit(
-      absl::Span<const NcclCommHandle>, int32_t,
-      absl::Span<const int32_t>) final {
+      absl::Span<const NcclCommHandle>, int32_t, absl::Span<const int32_t>,
+      std::optional<Config>) final {
     return UnimplementedError();
   }
 

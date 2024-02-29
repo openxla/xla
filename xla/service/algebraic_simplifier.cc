@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
@@ -1078,7 +1079,7 @@ Status AlgebraicSimplifierVisitor::HandleAdd(HloInstruction* add) {
   return OkStatus();
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
     HloInstruction* conjunction) {
   HloInstruction *lhs, *rhs;
   if (!Match(conjunction, m::And(m::Op(&lhs), m::Op(&rhs)))) {
@@ -1807,7 +1808,7 @@ Status AlgebraicSimplifierVisitor::HandleConcatenate(
   return OkStatus();
 }
 
-StatusOr<bool>
+absl::StatusOr<bool>
 AlgebraicSimplifierVisitor::TrySimplifyTautologicalBitcastConvert(
     HloInstruction* bitcast) {
   CHECK_EQ(bitcast->opcode(), HloOpcode::kBitcastConvert);
@@ -2249,7 +2250,8 @@ Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   return OkStatus();
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot(
+absl::StatusOr<bool>
+AlgebraicSimplifierVisitor::RemoveDegenerateDimensionFromDot(
     HloInstruction* dot) {
   const Shape& lhs_shape = dot->operand(0)->shape();
   int64_t num_degenerate_lhs_dims = 0;
@@ -2407,7 +2409,8 @@ Status AlgebraicSimplifierVisitor::SimplifyTransposeOfBroadcast(
                                   transpose->shape()));
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
+absl::StatusOr<bool>
+AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
     HloInstruction* dot) {
   const int64_t rank = dot->shape().rank();
   const auto& dnums = dot->dot_dimension_numbers();
@@ -2469,7 +2472,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
   return true;
 }
 
-StatusOr<HloInstruction*>
+absl::StatusOr<HloInstruction*>
 AlgebraicSimplifierVisitor::NormalizeDotOperandToBatchMajorAndContractingMinor(
     HloInstruction* dot_operand, absl::Span<const int64_t> batch_dimensions,
     absl::Span<const int64_t> contracting_dimensions) {
@@ -2502,7 +2505,7 @@ HloInstruction* AlgebraicSimplifierVisitor::AddReduce(
       shape, hlo, zero, dims, AddReduce_computation));
 }
 
-StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
+absl::StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
     HloInstruction* dot) {
   const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1 ||
@@ -2528,7 +2531,8 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcat(
                                    lhs_contracting_dim, /*swapped=*/true);
 }
 
-StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
+absl::StatusOr<HloInstruction*>
+AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
     HloInstruction* dot, HloInstruction* lhs, int64_t lhs_contracting_dim,
     HloInstruction* rhs, int64_t rhs_contracting_dim, bool swapped) {
   bool can_optimize = lhs->opcode() == HloOpcode::kConcatenate &&
@@ -2645,7 +2649,7 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfConcatHelper(
   return add_result;
 }
 
-StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
+absl::StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
     HloInstruction* dot) {
   const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
   if (dnums.lhs_contracting_dimensions_size() != 1 ||
@@ -2785,7 +2789,7 @@ StatusOr<HloInstruction*> AlgebraicSimplifierVisitor::OptimizeDotOfGather(
 // associative, so as long as we permute the elements of the contracting
 // dimensions on both sides of the dot in the same way, the result of the
 // dot is not affected.
-StatusOr<HloInstruction*>
+absl::StatusOr<HloInstruction*>
 AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims(
     HloInstruction* dot) {
   // This transformation assumes layout is not assigned yet.
@@ -2995,7 +2999,7 @@ AlgebraicSimplifierVisitor::OptimizeDotOfReorderContractingDims(
 
 // If appropriate, reorder operation on dot operand to the mirror operation on
 // the other dot operand
-StatusOr<HloInstruction*>
+absl::StatusOr<HloInstruction*>
 AlgebraicSimplifierVisitor::AssociativeReorderDotOperator(HloInstruction* dot) {
   DotDimensionNumbers dnums = dot->dot_dimension_numbers();
   HloInstruction* lhs = dot->mutable_operand(0);
@@ -3854,7 +3858,7 @@ Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
 }
 
 namespace {
-StatusOr<std::unique_ptr<HloInstruction>> MinMaxToClamp(
+absl::StatusOr<std::unique_ptr<HloInstruction>> MinMaxToClamp(
     HloInstruction* clamp_lower_bound_bcast, HloInstruction* to_clamp,
     HloInstruction* clamp_upper_bound_bcast, AlgebraicSimplifier* simplifier) {
   HloInstruction* clamp_lower_bound;
@@ -4713,6 +4717,41 @@ Status AlgebraicSimplifierVisitor::HandleCompare(HloInstruction* compare) {
     }
   }
 
+  // Below is a common JAX code issue encountered when generating a Causal mask
+  // The user either neglected to specify `dtype=bool` in `ones()`
+  // or mistakenly applied `.astype(bool)` to the result of `tril()` instead of
+  // to `ones()`. Consequently, the mask will be converted from f32 to bool,
+  // resulting in suboptimal HLO.
+  //
+  // mask = jnp.tril(jnp.ones((seq_len, seq_len)))
+  // res = jnp.where(mask, x, -jnp.inf)
+  //
+  // # it will be lowered to the following suboptimal HLO
+  // %cmp0 = pred compare(s32, s32, direction=GE)
+  // %sel0 = f32 select(%cmp0, ones, zeros)
+  // %cmp1 = pred compare(%sel0, zeros, direction=NE)
+  //
+  // # which can be simplified to just
+  // %cmp0 = pred compare(s32, s32, direction=GE)
+  //
+  // Simplification:
+  // Ne(select(Ge(a, b), ones, zeros), zeros) -> Ge(a, b)
+  if (compare->comparison_direction() == ComparisonDirection::kNe &&
+      IsAll(rhs, 0)) {
+    HloInstruction* compare0;
+    HloInstruction* sel_on_true;
+    HloInstruction* sel_on_false;
+    if (Match(lhs,
+              m::Select(m::Op(&compare0)
+                            .WithOpcode(HloOpcode::kCompare)
+                            .WithComparisonDirection(ComparisonDirection::kGe),
+                        m::Op(&sel_on_true), m::Op(&sel_on_false))) &&
+        IsAll(sel_on_true, 1) && IsAll(sel_on_false, 0) &&
+        SameShape(compare->shape(), compare0->shape())) {
+      return ReplaceInstruction(compare, compare0);
+    }
+  }
+
   // Gt(Max(a,b), a) -> Gt(b,a)
   // Gt(Max(a,b), b) -> Gt(a,b)
   // Gt(a, Min(a,b)) -> Gt(a,b)
@@ -5087,7 +5126,7 @@ Status AlgebraicSimplifierVisitor::HandlePower(HloInstruction* power) {
   return OkStatus();
 }
 
-StatusOr<bool>
+absl::StatusOr<bool>
 AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
     HloInstruction* broadcast) {
   TF_RET_CHECK(broadcast->opcode() == HloOpcode::kBroadcast);
@@ -5713,7 +5752,7 @@ Status AlgebraicSimplifierVisitor::HandleReverse(HloInstruction* reverse) {
   return OkStatus();
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyScalarSlice(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyScalarSlice(
     HloInstruction* slice) {
   // Only try to do this for effective scalars. We could do the same for slicing
   // out larger pieces of padding (replacing with a broadcast of the padding
@@ -5765,7 +5804,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyScalarSlice(
   return false;
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape(
     HloInstruction* slice) {
   CHECK_EQ(slice->opcode(), HloOpcode::kSlice);
   if (!IsUnstridedSlice(slice)) {
@@ -5821,7 +5860,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReshape(
 
 // Allowing a slice to move through a reverse with any necessary updates to the
 // slice config.
-StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReverse(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::TryToReorderSliceAndReverse(
     HloInstruction* slice) {
   VLOG(2) << "Entered TryToReorderSliceAndReverse for slice:"
           << slice->ToString();
@@ -6500,6 +6539,20 @@ Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
         compatible = false;
       }
     }
+
+    const auto custom_call_pattern = m::CustomCall(
+        {host_memory_offload_annotations::kMoveToHostCustomCallTarget});
+    if (Match(dus_update,
+              m::AnyOf<HloInstruction>(m::Reshape(custom_call_pattern),
+                                       m::Bitcast(custom_call_pattern),
+                                       custom_call_pattern))) {
+      // If this dynamic-update-slice is used for host memory offloading, it
+      // should not be converted into a pad. Also allow for a reshape or a
+      // bitcast between the host-offloading custom-call and the
+      // dynamic-update-slice.
+      compatible = false;
+    }
+
     PaddingConfig padding_config;
     if (compatible) {
       for (int64_t dim = 0; dim < updated_shape.rank(); ++dim) {
@@ -7801,7 +7854,7 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
   }
 
   // Convert transpose(dot(a,b)) to dot(b,a).
-  auto do_transpose_of_dot = [&]() -> StatusOr<bool> {
+  auto do_transpose_of_dot = [&]() -> absl::StatusOr<bool> {
     if (options_.supports_non_canonical_dots() ||
         operand->opcode() != HloOpcode::kDot || operand->user_count() != 1) {
       return false;
@@ -7858,7 +7911,7 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
   if (options_.supports_non_canonical_dots() &&
       Match(operand, m::Dot(&dot, m::Op(&lhs), m::Op(&rhs))) &&
       dot->user_count() == 1) {
-    TF_ASSIGN_OR_RETURN(bool did_transform, [&]() -> StatusOr<bool> {
+    TF_ASSIGN_OR_RETURN(bool did_transform, [&]() -> absl::StatusOr<bool> {
       const auto& dnums = dot->dot_dimension_numbers();
       const int64_t num_batch_dims = dnums.lhs_batch_dimensions_size();
       for (int64_t i = 0; i < num_batch_dims; ++i) {
@@ -7939,7 +7992,7 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
     HloInstruction* reshape_operand = operand->mutable_operand(0);
     HloInstruction* outer_reshape = transpose->users()[0];
     TF_ASSIGN_OR_RETURN(
-        bool did_transform, ([&]() -> StatusOr<bool> {
+        bool did_transform, ([&]() -> absl::StatusOr<bool> {
           if (operand->shape().dimensions_size() !=
               reshape_operand->shape().dimensions_size() + 1) {
             return false;
@@ -8083,7 +8136,7 @@ Status AlgebraicSimplifierVisitor::HandleTranspose(HloInstruction* transpose) {
   return OkStatus();
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
     HloInstruction* convolution) {
   HloInstruction *lhs, *a, *b;
   if (Match(convolution,
@@ -8144,7 +8197,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvInputPad(
   return false;
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvFilterPad(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvFilterPad(
     HloInstruction* convolution) {
   auto* lhs = convolution->mutable_operand(0);
   auto* rhs = convolution->mutable_operand(1);
@@ -8210,7 +8263,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::FoldConvFilterPad(
   return true;
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
     HloInstruction* convolution) {
   if (!options_.enable_conv_operand_swap() || options_.is_layout_sensitive()) {
     return false;
@@ -8347,7 +8400,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
   return true;
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     HloInstruction* convolution) {
   auto* lhs = convolution->mutable_operand(0);
   auto* rhs = convolution->mutable_operand(1);
@@ -8469,7 +8522,7 @@ StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
   return true;
 }
 
-StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
     HloInstruction* convolution) {
   if (options_.is_layout_sensitive() ||
       absl::c_linear_search(convolution->precision_config().operand_precision(),
@@ -8657,7 +8710,7 @@ Status AlgebraicSimplifierVisitor::HandleMap(HloInstruction* map) {
   return ReplaceWithNewInstruction(map, std::move(clone));
 }
 
-StatusOr<bool> AlgebraicSimplifier::Run(
+absl::StatusOr<bool> AlgebraicSimplifier::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

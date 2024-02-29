@@ -57,7 +57,6 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/mlir/runtime/transforms/compilation_pipeline_gpu.h"
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
@@ -271,7 +270,6 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   uint64_t start_usecs = tsl::Env::Default()->NowMicros();
 
   mlir::DialectRegistry registry;
-  IrEmitterUnnested::GetDependentDialects(registry);
   // Disable MLIR multi-threading to prevent creating too many threads when
   // compiling XLA executables concurrently (e.g. during auto-tuning).
   auto mlir_context = std::make_unique<mlir::MLIRContext>(
@@ -283,13 +281,13 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(), platform_name,
       gpu_device_info, mlir_context.get(), results.llvm_module.get(),
-      /*emit_ir_from_hlo=*/true, /*emit_kernels=*/true);
+      /*emit_kernels=*/true);
 
   std::vector<BufferAllocation*> allocations;
-    results.output_shape = hlo_module->result_shape();
-    TF_ASSIGN_OR_RETURN(results.output_info,
-                        GetOutputInfo(*hlo_module, *results.buffer_assignment));
-    results.use_original_allocations = true;
+  results.output_shape = hlo_module->result_shape();
+  TF_ASSIGN_OR_RETURN(results.output_info,
+                      GetOutputInfo(*hlo_module, *results.buffer_assignment));
+  results.use_original_allocations = true;
 
   auto ir_emitter = IrEmitterUnnested::Create(&ir_emitter_context);
 

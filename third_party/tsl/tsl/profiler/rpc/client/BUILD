@@ -26,7 +26,7 @@ cc_library(
     hdrs = ["capture_profile.h"],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
@@ -58,7 +58,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
         "//tensorflow/core/profiler/rpc/client:__pkg__",
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//tsl/profiler:internal",
         "//tsl/profiler/rpc:__pkg__",
     ]),
@@ -91,7 +91,7 @@ cc_library(
     name = "profiler_client",
     hdrs = ["profiler_client.h"],
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
@@ -114,7 +114,7 @@ cc_library(
     ],
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",

@@ -18,21 +18,24 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <tuple>
 #include <vector>
 
 #include "absl/base/const_init.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/statusor.h"
 #if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_driver.h"
 #endif  // GOOGLE_CUDA
 
@@ -132,7 +135,7 @@ absl::StatusOr<TypedKernel<Args...>*> LoadKernelOrGetPtr(
   if (it == kernel_ptr_cache.end()) {
     TF_ASSIGN_OR_RETURN(
         TypedKernel<Args...> loaded,
-        executor->CreateTypedKernel<Args...>(kernel_name, ptx, cubin_data));
+        (TypedKernel<Args...>::Create(executor, kernel_name, ptx, cubin_data)));
     it =
         kernel_ptr_cache.emplace(kernel_ptr_cache_key, std::move(loaded)).first;
   }

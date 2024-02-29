@@ -43,13 +43,15 @@ cc_library(
         ":host_gpu_executor",
         ":host_platform_id",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/platform",
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
-    alwayslink = True,  # Registers itself with the MultiPlatformManager.
+    alwayslink = True,  # Registers itself with the PlatformManager.
 )
 
 cc_library(
@@ -62,12 +64,15 @@ cc_library(
     ],
     deps = [
         "//xla/stream_executor:stream_executor_internal",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:setround",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -85,6 +90,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_internal",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -101,8 +107,8 @@ xla_cc_test(
     deps = [
         ":host_platform",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",

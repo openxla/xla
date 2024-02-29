@@ -258,7 +258,7 @@ class CompileOptions:
   env_option_overrides: List[Tuple[str, str]]
 
 def register_custom_call_target(
-    fn_name: str, capsule: Any, platform: str
+    fn_name: str, capsule: Any, platform: str, api_version: int = ...,
 ) -> _Status: ...
 def register_custom_call_partitioner(
     name: str,
@@ -443,6 +443,9 @@ class Memory:
   def __repr__(self) -> str: ...
   def __str__(self) -> str: ...
   def addressable_by_devices(self) -> List[Device]: ...
+
+class PjRtLayout:
+  def __str__(self) -> str: ...
 
 class GpuAllocatorConfig:
   class Kind(enum.IntEnum):

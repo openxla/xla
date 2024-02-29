@@ -15,14 +15,14 @@ package(
         # tensorflow/core/platform:monitoring depends on this package
         "//tensorflow/core/platform:__subpackages__",
         # tensorflow/compiler/xla/pjrt:metrics depends on this package
-        "//tensorflow/compiler/xla/pjrt:__subpackages__",
-        "//tensorflow/compiler/xla/service/gpu:__subpackages__",
+        "@xla//xla/pjrt:__subpackages__",
+        "@xla//xla/service/gpu:__subpackages__",
         # tensorflow/compiler/mlir/tfrt:tf_jitrt depends on this package
         "//tensorflow/compiler/mlir/tfrt:__subpackages__",
-        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
-        "//tensorflow/compiler/xla/hlo/experimental:__subpackages__",
+        "@xla//xla/stream_executor:__subpackages__",
+        "@xla//xla/hlo/experimental:__subpackages__",
         "//tensorflow/core/lib/monitoring:__subpackages__",
-        "//tensorflow/compiler/xla/service:__subpackages__",
+        "@xla//xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
         "//tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",

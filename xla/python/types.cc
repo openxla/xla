@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/python/types.h"
 
-#include <algorithm>
 #include <complex>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,8 +24,10 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/statusor.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 
@@ -71,7 +71,7 @@ const CustomDtypes& GetCustomDtypes() {
 
 }  // namespace
 
-xla::StatusOr<PrimitiveType> DtypeToPrimitiveType(const py::dtype& np_type) {
+absl::StatusOr<PrimitiveType> DtypeToPrimitiveType(const py::dtype& np_type) {
   static auto& builtin_dtypes =
       *new absl::flat_hash_map<std::tuple<char, char, int>, PrimitiveType>({
           {{'?', 'b', 1}, PRED},
@@ -131,7 +131,7 @@ xla::StatusOr<PrimitiveType> DtypeToPrimitiveType(const py::dtype& np_type) {
                          np_type.char_(), np_type.kind(), np_type.itemsize());
 }
 
-xla::StatusOr<py::dtype> PrimitiveTypeToDtype(PrimitiveType type) {
+absl::StatusOr<py::dtype> PrimitiveTypeToDtype(PrimitiveType type) {
   const CustomDtypes& custom_dtypes = GetCustomDtypes();
   switch (type) {
     case PRED:
@@ -184,7 +184,7 @@ xla::StatusOr<py::dtype> PrimitiveTypeToDtype(PrimitiveType type) {
   }
 }
 
-StatusOr<pybind11::dtype> IfrtDtypeToDtype(ifrt::DType dtype) {
+absl::StatusOr<pybind11::dtype> IfrtDtypeToDtype(ifrt::DType dtype) {
   const CustomDtypes& custom_dtypes = GetCustomDtypes();
   switch (dtype.kind()) {
     case ifrt::DType::kPred:
@@ -243,6 +243,11 @@ StatusOr<pybind11::dtype> IfrtDtypeToDtype(ifrt::DType dtype) {
       return Unimplemented("Unimplemented primitive type %s",
                            dtype.DebugString());
   }
+}
+
+absl::StatusOr<ifrt::DType> DtypeToIfRtDType(py::dtype dtype) {
+  TF_ASSIGN_OR_RETURN(auto primitive_type, DtypeToPrimitiveType(dtype));
+  return ifrt::ToDType(primitive_type);
 }
 
 const NumpyScalarTypes& GetNumpyScalarTypes() {
@@ -318,7 +323,7 @@ const char* PEP3118FormatDescriptorForPrimitiveType(PrimitiveType type) {
   }
 }
 
-StatusOr<py::str> TypeDescriptorForPrimitiveType(PrimitiveType type) {
+absl::StatusOr<py::str> TypeDescriptorForPrimitiveType(PrimitiveType type) {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define ENDIAN_PREFIX "<"
 #else
@@ -414,7 +419,8 @@ std::vector<int64_t> StridesForShape(PrimitiveType element_type,
                                /*innermost_stride_size=*/1);
 }
 
-StatusOr<py::object> LiteralToPython(std::shared_ptr<xla::Literal> literal) {
+absl::StatusOr<py::object> LiteralToPython(
+    std::shared_ptr<xla::Literal> literal) {
   xla::Literal& m = *literal;
   if (m.shape().IsTuple()) {
     std::vector<Literal> elems = m.DecomposeTuple();
@@ -438,36 +444,6 @@ StatusOr<py::object> LiteralToPython(std::shared_ptr<xla::Literal> literal) {
   return py::array(dtype, m.shape().dimensions(),
                    ByteStridesForShape(m.shape()), m.untyped_data(),
                    literal_object);
-}
-
-StatusOr<PythonBufferTree> GetPythonBufferTree(const py::object& argument) {
-  PythonBufferTree tree;
-  if (py::isinstance<py::tuple>(argument)) {
-    py::tuple tuple = py::reinterpret_borrow<py::tuple>(argument);
-    std::vector<Shape> host_shapes(tuple.size());
-    for (int i = 0; i < host_shapes.size(); ++i) {
-      TF_ASSIGN_OR_RETURN(PythonBufferTree subtree,
-                          GetPythonBufferTree(tuple[i]));
-      tree.leaves.reserve(tree.leaves.size() + subtree.leaves.size());
-      std::move(subtree.leaves.begin(), subtree.leaves.end(),
-                std::back_inserter(tree.leaves));
-      tree.arrays.reserve(tree.arrays.size() + subtree.arrays.size());
-      std::move(subtree.arrays.begin(), subtree.arrays.end(),
-                std::back_inserter(tree.arrays));
-      host_shapes[i] = std::move(subtree.shape);
-    }
-    tree.shape = ShapeUtil::MakeTupleShape(host_shapes);
-  } else {
-    pybind11::detail::type_caster<BorrowingLiteral> caster;
-    if (!caster.load(argument, /*convert=*/true)) {
-      return InvalidArgument("Invalid array value.");
-    }
-    DCHECK_EQ(caster.arrays.size(), 1);
-    tree.arrays.push_back(std::move(caster.arrays.front()));
-    tree.leaves.push_back(std::move(*caster));
-    tree.shape = tree.leaves.front().shape();
-  }
-  return tree;
 }
 
 template <typename IntType>

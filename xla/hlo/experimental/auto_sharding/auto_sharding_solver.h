@@ -33,13 +33,13 @@ namespace spmd {
 struct AutoShardingSolverResult {
  public:
   AutoShardingSolverResult(
-      StatusOr<std::tuple<std::vector<NodeStrategyIdx>,
-                          std::vector<EdgeStrategyIdx>, double>>
+      absl::StatusOr<std::tuple<std::vector<NodeStrategyIdx>,
+                                std::vector<EdgeStrategyIdx>, double>>
           status,
       bool skip_auto_sharding)
       : status(status), skip_auto_sharding(skip_auto_sharding) {}
   bool operator==(const AutoShardingSolverResult& other) const;
-  StatusOr<std::tuple<std::vector<int64_t>, std::vector<int64_t>, double>>
+  absl::StatusOr<std::tuple<std::vector<int64_t>, std::vector<int64_t>, double>>
       status;
   bool skip_auto_sharding;
 };
@@ -135,6 +135,10 @@ class StrategyShaver {
   std::vector<std::vector<AliasIdx>> dst_alias_map_;
   std::vector<std::vector<NodeIdx>> followers_;
 };
+
+// Check fail if `request` is invalid (e.g., because of negative node costs).
+// Note: This does not include checks for valid variable aliasing yet.
+void ValidateRequest(const AutoShardingSolverRequest& request);
 
 }  // namespace spmd
 }  // namespace xla

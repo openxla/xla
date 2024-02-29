@@ -125,7 +125,9 @@ cc_library(
         "//xla:util",
         "//xla/client:local_client",
         "//xla/stream_executor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
@@ -357,6 +359,17 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "pjrt_layout",
+    hdrs = ["pjrt_layout.h"],
+    visibility = ["//xla:friends"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla/service:hlo_parser",
     ],
 )
 
@@ -685,6 +698,7 @@ cc_library(
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",

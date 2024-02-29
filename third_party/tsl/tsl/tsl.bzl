@@ -354,7 +354,7 @@ def tsl_gpu_library(deps = None, cuda_deps = None, copts = tsl_copts(), **kwargs
         kwargs.pop("default_copts", None)
     cc_library(
         deps = deps + if_cuda([
-            clean_dep("//tsl/cuda:cudart"),
+            clean_dep("@xla//xla/tsl/cuda:cudart"),
             "@local_config_cuda//cuda:cuda_headers",
         ]) + if_rocm_is_configured([
             "@local_config_rocm//rocm:rocm_headers",
@@ -477,7 +477,7 @@ _transitive_hdrs = rule(
 
 def transitive_hdrs(name, deps = [], **kwargs):
     _transitive_hdrs(name = name + "_gather", deps = deps)
-    native.filegroup(name = name, srcs = [":" + name + "_gather"])
+    native.filegroup(name = name, srcs = [":" + name + "_gather"], **kwargs)
 
 # Create a header only library that includes all the headers exported by
 # the libraries in deps.

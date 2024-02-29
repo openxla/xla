@@ -47,6 +47,14 @@ class NcclApi {
  public:
   virtual ~NcclApi() = default;
 
+  // Communicator configuration.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/types.html#ncclconfig
+  struct Config {
+    bool split_share = false;
+    int64_t max_nchannels = 0;
+  };
+
   // Returns a default NcclApi for a current process. Can be a real one based on
   // NCCL or a stub if XLA compiled without NCCL or CUDA support.
   static NcclApi* Default();
@@ -145,7 +153,7 @@ class NcclApi {
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcomminitrank
   virtual absl::StatusOr<std::vector<OwnedNcclComm>> CommInitRanks(
       int32_t nranks, const NcclCliqueId& clique_id,
-      absl::Span<const DeviceRank> ranks) = 0;
+      absl::Span<const DeviceRank> ranks, const Config& config) = 0;
 
   // Creates new communicators by splitting `comms`.
   //
@@ -155,7 +163,7 @@ class NcclApi {
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcommsplit
   virtual absl::StatusOr<std::vector<OwnedNcclComm>> CommSplit(
       absl::Span<const NcclCommHandle> comms, int32_t color,
-      absl::Span<const int32_t> keys) = 0;
+      absl::Span<const int32_t> keys, std::optional<Config> config) = 0;
 
   // Abort any uncompleted operations and destroys the communicator. Frees
   // resources that are allocated to a communicator object comm.

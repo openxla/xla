@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -45,8 +46,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
-#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
+#include "xla/service/gpu/fusions/tiling_util.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
@@ -76,6 +77,12 @@ HloInstructionIndexing CreateUnknownIndexing(int64_t count = 1) {
 }
 
 IndexingMap CreateIdentityMap(const Shape& shape, MLIRContext* ctx) {
+  if (shape.IsTuple()) {
+    // Should happen only for variadic reduce. In that case all tuple shapes are
+    // equal.
+    return CreateIdentityMap(shape.tuple_shapes(0), ctx);
+  }
+
   auto dims = shape.dimensions();
   IndexingMap identity_map = IndexingMap::FromTensorSizes(
       AffineMap::getMultiDimIdentityMap(dims.size(), ctx), dims, {});
@@ -817,8 +824,9 @@ std::vector<int64_t> ToTransposeDimensions(const Layout& l) {
 
 AffineMap GetTilingAffineMap(llvm::ArrayRef<AffineExpr> exprs,
                              const Tiling& tiling) {
-  return AffineMap::get(/*dimCount=*/6, /*symbolCount=*/3, exprs,
-                        exprs[0].getContext());
+  return AffineMap::get(
+      /*dimCount=*/6, /*symbolCount=*/tiling.GetShape().size(), exprs,
+      exprs[0].getContext());
 }
 
 }  // namespace
@@ -1008,6 +1016,18 @@ GroupedByOpIndexingMap ComputeGroupedOutputToInputIndexing(
   auto initial_map = CreateIdentityMap(target_instr.instruction().shape(), ctx);
 
   GroupedByOpIndexingMap grouped_indexing_maps;
+  // If target_instr is a parameter of a fusion, then we create an identity map
+  // for the fusion operand.
+  if (fusion_adaptor.ContainsInstruction(target_instr)) {
+    if (auto parameter_instr =
+            DynCast<HloParameterInstruction>(&target_instr.instruction())) {
+      const HloInstruction* user = parameter_instr->users().front();
+      auto fusion_operand = HloInstructionAdaptor(*user).GetOperand(
+          parameter_instr->parameter_number());
+      grouped_indexing_maps[&fusion_operand.instruction()] = {initial_map};
+      return grouped_indexing_maps;
+    }
+  }
   grouped_indexing_maps[&target_instr.instruction()].insert(initial_map);
 
   auto post_order = fusion_adaptor.MakeInstructionPostOrder();

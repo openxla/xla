@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/layout.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -43,13 +44,14 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/connected_traceme.h"
+#include "tsl/profiler/lib/context_types.h"
 
 namespace pjrt {
 
@@ -419,7 +421,7 @@ xla::PjRtFuture<xla::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
   return PjRtFuture<Status>(std::move(promise));
 }
 
-static xla::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(
+static absl::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(
     const std::string& name, const xla::PjRtValueType& value,
     int api_minor_version) {
   PJRT_NamedValue c_value;
@@ -468,7 +470,7 @@ static xla::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(
   return c_value;
 }
 
-xla::StatusOr<std::vector<PJRT_NamedValue>> ConvertToPjRtNamedValueList(
+absl::StatusOr<std::vector<PJRT_NamedValue>> ConvertToPjRtNamedValueList(
     const absl::flat_hash_map<std::string, xla::PjRtValueType>& cpp_value_map,
     int api_minor_version) {
   std::vector<PJRT_NamedValue> c_value_list;
@@ -524,7 +526,7 @@ ConvertFromPjRtNamedValueList(const PJRT_NamedValue* c_value_list,
   return cpp_value_map;
 }
 
-static xla::StatusOr<PJRT_NamedValue_Type> GetPjrtNamedValueType(
+static absl::StatusOr<PJRT_NamedValue_Type> GetPjrtNamedValueType(
     xla::PjRtValueType cpp_value) {
   if (std::holds_alternative<std::string>(cpp_value)) {
     return PJRT_NamedValue_Type::PJRT_NamedValue_kString;
@@ -616,7 +618,7 @@ absl::string_view GetPlatformName(PJRT_Client* client, const PJRT_Api* api) {
   return platform_name;
 }
 
-xla::StatusOr<PJRT_TopologyDescription*> GetTopologyDescription(
+absl::StatusOr<PJRT_TopologyDescription*> GetTopologyDescription(
     PJRT_Client* client, const PJRT_Api* api) {
   PJRT_Client_TopologyDescription_Args args;
   args.struct_size = PJRT_Client_TopologyDescription_Args_STRUCT_SIZE;
@@ -687,7 +689,7 @@ static void PjRtValueDeleterCallback(char* value) { delete[] value; }
 static PJRT_KeyValueGetCFunc ToKVGetCFunc(
     xla::KeyValueStoreInterface* kv_store) {
   return [kv_store](PJRT_KeyValueGetCallback_Args* args) -> PJRT_Error* {
-    xla::StatusOr<std::string> output =
+    absl::StatusOr<std::string> output =
         kv_store->Get(std::string_view(args->key, args->key_size),
                       absl::Milliseconds(args->timeout_in_ms));
     if (!output.ok()) {
@@ -807,7 +809,7 @@ PJRT_RecvCallbackInfo CppRecvCallbackToCRecvCallback(
       }};
 }
 
-xla::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
+absl::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
     const xla::Layout& cpp_layout) {
   BufferMemoryLayoutData layout_data;
   layout_data.c_layout.type =
@@ -834,7 +836,7 @@ xla::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
   return layout_data;
 }
 
-xla::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
+absl::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
     absl::Span<int64_t const> byte_strides) {
   BufferMemoryLayoutData layout_data;
   layout_data.c_layout.type =
@@ -844,7 +846,7 @@ xla::StatusOr<BufferMemoryLayoutData> ConvertToBufferMemoryLayoutData(
   return layout_data;
 }
 
-xla::StatusOr<xla::Layout> ConvertToLayout(
+absl::StatusOr<xla::Layout> ConvertToLayout(
     const PJRT_Buffer_MemoryLayout_Tiled& c_tiled) {
   absl::Span<const int64_t> minor_to_major(c_tiled.minor_to_major,
                                            c_tiled.minor_to_major_size);
@@ -890,10 +892,9 @@ PJRT_Buffer_MemoryLayout GetMemoryLayout(const PJRT_Api* api,
   return args.layout;
 }
 
-xla::StatusOr<xla::Shape> BuildXlaShapeFromC(PJRT_Buffer_Type element_type,
-                                             const int64_t* dims,
-                                             size_t num_dims,
-                                             PJRT_Buffer_MemoryLayout* layout) {
+absl::StatusOr<xla::Shape> BuildXlaShapeFromC(
+    PJRT_Buffer_Type element_type, const int64_t* dims, size_t num_dims,
+    PJRT_Buffer_MemoryLayout* layout) {
   xla::Shape shape =
       xla::ShapeUtil::MakeShape(ConvertFromPjRtBufferType(element_type),
                                 absl::Span<const int64_t>(dims, num_dims));
@@ -945,6 +946,13 @@ absl::Span<PJRT_DeviceDescription* const> DeviceDescriptions(
 
 absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
     const PJRT_Api* api, PJRT_Executable* executable) {
+  // TODO(jieying): To be removed after 03/2024.
+  if (api->pjrt_api_version.major_version == 0 &&
+      api->pjrt_api_version.minor_version < 40) {
+    return absl::UnimplementedError(
+        "GetCompiledMemoryStats requires a plugin with PJRT C API version >= "
+        "0.40");
+  }
   PJRT_Executable_GetCompiledMemoryStats_Args args;
   args.struct_size = PJRT_Executable_GetCompiledMemoryStats_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -957,7 +965,28 @@ absl::StatusOr<xla::CompiledMemoryStats> GetCompiledMemoryStats(
   results.output_size_in_bytes = args.output_size_in_bytes;
   results.alias_size_in_bytes = args.alias_size_in_bytes;
   results.temp_size_in_bytes = args.temp_size_in_bytes;
+  results.host_generated_code_size_in_bytes =
+      args.host_generated_code_size_in_bytes;
+  results.host_argument_size_in_bytes = args.host_argument_size_in_bytes;
+  results.host_output_size_in_bytes = args.host_output_size_in_bytes;
+  results.host_alias_size_in_bytes = args.host_alias_size_in_bytes;
+  results.host_temp_size_in_bytes = args.host_temp_size_in_bytes;
   return results;
+}
+
+PJRT_Profiler_Extension CreatePjrtProfilerExtension(
+    absl::string_view traceme_name) {
+  tsl::profiler::TraceMeProducer producer(
+      traceme_name, tsl::profiler::ContextType::kPjrtLibraryCall);
+  int64_t traceme_context_id = producer.GetContextId();
+  PJRT_Profiler_Extension profiler_extension{
+      /*struct_size=*/PJRT_Profiler_Extension_STRUCT_SIZE,
+      /*type=*/PJRT_Extension_Type::PJRT_Extension_Type_Profiler,
+      /*next=*/nullptr,
+      /*profiler_api=*/nullptr,
+      /*traceme_context_id=*/traceme_context_id,
+  };
+  return profiler_extension;
 }
 
 }  // namespace pjrt

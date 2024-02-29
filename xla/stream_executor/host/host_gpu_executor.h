@@ -19,9 +19,20 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_HOST_HOST_GPU_EXECUTOR_H_
 #define XLA_STREAM_EXECUTOR_HOST_HOST_GPU_EXECUTOR_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_options.h"
+#include "xla/stream_executor/event.h"
+#include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/kernel_spec.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_internal.h"
 
@@ -65,10 +76,10 @@ class HostExecutor : public internal::StreamExecutorInterface {
   bool HostMemoryRegister(void* mem, uint64_t size) override { return true; }
   bool HostMemoryUnregister(void* mem) override { return true; }
 
-  bool Memcpy(Stream* stream, void* host_dst, const DeviceMemoryBase& gpu_src,
-              uint64_t size) override;
-  bool Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst, const void* host_src,
-              uint64_t size) override;
+  absl::Status Memcpy(Stream* stream, void* host_dst,
+                      const DeviceMemoryBase& gpu_src, uint64_t size) override;
+  absl::Status Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
+                      const void* host_src, uint64_t size) override;
   bool MemcpyDeviceToDevice(Stream* stream, DeviceMemoryBase* gpu_dst,
                             const DeviceMemoryBase& gpu_src,
                             uint64_t size) override;

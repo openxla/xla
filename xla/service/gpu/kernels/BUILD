@@ -1,8 +1,8 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -177,7 +177,7 @@ xla_cc_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",  # build_cleaner: keep
-        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
@@ -227,8 +227,8 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
@@ -274,8 +274,8 @@ xla_test(
         ":cutlass_gemm_custom_kernel",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
@@ -294,8 +294,8 @@ cc_binary(
         "//xla:xla_data_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",

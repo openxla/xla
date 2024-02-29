@@ -22,6 +22,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_DNN_H_
 #define XLA_STREAM_EXECUTOR_DNN_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -37,6 +38,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -1245,6 +1247,21 @@ class VersionInfo {
   int patch_;
 };
 
+class DnnGraph {
+ public:
+  DnnGraph() = default;
+  virtual ~DnnGraph() = default;
+
+  // Returns non-OK status on hard failures (incorrectly constructed graph,
+  // anything else unexpected),
+  // false on expected ones (graph is valid but not supported),
+  // true on success.
+  virtual absl::StatusOr<bool> Prepare() = 0;
+  virtual absl::Status Build(int64_t plan_id) = 0;
+  virtual absl::Status Execute(Stream& stream,
+                               absl::Span<DeviceMemoryBase> operands) const = 0;
+};
+
 // Suite of operations typically used for implementing Deep/Convolutional Neural
 // Nets. Note: A false return value of an operation indicates the
 // implementation is not available.
@@ -1705,6 +1722,11 @@ class DnnSupport {
       std::optional<dnn::TensorDescriptor> norm_factor_descriptor,
       std::optional<dnn::TensorDescriptor> dscale_descriptor,
       std::optional<dnn::TensorDescriptor> dbias_descriptor);
+
+  virtual absl::StatusOr<std::unique_ptr<DnnGraph>> DeserializeGraph(
+      absl::string_view) const {
+    return absl::UnimplementedError("Graph support requires cuDNN >= 8.1.");
+  };
 
   virtual absl::StatusOr<std::unique_ptr<const FusedMHARunner>>
   FusedMHARunnerFromDesc(

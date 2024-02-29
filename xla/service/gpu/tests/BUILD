@@ -55,6 +55,7 @@ cc_library(
         "//xla:shape_util",
         "//xla/service:gpu_plugin",
         "//xla/service/gpu:gpu_executable",
+        "//xla/stream_executor:platform_manager",
         "//xla/tests:filecheck",
         "//xla/tests:llvm_irgen_test_base",
         "//xla/tests:verified_hlo_module",
@@ -90,6 +91,9 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":gpu_codegen_test",
+        "//xla:error_spec",
+        "//xla/tests:test_utils",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -780,6 +784,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_proto_cc",
+        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
@@ -822,6 +827,7 @@ xla_test(
     backends = [
         "gpu",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 2,
     deps = [
         ":gpu_codegen_test",
@@ -837,6 +843,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_module_config",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
@@ -847,12 +854,17 @@ xla_test(
         "//xla/tests:test_macros_header",
         "//xla/tests:test_utils",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
 # This library is here to be reused by tests.

@@ -311,7 +311,7 @@ filegroup(
         "onednn_threadpool.h",
     ],
     visibility = internal_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/framework:__pkg__",
         "//tensorflow/core/util:__pkg__",

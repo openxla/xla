@@ -28,6 +28,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "nvidia/include/NVGPUToLLVM/NVGPUToLLVMPass.h"
+#include "nvidia/include/TritonNVIDIAGPUToLLVM/Passes.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -121,8 +123,6 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/tensor_float_32_utils.h"
-#include "triton/Conversion/NVGPUToLLVM/NVGPUToLLVMPass.h"
-#include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -855,7 +855,7 @@ void StripParameterAddressSpaces(mlir::RewriterBase& rewriter,
 
   // Convert generic address spaces back to original ones within the function
   // body.
-  mlir::Block* entry = generic_func.addEntryBlock();
+  mlir::Block* entry = generic_func.addEntryBlock(rewriter);
   rewriter.setInsertionPointToEnd(entry);
   SmallVector<Value> converted_args;
   for (auto [arg, type] :
@@ -1561,8 +1561,8 @@ Value RoundToBF16(ImplicitLocOpBuilder& b, Value input) {
 
 // Leverages BF16 datatype for F32 matmul computation. It follows the guidance
 // from https://arxiv.org/pdf/1904.06376.pdf.
-StatusOr<Value> Emit6xBfloat16MatMul(ImplicitLocOpBuilder& b, Value lhs,
-                                     Value rhs, Value acc) {
+absl::StatusOr<Value> Emit6xBfloat16MatMul(ImplicitLocOpBuilder& b, Value lhs,
+                                           Value rhs, Value acc) {
   Type f32 = b.getF32Type();
   TF_RET_CHECK(lhs.getType().cast<ShapedType>().getElementType() == f32);
   TF_RET_CHECK(rhs.getType().cast<ShapedType>().getElementType() == f32);
@@ -1810,7 +1810,7 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
         dot_input_rhs.getType().cast<ShapedType>().getElementType() == f32;
     Value accumulator_next;
     if (use_bf16_6x) {
-      StatusOr<Value> accumulator_next_or = Emit6xBfloat16MatMul(
+      absl::StatusOr<Value> accumulator_next_or = Emit6xBfloat16MatMul(
           b, dot_input_lhs, dot_input_rhs, iter_args.back());
       TF_CHECK_OK(accumulator_next_or.status());
       accumulator_next = accumulator_next_or.value();
