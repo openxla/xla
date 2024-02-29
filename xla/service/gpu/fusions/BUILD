@@ -699,6 +699,7 @@ cc_library(
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:TensorDialect",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
