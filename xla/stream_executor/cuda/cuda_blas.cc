@@ -22,7 +22,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "Eigen/Core"  // from @eigen_archive
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
