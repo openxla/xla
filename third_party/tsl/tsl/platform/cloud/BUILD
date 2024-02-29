@@ -1,18 +1,18 @@
 # Description:
 # Cloud file system implementation.
 
-load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl:tsl.bzl",
     "if_windows",
-    "set_external_visibility",
+    "internal_visibility",
     "tsl_copts",
 )
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         ":dependency_allowlist",
     ]),
     licenses = ["notice"],

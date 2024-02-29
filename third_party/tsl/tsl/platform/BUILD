@@ -7,7 +7,7 @@
 load(
     "//tsl:tsl.bzl",
     "if_not_fuchsia",
-    "set_external_visibility",
+    "internal_visibility",
     "tsl_copts",
 )
 load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
@@ -25,6 +25,7 @@ load(
     "tf_stream_executor_deps",
     "tf_windows_aware_platform_deps",
     "tsl_cc_test",
+    "tsl_grpc_credentials_deps",
     "tsl_protobuf_deps",
 )
 load("//tsl/platform:build_config_root.bzl", "if_static")
@@ -51,7 +52,7 @@ exports_files(
         "load_library.h",
         "stringpiece_test.cc",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/platform:__subpackages__",
         "//tsl:__subpackages__",
     ]),
@@ -185,14 +186,6 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
-    ],
-)
-
-cc_library(
-    name = "gif",
-    hdrs = ["gif.h"],
-    deps = [
-        "@gif",
     ],
 )
 
@@ -382,7 +375,7 @@ filegroup(
         "test_benchmark.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
@@ -395,7 +388,7 @@ filegroup(
         "test.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
@@ -601,7 +594,6 @@ filegroup(
         "error_logging.h",
         "fingerprint.h",
         "notification.h",
-        "png.h",
         "random.cc",
         "random.h",
         "test_benchmark.h",
@@ -616,20 +608,8 @@ filegroup(
         "subprocess.h",
     ]),
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
-        "//tensorflow/core/platform:__pkg__",
-    ]),
-)
-
-filegroup(
-    name = "gif_hdrs",
-    srcs = [
-        "gif.h",
-    ],
-    compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
-        "//tensorflow/core/lib/gif:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
 )
@@ -642,9 +622,6 @@ filegroup(
         ],
         exclude = [
             "dynamic_annotations.h",
-            "gif.h",
-            "png.h",
-            "jpeg.h",
         ],
     ) + [
         "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
@@ -673,6 +650,7 @@ exports_files(
         "file_system.h",
         "file_system_helper.cc",
         "file_system_helper.h",
+        "grpc_credentials.h",
         "host_info.h",
         "human_readable_json.h",
         "init_main.h",
@@ -693,7 +671,7 @@ exports_files(
         "tracing.cc",
         "tracing.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         ":__subpackages__",
         "//tensorflow:__subpackages__",
     ]),
@@ -709,7 +687,7 @@ filegroup(
         "stringpiece.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
     ]),
 )
@@ -738,30 +716,10 @@ filegroup(
         "unbounded_work_queue.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/platform:__pkg__",
     ]),
-)
-
-filegroup(
-    name = "jpeg_hdrs",
-    srcs = [
-        "jpeg.h",
-    ],
-    compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
-        "//tensorflow/core:__pkg__",
-        "//tensorflow/core/lib/jpeg:__pkg__",
-    ]),
-)
-
-cc_library(
-    name = "jpeg",
-    hdrs = ["jpeg.h"],
-    deps = [
-        "@libjpeg_turbo//:jpeg",
-    ],
 )
 
 filegroup(
@@ -772,7 +730,7 @@ filegroup(
         "platform.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/jpeg:__pkg__",
     ]),
@@ -789,7 +747,7 @@ filegroup(
         "stringpiece.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/jpeg:__pkg__",
         "//tensorflow/core/platform:__pkg__",
@@ -806,7 +764,7 @@ filegroup(
         "platform.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/gif:__pkg__",
         "//tensorflow/core/platform:__pkg__",
@@ -1032,14 +990,12 @@ cc_library(
 cc_library(
     name = "build_test",
     testonly = 1,
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/platform:__pkg__",
     ]),
     deps = [
         ":byte_order",
         ":fingerprint",
-        ":gif",
-        ":jpeg",
         ":macros",
         ":net",
         ":platform",
@@ -1103,6 +1059,13 @@ cc_library(
 )
 
 cc_library(
+    name = "grpc_credentials",
+    compatible_with = get_compatible_with_portable(),
+    textual_hdrs = ["grpc_credentials.h"],
+    deps = tsl_grpc_credentials_deps(),
+)
+
+cc_library(
     name = "prefetch",
     hdrs = ["prefetch.h"],
     compatible_with = get_compatible_with_portable(),
@@ -1149,7 +1112,7 @@ filegroup(
         "str_util.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 cc_library(
@@ -1402,16 +1365,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-    ],
-)
-
-cc_library(
-    name = "png",
-    hdrs = ["png.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":platform",
-        "@png",
     ],
 )
 

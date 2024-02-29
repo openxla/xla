@@ -1,14 +1,14 @@
 # Description:
 #   RPC communication interfaces and implementations for TensorFlow.
 
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("//tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tsl:internal",
     ]),
     licenses = ["notice"],

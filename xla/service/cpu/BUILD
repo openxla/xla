@@ -14,7 +14,7 @@ load(
     "acl_deps",
     "if_enable_acl",
 )
-load("@tsl//tsl:tsl.bzl", "tf_openmp_copts", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/mkl:build_defs.bzl",
@@ -26,7 +26,7 @@ load(":build_defs.bzl", "runtime_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -105,7 +105,7 @@ filegroup(
         "runtime_matmul_s32.cc",
         "runtime_fork_join.cc",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 filegroup(
@@ -132,7 +132,7 @@ filegroup(
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
     ],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
 )
 
 cc_library(
@@ -178,6 +178,7 @@ cc_library(
         "//xla/service:generic_transfer_manager",
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/host:host_platform_id",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/types:span",
@@ -246,7 +247,6 @@ cc_library(
         "//xla/mlir/runtime/transforms:jit_compiler",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
-        "//xla/mlir_hlo:lhlo",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/mlir_hlo:transforms_passes",
         "//xla/runtime:custom_call_registry",
@@ -429,6 +429,7 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/service:buffer_assignment",
@@ -452,6 +453,7 @@ tf_proto_library(
     protodeps = [
         ":xla_framework_proto",
         "//xla/service:hlo_proto",
+        "//xla:xla_proto",
     ],
 )
 
@@ -1573,6 +1575,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":runtime_lightweight_check",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:statusor",
@@ -1608,6 +1611,7 @@ cc_library(
         ":onednn_memory_util",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
+        "//xla:shape_util",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@eigen_archive//:eigen3",
@@ -1666,23 +1670,37 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_util",
+    hdrs = ["onednn_util.h"],
+)
+
+cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
+        "onednn_matmul.h",
         "onednn_matmul_rewriter.h",
-        "onednn_util.h",
+        "@tsl//tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
+        ":onednn_matmul",
         ":onednn_memory_util",
+        ":onednn_util",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
@@ -1693,12 +1711,12 @@ cc_library(
     srcs = ["onednn_ops_rewriter.cc"],
     hdrs = [
         "onednn_ops_rewriter.h",
-        "onednn_util.h",
     ],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",

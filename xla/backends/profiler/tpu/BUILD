@@ -11,10 +11,7 @@ cc_library(
     name = "tpu_tracer",
     srcs = if_with_tpu_support(["tpu_tracer.cc"]),
     copts = tf_profiler_copts(),
-    visibility = [
-        "//third_party/xprof/plugin/tensorboard_plugin_profile/integration_tests/tpu/tensorflow:__pkg__",
-        "//xla:internal",
-    ],
+    visibility = ["//xla:internal"],
     deps = [
         "//xla/stream_executor/tpu:tpu_api",
         "//xla/stream_executor/tpu:tpu_api_dlsym_set_fn",

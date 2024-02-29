@@ -1,9 +1,13 @@
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//visibility:public"],
+    default_visibility = internal_visibility([
+        "//learning/brain/mlir:tensorflow_friends",
+        "//learning/brain/mlir:xla_friends",
+    ]),
     licenses = ["notice"],
 )
 
@@ -19,6 +23,24 @@ cc_library(
         "//xla/mlir_hlo",
         "//xla/service:hlo_proto_cc",
         "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_library(
+    name = "custom_call_importer",
+    srcs = ["custom_call_importer.cc"],
+    hdrs = ["custom_call_importer.h"],
+    deps = [
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/mlir_hlo",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -45,6 +67,7 @@ cc_library(
     ],
     deps = [
         ":attribute_importer",
+        ":custom_call_importer",
         ":hlo_utils",
         ":location_importer",
         "//xla:comparison_util",
@@ -64,11 +87,13 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:QuantOps",
         "@llvm-project//mlir:SparseTensorDialect",
         "@tsl//tsl/platform:statusor",
     ],

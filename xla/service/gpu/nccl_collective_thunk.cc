@@ -50,7 +50,6 @@ limitations under the License.
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
 #include "xla/status.h"
-#include "xla/status_macros.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
@@ -69,6 +68,7 @@ namespace gpu {
 namespace {
 
 static constexpr int64_t kCollectiveMemorySpaceColor = 1;
+static constexpr int64_t kNoStreamId = 0;
 
 bool IsTypeSupportedByNccl(PrimitiveType element_type,
                            Thunk::Kind reduction_op) {
@@ -221,7 +221,8 @@ NcclCollectiveThunk::NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info,
 static absl::StatusOr<NcclCliqueKey> GetNcclCliqueKey(
     const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, int64_t stream_id) {
+    CollectiveOpGroupMode group_mode, int64_t stream_id,
+    AsyncStreamKind stream_kind) {
   GlobalDeviceId global_device_id = params.global_device_id;
 
   TF_ASSIGN_OR_RETURN(
@@ -235,66 +236,26 @@ static absl::StatusOr<NcclCliqueKey> GetNcclCliqueKey(
         "Partial replica groups are not allowed when using NCCL_COMM_ID "
         "environment configuration.");
   }
+  static const bool enable_per_stream_comms =
+      xla::GetDebugOptionsFromFlags().xla_gpu_enable_nccl_per_stream_comms();
 
-  return NcclCliqueKey(std::move(participants), stream_id);
+  return NcclCliqueKey(std::move(participants),
+                       enable_per_stream_comms ? stream_id : kNoStreamId,
+                       stream_kind);
 }
 
-absl::StatusOr<NcclComm::Lock> GetNcclComm(
+absl::StatusOr<NcclApi::NcclCommHandle> GetNcclComm(
     const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, int64_t stream_id) {
-  TF_ASSIGN_OR_RETURN(
-      NcclCliqueKey clique_key,
-      GetNcclCliqueKey(params, replica_groups, group_mode, stream_id));
+    CollectiveOpGroupMode group_mode, int64_t stream_id,
+    AsyncStreamKind stream_kind) {
+  TF_ASSIGN_OR_RETURN(NcclCliqueKey clique_key,
+                      GetNcclCliqueKey(params, replica_groups, group_mode,
+                                       stream_id, stream_kind));
 
   std::optional<int64_t> rank = clique_key.rank(params.global_device_id);
   return collective_cliques.GetComm(std::move(clique_key), *rank);
-}
-
-// TODO(ezhulenev): This is a deprecated code path and should be removed after
-// all users in legacy XLA runtime are removed.
-absl::StatusOr<NcclComm::Lock> LockNcclComm(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, int64_t op_id, int64_t stream_id,
-    bool enable_clique_optimization) {
-  GlobalDeviceId global_device_id = params.global_device_id;
-
-  TF_ASSIGN_OR_RETURN(
-      std::vector<GlobalDeviceId> participants,
-      GetParticipatingDevices(global_device_id, *params.device_assn,
-                              replica_groups, group_mode));
-
-  if (IsGlobalNcclConfig() &&
-      (participants.size() != params.device_assn->replica_count())) {
-    return InvalidArgument(
-        "Partial replica groups are not allowed when using NCCL_COMM_ID "
-        "environment configuration.");
-  }
-
-  auto it = absl::c_find(participants, global_device_id);
-  TF_RET_CHECK(it != participants.end());
-  int rank = it - participants.begin();
-
-  std::vector<GlobalDeviceId> local_devices;
-  if (params.global_device_id_map) {
-    local_devices.reserve(params.global_device_id_map->size());
-    for (const auto& entry : *params.global_device_id_map) {
-      local_devices.push_back(entry.second);
-    }
-  }
-  size_t num_local_participants = GetNumLocalParticipants(
-      participants, params.global_device_id_map ? &local_devices : nullptr);
-
-  bool is_local = participants.size() == num_local_participants;
-  TF_ASSIGN_OR_RETURN(
-      const NcclCliqueIdCallback* clique_id_callback,
-      GetNcclCliqueIdCallback(params.nccl_clique_id_callback, is_local));
-
-  return AcquireNcclComm(params.run_id, OpId(op_id), std::move(participants),
-                         num_local_participants, *clique_id_callback, rank,
-                         stream_id, enable_clique_optimization);
 }
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
@@ -431,9 +392,13 @@ absl::Status NcclCollectiveThunk::Prepare(const PrepareParams& params,
   size_t num_local_participants = GetNumLocalParticipants(
       participants,
       collectives->global_device_id_map ? &local_devices : nullptr);
-
+  AsyncStreamKind stream_kind = GetAsyncStreamKind();
+  static const bool enable_per_stream_comms =
+      xla::GetDebugOptionsFromFlags().xla_gpu_enable_nccl_per_stream_comms();
   return resource_requests.AddClique(
-      NcclCliqueKey(std::move(participants), GetStreamId()),
+      NcclCliqueKey(std::move(participants),
+                    enable_per_stream_comms ? GetStreamId() : kNoStreamId,
+                    stream_kind),
       num_local_participants);
 }
 
@@ -466,41 +431,43 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",
                                 Thunk::KindToString(kind()));
   const int64_t stream_id = GetStreamId();
+  AsyncStreamKind stream_kind = GetAsyncStreamKind();
   TF_ASSIGN_OR_RETURN(
-      NcclComm::Lock comm,
+      NcclApi::NcclCommHandle comm,
       GetNcclComm(*params.collective_params, *params.collective_cliques,
-                  config().replica_groups, config().group_mode, stream_id));
+                  config().replica_groups, config().group_mode, stream_id,
+                  stream_kind));
 
   se::StreamExecutor* executor = params.stream->parent();
-  int64_t async_stream_idx = static_cast<int64_t>(GetAsyncStreamKind());
+  int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
 
   if (IsAsync()) {
     // Launch collective operation on an async stream.
     se::Stream& async_stream = *params.async_comms_streams[async_stream_idx];
 
     // Wait for main compute stream to make sure all buffers are ready.
-    async_stream.ThenWaitFor(params.stream);
+    TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
 
-    TF_RETURN_IF_ERROR(RunNcclCollective(params, async_stream, *comm));
+    TF_RETURN_IF_ERROR(RunNcclCollective(params, async_stream, comm));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
-    async_stream.ThenRecordEvent(event);
+    TF_RETURN_IF_ERROR(async_stream.RecordEvent(event));
 
   } else {
     // Launch collective operation on a main stream.
-    TF_RETURN_IF_ERROR(RunNcclCollective(params, *params.stream, *comm));
+    TF_RETURN_IF_ERROR(RunNcclCollective(params, *params.stream, comm));
   }
 
   // After a first execution of this instance of collective operation do a
   // rendezvous with other participants to make sure that all of them allocated
   // required state (internal to NCCL) and ready to continue. Going too far
   // ahead on one rank leads to deadlocks in NCCL.
-  if (!first_call_rendezvous_flag_.IsCompleted()) {
+  if (NeedFirstCallRendzevous() && !first_call_rendezvous_flag_.IsCompleted()) {
     TF_ASSIGN_OR_RETURN(
         NcclCliqueKey clique_key,
         GetNcclCliqueKey(*params.collective_params, config().replica_groups,
-                         config().group_mode, stream_id));
+                         config().group_mode, stream_id, stream_kind));
 
     TF_ASSIGN_OR_RETURN(
         size_t num_local_participants,
@@ -522,8 +489,8 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     RendezvousSingle(first_call_rendezvous_flag_, rendezvous_name,
                      rendezvous_key, num_local_participants,
-                     /*warn_stuck_timeout=*/absl::Seconds(10),
-                     /*terminate_timeout=*/absl::Seconds(30));
+                     /*warn_stuck_timeout=*/absl::Seconds(20),
+                     /*terminate_timeout=*/absl::Seconds(40));
   }
 
   return absl::OkStatus();
@@ -550,8 +517,7 @@ absl::Status NcclCollectiveDoneThunk::ExecuteOnStream(
     const ExecuteParams& params) {
   se::StreamExecutor* executor = params.stream->parent();
   TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
-  params.stream->ThenWaitFor(event);
-  return absl::OkStatus();
+  return params.stream->WaitFor(event);
 }
 
 absl::Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op) {

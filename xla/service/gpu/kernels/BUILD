@@ -1,7 +1,10 @@
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
@@ -121,6 +124,76 @@ xla_test(
 )
 
 cc_library(
+    name = "topk_kernel",
+    srcs = if_gpu_is_configured(["topk_kernel.cc"]),
+    hdrs = if_gpu_is_configured(["topk_kernel.h"]),
+    compatible_with = [],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    deps = [
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor",  # build_cleaner: keep
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ] + if_gpu_is_configured([
+        ":topk_kernel_gpu",
+    ]),
+)
+
+gpu_kernel_library(
+    name = "topk_kernel_gpu",
+    srcs = if_gpu_is_configured([
+        "topk_kernel_bfloat16.cu.cc",
+        "topk_kernel_float.cu.cc",
+        "topk_kernel.cu.h",
+    ]),
+    hdrs = if_gpu_is_configured(["topk_kernel_common.h"]),
+    compatible_with = [],
+    deps = [
+        "//xla:types",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "@tsl//tsl/lib/math:math_util",
+    ],
+)
+
+xla_cc_test(
+    name = "topk_kernel_test",
+    srcs = if_gpu_is_configured(["topk_kernel_test.cc"]),
+    tags = tf_gpu_tests_tags(),
+    deps = [
+        ":topk_kernel",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor",  # build_cleaner: keep
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor/gpu:gpu_init",
+        "//xla/stream_executor/gpu:gpu_stream_header",
+        "//xla/stream_executor/gpu:gpu_timer_header",
+        "//xla/stream_executor/gpu:gpu_types_header",
+        "//xla/stream_executor/host:host_platform",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/random",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
     name = "topk_custom_kernel",
     srcs = ["topk_custom_kernel.cc"],
     hdrs = ["topk_custom_kernel.h"],
@@ -131,19 +204,16 @@ cc_library(
     deps = [
         ":custom_kernel",
         "//xla:statusor",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
         "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:statusor",
     ] + if_gpu_is_configured([
-        "//xla/service/gpu/runtime:gpu_kernel_helper",
-    ]) + if_cuda_is_configured([
-        "//xla/service/gpu/runtime:topk_kernel_cuda",
-    ]) + if_rocm_is_configured([
-        "//xla/service/gpu/runtime:topk_kernel_rocm",
+        ":topk_kernel_gpu",
     ]),
 )
 
@@ -153,18 +223,19 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":topk_custom_kernel",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
-        "@eigen_archive//:eigen3",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -190,6 +261,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -203,8 +275,8 @@ xla_test(
         ":cutlass_gemm_custom_kernel",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
@@ -223,10 +295,11 @@ cc_binary(
         "//xla:xla_data_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",

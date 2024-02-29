@@ -66,6 +66,8 @@ class LiteralSlice;
 // Abstract base class for literals.
 class LiteralBase {
  public:
+  using DynamicSizeType = ShapeUtil::DynamicSizeType;
+
   virtual ~LiteralBase() = 0;
 
   // Literals are equal if they have compatible shapes and the same data
@@ -157,9 +159,9 @@ class LiteralBase {
   NativeT Get(absl::Span<const int64_t> multi_index) const;
 
   // Get the dynamic size on dim_index in the literal at the given shape_index.
-  int32_t GetDynamicSize(int64_t dim_index,
-                         const ShapeIndex& shape_index) const;
-  int32_t GetDynamicSize(int64_t dim_index) const;
+  DynamicSizeType GetDynamicSize(int64_t dim_index,
+                                 const ShapeIndex& shape_index) const;
+  DynamicSizeType GetDynamicSize(int64_t dim_index) const;
 
   // Returns the element value at index (0, ..., 0), however many zeroes are
   // required for that index.
@@ -342,16 +344,16 @@ class LiteralBase {
 
   // Converts this literal to the given shape. Returns an error is the
   // conversion is not possible.
-  StatusOr<Literal> ConvertToShape(const Shape& dest_shape) const;
+  absl::StatusOr<Literal> ConvertToShape(const Shape& dest_shape) const;
 
   // Converts this literal to another primitive type using a bitcast
   // conversion. Returns an error if the conversion is not possible. This
   // literal must be array-shaped.
-  StatusOr<Literal> BitcastConvert(const Shape& dest_shape) const;
+  absl::StatusOr<Literal> BitcastConvert(const Shape& dest_shape) const;
 
   // Converts this literal to another primitive type. Returns an error if the
   // conversion is not possible. This literal must be array-shaped.
-  StatusOr<Literal> Convert(PrimitiveType primitive_dest_type) const;
+  absl::StatusOr<Literal> Convert(PrimitiveType primitive_dest_type) const;
 
   // Clones the underlying buffers into a new Literal.
   Literal Clone() const;
@@ -396,12 +398,12 @@ class LiteralBase {
   // dimensions. The total number of elements must not change; The
   // implementation currently only supports monotonic dim0-major layouts.
   // This literal must be an array.
-  StatusOr<Literal> Reshape(absl::Span<const int64_t> dimensions) const;
+  absl::StatusOr<Literal> Reshape(absl::Span<const int64_t> dimensions) const;
 
   // Creates a new literal by broadcasting this literal with `dimensions` to
   // yield a literal of shape `result_shape`.
-  StatusOr<Literal> Broadcast(const Shape& result_shape,
-                              absl::Span<const int64_t> dimensions) const;
+  absl::StatusOr<Literal> Broadcast(const Shape& result_shape,
+                                    absl::Span<const int64_t> dimensions) const;
 
   // Creates a new literal by reordering the dimensions of this literal.
   // The given `permutation` must be a permutation of the dimension numbers
@@ -496,8 +498,8 @@ class LiteralBase {
     template <typename NativeT>
     void Set(absl::Span<const int64_t> index, NativeT value);
 
-    int32_t GetDynamicSize(int64_t dim_index) const;
-    void SetDynamicSize(int64_t dim_index, int32_t size);
+    DynamicSizeType GetDynamicSize(int64_t dim_index) const;
+    void SetDynamicSize(int64_t dim_index, DynamicSizeType size);
     void AllocateBuffers();
     void DeallocateBuffers();
     // Gets/sets the buffer holding the array data.
@@ -525,8 +527,6 @@ class LiteralBase {
       from.rep_.emplace<Uninitialized>();
     }
 
-    using DynamicSizeType = int32_t;
-
     // Gets/sets the buffer holding dynamic sizes.
     const DynamicSizeType* dynamic_size_buffer() const {
       DCHECK(LayoutUtil::IsDenseArray(*subshape_));
@@ -534,7 +534,7 @@ class LiteralBase {
           buffer() + dynamic_size_buffer_offset());
     }
     DynamicSizeType* dynamic_size_buffer() {
-      return const_cast<int32_t*>(
+      return const_cast<DynamicSizeType*>(
           const_cast<const Piece*>(this)->dynamic_size_buffer());
     }
 
@@ -854,8 +854,8 @@ class MutableLiteralBase : public LiteralBase {
 
   // Set the dynamic size on dim_index in the literal at the given shape_index.
   void SetDynamicSize(int64_t dim_index, const ShapeIndex& shape_index,
-                      int32_t size);
-  void SetDynamicSize(int64_t dim_index, int32_t size);
+                      DynamicSizeType size);
+  void SetDynamicSize(int64_t dim_index, DynamicSizeType size);
 
   // Returns a pointer to the underlying buffer holding the array at the given
   // shape index. CHECKs if the subshape of the literal at the given ShapeIndex
@@ -988,8 +988,8 @@ class MutableLiteralBase : public LiteralBase {
   static Literal MoveIntoTuple(absl::Span<Literal> elements);
 
   // Serialize from a proto.
-  static StatusOr<Literal> CreateFromProto(const LiteralProto& proto,
-                                           bool prohibit_empty_literal = true);
+  static absl::StatusOr<Literal> CreateFromProto(
+      const LiteralProto& proto, bool prohibit_empty_literal = true);
 
  protected:
   // Returns the piece at the given ShapeIndex.

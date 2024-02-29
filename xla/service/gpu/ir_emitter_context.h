@@ -16,13 +16,18 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_IR_EMITTER_CONTEXT_H_
 #define XLA_SERVICE_GPU_IR_EMITTER_CONTEXT_H_
 
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -43,14 +48,13 @@ class IrEmitterContext {
                    std::string platform_name,
                    const se::DeviceDescription& gpu_device_info,
                    mlir::MLIRContext* mlir_context, llvm::Module* llvm_module,
-                   bool emit_ir_from_hlo, bool emit_kernels)
+                   bool emit_kernels)
       : hlo_module_(hlo_module),
         buffer_assignment_(buffer_assignment),
         platform_name_(std::move(platform_name)),
         gpu_device_info_(gpu_device_info),
         mlir_context_(mlir_context),
         llvm_module_(llvm_module),
-        emit_ir_from_hlo_(emit_ir_from_hlo),
         emit_kernels_(emit_kernels) {}
   // Disallow copy and assign.
   IrEmitterContext(const IrEmitterContext&) = delete;
@@ -104,7 +108,6 @@ class IrEmitterContext {
 
   KernelReuseCache& kernel_cache() { return kernel_cache_; }
 
-  bool emit_ir_from_hlo() const { return emit_ir_from_hlo_; }
   bool emit_kernels() const { return emit_kernels_; }
 
  private:
@@ -122,7 +125,6 @@ class IrEmitterContext {
   llvm::Module* llvm_module_;
   NameUniquer name_uniquer_;
   std::vector<GpuExecutable::ConstantInfo> constants_;
-  const bool emit_ir_from_hlo_;
   KernelReuseCache kernel_cache_;
 
   // We should not emit kernels when loading thunks from a compilation result.

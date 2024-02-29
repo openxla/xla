@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_clique.h"
 #include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/service_executable_run_options.h"
@@ -80,6 +81,10 @@ class Thunk {
  public:
   using ExecutionStreamIdMap =
       absl::flat_hash_map<ExecutionStreamId, se::Stream*>;
+
+  // When default execution stream id is used, operations launched by a thunk
+  // must be synchronized with a stream passed in ExecuteOptions.
+  static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
     kCholesky,
@@ -129,7 +134,8 @@ class Thunk {
     kTriangularSolve,
     kWhile,
     kFusedMHA,
-    kWaitForStreams
+    kWaitForStreams,
+    kCuDnn
   };
 
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
@@ -151,7 +157,7 @@ class Thunk {
     // LMHLO is removed from the runtime pipeline.
     mlir::Operation* op;
 
-    ExecutionStreamId execution_stream_id = Thunk::GetMainComputeStreamId();
+    ExecutionStreamId execution_stream_id = kDefaultExecutionStreamId;
   };
 
   //===--------------------------------------------------------------------===//
@@ -176,14 +182,11 @@ class Thunk {
   // collected from all thunks at prepare stage.
   class CollectiveCliques {
    public:
-    using CliquesMap =
-        absl::flat_hash_map<NcclCliqueKey, std::shared_ptr<NcclClique::Lock>>;
-
     CollectiveCliques() = default;
-    explicit CollectiveCliques(CliquesMap cliques_map);
+    explicit CollectiveCliques(NcclClique::AcquiredCliquesMap cliques_map);
 
-    absl::StatusOr<NcclComm::Lock> GetComm(const NcclCliqueKey& clique_key,
-                                           int32_t rank) const;
+    absl::StatusOr<NcclApi::NcclCommHandle> GetComm(
+        const NcclCliqueKey& clique_key, int32_t rank) const;
 
     // Returns the number of communicators in a collective clique. Returns error
     // if we do not have an acquired clique for a given key.
@@ -193,7 +196,7 @@ class Thunk {
     bool empty() const { return cliques_map_.empty(); }
 
    private:
-    CliquesMap cliques_map_;
+    NcclClique::AcquiredCliquesMap cliques_map_;
   };
 
   //===--------------------------------------------------------------------===//
@@ -208,10 +211,13 @@ class Thunk {
     // missing a global device mapping for a local device ordinal).
     static absl::StatusOr<CollectiveExecuteParams> Create(
         const ServiceExecutableRunOptions& run_options,
-        int64_t local_device_ordinal);
+        int64_t local_device_ordinal, int64_t collective_max_nchannels = 0,
+        int64_t p2p_max_nchannels = 0);
 
     // A mapping from local device ordinals to global device IDs.
     using GlobalDeviceIdMap = std::map<int32_t, GlobalDeviceId>;
+
+    se::StreamExecutor* executor;
 
     // XLA execution run id allows us to distinguish collective operations
     // from different concurrent executions and avoid deadlocks.
@@ -224,12 +230,18 @@ class Thunk {
     const GlobalDeviceIdMap* global_device_id_map;
     const NcclCliqueIdCallback* nccl_clique_id_callback;
 
+    int64_t collective_max_nchannels;
+    int64_t p2p_max_nchannels;
+
    private:
-    CollectiveExecuteParams(
-        RunId run_id, int64_t local_device_ordinal,
-        GlobalDeviceId global_device_id, const DeviceAssignment* device_assn,
-        const GlobalDeviceIdMap* global_device_id_map,
-        const NcclCliqueIdCallback* nccl_clique_id_callback);
+    CollectiveExecuteParams(se::StreamExecutor* executor, RunId run_id,
+                            int64_t local_device_ordinal,
+                            GlobalDeviceId global_device_id,
+                            const DeviceAssignment* device_assn,
+                            const GlobalDeviceIdMap* global_device_id_map,
+                            const NcclCliqueIdCallback* nccl_clique_id_callback,
+                            int64_t collective_max_nchannels,
+                            int64_t p2p_max_nchannels);
   };
 
   //===--------------------------------------------------------------------===//
@@ -247,6 +259,9 @@ class Thunk {
   //===--------------------------------------------------------------------===//
   // InitializeParams
   //===--------------------------------------------------------------------===//
+
+  // TODO(ezhulenev): Merge InitializeParams and ExecuteParams as they have
+  // almost the same members and tightly coupled.
 
   // Parameters passed to Initialize. At thunk initialization time we do not
   // launch any "work" on device and only initialize thunks for execution, i.e.
@@ -269,7 +284,7 @@ class Thunk {
     se::Stream* command_buffer_trace_stream = nullptr;
 
     // Parameters for executing collective operations.
-    const CollectiveExecuteParams* collective_params = nullptr;
+    CollectiveExecuteParams* collective_params = nullptr;
 
     // Collective cliques acquired based on resource requests.
     CollectiveCliques* collective_cliques = nullptr;
@@ -325,6 +340,8 @@ class Thunk {
     ExecutionStreamIdMap additional_compute_streams;
 
    private:
+    friend class CommandBufferThunk;
+
     ExecuteParams(const BufferAllocations* buffer_allocations,
                   se::Stream* stream, se::Stream* command_buffer_trace_stream,
                   absl::InlinedVector<se::Stream*, 4> async_comms_streams,
@@ -353,7 +370,7 @@ class Thunk {
 
   virtual std::string ToStringExtra(int indent) const { return ""; }
   Kind kind() const { return kind_; }
-  std::string profile_annotation() const { return profile_annotation_; }
+  std::string_view profile_annotation() const { return profile_annotation_; }
 
   // Only valid during compilation, i.e., lowering thunks to kernel-launch
   // related XLA runtime custom calls). nullptr at runtime. MLIR codegen will
@@ -396,10 +413,6 @@ class Thunk {
 
   static absl::StatusOr<se::Stream*> GetStreamForExecution(
       ExecutionStreamId stream_id, const ExecuteParams& params);
-
-  static ExecutionStreamId GetMainComputeStreamId() {
-    return ExecutionStreamId(0);
-  }
 
  private:
   Kind kind_;

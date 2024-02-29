@@ -33,13 +33,13 @@ namespace spmd {
 struct AutoShardingSolverResult {
  public:
   AutoShardingSolverResult(
-      StatusOr<std::tuple<std::vector<NodeStrategyIdx>,
-                          std::vector<EdgeStrategyIdx>, double>>
+      absl::StatusOr<std::tuple<std::vector<NodeStrategyIdx>,
+                                std::vector<EdgeStrategyIdx>, double>>
           status,
       bool skip_auto_sharding)
       : status(status), skip_auto_sharding(skip_auto_sharding) {}
   bool operator==(const AutoShardingSolverResult& other) const;
-  StatusOr<std::tuple<std::vector<int64_t>, std::vector<int64_t>, double>>
+  absl::StatusOr<std::tuple<std::vector<int64_t>, std::vector<int64_t>, double>>
       status;
   bool skip_auto_sharding;
 };
@@ -119,10 +119,26 @@ bool CheckDominance(const AutoShardingSolverRequest& request,
                     const std::vector<AliasIdx>& dst_aliases, NodeIdx node_idx,
                     NodeStrategyIdx first, NodeStrategyIdx second);
 
-// For every node, examine each sharding strategy to see if it is equivalent to
-// another (which, if so, would allow the reusing of strategy variables).
-std::vector<std::vector<NodeStrategyIdx>> StratFollow(
-    const AutoShardingSolverRequest& request);
+class StrategyShaver {
+ public:
+  explicit StrategyShaver(const AutoShardingSolverRequest& request);
+
+  // For every node, examine each sharding strategy to see if it is dominated by
+  // another.
+  NodeStrategies FindShavedStrategies() const;
+
+ private:
+  const AutoShardingSolverRequest& request_;  // NOLINT
+  std::vector<std::vector<EdgeIdx>> src_edge_map_;
+  std::vector<std::vector<EdgeIdx>> dst_edge_map_;
+  std::vector<std::vector<AliasIdx>> src_alias_map_;
+  std::vector<std::vector<AliasIdx>> dst_alias_map_;
+  std::vector<std::vector<NodeIdx>> followers_;
+};
+
+// Check fail if `request` is invalid (e.g., because of negative node costs).
+// Note: This does not include checks for valid variable aliasing yet.
+void ValidateRequest(const AutoShardingSolverRequest& request);
 
 }  // namespace spmd
 }  // namespace xla

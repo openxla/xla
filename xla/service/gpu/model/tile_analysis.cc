@@ -24,6 +24,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
@@ -31,12 +33,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/service/gpu/model/affine_map_printer.h"
 #include "xla/service/gpu/model/indexing_map.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {
 namespace {
 
+using absl::StrCat;
 using mlir::AffineDimExpr;
 using mlir::AffineExpr;
 using mlir::AffineMap;
@@ -374,6 +376,19 @@ void SymbolicTile::Print(std::ostream& out,
 
 std::ostream& operator<<(std::ostream& out, const SymbolicTile& symbolic_tile) {
   AffineMapPrinter printer;
+
+  // This utilizes the assumption that symbols are structured as triplets, i.e.
+  // [offset0, size0, stride0, ... offset{N-1}, size{N-1}, stride{N-1}]
+  // where N is the tensor rank.
+  for (int64_t triplet_start = 0;
+       triplet_start < symbolic_tile.offset_map().getNumSymbols();
+       triplet_start += kNumTileParametersPerInputDim) {
+    int64_t triplet_idx = triplet_start / kNumTileParametersPerInputDim;
+    printer.SetSymbolName(triplet_start, StrCat("offset", triplet_idx));
+    printer.SetSymbolName(triplet_start + 1, StrCat("size", triplet_idx));
+    printer.SetSymbolName(triplet_start + 2, StrCat("stride", triplet_idx));
+  }
+
   symbolic_tile.Print(out, printer);
   return out;
 }

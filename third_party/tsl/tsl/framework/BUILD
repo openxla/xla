@@ -4,8 +4,12 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//tsl/platform:build_config.bzl",
+    "tsl_cc_test",
+)
 load(
     "//tsl/platform:build_config_root.bzl",
     "if_static",
@@ -13,10 +17,6 @@ load(
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "//tsl/platform:build_config.bzl",
-    "tsl_cc_test",
 )
 
 package(
@@ -82,7 +82,7 @@ filegroup(
         "tracking_allocator.h",
         "type_traits.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow/core:__subpackages__"]),
 )
 
 # Files needed for tf2xla build.
@@ -154,8 +154,8 @@ cc_library(
         "cpu_allocator_impl.cc",
         "tracking_allocator.h",
     ],
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+    visibility = internal_visibility([
+        "@xla//xla:__subpackages__",
         "//tensorflow/core:__subpackages__",
         "//tsl:__subpackages__",
     ]),
@@ -291,7 +291,7 @@ filegroup(
 cc_library(
     name = "numeric_types",
     hdrs = ["numeric_types.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/compiler:__subpackages__",
         "//tensorflow/core:__subpackages__",
     ]),
@@ -333,7 +333,7 @@ cc_library(
 cc_library(
     name = "type_traits",
     hdrs = ["type_traits.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core/framework:__pkg__",
     ]),
     deps = [
@@ -347,7 +347,7 @@ filegroup(
     srcs = [
         "cancellation.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__subpackages__"]),
+    visibility = internal_visibility(["//tensorflow/core:__subpackages__"]),
 )
 
 cc_library(
@@ -372,6 +372,35 @@ cc_library(
         "//tsl/platform:types",
         "@com_google_absl//absl/memory",
     ],
+)
+
+cc_library(
+    name = "serving_device_selector",
+    srcs = ["serving_device_selector.cc"],
+    hdrs = ["serving_device_selector.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//tsl/platform:logging",
+        "@com_google_absl//absl/container:fixed_array",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "serving_device_selector_policies",
+    srcs = ["serving_device_selector_policies.cc"],
+    hdrs = ["serving_device_selector_policies.h"],
+    features = ["-layering_check"],
+    deps = [
+        ":serving_device_selector",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "real_time_in_memory_metric",
+    hdrs = ["real_time_in_memory_metric.h"],
 )
 
 tsl_cc_test(
@@ -403,7 +432,7 @@ exports_files(
         "shared_counter.h",
         "tracking_allocator.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/common_runtime:__pkg__",
         "//tensorflow/core/common_runtime/gpu:__pkg__",
@@ -437,5 +466,15 @@ tsl_cc_test(
         "//tsl/platform:test_main",
         "//tsl/protobuf:error_codes_proto_impl_cc",
         "//tsl/util:device_name_utils",
+    ],
+)
+
+tsl_cc_test(
+    name = "real_time_in_memory_metric_test",
+    srcs = ["real_time_in_memory_metric_test.cc"],
+    deps = [
+        ":real_time_in_memory_metric",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )

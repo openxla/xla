@@ -27,7 +27,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
@@ -48,7 +47,6 @@ limitations under the License.
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/port.h"
-#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 
@@ -70,43 +68,6 @@ class EventInterface {
  private:
   EventInterface(const EventInterface&) = delete;
   void operator=(const EventInterface&) = delete;
-};
-
-//===----------------------------------------------------------------------===//
-// KernelInterface
-//===----------------------------------------------------------------------===//
-
-// Pointer-to-implementation object type (i.e. the Kernel class delegates to
-// this interface) with virtual destruction. This class exists for the
-// platform-dependent code to hang any kernel data/resource info/functionality
-// off of.
-class KernelInterface {
- public:
-  // Default constructor for the abstract interface.
-  KernelInterface() = default;
-
-  // Default destructor for the abstract interface.
-  virtual ~KernelInterface() = default;
-
-  // Returns the number of formal parameters that this kernel accepts.
-  virtual unsigned Arity() const = 0;
-
-  // Sets the preferred cache configuration.
-  virtual void SetPreferredCacheConfig(KernelCacheConfig config) = 0;
-
-  // Gets the preferred cache configuration.
-  virtual KernelCacheConfig GetPreferredCacheConfig() const = 0;
-
-  // Returns the maximum number of blocks (per multiprocessor) occupied by the
-  // kernel given the number of threads per block and shared memory size.
-  virtual absl::StatusOr<int32_t> GetMaxOccupiedBlocksPerCore(
-      ThreadDim threads, size_t dynamic_shared_memory_bytes) const {
-    return absl::UnimplementedError("Not Implemented");
-  }
-
- private:
-  KernelInterface(const KernelInterface&) = delete;
-  void operator=(const KernelInterface&) = delete;
 };
 
 //===----------------------------------------------------------------------===//
@@ -258,10 +219,11 @@ class StreamExecutorInterface {
   }
   virtual absl::Status Memset32(Stream* stream, DeviceMemoryBase* location,
                                 uint32_t pattern, uint64_t size) = 0;
-  virtual bool Memcpy(Stream* stream, void* host_dst,
-                      const DeviceMemoryBase& gpu_src, uint64_t size) = 0;
-  virtual bool Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
-                      const void* host_src, uint64_t size) = 0;
+  virtual absl::Status Memcpy(Stream* stream, void* host_dst,
+                              const DeviceMemoryBase& gpu_src,
+                              uint64_t size) = 0;
+  virtual absl::Status Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
+                              const void* host_src, uint64_t size) = 0;
   virtual bool MemcpyDeviceToDevice(Stream* stream, DeviceMemoryBase* gpu_dst,
                                     const DeviceMemoryBase& gpu_src,
                                     uint64_t size) = 0;
@@ -334,8 +296,11 @@ class StreamExecutorInterface {
   // Each call creates a new instance of the platform-specific implementation of
   // the corresponding interface type.
   virtual std::unique_ptr<EventInterface> CreateEventImplementation() = 0;
-  virtual std::unique_ptr<KernelInterface> CreateKernelImplementation() = 0;
   virtual std::unique_ptr<StreamInterface> GetStreamImplementation() = 0;
+
+  virtual absl::StatusOr<std::unique_ptr<Kernel>> CreateKernel() {
+    return absl::UnimplementedError("Kernels are not implemented");
+  }
 
   virtual absl::StatusOr<std::unique_ptr<CommandBuffer>> CreateCommandBuffer(
       CommandBuffer::Mode mode) {
