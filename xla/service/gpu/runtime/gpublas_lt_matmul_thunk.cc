@@ -52,6 +52,31 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
       d_scale_buffer_(d_scale),
       d_amax_buffer_(d_amax) {}
 
+CublasLtMatmulBackwardThunk::CublasLtMatmulBackwardThunk(
+    ThunkInfo thunk_info, GemmConfig gemm_config,
+    se::gpu::BlasLt::Epilogue epilogue, int64_t algorithm_idx,
+    BufferAllocation::Slice a_buffer, BufferAllocation::Slice b_buffer,
+    BufferAllocation::Slice c_buffer, BufferAllocation::Slice d_buffer,
+    BufferAllocation::Slice bias_buffer, BufferAllocation::Slice aux_buffer,
+    BufferAllocation::Slice a_scale, BufferAllocation::Slice b_scale,
+    BufferAllocation::Slice c_scale, BufferAllocation::Slice d_scale,
+    BufferAllocation::Slice d_amax)
+    : Thunk(Kind::kCublasLtMatmul, thunk_info),
+      gemm_config_(std::move(gemm_config)),
+      epilogue_(epilogue),
+      algorithm_idx_(algorithm_idx),
+      a_buffer_(a_buffer),
+      b_buffer_(b_buffer),
+      c_buffer_(c_buffer),
+      d_buffer_(d_buffer),
+      bias_buffer_(bias_buffer),
+      aux_buffer_(aux_buffer),
+      a_scale_buffer_(a_scale),
+      b_scale_buffer_(b_scale),
+      c_scale_buffer_(c_scale),
+      d_scale_buffer_(d_scale),
+      d_amax_buffer_(d_amax) {}
+
 absl::Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   TF_ASSIGN_OR_RETURN(auto plan, GetMatmulPlan(params.stream));
   TF_ASSIGN_OR_RETURN(auto algorithm, GetMatmulAlgorithm(plan));

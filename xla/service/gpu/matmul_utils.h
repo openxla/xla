@@ -160,7 +160,8 @@ absl::StatusOr<bool> EpilogueAddsVectorBias(
     GemmBackendConfig_Epilogue epilogue);
 absl::StatusOr<bool> EpilogueHasAuxiliaryOutput(
     GemmBackendConfig_Epilogue epilogue);
-
+absl::StatusOr<bool> EpilogueHasAuxiliaryInput(
+    GemmBackendConfig_Epilogue epilogue);
 absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
     GemmBackendConfig_Epilogue epilogue);
 
