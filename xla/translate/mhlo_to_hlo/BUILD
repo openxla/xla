@@ -117,6 +117,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
+        "@stablehlo//:base",
         "@stablehlo//:stablehlo_ops",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:statusor",
