@@ -146,6 +146,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   Status HandleFft(HloInstruction* fft) override;
   Status HandleAllReduce(HloInstruction* crs) override;
   Status HandleReduceScatter(HloInstruction* crs) override;
+  Status HandleCollectiveBroadcast(HloInstruction* hlo) override;
   Status HandleCollectivePermute(HloInstruction* crs) override;
   Status HandleInfeed(HloInstruction* instruction) override;
   Status HandleOutfeed(HloInstruction* outfeed) override;
