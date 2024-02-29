@@ -187,7 +187,7 @@ class GemmAutotuner {
     if (has_vector_bias) {
       Shape bias_buffer_shape =
           is_forward_epilogue ? gemm->operand(has_matrix_bias ? 3 : 2)->shape()
-                              : gemm->shape().tuple_shapes(1);  // DRELU_BGRAD
+                              : gemm->shape().tuple_shapes(1); // DRELU_BGRAD
 
       TF_ASSIGN_OR_RETURN(bias_buffer, CreateBuffer(bias_buffer_shape));
     }

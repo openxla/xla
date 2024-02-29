@@ -130,6 +130,7 @@ limitations under the License.
 #include "xla/service/gpu/dot_operand_converter.h"
 #include "xla/service/gpu/fusion_pipeline.h"
 #include "xla/service/gpu/fusion_wrapper.h"
+#include "xla/service/gpu/gemm_relu_bwd_rewriter.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/gemm_fusion.h"
 #include "xla/service/gpu/gemm_rewriter.h"
@@ -1409,8 +1410,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite non-FP8 GEMMs.
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/false);
 
+    // Rewrite bwd GEMMs with gradient of ReLU as input.
+    pipeline.AddPass<GemmReLUBwdRewriter>();
+
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
+
 
     if (debug_options.xla_gpu_normalize_layouts()) {
       pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
@@ -1468,6 +1473,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // TODO(tdanyluk): Apply CublasPadForGemms to the cuBLAS GEMMs generated
   // here for possibly better cuBLAS performance.
   pipeline.AddPass<GemmRewriter>(gpu_version);
+  // // Rewrite bwd GEMMs with gradient of ReLU as input.
+  pipeline.AddPass<GemmReLUBwdRewriter>();
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 

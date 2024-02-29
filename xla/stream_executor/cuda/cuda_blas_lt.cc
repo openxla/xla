@@ -227,6 +227,12 @@ cudaDataType_t BlasLt::MatrixLayout::type() const {
   return std::move(desc);
 }
 
+cublasLtEpilogue_t BlasLt::MatmulDesc::epilogue_type() const {
+  return static_cast<cublasLtEpilogue_t>(
+      GetAttr<int32_t>(handle_.get(), CUBLASLT_MATMUL_DESC_EPILOGUE)
+          .value());
+}
+
 cublasComputeType_t BlasLt::MatmulDesc::compute_type() const {
   return static_cast<cublasComputeType_t>(
       GetAttr<int32_t>(handle_.get(), CUBLASLT_MATMUL_DESC_COMPUTE_TYPE)
@@ -265,12 +271,27 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
         max_workspace_size));
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
+    
+    auto epilogue = op_desc_.epilogue_type();
+    VLOG(2) << "shuw: epilogue=" << epilogue << std::endl;
+    if (epilogue == CUBLASLT_EPILOGUE_RELU_AUX ||
+        epilogue == CUBLASLT_EPILOGUE_RELU_AUX_BIAS) {
+      TF_ASSIGN_OR_RETURN(
+          int64_t output_leading_dim,
+          GetAttr<int64_t>(d_desc_.get(), CUBLASLT_MATRIX_LAYOUT_LD));
+
+      TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD,
+                                 output_leading_dim));
+    }
 
     int found_algorithm_count = 0;
+    VLOG(2) << "shuw: before cublasLtMatmulAlgoGetHeuristic\n";
     SE_CUBLAS_RETURN_IF_ERROR(cublasLtMatmulAlgoGetHeuristic(
         blas_lt_ref_.blas_lt_.get(), op_desc_.get(), a_desc_.get(),
         b_desc_.get(), c_desc_.get(), d_desc_.get(), preference.get(),
         max_algorithm_count, results.data(), &found_algorithm_count));
+    VLOG(2) << "shuw: end cublasLtMatmulAlgoGetHeuristic\n";        
     results.resize(found_algorithm_count);
   }
 
@@ -474,6 +495,7 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
       TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                  CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER,
                                  aux.opaque()));
+      std::cout << "CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER!\n";
 
       // Set leading dim and batch stride of auxiliary output to match output.
       // TODO(cjfj): Set this once at initialization.

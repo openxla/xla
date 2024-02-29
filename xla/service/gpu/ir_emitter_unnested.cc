@@ -700,7 +700,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
   BufferAllocation::Slice aux, bias, c;
   if (is_drelu_epilogue) {
     TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
-    if (has_vector_bias && has_aux_output) {  // DRELU_BGRAD
+    if (has_vector_bias) {  // DRELU_BGRAD
       TF_ASSIGN_OR_RETURN(bias, GetAllocationSliceForHlo(instr, {1}));
     }
 
@@ -750,81 +750,433 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
 
 absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
     const HloCustomCallInstruction* instr) {
-  TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
-               instr->operand_count() == 8);
   TF_ASSIGN_OR_RETURN(const auto gpu_config,
                       instr->backend_config<xla::gpu::GpuBackendConfig>());
   xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
   xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+  if (epilogue != GemmBackendConfig::D_RELU &&
+      epilogue != GemmBackendConfig::RELU_AUX &&
+      epilogue != GemmBackendConfig::D_RELU_BGRAD &&
+      epilogue != GemmBackendConfig::BIAS_RELU_AUX) {
+    TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
+                 instr->operand_count() == 8);
+    TF_ASSIGN_OR_RETURN(const auto gpu_config,
+                        instr->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+    xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
 
-  TF_ASSIGN_OR_RETURN(bool has_vector_bias,
-                      xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
-  bool has_damax = instr->shape().IsTuple();
-  xla::ShapeIndex output_index =
-      has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
+    bool has_damax = instr->shape().IsTuple();
+    xla::ShapeIndex output_index =
+        has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
 
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
-                      GetAllocationSliceForHlo(instr->operand(0)));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
-                      GetAllocationSliceForHlo(instr->operand(1)));
-  BufferAllocation::Slice c;
-  bool has_matrix_bias = config.beta() != 0;
-  if (has_matrix_bias) {
-    TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
-  } else {
-    TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
-  }
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
-                      GetAllocationSliceForHlo(instr, output_index));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
+    BufferAllocation::Slice c;
+    bool has_matrix_bias = config.beta() != 0;
+    if (has_matrix_bias) {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
+    } else {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    }
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
 
-  int a_scale_index = has_matrix_bias ? 3 : 2;
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a_scale,
-                      GetAllocationSliceForHlo(instr->operand(a_scale_index)));
-  TF_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice b_scale,
-      GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
-#if GOOGLE_CUDA
-  TF_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice c_scale,
-      GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
-  TF_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice d_scale,
-      GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
-#else  // TENSORFLOW_USE_ROCM
-  BufferAllocation::Slice c_scale;
-  BufferAllocation::Slice d_scale;
-#endif
-
-  BufferAllocation::Slice bias;
-  if (has_vector_bias) {
+    int a_scale_index = has_matrix_bias ? 3 : 2;
     TF_ASSIGN_OR_RETURN(
-        bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
+        BufferAllocation::Slice a_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice b_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice c_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice d_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+
+    BufferAllocation::Slice bias;
+    if (has_vector_bias) {
+      TF_ASSIGN_OR_RETURN(
+          bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
+    }
+
+    BufferAllocation::Slice d_amax;
+    if (has_damax) {
+      TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {1}));
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm =
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    BufferAllocation::Slice aux;  // Not used.
+
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
+    return absl::OkStatus();
+  } else if (epilogue == GemmBackendConfig::D_RELU) {  // D_RELU
+    TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
+                 instr->operand_count() == 8);
+    std::cout << "shuw: here in D_RELU epilog\n";
+    TF_ASSIGN_OR_RETURN(const auto gpu_config,
+                        instr->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+    xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_output,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_input,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
+    bool has_damax = instr->shape().IsTuple();
+    xla::ShapeIndex output_index =
+        has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
+    BufferAllocation::Slice c;
+    bool has_matrix_bias = config.beta() != 0;
+    if (has_matrix_bias) {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
+    } else {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    }
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
+
+    int a_scale_index = has_matrix_bias ? 3 : 2;
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice a_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice b_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice c_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice d_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+
+    BufferAllocation::Slice bias;
+    if (has_vector_bias) {
+      TF_ASSIGN_OR_RETURN(
+          bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
+    }
+
+    BufferAllocation::Slice aux;  // Not used.
+    if (has_aux_input) {
+      std::cout <<"shuw::::::" << "yes aux input in last one!\n";
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(instr->operand_count()-1)));
+    }
+    BufferAllocation::Slice d_amax;
+    if (has_damax) {
+      TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {1}));
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm = 
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
+    
+    // std::cout << "d_amax == nullptr ? :" <<d_amax <<std::endl;
+    std::cout << "aux == nullptr ? :" << aux <<std::endl;
+    // std::cout << "bias == nullptr ? :" << bias <<std::endl;
+    std::cout << "shuw: here end in D_RELU epilog\n";
+    return absl::OkStatus();
+  } else if (epilogue == GemmBackendConfig::RELU_AUX) {
+    std::cout << "shuw:: fp8 RELU_AUX\n";
+    TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
+                 instr->operand_count() == 8);
+    TF_ASSIGN_OR_RETURN(const auto gpu_config,
+                        instr->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+    xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_output,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
+    bool has_damax = instr->shape().IsTuple();
+    xla::ShapeIndex output_index =
+        has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
+    BufferAllocation::Slice c;
+    bool has_matrix_bias = config.beta() != 0;
+    if (has_matrix_bias) {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
+    } else {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    }
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
+
+    int a_scale_index = has_matrix_bias ? 3 : 2;
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice a_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice b_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice c_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice d_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+
+    BufferAllocation::Slice bias;
+    if (has_vector_bias) {
+      TF_ASSIGN_OR_RETURN(
+          bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
+    }
+
+    BufferAllocation::Slice aux;
+    if (has_aux_output) {
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr, {1}));
+    }
+    BufferAllocation::Slice d_amax;
+    if (has_damax) {
+      TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {2}));
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm =
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
+    std::cout << "d_amax == nullptr ? :" <<d_amax  <<std::endl;
+    std::cout << "aux == nullptr ? :" << aux  <<std::endl;
+    std::cout << "a_scale == nullptr ? :" << a_scale  <<std::endl;
+    // std::cout << "bias == nullptr ? :" << bias  <<std::endl;
+    std::cout << "shuw: here end in RELU_AUX epilog\n";
+    return absl::OkStatus();
+  } else if (epilogue == GemmBackendConfig::D_RELU_BGRAD) {
+ TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
+                 instr->operand_count() == 8);
+    std::cout << "shuw: here in D_RELU_BGRAD epilog\n";
+    TF_ASSIGN_OR_RETURN(const auto gpu_config,
+                        instr->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+    xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_output,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_input,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
+    bool has_damax = instr->shape().IsTuple();
+    xla::ShapeIndex output_index =
+        has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
+    BufferAllocation::Slice c;
+    bool has_matrix_bias = config.beta() != 0;
+    if (has_matrix_bias) {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
+    } else {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    }
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
+
+    int a_scale_index = has_matrix_bias ? 3 : 2;
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice a_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice b_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice c_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice d_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+
+    BufferAllocation::Slice bias;
+    if (has_vector_bias) {  // DRELU_BGRAD
+      TF_ASSIGN_OR_RETURN(bias, GetAllocationSliceForHlo(instr, {1}));
+    }
+
+    BufferAllocation::Slice aux;  // Not used.
+    if (has_aux_input) {
+      std::cout <<"shuw::::::" << "yes aux input in last one!\n";
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(instr->operand_count()-1)));
+    }
+    BufferAllocation::Slice d_amax;
+    if (has_damax) {
+      TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {1}));
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm = 
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
+    
+    // std::cout << "d_amax == nullptr ? :" <<d_amax <<std::endl;
+    std::cout << "aux == nullptr ? :" << aux <<std::endl;
+    std::cout << "bias == nullptr ? :" << bias <<std::endl;
+    std::cout << "shuw: here end in D_RELU_BGRAD epilog\n";
+    return absl::OkStatus();
+  } else if (epilogue == GemmBackendConfig::BIAS_RELU_AUX) {
+    std::cout << "shuw:: fp8 BIAS_RELU_AUX\n";
+    TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
+                 instr->operand_count() == 8);
+    TF_ASSIGN_OR_RETURN(const auto gpu_config,
+                        instr->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+    xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+    TF_ASSIGN_OR_RETURN(
+      bool has_aux_output,
+      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+
+    TF_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
+    bool has_damax = instr->shape().IsTuple();
+    xla::ShapeIndex output_index =
+        has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
+    BufferAllocation::Slice c;
+    bool has_matrix_bias = config.beta() != 0;
+    if (has_matrix_bias) {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr->operand(2)));
+    } else {
+      TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    }
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
+
+    int a_scale_index = has_matrix_bias ? 3 : 2;
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice a_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice b_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice c_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
+    TF_ASSIGN_OR_RETURN(
+        BufferAllocation::Slice d_scale,
+        GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+
+    BufferAllocation::Slice bias;
+    if (has_vector_bias) {
+      TF_ASSIGN_OR_RETURN(
+          bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
+    }
+
+    BufferAllocation::Slice aux;
+    if (has_aux_output) {
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr, {1}));
+    }
+    BufferAllocation::Slice d_amax;
+    if (has_damax) {
+      TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {2}));
+    }
+
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm =
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
+    std::cout << "d_amax == nullptr ? :" <<d_amax  <<std::endl;
+    std::cout << "aux == nullptr ? :" << aux  <<std::endl;
+    std::cout << "a_scale == nullptr ? :" << a_scale  <<std::endl;
+    std::cout << "bias == nullptr ? :" << bias  <<std::endl;
+    std::cout << "shuw: here end in BIAS_RELU_AUX epilog\n";
+    return absl::OkStatus();
   }
-
-  BufferAllocation::Slice d_amax;
-  if (has_damax) {
-    TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {1}));
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      auto gemm_config,
-      GemmConfig::For(static_cast<const HloInstruction*>(instr)));
-
-  // Use the first algorithm by default (i.e. fastest according to heuristics).
-  int64_t algorithm =
-      config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
-          ? config.selected_algorithm()
-          : 0;
-
-  BufferAllocation::Slice aux;  // Not used.
-
-  TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
-                      gpublas_lt::AsBlasLtEpilogue(epilogue));
-  auto thunk = std::make_unique<CublasLtMatmulThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax);
-  AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
 #endif  // GOOGLE_CUDA || TF_HIPBLASLT
