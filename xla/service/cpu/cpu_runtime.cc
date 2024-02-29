@@ -153,6 +153,8 @@ extern const char* const kAllGatherSymbolName = "__xla_cpu_runtime_AllGather";
 extern const char* const kReduceScatterSymbolName =
     "__xla_cpu_runtime_ReduceScatter";
 extern const char* const kAllToAllSymbolName = "__xla_cpu_runtime_AllToAll";
+extern const char* const kCollectiveBroadcastSymbolName =
+    "__xla_cpu_runtime_CollectiveBroadcast";
 extern const char* const kCollectivePermuteSymbolName =
     "__xla_cpu_runtime_CollectivePermute";
 extern const char* const kPartitionIdSymbolName =

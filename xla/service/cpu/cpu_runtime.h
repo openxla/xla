@@ -78,6 +78,7 @@ extern const char* const kStatusIsSuccessSymbolName;
 extern const char* const kKeyValueSortSymbolName;
 extern const char* const kTopKF32SymbolName;
 extern const char* const kAllReduceSymbolName;
+extern const char* const kCollectiveBroadcastSymbolName;
 extern const char* const kCollectivePermuteSymbolName;
 extern const char* const kPartitionIdSymbolName;
 extern const char* const kReplicaIdSymbolName;
