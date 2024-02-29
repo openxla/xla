@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/fusions/concatenate_mlir.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/error_spec.h"
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
@@ -44,7 +45,7 @@ TEST_F(MlirConcatenateFusionTest, StandAloneConcatenate) {
         calls=fused_computation, kind=kLoop
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: #[[MAP_1:.*]] = affine_map<()[s0, s1] -> (s0 + s1 * 128)>
     // CHECK: #[[MAP_2:.*]] = affine_map<()[s0, s1] -> ((s0 + s1 * 128) mod 400)>
 
@@ -65,20 +66,20 @@ TEST_F(MlirConcatenateFusionTest, StandAloneConcatenate) {
     // CHECK: %[[INPUT_INDEX_1:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
     // CHECK: %[[IN_BOUND_1:.*]] = arith.cmpi ult, %[[INPUT_INDEX_1:.*]], %[[C_200]]
     // CHECK: %[[IF_1:.*]] = scf.if %[[IN_BOUND_1]]
-    // CHECK:   %[[VAL_1:.*]] = tensor.extract %[[ARG_0]][%[[INPUT_INDEX_1]]]
+    // CHECK:   %[[VAL_1:.*]] = xla_gpu.pure_call @fused_computation_param0
     // CHECK:   %[[INSERTED_1:.*]] = tensor.insert %[[VAL_1:.*]] into %[[OUTPUT]][%[[INPUT_INDEX_1]]]
 
     // CHECK: %[[INPUT_INDEX_2:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
     // CHECK: %[[IN_BOUND_2:.*]] = arith.cmpi ult, %[[INPUT_INDEX_2:.*]], %[[C_400]]
     // CHECK: %[[IF_2:.*]] = scf.if %[[IN_BOUND_2]]
-    // CHECK:   %[[VAL_2:.*]] = tensor.extract %[[ARG_1]][%[[INPUT_INDEX_2]]]
+    // CHECK:   %[[VAL_2:.*]] = xla_gpu.pure_call @fused_computation_param1
     // CHECK:   %[[OUTPUT_INDEX_2:.*]] = arith.addi %[[INPUT_INDEX_2]], %[[C_200]]
     // CHECK:   %[[INSERTED_2:.*]] = tensor.insert %[[VAL_2:.*]] into {{.*}}[%[[OUTPUT_INDEX_2]]]
 
     // CHECK: %[[INPUT_INDEX_3:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
     // CHECK: %[[IN_BOUND_3:.*]] = arith.cmpi ult, %[[INPUT_INDEX_4:.*]], %[[C_300]]
     // CHECK: %[[IF_3:.*]] = scf.if %[[IN_BOUND_3]]
-    // CHECK:   %[[VAL_3:.*]] = tensor.extract %[[ARG_2]][%[[INPUT_INDEX_3]]]
+    // CHECK:   %[[VAL_3:.*]] = xla_gpu.pure_call @fused_computation_param2
     // CHECK:   %[[OUTPUT_INDEX_3:.*]] = arith.addi %[[INPUT_INDEX_3]], %[[C_600]]
     // CHECK:   %[[INSERTED_3:.*]] = tensor.insert %[[VAL_3:.*]] into {{.*}}[%[[OUTPUT_INDEX_3]]]
   )"));

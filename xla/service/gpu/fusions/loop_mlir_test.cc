@@ -19,7 +19,6 @@ limitations under the License.
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -209,7 +208,7 @@ TEST_F(MlirLoopFusionTest, NoCodeDuplication) {
       ROOT %fusion = f32[2]{0} fusion(broadcast), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK-COUNT-4: arith.add
     // CHECK-NOT: arith.add
   )"));
@@ -235,7 +234,7 @@ TEST_F(MlirLoopFusionTest, TwoUsersConsistentIndexing) {
       ROOT %fusion = f32[2] fusion(p0, p1), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: func.func @fused_computation
     // CHECK-NEXT: gpu.thread_id
     // CHECK-NEXT: pure_call @fused_computation_atan2
@@ -243,8 +242,8 @@ TEST_F(MlirLoopFusionTest, TwoUsersConsistentIndexing) {
     // CHECK-NEXT: return
 
     // CHECK: func.func private @fused_computation_atan2
-    // CHECK-NEXT: tensor.extract
-    // CHECK-NEXT: tensor.extract
+    // CHECK-NEXT: xla_gpu.pure_call
+    // CHECK-NEXT: xla_gpu.pure_call
     // CHECK-NEXT: addf
     // CHECK-NEXT: subf
     // CHECK-NEXT: mulf
@@ -273,7 +272,7 @@ TEST_F(MlirLoopFusionTest, ComplexOps) {
       ROOT %fusion = c64[2] fusion(p0, p1, p2), kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: func.func @fused_computation
     // CHECK-NEXT: gpu.thread_id
     // CHECK-NEXT: pure_call @fused_computation_add
@@ -310,7 +309,7 @@ TEST_F(MlirLoopFusionTest, IotaCopyBitcastBroadcastReshapeReverseTranspose) {
         kind=kLoop, calls=%fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK-COUNT-2: func.func
     // CHECK-NOT:     func.func
   )"));
@@ -346,7 +345,7 @@ TEST_F(MlirLoopFusionTest, VariadicReduce) {
         f32[5,200,300]{2,1,0} b, f32[] c), kind=kLoop, calls=fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: #[[MAP:.*]] = affine_map<()[s0, s1] -> ((s0 + s1 * 128) mod 200)>
     // CHECK: func @fused_computation(
     // CHECK:   %[[TID_X:.*]] = gpu.thread_id x

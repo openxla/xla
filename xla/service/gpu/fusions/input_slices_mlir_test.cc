@@ -17,7 +17,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "xla/error_spec.h"
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
-#include "tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {
@@ -40,13 +39,15 @@ TEST_F(MlirInputSlicesFusionTest, SimpleInputSlices) {
       ROOT %fusion = (f32[1,2,3,5]{2,1,0,3}, f32[1,2,3,5]{2,1,0,3}) fusion(%input), kind=kLoop, calls=fused_computation
     }
   )";
-  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+  ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: arith.cmpi sge
     // CHECK: arith.cmpi sle
     // CHECK: arith.andi
     // CHECK: scf.if
+    // CHECK: func.func private @fused_computation_input
+    // CHECK: tensor.extract
     // CHECK: func.func private @fused_computation_tuple
-    // CHECK-COUNT-2: tensor.extract
+    // CHECK-COUNT-2: xla_gpu.pure_call
   )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
