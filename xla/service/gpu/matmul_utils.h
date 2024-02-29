@@ -75,10 +75,10 @@ absl::StatusOr<bool> CanFoldTransposeOperandIntoDot(const HloInstruction& dot,
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
     const HloInstruction& dot, int64_t threshold);
 
-// Returns true if the backend can lower the dot. Currently the backend
-// cannot handle some dots, e.g., i8[] x i8[] -> i32[] dots,
+// Returns true if the backend can lower the dot. Currently the classical
+// emitters cannot handle some dots, e.g., i8[] x i8[] -> i32[] dots,
 // so we need to always use cuBLAS or Triton for those.
-bool IsDotSupportedByBackend(const HloInstruction& dot);
+bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot);
 
 // extending plain MatrixLayout struct with creator functions
 struct MatrixLayout : public se::gpu::MatrixLayout {

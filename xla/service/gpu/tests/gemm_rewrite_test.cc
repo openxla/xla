@@ -85,7 +85,7 @@ class GemmRewriteTest : public GpuCodegenTest {
 
   enum class Switch : uint32_t {
     False,  // check always fails
-    True,   // check always succeeds
+    True,  // check always succeeds
   };
   // switch based on architecture only
   bool CudaOrRocmCheck(Switch cuda_set, Switch rocm_set) {

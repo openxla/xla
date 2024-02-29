@@ -391,8 +391,8 @@ FusionPlanAndRequirements BuildFusionPlanTowardOperands(
 HloInstruction& BuildFusionTowardOperandsImpl(
     AdjacencyList::NodeId node_id, const FusionPlan& fusion_plan,
     absl::flat_hash_map<AdjacencyList::NodeId, HloInstruction*>&
-        fused_hlo_map,                           // read/append
-    HloComputation::Builder& builder,            // append
+        fused_hlo_map,  // read/append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   if (auto it = fused_hlo_map.find(node_id); it != fused_hlo_map.end()) {
@@ -427,7 +427,7 @@ HloInstruction& BuildFusionTowardOperandsImpl(
 // Builds the HLO instructions for the fusion represented by `fusion_plan`.
 HloInstruction& BuildFusionTowardOperands(
     const FusionPlan& fusion_plan,
-    HloComputation::Builder& builder,            // append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   absl::flat_hash_map<AdjacencyList::NodeId, HloInstruction*> fused_hlo_map;
@@ -452,7 +452,7 @@ HlosAndRequirements FuseTowardOperands(
     const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const HeroProperties& properties, const Requirements& requirements_so_far,
-    HloComputation::Builder& builder,            // append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   FusionPlanAndRequirements fusion_plan_and_reqs =
@@ -480,7 +480,7 @@ HlosAndRequirements FuseTowardOperands(
 HlosAndRequirements FuseDotOperand(
     const HloInstruction& dot, int operand_index,
     const se::GpuComputeCapability& gpu_version,
-    HloComputation::Builder& builder,            // append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   // Direct dot inputs have well defined dimension orders.
@@ -511,7 +511,7 @@ HlosAndRequirements FuseTowardUsers(
     const DimensionOrder& hlo_dim_order,
     const se::GpuComputeCapability& gpu_version,
     const HeroProperties& properties, const Requirements& requirements,
-    HloComputation::Builder& builder,            // append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   const HlosAndRequirements existing_hlos_and_requirements = {&hlo, &fused_hlo,
@@ -593,7 +593,7 @@ HlosAndRequirements FuseDotOutput(
     const HloInstruction& dot, const HloInstruction& fused_dot,
     const se::GpuComputeCapability& gpu_version,
     const DotRequirements& requirements,
-    HloComputation::Builder& builder,            // append
+    HloComputation::Builder& builder,  // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   const auto context =
@@ -682,7 +682,7 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
     TF_ASSIGN_OR_RETURN(bool is_matmul_tiny,
                         IsMatrixMultiplicationTooSmallForRewriting(
                             *dot, gemm_rewrite_size_threshold));
-    if (is_matmul_tiny && IsDotSupportedByBackend(*dot)) {
+    if (is_matmul_tiny && IsDotSupportedByClassicalEmitters(*dot)) {
       return absl::OkStatus();
     }
 

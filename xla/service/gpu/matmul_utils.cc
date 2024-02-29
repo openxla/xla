@@ -823,8 +823,8 @@ absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
          threshold;
 }
 
-bool IsDotSupportedByBackend(const HloInstruction& dot) {
-  // Let us be conservative and only throw float dots at the backend.
+bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
+  // Let us be conservative and only throw float dots at the emitters.
   switch (dot.shape().element_type()) {
     case F16:
     case F32:
