@@ -791,7 +791,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<ChangeOpDataType>(
         F16, F32, HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kConvolution>);
   }
-#endif // !INTEL_MKL || !ENABLE_ONEDNN_V3
+#endif  // !INTEL_MKL || !ENABLE_ONEDNN_V3
 
   // Run the following passes to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),
