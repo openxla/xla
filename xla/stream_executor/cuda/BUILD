@@ -224,24 +224,6 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
-    name = "memcpy_test",
-    srcs = ["memcpy_test.cc"],
-    tags = tf_cuda_tests_tags() + [
-        "requires-gpu-nvidia",
-    ],
-    deps = [
-        ":cuda_platform",
-        "//xla/stream_executor",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:platform_manager",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
 # The activation library is tightly coupled to the executor library.
 # TODO(leary) split up cuda_executor.cc so that this can stand alone.
 cc_library(
