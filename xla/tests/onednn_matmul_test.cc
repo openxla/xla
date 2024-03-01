@@ -108,6 +108,26 @@ TEST_F(MatmulTest, SimpleTestF32TransposeB) {
   MatchOptimizedHlo(matmul_module_str, matmul_rewrite_str_);
 }
 
+TEST_F(MatmulTest, SimpleTestBF16Shapes) {
+  // TODO(penporn): Refactor IsBF16SupportedByOneDNNOnThisCPU() from
+  // tensorflow/core/graph/mkl_graph_util.h and call the function instead.
+  if (!IsSupportedType(PrimitiveType::BF16)) {
+    GTEST_SKIP() << "CPU does not support BF16.";
+  }
+
+  const char* matmul_module_str = R"(
+  HloModule matmul.test.bf16, entry_computation_layout={(bf16[1,5,2000]{2,1,0},bf16[1,2000,200]{2,1,0})->bf16[1,5,200]{2,1,0}}
+
+  ENTRY matmul.test.bf16 {
+    arg.0 = bf16[1,5,2000]{2,1,0} parameter(0)
+    arg.1 = bf16[1,2000,200]{2,1,0} parameter(1)
+    ROOT onednn.matmul.0 = bf16[1,5,200]{2,1,0} dot(arg.0, arg.1), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{2e-2, 1e-4}));
+  MatchOptimizedHlo(matmul_module_str, matmul_rewrite_str_);
+}
+
 TEST_F(MatmulTest, SimpleTestF32WithBiasAddFusion1) {
   const char* matmul_module_str = R"(
   HloModule matmul.biasadd.test.f32, entry_computation_layout={(f32[32,32,40,30]{3,2,1,0})->f32[32,32,40,40]{3,2,1,0}}

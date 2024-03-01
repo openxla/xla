@@ -372,7 +372,7 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
   auto rank = lhs_shape.rank();
   auto rhs_dims = rhs_shape.dimensions();
   int64_t num_mac_ops = ShapeUtil::ElementsIn(lhs_shape) * rhs_dims.back();
-  int mac_ops_threshold = (rank == 2) ? (1 << 23) : (1 << 18);
+  int mac_ops_threshold = (rank == 2) ? (1 << 20) : (1 << 18);
   return (num_mac_ops >= mac_ops_threshold);
 }
 
