@@ -111,6 +111,9 @@ def xla_test(
         if backend == "cpu":
             backend_deps = ["//xla/service:cpu_plugin"]
             backend_deps += ["//xla/tests:test_macros_cpu"]  # buildifier: disable=list-append
+
+            # TODO(ddunleavy): Fix the RBE ARM64 tests.
+            this_backend_tags.append("no_aarch64")
         elif backend == "gpu":
             backend_deps = if_gpu_is_configured(["//xla/service:gpu_plugin"])
             backend_deps += if_gpu_is_configured(["//xla/tests:test_macros_gpu"])  # buildifier: disable=list-append
