@@ -36,6 +36,7 @@ message OneDnnMatMulConfig {
 }
 
 message OneDnnLayerNormConfig {
+  int32 epsilon_typecast = 1;
   // These enum needs to be mapped to oneDNN enum for post_op algorithm.
   // TODO(intel-tf): Add kinds supported by oneDNN.
   enum FusionKind {
@@ -44,5 +45,5 @@ message OneDnnLayerNormConfig {
     SHIFT = 2;
     SCALE_AND_SHIFT = 3;
   }
-  FusionKind fused_ops = 1;
+  FusionKind fused_ops = 2;
 }
