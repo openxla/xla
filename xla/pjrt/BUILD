@@ -128,6 +128,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
