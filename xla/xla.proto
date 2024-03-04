@@ -704,7 +704,11 @@ message DebugOptions {
   // Let GEMM fusion autotuning probe cuDNN as a backend.
   bool xla_gpu_cudnn_gemm_fusion = 277;
 
-  // Next id: 279
+  // Enable GPU memory monitoring, which will log when the GPU memory usage
+  // increases during runtime.
+  bool xla_gpu_enable_memory_monitoring = 279;
+
+  // Next id: 280
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

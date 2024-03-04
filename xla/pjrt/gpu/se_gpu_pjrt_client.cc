@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
+#include "xla/service/gpu/memory_monitor.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
@@ -1085,6 +1086,11 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states;
   TF_ASSIGN_OR_RETURN(local_device_states, BuildLocalDeviceStates(xla_client));
   EnablePeerAccess(xla_client->backend().stream_executors());
+  std::vector<se::StreamExecutor*> executors;
+  for (const auto& ordinal_and_device : local_device_states) {
+    executors.push_back(ordinal_and_device.second->executor());
+  }
+  xla::gpu::StartMemoryMonitor(executors);
   TF_ASSIGN_OR_RETURN(auto allocator,
                       GetStreamExecutorGpuDeviceAllocator(
                           xla_client->platform(), options.allocator_config,

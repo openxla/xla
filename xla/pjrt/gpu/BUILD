@@ -80,6 +80,7 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/service/gpu:memory_monitor",
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",

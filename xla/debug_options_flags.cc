@@ -234,6 +234,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
 
   opts.set_xla_gpu_enable_mlir_emitters(false);
+  opts.set_xla_gpu_enable_memory_monitoring(false);
   return opts;
 }
 
@@ -1590,6 +1591,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_mlir_emitters),
       debug_options->xla_gpu_enable_mlir_emitters(),
       "Enable new MLIR-based emitters."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_memory_monitoring",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_memory_monitoring),
+      debug_options->xla_gpu_enable_memory_monitoring(),
+      "Enable GPU memory monitoring, which will log when the GPU memory usage "
+      "increases during runtime."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

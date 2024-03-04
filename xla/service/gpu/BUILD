@@ -277,6 +277,20 @@ cc_library(
 )
 
 cc_library(
+    name = "memory_monitor",
+    srcs = ["memory_monitor.cc"],
+    hdrs = ["memory_monitor.h"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "//xla/stream_executor",
+        "//xla:debug_options_flags",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/util:env_var",
+    ],
+)
+
+cc_library(
     name = "ir_emitter_context",
     srcs = ["ir_emitter_context.cc"],
     hdrs = ["ir_emitter_context.h"],
