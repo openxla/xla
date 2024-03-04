@@ -205,6 +205,12 @@ class RocmComputeCapability {
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
+  bool gfx9_mi300_or_later() const {
+    static constexpr absl::string_view kList[] = {"gfx940", "gfx941",
+                                                  "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+
   bool navi21() const { return gfx_version() == "gfx1030"; }
 
   bool navi31() const { return gfx_version() == "gfx1100"; }
@@ -220,7 +226,18 @@ class RocmComputeCapability {
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
 
   bool has_fp16_atomics_support() const {
-    // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
+    return gfx9_mi100_or_later();
+  }
+
+  bool has_bf16_atomics_support() const {
+    return gfx9_mi300_or_later();
+  }
+
+  bool has_fp32_atomics_support() const {
+    return gfx9_mi100_or_later();
+  }
+
+  bool has_fp64_atomics_support() const {
     return gfx9_mi200_or_later();
   }
 

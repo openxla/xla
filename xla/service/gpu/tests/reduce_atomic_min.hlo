@@ -421,7 +421,7 @@ ENTRY reduce.1 {
 // CHECK:         %[[VAL_207:.*]] = icmp eq i32 %[[VAL_205]], %[[VAL_206]]
 // CHECK:         br i1 %[[VAL_207]], label %atomic_op_loop_exit, label %atomic_op_loop_cas
 // CHECK:       atomic_op_loop_cas:                               ; preds = %[[VAL_203]]
-// CHECK:         %[[VAL_208:.*]] = cmpxchg ptr %[[VAL_202]], i32 %[[VAL_205]], i32 %[[VAL_206]]{{.*}} seq_cst seq_cst, align 4
+// CHECK:         %[[VAL_208:.*]] = cmpxchg ptr %[[VAL_202]], i32 %[[VAL_205]], i32 %[[VAL_206]]{{.*}} {{.*}} {{.*}}, align 4
 // CHECK:         %[[VAL_209:.*]] = extractvalue { i32, i1 } %[[VAL_208]], 0
 // CHECK:         store i32 %[[VAL_209]], ptr{{.*}} %[[VAL_16]], align 4
 // CHECK:         %[[VAL_210:.*]] = extractvalue { i32, i1 } %[[VAL_208]], 1

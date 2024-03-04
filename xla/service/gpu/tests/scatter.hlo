@@ -127,7 +127,7 @@
 // CHECK:         br i1 %[[VAL_83]], label %[[VAL_70]], label %[[VAL_80]]
 // CHECK:       atomic_op_loop_cas:                               ; preds = %[[VAL_79]]
 // CHECK-PTX:     %[[VAL_84:.*]] = cmpxchg ptr %[[VAL_71]], i32 %[[VAL_81]], i32 %[[VAL_82]] seq_cst seq_cst, align 4
-// CHECK-GCN:     %[[VAL_84:.*]] = cmpxchg ptr %[[VAL_71]], i32 %[[VAL_81]], i32 %[[VAL_82]] {{.*}} seq_cst seq_cst, align 4
+// CHECK-GCN:     %[[VAL_84:.*]] = cmpxchg ptr %[[VAL_71]], i32 %[[VAL_81]], i32 %[[VAL_82]] {{.*}} {{.*}} {{.*}}, align 4
 // CHECK:         %[[VAL_85:.*]] = extractvalue { i32, i1 } %[[VAL_84]], 0
 // CHECK-PTX:     store i32 %[[VAL_85]], ptr %[[VAL_47]], align 4
 // CHECK-GCN:     store i32 %[[VAL_85]], ptr addrspace(5) %[[VAL_47]], align 4
