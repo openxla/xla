@@ -562,6 +562,7 @@ xla_test(
     srcs = if_cuda_is_configured(["ir_emitter_triton_test.cc"]),
     backends = [
         "gpu_a100",
+        "gpu_h100",
         "gpu_v100",
     ],
     shard_count = 20,
@@ -636,6 +637,7 @@ xla_test(
     srcs = if_cuda_is_configured(["ir_emitter_triton_parametrized_test.cc"]),
     backends = [
         "gpu_a100",
+        "gpu_h100",
         "gpu_v100",
     ],
     shard_count = 10,
