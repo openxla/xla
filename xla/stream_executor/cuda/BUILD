@@ -191,23 +191,6 @@ cuda_only_cc_library(
 )
 
 xla_cc_test(
-    name = "stream_search_test",
-    size = "small",
-    srcs = ["stream_search_test.cc"],
-    tags = tf_cuda_tests_tags() + [
-        "requires-gpu-nvidia",
-    ],
-    deps = [
-        ":cuda_platform",
-        "//xla/stream_executor",
-        "//xla/stream_executor/host:host_platform",
-        "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-xla_cc_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],
     tags = tf_cuda_tests_tags() + [
