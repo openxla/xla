@@ -112,6 +112,8 @@ absl::Status SetTpuOpsStructFns(void* library_handle) {  // TENSORFLOW_STATUS_OK
   TFTPU_SET_FN(ops_api_fn, TpuEmbeddingEngine_DedupDataTupleMaskComputation);
 
   TFTPU_SET_FN(ops_api_fn, SparseCore_GetMaxIdsAndUniques);
+  TFTPU_SET_FN(ops_api_fn, SparseCore_SetTextProto);
+
   return absl::OkStatus();
 }
 

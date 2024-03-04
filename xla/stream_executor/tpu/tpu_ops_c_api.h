@@ -20,6 +20,8 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
+#include "absl/strings/string_view.h"
+#include "third_party/protobuf/message.h"
 #include "xla/stream_executor/tpu/c_api_decl.h"
 #include "xla/stream_executor/tpu/libtftpu.h"
 
@@ -722,6 +724,8 @@ typedef struct SparseCore_GetMaxIdsAndUniques_Params {
 
 TFTPU_CAPI_EXPORT void SparseCore_GetMaxIdsAndUniques(
     SparseCore_GetMaxIdsAndUniques_Params* params);
+TFTPU_CAPI_EXPORT void SparseCore_SetTextProto(absl::string_view filename,
+                                               const proto2::Message& proto);
 
 struct TfTpu_OpsApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuCompile_CompileAndBuild);
@@ -825,6 +829,7 @@ struct TfTpu_OpsApiFn {
   TFTPU_ADD_FN_IN_STRUCT(TpuEmbeddingEngine_DedupDataTupleMaskComputation);
 
   TFTPU_ADD_FN_IN_STRUCT(SparseCore_GetMaxIdsAndUniques);
+  TFTPU_ADD_FN_IN_STRUCT(SparseCore_SetTextProto);
 };
 
 }  // extern "C"
