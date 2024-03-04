@@ -24,6 +24,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 
+#include "absl/status/status.h"
+
 #define TENSORFLOW_USE_HIPSOLVER \
   (TENSORFLOW_USE_ROCM && (TF_ROCM_VERSION >= 40500))
 #define TENSORFLOW_USE_ROCSOLVER \
