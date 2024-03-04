@@ -152,7 +152,9 @@ tsl_pybind_extension(
     deps = [
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
-        "@pybind11",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
     ],
 )
 
@@ -1208,14 +1210,6 @@ xla_cc_test(
         "@tsl//tsl/profiler/utils:file_system_utils",
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
-    ],
-)
-
-cc_library(
-    name = "status_casters",
-    hdrs = ["status_casters.h"],
-    deps = [
-        "//xla/pjrt:status_casters",
     ],
 )
 
