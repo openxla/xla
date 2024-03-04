@@ -91,11 +91,10 @@ absl::Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
       AssignBufferIfNotNull(buffer_allocations, seqlen_k_buffer_);
   RunFusedMHAOptions opts;
   opts.runner_cache = &GetOrCreateRunner(params.stream);
-  TF_RETURN_IF_ERROR(RunGpuFMHA(config_, lhs_bmm1_buffer, rhs_bmm1_buffer,
-                                rhs_bmm2_buffer, output_buffer, scratch_buffer,
-                                mask_buffer, bias_buffer, activation_buffer,
-                                seqlen_q_buffer, seqlen_k_buffer,
-                                params.stream, opts));
+  TF_RETURN_IF_ERROR(RunGpuFMHA(
+      config_, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer, output_buffer,
+      scratch_buffer, mask_buffer, bias_buffer, activation_buffer,
+      seqlen_q_buffer, seqlen_k_buffer, params.stream, opts));
 
   if (!params.stream->ok()) {
     return Internal("FusedMHAThunk::ExecuteOnStream failed.");

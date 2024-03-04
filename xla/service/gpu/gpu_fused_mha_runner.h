@@ -156,8 +156,7 @@ struct GpufMHAParams {
       std::optional<se::DeviceMemoryBase> bias_buffer,
       std::optional<se::DeviceMemoryBase> activation_buffer,
       std::optional<se::DeviceMemoryBase> seqlen_q_buffer,
-      std::optional<se::DeviceMemoryBase> seqlen_k_buffer
-      );
+      std::optional<se::DeviceMemoryBase> seqlen_k_buffer);
 
   const GpufMHAConfig* config;  // Not owned
   se::DeviceMemoryBase lhs_bmm1_buffer;
@@ -420,8 +419,8 @@ absl::Status RunGpuFMHABackward(
     std::optional<se::DeviceMemoryBase> fwd_output_buffer,
     std::optional<se::DeviceMemoryBase> bias_buffer,
     std::optional<se::DeviceMemoryBase> seqlen_q_buffer,
-    std::optional<se::DeviceMemoryBase> seqlen_k_buffer,
-    se::Stream* stream, RunFusedMHABackwardOptions = {});
+    std::optional<se::DeviceMemoryBase> seqlen_k_buffer, se::Stream* stream,
+    RunFusedMHABackwardOptions = {});
 
 std::string ToString(const GpufMHAConfig& config);
 

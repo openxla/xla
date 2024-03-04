@@ -969,12 +969,14 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
       bias_shape = bias->shape();
     }
 
-    bool has_seqlen_qk = 2 == (instr->operand_count() - 3 - has_mask - has_bias);
+    bool has_seqlen_qk =
+        2 == (instr->operand_count() - 3 - has_mask - has_bias);
     int64_t seqlen_qk_operand_index = 2 + has_mask + has_bias;
     if (has_seqlen_qk) {
       const HloInstruction* seqlen_q = instr->operand(seqlen_qk_operand_index);
       TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
-      const HloInstruction* seqlen_k = instr->operand(seqlen_qk_operand_index + 1);
+      const HloInstruction* seqlen_k =
+          instr->operand(seqlen_qk_operand_index + 1);
       TF_ASSIGN_OR_RETURN(seqlen_k_slice, GetAllocationSliceForHlo(seqlen_k));
     }
   }
@@ -1009,8 +1011,8 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
   AddThunkToThunkSequence(std::make_unique<FusedMHAThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(fmha_config),
       lhs_bmm1_slice, rhs_bmm1_slice, rhs_bmm2_slice, output_slice,
-      scratch_slice, mask_slice, bias_slice, activation_slice,
-      seqlen_q_slice, seqlen_k_slice));
+      scratch_slice, mask_slice, bias_slice, activation_slice, seqlen_q_slice,
+      seqlen_k_slice));
   return absl::OkStatus();
 }
 

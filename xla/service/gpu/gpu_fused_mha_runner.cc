@@ -49,8 +49,7 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                          DeviceMemoryBase bias_buffer,
                          DeviceMemoryBase scratch_memory,
                          DeviceMemoryBase activation_output,
-                         DeviceMemoryBase seqlen_q,
-                         DeviceMemoryBase seqlen_k) {
+                         DeviceMemoryBase seqlen_q, DeviceMemoryBase seqlen_k) {
   se::dnn::LazyOpRunner<se::dnn::FusedMHAOp> *lazy_runner =
       options.runner_cache->AsFusedMHARunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAOp>> local_runner;
@@ -115,12 +114,14 @@ absl::Status RunGpuFMHAImpl(const GpufMHAParams &params, se::Stream *stream,
   auto bias_buffer = params.bias_buffer.has_value()
                          ? se::DeviceMemory<BiasType>(*params.bias_buffer)
                          : se::DeviceMemoryBase();
-  auto seqlen_q_buffer = params.seqlen_q_buffer.has_value()
-                         ? se::DeviceMemory<BiasType>(*params.seqlen_q_buffer)
-                         : se::DeviceMemoryBase();
-  auto seqlen_k_buffer = params.seqlen_k_buffer.has_value()
-                         ? se::DeviceMemory<BiasType>(*params.seqlen_k_buffer)
-                         : se::DeviceMemoryBase();
+  auto seqlen_q_buffer =
+      params.seqlen_q_buffer.has_value()
+          ? se::DeviceMemory<BiasType>(*params.seqlen_q_buffer)
+          : se::DeviceMemoryBase();
+  auto seqlen_k_buffer =
+      params.seqlen_k_buffer.has_value()
+          ? se::DeviceMemory<BiasType>(*params.seqlen_k_buffer)
+          : se::DeviceMemoryBase();
   se::dnn::AlgorithmDesc algorithm = params.config->algorithm;
   if (options.runner_cache) {
     algorithm = options.runner_cache->ToAlgorithmDesc();
@@ -140,8 +141,7 @@ absl::Status RunGpuFMHAImpl(const GpufMHAParams &params, se::Stream *stream,
       run_status = RunFusedMHA<ElementType, BiasType, OutputType>(
           params, stream, options, lhs_bmm1_buffer, rhs_bmm1_buffer,
           rhs_bmm2_buffer, output_buffer, mask_buffer, bias_buffer,
-          scratch_memory, activation_buffer, seqlen_q_buffer,
-          seqlen_k_buffer);
+          scratch_memory, activation_buffer, seqlen_q_buffer, seqlen_k_buffer);
       break;
     default:
       return Internal("Invalid cuDNN fMHA kind");
@@ -282,8 +282,7 @@ absl::Status RunFusedMHABackward(
                    d_output_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer,
                    d_bmm2_rhs_buffer, d_s_buffer, softmax_buffer,
                    d_Q_accum_buffer, mask_buffer, d_bias_buffer,
-                   fwd_output_buffer, bias_buffer, seqlen_q,
-                   seqlen_k);
+                   fwd_output_buffer, bias_buffer, seqlen_q, seqlen_k);
   return absl::OkStatus();
 }
 
@@ -339,13 +338,15 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
                          ? se::DeviceMemory<BiasType>(*params.bias_buffer)
                          : se::DeviceMemoryBase();
 
-  auto seqlen_q_buffer = params.seqlen_q_buffer.has_value()
-                         ? se::DeviceMemory<BiasType>(*params.seqlen_q_buffer)
-                         : se::DeviceMemoryBase();
+  auto seqlen_q_buffer =
+      params.seqlen_q_buffer.has_value()
+          ? se::DeviceMemory<BiasType>(*params.seqlen_q_buffer)
+          : se::DeviceMemoryBase();
 
-  auto seqlen_k_buffer = params.seqlen_k_buffer.has_value()
-                         ? se::DeviceMemory<BiasType>(*params.seqlen_k_buffer)
-                         : se::DeviceMemoryBase();
+  auto seqlen_k_buffer =
+      params.seqlen_k_buffer.has_value()
+          ? se::DeviceMemory<BiasType>(*params.seqlen_k_buffer)
+          : se::DeviceMemoryBase();
 
   se::dnn::AlgorithmDesc algorithm = params.config->algorithm;
   if (options.runner_cache) {
@@ -753,8 +754,8 @@ absl::Status RunGpuFMHABackward(
     std::optional<se::DeviceMemoryBase> fwd_output_buffer,
     std::optional<se::DeviceMemoryBase> bias_buffer,
     std::optional<se::DeviceMemoryBase> seqlen_q_buffer,
-    std::optional<se::DeviceMemoryBase> seqlen_k_buffer,
-    se::Stream *stream, RunFusedMHABackwardOptions options) {
+    std::optional<se::DeviceMemoryBase> seqlen_k_buffer, se::Stream *stream,
+    RunFusedMHABackwardOptions options) {
   TF_ASSIGN_OR_RETURN(
       GpufMHABackwardParams params,
       GpufMHABackwardParams::For(
