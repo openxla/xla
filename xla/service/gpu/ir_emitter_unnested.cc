@@ -968,10 +968,9 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
       TF_ASSIGN_OR_RETURN(bias_slice, GetAllocationSliceForHlo(bias));
       bias_shape = bias->shape();
     }
-
+    int64_t seqlen_qk_operand_index = 3 + has_mask + has_bias;
     bool has_seqlen_qk =
-        2 == (instr->operand_count() - 3 - has_mask - has_bias);
-    int64_t seqlen_qk_operand_index = 2 + has_mask + has_bias;
+        seqlen_qk_operand_index == instr->operand_count() - 2;
     if (has_seqlen_qk) {
       const HloInstruction* seqlen_q = instr->operand(seqlen_qk_operand_index);
       TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
@@ -1093,7 +1092,7 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunk(
   }
 
   BufferAllocation::Slice seqlen_q_slice, seqlen_k_slice;
-  bool has_seqlen_qk = 2 == (instr->operand_count() - input_index);
+  bool has_seqlen_qk = input_index == instr->operand_count() - 2;
   if (has_seqlen_qk) {
     const HloInstruction* seqlen_q = instr->operand(input_index);
     TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
