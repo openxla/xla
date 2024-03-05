@@ -28,8 +28,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"     // from @llvm-project
+#include "mlir/Pass/PassManager.h"   // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
@@ -930,7 +930,7 @@ ENTRY e {
 }
 )";
 
-  // This check tests if Triton is used at all plus it runs TritonAutotuner,
+  // This check tests if Triton is used at all plus it runs GemmFusionAutotuner,
   // which verifies if the generated kernels can run without errors such as
   // CUDA_ERROR_ILLEGAL_ADDRESS.
   MatchOptimizedHlo(kHloText, R"(
