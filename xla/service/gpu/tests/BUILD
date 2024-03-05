@@ -2,7 +2,7 @@
 # verify the IR emitted.
 
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
+load("//xla:lit.bzl", "lit_test_suite")
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
@@ -743,8 +743,8 @@ xla_cc_test(
 )
 
 lit_test_suite(
-    name = "all_tests",
-    srcs = enforce_glob(
+    name = "lit_tests_ampere_or_rocm",
+    srcs = glob(
         [
             "add_preds.hlo",
             "calling_convention.hlo",
@@ -776,9 +776,6 @@ lit_test_suite(
             "transpose_210_extra_output.hlo",
             "triton_naming.hlo",
         ],
-        include = [
-            "*.hlo",
-        ],
     ),
     args = if_cuda_is_configured([
         "--param=PTX=PTX",
@@ -798,6 +795,24 @@ lit_test_suite(
         "single_instruction.hlo": ["no_rocm"],
         "reduce_unnested.hlo": ["no_rocm"],
     },
+    tools = [
+        "//xla/tools:hlo-opt",
+        "@llvm-project//llvm:FileCheck",
+    ],
+)
+
+lit_test_suite(
+    name = "lit_tests_hopper",
+    srcs = ["dynamic_update_slice_inplace_bf16.hlo"],
+    args = if_cuda_is_configured([
+        "--param=PTX=PTX",
+        "--param=GPU=h100",
+    ]),
+    cfg = "//xla:lit.cfg.py",
+    data = [
+        ":test_utilities",
+    ],
+    default_tags = tf_cuda_tests_tags(),
     tools = [
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",

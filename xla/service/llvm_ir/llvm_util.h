@@ -131,15 +131,21 @@ llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Type* element_type,
                                    int64_t index, llvm::IRBuilder<>* b);
 
 // Returns the LLVM type which represents the given XLA primitive type.
+// has_bf16_support is used to do elementwise BF16 math natively in platforms
+// that support it (e.g., Hopper and later).
 llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
-                                  llvm::Module* module);
+                                  llvm::Module* module,
+                                  bool has_bf16_support = false);
 
 // Returns the type size in bits. If "type" is a struct, it must be packed.
 int GetSizeInBits(llvm::Type* type);
 
 // Returns the LLVM type which represents the given XLA shape. For example,
 // if "shape" is [5 x [10 x f32]], the function returns [5 x [10 x float]].
-llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module);
+// has_bf16_support is used to do elementwise BF16 math natively in platforms
+// that support it (e.g., Hopper and later).
+llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module,
+                          bool has_bf16_support = false);
 
 // Returns a value that represents a pointer to a global string constant that
 // encodes the shape as a serialized protobuf.

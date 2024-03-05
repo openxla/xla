@@ -206,8 +206,9 @@ absl::Status ScatterFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
     llvm::Value* output_address =
         outputs.back().EmitArrayElementAddress(input_window_index, builder);
     llvm::Value* input_address = llvm_ir::EmitAllocaAtFunctionEntry(
-        llvm_ir::PrimitiveTypeToIrType(updates_shape.element_type(),
-                                       ir_emitter_context.llvm_module()),
+        llvm_ir::PrimitiveTypeToIrType(
+            updates_shape.element_type(), ir_emitter_context.llvm_module(),
+            ir_emitter_context.cuda_compute_capability().IsAtLeastHopper()),
         "input_address", builder);
     TF_ASSIGN_OR_RETURN(llvm::Value* const input_ir_value, updates_gen(index));
     builder->CreateStore(input_ir_value, input_address);

@@ -1808,7 +1808,9 @@ absl::Status IrEmitterUnnested::EmitSelectAndScatter(
     // boolean flag if the value is initialized. The initialized_flag is set
     // false.
     llvm::Value* selected_value_address = llvm_ir::EmitAllocaAtFunctionEntry(
-        llvm_ir::PrimitiveTypeToIrType(operand_shape.element_type(), module_),
+        llvm_ir::PrimitiveTypeToIrType(
+            operand_shape.element_type(), module_,
+            ir_emitter_context_->cuda_compute_capability().IsAtLeastHopper()),
         "selected_value_address", &b_);
 
     llvm::AllocaInst* selected_index_address =
@@ -1895,8 +1897,10 @@ absl::Status IrEmitterUnnested::EmitSelectAndScatter(
     llvm::Value* operand_address =
         operand_array.EmitArrayElementAddress(operand_index, &b_);
     llvm::AllocaInst* select_return_buffer = llvm_ir::EmitAllocaAtFunctionEntry(
-        llvm_ir::PrimitiveTypeToIrType(PRED, module_), "select_return_buffer",
-        &b_);
+        llvm_ir::PrimitiveTypeToIrType(
+            PRED, module_,
+            ir_emitter_context_->cuda_compute_capability().IsAtLeastHopper()),
+        "select_return_buffer", &b_);
 
     const HloComputation* select_computation = instr->select();
     TF_RETURN_IF_ERROR(CallNestedComputation(
@@ -1910,7 +1914,11 @@ absl::Status IrEmitterUnnested::EmitSelectAndScatter(
     llvm::Value* cond =
         ICmpNE(result,
                llvm::ConstantInt::get(
-                   llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0),
+                   llvm_ir::PrimitiveTypeToIrType(
+                       PRED, module_,
+                       ir_emitter_context_->cuda_compute_capability()
+                           .IsAtLeastHopper()),
+                   0),
                "boolean_predicate");
     llvm_ir::LlvmIfData if_select_lhs =
         llvm_ir::EmitIfThenElse(cond, "if-select-lhs", &b_);

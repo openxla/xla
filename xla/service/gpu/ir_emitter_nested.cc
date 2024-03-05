@@ -327,9 +327,11 @@ bool MaybeEmitDirectAtomicOperation(llvm::IRBuilder<>* builder,
       computation.root_instruction()->shape().element_type();
   bool is_atomic_integral = element_type == S32 || element_type == U32 ||
                             element_type == S64 || element_type == U64;
-  llvm::Value* source =
-      builder->CreateLoad(llvm_ir::PrimitiveTypeToIrType(element_type, module),
-                          source_address, "source");
+  llvm::Value* source = builder->CreateLoad(
+      llvm_ir::PrimitiveTypeToIrType(
+          element_type, module,
+          ir_emitter_context.cuda_compute_capability().IsAtLeastHopper()),
+      source_address, "source");
 
   // Just passing along RHS -> atomic store.
   if (computation.instruction_count() == 2 &&

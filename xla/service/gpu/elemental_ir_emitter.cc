@@ -326,9 +326,12 @@ absl::StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitCbrt(
 
 absl::StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitF32ToBF16(
     llvm::Value* f32_value) {
+  auto compute_capability = ir_emitter_context_.cuda_compute_capability();
+  if (compute_capability.IsAtLeastHopper()) {
+    return FPTrunc(BitCast(f32_value, b()->getFloatTy()), b()->getBFloatTy());
+  }
   // sm_80 and up has an instruction to convert f32 into bf16.
-  if (ir_emitter_context_.cuda_compute_capability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
+  if (compute_capability.IsAtLeastAmpere()) {
     return BitCast(
         FPTrunc(BitCast(f32_value, b()->getFloatTy()), b()->getBFloatTy()),
         b()->getInt16Ty());

@@ -286,8 +286,9 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
     const KernelArgument& kernel_argument = arguments[arg_no];
     llvm::Argument& llvm_arg = *kernel->getArg(to_llvm_arg_no[arg_no]);
 
-    llvm::Type* ir_type =
-        llvm_ir::ShapeToIrType(kernel_argument.shape(), llvm_module);
+    llvm::Type* ir_type = llvm_ir::ShapeToIrType(
+        kernel_argument.shape(), llvm_module,
+        ir_emitter_context.cuda_compute_capability().IsAtLeastHopper());
     llvm_ir::IrArray ir_array(&llvm_arg, ir_type, kernel_argument.shape());
 
     if (!kernel_argument.written()) {
