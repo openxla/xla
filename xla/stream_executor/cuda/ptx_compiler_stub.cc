@@ -1,4 +1,4 @@
-/* Copyright 2019 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,11 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_STATUS_CASTERS_H_
-#define XLA_PYTHON_STATUS_CASTERS_H_
+#include <cstdint>
+#include <vector>
 
-// Forwarding header.
-// TODO(phawkins): update users to use the new header location.
-#include "xla/pjrt/status_casters.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "xla/stream_executor/gpu/gpu_asm_opts.h"
 
-#endif  // XLA_PYTHON_STATUS_CASTERS_H_
+namespace stream_executor {
+absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
+    int cc_major, int cc_minor, const char* ptx_contents, GpuAsmOpts options,
+    bool cancel_if_reg_spill) {
+  return absl::UnimplementedError(
+      "XLA was built without libnvptxcompiler support.");
+}
+}  // namespace stream_executor

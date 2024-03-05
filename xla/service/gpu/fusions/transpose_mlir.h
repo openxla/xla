@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 
+#include "absl/container/flat_hash_set.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
@@ -61,29 +62,42 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
       mlir::MLIRContext* ctx) const override;
 
  protected:
-  absl::Status EmitMlir(mlir::ModuleOp module,
-                        mlir::func::FuncOp entry_function,
-                        const HloFusionInstruction& fusion) const override;
+  absl::Status EmitEntryFunction(
+      const mlir_converter::PartitionedComputations& computations,
+      const mlir_converter::CallTargetProvider& call_targets,
+      mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion) const override;
+
+  absl::flat_hash_set<const HloInstruction*> GetInstructionsWithCustomCodegen(
+      const HloFusionInstruction& fusion) const override {
+    if (fusion.fused_expression_root()->opcode() == HloOpcode::kTuple) {
+      absl::flat_hash_set<const HloInstruction*> result{
+          shmem_transposes_.begin(), shmem_transposes_.end()};
+      // In multi-output fusion with transpose, each root epilogue will be
+      // generated separately.
+      result.insert(fusion.fused_expression_root());
+      return result;
+    }
+
+    return shmem_transposes_;
+  }
 
   absl::StatusOr<llvm::SmallVector<mlir::Value, 4>> EmitWriteToShMemMlir(
-      mlir::ImplicitLocOpBuilder& builder, mlir::ModuleOp module,
-      mlir::func::FuncOp entry_function, const HloFusionInstruction& fusion,
+      mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion,
       const mlir_converter::PartitionedComputation& root_computation,
-      mlir_converter::CallTargetProvider& call_target_provider) const;
+      const mlir_converter::CallTargetProvider& call_target_provider) const;
   absl::Status EmitReadFromShMemMlir(
-      mlir::ImplicitLocOpBuilder& builder, mlir::ModuleOp module,
-      mlir::func::FuncOp entry_function, const HloFusionInstruction& fusion,
-      mlir_converter::CallTargetProvider& call_target_provider,
-      const absl::flat_hash_set<
-          const mlir_converter::PartitionedComputation::Subgraph*>&
-          hero_subgraphs,
-      const mlir_converter::PartitionedComputation::Subgraph* root_subgraph,
+      mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion,
+      const mlir_converter::CallTargetProvider& call_target_provider,
       mlir::ValueRange shmem_tensors) const;
 
  private:
   const HloFusionAnalysis& analysis_;
   Tiling tiling_;
   Vector3 permutation_;
+  absl::flat_hash_set<const HloInstruction*> shmem_transposes_;
 };
 
 }  // namespace gpu

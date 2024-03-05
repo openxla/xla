@@ -1,4 +1,4 @@
-/* Copyright 2015 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
-#define XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
-
-#include "xla/stream_executor/platform_manager.h"
+#ifndef XLA_STREAM_EXECUTOR_CUDA_PTX_COMPILER_SUPPORT_H_
+#define XLA_STREAM_EXECUTOR_CUDA_PTX_COMPILER_SUPPORT_H_
 
 namespace stream_executor {
-// The name `MultiPlatformManager` is deprecated. Please use `PlatformManager`
-// instead and include `platform_manager.h`.
-// TODO(hebecker): A migration is to `PlatformManager` is under way.
-using MultiPlatformManager [[deprecated("Rename to PlatformManager")]] =
-    PlatformManager;
+// Returns true if XLA was built with libnvptxcompiler support. Otherwise false
+// is returned.
+bool IsLibNvPtxCompilerSupported();
 }  // namespace stream_executor
 
-#endif  // XLA_STREAM_EXECUTOR_MULTI_PLATFORM_MANAGER_H_
+#endif  // XLA_STREAM_EXECUTOR_CUDA_PTX_COMPILER_SUPPORT_H_

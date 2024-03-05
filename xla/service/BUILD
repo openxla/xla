@@ -5539,6 +5539,7 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

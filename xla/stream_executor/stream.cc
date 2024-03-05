@@ -152,26 +152,6 @@ absl::Status Stream::Initialize() {
   return absl::InternalError("failed to allocate stream during initialization");
 }
 
-Stream &Stream::Init() {
-  absl::Status status = Initialize();
-  if (!status.ok()) {
-    LOG(ERROR) << status;
-  }
-
-  return *this;
-}
-
-Stream &Stream::ThenRecordEvent(Event *event) {
-  absl::Status status = RecordEvent(event);
-  if (!status.ok()) {
-    LOG(ERROR) << "Error recording event in stream: " << status.message()
-               << "; not marking stream as bad, as the Event object may be "
-               << "at fault. Monitor for further errors.";
-  }
-
-  return *this;
-}
-
 absl::Status Stream::RecordEvent(Event *event) {
   return parent_->RecordEvent(this, event);
 }
@@ -278,12 +258,6 @@ absl::Status Stream::WaitFor(Event *event) {
   return parent_->WaitForEvent(this, event);
 }
 
-Stream &Stream::ThenMemcpy(void *host_dst, const DeviceMemoryBase &gpu_src,
-                           uint64_t size) {
-  CheckStatus(Memcpy(host_dst, gpu_src, size));
-  return *this;
-}
-
 absl::Status Stream::Memcpy(void *host_dst, const DeviceMemoryBase &gpu_src,
                             uint64_t size) {
   if (parent_->Memcpy(this, host_dst, gpu_src, size)) {
@@ -292,24 +266,12 @@ absl::Status Stream::Memcpy(void *host_dst, const DeviceMemoryBase &gpu_src,
   return absl::InternalError("failed to memcpy");
 }
 
-Stream &Stream::ThenMemcpy(DeviceMemoryBase *gpu_dst, const void *host_src,
-                           uint64_t size) {
-  CheckStatus(Memcpy(gpu_dst, host_src, size));
-  return *this;
-}
-
 absl::Status Stream::Memcpy(DeviceMemoryBase *gpu_dst, const void *host_src,
                             uint64_t size) {
   if (parent_->Memcpy(this, gpu_dst, host_src, size)) {
     return absl::OkStatus();
   }
   return absl::InternalError("failed to memcpy");
-}
-
-Stream &Stream::ThenMemcpy(DeviceMemoryBase *gpu_dst,
-                           const DeviceMemoryBase &gpu_src, uint64_t size) {
-  CheckStatus(Memcpy(gpu_dst, gpu_src, size));
-  return *this;
 }
 
 absl::Status Stream::Memcpy(DeviceMemoryBase *gpu_dst,

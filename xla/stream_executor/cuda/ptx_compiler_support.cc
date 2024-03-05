@@ -1,4 +1,4 @@
-/* Copyright 2020 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// We define the dialect here so that both structs and ops can refer to it.
-
-#ifndef LHLO_GPU_OPS_BASE
-#define LHLO_GPU_OPS_BASE
-
-include "mlir/IR/OpBase.td"
-
-def LmhloGpuDialect : Dialect {
-  let name = "lmhlo_gpu";
-  let cppNamespace = "::mlir::lmhlo_gpu";
-
-  let useDefaultAttributePrinterParser = 1;
-}
-
-#endif // LHLO_GPU_OPS_BASE
+namespace stream_executor {
+bool IsLibNvPtxCompilerSupported() { return LIBNVPTXCOMPILER_SUPPORT; }
+}  // namespace stream_executor
