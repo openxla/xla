@@ -207,8 +207,8 @@ absl::Status FusedMHABackwardThunk::ExecuteOnStream(
       bmm2_grad_gemm1_lhs_buffer, bmm2_grad_gemm2_rhs_buffer, d_output_buffer,
       scratch_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer, d_bmm2_rhs_buffer,
       d_s_buffer, softmax_sum_buffer, d_Q_accum_buffer, mask_buffer,
-      d_bias_buffer, fwd_output_buffer, bias_buffer, seqlen_q_buffer_,
-      seqlen_k_buffer_, params.stream, opts));
+      d_bias_buffer, fwd_output_buffer, bias_buffer, seqlen_q_buffer,
+      seqlen_k_buffer, params.stream, opts));
   if (!params.stream->ok()) {
     return Internal("FusedMHABackwardThunk::ExecuteOnStream failed.");
   }
