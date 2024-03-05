@@ -969,8 +969,7 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
       bias_shape = bias->shape();
     }
     int64_t seqlen_qk_operand_index = 3 + has_mask + has_bias;
-    bool has_seqlen_qk =
-        seqlen_qk_operand_index == instr->operand_count() - 2;
+    bool has_seqlen_qk = seqlen_qk_operand_index == instr->operand_count() - 2;
     if (has_seqlen_qk) {
       const HloInstruction* seqlen_q = instr->operand(seqlen_qk_operand_index);
       TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
