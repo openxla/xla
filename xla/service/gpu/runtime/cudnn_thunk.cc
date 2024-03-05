@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/service/gpu/runtime/cudnn_thunk.h"
+#include <utility>
 
 #include "absl/status/status.h"
 
@@ -21,10 +22,12 @@ namespace xla {
 namespace gpu {
 
 CuDnnThunk::CuDnnThunk(std::unique_ptr<se::dnn::DnnGraph> graph,
-                       int64_t plan_id, ThunkInfo thunk_info,
+                       int64_t plan_id, std::string fingerprint,
+                       ThunkInfo thunk_info,
                        absl::Span<const KernelArgument> kernel_arguments)
     : graph_(std::move(graph)),
       plan_id_(plan_id),
+      fingerprint_(std::move(fingerprint)),
       Thunk(Kind::kCuDnn, std::move(thunk_info)) {
   args_.reserve(kernel_arguments.size());
   for (const KernelArgument& kernel_argument : kernel_arguments) {
@@ -32,7 +35,20 @@ CuDnnThunk::CuDnnThunk(std::unique_ptr<se::dnn::DnnGraph> graph,
   }
 }
 
-absl::Status CuDnnThunk::InitializeImpl() {
+absl::Status CuDnnThunk::InitializeImpl(const InitializeParams& params) {
+  std::vector<uint8_t>& cache_entry =
+      params.dnn_graph_compilation_cache[fingerprint_];
+  std::string().swap(fingerprint_);
+
+  if (!cache_entry.empty()) {
+    VLOG(8) << "Compilation cache hit.";
+    TF_ASSIGN_OR_RETURN(
+        graph_,
+        params.stream->parent()->AsDnn()->DeserializeGraph(absl::string_view(
+            reinterpret_cast<char*>(cache_entry.data()), cache_entry.size())));
+    return absl::OkStatus();
+  }
+
   TF_ASSIGN_OR_RETURN(bool supported, graph_->Prepare());
   if (!supported) {
     return absl::InternalError("cuDNN graph is not supported.");
@@ -64,13 +80,15 @@ absl::Status CuDnnThunk::InitializeImpl() {
           "Support of workspace allocation is not added yet.");
     }
 
+    TF_ASSIGN_OR_RETURN(cache_entry, graph_->Serialize());
+
     return absl::OkStatus();
   }
 }
 
 absl::Status CuDnnThunk::Initialize(const InitializeParams& params) {
   absl::Status ret = absl::OkStatus();
-  absl::call_once(once_flag_, [&] { ret = InitializeImpl(); });
+  absl::call_once(once_flag_, [&] { ret = InitializeImpl(params); });
   return ret;
 }
 

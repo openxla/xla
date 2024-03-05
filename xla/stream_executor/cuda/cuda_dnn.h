@@ -63,6 +63,7 @@ class CudnnGraph : public dnn::DnnGraph {
   absl::StatusOr<bool> Prepare() override;
   // Builds single plan of the graph with given ID.
   absl::Status Build(int64_t plan_id) override;
+  absl::StatusOr<std::vector<uint8_t>> Serialize() const override;
   absl::Status Execute(Stream& stream,
                        absl::Span<DeviceMemoryBase> operands) const override;
   int64_t ExecutionPlanCount() const override {

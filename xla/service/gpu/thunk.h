@@ -288,6 +288,10 @@ class Thunk {
 
     // Collective cliques acquired based on resource requests.
     CollectiveCliques* collective_cliques = nullptr;
+
+    // <HLO computation fingerprint, serialized graph>
+    mutable absl::flat_hash_map<std::string, std::vector<uint8_t>>
+        dnn_graph_compilation_cache;
   };
 
   //===--------------------------------------------------------------------===//

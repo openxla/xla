@@ -10702,6 +10702,12 @@ absl::Status CudnnGraph::Build(const int64_t plan_id) {
   return absl::OkStatus();
 }
 
+absl::StatusOr<std::vector<uint8_t>> CudnnGraph::Serialize() const {
+  std::vector<uint8_t> data;
+  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.serialize(data));
+  return data;
+}
+
 absl::Status CudnnGraph::Execute(Stream& stream,
                                  absl::Span<DeviceMemoryBase> operands) const {
   std::unordered_map<std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>,

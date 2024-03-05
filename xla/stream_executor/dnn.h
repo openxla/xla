@@ -1258,6 +1258,7 @@ class DnnGraph {
   // true on success.
   virtual absl::StatusOr<bool> Prepare() = 0;
   virtual absl::Status Build(int64_t plan_id) = 0;
+  virtual absl::StatusOr<std::vector<uint8_t>> Serialize() const = 0;
   virtual absl::Status Execute(Stream& stream,
                                absl::Span<DeviceMemoryBase> operands) const = 0;
   virtual int64_t ExecutionPlanCount() const = 0;

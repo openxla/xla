@@ -322,7 +322,21 @@ absl::StatusOr<se::gpu::CudnnGraph> CreateGraph(
 }
 
 }  // namespace
-#endif
+
+int CuDnnFusion::GetAvailablePlanCount(const HloFusionInstruction& hlo) {
+  auto graph = CreateGraph(hlo);
+  if (!graph.ok()) {
+    return 0;
+  }
+  auto supported = graph->Prepare();
+  if (!supported.ok() || !*supported) {
+    return 0;
+  }
+  constexpr int64_t kMaxPlans = 10;
+  return std::min(graph->ExecutionPlanCount(), kMaxPlans);
+}
+
+#endif  // GOOGLE_CUDA
 
 absl::StatusOr<FusionEmissionResult> CuDnnFusion::Emit(
     IrEmitterContext& ir_emitter_context,
@@ -349,25 +363,13 @@ absl::StatusOr<FusionEmissionResult> CuDnnFusion::Emit(
   FusionEmissionResult result;
   result.thunks.emplace_back(std::make_unique<CuDnnThunk>(
       std::make_unique<se::gpu::CudnnGraph>(graph), plan_id,
+      GetComputationFingerprint(fusion.fused_instructions_computation(), {}),
       Thunk::ThunkInfo::WithProfileAnnotation(&fusion),
       kernel_arguments.args()));
   return result;
 #else
   return absl::UnimplementedError("cuDNN support requires CUDA");
-#endif
-}
-
-int CuDnnFusion::GetAvailablePlanCount(const HloFusionInstruction& hlo) {
-  auto graph = CreateGraph(hlo);
-  if (!graph.ok()) {
-    return 0;
-  }
-  auto supported = graph->Prepare();
-  if (!supported.ok() || !*supported) {
-    return 0;
-  }
-  constexpr int64_t kMaxPlans = 10;
-  return std::min(graph->ExecutionPlanCount(), kMaxPlans);
+#endif  // GOOGLE_CUDA
 }
 
 }  // namespace gpu
