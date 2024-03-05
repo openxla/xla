@@ -31,7 +31,8 @@ VectorSupportLibrary::VectorSupportLibrary(PrimitiveType primitive_type,
       b_(b),
       name_(std::move(name)) {
   scalar_type_ = llvm_ir::PrimitiveTypeToIrType(
-      primitive_type, b_->GetInsertBlock()->getModule());
+      primitive_type, b_->GetInsertBlock()->getModule(),
+      /*has_bf16_support=*/false);
   scalar_pointer_type_ = llvm::PointerType::getUnqual(scalar_type_);
   vector_type_ = llvm::VectorType::get(scalar_type_, vector_size, false);
   vector_pointer_type_ = llvm::PointerType::getUnqual(vector_type_);

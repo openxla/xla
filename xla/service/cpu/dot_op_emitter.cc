@@ -831,13 +831,15 @@ Status DotOpEmitter::EmitCallToRuntime() {
       fn_name = multi_threaded
                     ? runtime::kEigenMatMulC64SymbolName
                     : runtime::kEigenSingleThreadedMatMulC64SymbolName;
-      float_type = llvm_ir::PrimitiveTypeToIrType(C64, module);
+      float_type = llvm_ir::PrimitiveTypeToIrType(C64, module,
+                                                  /*has_bf16_support=*/false);
       break;
     case C128:
       fn_name = multi_threaded
                     ? runtime::kEigenMatMulC128SymbolName
                     : runtime::kEigenSingleThreadedMatMulC128SymbolName;
-      float_type = llvm_ir::PrimitiveTypeToIrType(C128, module);
+      float_type = llvm_ir::PrimitiveTypeToIrType(C128, module,
+                                                  /*has_bf16_support=*/false);
       break;
     case S32:
       fn_name = multi_threaded

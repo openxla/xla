@@ -733,7 +733,8 @@ Status IrEmitter::HandleSelectAndScatter(HloInstruction* select_and_scatter) {
   // Allocate space to keep the currently selected value, its index, and
   // the boolean initialized_flag, which is initially set to false.
   llvm::AllocaInst* selected_value_address = llvm_ir::EmitAllocaAtFunctionEntry(
-      llvm_ir::PrimitiveTypeToIrType(operand_element_type, module_),
+      llvm_ir::PrimitiveTypeToIrType(operand_element_type, module_,
+                                     /*has_bf16_support=*/false),
       "selected_value_address", &b_,
       MinimumAlignmentForPrimitiveType(operand_element_type));
   llvm::AllocaInst* selected_index_address =
@@ -820,7 +821,9 @@ Status IrEmitter::HandleSelectAndScatter(HloInstruction* select_and_scatter) {
   // index to the currently visiting operand.
   llvm::Value* cond = ICmpNE(
       result,
-      llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0),
+      llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(
+                                 PRED, module_, /*has_bf16_support=*/false),
+                             0),
       "boolean_predicate");
   llvm_ir::LlvmIfData if_select_lhs =
       llvm_ir::EmitIfThenElse(cond, "if-select-lhs", &b_);
@@ -1682,8 +1685,8 @@ IrEmitter::ShardedVectorType IrEmitter::CreateShardedVectorType(
       ShapeUtil::ByteSizeOfPrimitiveType(element_type);
 
   ShardedVectorType sharded_vector_type;
-  llvm::Type* element_ir_type =
-      llvm_ir::PrimitiveTypeToIrType(element_type, module_);
+  llvm::Type* element_ir_type = llvm_ir::PrimitiveTypeToIrType(
+      element_type, module_, /*has_bf16_support=*/false);
 
   for (int i = 0, e = 1 + Log2Ceiling(element_count); i < e; i++) {
     // For every power of two present in element_count, we generate one or more
@@ -2872,7 +2875,9 @@ Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
       Load(IrShapeType(
                xla_while->while_condition()->root_instruction()->shape()),
            GetBufferForGlobalCallReturnValue(*xla_while->while_condition())),
-      llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0));
+      llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(
+                                 PRED, module_, /*has_bf16_support=*/false),
+                             0));
 
   // Branches to the body or to the while exit depending on the condition.
   llvm::BasicBlock* body_bb =
@@ -3052,8 +3057,8 @@ void IrEmitter::EmitTransferElements(llvm::Value* target, llvm::Value* source,
       ShapeUtil::ByteSizeOfPrimitiveType(primitive_type);
   llvm::Align element_alignment(tsl::MathUtil::GCD<unsigned>(
       primitive_type_size, MinimumAlignmentForPrimitiveType(primitive_type)));
-  llvm::Type* primitive_llvm_type =
-      llvm_ir::PrimitiveTypeToIrType(primitive_type, module_);
+  llvm::Type* primitive_llvm_type = llvm_ir::PrimitiveTypeToIrType(
+      primitive_type, module_, /*has_bf16_support=*/false);
 
   if (element_count == 1) {
     auto* load_instruction =
@@ -3126,11 +3131,12 @@ Status IrEmitter::HandleConditional(HloInstruction* conditional) {
     llvm::LoadInst* pred_value = Load(
         GetIrArrayFor(branch_index).GetBasePointeeType(),
         GetIrArrayFor(branch_index).GetBasePointer(), "load_predicate_value");
-    llvm::Value* pred_cond =
-        ICmpNE(pred_value,
-               llvm::ConstantInt::get(
-                   llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0),
-               "boolean_predicate");
+    llvm::Value* pred_cond = ICmpNE(
+        pred_value,
+        llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(
+                                   PRED, module_, /*has_bf16_support=*/false),
+                               0),
+        "boolean_predicate");
     llvm_ir::LlvmIfData if_data =
         llvm_ir::EmitIfThenElse(pred_cond, "conditional", &b_);
 

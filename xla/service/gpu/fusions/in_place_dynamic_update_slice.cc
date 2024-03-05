@@ -52,19 +52,24 @@ absl::Status InPlaceDynamicUpdateSliceFusion::EmitKernel(
   // This condition should be enforced explicitly in the
   // 'CanEmitFusedDynamicUpdateSliceInPlaceForGpu' matcher.
   for (auto [op, output] : llvm::zip(dus_ops_, outputs)) {
-    output = output.CastToShape(op->shape(), builder);
+    output = output.CastToShape(
+        op->shape(), builder,
+        ir_emitter_context.cuda_compute_capability().IsAtLeastHopper());
   }
 
   auto* fused_computation = fusion.fused_instructions_computation();
   GpuElementalIrEmitter elemental_emitter(ir_emitter_context, builder);
   FusedIrEmitter fused_emitter(elemental_emitter);
+  bool has_bf16_support =
+      ir_emitter_context.cuda_compute_capability().IsAtLeastHopper();
   for (auto [index, input] : llvm::enumerate(inputs)) {
     auto fused_operand = fused_computation->parameter_instruction(index);
     fused_emitter.BindGenerator(
-        *fused_operand, [input = input, builder,
-                         fused_operand](const llvm_ir::IrArray::Index& index) {
-          return input.EmitReadArrayElement(index, builder,
-                                            fused_operand->name());
+        *fused_operand,
+        [input = input, builder, fused_operand,
+         has_bf16_support](const llvm_ir::IrArray::Index& index) {
+          return input.EmitReadArrayElement(
+              index, builder, fused_operand->name(), true, has_bf16_support);
         });
   }
 

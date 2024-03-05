@@ -212,7 +212,7 @@ llvm::Value* EmitBufferIndexingGEP(llvm::Value* array, llvm::Type* element_type,
 }
 
 llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
-                                  llvm::Module* module) {
+                                  llvm::Module* module, bool has_bf16_support) {
   switch (element_type) {
     case S4:
     case U4:
@@ -223,14 +223,11 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
       return llvm::Type::getInt8Ty(module->getContext());
     case S16:
     case U16:
-    case BF16:
-      // For BF16 we just need some type that is 16 bits wide so that it will
-      // take up the right amount of space in memory. LLVM does not have a BF16
-      // type (the LLVM half type is IEEE 16 bit floating point, not bfloat), so
-      // we can't map it directly to an LLVM type. We will not map a BF16
-      // addition to an addition on this type (int16_t) - this is just the type
-      // used for storage.
       return llvm::Type::getInt16Ty(module->getContext());
+    case BF16: {
+      return has_bf16_support ? llvm::Type::getBFloatTy(module->getContext())
+                              : llvm::Type::getInt16Ty(module->getContext());
+    }
     case F8E5M2:
     case F8E5M2FNUZ:
     case F8E4M3FN:
@@ -308,8 +305,10 @@ int GetSizeInBits(llvm::Type* type) {
   return bits;
 }
 
-llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module) {
-  llvm::Type* result_type = PrimitiveTypeToIrType(shape.element_type(), module);
+llvm::Type* ShapeToIrType(const Shape& shape, llvm::Module* module,
+                          bool has_bf16_support) {
+  llvm::Type* result_type =
+      PrimitiveTypeToIrType(shape.element_type(), module, has_bf16_support);
   if (shape.IsTuple()) {
     // A tuple buffer is an array of pointers.
     result_type = llvm::ArrayType::get(result_type, shape.tuple_shapes_size());
@@ -499,7 +498,8 @@ llvm::Value* EmitComparison(llvm::CmpInst::Predicate predicate,
   // comparison_result is i1, but the NVPTX codegen incorrectly lowers i1
   // arrays. So we extend it to i8 so that it's addressable.
   return b->CreateZExt(comparison_result, llvm_ir::PrimitiveTypeToIrType(
-                                              PRED, ModuleFromIRBuilder(b)));
+                                              PRED, ModuleFromIRBuilder(b),
+                                              /*has_bf16_support=*/false));
 }
 
 // Internal helper that is called from emitted code to log an int64_t value with

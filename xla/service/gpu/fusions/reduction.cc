@@ -294,7 +294,9 @@ ReductionGroupEmitter::ReductionGroupEmitter(
       Shape result_shape = OutputShape(reduce_hlo->shape(), op_result_idx);
 
       llvm::Type* element_type = llvm_ir::PrimitiveTypeToIrType(
-          result_shape.element_type(), builder->GetInsertBlock()->getModule());
+          result_shape.element_type(), builder->GetInsertBlock()->getModule(),
+          reduction_emitter.ir_emitter_context_.cuda_compute_capability()
+              .IsAtLeastHopper());
       llvm::AllocaInst* reduction_input_address =
           llvm_ir::EmitAllocaAtFunctionEntry(
               element_type, "reduction_input_address", builder);

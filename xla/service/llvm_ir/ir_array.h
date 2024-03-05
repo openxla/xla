@@ -272,8 +272,8 @@ class IrArray {
   // address points to.
   llvm::Value* EmitArrayElementAddress(
       const Index& index, llvm::IRBuilder<>* b, absl::string_view name = "",
-      bool use_linear_index = true,
-      llvm::Value** is_high_order_bits = nullptr) const;
+      bool use_linear_index = true, llvm::Value** is_high_order_bits = nullptr,
+      bool has_bf16_support = false) const;
 
   // Attach metadata this IrArray instance knows about to "instruction".
   void AnnotateLoadStoreInstructionWithMetadata(
@@ -290,7 +290,8 @@ class IrArray {
   // available) or the multi-dimensional index should be used.
   llvm::Value* EmitReadArrayElement(const Index& index, llvm::IRBuilder<>* b,
                                     absl::string_view name = "",
-                                    bool use_linear_index = true) const;
+                                    bool use_linear_index = true,
+                                    bool has_bf16_support = false) const;
 
   // Emit IR to write the given value to the array element at the given index.
   // 'use_linear_index' can be used to specify whether the linear index (if
@@ -301,14 +302,15 @@ class IrArray {
   // written back. To avoid race conditions, the caller must ensure that the two
   // different 4-bit values within a byte are not written to in parallel.
   void EmitWriteArrayElement(const Index& index, llvm::Value* value,
-                             llvm::IRBuilder<>* b,
-                             bool use_linear_index = true) const;
+                             llvm::IRBuilder<>* b, bool use_linear_index = true,
+                             bool has_bf16_support = false) const;
 
   // Returns a new IrArray whose shape is "new_shape" and base pointer is a
   // bitcast of the base pointer of "this" IrArray.
   // 'use_linear_index' can be used to specify whether the linear index (if
   // available) or the multi-dimensional index should be used.
-  IrArray CastToShape(const Shape& new_shape, llvm::IRBuilder<>* b) const;
+  IrArray CastToShape(const Shape& new_shape, llvm::IRBuilder<>* b,
+                      bool has_bf16_support = false) const;
 
   void AddAliasScopeMetadata(llvm::MDNode* alias_scope) {
     CHECK_NE(alias_scope, nullptr);
@@ -361,7 +363,8 @@ class IrArray {
   // Like EmitArrayElementAddress, but always uses a linear index.
   llvm::Value* EmitLinearArrayElementAddress(
       const Index& index, llvm::IRBuilder<>* b, absl::string_view name = "",
-      llvm::Value** is_high_order_bits = nullptr) const;
+      llvm::Value** is_high_order_bits = nullptr,
+      bool has_bf16_support = false) const;
 
   // Address of the base of the array as an LLVM Value.
   llvm::Value* base_ptr_;

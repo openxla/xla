@@ -172,8 +172,9 @@ absl::Status TransposeFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
     auto* module = ir_emitter_context.llvm_module();
     tiles[tr.instr] = llvm_ir::AllocateSharedMemoryTile(
         module,
-        llvm_ir::PrimitiveTypeToIrType(tr.instr->shape().element_type(),
-                                       module),
+        llvm_ir::PrimitiveTypeToIrType(
+            tr.instr->shape().element_type(), module,
+            ir_emitter_context.cuda_compute_capability().IsAtLeastHopper()),
         tile_size, absl::StrCat("tr_tile_", tile_idx));
   }
 

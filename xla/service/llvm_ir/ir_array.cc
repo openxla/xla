@@ -486,9 +486,12 @@ llvm::Value* IrArray::Index::Linearize(
   return logical_linear_index;
 }
 
-llvm::Value* IrArray::EmitArrayElementAddress(
-    const IrArray::Index& index, llvm::IRBuilder<>* b, absl::string_view name,
-    bool use_linear_index, llvm::Value** is_high_order_bits) const {
+llvm::Value* IrArray::EmitArrayElementAddress(const IrArray::Index& index,
+                                              llvm::IRBuilder<>* b,
+                                              absl::string_view name,
+                                              bool use_linear_index,
+                                              llvm::Value** is_high_order_bits,
+                                              bool has_bf16_support) const {
   if (ShapeUtil::IsScalar(shape_)) {
     if (primitive_util::Is4BitType(shape_.element_type())) {
       CHECK_NE(is_high_order_bits, nullptr);
@@ -505,7 +508,8 @@ llvm::Value* IrArray::EmitArrayElementAddress(
       << " is not compatible with " << shape_.ToString(true);
 
   if (use_linear_index && index.LinearValidOnShape(shape_)) {
-    return EmitLinearArrayElementAddress(index, b, name, is_high_order_bits);
+    return EmitLinearArrayElementAddress(index, b, name, is_high_order_bits,
+                                         has_bf16_support);
   }
 
   if (primitive_util::Is4BitType(shape_.element_type())) {
@@ -522,7 +526,7 @@ llvm::Value* IrArray::EmitArrayElementAddress(
       linear_index = IrArray::Index(linearized, shape_, b);
     }
     return EmitLinearArrayElementAddress(linear_index, b, name,
-                                         is_high_order_bits);
+                                         is_high_order_bits, has_bf16_support);
   }
 
   std::vector<llvm::Value*> actual_index;
@@ -553,10 +557,11 @@ llvm::Value* IrArray::EmitArrayElementAddress(
 
 llvm::Value* IrArray::EmitLinearArrayElementAddress(
     const IrArray::Index& index, llvm::IRBuilder<>* b, absl::string_view name,
-    llvm::Value** is_high_order_bits) const {
+    llvm::Value** is_high_order_bits, bool has_bf16_support) const {
   CHECK(index.LinearValidOnShape(shape_));
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
-  llvm::Type* type = PrimitiveTypeToIrType(shape_.element_type(), module);
+  llvm::Type* type =
+      PrimitiveTypeToIrType(shape_.element_type(), module, has_bf16_support);
   if (!primitive_util::Is4BitType(shape_.element_type())) {
     auto linear_index = llvm::dyn_cast<llvm::BinaryOperator>(index.linear());
     if (linear_index && (linear_index->getOpcode() == llvm::Instruction::Add)) {
@@ -603,10 +608,11 @@ void IrArray::AnnotateLoadStoreInstructionWithMetadata(
 llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
                                            llvm::IRBuilder<>* b,
                                            absl::string_view name,
-                                           bool use_linear_index) const {
+                                           bool use_linear_index,
+                                           bool has_bf16_support) const {
   llvm::Value* is_high_order_bits = nullptr;
   llvm::Value* element_address = EmitArrayElementAddress(
-      index, b, name, use_linear_index, &is_high_order_bits);
+      index, b, name, use_linear_index, &is_high_order_bits, has_bf16_support);
   llvm::Type* load_type = primitive_util::Is4BitType(shape_.element_type())
                               ? b->getInt8Ty()
                               : element_type_;
@@ -624,11 +630,11 @@ llvm::Value* IrArray::EmitReadArrayElement(const Index& index,
 }
 
 void IrArray::EmitWriteArrayElement(const Index& index, llvm::Value* value,
-                                    llvm::IRBuilder<>* b,
-                                    bool use_linear_index) const {
+                                    llvm::IRBuilder<>* b, bool use_linear_index,
+                                    bool has_bf16_support) const {
   llvm::Value* is_high_order_bits = nullptr;
   llvm::Value* element_address = EmitArrayElementAddress(
-      index, b, "", use_linear_index, &is_high_order_bits);
+      index, b, "", use_linear_index, &is_high_order_bits, has_bf16_support);
   if (primitive_util::Is4BitType(shape_.element_type())) {
     // Read a byte, replace the high-order or low-order bits with 'value',
     // and write it back.
@@ -656,12 +662,13 @@ void IrArray::EmitWriteArrayElement(const Index& index, llvm::Value* value,
   AnnotateLoadStoreInstructionWithMetadata(store);
 }
 
-IrArray IrArray::CastToShape(const Shape& new_shape,
-                             llvm::IRBuilder<>* b) const {
+IrArray IrArray::CastToShape(const Shape& new_shape, llvm::IRBuilder<>* b,
+                             bool has_bf16_support) const {
   if (shape_ == new_shape) return *this;
 
   llvm::Module* module = b->GetInsertBlock()->getParent()->getParent();
-  llvm::Type* new_ir_type = llvm_ir::ShapeToIrType(new_shape, module);
+  llvm::Type* new_ir_type =
+      llvm_ir::ShapeToIrType(new_shape, module, has_bf16_support);
   IrArray new_irarray(base_ptr_, new_ir_type, new_shape);
   new_irarray.metadata_ = metadata_;
   return new_irarray;
