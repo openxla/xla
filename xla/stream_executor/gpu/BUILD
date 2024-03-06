@@ -318,10 +318,24 @@ gpu_only_cc_library(
 )
 
 gpu_only_cc_library(
+    name = "gpu_timer_kernel_header",
+    hdrs = ["gpu_timer_kernel.h"],
+)
+
+gpu_kernel_library(
+    name = "gpu_timer_kernel",
+    srcs = if_gpu_is_configured(["gpu_timer_kernel.cu.cc"]),
+    deps = [
+        ":gpu_timer_kernel_header",
+    ],
+)
+
+gpu_only_cc_library(
     name = "gpu_timer_header",
     hdrs = ["gpu_timer.h"],
     deps = [
         ":gpu_executor_header",
+        ":gpu_timer_kernel_header",
         ":gpu_types_header",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/time",
@@ -336,6 +350,7 @@ gpu_only_cc_library(
         ":gpu_driver_header",
         ":gpu_executor_header",
         ":gpu_stream",
+        ":gpu_timer_kernel",
         ":gpu_types_header",
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_internal",
