@@ -89,7 +89,7 @@ docker exec xla bazel \
         $RBE_FLAGS \
         --nobuild_tests_only \
         $ADDITIONAL_FLAGS \
-        -- //xla/... //build_tools/...
+        -- //xla/... //build_tools/... @tsl//tsl/... -@tsl//tsl/platform:subprocess_test -@tsl//tsl/platform/cloud:google_auth_provider_test -@tsl//tsl/platform/cloud:oauth_client_test
 
 
 # Print build time statistics, including critical path.
