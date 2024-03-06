@@ -33,7 +33,7 @@ namespace xla {
 namespace gpu {
 
 absl::StatusOr<bool> CudnnSupportsOptimizedIntegerConvolution(
-    const se::CudaComputeCapability& compute_capability,
+    const se::GpuComputeCapability& compute_capability,
     HloCustomCallInstruction& conv, int vector_size) {
   TF_ASSIGN_OR_RETURN(auto kind, GetCudnnConvKind(&conv));
   const Shape& input_shape = conv.operand(0)->shape();
@@ -50,9 +50,11 @@ absl::StatusOr<bool> CudnnSupportsOptimizedIntegerConvolution(
 
   // Require cc6.1+ for any vectorized integer convolutions
   // Require cc7.5+ for any IMMA convolutions
-  if ((vector_size == 32 && !compute_capability.IsAtLeast(7, 5)) ||
-      !compute_capability.IsAtLeast(6, 1)) {
-    VLOG(3) << "Compute capability " << compute_capability.ToString()
+  bool isCUDA = std::holds_alternative<se::CudaComputeCapability>(compute_capability);
+  auto cuda_compute_capability = std::get<se::CudaComputeCapability>(compute_capability);
+  if ((vector_size == 32 && !cuda_compute_capability.IsAtLeast(7, 5)) ||
+      !cuda_compute_capability.IsAtLeast(6, 1)) {
+    VLOG(3) << "Compute capability " << cuda_compute_capability.ToString()
             << " is not sufficent for int8x" << vector_size
             << " vectorization.";
     return false;

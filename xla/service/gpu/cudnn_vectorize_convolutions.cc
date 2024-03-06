@@ -335,7 +335,7 @@ absl::Status ReorderInt8NchwVect(HloCustomCallInstruction* conv,
 // (The dimensions can appear in any order; which is N/C/etc is determined by
 // the convolutions' dnums.)
 static absl::StatusOr<bool> TryRevectorizeConv(
-    const se::CudaComputeCapability& compute_capability,
+    const se::GpuComputeCapability& compute_capability,
     const se::dnn::VersionInfo& cudnn_version, HloCustomCallInstruction* conv,
     int vect_size) {
   const Shape& input_shape = conv->operand(0)->shape();
@@ -496,7 +496,7 @@ static absl::StatusOr<bool> TryRevectorizeConv(
 // This requires that C be a multiple of vect_size.  CudnnPadForConvolutions can
 // add padding to make this true.
 static absl::StatusOr<bool> TryVectorizeConv(
-    const se::CudaComputeCapability& compute_capability,
+    const se::GpuComputeCapability& compute_capability,
     const se::dnn::VersionInfo& cudnn_version, HloCustomCallInstruction* conv,
     int64_t vect_size) {
   const Shape& input_shape = conv->operand(0)->shape();
@@ -625,7 +625,10 @@ absl::StatusOr<bool> CudnnVectorizeConvolutions::Run(
       // Try to (re)vectorize to int8x32 if this is an sm75+ GPU.  If we can't,
       // fall back to int8x4.
       bool local_changed = false;
-      if (compute_capability_.IsAtLeast(7, 5)) {
+      auto *ccc = std::get_if<se::CudaComputeCapability>(&compute_capability_);
+      bool isSM75_and_later = false;
+      if (ccc) isSM75_and_later = ccc->IsAtLeast(7, 5);
+      if (isSM75_and_later || se::isROCm(compute_capability_)) {
         TF_ASSIGN_OR_RETURN(
             local_changed,
             TryRevectorizeConv(compute_capability_, cudnn_version_, conv, 32));

@@ -315,7 +315,7 @@ static absl::StatusOr<bool> TryResolvePaddedShapesForTensorCore(
 // Adds padding to cudnn integer convolutions to make input and output feature
 // maps multiples of pad_to (usually 4 or 32).
 absl::StatusOr<bool> TryResolvePaddedShapesForIntegerConvolution(
-    int pad_to, const se::CudaComputeCapability& compute_capability,
+    int pad_to, const se::GpuComputeCapability& compute_capability,
     HloCustomCallInstruction* conv, std::vector<Shape>* new_input_shapes_ptr,
     Shape* new_result_shape_ptr) {
   TF_ASSIGN_OR_RETURN(auto kind, GetCudnnConvKind(conv));
@@ -490,13 +490,16 @@ absl::StatusOr<bool> CudnnPadForConvolutions::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
+  auto *ccc = std::get_if<se::CudaComputeCapability>(&compute_capability_);
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloCustomCallInstruction* conv : GetRelevantConvs(comp)) {
       // On Turing and later (sm75+), pad to multiples of 32 bytes if possible,
       // because that lets us use the fast int8x32 data type.
       bool local_changed = false;
-      if (compute_capability_.IsAtLeast(7, 5)) {
+      bool isSM75_and_later = false;
+      if (ccc) isSM75_and_later = ccc->IsAtLeast(7, 5);
+      if (isSM75_and_later || se::isROCm(compute_capability_)) {
         TF_ASSIGN_OR_RETURN(
             local_changed,
             ResolveAndPad(conv, absl::bind_front(
@@ -512,7 +515,9 @@ absl::StatusOr<bool> CudnnPadForConvolutions::Run(
       }
       changed |= local_changed;
     }
-    if (compute_capability_.IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+    bool isVOLTA = false;
+    if (ccc) isVOLTA = ccc->IsAtLeast(se::CudaComputeCapability::VOLTA);
+    if (isVOLTA || se::isROCm(compute_capability_)) {
       for (HloCustomCallInstruction* conv : GetRelevantConvs(comp)) {
         TF_ASSIGN_OR_RETURN(
             bool local_changed,
