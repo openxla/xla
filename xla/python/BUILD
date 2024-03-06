@@ -190,6 +190,7 @@ cc_library(
         "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/python/ifrt",
@@ -197,10 +198,14 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@nanobind",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -583,7 +588,9 @@ cc_library(
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/pjrt:status_casters",
         "@tsl//tsl/platform:errors",
-        "@pybind11",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@nanobind",
     ],
 )
 
@@ -598,6 +605,8 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_absl_span",
+        ":nb_helpers",
         ":types",
         # placeholder for index annotation deps
         "@com_google_absl//absl/types:span",
@@ -614,7 +623,7 @@ cc_library(
         "//xla/client/lib:sorting",
         "//xla/client/lib:svd",
         "//xla/pjrt:status_casters",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
@@ -744,11 +753,16 @@ cc_library(
         ":types",
         # placeholder for index annotation deps
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "//xla:literal",
         "//xla/client:executable_build_options",
         "//xla/client:xla_builder",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
+        "@tsl//tsl/platform:logging",
+        "@nanobind",
         "@pybind11",
     ],
 )
@@ -815,8 +829,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":refine_polymorphic_shapes",
-        ":types",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/status:statusor",
         "//xla:status",
         "//xla/client:xla_computation",
         "//xla/mlir/utils:error_util",
@@ -835,7 +849,8 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SparseTensorDialect",
-        "@pybind11",
+        "@llvm-project//mlir:Support",
+        "@nanobind",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
@@ -982,6 +997,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_absl_span",
+        ":nb_helpers",
+        ":nb_numpy",
         ":py_client",
         ":types",
         # placeholder for index annotation deps
@@ -993,6 +1011,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "//xla:array",
         "//xla:debug_options_flags",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
@@ -1007,6 +1026,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/pjrt:exceptions",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:status_casters",
         "//xla/service:call_inliner",
         "//xla/service:computation_placer",
@@ -1021,6 +1041,8 @@ cc_library(
         "//xla/service:name_uniquer",
         "//xla/service:tuple_simplifier",
         "@tsl//tsl/lib/strings:proto_serialization",
+        "@tsl//tsl/platform:logging",
+        "@nanobind",
         "@pybind11",
     ],
 )
@@ -1265,6 +1287,7 @@ cc_library(
     name = "nb_helpers",
     srcs = ["nb_helpers.cc"],
     hdrs = ["nb_helpers.h"],
+    compatible_with = [],
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
@@ -1285,5 +1308,17 @@ cc_library(
         "@local_config_python//:python_headers",
         "@nanobind",
         "@tsl//tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "nb_absl_span",
+    hdrs = ["nb_absl_span.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
     ],
 )
