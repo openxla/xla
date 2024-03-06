@@ -4663,6 +4663,7 @@ cc_library(
         ":backend_configs_cc",
         ":cublas_cudnn",
         ":matmul_utils",
+        ":stream_executor_util",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
