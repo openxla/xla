@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/const_init.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/nvPTXCompiler.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
@@ -110,9 +112,15 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
                     std::back_inserter(cmdline_options_ptrs),
                     [](const std::string& s) { return s.c_str(); });
 
-  nvPTXCompileResult compile_result =
-      nvPTXCompilerCompile(compiler_handle, cmdline_options_ptrs.size(),
-                           cmdline_options_ptrs.data());
+  static absl::Mutex mutex(absl::kConstInit);
+  nvPTXCompileResult compile_result = [&] {
+    // nvPTXCompilerCompile can cause a crash when called from multiple
+    // threads at the same time. As a work around we guard the calls with a
+    // mutex.
+    absl::MutexLock lock(&mutex);
+    return nvPTXCompilerCompile(compiler_handle, cmdline_options_ptrs.size(),
+                                cmdline_options_ptrs.data());
+  }();
 
   if (compile_result != NVPTXCOMPILE_SUCCESS) {
     size_t error_log_size{};
