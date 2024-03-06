@@ -23,4 +23,4 @@ void* kernel();  // returns a pointer to a CUDA C++ device function
 }  // namespace delay_kernel
 }  // namespace stream_executor::gpu
 
-#endif
+#endif  // XLA_STREAM_EXECUTOR_GPU_GPU_TIMER_KERNEL_H_
