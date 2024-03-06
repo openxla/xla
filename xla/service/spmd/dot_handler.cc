@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal_util.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/service/spmd/convolution_handler.h"
@@ -978,8 +977,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
   body_name += (einsum_config.is_ag_einsum) ? "_ag" : "_rs";
   SpmdBuilder body_b(body_name, original_hlo);
 
-  bool use_multi_streamed_dots =
-      module->config().debug_options().xla_gpu_multi_streamed_windowed_einsum();
   // Generate partial results used by bidirectional algorithm.
   auto get_partial_bid_results =
       [&](HloInstruction* l, HloInstruction* r, HloInstruction* o,
@@ -1354,10 +1351,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
   };
 
   // Generate partial result used by unidirectional algorithm.
-  auto get_partial_unid_result = [&](HloInstruction* l, HloInstruction* r,
-                                     HloInstruction* o, HloInstruction* i,
-                                     int64_t queue_id =
-                                         0) -> absl::StatusOr<HloInstruction*> {
+  auto get_partial_unid_result =
+      [&](HloInstruction* l, HloInstruction* r, HloInstruction* o,
+          HloInstruction* i) -> absl::StatusOr<HloInstruction*> {
     auto partition_id =
         lhs.state().collective_ops_creator.create_partition_id(&body_b);
     auto data_partition_id = body_b.AddInstruction(HloInstruction::CreateBinary(
@@ -1408,16 +1404,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       o = body_b.AddInstruction(HloInstruction::CreateDynamicUpdateSlice(
           o->shape(), o, dot, offsets));
     }
-    if (queue_id > 0) {
-      // Dispatch the dot to additional compute stream.
-      auto dot_gpu_config = dot->backend_config<xla::gpu::GpuBackendConfig>();
-      auto o_gpu_config = o->backend_config<xla::gpu::GpuBackendConfig>();
-      dot_gpu_config->set_operation_queue_id(queue_id);
-      o_gpu_config->mutable_wait_on_operation_queues()->Add(queue_id);
-      TF_CHECK_OK(dot->set_backend_config(dot_gpu_config.value()));
-      TF_CHECK_OK(o->set_backend_config(o_gpu_config.value()));
-    }
-
     return o;
   };
 
@@ -1527,11 +1513,6 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         {second_next_l, second_next_r, o, next_cw_cp_output, i}));
 
   } else if (options.unroll_windowed_einsum && num_partitions % 2 == 0) {
-    // If using multiple streams, then assign a different queue id.
-    // Use the channel id generator to ensure uniqueness.
-    int64_t queue_id =
-        use_multi_streamed_dots ? hlo_query::NextChannelId(*module) : 0;
-
     if (operands_sharded_at_contracting_dims) {
       std::vector<std::pair<int64_t, int64_t>> output_sd_pairs(num_partitions);
       for (int64_t source = 0; source < num_partitions; ++source) {
@@ -1545,8 +1526,8 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
                   &body_b, o, output_sd_pairs,
                   (*lhs.state().next_channel_id)++);
 
-      TF_ASSIGN_OR_RETURN(
-          extra_inout, get_partial_unid_result(l, r, extra_inout, i, queue_id));
+      TF_ASSIGN_OR_RETURN(extra_inout,
+                          get_partial_unid_result(l, r, extra_inout, i));
 
       extra_inout =
           lhs.state()
@@ -1589,7 +1570,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
       } else {
         next_r = cp_output;
       }
-      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, i, queue_id));
+      TF_ASSIGN_OR_RETURN(o, get_partial_unid_result(l, r, o, i));
 
       // ++i
       i = body_b.AddInstruction(HloInstruction::CreateBinary(

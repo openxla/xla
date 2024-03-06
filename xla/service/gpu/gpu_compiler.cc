@@ -154,6 +154,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/move_copy_to_users.h"
 #include "xla/service/gpu/prepare_hlo_for_ir_emitting_pipeline.h"
+#include "xla/service/gpu/gpu_windowed_einsum_handler.h"
 #include "xla/service/gpu/reduction_degenerate_dim_remover.h"
 #include "xla/service/gpu/reduction_dimension_grouper.h"
 #include "xla/service/gpu/reduction_layout_normalizer.h"
@@ -705,6 +706,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
   {
     HloPassPipeline pipeline("optimization");
     AddHloVerifier(&pipeline);
+    if (hlo_module->config()
+            .debug_options()
+            .xla_gpu_multi_streamed_windowed_einsum()) {
+      pipeline.AddPass<GpuWindowedEinsumHandler>();
+    }
     pipeline.AddPass<TopKSplitter>();
     pipeline.AddPass<TopkSpecializer>();
     pipeline.AddPass<TopkDecomposer>();

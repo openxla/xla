@@ -3526,6 +3526,7 @@ cc_library(
         ":gpu_reduce_scatter_creator",
         ":gpu_sanitize_constant_names",
         ":gpu_scatter_expander",
+        ":gpu_windowed_einsum_handler",
         ":hlo_fusion_stats",
         ":horizontal_input_fusion",
         ":horizontal_loop_fusion",
@@ -5734,6 +5735,7 @@ cc_library(
     ],
 )
 
+cc_library(
     name = "stream_attribute_annotator",
     srcs = ["stream_attribute_annotator.cc"],
     hdrs = ["stream_attribute_annotator.h"],
@@ -5774,6 +5776,7 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
     name = "stream_attribute_annotator_test",
     srcs = ["stream_attribute_annotator_test.cc"],
     deps = [
@@ -5828,6 +5831,55 @@ xla_cc_test(
     deps = [
         ":backend_configs_cc",
         ":stream_attribute_async_wrapper",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "gpu_windowed_einsum_handler",
+    srcs = ["gpu_windowed_einsum_handler.cc"],
+    hdrs = ["gpu_windowed_einsum_handler.h"],
+    deps = [
+        ":backend_configs_cc",
+        "//xla:status",
+        "//xla:statusor",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_windowed_einsum_handler_test",
+    srcs = ["gpu_windowed_einsum_handler_test.cc"],
+    deps = [
+        ":backend_configs_cc",
+        ":gpu_windowed_einsum_handler",
         "//xla:status",
         "//xla:statusor",
         "//xla:util",

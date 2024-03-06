@@ -27,7 +27,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/sharding_format_picker.h"
@@ -54,8 +53,7 @@ class SpmdPartitioningTest
       bool choose_faster_windowed_einsum = false,
       bool unroll_windowed_einsum = false,
       bool bidirectional_windowed_einsum = false,
-      int64_t threshold_for_windowed_einsum_mib = -1,
-      bool use_multiple_streams_for_windowed_einsum = false) {
+      int64_t threshold_for_windowed_einsum_mib = -1) {
     // Some tests (BackpropFilter convs) set this flag false to test two
     // different paths of the implementation.
     SpmdPartitionerOptions options;
@@ -78,11 +76,6 @@ class SpmdPartitioningTest
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_use_spmd_partitioning(true);
     config.set_num_partitions(num_devices);
-    DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_multi_streamed_windowed_einsum(
-        use_multiple_streams_for_windowed_einsum);
-    config.set_debug_options(debug_options);
-
     TF_ASSIGN_OR_RETURN(auto module,
                         ParseAndReturnVerifiedModule(hlo_module, config));
 
@@ -125,16 +118,6 @@ class SpmdPartitioningTest
     }
   }
 };
-
-std::vector<HloInstruction*> GetAllGemms(HloComputation* comp) {
-  std::vector<HloInstruction*> all_gemms;
-  for (auto inst : comp->instructions()) {
-    if (inst->opcode() == HloOpcode::kDot) {
-      all_gemms.push_back(inst);
-    }
-  }
-  return all_gemms;
-}
 
 std::string TestParamToString(
     const ::testing::TestParamInfo<ShardingFormatPicker::ShardingType>& data) {
@@ -4536,233 +4519,6 @@ ENTRY entry {
               op::Tuple(op::GetTupleElement(op::Parameter(0)),
                         op::GetTupleElement(op::Parameter(0)), cond_op,
                         op::GetTupleElement(op::Parameter(0)), next_i));
-}
-
-TEST_P(SpmdPartitioningTest,
-       UnrolledWindowedEinsumTwoContractingDimsRhsReshard2Partition) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %p0 = f32[4096,2,3264]{2,1,0} parameter(0), sharding={devices=[1,1,2]0,1}
-  %p1 = f32[2,3264,2176]{2,1,0} parameter(1), sharding={devices=[2,1,1]0,1}
-  ROOT %dot.224 = f32[4096,2176]{1,0} dot(f32[4096,2,3264]{2,1,0} %p0, f32[2,3264,2176]{2,1,0} %p1), lhs_contracting_dims={1,2}, rhs_contracting_dims={0,1}, sharding={devices=[1,2]0,1}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/2,
-                           /*conv_halo_exchange_always_on_lhs=*/true,
-                           /*choose_faster_windowed_einsum=*/false,
-                           /*unroll_windowed_einsum=*/true,
-                           /*bidirectional_windowed_einsum=*/false,
-                           /*threshold_for_windowed_einsum_mib=*/0,
-                           /*use_multiple_streams_for_windowed_einsum=*/true));
-  VLOG(1) << module->ToString();
-
-  // Check while op.
-  const auto arg0 = AllOf(op::Parameter(0), op::Shape("f32[4096,2,1632]"));
-  const auto arg1 = AllOf(
-      op::Reshape(op::Transpose(op::AllToAll(op::Reshape(op::Parameter(1))))),
-      op::Shape("f32[2,1632,2176]"));
-
-  const auto while_op =
-      AllOf(op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
-                                op::Constant())),
-            op::Shape("(f32[4096,2,1632]{2,1,0}, f32[2,1632,2176]{2,1,0},"
-                      " f32[4096,1088]{1,0}, f32[4096,1088]{1,0}, u32[])"));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, AllOf(op::Add(op::CollectivePermute(),
-                                  op::GetTupleElement(while_op)),
-                          op::Shape("f32[4096,1088]")));
-
-  // Check while op body.
-  const auto while_loop = root->operand(1)->operand(0);
-  std::vector<HloInstruction*> all_gemms =
-      GetAllGemms(while_loop->while_body());
-  EXPECT_EQ(all_gemms.size(), 2);
-  EXPECT_NE(all_gemms[0]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id(),
-            all_gemms[1]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id());
-  auto wait_on_queues = while_loop->while_body()
-                            ->root_instruction()
-                            ->operand(3)
-                            ->backend_config<xla::gpu::GpuBackendConfig>()
-                            ->wait_on_operation_queues();
-  EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
-}
-
-TEST_P(SpmdPartitioningTest,
-       UnrolledWindowedEinsumTwoContractingDimsRhsReshard4Partition) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %p0 = f32[4096,4,3264]{2,1,0} parameter(0), sharding={devices=[1,1,4]0,1,2,3}
-  %p1 = f32[4,3264,2176]{2,1,0} parameter(1), sharding={devices=[4,1,1]0,1,2,3}
-  ROOT %dot.224 = f32[4096,2176]{1,0} dot(f32[4096,4,3264]{2,1,0} %p0, f32[4,3264,2176]{2,1,0} %p1), lhs_contracting_dims={1,2}, rhs_contracting_dims={0,1}, sharding={devices=[1,4]0,1,2,3}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/4,
-                           /*conv_halo_exchange_always_on_lhs=*/true,
-                           /*choose_faster_windowed_einsum=*/false,
-                           /*unroll_windowed_einsum=*/true,
-                           /*bidirectional_windowed_einsum=*/false,
-                           /*threshold_for_windowed_einsum_mib=*/0,
-                           /*use_multiple_streams_for_windowed_einsum=*/true));
-  VLOG(1) << module->ToString();
-  LOG(ERROR) << module->ToString();
-
-  // Check while op.
-  const auto arg0 = AllOf(op::Parameter(0), op::Shape("f32[4096,4,816]"));
-  const auto arg1 = AllOf(
-      op::Reshape(op::Transpose(op::AllToAll(op::Reshape(op::Parameter(1))))),
-      op::Shape("f32[4,816,2176]"));
-
-  const auto while_op =
-      AllOf(op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
-                                op::Constant())),
-            op::Shape("(f32[4096,4,816]{2,1,0}, f32[4,816,2176]{2,1,0},"
-                      " f32[4096,544]{1,0}, f32[4096,544]{1,0}, u32[])"));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, AllOf(op::Add(op::CollectivePermute(),
-                                  op::GetTupleElement(while_op)),
-                          op::Shape("f32[4096,544]")));
-
-  // Check while op body.
-  const auto while_loop = root->operand(1)->operand(0);
-  std::vector<HloInstruction*> all_gemms =
-      GetAllGemms(while_loop->while_body());
-  EXPECT_EQ(all_gemms.size(), 2);
-  EXPECT_NE(all_gemms[0]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id(),
-            all_gemms[1]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id());
-  auto wait_on_queues = while_loop->while_body()
-                            ->root_instruction()
-                            ->operand(3)
-                            ->operand(0)
-                            ->backend_config<xla::gpu::GpuBackendConfig>()
-                            ->wait_on_operation_queues();
-  EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
-}
-
-TEST_P(SpmdPartitioningTest,
-       UnrolledWindowedEinsumTwoContractingDimsLhsReshard2Partition) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %p0 = f32[2048,2,3264]{2,1,0} parameter(0), sharding={devices=[1,1,2]0,1}
-  %p1 = f32[2,3264,2176]{2,1,0} parameter(1), sharding={devices=[2,1,1]0,1}
-  ROOT %dot.224 = f32[2048,2176]{1,0} dot(f32[2048,2,3264]{2,1,0} %p0, f32[2,3264,2176]{2,1,0} %p1), lhs_contracting_dims={1,2}, rhs_contracting_dims={0,1}, sharding={devices=[1,2]0,1}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/2,
-                           /*conv_halo_exchange_always_on_lhs=*/true,
-                           /*choose_faster_windowed_einsum=*/false,
-                           /*unroll_windowed_einsum=*/true,
-                           /*bidirectional_windowed_einsum=*/false,
-                           /*threshold_for_windowed_einsum_mib=*/0,
-                           /*use_multiple_streams_for_windowed_einsum=*/true));
-  // Check while op.
-  const auto arg0 = AllOf(
-      op::Reshape(op::Transpose(op::AllToAll(op::Reshape(op::Parameter(0))))),
-      op::Shape("f32[2048,1,3264]"));
-  const auto arg1 = AllOf(op::Parameter(1), op::Shape("f32[1,3264,2176]"));
-
-  const auto while_op =
-      AllOf(op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
-                                op::Constant())),
-            op::Shape("(f32[2048,1,3264]{2,1,0}, f32[1,3264,2176]{2,1,0},"
-                      " f32[2048,1088]{1,0}, f32[2048,1088]{1,0}, u32[])"));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, AllOf(op::Add(op::CollectivePermute(),
-                                  op::GetTupleElement(while_op)),
-                          op::Shape("f32[2048,1088]")));
-
-  // Check while op body.
-  const auto while_loop = root->operand(1)->operand(0);
-  std::vector<HloInstruction*> all_gemms =
-      GetAllGemms(while_loop->while_body());
-  EXPECT_EQ(all_gemms.size(), 2);
-  EXPECT_NE(all_gemms[0]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id(),
-            all_gemms[1]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id());
-  auto wait_on_queues = while_loop->while_body()
-                            ->root_instruction()
-                            ->operand(3)
-                            ->backend_config<xla::gpu::GpuBackendConfig>()
-                            ->wait_on_operation_queues();
-  EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
-}
-
-TEST_P(SpmdPartitioningTest,
-       UnrolledWindowedEinsumTwoContractingDimsLhsReshard4Partition) {
-  absl::string_view hlo_string = R"(
-HloModule module
-
-ENTRY entry {
-  %p0 = f32[2048,4,3264]{2,1,0} parameter(0), sharding={devices=[1,1,4]0,1,2,3}
-  %p1 = f32[4,3264,2176]{2,1,0} parameter(1), sharding={devices=[4,1,1]0,1,2,3}
-  ROOT %dot.224 = f32[2048,2176]{1,0} dot(f32[2048,4,3264]{2,1,0} %p0, f32[4,3264,2176]{2,1,0} %p1), lhs_contracting_dims={1,2}, rhs_contracting_dims={0,1}, sharding={devices=[1,4]0,1,2,3}
-})";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string, /*num_devices=*/4,
-                           /*conv_halo_exchange_always_on_lhs=*/true,
-                           /*choose_faster_windowed_einsum=*/false,
-                           /*unroll_windowed_einsum=*/true,
-                           /*bidirectional_windowed_einsum=*/false,
-                           /*threshold_for_windowed_einsum_mib=*/0,
-                           /*use_multiple_streams_for_windowed_einsum=*/true));
-  // Check while op.
-  const auto arg0 = AllOf(
-      op::Reshape(op::Transpose(op::AllToAll(op::Reshape(op::Parameter(0))))),
-      op::Shape("f32[2048,1,3264]"));
-  const auto arg1 = AllOf(op::Parameter(1), op::Shape("f32[1,3264,2176]"));
-
-  const auto while_op =
-      AllOf(op::While(op::Tuple(arg0, arg1, op::Broadcast(), op::Broadcast(),
-                                op::Constant())),
-            op::Shape("(f32[2048,1,3264]{2,1,0}, f32[1,3264,2176]{2,1,0},"
-                      " f32[2048,544]{1,0}, f32[2048,544]{1,0}, u32[])"));
-  const auto root = module->entry_computation()->root_instruction();
-  EXPECT_THAT(root, AllOf(op::Add(op::CollectivePermute(),
-                                  op::GetTupleElement(while_op)),
-                          op::Shape("f32[2048,544]")));
-
-  // Check while op body.
-  const auto while_loop = root->operand(1)->operand(0);
-  std::vector<HloInstruction*> all_gemms =
-      GetAllGemms(while_loop->while_body());
-  EXPECT_EQ(all_gemms.size(), 2);
-  EXPECT_NE(all_gemms[0]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id(),
-            all_gemms[1]
-                ->backend_config<xla::gpu::GpuBackendConfig>()
-                ->operation_queue_id());
-  auto wait_on_queues = while_loop->while_body()
-                            ->root_instruction()
-                            ->operand(3)
-                            ->operand(0)
-                            ->backend_config<xla::gpu::GpuBackendConfig>()
-                            ->wait_on_operation_queues();
-  EXPECT_TRUE(wait_on_queues.size() == 1 && wait_on_queues[0] == 1);
 }
 
 TEST_P(SpmdPartitioningTest, ChooseWindowedEinsumOverIncreasedMemUsageOption) {

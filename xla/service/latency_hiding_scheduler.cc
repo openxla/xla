@@ -358,9 +358,6 @@ void AsyncTracker::SetConcurrentResourceLimits(
       config_.send_recv_host_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kRecvHost)] =
       config_.send_recv_host_overlap_limit;
-  max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAsyncCompute)] =
-      config_.async_compute_overlap_limit;
-
   // Set the limits for target-defined resources
   const int64_t first_target_resource =
       AsyncTracker::GetFirstTargetDefinedResource();
@@ -394,8 +391,6 @@ absl::string_view AsyncTracker::GetResourceName(int64_t resource_type) const {
       return "kRecvHost";
     case ResourceTypeToIndex(ResourceType::kReduceScatter):
       return "kReduceScatter";
-    case ResourceTypeToIndex(ResourceType::kAsyncCompute):
-      return "kAsyncCompute";
     default:
       return "Not a valid default resource";
   }
