@@ -95,7 +95,7 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
       /*layout_sensitive=*/false,
       /*allow_mixed_precision=*/false);
 
-  // Convert upsupported bf16 convolutions to f32.
+  // Convert unsupported bf16 convolutions to f32.
   ConvBfloat16Support conv_bf16_support(
     std::get<se::RocmComputeCapability>(gpu_version));
   pipeline.AddPass<FloatNormalization>(&conv_bf16_support);
