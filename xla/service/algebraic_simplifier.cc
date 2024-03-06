@@ -8659,6 +8659,75 @@ Status AlgebraicSimplifierVisitor::HandleConvolution(
   if (swapped) {
     return OkStatus();
   }
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  bool converted_conv = false;
+  bool can_rewrite = true;
+  auto from_dtype = convolution->shape().element_type();
+  if (options_.executing_on_cpu() && from_dtype == PrimitiveType::BF16) {
+    // Under the above conditions, convolutions remain in lower (BF16)
+    // precision. To ensure the correctness of the generated LLVM IR, we cast
+    // the convolutions to higher precision. This does not compromise
+    // performance as lower floating point precision convolutions are converted
+    // to higher precision in the regular optimization pipeline.
+    if (convolution->batch_group_count() != 1 ||
+        convolution->operand(1)->opcode() == HloOpcode::kReverse) {
+      can_rewrite = false;
+    }
+    const Shape& inp_shape = convolution->operand(0)->shape();
+    const Shape& ker_shape = convolution->operand(1)->shape();
+    const Shape& out_shape = convolution->shape();
+    if (ShapeUtil::IsZeroElementArray(inp_shape) ||
+        ShapeUtil::IsZeroElementArray(ker_shape) ||
+        ShapeUtil::IsZeroElementArray(out_shape)) {
+      can_rewrite = false;
+    }
+
+    auto dims = convolution->window().dimensions().size();
+    if (dims >= 4 || dims <= 0) can_rewrite = false;
+
+    if (inp_shape.rank() != ker_shape.rank() ||
+        inp_shape.rank() != out_shape.rank()) {
+      can_rewrite = false;
+    }
+
+    for (auto it = convolution->window().dimensions().begin();
+         it != convolution->window().dimensions().end(); it++) {
+      if ((*it).padding_low() < 0 || (*it).padding_high() < 0 ||
+          (*it).stride() < 0 || (*it).base_dilation() != 1 ||
+          (*it).window_reversal()) {
+        can_rewrite = false;
+      }
+    }
+
+    auto to_dtype = PrimitiveType::F32;
+
+    std::vector<HloInstruction*> new_operands;
+    auto from_dtype_operands = convolution->operands();
+
+    std::for_each(
+        from_dtype_operands.begin(), from_dtype_operands.end(),
+        [&new_operands, &to_dtype](HloInstruction* instr) {
+          new_operands.push_back(
+              instr->AddInstruction(HloInstruction::CreateConvert(
+                  ShapeUtil::ChangeElementType(instr->shape(), to_dtype),
+                  instr)));
+        });
+
+    HloInstruction* to_conv =
+        convolution->AddInstruction(convolution->CloneWithNewOperands(
+            ShapeUtil::ChangeElementType(convolution->shape(), to_dtype),
+            new_operands));
+
+    HloInstruction* from_conv =
+        to_conv->AddInstruction(HloInstruction::CreateConvert(
+            ShapeUtil::ChangeElementType(to_conv->shape(), from_dtype),
+            to_conv));
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(convolution, from_conv));
+    convolution = to_conv;
+    converted_conv = true;
+  }
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   // Try to replace the convolution with a kDot or a kMultiply instruction.
   TF_ASSIGN_OR_RETURN(bool replaced_with_dot, SimplifyConvToDot(convolution));
   if (replaced_with_dot) {
@@ -8669,7 +8738,27 @@ Status AlgebraicSimplifierVisitor::HandleConvolution(
   if (replaced_with_multiply) {
     return OkStatus();
   }
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  // Undo changes if we can rewrite convolution to custom call
+  if (options_.executing_on_cpu() && converted_conv && can_rewrite) {
+    std::vector<HloInstruction*> new_operands;
+    auto to_dtype_operands = convolution->operands();
 
+    std::for_each(to_dtype_operands.begin(), to_dtype_operands.end(),
+                  [&new_operands](HloInstruction* instr) {
+                    new_operands.push_back(instr->mutable_operand(0));
+                  });
+
+    HloInstruction* from_conv =
+        convolution->AddInstruction(convolution->CloneWithNewOperands(
+            ShapeUtil::ChangeElementType(convolution->shape(), from_dtype),
+            new_operands));
+
+    HloInstruction* to_conv = convolution->users()[0];
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(to_conv, from_conv));
+  }
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   return OkStatus();
 }
 

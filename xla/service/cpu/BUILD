@@ -227,6 +227,7 @@ cc_library(
         ":ir_emission_utils",
         ":ir_emitter",
         ":onednn_matmul_rewriter",
+        ":onednn_convolution_rewriter",
         ":onednn_ops_rewriter",
         ":parallel_task_assignment",
         ":simple_orc_jit",
@@ -533,6 +534,7 @@ cc_library(
         ":onednn_layer_norm",
         ":onednn_matmul",
         ":onednn_softmax",
+        ":onednn_convolution",
         ":orc_jit_memory_mapper",
         ":runtime_conv2d",
         ":runtime_conv2d_acl",
@@ -1623,6 +1625,30 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_convolution",
+    srcs = ["onednn_convolution.cc"],
+    hdrs = [
+        "onednn_convolution.h",
+        "@tsl//tsl/util:onednn_util_hdrs",
+    ],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_memory_util",
+        ":runtime_lightweight_check",
+        "//xla:executable_run_options",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_layer_norm",
     srcs = ["onednn_layer_norm.cc"],
     hdrs = [
@@ -1724,6 +1750,37 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
+        "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
+    name = "onednn_convolution_rewriter",
+    srcs = ["onednn_convolution_rewriter.cc"],
+    hdrs = [
+        "onednn_convolution_rewriter.h",
+        "onednn_util.h",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":backend_config_proto_cc",
+        ":onednn_convolution",
+        ":onednn_memory_util",
+        ":onednn_util",
+        "//xla:executable_run_options",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/algorithm:container",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
     ] + mkl_deps(),
 )

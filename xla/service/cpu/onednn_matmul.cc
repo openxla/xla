@@ -100,10 +100,10 @@ dnnl::memory::desc OneDnnMatMulOptWeightsDesc(
     const Shape& output_shape, const OneDnnMatMulConfig* matmul_config) {
   auto input_md = ShapeToMemDesc(input_shape, matmul_config->transpose_a());
   auto weights_md = ShapeToMemDesc(weights_shape, matmul_config->transpose_b());
-  auto bias_md =
-      absl::c_count(matmul_config->fused_ops(), OneDnnMatMulConfig::BIAS) > 0
-          ? ShapeToMemDesc(bias_shape)
-          : dnnl::memory::desc{};
+  auto bias_md = absl::c_count(matmul_config->fusions().ops(),
+                               OneDnnFusionConfig::BIAS) > 0
+                     ? ShapeToMemDesc(bias_shape)
+                     : dnnl::memory::desc{};
   auto output_md = ShapeToMemDesc(output_shape);
 
   // extend bias rank to match result rank
@@ -211,21 +211,21 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
 
   // Currently, GELU/ReLU only fusion is supported.
   dnnl::post_ops post_ops;
-  for (auto& fused_op : matmul_config.fused_ops()) {
+  for (auto& fused_op : matmul_config.fusions().ops()) {
     switch (fused_op) {
-      case OneDnnMatMulConfig::RELU:
+      case OneDnnFusionConfig::RELU:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_relu, 0.f, 0.f);
         break;
-      case OneDnnMatMulConfig::TANH:
+      case OneDnnFusionConfig::TANH:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_tanh, 0.f, 0.f);
         break;
-      case OneDnnMatMulConfig::GELU_TANH:
+      case OneDnnFusionConfig::GELU_TANH:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_tanh, 0.f, 0.f);
         break;
-      case OneDnnMatMulConfig::GELU_ERF:
+      case OneDnnFusionConfig::GELU_ERF:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_erf, 0.f, 0.f);
         break;
-      case OneDnnMatMulConfig::BIAS: {
+      case OneDnnFusionConfig::BIAS: {
         MemrefInfo bias_minfo(args[arg_indx++]);
         bias_md = bias_minfo.GetOneDnnMemDesc();
 
@@ -239,7 +239,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
         }
         bias_mem = memory(bias_md, cpu_engine, bias_minfo.Data());
       } break;
-      case OneDnnMatMulConfig::BINARY_ADD: {
+      case OneDnnFusionConfig::BINARY_ADD: {
         MemrefInfo binary_minfo(args[arg_indx++]);
         auto binary_md = binary_minfo.GetOneDnnMemDesc();
         auto arg_idx =
@@ -248,10 +248,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
         postop_args.emplace_back(
             arg_idx, dnnl::memory(binary_md, cpu_engine, binary_minfo.Data()));
       } break;
-      case OneDnnMatMulConfig::LINEAR: {
+      case OneDnnFusionConfig::LINEAR: {
         float const_float;
         *(reinterpret_cast<int32_t*>(&const_float)) =
-            matmul_config.alpha_typecast();
+            matmul_config.fusions().alpha_typecast();
         post_ops.append_eltwise(dnnl::algorithm::eltwise_linear, const_float,
                                 0.f);
       } break;
@@ -335,7 +335,8 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
   auto output_md = output_minfo.GetOneDnnMemDesc();
 
   auto bias_md = dnnl::memory::desc{};
-  if (absl::c_count(matmul_config.fused_ops(), OneDnnMatMulConfig::BIAS) > 0) {
+  if (absl::c_count(matmul_config.fusions().ops(), OneDnnFusionConfig::BIAS) >
+      0) {
     MemrefInfo bias_minfo(args[arg_indx++]);
     bias_md = bias_minfo.GetOneDnnMemDesc();
   }

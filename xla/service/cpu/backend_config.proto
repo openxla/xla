@@ -8,14 +8,37 @@ message BackendConfig {
   // outer-most dimension first). Used by the parallel cpu backend to partition
   // HLOs into parallel tasks.
   repeated int64 outer_dimension_partitions = 1;
-  // Configuration to be used by oneDNN matmul
-  OneDnnMatMulConfig onednn_matmul_config = 2;
-  OneDnnLayerNormConfig onednn_layer_norm_config = 3;
+  oneof backend_config_oneof {
+    // Configuration to be used by oneDNN matmul
+    OneDnnMatMulConfig onednn_matmul_config = 2;
+    // Configuration to be used by oneDNN layer norm
+    OneDnnNormConfig onednn_layer_norm_config = 3;
+    // Configuration to be used by oneDNN convolution
+    OneDnnConvolutionConfig onednn_conv_config = 4;
+  }
 }
 
-message OneDnnMatMulConfig {
-  bool transpose_a = 1;
-  bool transpose_b = 2;
+message DataLayoutProto {
+  // The batch dimension of the tensor
+  uint64 batch_dim = 1;
+  // The feature dimension of the tensor
+  uint64 feature_dim = 2;
+  // The spatial dimensions of the tensor
+  repeated uint64 spatial_dims = 3; 
+}
+
+message FilterLayoutProto {
+  // The input feature dimension of the tensor
+  uint64 input_feature_dim = 1;
+  // The output feature dimension of the tensor
+  uint64 output_feature_dim = 2;
+  // The spatial dimensions of the tensor
+  repeated uint64 spatial_dims = 3;
+  // Shape of the tensor
+  repeated uint64 shape = 4; 
+}
+
+message OneDnnFusionConfig {
   // These enum needs to be mapped to oneDNN enum for post_op algorithm.
   // TODO(intel-tf): Add kinds supported by oneDNN.
   enum FusionKind {
@@ -28,21 +51,55 @@ message OneDnnMatMulConfig {
     BINARY_ADD = 6;
     LINEAR = 7;
   }
-  repeated FusionKind fused_ops = 3;
-  bool bias_broadcast = 4;
+  repeated FusionKind ops = 1;
   // To avoid protobuf failures for specific decimal values,
   // the original float value alpha is type-casted to int32.
-  int32 alpha_typecast = 5;
+  int32 alpha_typecast = 2;
 }
 
-message OneDnnLayerNormConfig {
-  // These enum needs to be mapped to oneDNN enum for post_op algorithm.
-  // TODO(intel-tf): Add kinds supported by oneDNN.
-  enum FusionKind {
+message OneDnnMatMulConfig {
+  bool transpose_a = 1;
+  bool transpose_b = 2;
+  
+  bool bias_broadcast = 3;
+  
+  OneDnnFusionConfig fusions = 4;
+}
+
+message TensorLayoutProto {
+  uint64 dims = 1;
+  oneof layout {
+    DataLayoutProto data = 2;
+    FilterLayoutProto filter = 3;
+  }
+}
+
+message WindowProto {
+  repeated uint64 size = 1;
+  repeated uint64 pad_left = 2;
+  repeated uint64 pad_right = 3;
+  repeated uint64 strides = 4;
+  repeated uint64 window_dilations = 5;
+}
+
+message OneDnnNormConfig {
+  enum ScaleAndShift {
     UNDEFINED = 0;
     SCALE = 1;
     SHIFT = 2;
     SCALE_AND_SHIFT = 3;
   }
-  FusionKind fused_ops = 1;
+  ScaleAndShift rescale = 1;
+  OneDnnFusionConfig fusions = 2;
+}
+
+message OneDnnConvolutionConfig {
+  uint64 dims = 1;
+  TensorLayoutProto input = 2;
+  TensorLayoutProto kernel = 3;
+  TensorLayoutProto output = 4;
+  WindowProto window = 5;
+  
+  OneDnnFusionConfig fusions = 6;
+  uint64 feature_groups = 7;
 }

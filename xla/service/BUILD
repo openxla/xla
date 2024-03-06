@@ -20,6 +20,7 @@ load(
     "if_rocm",
     "if_rocm_is_configured",
 )
+load("@tsl//tsl:tsl.bzl", "tf_openmp_copts", "tsl_copts")
 load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
@@ -2374,6 +2375,7 @@ cc_library(
     name = "algebraic_simplifier",
     srcs = ["algebraic_simplifier.cc"],
     hdrs = ["algebraic_simplifier.h"],
+    copts = tsl_copts(),
     deps = [
         ":hlo_cost_analysis",
         ":hlo_creation_utils",

@@ -241,6 +241,7 @@ limitations under the License.
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 #include "xla/service/cpu/cpu_float_support.h"
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
+#include "xla/service/cpu/onednn_convolution_rewriter.h"
 #include "xla/service/cpu/onednn_ops_rewriter.h"
 #endif
 
@@ -806,6 +807,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     // other platforms do, so it should be changed.
     options.set_minmax_propagate_nan(false);
     options.set_supports_non_canonical_dots(false);
+    options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<SortSimplifier>();
     pipeline.AddPass<HloDCE>();
@@ -916,6 +918,7 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.
     pipeline.AddPass<SimplifyFPConversions>();
+    pipeline.AddPass<OneDnnConvolutionRewriter>();
     pipeline.AddPass<OneDnnMatMulRewriter>(max_parallelism,
                                            compile_options.thread_pool);
     // Run SimplifyFPConversions pass again to remove redundant Convert ops
@@ -945,6 +948,7 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
     // other platforms do, so it should be changed.
     options.set_minmax_propagate_nan(false);
+    options.set_executing_on_cpu(true);
     pipeline.AddPass<AlgebraicSimplifier>(options);
     pipeline.AddPass<HloDCE>();
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);

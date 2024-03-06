@@ -316,9 +316,9 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
           instr->AddInstruction(HloInstruction::CreateCustomCall(
               prod_shape, {prod_r, scale, shift}, "__onednn$layernorm"));
       BackendConfig backend_config;
-      OneDnnLayerNormConfig* ln_config =
+      OneDnnNormConfig* ln_config =
           backend_config.mutable_onednn_layer_norm_config();
-      ln_config->set_fused_ops(OneDnnLayerNormConfig::SCALE_AND_SHIFT);
+      ln_config->set_rescale(OneDnnNormConfig::SCALE_AND_SHIFT);
       TF_RETURN_IF_ERROR(ln_call->set_backend_config(backend_config));
       TF_RETURN_IF_ERROR(ReplaceInstruction(instr, ln_call));
     }

@@ -35,6 +35,7 @@ bool CpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kDot:
       return LowPrecisionType() == BF16 &&
              OneDnnMatMulRewriter::ShouldRewrite(&hlo) && DotSupported(hlo);
+    case HloOpcode::kConvolution:
     // Data movement only ops.
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:
