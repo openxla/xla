@@ -58,6 +58,15 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:   }
     ; CHECK:     }
     )";
+  const char* fused_matmul_mul_add_str_ = R"(
+    ; CHECK:     custom_call_target="__onednn$matmul",
+    ; CHECK:       backend_config={
+    ; CHECK-DAG:     "outer_dimension_partitions":[],
+    ; CHECK-DAG:     "onednn_matmul_config":{
+    ; CHECK-DAG:       "fused_ops":["LINEAR","BINARY_ADD"]
+    ; CHECK-DAG:   }
+    ; CHECK:     }
+    )";
 };
 
 TEST_F(MatmulTest, SimpleTestF32) {
@@ -518,6 +527,31 @@ TEST_F(MatmulTest, TestF32ConstantWeights) {
   ; CHECK-NOT: custom_call_target="__onednn$matmul_reorder",
   ; CHECK:     custom-call(%{{[a-z,A-Z,0-9,\.]*}}, %constant{{[a-z,A-Z,0-9,\.]*}}), custom_call_target="__onednn$matmul",
   )");
+}
+
+TEST_F(MatmulTest, SimpleTestF32WithMulAndAddFusion) {
+  const char* matmul_module_str = R"(
+  HloModule matmul.mul.add.test.f32, entry_computation_layout={(f32[32,32,40,30]{3,2,1,0}, f32[32,32,30,40]{3,2,1,0})->f32[32,32,40,40]{3,2,1,0}}
+  ENTRY matmul.mul.add.test.f32 {
+    arg0.1 = f32[32,32,40,30]{3,2,1,0} parameter(0), parameter_replication={false}
+    arg0.2 = f32[32,32,30,40]{3,2,1,0} parameter(1), parameter_replication={false}
+    dot.7 = f32[32,32,40,40]{3,2,1,0} dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    const.0 = f32[] constant(0.044715)
+    bcast.0 = f32[32,32,40,40]{3,2,1,0} broadcast(const.0), dimensions={}
+    mul.0 = f32[32,32,40,40]{3,2,1,0} multiply(dot.7,bcast.0)
+    const.1 = f32[] constant(0.65)
+    bcast.1 = f32[32,32,40,40]{3,2,1,0} broadcast(const.1), dimensions={}
+    add.0 = f32[32,32,40,40]{3,2,1,0} add(mul.0, bcast.1)
+    const.2 = f32[] constant(0.65)
+    bcast.2 = f32[32,32,40,40]{3,2,1,0} broadcast(const.2), dimensions={}
+    add.1 = f32[32,32,40,40]{3,2,1,0} add(bcast.2, bcast.1)
+    tuple.12 = (f32[32,32,40,40]{3,2,1,0}) tuple(add.0)
+    tuple.14 = (f32[32,32,40,40]{3,2,1,0}) tuple(add.1)
+    ROOT get-tuple-element.13 = f32[32,32,40,40]{3,2,1,0} get-tuple-element(tuple.12), index=0
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_mul_add_str_);
 }
 
 }  // namespace cpu
