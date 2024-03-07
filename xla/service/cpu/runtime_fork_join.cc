@@ -97,8 +97,8 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_ParallelForkJoin(
   }
 
   // Call first compute function inline.
-  function(result_ptr, run_options_ptr, params, buffer_table, &statuses[0],
-           &partitions[0], prof_counters);
+  function(result_ptr, run_options_ptr, params, buffer_table, statuses.data(),
+           partitions, prof_counters);
   VLOG(3) << "ParallelForkJoin partition 0 done.";
   bc.Wait();
 
