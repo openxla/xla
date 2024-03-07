@@ -40,6 +40,7 @@ class CpuFloatSupport : public FloatSupport {
 
  private:
   bool IsSupported(const HloInstruction& hlo) const;
+  bool DotSupported(const HloInstruction& hlo) const;
 };
 
 }  // namespace cpu

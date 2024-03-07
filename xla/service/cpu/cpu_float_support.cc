@@ -18,6 +18,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_float_support.h"
 
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
+#include "xla/service/cpu/onednn_memory_util.h"
 
 namespace xla {
 namespace cpu {
@@ -33,7 +34,8 @@ bool CpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
     case HloOpcode::kDot:
-      return (LowPrecisionType() == BF16 || LowPrecisionType() == F16);
+      return (LowPrecisionType() == BF16 || LowPrecisionType() == F16)
+                                      && DotSupported(hlo);
     // Data movement only ops.
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:
@@ -55,6 +57,24 @@ bool CpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     default:
       return false;
   }
+}
+
+bool CpuFloatSupport::DotSupported(const HloInstruction& hlo) const {
+  const Shape& lhs_shape = hlo.operand(0)->shape();
+  const Shape& rhs_shape = hlo.operand(1)->shape();
+  const Shape& output_shape = hlo.shape();
+  // OneDNN only supports 2 <= rank <= kOneDnnMaxNDims.
+  if (lhs_shape.rank() != rhs_shape.rank() ||
+      rhs_shape.rank() != output_shape.rank() || lhs_shape.rank() < 2 ||
+      lhs_shape.rank() > kOneDnnMaxNDims) {
+    return false;
+  }
+
+  auto rank = lhs_shape.rank();
+  auto rhs_dims = rhs_shape.dimensions();
+  int64_t num_mac_ops = ShapeUtil::ElementsIn(lhs_shape) * rhs_dims.back();
+  int mac_ops_threshold = (rank == 2) ? (1 << 23) : (1 << 18);
+  return (num_mac_ops >= mac_ops_threshold);
 }
 
 }  // namespace cpu
