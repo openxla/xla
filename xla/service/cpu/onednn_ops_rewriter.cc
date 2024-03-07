@@ -174,7 +174,6 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
       *sqrd_diff_mean, *scale_node, *sqrd_diff;
 
   // First Match X*Z + Bias - Mean(X)*Z
-
   if (!Match(
           instr,
           m::Add().WithBinaryOperandsAnyOrder(
@@ -194,7 +193,7 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
   const Shape& src_shape = (*src)->shape();
   if (!IsSupportedType(src_shape.element_type())) return std::nullopt;
 
-  // get bias
+  // Get bias
   if (!Match(bias_node, m::Broadcast(m::Op(bias)))) return std::nullopt;
 
   // Match Z = scale / sqrt(variance + eps)
@@ -275,8 +274,7 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
   HloInstruction* scale_gamma = FindLayerNormScale(hinge);
   scaleFound = (scale_gamma != nullptr);
 
-  // Currently patterns without scale and shift are
-  // not supported.
+  // Currently patterns without scale and shift are not supported.
   // OneDNN only supports 2 <= rank <= 5
   if (!(prod_shape.rank() >= 2 && prod_shape.rank() <= 5) || !shiftFound ||
       !scaleFound) {
@@ -388,14 +386,12 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   Status HandleAdd(HloInstruction* instr) override {
     HloInstruction *src, *scale, *bias;
     float eps;
-    bool found_ln = false;
     bool is_bf16orfp16_convert = false;
     bool is_producer_bf16orfp16 = false;
     HloInstruction* convert_instr;
 
-    if (MatchTFKerasLayerNorm(instr, &src, &scale, &bias, &eps)) {
-      found_ln = true;
-    }
+    bool found_ln =
+        MatchTFKerasLayerNorm(instr, &src, &scale, &bias, &eps).value_or(false);
 
     if (!found_ln) {
       found_ln = MatchFlaxLayerNorm(instr, &src, &scale, &bias, &eps,

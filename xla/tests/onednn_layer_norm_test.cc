@@ -21,20 +21,29 @@ limitations under the License.
 namespace xla {
 namespace {
 
-class LayerNormTest : public HloTestBase {};
-
-TEST_F(LayerNormTest, LayerNormTest0_FP32) {
-  const char* layer_norm_module_str = R"(
-  HloModule layer_norm.test, entry_computation_layout={(f32[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->f32[84,197,768]{2,1,0}}
+class LayerNormTest : public HloTestBase {
+ protected:
+  const char* onednn_layer_norm_ =
+      R"(
+  ; CHECK:     custom_call_target="__onednn$layernorm",
+  ; CHECK:       backend_config={
+  ; CHECK-DAG:     "onednn_layer_norm_config":{
+  ; CHECK-DAG:       "fused_ops":"SCALE_AND_SHIFT"
+  ; CHECK-DAG:   }
+  ; CHECK:     }
+  )";
+  std::string common_hlo_region_ =
+      R"(
 
   region_add {
     Arg_0.7555 = f32[] parameter(0)
     Arg_1.7556 = f32[] parameter(1)
     ROOT add.7557 = f32[] add(Arg_0.7555, Arg_1.7556)
   }
+)";
 
-  ENTRY main {
-    Arg_0.1 = f32[84,197,768]{2,1,0} parameter(0), sharding={replicated}
+  std::string common_hlo_entry_computation_block_ =
+      R"(
     Arg_0.2 = f32[768]{0} parameter(1), sharding={replicated}
     Arg_0.3 = f32[768]{0} parameter(2), sharding={replicated}
 
@@ -76,162 +85,60 @@ TEST_F(LayerNormTest, LayerNormTest0_FP32) {
     broadcast.333 = f32[84,197,768]{2,1,0} broadcast(reshape.332), dimensions={0,1}
     multiply.334 = f32[84,197,768]{2,1,0} multiply(multiply.330, broadcast.333)
     subtract.337 = f32[84,197,768]{2,1,0} subtract(broadcast.336, multiply.334)
-    ROOT add.338 = f32[84,197,768]{2,1,0} add(multiply.331, subtract.337)
-  }  
 )";
+};
+
+TEST_F(LayerNormTest, LayerNormTest0_FP32) {
+  std::string layer_norm_module_str =
+      R"(HloModule layer_norm.test, entry_computation_layout={(f32[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->f32[84,197,768]{2,1,0}})" +
+      common_hlo_region_ + R"(
+  ENTRY main {
+    Arg_0.1 = f32[84,197,768]{2,1,0} parameter(0), sharding={replicated}
+        
+  )" + common_hlo_entry_computation_block_ +
+      R"(
+    ROOT add.338 = f32[84,197,768]{2,1,0} add(multiply.331, subtract.337)
+  }
+  )";
 
   EXPECT_TRUE(RunAndCompare(layer_norm_module_str, ErrorSpec{1e-4, 1e-4}));
-  MatchOptimizedHlo(layer_norm_module_str,
-                    R"(
-  ; CHECK:     custom_call_target="__onednn$layernorm",
-  ; CHECK:       backend_config={
-  ; CHECK-DAG:     "onednn_layer_norm_config":{
-  ; CHECK-DAG:       "fused_ops":"SCALE_AND_SHIFT"
-  ; CHECK-DAG:   }
-  ; CHECK:     }
-  )");
+  MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
 }
 
 TEST_F(LayerNormTest, LayerNormTest0_BF16) {
-  const char* layer_norm_module_str = R"(
-  HloModule layer_norm.test, entry_computation_layout={(bf16[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->bf16[84,197,768]{2,1,0}}
-
-  region_add {
-    Arg_0.7555 = f32[] parameter(0)
-    Arg_1.7556 = f32[] parameter(1)
-    ROOT add.7557 = f32[] add(Arg_0.7555, Arg_1.7556)
-  }
-
+  std::string layer_norm_module_str =
+      R"(HloModule layer_norm.test, entry_computation_layout={(bf16[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->bf16[84,197,768]{2,1,0}})" +
+      common_hlo_region_ + R"(
   ENTRY main {
-    Arg_0.1 = bf16[84,197,768]{2,1,0} parameter(0), sharding={replicated}
-    Arg_0.2 = f32[768]{0} parameter(1), sharding={replicated}
-    Arg_0.3 = f32[768]{0} parameter(2), sharding={replicated}
-
-    convert.289 = f32[84,197,768]{2,1,0} convert(Arg_0.1)
-    convert.290 = f32[84,197,768]{2,1,0} convert(convert.289)
-    constant.291 = f32[] constant(0)
-    convert.292 = f32[] convert(constant.291)
-    reduce.297 = f32[84,197]{1,0} reduce(convert.290, convert.292), dimensions={2}, to_apply=region_add
-    constant.298 = s32[] constant(768)
-    convert.299 = f32[] convert(constant.298)
-    broadcast.300 = f32[84,197]{1,0} broadcast(convert.299), dimensions={}
-    divide.301 = f32[84,197]{1,0} divide(reduce.297, broadcast.300)
-    convert.302 = f32[84,197]{1,0} convert(divide.301)
-    reshape.303 = f32[84,197,1]{2,1,0} reshape(convert.302)
-    reshape.304 = f32[84,197]{1,0} reshape(reshape.303)
-    broadcast.305 = f32[84,197,768]{2,1,0} broadcast(reshape.304), dimensions={0,1}
-    subtract.306 = f32[84,197,768]{2,1,0} subtract(convert.289, broadcast.305)
-    multiply.307 = f32[84,197,768]{2,1,0} multiply(subtract.306, subtract.306)
-    convert.308 = f32[84,197,768]{2,1,0} convert(multiply.307)
-    constant.309 = f32[] constant(0)
-    convert.310 = f32[] convert(constant.309)
-    reduce.315 = f32[84,197]{1,0} reduce(convert.308, convert.310), dimensions={2}, to_apply=region_add
-    constant.316 = s32[] constant(768)
-    convert.317 = f32[] convert(constant.316)
-    broadcast.318 = f32[84,197]{1,0} broadcast(convert.317), dimensions={}
-    divide.319 = f32[84,197]{1,0} divide(reduce.315, broadcast.318)
-    convert.320 = f32[84,197]{1,0} convert(divide.319)
-    reshape.321 = f32[84,197,1]{2,1,0} reshape(convert.320)
-    constant.322 = f32[] constant(1e-12)
-    broadcast.323 = f32[84,197,1]{2,1,0} broadcast(constant.322), dimensions={}
-    add.324 = f32[84,197,1]{2,1,0} add(reshape.321, broadcast.323)
-    rsqrt.325 = f32[84,197,1]{2,1,0} rsqrt(add.324)
-    reshape.328 = f32[84,197]{1,0} reshape(rsqrt.325)
-    broadcast.329 = f32[84,197,768]{2,1,0} broadcast(reshape.328), dimensions={0,1}
-    broadcast.327 = f32[84,197,768]{2,1,0} broadcast(Arg_0.2), dimensions={2}
-    multiply.330 = f32[84,197,768]{2,1,0} multiply(broadcast.329, broadcast.327)
-    multiply.331 = f32[84,197,768]{2,1,0} multiply(convert.289, multiply.330)
-    broadcast.336 = f32[84,197,768]{2,1,0} broadcast(Arg_0.3), dimensions={2}
-    reshape.332 = f32[84,197]{1,0} reshape(reshape.303)
-    broadcast.333 = f32[84,197,768]{2,1,0} broadcast(reshape.332), dimensions={0,1}
-    multiply.334 = f32[84,197,768]{2,1,0} multiply(multiply.330, broadcast.333)
-    subtract.337 = f32[84,197,768]{2,1,0} subtract(broadcast.336, multiply.334)
+    Arg_0.1.0 = bf16[84,197,768]{2,1,0} parameter(0), sharding={replicated}
+    Arg_0.1 = f32[84,197,768]{2,1,0} convert(Arg_0.1.0)
+  )" + common_hlo_entry_computation_block_ +
+      R"(
     add.338 = f32[84,197,768]{2,1,0} add(multiply.331, subtract.337)
     ROOT convert.339 = bf16[84,197,768]{2,1,0} convert(add.338)
-  }  
-)";
+  }
+  )";
 
   EXPECT_TRUE(RunAndCompare(layer_norm_module_str, ErrorSpec{1e-2, 1e-2}));
-  MatchOptimizedHlo(layer_norm_module_str,
-                    R"(
-  ; CHECK:     custom_call_target="__onednn$layernorm",
-  ; CHECK:       backend_config={
-  ; CHECK-DAG:     "onednn_layer_norm_config":{
-  ; CHECK-DAG:       "fused_ops":"SCALE_AND_SHIFT"
-  ; CHECK-DAG:   }
-  ; CHECK:     }
-  )");
+  MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
 }
 
-TEST_F(LayerNormTest, LayerNormTest0_FP16) {
-  const char* layer_norm_module_str = R"(
-  HloModule layer_norm.test, entry_computation_layout={(f16[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->f16[84,197,768]{2,1,0}}
-
-  region_add {
-    Arg_0.7555 = f32[] parameter(0)
-    Arg_1.7556 = f32[] parameter(1)
-    ROOT add.7557 = f32[] add(Arg_0.7555, Arg_1.7556)
-  }
-
+TEST_F(LayerNormTest, LayerNormTest0_F16) {
+  std::string layer_norm_module_str =
+      R"(HloModule layer_norm.test, entry_computation_layout={(f16[84,197,768]{2,1,0}, f32[768]{0}, f32[768]{0})->f16[84,197,768]{2,1,0}})" +
+      common_hlo_region_ + R"(
   ENTRY main {
-    Arg_0.1 = f16[84,197,768]{2,1,0} parameter(0), sharding={replicated}
-    Arg_0.2 = f32[768]{0} parameter(1), sharding={replicated}
-    Arg_0.3 = f32[768]{0} parameter(2), sharding={replicated}
-
-    convert.289 = f32[84,197,768]{2,1,0} convert(Arg_0.1)
-    convert.290 = f32[84,197,768]{2,1,0} convert(convert.289)
-    constant.291 = f32[] constant(0)
-    convert.292 = f32[] convert(constant.291)
-    reduce.297 = f32[84,197]{1,0} reduce(convert.290, convert.292), dimensions={2}, to_apply=region_add
-    constant.298 = s32[] constant(768)
-    convert.299 = f32[] convert(constant.298)
-    broadcast.300 = f32[84,197]{1,0} broadcast(convert.299), dimensions={}
-    divide.301 = f32[84,197]{1,0} divide(reduce.297, broadcast.300)
-    convert.302 = f32[84,197]{1,0} convert(divide.301)
-    reshape.303 = f32[84,197,1]{2,1,0} reshape(convert.302)
-    reshape.304 = f32[84,197]{1,0} reshape(reshape.303)
-    broadcast.305 = f32[84,197,768]{2,1,0} broadcast(reshape.304), dimensions={0,1}
-    subtract.306 = f32[84,197,768]{2,1,0} subtract(convert.289, broadcast.305)
-    multiply.307 = f32[84,197,768]{2,1,0} multiply(subtract.306, subtract.306)
-    convert.308 = f32[84,197,768]{2,1,0} convert(multiply.307)
-    constant.309 = f32[] constant(0)
-    convert.310 = f32[] convert(constant.309)
-    reduce.315 = f32[84,197]{1,0} reduce(convert.308, convert.310), dimensions={2}, to_apply=region_add
-    constant.316 = s32[] constant(768)
-    convert.317 = f32[] convert(constant.316)
-    broadcast.318 = f32[84,197]{1,0} broadcast(convert.317), dimensions={}
-    divide.319 = f32[84,197]{1,0} divide(reduce.315, broadcast.318)
-    convert.320 = f32[84,197]{1,0} convert(divide.319)
-    reshape.321 = f32[84,197,1]{2,1,0} reshape(convert.320)
-    constant.322 = f32[] constant(1e-12)
-    broadcast.323 = f32[84,197,1]{2,1,0} broadcast(constant.322), dimensions={}
-    add.324 = f32[84,197,1]{2,1,0} add(reshape.321, broadcast.323)
-    rsqrt.325 = f32[84,197,1]{2,1,0} rsqrt(add.324)
-    reshape.328 = f32[84,197]{1,0} reshape(rsqrt.325)
-    broadcast.329 = f32[84,197,768]{2,1,0} broadcast(reshape.328), dimensions={0,1}
-    broadcast.327 = f32[84,197,768]{2,1,0} broadcast(Arg_0.2), dimensions={2}
-    multiply.330 = f32[84,197,768]{2,1,0} multiply(broadcast.329, broadcast.327)
-    multiply.331 = f32[84,197,768]{2,1,0} multiply(convert.289, multiply.330)
-    broadcast.336 = f32[84,197,768]{2,1,0} broadcast(Arg_0.3), dimensions={2}
-    reshape.332 = f32[84,197]{1,0} reshape(reshape.303)
-    broadcast.333 = f32[84,197,768]{2,1,0} broadcast(reshape.332), dimensions={0,1}
-    multiply.334 = f32[84,197,768]{2,1,0} multiply(multiply.330, broadcast.333)
-    subtract.337 = f32[84,197,768]{2,1,0} subtract(broadcast.336, multiply.334)
+    Arg_0.1.0 = f16[84,197,768]{2,1,0} parameter(0), sharding={replicated}
+    Arg_0.1 = f32[84,197,768]{2,1,0} convert(Arg_0.1.0)
+  )" + common_hlo_entry_computation_block_ +
+      R"(
     add.338 = f32[84,197,768]{2,1,0} add(multiply.331, subtract.337)
     ROOT convert.339 = f16[84,197,768]{2,1,0} convert(add.338)
-  }  
-)";
+  }
+  )";
 
   EXPECT_TRUE(RunAndCompare(layer_norm_module_str, ErrorSpec{1e-2, 1e-2}));
-  MatchOptimizedHlo(layer_norm_module_str,
-                    R"(
-  ; CHECK:     custom_call_target="__onednn$layernorm",
-  ; CHECK:       backend_config={
-  ; CHECK-DAG:     "onednn_layer_norm_config":{
-  ; CHECK-DAG:       "fused_ops":"SCALE_AND_SHIFT"
-  ; CHECK-DAG:   }
-  ; CHECK:     }
-  )");
+  MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
 }
 
 }  // namespace
