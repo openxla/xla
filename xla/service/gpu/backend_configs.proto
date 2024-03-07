@@ -260,4 +260,10 @@ message GpuBackendConfig {
 
     CudnnfMHABackendConfig cudnn_fmha_backend_config = 9;
   }
+
+  // This attribute instructs the latency-hiding scheduler to delay
+  // scheduling this particular instruction. Note that setting this to
+  // true will make this instruction scheduled at the very beginning of
+  // the parent computation before every other nodes.
+  bool should_force_delay_schedule = 10;
 }
