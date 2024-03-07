@@ -27,9 +27,9 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "mlir/ExecutionEngine/AsyncRuntime.h"  // from @llvm-project
 #include "xla/runtime/async_runtime.h"
-#include "tsl/concurrency/async_value.h"
-#include "tsl/concurrency/async_value_ref.h"
-#include "tsl/concurrency/chain.h"
+#include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
 #include "tsl/platform/mem.h"
 
 namespace xla {

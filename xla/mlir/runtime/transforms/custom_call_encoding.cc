@@ -45,8 +45,8 @@ limitations under the License.
 #include "xla/runtime/custom_call.h"
 #include "xla/runtime/tracing.h"
 #include "xla/runtime/type_id.h"
-#include "tsl/concurrency/async_value_ref.h"
-#include "tsl/concurrency/chain.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
 
 namespace Eigen {
 struct half;

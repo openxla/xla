@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_CONCURRENCY_ASYNC_VALUE_H_
-#define TENSORFLOW_TSL_CONCURRENCY_ASYNC_VALUE_H_
+#ifndef XLA_TSL_CONCURRENCY_ASYNC_VALUE_H_
+#define XLA_TSL_CONCURRENCY_ASYNC_VALUE_H_
 
 #include <atomic>
 #include <cassert>
@@ -30,8 +30,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/concurrency/concurrent_vector.h"
-#include "tsl/concurrency/ref_count.h"
+#include "xla/tsl/concurrency/concurrent_vector.h"
+#include "xla/tsl/concurrency/ref_count.h"
 
 namespace tsl {
 
@@ -995,4 +995,4 @@ inline bool AsyncValue::IsUnique() const {
 
 }  // namespace tsl
 
-#endif  // TENSORFLOW_TSL_CONCURRENCY_ASYNC_VALUE_H_
+#endif  // XLA_TSL_CONCURRENCY_ASYNC_VALUE_H_

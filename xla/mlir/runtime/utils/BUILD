@@ -14,11 +14,11 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/runtime:async_runtime",
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/functional:any_invocable",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//mlir:mlir_async_runtime_api",
-        "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/platform:platform_port",
     ],
 )
