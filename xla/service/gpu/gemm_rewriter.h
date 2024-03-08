@@ -45,7 +45,8 @@ namespace gpu {
 // stored in the backend config.
 class GemmRewriter : public HloModulePass {
  public:
-  explicit GemmRewriter(se::GpuComputeCapability gpu_version);
+  explicit GemmRewriter(se::GpuComputeCapability gpu_version,
+                        bool f8_rewrite = false);
   absl::string_view name() const override { return "cublas-gemm-rewriter"; }
 
   using HloPassInterface::Run;
@@ -55,6 +56,7 @@ class GemmRewriter : public HloModulePass {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  bool f8_rewrite_;
 };
 
 }  // namespace gpu

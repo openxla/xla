@@ -1379,11 +1379,15 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+
+    // Rewrite FP8 GEMMs ahead of Triton.
+    pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
       pipeline.AddPass<GemmRewriterTriton>(gpu_version);
     }
-    pipeline.AddPass<GemmRewriter>(gpu_version);
+    // Rewrite non-FP8 GEMMs.
+    pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/false);
 
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();

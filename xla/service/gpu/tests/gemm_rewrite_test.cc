@@ -4639,8 +4639,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnsupportedTypesF8) {
           }
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(GpuComputeComp()),
-                            absl::StrReplaceAll(R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(GpuComputeComp(), /*f8_rewrite=*/false),
+      absl::StrReplaceAll(R"(
 ; CHECK-LABEL: ENTRY %unsupported_types ({{.*}}: f8e5m2[16,16], {{.*}}: f8e5m2[16,16]) -> f8e5m2[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e5m2[16,16]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P0_CONVERT:%[^ ]+]] = f16[16,16]{1,0} convert([[P0]])
@@ -4665,7 +4666,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnsupportedTypesF8) {
 ; CHECK:           }
 ; CHECK:         ROOT [[OUT:%[^ ]+]] = f8e5m2[16,16]{1,0} convert
       )",
-                                                replacements_));
+                          replacements_));
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
@@ -4685,8 +4686,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
 
   CheckFp8IfSupported(hlo_text);
   // auto comp = se::DeviceCom
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16]) -> f8e4m3fn[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -4736,8 +4738,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -4789,8 +4792,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDPaddedF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[13,17], {{.*}}: f8e4m3fn[17,31], {{.*}}: f32[], {{.*}}: f32[]) -> f32[13,31] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[13,17]{1,0} parameter(0)
 ; CHECK-NEXT:    [[C0:%[^ ]+]] = f8e4m3fn[] constant(0)
@@ -4849,7 +4853,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -4887,8 +4891,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDUnaryOpsF8) {
 
 )";
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[3], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[3]{0} parameter(0)
@@ -4948,13 +4953,14 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[32,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[32,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[C0:%[^ ]+]] = s32[] constant(0)
@@ -5010,13 +5016,14 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: pred[16,32]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P4:%[^ ]+]] = pred[16,32]{1,0} parameter(4)
@@ -5076,15 +5083,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
-
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: pred[16,32]) -> f32[16,16] {
-; CHECK-NOT:           custom_call_target="__cublas$lt$matmul$f8"
-      )");
+  EXPECT_FALSE(changed);
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
@@ -5111,8 +5112,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[10,16,32], {{.*}}: f8e4m3fn[10,32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[10,16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[10,16,32]{2,1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[10,32,16]{2,1,0} parameter(1)
@@ -5167,8 +5169,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
@@ -5224,8 +5227,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluActivationF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
@@ -5297,8 +5301,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: bf16[], {{.*}}: bf16[], {{.*}}: bf16[16]) -> bf16[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -5369,8 +5374,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: bf16[], {{.*}}: bf16[]) -> bf16[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -5424,8 +5430,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
       )");
 }
@@ -5456,8 +5463,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[16,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
@@ -5513,8 +5521,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasPaddedF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[14,31], {{.*}}: f8e4m3fn[31,14], {{.*}}: f32[14,14], {{.*}}: f32[], {{.*}}: f32[]) -> f32[14,14] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[14,31]{1,0} parameter(0)
@@ -5584,8 +5593,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: f32[]) -> f8e4m3fn[16,16] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -5649,8 +5659,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABInvScaledDF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-NOT:     divide
 
@@ -5693,8 +5704,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: f32[]) -> f8e4m3fn[16,16] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -5760,8 +5772,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasF8) {
 )";
 
   CheckFp8IfSupported(hlo_text, ErrorSpec{0.1, 0.1});
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f16[16,16], {{.*}}: f16[], {{.*}}: f16[], {{.*}}: f16[]) -> f8e4m3fn[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
@@ -5828,8 +5841,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
 )";
 
   CheckFp8IfSupported(hlo_text, ErrorSpec{0.1, 0.1});
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f16[16], {{.*}}: f16[], {{.*}}: f16[], {{.*}}: f16[]) -> f8e4m3fn[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
@@ -5894,8 +5908,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF32VectorBiasF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -5955,8 +5970,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
 
   CheckFp8IfSupported(hlo_text, ErrorSpec{2e-3, 0.});
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f16[16], {{.*}}: f16[], {{.*}}: f16[]) -> f16[16,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -6016,7 +6032,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -6025,8 +6041,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
                                         .WithShape(F16, {64, 32}))
                              .WithShape(F16, {4, 16, 32})));
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[4,16,16], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[32], {{.*}}: f16[], {{.*}}: f16[]) -> f16[4,16,32] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[4,16,16]{2,1,0} parameter(0)
 ; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f8e4m3fn[64,16]{1,0} bitcast([[P0]])
@@ -6090,7 +6107,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -6101,8 +6118,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
                                 .WithShape(F16, {60, 31}))
                      .WithShape(F16, {4, 15, 31})));
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[4,15,15], {{.*}}: f8e4m3fn[15,31], {{.*}}: f32[31], {{.*}}: f16[], {{.*}}: f16[]) -> f16[4,15,31] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[4,15,15]{2,1,0} parameter(0)
 ; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f8e4m3fn[60,15]{1,0} bitcast([[P0]])
@@ -6170,7 +6188,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -6179,8 +6197,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
                                         .WithShape(F32, {64, 32}))
                              .WithShape(F32, {4, 16, 32})));
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[4,16,16], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[4,16,32], {{.*}}: f32[], {{.*}}: f32[]) -> f32[4,16,32] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[4,16,16]{2,1,0} parameter(0)
 ; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f8e4m3fn[64,16]{1,0} bitcast([[P0]])
@@ -6240,7 +6259,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
@@ -6251,8 +6270,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
                                 .WithShape(F32, {45, 31}))
                      .WithShape(F32, {3, 15, 31})));
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[3,15,15], {{.*}}: f8e4m3fn[15,31], {{.*}}: f32[3,15,31], {{.*}}: f32[], {{.*}}: f32[]) -> f32[3,15,31] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[3,15,15]{2,1,0} parameter(0)
 ; CHECK-NEXT:    [[P0_BITCAST:%[^ ]+]] = f8e4m3fn[45,15]{1,0} bitcast([[P0]])
@@ -6320,12 +6340,13 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  GemmRewriter pass(CudaHopperOrRocm());
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_TRUE(changed);
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[48,16], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[32,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[48,16]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(1)
@@ -6384,8 +6405,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(8);
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,32] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK:         [[AG:%[^ ]+]] = f8e4m3fn[16,64]{1,0} all-gather([[P0]]), {{[^ ]+}}
@@ -6413,7 +6435,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllGatherF8) {
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
       )",
-                            nullptr, &config);
+      nullptr, &config);
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllToAllF8) {
@@ -6443,8 +6465,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllToAllF8) {
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(8);
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK:         [[AA:%[^ ]+]] = f8e4m3fn[16,32]{1,0} all-to-all([[P0]]), {{[^ ]+}}
@@ -6470,7 +6493,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDWithAllToAllF8) {
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
       )",
-                            nullptr, &config);
+      nullptr, &config);
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest,
@@ -6501,8 +6524,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
   config.set_use_spmd_partitioning(true);
   config.set_num_partitions(8);
 
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[16,32], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
 ; CHECK:         [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK:         [[AA:%[^ ]+]] = f8e4m3fn[16,32]{1,0} collective-permute([[P0]]), {{[^ ]+}}
@@ -6528,7 +6552,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
       )",
-                            nullptr, &config);
+      nullptr, &config);
 }
 
 TEST_P(ParameterizedFp8GemmRewriteTest,
@@ -6560,8 +6584,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 
 )";
   CheckFp8IfSupported(hlo_text, ErrorSpec{2e-3, 0.});
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL:   ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f16[16], {{.*}}: f16[16,16], {{.*}}: f16[], {{.*}}: f16[]) -> f16[16,16] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -6638,8 +6663,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: f32[]) -> (f8e4m3fn[16,16], f32[]) {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -6716,8 +6742,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f16[], {{.*}}: f16[], {{.*}}: f16[]) -> (f8e4m3fn[16,16], f16[]) {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -6797,8 +6824,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fn[16,32], {{.*}}: f8e4m3fn[32,16], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: f32[]) -> (f8e4m3fn[16,16], f32[]) {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fn[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fn[32,16]{1,0} parameter(1)
@@ -6921,8 +6949,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8Parameterized) {
     const auto hlo_text = absl::StrReplaceAll(hlo_template, replacements);
     CheckFp8IfSupported(hlo_text);
 
-    RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                              R"(
+    RunAndFilecheckHloRewrite(
+        hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+        R"(
     ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
           )");
   }
@@ -6988,8 +7017,9 @@ ENTRY f {
     const auto hlo_text = absl::StrReplaceAll(hlo_template, replacements);
     CheckFp8IfSupported(hlo_text);
 
-    RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                              R"(
+    RunAndFilecheckHloRewrite(
+        hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+        R"(
     ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
           )");
   }
@@ -7019,8 +7049,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8TF32E5M2) {
 )";
 
   CheckFp8IfSupported(hlo_text);
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            R"(
+  RunAndFilecheckHloRewrite(
+      hlo_text, GemmRewriter(CudaHopperOrRocm(), /*f8_rewrite=*/true),
+      R"(
     ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
           )");
 }
@@ -7047,39 +7078,11 @@ TEST_P(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
       ROOT out = f32[16,16] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
           }
 )";
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
-  RunAndFilecheckHloRewrite(hlo_text, GemmRewriter(CudaHopperOrRocm()),
-                            absl::StrReplaceAll(R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: f8e4m3fnuz[16,32], {{.*}}: f8e4m3fnuz[32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = f8e4m3fnuz[16,32]{1,0} parameter(0)
-; CHECK-NEXT:    [[P0_CV:%[^ ]+]] = f32[16,32]{1,0} convert([[P0]])
-; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
-; CHECK-NEXT:    [[P2_B:%[^ ]+]] = f32[16,32]{1,0} broadcast([[P2]]), dimensions={}
-; CHECK-NEXT:    [[P0_UNSCALED:%[^ ]+]] = f32[16,32]{1,0} multiply([[P0_CV]], [[P2_B]])
-; CHECK-NEXT:    [[P1:%[^ ]+]] = f8e4m3fnuz[32,16]{1,0} parameter(1)
-; CHECK-NEXT:    [[P1_CV:%[^ ]+]] = f32[32,16]{1,0} convert([[P1]])
-; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
-; CHECK-NEXT:    [[P3_B:%[^ ]+]] = f32[32,16]{1,0} broadcast([[P3]]), dimensions={}
-; CHECK-NEXT:    [[P1_UNSCALED:%[^ ]+]] = f32[32,16]{1,0} multiply([[P1_CV]], [[P3_B]])
-; CHECK-NEXT:    [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0_UNSCALED]], [[P1_UNSCALED]]),
-; CHECK:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
-; CHECK:           backend_config={
-; CHECK-DAG:         "alpha_real":1
-; CHECK-DAG:         "alpha_imag":0
-; CHECK-DAG:         "beta":0
-; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
-; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
-; CHECK-DAG:           "lhs_batch_dimensions":[]
-; CHECK-DAG:           "rhs_batch_dimensions":[]
-; CHECK-DAG:         }
-; CHECK-DAG:         "precision_config":{
-; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
-; CHECK-DAG:         }
-; CHECK-DAG:         "epilogue":"DEFAULT"
-; CHECK:           }
-      )",
-                                                replacements_));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+  GemmRewriter pass(CudaHopperOrRocm(), /*f8_rewrite=*/true);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  EXPECT_FALSE(changed);
 }
 
 INSTANTIATE_TEST_SUITE_P(Fp8CublasTestsBothLegacyAndLt,
