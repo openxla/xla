@@ -11,7 +11,7 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.bzl", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -25,7 +25,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -185,6 +185,7 @@ cc_library(
     ],
     deps = [
         ":pjrt_client_registry",
+        "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
     ],
 )
@@ -275,6 +276,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:test_helpers",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:client_library",
         "//xla/client:global_data",
@@ -777,6 +779,7 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:array4d",
+        "//xla:comparison_util",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
@@ -787,6 +790,8 @@ xla_test(
         "//xla/client:xla_builder",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/types:span",
+        "@ml_dtypes//:float8",
+        "@tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -995,10 +1000,13 @@ xla_test(
         ":hlo_test_base",
         ":test_macros_header",
         ":xla_internal_test_main",
+        "//xla:array2d",
         "//xla:error_spec",
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:test",
+        "//xla:types",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -1296,6 +1304,7 @@ xla_test(
         "requires-gpu-sm80",
     ]},
     backends = ["gpu"],
+    tags = ["no_rocm"],  # No int8
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -1778,6 +1787,7 @@ xla_test(
         "//xla:test",
         "//xla/client:local_client",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -1976,10 +1986,6 @@ xla_test(
 xla_test(
     name = "convert_test",
     srcs = ["convert_test.cc"],
-    backend_tags = {
-        # TODO(b/305009066)
-        "ghostfish_grm": ["broken"],
-    },
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2031,7 +2037,6 @@ xla_test(
             "multi_gpu",
             "no_oss",
             "notap",
-            "jitrt_executable",
         ],
         "cpu": [
             "notsan",
@@ -2070,7 +2075,6 @@ xla_test(
             "multi_gpu",
             "no_oss",
             "notap",
-            "jitrt_executable",
         ],
     },
     backends = [
@@ -2514,6 +2518,7 @@ xla_test(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/host:host_platform",
         "//xla/stream_executor/host:host_platform_id",
         "@tsl//tsl/platform:env",
@@ -2731,6 +2736,7 @@ xla_cc_test(
         "//xla/client:client_library",
         "//xla/client:xla_builder",
         "//xla/service:cpu_plugin",
+        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
@@ -2860,6 +2866,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/service/cpu:onednn_util",
         "@tsl//tsl/platform:platform_port",
     ],
 )

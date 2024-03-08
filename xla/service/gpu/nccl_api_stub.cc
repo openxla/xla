@@ -1,4 +1,4 @@
-/* Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,9 +15,12 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_clique_key.h"
@@ -83,13 +86,27 @@ class NcclApiStub final : public NcclApi {
     return UnimplementedError();
   }
 
-  absl::StatusOr<NcclCommHandle> CommInitRank(int32_t nranks,
-                                              const NcclCliqueId& clique_id,
-                                              int32_t rank) final {
+  absl::StatusOr<std::vector<OwnedNcclComm>> CommInitRanks(
+      int32_t, const NcclCliqueId&, absl::Span<const DeviceRank>,
+      const Config&) final {
+    return UnimplementedError();
+  }
+
+  absl::StatusOr<std::vector<OwnedNcclComm>> CommSplit(
+      absl::Span<const NcclCommHandle>, int32_t, absl::Span<const int32_t>,
+      std::optional<Config>) final {
     return UnimplementedError();
   }
 
   absl::Status CommAbort(NcclCommHandle) final { return UnimplementedError(); }
+
+  absl::Status CommFinalize(NcclCommHandle) final {
+    return UnimplementedError();
+  }
+
+  absl::Status CommDestroy(NcclCommHandle) final {
+    return UnimplementedError();
+  }
 
   absl::StatusOr<int32_t> CommCount(NcclCommHandle) final {
     return UnimplementedError();
@@ -105,6 +122,13 @@ class NcclApiStub final : public NcclApi {
   absl::Status AllReduce(se::DeviceMemoryBase, se::DeviceMemoryBase,
                          PrimitiveType, size_t, ReductionKind, NcclCommHandle,
                          se::Stream*) final {
+    return UnimplementedError();
+  }
+
+  absl::Status Broadcast(se::DeviceMemoryBase send_buffer,
+                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+                         size_t count, size_t root, NcclCommHandle comm,
+                         se::Stream* stream) final {
     return UnimplementedError();
   }
 

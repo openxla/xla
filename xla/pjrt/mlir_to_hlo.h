@@ -30,8 +30,7 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
 // Converts an CHLO/MHLO module to XLA HLO.
 Status MlirToXlaComputation(mlir::ModuleOp module,
                             XlaComputation& xla_computation,
-                            bool use_tuple_args, bool return_tuple,
-                            bool legalize_sparse_ops = false);
+                            bool use_tuple_args, bool return_tuple);
 
 // Converts an MHLO/CHLO module string to an XLA computation.
 Status ParseMlirModuleStringAndConvertToXlaComputation(
@@ -60,6 +59,8 @@ StatusOr<std::string> SerializeUsingVersionedStablehlo(
 // back to StableHLO.
 // If module is not a portable artifact, this method is identity. Only fails
 // on portable artifacts that are outside of the compatibility window.
+// `ParseMlirModuleString` uses this method, and should be preferred to directly
+// calling `UpgradeVersionedStablehlo` where possible.
 Status UpgradeVersionedStablehlo(mlir::ModuleOp mlir_module);
 
 }  // namespace xla

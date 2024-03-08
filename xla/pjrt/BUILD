@@ -1,5 +1,6 @@
 # Placeholder: load py_proto_library
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -8,7 +9,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
 )
 
@@ -124,7 +125,10 @@ cc_library(
         "//xla:util",
         "//xla/client:local_client",
         "//xla/stream_executor",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
@@ -165,13 +169,14 @@ cc_library(
     name = "pjrt_client",
     srcs = ["pjrt_client.cc"],
     hdrs = ["pjrt_client.h"],
-    visibility = ["//xla:friends"],
+    visibility = internal_visibility(["//xla:friends"]),
     deps = [
         ":pjrt_common",
         ":pjrt_compiler",
         ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_future",
+        ":pjrt_layout",
         ":utils",
         "//xla:literal",
         "//xla:shape_util",
@@ -225,7 +230,7 @@ cc_library(
     name = "pjrt_executable",
     srcs = ["pjrt_executable.cc"],
     hdrs = ["pjrt_executable.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":compile_options_proto_cc",
         ":executable_metadata_proto_cc",
@@ -283,7 +288,7 @@ cc_library(
     name = "pjrt_compiler",
     srcs = ["pjrt_compiler.cc"],
     hdrs = ["pjrt_compiler.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":metrics",
         ":pjrt_device_description",
@@ -332,7 +337,7 @@ cc_library(
     name = "utils",
     srcs = ["utils.cc"],
     hdrs = ["utils.h"],
-    visibility = ["//xla:friends"],
+    visibility = internal_visibility(["//xla:friends"]),
     deps = [
         ":layout_mode",
         "//xla:shape_util",
@@ -355,6 +360,21 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "pjrt_layout",
+    hdrs = ["pjrt_layout.h"],
+    visibility = ["//xla:friends"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:statusor",
+        "//xla/service:hlo_parser",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -415,7 +435,7 @@ cc_library(
     name = "pjrt_stream_executor_client",
     srcs = ["pjrt_stream_executor_client.cc"],
     hdrs = ["pjrt_stream_executor_client.h"],
-    visibility = ["//xla:friends"],
+    visibility = internal_visibility(["//xla:friends"]),
     deps = [
         ":event_pool",
         ":local_device_state",
@@ -569,7 +589,7 @@ cc_library(
 cc_library(
     name = "pjrt_future",
     hdrs = ["pjrt_future.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@com_google_absl//absl/functional:any_invocable",
         "@tsl//tsl/concurrency:async_value",
@@ -581,9 +601,9 @@ cc_library(
 cc_library(
     name = "tfrt_cpu_pjrt_client",
     hdrs = ["tfrt_cpu_pjrt_client.h"],
-    visibility = [
+    visibility = internal_visibility([
         "//xla:friends",
-    ],
+    ]),
     deps = [
         "//xla/pjrt/cpu:cpu_client",
     ],
@@ -671,6 +691,7 @@ cc_library(
         ":pjrt_device_description",
         ":pjrt_executable",
         ":pjrt_future",
+        ":pjrt_layout",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
@@ -684,6 +705,7 @@ cc_library(
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",

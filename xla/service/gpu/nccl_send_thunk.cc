@@ -22,53 +22,28 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/nccl_p2p_thunk_common.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
 
-using mlir::lmhlo::SendOp;
-
-namespace impl {
-
-NcclP2PConfig GetNcclP2PConfig(SendOp op, int64_t replica_count,
-                               int64_t partition_count) {
-  return GetNcclP2PConfigForSendRecv(op, replica_count, partition_count);
-}
-
-absl::Status CheckImplementable(SendOp op) {
-  return IsValidOperand(op.getInputs()[0], Thunk::kNcclSend);
-}
-
-}  // namespace impl
-
-NcclSendThunk::NcclSendThunk(ThunkInfo thunk_info, NcclApi* nccl_api, SendOp op,
+NcclSendThunk::NcclSendThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
+                             const HloSendInstruction* instr,
                              int64_t replica_count, int64_t partition_count,
                              const Buffer& buffer)
     : NcclCollectiveThunk(Thunk::kNcclSend, thunk_info, nccl_api,
                           /*is_sync=*/false),
-      config_(GetNcclP2PConfig(op, replica_count, partition_count)),
-      buffer_(buffer) {}
-
-/*static*/ NcclP2PConfig NcclSendThunk::GetNcclP2PConfig(
-    SendOp op, int64_t replica_count, int64_t partition_count) {
-  return impl::GetNcclP2PConfig(op, replica_count, partition_count);
-}
-
-/*static*/ absl::Status NcclSendThunk::CheckImplementable(
-    mlir::lmhlo::SendOp op, int64_t replica_count, int64_t partition_count) {
-  return AddOpDescription<NcclSendThunk>(impl::CheckImplementable(op), op,
-                                         replica_count, partition_count);
-}
-
-/*static*/ CollectiveOpGroupMode NcclSendThunk::GetGroupMode(SendOp op) {
-  return GetGroupModeForSendRecv(op);
-}
+      config_(GetNcclP2PConfigForSendRecv(instr, instr->operand(0)->shape(),
+                                          replica_count, partition_count)),
+      buffer_(buffer),
+      stream_kind_(GetStreamKindForSendRecv(instr)) {}
 
 absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
                                               se::Stream& stream,
@@ -79,16 +54,16 @@ absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
                              config_.config.operand_element_type));
   TF_RET_CHECK(device_buffers.size() == 1) << "Expected one buffer pair.";
 
-  GlobalDeviceId global_device_id = params.nccl_params.global_device_id();
+  GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      params.nccl_params.device_assn()->LogicalIdForDevice(global_device_id));
+  TF_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID current_logical_id,
+                      params.collective_params->device_assn->LogicalIdForDevice(
+                          global_device_id));
   const int64_t current_id =
       config_.config.group_mode == CollectiveOpGroupMode::kCrossReplica
           ? current_logical_id.replica_id
           : current_logical_id.computation_id;
-  std::string device_string = GetDeviceString(params.nccl_params);
+  std::string device_string = GetDeviceString(*params.collective_params);
 
   const NcclP2PConfig::SourceTargetMapEntry source_target =
       NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
@@ -117,7 +92,7 @@ absl::Status RunSend(NcclApi* nccl_api,
   // Send source buffer to target peer if needed.
   if (target_id) {
     TF_RETURN_IF_ERROR(nccl_api->Send(src_addr, buffer.element_type,
-                                      buffer.element_type, *target_id, comm,
+                                      buffer.element_count, *target_id, comm,
                                       &stream));
   }
 

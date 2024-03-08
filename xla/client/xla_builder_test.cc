@@ -20,10 +20,12 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_parser.h"
@@ -47,6 +50,7 @@ limitations under the License.
 #include "xla/test_helpers.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -55,8 +59,14 @@ namespace {
 
 namespace m = ::xla::match;
 
+using ::testing::_;
 using ::testing::HasSubstr;
 using ::testing::Test;
+using ::tsl::testing::StatusIs;
+
+HloInstruction* GetRoot(HloModule& module) {
+  return module.entry_computation()->root_instruction();
+}
 
 // TODO(b/74197823): Move the tests to service/.
 StatusOr<std::unique_ptr<HloModule>> BuildHloModule(XlaBuilder& b) {
@@ -238,6 +248,30 @@ TEST(XlaBuilderTest, XPlusX) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Add(m::Parameter(0), m::Parameter(0))));
+}
+
+TEST(XlaBuilderTest, TestBinaryOpImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[2, 2]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[2,2]"));
+  Add(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+      /*broadcast_dimensions=*/{1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, TestBinaryOpImplicitBroadcastBounded) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[<=2, <=2]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[<=2, <=2]"));
+  Add(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+      /*broadcast_dimensions=*/{1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, ShapeInferenceError) {
@@ -607,6 +641,18 @@ TEST(XlaBuilderTest, AllReduceTuple) {
   EXPECT_THAT(root, GmockMatch(m::Op()
                                    .WithOpcode(HloOpcode::kAllReduce)
                                    .WithShapeEqualTo(&tuple_shape)));
+}
+
+TEST(XlaBuilderTest, CollectiveBroadcast) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  replica_group.add_replica_ids(1);
+  CollectiveBroadcast(x, {replica_group});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCollectiveBroadcast);
 }
 
 TEST(XlaBuilderTest, CollectivePermute) {
@@ -1576,6 +1622,106 @@ TEST(XlaBuilderTest, TopKDimensions) {
 }
 
 //============================================================================//
+// Experimental Test
+//============================================================================//
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimExportSuccess) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[1, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("s32[3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[1, 2, 3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[1, 2, 3]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(module->ToString(), HasSubstr("mhlo.dynamic_broadcast_in_dim"));
+  EXPECT_THAT(module->ToString(), HasSubstr("broadcast_dimensions=[1,2]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimNonBroadcastDimSizeGreaterThanOne) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("s32[3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[2, 2, 3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[2, 2, 3]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(module->ToString(), HasSubstr("mhlo.dynamic_broadcast_in_dim"));
+  EXPECT_THAT(module->ToString(), HasSubstr("broadcast_dimensions=[1,2]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimDynamicResultSize) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[1, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("s32[3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[1, 2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[1, 2, ?]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(module->ToString(), HasSubstr("mhlo.dynamic_broadcast_in_dim"));
+  EXPECT_THAT(module->ToString(), HasSubstr("broadcast_dimensions=[1,2]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimInvalidOutputDimensionsElementType) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("f32[3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[2, 3, 3]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  EXPECT_THAT(
+      BuildHloModule(b),
+      StatusIs(_,
+               HasSubstr("output_dimensions must be an integer type f32[3]")));
+}
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimInvalidOutputDimensionsRank) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("s32[2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[2, 3, 3]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  EXPECT_THAT(
+      BuildHloModule(b),
+      StatusIs(_,
+               HasSubstr("output_dimensions must be rank 1 but got rank 2")));
+}
+
+TEST(XlaBuilderTest, DynamicBroadcastInDimIncompatibleBroadcastSize) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_dimensions, ParseShape("s32[3]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape output_shape, ParseShape("f32[2, 3, 3]"));
+  DynamicBroadcastInDim(
+      Parameter(&b, 0, operand, "operand"),
+      Parameter(&b, 1, output_dimensions, "output_dimensions"),
+      /*broadcast_dimensions=*/{1, 2}, output_shape);
+  EXPECT_THAT(
+      BuildHloModule(b),
+      StatusIs(_, HasSubstr("size of operand dimension 0 (2) is not compatible "
+                            "with size of result dimension 1 (3)")));
+}
+
+//============================================================================//
 // Unbounded Dynamism Test
 //============================================================================//
 
@@ -1585,49 +1731,100 @@ struct UnaryOpTestCase {
   std::function<XlaOp(XlaOp)> unary_op;
 };
 
+struct BinaryOpTestCase {
+  std::string lhs;
+  std::string rhs;
+  absl::Span<const int64_t> broadcast_dimensions;
+  std::string expected;
+  std::function<XlaOp(XlaOp, XlaOp, absl::Span<const int64_t>)> binary_op;
+  std::optional<std::string_view> error_message;
+};
+
+constexpr absl::string_view kBroadcastDimensionMismatch =
+    "Broadcast dimension 0 mismatch: 2 != -9223372036854775808; f32[2] and "
+    "f32[?,10].";
+std::array<const int64_t, 1> zero_array = {0};
+
 class XlaBuilderUnboundedUnaryOpTest
     : public ::testing::TestWithParam<UnaryOpTestCase> {};
 
+class XlaBuilderUnboundedBinaryOpTest
+    : public ::testing::TestWithParam<BinaryOpTestCase> {};
+
 TEST_P(XlaBuilderUnboundedUnaryOpTest, UnboundedUnaryOpTest) {
   XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape operand_shape, ParseShape(GetParam().operand));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected_shape,
-                          ParseShape(GetParam().expected));
-  GetParam().unary_op(Parameter(&b, 0, operand_shape, "operand"));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> result, BuildHloModule(b));
-  const Shape& result_shape =
-      result->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result_shape, expected_shape))
-      << "result: " << ShapeUtil::HumanString(result_shape)
-      << " expected: " << ShapeUtil::HumanString(expected_shape);
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape(GetParam().operand));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape(GetParam().expected));
+  GetParam().unary_op(Parameter(&b, 0, operand, "operand"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedAdd) {
+TEST_P(XlaBuilderUnboundedBinaryOpTest, UnboundedBinaryOpTest) {
   XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape(GetParam().lhs));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape(GetParam().rhs));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape(GetParam().expected));
+  GetParam().binary_op(Parameter(&b, 0, lhs, "lhs"),
+                       Parameter(&b, 1, rhs, "rhs"),
+                       GetParam().broadcast_dimensions);
+  if (auto result = BuildHloModule(b); result.ok()) {
+    std::unique_ptr<HloModule> module = std::move(*result);
+    EXPECT_THAT(GetRoot(*module),
+                GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+  } else {
+    ASSERT_TRUE(GetParam().error_message.has_value());
+    EXPECT_THAT(result, StatusIs(_, HasSubstr(*GetParam().error_message)));
+  }
+}
+
+TEST(XlaBuilderTest, UnboundedAddScalarBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
   Add(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
       /*broadcast_dimensions=*/{});
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedAddDegenerateBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Add(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+      /*broadcast_dimensions=*/{0, 1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedAddUnsupportedImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[2]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
   Add(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
+      /*broadcast_dimensions=*/{0});
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr(kBroadcastDimensionMismatch)));
+}
+
+TEST(XlaBuilderTest, UnboundedAnd) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("s32[1, ?, 2, ?, <=2, ?, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("s32[?, 1, ?, 2, ?, <=2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
+                          ParseShape("s32[?, ?, 2, 2, <=2, <=2, ?]"));
+  And(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+      /*broadcast_dimensions=*/absl::Span<const int64_t>{});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedBatchNormGrad) {
@@ -1640,18 +1837,15 @@ TEST(XlaBuilderTest, UnboundedBatchNormGrad) {
   TF_ASSERT_OK_AND_ASSIGN(Shape grad_scale, ParseShape("f32[?]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape grad_offset, ParseShape("f32[?]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape grad_output, ParseShape("f32[5, ?, 7]"));
+  Shape expected =
+      ShapeUtil::MakeTupleShape({grad_operand, grad_scale, grad_offset});
   BatchNormGrad(
       Parameter(&b, 0, operand, "operand"), Parameter(&b, 1, scale, "scale"),
       Parameter(&b, 2, mean, "mean"), Parameter(&b, 3, variance, "variance"),
       Parameter(&b, 4, grad_output, "grad_output"), 1.0, 1);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  Shape expected_tuple_shape =
-      ShapeUtil::MakeTupleShape({grad_operand, grad_scale, grad_offset});
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected_tuple_shape))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected_tuple_shape);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedBatchNormInference) {
@@ -1667,11 +1861,8 @@ TEST(XlaBuilderTest, UnboundedBatchNormInference) {
       Parameter(&b, 2, offset, "offset"), Parameter(&b, 3, mean, "mean"),
       Parameter(&b, 4, variance, "variance"), 1.0, 1);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedBatchNormTraining) {
@@ -1682,17 +1873,54 @@ TEST(XlaBuilderTest, UnboundedBatchNormTraining) {
   TF_ASSERT_OK_AND_ASSIGN(Shape offset, ParseShape("f32[5]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape batch_mean, ParseShape("f32[?]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape batch_var, ParseShape("f32[?]"));
+  Shape expected = ShapeUtil::MakeTupleShape({output, batch_mean, batch_var});
   BatchNormTraining(Parameter(&b, 0, operand, "operand"),
                     Parameter(&b, 1, scale, "scale"),
                     Parameter(&b, 2, offset, "offset"), 1.0, 1);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  Shape expected_tuple_shape =
-      ShapeUtil::MakeTupleShape({output, batch_mean, batch_var});
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected_tuple_shape))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected_tuple_shape);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedBroadcastUnsupportedOperand) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[<=3, ?]"));
+  Broadcast(Parameter(&b, 0, operand, "operand"), /*broadcast_sizes=*/{1});
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr("is_unbounded_dynamic")));
+}
+
+TEST(XlaBuilderTest, UnboundedBroadcastUnsupportedBroadcastSize) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[1]"));
+  Broadcast(Parameter(&b, 0, operand, "operand"),
+            /*broadcast_sizes=*/{Shape::kUnboundedSize});
+  EXPECT_THAT(
+      BuildHloModule(b),
+      StatusIs(_, HasSubstr("Non-broadcast dimensions must not be dynamic.")));
+}
+
+TEST(XlaBuilderTest, UnboundedBroadcastInDim) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[<=2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[<=2, 3, 4]"));
+  BroadcastInDim(Parameter(&b, 0, operand, "operand"),
+                 /*out_dim_size=*/{2, 3, 4},
+                 /*broadcast_dimensions=*/{0, 2});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedBroadcastInDimUnsupported) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[<=3, ?]"));
+  BroadcastInDim(Parameter(&b, 0, operand, "operand"),
+                 /*out_dim_size=*/{2, 3, Shape::kUnboundedSize},
+                 /*broadcast_dimensions=*/{0, 2});
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr("BroadcastInDim output must shape be "
+                                    "static or bounded dynamic")));
 }
 
 TEST(XlaBuilderTest, UnboundedClamp) {
@@ -1705,75 +1933,85 @@ TEST(XlaBuilderTest, UnboundedClamp) {
   Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
         Parameter(&b, 2, ehs, "ehs"));
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  auto result = module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedClampUnsupportedScalarMinMax) {
+TEST(XlaBuilderTest, UnboundedClampScalarMinImplicitBroadcast) {
   XlaBuilder b(TestName());
-  Shape lhs = ShapeUtil::MakeScalarShape(F32);
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 2, <=2]"));
-  Shape ehs = ShapeUtil::MakeScalarShape(F32);
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
   Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
         Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedClampUnsupportedImplicitBroadcast1) {
+TEST(XlaBuilderTest, UnboundedClampScalarMinMaxImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+        Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedClampScalarOperandMaxImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+        Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedClampScalarMinOperandImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+        Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest,
+     UnboundedClampUnsupportedDegenerateOperandImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
   Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
         Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("ShapeUtil::SameDimensions(non_scalar_shape.value(), "
-                        "*shape) Unimplemented implicit broadcast."));
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr("Unimplemented implicit broadcast.")));
 }
 
-TEST(XlaBuilderTest, UnboundedClampUnsupportedImplicitBroadcast2) {
+TEST(XlaBuilderTest, UnboundedCompare) {
   XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
-  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-        Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
-}
-
-TEST(XlaBuilderTest, UnboundedClampUnsupportedImplicitBroadcast3) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
-  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-        Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
-}
-
-TEST(XlaBuilderTest, UnboundedClampUnsupportedImplicitBroadcast4) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
-  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-        Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
+                          ParseShape("pred[?, ?, 2, 2, <=2, <=2, ?]"));
+  Compare(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+          /*direction=*/{});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedConcatenate) {
@@ -1792,11 +2030,18 @@ TEST(XlaBuilderTest, UnboundedConcatenate) {
                Parameter(&b, 2, operand3, "operand3")},
               2);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanStringWithLayout(result)
-      << " expected: " << ShapeUtil::HumanStringWithLayout(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedConvert) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("s32[?]"));
+  ConvertElementType(Parameter(&b, 0, operand, "operand"), PrimitiveType::S32);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedConvolution) {
@@ -1822,37 +2067,8 @@ TEST(XlaBuilderTest, UnboundedConvolution) {
                             Parameter(&b, 1, rhs, "rhs"),
                             /*window_strides=*/{1, 1}, Padding::kValid, dnums);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected));
-}
-
-TEST(XlaBuilderTest, UnboundedDiv) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
-  Div(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedDivUnsupportedImplicitBroadcast) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
-  Div(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedDot) {
@@ -1862,11 +2078,8 @@ TEST(XlaBuilderTest, UnboundedDot) {
   TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
   Dot(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"));
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedDotGeneral) {
@@ -1883,11 +2096,8 @@ TEST(XlaBuilderTest, UnboundedDotGeneral) {
 
   DotGeneral(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"), dnums);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedGather) {
@@ -1908,67 +2118,8 @@ TEST(XlaBuilderTest, UnboundedGather) {
          Parameter(&b, 1, start_indices, "start_indices"), dimension_numbers,
          /*slice_sizes=*/{1, 2, 2});
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedMax) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
-  Max(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedMaxUnsupportedImplicitBroadcast) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
-  Max(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
-}
-
-TEST(XlaBuilderTest, UnboundedMul) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
-  Mul(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedMulUnsupportedImplicitBroadcast) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
-  Mul(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedPad) {
@@ -1985,66 +2136,39 @@ TEST(XlaBuilderTest, UnboundedPad) {
   Pad(Parameter(&b, 0, operand, "operand"),
       /*padding_value=*/ConstantR0<float>(&b, 0), padding_config);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected));
-}
-
-TEST(XlaBuilderTest, UnboundedPow) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
-  Pow(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedPowUnsupportedImplicitBroadcast) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
-  Pow(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedReduce) {
   XlaBuilder b(TestName());
-  XlaOp input0 = Parameter(&b, 0, ParseShape("f32[7, 5]").value(), "input0");
-  XlaOp input1 = Parameter(&b, 1, ParseShape("f32[?, 5]").value(), "input1");
-  XlaOp input2 = Parameter(&b, 2, ParseShape("f32[7, ?]").value(), "input2");
-  XlaOp init = Parameter(&b, 3, ShapeUtil::MakeShape(F32, {}), "init");
-
-  XlaBuilder bsum(TestName());
-  XlaOp arg0 = Parameter(&bsum, 0, ShapeUtil::MakeShape(F32, {}), "arg0");
-  XlaOp arg1 = Parameter(&bsum, 1, ShapeUtil::MakeShape(F32, {}), "arg1");
-  XlaOp arg2 = Parameter(&bsum, 2, ShapeUtil::MakeShape(F32, {}), "arg2");
-  XlaOp arg3 = Parameter(&bsum, 3, ShapeUtil::MakeShape(F32, {}), "arg3");
-  XlaOp arg4 = Parameter(&bsum, 4, ShapeUtil::MakeShape(F32, {}), "arg4");
-  XlaOp arg5 = Parameter(&bsum, 5, ShapeUtil::MakeShape(F32, {}), "arg5");
-
-  std::vector<XlaOp> output_operands = {Add(arg0, arg1), Add(arg2, arg3),
-                                        Add(arg4, arg5)};
-  Tuple(&bsum, absl::MakeSpan(output_operands));
-  TF_ASSERT_OK_AND_ASSIGN(auto sum, bsum.Build());
-  Reduce(&b, {input0, input1, input2}, {init, init, init}, sum, {1});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
   Shape shape = ShapeUtil::MakeShape(F32, {7}, {false});
   Shape expected = ShapeUtil::MakeTupleShape({shape, shape, shape});
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected));
+
+  TF_ASSERT_OK_AND_ASSIGN(Shape input0, ParseShape("f32[7, 5]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape input1, ParseShape("f32[?, 5]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape input2, ParseShape("f32[7, ?]"));
+  Shape scalar_f32 = ShapeUtil::MakeShape(F32, {});
+  XlaOp init = Parameter(&b, 3, scalar_f32, "init");
+
+  XlaBuilder bsum(TestName());
+  std::vector<XlaOp> output_operands = {
+      Add(Parameter(&bsum, 0, scalar_f32, "arg0"),
+          Parameter(&bsum, 1, scalar_f32, "arg1")),
+      Add(Parameter(&bsum, 2, scalar_f32, "arg2"),
+          Parameter(&bsum, 3, scalar_f32, "arg3")),
+      Add(Parameter(&bsum, 4, scalar_f32, "arg4"),
+          Parameter(&bsum, 5, scalar_f32, "arg5"))};
+  Tuple(&bsum, absl::MakeSpan(output_operands));
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation sum, bsum.Build());
+  Reduce(
+      &b,
+      {Parameter(&b, 0, input0, "input0"), Parameter(&b, 1, input1, "input1"),
+       Parameter(&b, 2, input2, "input2")},
+      {init, init, init}, sum, {1});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedReduceWindow) {
@@ -2062,41 +2186,79 @@ TEST(XlaBuilderTest, UnboundedReduceWindow) {
                /*window_dimensions=*/{1, 2, 4},
                /*window_strides=*/{1, 1, 1}, Padding::kValid);
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result_shape =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result_shape, expected));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedReshapeUnsupported1) {
+TEST(XlaBuilderTest, UnboundedReshape) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[2,3]"));
   Reshape(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0},
           /*new_sizes=*/{2, 3});
-  auto statusor = BuildHloModule(b);
-  EXPECT_THAT(
-      statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedReshapeUnsupported2) {
+TEST(XlaBuilderTest, UnboundedReshapeUnsupportedOutputShape) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[6]"));
   Reshape(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0},
           /*new_sizes=*/{Shape::kUnboundedSize, Shape::kUnboundedSize});
-  auto statusor = BuildHloModule(b);
   EXPECT_THAT(
-      statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+      BuildHloModule(b),
+      StatusIs(_,
+               HasSubstr(
+                   "Reshaping with unbounded result shape is not supported.")));
 }
 
-TEST(XlaBuilderTest, UnboundedReshapeUnsupported3) {
+TEST(XlaBuilderTest, UnboundedReshapeUnsupportedInferredShape) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[?]"));
   Reshape(operand, Parameter(&b, 0, operand, "operand"));
-  auto statusor = BuildHloModule(b);
   EXPECT_THAT(
-      statusor.status().message(),
-      HasSubstr("Reshaping with unbounded dimensions is not supported."));
+      BuildHloModule(b),
+      StatusIs(_,
+               HasSubstr(
+                   "Reshaping with unbounded result shape is not supported.")));
+}
+
+TEST(XlaBuilderTest, UnboundedScatter) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape input, ParseShape("f32[?, ?, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape scatter_indices, ParseShape("s32[?, ?, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape updates, ParseShape("f32[?, ?, ?, ?]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, ?, ?]"));
+
+  XlaComputation update_computation;
+  {
+    std::unique_ptr<XlaBuilder> sub_builder = b.CreateSubBuilder("add");
+    XlaOp arg0 = Parameter(sub_builder.get(), 0,
+                           ShapeUtil::MakeScalarShape(F32), "arg0");
+    XlaOp arg1 = Parameter(sub_builder.get(), 1,
+                           ShapeUtil::MakeScalarShape(F32), "arg1");
+    Add(arg0, arg1);
+    TF_ASSERT_OK_AND_ASSIGN(update_computation, sub_builder->Build());
+  }
+
+  ScatterDimensionNumbers dimension_numbers;
+  dimension_numbers.add_update_window_dims(2);
+  dimension_numbers.add_update_window_dims(3);
+  dimension_numbers.add_inserted_window_dims(0);
+  dimension_numbers.add_scatter_dims_to_operand_dims(1);
+  dimension_numbers.add_scatter_dims_to_operand_dims(0);
+  dimension_numbers.set_index_vector_dim(2);
+
+  Scatter(Parameter(&b, 0, input, "input"),
+          Parameter(&b, 1, scatter_indices, "scatter_indices"),
+          Parameter(&b, 2, updates, "updates"), update_computation,
+          dimension_numbers, /*indices_are_sorted=*/false,
+          /*unique_indices=*/false);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedSelect) {
@@ -2109,62 +2271,72 @@ TEST(XlaBuilderTest, UnboundedSelect) {
   Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
          Parameter(&b, 2, ehs, "ehs"));
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  auto result = module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedSelectUnsupportedImplicitBroadcast1) {
+TEST(XlaBuilderTest, UnboundedSelectScalarPred) {
   XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+         Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedSelectScalarOnTrueOnFalseImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+         Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedSelectScalarPredOnFalseImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+         Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedSelectScalarPredOnTrueImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+         Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest,
+     UnboundedSelectUnsupportedDegenerateOperandImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
   Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
          Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("ShapeUtil::SameDimensions(non_scalar_shape.value(), "
-                        "*shape) Unimplemented implicit broadcast."));
-}
-
-TEST(XlaBuilderTest, UnboundedSelectUnsupportedImplicitBroadcast2) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
-  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-         Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
-}
-
-TEST(XlaBuilderTest, UnboundedSelectUnsupportedImplicitBroadcast3) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
-  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-         Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
-}
-
-TEST(XlaBuilderTest, UnboundedSelectUnsupportedImplicitBroadcast4) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
-  Select(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-         Parameter(&b, 2, ehs, "ehs"));
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  EXPECT_THAT(
-      build_status.status().message(),
-      HasSubstr("!is_unbounded_dynamic Unimplemented implicit broadcast."));
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr("Unimplemented implicit broadcast.")));
 }
 
 TEST(XlaBuilderTest, UnboundedSlice) {
@@ -2176,38 +2348,8 @@ TEST(XlaBuilderTest, UnboundedSlice) {
         /*limit_indices=*/{1, 3, 5},
         /*strides=*/{1, 1, 1});
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  auto result = module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedSub) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[1, ?, 2, ?, <=2, ?, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 1, ?, 2, ?, <=2, ?]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape expected,
-                          ParseShape("f32[?, ?, 2, 2, <=2, <=2, ?]"));
-  Sub(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{});
-  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanString(result)
-      << " expected: " << ShapeUtil::HumanString(expected);
-}
-
-TEST(XlaBuilderTest, UnboundedSubUnsupportedImplicitBroadcast) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
-  Sub(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-      /*broadcast_dimensions=*/{1});
-  StatusOr<std::unique_ptr<HloModule>> build_status = BuildHloModule(b);
-  ASSERT_FALSE(build_status.ok());
-  EXPECT_THAT(build_status.status().message(),
-              HasSubstr("Unbounded dynamic shapes not supported"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 TEST(XlaBuilderTest, UnboundedTranspose) {
@@ -2219,11 +2361,8 @@ TEST(XlaBuilderTest, UnboundedTranspose) {
   Transpose(Parameter(&b, 0, operand, "operand"),
             /*permutation=*/{4, 0, 3, 2, 1});
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
-  const Shape& result =
-      module->entry_computation()->root_instruction()->shape();
-  EXPECT_TRUE(ShapeUtil::Equal(result, expected))
-      << "result: " << ShapeUtil::HumanStringWithLayout(result)
-      << " expected: " << ShapeUtil::HumanStringWithLayout(expected);
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
 INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, XlaBuilderUnboundedUnaryOpTest,
@@ -2233,6 +2372,7 @@ INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, XlaBuilderUnboundedUnaryOpTest,
                               {"f32[?]", "f32[?]", &Ceil},
                               {"u32[?]", "u32[?]", &Clz},
                               {"f32[?]", "f32[?]", &Cos},
+                              {"f32[?]", "f32[?]", &Erf},
                               {"f32[?]", "f32[?]", &Exp},
                               {"f32[?]", "f32[?]", &Expm1},
                               {"f32[?]", "f32[?]", &Floor},
@@ -2251,6 +2391,35 @@ INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, XlaBuilderUnboundedUnaryOpTest,
                               {"f32[?]", "f32[?]", &Sin},
                               {"f32[?]", "f32[?]", &Sqrt},
                               {"f32[?]", "f32[?]", &Tanh}}));
+
+INSTANTIATE_TEST_SUITE_P(
+    UnboundedDynamism, XlaBuilderUnboundedBinaryOpTest,
+    ::testing::ValuesIn<BinaryOpTestCase>({
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Add},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Add},
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Div},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Div},
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Max},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Max},
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Mul},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Mul},
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Pow},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Pow},
+        {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
+         /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Sub},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Sub},
+    }));
 
 }  // namespace
 }  // namespace xla

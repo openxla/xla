@@ -2,12 +2,13 @@
 #    Libraries for helping construct LLVM IR for XLA backends.
 
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -79,6 +80,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:byte_order",
@@ -183,6 +185,7 @@ cc_library(
         "//xla/service:fusion_node_indexing_evaluation",
         "@com_google_absl//absl/container:flat_hash_map",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",

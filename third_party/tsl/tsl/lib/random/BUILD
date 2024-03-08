@@ -1,17 +1,20 @@
+load("//tsl:tsl.bzl", "internal_visibility")
+load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
-load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
+
+default_visibility = [
+    "//tsl/lib/io:__pkg__",
+    # tensorflow/core/platform/random aliases this package
+    "//tensorflow/core/lib/random:__pkg__",
+]
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
-        "//tsl/lib/io:__pkg__",
-        # tensorflow/core/platform/random aliases this package
-        "//tensorflow/core/lib/random:__pkg__",
-    ],
+    default_visibility = internal_visibility(default_visibility),
     licenses = ["notice"],
 )
 
@@ -32,6 +35,7 @@ cc_library(
         "random_distributions.h",
         "simple_philox.h",
     ],
+    visibility = internal_visibility(default_visibility),
     deps = [
         ":exact_uniform_int",
         ":philox_random",
@@ -49,10 +53,10 @@ cc_library(
     name = "random_distributions_utils",
     hdrs = ["random_distributions_utils.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow/core/lib/random:__pkg__",
         "//tensorflow/lite:__subpackages__",
-    ],
+    ]),
     deps = [":philox_random"],
 )
 
@@ -60,10 +64,10 @@ cc_library(
     name = "philox_random",
     hdrs = ["philox_random.h"],
     compatible_with = get_compatible_with_portable(),
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow/core/lib/random:__pkg__",
         "//tensorflow/lite:__subpackages__",
-    ],
+    ]),
 )
 
 cc_library(
@@ -116,7 +120,7 @@ filegroup(
         "random_distributions_utils.h",
         "simple_philox.h",
     ],
-    visibility = ["//tensorflow/core/lib/random:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/random:__pkg__"]),
 )
 
 filegroup(
@@ -126,7 +130,7 @@ filegroup(
         "random_distributions_utils.h",
         "weighted_picker.h",
     ],
-    visibility = ["//tensorflow/core/lib/random:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/random:__pkg__"]),
 )
 
 filegroup(
@@ -134,7 +138,7 @@ filegroup(
     srcs = [
         "philox_random_test_utils.h",
     ],
-    visibility = ["//tensorflow/core/lib/random:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/random:__pkg__"]),
 )
 
 filegroup(
@@ -149,7 +153,7 @@ filegroup(
         "simple_philox.h",
         "weighted_picker.h",
     ],
-    visibility = ["//tensorflow/core/lib/random:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/lib/random:__pkg__"]),
 )
 
 tsl_cc_test(

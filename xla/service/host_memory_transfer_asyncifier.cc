@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -52,15 +53,18 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     // pass must only be run after LayoutAssignment.
     HloInstruction* dynamic_slice_operand = dynamic_slice->mutable_operand(0);
     if (!dynamic_slice->shape().has_layout()) {
-      return InternalErrorStrCat(dynamic_slice->name(),
-                                 " does not have a layout.");
+      return InternalStrCat(dynamic_slice->name(), " does not have a layout.");
     }
     if (!dynamic_slice_operand->shape().has_layout()) {
-      return InternalErrorStrCat(dynamic_slice->name(), "'s operand, ",
-                                 dynamic_slice_operand->name(),
-                                 ", does not have a layout.");
+      return InternalStrCat(dynamic_slice->name(), "'s operand, ",
+                            dynamic_slice_operand->name(),
+                            ", does not have a layout.");
     }
 
+    VLOG(3) << absl::StreamFormat(
+        "\"%s\" from S(%d) to S(%d)", dynamic_slice->name(),
+        dynamic_slice_operand->shape().layout().memory_space(),
+        dynamic_slice->shape().layout().memory_space());
     // Check that this is a dynamic-slice slicing from host memory to device
     // memory.
     if (dynamic_slice_operand->shape().layout().memory_space() !=
@@ -100,18 +104,18 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     HloInstruction* dynamic_update_slice_update =
         dynamic_update_slice->mutable_operand(1);
     if (!dynamic_update_slice->shape().has_layout()) {
-      return InternalErrorStrCat(dynamic_update_slice->name(),
-                                 " does not have a layout.");
+      return InternalStrCat(dynamic_update_slice->name(),
+                            " does not have a layout.");
     }
     if (!dynamic_update_slice_operand->shape().has_layout()) {
-      return InternalErrorStrCat(dynamic_update_slice->name(), "'s operand, ",
-                                 dynamic_update_slice_operand->name(),
-                                 ", does not have a layout.");
+      return InternalStrCat(dynamic_update_slice->name(), "'s operand, ",
+                            dynamic_update_slice_operand->name(),
+                            ", does not have a layout.");
     }
     if (!dynamic_update_slice_update->shape().has_layout()) {
-      return InternalErrorStrCat(dynamic_update_slice->name(), "'s update, ",
-                                 dynamic_update_slice_update->name(),
-                                 ", does not have a layout.");
+      return InternalStrCat(dynamic_update_slice->name(), "'s update, ",
+                            dynamic_update_slice_update->name(),
+                            ", does not have a layout.");
     }
 
     // Check that this is a dynamic-update-slice updating from device memory
@@ -128,7 +132,7 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
     }
     if (dynamic_update_slice_operand->shape().layout().memory_space() !=
         dynamic_update_slice->shape().layout().memory_space()) {
-      return InternalErrorStrCat(
+      return InternalStrCat(
           "Unexpected that ", dynamic_update_slice_operand->name(),
           "'s memory space is not the same as the dynamic-update-slice.");
     }
@@ -151,10 +155,10 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
   Status HandleCopy(HloInstruction* copy) override {
     HloInstruction* operand = copy->mutable_operand(0);
     if (!operand->shape().has_layout()) {
-      return InternalErrorStrCat(operand->name(), " does not have a layout.");
+      return InternalStrCat(operand->name(), " does not have a layout.");
     }
     if (!copy->shape().has_layout()) {
-      return InternalErrorStrCat(copy->name(), " does not have a layout.");
+      return InternalStrCat(copy->name(), " does not have a layout.");
     }
 
     const auto copy_src_memory_space = operand->shape().layout().memory_space();
@@ -193,7 +197,7 @@ class HostMemoryTransferAsyncifierVisitor : public DfsHloVisitorWithDefault {
 
 }  // namespace
 
-StatusOr<bool> HostMemoryTransferAsyncifier::Run(
+absl::StatusOr<bool> HostMemoryTransferAsyncifier::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   HostMemoryTransferAsyncifierVisitor visitor(kHostMemorySpaceColor);

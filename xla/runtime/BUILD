@@ -1,11 +1,20 @@
 load("//xla:xla.bzl", "xla_cc_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
-load("@tsl//tsl/platform:build_config.bzl", "if_llvm_system_z_available", "tf_platform_deps")
+load("@tsl//tsl/platform:build_config.bzl", "tf_platform_deps")
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "if_llvm_aarch32_available",
+    "if_llvm_aarch64_available",
+    "if_llvm_powerpc_available",
+    "if_llvm_system_z_available",
+    "if_llvm_x86_available",
+)
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
 )
 
@@ -80,6 +89,7 @@ cc_library(
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -137,28 +147,6 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/concurrency:async_value",
-    ],
-)
-
-xla_cc_test(
-    name = "custom_call_test",
-    srcs = ["custom_call_test.cc"],
-    deps = [
-        ":arguments",
-        ":async_runtime",
-        ":custom_call",
-        ":custom_call_registry",
-        ":diagnostics",
-        ":jit_executable",
-        ":module",
-        ":state",
-        "//xla/mlir/runtime/ir/tests:testlib",
-        "//xla/mlir/runtime/transforms:compilation_pipeline_gpu",
-        "//xla/mlir/runtime/transforms:custom_call_encoding",
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -237,30 +225,6 @@ cc_library(
     ],
 )
 
-xla_cc_test(
-    name = "executable_test",
-    srcs = ["executable_test.cc"],
-    tags = ["nomsan"],  # TODO(ezhulenev): Find msan error in LLVM coroutine passes
-    deps = [
-        ":arguments",
-        ":async_runtime",
-        ":custom_call_registry",
-        ":jit_executable",
-        ":logical_result",
-        ":results",
-        ":types",
-        "//xla/mlir/runtime/transforms:compilation_pipeline_options",
-        "//xla/mlir/runtime/transforms/tests:testlib_pipeline",
-        "//xla/mlir/runtime/utils:async_runtime_api",
-        "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
 cc_library(
     name = "execution_engine",
     srcs = ["execution_engine.cc"],
@@ -278,26 +242,21 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TransformUtils",
+    ] + if_llvm_aarch32_available([
+        "@llvm-project//llvm:ARMAsmParser",
+        "@llvm-project//llvm:ARMCodeGen",
+    ]) + if_llvm_aarch64_available([
+        "@llvm-project//llvm:AArch64AsmParser",
+        "@llvm-project//llvm:AArch64CodeGen",
+    ]) + if_llvm_powerpc_available([
+        "@llvm-project//llvm:PowerPCAsmParser",
+        "@llvm-project//llvm:PowerPCCodeGen",
+    ]) + if_llvm_system_z_available([
+        "@llvm-project//llvm:SystemZAsmParser",
+        "@llvm-project//llvm:SystemZCodeGen",
+    ]) + if_llvm_x86_available([
         "@llvm-project//llvm:X86AsmParser",
         "@llvm-project//llvm:X86CodeGen",
-    ] + select({
-        "@tsl//tsl:arm_any": [
-            "@llvm-project//llvm:AArch64AsmParser",  # fixdeps: keep
-            "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
-        ],
-        "@tsl//tsl:linux_ppc64le": [
-            "@llvm-project//llvm:PowerPCAsmParser",  # fixdeps: keep
-            "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
-        ],
-        "@tsl//tsl:macos_arm64": [
-            "@llvm-project//llvm:AArch64AsmParser",  # fixdeps: keep
-            "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
-        ],
-        "//conditions:default": [
-        ],
-    }) + if_llvm_system_z_available([
-        "@llvm-project//llvm:SystemZAsmParser",  # fixdeps: keep
-        "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]),
 )
 

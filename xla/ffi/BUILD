@@ -35,6 +35,7 @@ cc_library(
     hdrs = ["ffi.h"],
     deps = [
         ":api",
+        "//xla:shape_util",
         "//xla:status",
         "//xla:types",
         "//xla:xla_data_proto_cc",
@@ -80,6 +81,7 @@ xla_cc_test(
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/status",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

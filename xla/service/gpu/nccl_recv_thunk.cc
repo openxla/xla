@@ -22,53 +22,28 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/global_device_id.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/nccl_p2p_thunk_common.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
 
-using mlir::lmhlo::RecvOp;
-
-namespace impl {
-
-NcclP2PConfig GetNcclP2PConfig(RecvOp op, int64_t replica_count,
-                               int64_t partition_count) {
-  return GetNcclP2PConfigForSendRecv(op, replica_count, partition_count);
-}
-
-absl::Status CheckImplementable(RecvOp op) {
-  return IsValidOperand(op.getOutputs()[0], Thunk::kNcclSend);
-}
-
-}  // namespace impl
-
-NcclRecvThunk::NcclRecvThunk(ThunkInfo thunk_info, NcclApi* nccl_api, RecvOp op,
+NcclRecvThunk::NcclRecvThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
+                             const HloRecvInstruction* instr,
                              int64_t replica_count, int64_t partition_count,
                              const Buffer& buffer)
     : NcclCollectiveThunk(Thunk::kNcclRecv, thunk_info, nccl_api,
                           /*is_sync=*/false),
-      config_(GetNcclP2PConfig(op, replica_count, partition_count)),
-      buffer_(buffer) {}
-
-/*static*/ NcclP2PConfig NcclRecvThunk::GetNcclP2PConfig(
-    RecvOp op, int64_t replica_count, int64_t partition_count) {
-  return impl::GetNcclP2PConfig(op, replica_count, partition_count);
-}
-
-/*static*/ absl::Status NcclRecvThunk::CheckImplementable(
-    RecvOp op, int64_t replica_count, int64_t partition_count) {
-  return AddOpDescription<NcclRecvThunk>(impl::CheckImplementable(op), op,
-                                         replica_count, partition_count);
-}
-
-/*static*/ CollectiveOpGroupMode NcclRecvThunk::GetGroupMode(RecvOp op) {
-  return GetGroupModeForSendRecv(op);
-}
+      config_(GetNcclP2PConfigForSendRecv(instr, instr->shape().tuple_shapes(0),
+                                          replica_count, partition_count)),
+      buffer_(buffer),
+      stream_kind_(GetStreamKindForSendRecv(instr)) {}
 
 absl::Status NcclRecvThunk::RunNcclCollective(const ExecuteParams& params,
                                               se::Stream& stream,
@@ -79,16 +54,16 @@ absl::Status NcclRecvThunk::RunNcclCollective(const ExecuteParams& params,
                              config_.config.operand_element_type));
   TF_RET_CHECK(device_buffers.size() == 1) << "Expected one buffer pair.";
 
-  GlobalDeviceId global_device_id = params.nccl_params.global_device_id();
+  GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      params.nccl_params.device_assn()->LogicalIdForDevice(global_device_id));
+  TF_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID current_logical_id,
+                      params.collective_params->device_assn->LogicalIdForDevice(
+                          global_device_id));
   const int64_t current_id =
       config_.config.group_mode == CollectiveOpGroupMode::kCrossReplica
           ? current_logical_id.replica_id
           : current_logical_id.computation_id;
-  std::string device_string = GetDeviceString(params.nccl_params);
+  std::string device_string = GetDeviceString(*params.collective_params);
 
   const NcclP2PConfig::SourceTargetMapEntry source_target =
       NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
@@ -126,7 +101,7 @@ absl::Status RunRecv(NcclApi* nccl_api,
     // the destination buffer.
     VLOG(3) << absl::StreamFormat("%s : collective-Permute: Issuing MemZero",
                                   device_string);
-    stream.ThenMemZero(&dest_addr, dest_addr.size());
+    TF_RETURN_IF_ERROR(stream.MemZero(&dest_addr, dest_addr.size()));
   }
   return absl::OkStatus();
 }

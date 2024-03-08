@@ -31,6 +31,6 @@ xla_cc_test(
         ":sm_bw_utils",
         "@com_google_googletest//:gtest_main",
     ] + if_cuda([
-        "@tsl//tsl/cuda:cudart",
+        "//xla/tsl/cuda:cudart",
     ]),
 )

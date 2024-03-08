@@ -16,13 +16,13 @@ load(
     "if_rocm_is_configured",
     "rocm_library",
 )
-load("@tsl//tsl:tsl.bzl", "set_external_visibility", "tsl_copts")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([":friends"]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -156,6 +156,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:fingerprint",
     ]),
     alwayslink = True,
 )
@@ -176,6 +177,12 @@ rocm_library(
     deps = if_rocm_is_configured(["@local_config_rocm//rocm:rocm_headers"]),
 )
 
+rocm_library(
+    name = "hip_noop_kernel",
+    srcs = if_rocm_is_configured(["hip_noop_kernel.cu.cc"]),
+    deps = if_rocm_is_configured(["@local_config_rocm//rocm:rocm_headers"]),
+)
+
 cc_library(
     name = "rocm_platform",
     srcs = if_rocm_is_configured(["rocm_platform.cc"]),
@@ -192,7 +199,7 @@ cc_library(
         "//xla/stream_executor",  # buildcleaner: keep
         "//xla/stream_executor/platform",
     ]),
-    alwayslink = True,  # Registers itself with the MultiPlatformManager.
+    alwayslink = True,  # Registers itself with the PlatformManager.
 )
 
 cc_library(
@@ -339,6 +346,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_timer_header",
         "//xla/stream_executor/gpu:gpu_types_header",
+        "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@com_google_absl//absl/algorithm:container",

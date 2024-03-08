@@ -3,12 +3,12 @@
 
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
-load("@tsl//tsl:tsl.bzl", "set_external_visibility")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([":friends"]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -43,13 +43,15 @@ cc_library(
         ":host_gpu_executor",
         ":host_platform_id",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/platform",
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
     ],
-    alwayslink = True,  # Registers itself with the MultiPlatformManager.
+    alwayslink = True,  # Registers itself with the PlatformManager.
 )
 
 cc_library(
@@ -62,12 +64,15 @@ cc_library(
     ],
     deps = [
         "//xla/stream_executor:stream_executor_internal",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:setround",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -81,17 +86,15 @@ cc_library(
         "host_gpu_executor.h",
     ],
     deps = [
-        ":host_platform_id",
         ":host_stream",
         "//xla/stream_executor",
-        "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:stream_executor_internal",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform/profile_utils:profile_utils_cpu_utils",
     ],
@@ -104,8 +107,8 @@ xla_cc_test(
     deps = [
         ":host_platform",
         "//xla/stream_executor",
-        "//xla/stream_executor:multi_platform_manager",
         "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",

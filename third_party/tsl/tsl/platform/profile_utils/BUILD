@@ -1,7 +1,7 @@
 # Description:
 # profile_utils targets.
 
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
@@ -14,8 +14,8 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
-        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
+    default_visibility = internal_visibility([
+        "@xla//xla/stream_executor:__subpackages__",
         "//tensorflow/core/platform:__subpackages__",
         "//tsl:__pkg__",
         "//tsl/platform/default:__pkg__",
@@ -39,10 +39,10 @@ filegroup(
         "android_armv7a_cpu_utils_helper.cc",
         "clock_cycle_profiler.cc",
     ],
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow/core/platform:__subpackages__",
         "//tsl/platform:__pkg__",
-    ],
+    ]),
 )
 
 cc_library(

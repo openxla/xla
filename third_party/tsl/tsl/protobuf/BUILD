@@ -2,7 +2,7 @@
 load(
     "//tsl:tsl.bzl",
     "if_google",
-    "set_external_visibility",
+    "internal_visibility",
 )
 load(
     "//tsl/platform:build_config.bzl",
@@ -11,7 +11,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
         "//tsl:internal",
         "//tensorflow_models:__subpackages__",
@@ -103,7 +103,7 @@ tf_proto_library(
     name = "test_log_proto",
     srcs = ["test_log.proto"],
     make_default_target_header_only = True,
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
         "//tsl/util:__pkg__",
     ]),

@@ -292,14 +292,10 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
 std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
     llvm::Triple target_triple, se::CudaComputeCapability compute_capability,
     const DebugOptions& debug_options) {
-  // TODO(b/266678775): Make it always PTX 7.1 as soon as TF driver requirements
-  // are updated.
-  const std::string ptx_ver =
-      debug_options.xla_gpu_enable_triton_gemm() ? "+ptx71" : "+ptx60";
   // Figure out the exact name of the processor as known to the NVPTX backend
   // from the gpu_architecture flag.
   return GetTargetMachine(target_triple, GetSmName(compute_capability),
-                          debug_options, ptx_ver);
+                          debug_options, /*feature_str=*/"+ptx74");
 }
 
 using TargetModuleLinker =
@@ -770,9 +766,7 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     ir_fs->flush();
   }
   // Locate lld.
-  // TODO(whchung@gmail.com): change to tensorflow::ROCmRoot() after
-  // ROCm-Device-Libs PR.
-  std::string lld_path = tsl::io::JoinPath("/opt/rocm", "llvm/bin");
+  std::string lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
   auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
   if (!lld_program) {
     return xla::Internal("unable to find ld.lld in PATH: %s",

@@ -24,6 +24,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
@@ -31,12 +33,12 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/service/gpu/model/affine_map_printer.h"
 #include "xla/service/gpu/model/indexing_map.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 namespace gpu {
 namespace {
 
+using absl::StrCat;
 using mlir::AffineDimExpr;
 using mlir::AffineExpr;
 using mlir::AffineMap;
@@ -149,30 +151,14 @@ AffineMap SubstituteAllIndicesAndKnownSymbolsWithSameValue(
 //
 // Strictly solving (1) may yield negative strides (e.g. in the case of
 // reverse). Conceptually, negative strides denote of a decremental iteration
-// order over indices {0, ..., size_expr{i} - 1}. Since all indices within a
-// tile are captured at the same time (they are only explicit here as a
-// convenience), we can reverse this iteration order by replacing
-//   index_expr{i}
-// with
-//   (size_expr{i} - 1 - index_expr{i}).
-//
-// This gives us a new expression
-//
-//     change-iteration-order(offset_expr{i} + stride_expr{i} * index_expr{i})
-//   = offset_expr{i} - |stride_expr{i}| * (size_expr{i} - 1 - index_expr{i})
-//   = offset_expr{i} - |stride_expr{i}| * (size_expr{i} - 1) +
-//     |stride_expr{i}| * index_expr{i}
-//   = offset_expr'{i} + stride_expr'{i} * index_expr{i}
-// where
-//   offset_expr'{i} = offset_expr{i} - |stride_expr{i}| * (size_expr{i} - 1)
-//   stride_expr'{i} = |stride_expr{i}| = -stride_expr{i}
-// and size, offset, and stride expressions are positive.
+// order over indices {0, ..., size_expr{i} - 1}. This is not normalized in
+// symbolic tiles, and must be handled by consumers.
 //
 // The resulting affine maps elide known symbols from the list of parameter
 // symbols, since they will have been replaced by constants.
 std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
     const IndexingMap& indexing_map) {
-  AffineMap affine_map = indexing_map.affine_map;
+  AffineMap affine_map = indexing_map.GetAffineMap();
   if (!AffineMapDescribesTile(affine_map)) {
     return std::nullopt;
   }
@@ -186,19 +172,18 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
   // offsets_expr = f'(0, ..., 0)[0, ..., 0]
   AffineMap f_prime_0 = SubstituteAllIndicesAndKnownSymbolsWithSameValue(
       affine_map, getAffineConstantExpr(0, mlir_context), num_known_symbols);
-  llvm::ArrayRef<AffineExpr> unnormalized_offset_expressions =
-      f_prime_0.getResults();
+  llvm::ArrayRef<AffineExpr> offset_expressions = f_prime_0.getResults();
 
   // Compute f'(1, ..., 1)[1, ..., 1].
   AffineMap f_prime_1 = SubstituteAllIndicesAndKnownSymbolsWithSameValue(
       affine_map, getAffineConstantExpr(1, mlir_context), num_known_symbols);
 
   // strides_expr = f'(1, ..., 1)[1, ..., 1] - f'(0, ..., 0)[0, ..., 0]
-  std::vector<AffineExpr> signed_stride_expressions;
-  signed_stride_expressions.reserve(num_results);
+  std::vector<AffineExpr> stride_expressions;
+  stride_expressions.reserve(num_results);
   for (auto [sub_lhs, sub_rhs] :
-       llvm::zip(f_prime_1.getResults(), f_prime_0.getResults())) {
-    signed_stride_expressions.push_back(
+       llvm::zip(f_prime_1.getResults(), offset_expressions)) {
+    stride_expressions.push_back(
         simplifyAffineExpr(sub_lhs - sub_rhs, affine_map.getNumDims(),
                            affine_map.getNumSymbols()));
   }
@@ -219,9 +204,8 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
   std::vector<AffineExpr> size_expressions;
   size_expressions.reserve(num_results);
   constexpr int kSizePositionWithinTileParameters = 1;
-  for (auto [offset_expr, stride_expr, input_expr] :
-       llvm::zip(unnormalized_offset_expressions, signed_stride_expressions,
-                 affine_map.getResults())) {
+  for (auto [offset_expr, stride_expr, input_expr] : llvm::zip(
+           offset_expressions, stride_expressions, affine_map.getResults())) {
     AffineExpr size_expr;
     if (stride_expr == getAffineConstantExpr(0, mlir_context)) {
       size_expr = getAffineConstantExpr(1, mlir_context);
@@ -235,7 +219,7 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
         if (symbol_expr && symbol_expr.getPosition() < num_known_symbols) {
           CHECK(!size_expr);
           const Range& symbol_range =
-              indexing_map.domain.symbol_ranges[symbol_expr.getPosition()];
+              indexing_map.GetSymbolRange(symbol_expr.getPosition());
           size_expr = getAffineConstantExpr(
               symbol_range.upper_bound - symbol_range.lower_bound + 1,
               mlir_context);
@@ -250,31 +234,6 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
       });
     }
     size_expressions.push_back(size_expr);
-  }
-
-  // Normalize offsets and strides to be non-negative if possible.
-  std::vector<AffineExpr> offset_expressions;
-  offset_expressions.reserve(num_results);
-  std::vector<AffineExpr> stride_expressions;
-  stride_expressions.reserve(num_results);
-  IndexingMapSimplifier simplifier =
-      IndexingMapSimplifier::FromIndexingMap(indexing_map);
-
-  for (auto [offset_expr, stride_expr, size_expr] :
-       llvm::zip(unnormalized_offset_expressions, signed_stride_expressions,
-                 size_expressions)) {
-    if (simplifier.IsAlwaysPositiveOrZero(stride_expr)) {
-      offset_expressions.push_back(offset_expr);
-      stride_expressions.push_back(stride_expr);
-    } else if (simplifier.IsAlwaysNegativeOrZero(stride_expr)) {
-      offset_expressions.push_back(offset_expr + stride_expr * size_expr);
-      stride_expressions.push_back(-stride_expr);
-    } else {
-      // In that case, the comparison is inconclusive---the expression may be
-      // both positive or negative depending on the parameters. We can not
-      // produce a tile that satisfies the "non-negative" requirements.
-      return std::nullopt;
-    }
   }
 
   int64_t num_symbols = affine_map.getNumSymbols();
@@ -294,21 +253,21 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
 
 /*static*/ std::optional<SymbolicTile> SymbolicTile::FromIndexingMap(
     const IndexingMap& indexing_map) {
-  MLIRContext* mlir_context = indexing_map.affine_map.getContext();
-  int64_t num_input_dims = indexing_map.domain.dimension_ranges.size();
+  MLIRContext* mlir_context = indexing_map.GetAffineMap().getContext();
+  int64_t num_input_dims = indexing_map.GetDimensionCount();
   std::vector<AffineExpr> exprs;
   exprs.reserve(num_input_dims);
 
-  Domain tile_domain;
-  tile_domain.dimension_ranges.reserve(num_input_dims);
-  tile_domain.symbol_ranges.reserve(kNumTileParametersPerInputDim *
-                                        num_input_dims +
-                                    indexing_map.affine_map.getNumSymbols());
+  std::vector<Range> tile_dimension_ranges;
+  tile_dimension_ranges.reserve(num_input_dims);
+  std::vector<Range> tile_symbol_ranges;
+  tile_symbol_ranges.reserve(kNumTileParametersPerInputDim * num_input_dims +
+                             indexing_map.GetAffineMap().getNumSymbols());
 
   // The symbols declared in 'indexing_map.affine_map' will precede those
   // defined in the producer map we construct here.
-  absl::c_copy(indexing_map.domain.symbol_ranges,
-               std::back_inserter(tile_domain.symbol_ranges));
+  absl::c_copy(indexing_map.GetSymbolRanges(),
+               std::back_inserter(tile_symbol_ranges));
 
   // For each input dims we add kNumTileParametersPerInputDim = 3 symbols, as
   // well as a single dim. Symbols are ordered in (offset, size, stride)
@@ -322,12 +281,12 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
 
     exprs.push_back(offset + stride * index);
 
-    Range range = indexing_map.domain.dimension_ranges[dim];
-    tile_domain.dimension_ranges.push_back(range);
+    Range range = indexing_map.GetDimensionRange(dim);
+    tile_dimension_ranges.push_back(range);
 
     for (int64_t symbol_index = 0; symbol_index < kNumTileParametersPerInputDim;
          ++symbol_index) {
-      tile_domain.symbol_ranges.push_back(range);
+      tile_symbol_ranges.push_back(range);
     }
   }
 
@@ -335,9 +294,10 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
       num_input_dims, kNumTileParametersPerInputDim * num_input_dims, exprs,
       mlir_context);
 
-  IndexingMap composed_indexing_map{
-      .affine_map = indexing_map.affine_map.compose(producer_map),
-      .domain = tile_domain};
+  IndexingMap composed_indexing_map(
+      indexing_map.GetAffineMap().compose(producer_map), tile_dimension_ranges,
+      tile_symbol_ranges);
+
   composed_indexing_map.Simplify();
 
   std::optional<RawSymbolicTile> maybe_raw_symbolic_tile =
@@ -373,6 +333,19 @@ void SymbolicTile::Print(std::ostream& out,
 
 std::ostream& operator<<(std::ostream& out, const SymbolicTile& symbolic_tile) {
   AffineMapPrinter printer;
+
+  // This utilizes the assumption that symbols are structured as triplets, i.e.
+  // [offset0, size0, stride0, ... offset{N-1}, size{N-1}, stride{N-1}]
+  // where N is the tensor rank.
+  for (int64_t triplet_start = 0;
+       triplet_start < symbolic_tile.offset_map().getNumSymbols();
+       triplet_start += kNumTileParametersPerInputDim) {
+    int64_t triplet_idx = triplet_start / kNumTileParametersPerInputDim;
+    printer.SetSymbolName(triplet_start, StrCat("offset", triplet_idx));
+    printer.SetSymbolName(triplet_start + 1, StrCat("size", triplet_idx));
+    printer.SetSymbolName(triplet_start + 2, StrCat("stride", triplet_idx));
+  }
+
   symbolic_tile.Print(out, printer);
   return out;
 }

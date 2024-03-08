@@ -1,12 +1,13 @@
 # Common computation builders for XLA.
 
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla/client:friends"],
+    default_visibility = internal_visibility(["//xla/client:friends"]),
     licenses = ["notice"],
 )
 
