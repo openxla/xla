@@ -2713,6 +2713,7 @@ cc_library(
         "//xla:window_util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
+        ":variant_visitor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
     ],
