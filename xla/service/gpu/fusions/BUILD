@@ -573,6 +573,7 @@ xla_test(
         "gpu",
     ],
     deps = [
+        "//xla/service/gpu:stream_executor_util",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
