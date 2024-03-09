@@ -516,11 +516,13 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = [":friends"],  # For the functions to access C++ flags/thread-local variables
     deps = [
+        ":nb_helpers",
         ":py_client",
         ":python_ref_manager",
         ":pytree",
         ":types",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -535,7 +537,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
         "@nanobind",
-        "@pybind11",
     ],
 )
 
