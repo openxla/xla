@@ -605,7 +605,11 @@ LogicalResult matchAndRewriteDotLikeHybridOp(
   // For weight-only quantization:
   // result = hybridOp(lhs, dequant(rhs))
   Value lhsFloat32Tensor = adaptor.getLhs();
-  Value rhs = adaptor.getRhs();
+  // Insert optimization_barrier to prevent constant folding of dequantize +
+  // quantized weights.
+  auto barrier = rewriter.create<mhlo::OptimizationBarrierOp>(op->getLoc(),
+                                                              adaptor.getRhs());
+  Value rhs = barrier.getResult()[0];
   quant::UniformQuantizedType rhsElementType =
       getElementTypeOrSelf(op.getRhs().getType())
           .template cast<quant::UniformQuantizedType>();
@@ -1363,6 +1367,7 @@ class MhloQuantLegalizeToInt
     if (failed(result)) {
       signalPassFailure();
     }
+    op->dump();
   }
 };
 
