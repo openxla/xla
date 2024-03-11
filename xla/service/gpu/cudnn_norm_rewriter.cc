@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/variant_visitor.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape_util.h"
@@ -147,14 +148,24 @@ class UniqueHloInstruction {
 // Returns an architecture-specific constant for the calculation of an upper
 // bound for the size of the scratch space for layer norm kernels.
 absl::StatusOr<int64_t> CConstant(
-    se::CudaComputeCapability cuda_compute_capability) {
-  if (cuda_compute_capability.major == se::CudaComputeCapability::AMPERE) {
-    return 32 * 128;
-  } else if (cuda_compute_capability.major ==
-             se::CudaComputeCapability::HOPPER) {
-    return 32 * 144;
-  }
-  return xla::Internal("Norm kernels require Ampere or Hopper architecture.");
+    const se::GpuComputeCapability& gpu_compute_capability) {
+    return std::visit(VariantVisitor{
+      [](const se::CudaComputeCapability& cc) -> absl::StatusOr<int64_t> {
+        if (cc.major == se::CudaComputeCapability::AMPERE) {
+          return 32*128;
+        } else if (cc.major == se::CudaComputeCapability::HOPPER) {
+          return  32*144;
+          } else {
+            return xla::Internal("Norm kernels require Ampere or Hopper architecture.");
+          }
+      },
+      [](const se::RocmComputeCapability& cc) -> absl::StatusOr<int64_t> {
+        if (cc.gfx9_mi100_or_later()) {
+          return 32*128;
+          } else {
+            return xla::Internal("Norm kernels require MI100 or later architecture.");
+          }
+      }}, gpu_compute_capability);
 }
 
 // Returns whether the element type of instr is compatible with layer norm
@@ -824,8 +835,8 @@ auto F2(UniqueHloInstruction* fused_norm_factor, UniqueHloInstruction* scale,
 class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit CudnnNormRewriterVisitor(
-      const se::CudaComputeCapability cuda_compute_capability)
-      : cuda_compute_capability_(cuda_compute_capability) {}
+      const se::GpuComputeCapability gpu_compute_capability)
+      : gpu_compute_capability_(gpu_compute_capability) {}
 
   absl::Status HandleAdd(HloInstruction* instr) override {
     TF_RETURN_IF_ERROR(MatchLayerNorm(instr));
@@ -867,13 +878,25 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      // Layer norm kernels require Ampere or Hopper architectures.
-      if (cuda_compute_capability_.major != se::CudaComputeCapability::AMPERE &&
-          cuda_compute_capability_.major != se::CudaComputeCapability::HOPPER) {
-        VLOG(1) << "Layer norm Custom Calls require Ampere or Hopper "
-                   "architectures.";
-        return absl::OkStatus();
-      }
+      bool disabled = std::visit(VariantVisitor{
+        [](const se::CudaComputeCapability& cc) -> bool {
+          // Layer norm kernels require Ampere or Hopper architectures.
+          if (cc.major != se::CudaComputeCapability::AMPERE &&
+              cc.major != se::CudaComputeCapability::HOPPER) {
+            VLOG(1) << "Layer norm Custom Calls require Ampere or Hopper "
+                       "architectures.";
+            return true;
+          } else { return false; }
+        },
+        [](const se::RocmComputeCapability& cc) -> bool {
+          // Layer norm kernels require MI100 or later architectures.
+          if (!cc.gfx9_mi100_or_later()) {
+            VLOG(1) << "Layer norm Custom Calls require MI100 or later architecture.";
+            return true;
+          } else { return false; }
+        }}, gpu_compute_capability_);
+
+      if (disabled) return absl::OkStatus();
 
       // Verify the uniqueness of the inputs.
       if (!x.Instr() || !expectation.Instr() || !variance.Instr() ||
@@ -1013,7 +1036,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       TF_ASSIGN_OR_RETURN(const int64_t c_constant,
-                          CConstant(cuda_compute_capability_));
+                          CConstant(gpu_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) + (2 * reshaped_dims[0] * 4) + 64;
       algorithm->mutable_workspace_size()->set_value(workspace_size);
@@ -1133,7 +1156,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Update the workspace size.
       TF_ASSIGN_OR_RETURN(const int64_t c_constant,
-                          CConstant(cuda_compute_capability_));
+                          CConstant(gpu_compute_capability_));
       const int64_t workspace_size = (2 * c_constant * (4 + 256)) + 32;
       backend_config.mutable_algorithm()->mutable_workspace_size()->set_value(
           workspace_size);
@@ -1396,7 +1419,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       TF_ASSIGN_OR_RETURN(const int64_t c_constant,
-                          CConstant(cuda_compute_capability_));
+                          CConstant(gpu_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) +
           (2 * x.Instr()->shape().dimensions(0) * 4) + 64;
@@ -1453,14 +1476,14 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  se::CudaComputeCapability cuda_compute_capability_;
+  se::GpuComputeCapability gpu_compute_capability_;
   NormMetadataMap norm_metadata_;
 };
 
 absl::StatusOr<bool> RunOnComputation(
     HloComputation* computation,
-    se::CudaComputeCapability cuda_compute_capability) {
-  CudnnNormRewriterVisitor visitor(cuda_compute_capability);
+    se::GpuComputeCapability gpu_compute_capability) {
+  CudnnNormRewriterVisitor visitor(gpu_compute_capability);
   TF_RETURN_IF_ERROR(computation->Accept(&visitor));
   return visitor.changed();
 }
@@ -1468,8 +1491,8 @@ absl::StatusOr<bool> RunOnComputation(
 }  // anonymous namespace
 
 CudnnNormRewriter::CudnnNormRewriter(
-    se::CudaComputeCapability cuda_compute_capability)
-    : cuda_compute_capability_(cuda_compute_capability) {}
+    se::GpuComputeCapability gpu_compute_capability)
+    : gpu_compute_capability_(gpu_compute_capability) {}
 
 absl::StatusOr<bool> CudnnNormRewriter::Run(
     HloModule* module,
@@ -1478,7 +1501,7 @@ absl::StatusOr<bool> CudnnNormRewriter::Run(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     TF_ASSIGN_OR_RETURN(
-        bool result, RunOnComputation(computation, cuda_compute_capability_));
+        bool result, RunOnComputation(computation, gpu_compute_capability_));
     changed |= result;
   }
   return changed;

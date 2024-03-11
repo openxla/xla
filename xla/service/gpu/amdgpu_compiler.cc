@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/service/gpu/conv_algorithm_picker.h"
 #include "xla/service/gpu/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
+#include "xla/service/gpu/cudnn_norm_rewriter.h"
 #include "xla/service/gpu/cusolver_rewriter.h"
 #include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gemm_rewriter.h"
@@ -97,6 +98,7 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
   auto rocm_compute_capability = std::get<se::RocmComputeCapability>(
       gpu_target_config.device_description.gpu_compute_capability());
 
+  pre_pipeline.AddPass<CudnnNormRewriter>(rocm_compute_capability);
   pre_pipeline.AddPass<DotDimensionMerger>();
 
   for (const auto& req : HipblasPaddingRequirements) {

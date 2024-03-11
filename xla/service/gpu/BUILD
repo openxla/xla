@@ -4000,6 +4000,7 @@ cc_library(
         ":conv_algorithm_picker",
         ":cublas_pad_for_gemms",
         ":cublas_padding_requirements",
+        ":cudnn_norm_rewriter",
         ":cusolver_rewriter",
         ":gemm_algorithm_picker",
         ":gemm_rewriter",
@@ -4618,6 +4619,7 @@ cc_library(
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
+        ":variant_visitor",
         "//xla:shape_util",
         "//xla:status",
         "//xla:statusor",
