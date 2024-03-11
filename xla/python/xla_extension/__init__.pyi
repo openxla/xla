@@ -696,8 +696,15 @@ class DeviceTopology:
 def buffer_to_dlpack_managed_tensor(
     buffer: ArrayImpl, stream: int | None = None
 ) -> Any: ...
+@overload
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
+) -> ArrayImpl: ...
+@overload
+def dlpack_managed_tensor_to_buffer( # Legacy overload
+    tensor: Any,
+    cpu_backend: Optional[Client] = ...,
+    gpu_backend: Optional[Client] = ...,
 ) -> ArrayImpl: ...
 
 def cuda_array_interface_to_buffer(
@@ -710,12 +717,6 @@ def cuda_array_interface_to_buffer(
     gpu_backend: Optional[Client] = ...,
 ) -> ArrayImpl: ...
 
-# Legacy overload
-def dlpack_managed_tensor_to_buffer(
-    tensor: Any,
-    cpu_backend: Optional[Client] = ...,
-    gpu_backend: Optional[Client] = ...,
-) -> ArrayImpl: ...
 
 # === BEGIN py_traceback.cc
 
