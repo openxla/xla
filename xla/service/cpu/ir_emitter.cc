@@ -47,6 +47,9 @@ limitations under the License.
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Value.h"
+#include "tsl/lib/math/math_util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -79,9 +82,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/math/math_util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 #include "xla/service/cpu/onednn_memory_util.h"
@@ -2590,11 +2590,49 @@ Status IrEmitter::HandleOneDnnMatMulCalls(HloInstruction* custom_call,
   b_.CreateStore(args_val, args_ptr);
 
   TF_RETURN_IF_ERROR(EmitTargetAddressForOp(custom_call));
-  llvm_ir::IrArray result_array = GetIrArrayFor(custom_call);
-  auto result_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, result_array);
+  llvm::Value* result_val;
+  llvm::Value* scratch_val;
+  StackAlloca result_stack_alloca;
+  StackAlloca scratch_stack_alloca;
+  llvm_ir::IrArray result_array;
+  llvm_ir::IrArray scratch_array;
+  llvm::Value* result_value_ptr;
+  llvm::Value* scratch_value_ptr;
+
+  if (custom_call->shape().IsTuple()) {
+    TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice result_slice,
+                        assignment_.GetUniqueSlice(custom_call, {0}));
+    const Shape& result_shape = custom_call->shape().tuple_shapes(0);
+    result_value_ptr = EmitBufferPointer(result_slice, result_shape);
+    llvm::Type* ir_type = IrShapeType(result_shape);
+    result_array = llvm_ir::IrArray(result_value_ptr, ir_type, result_shape);
+    result_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, result_array);
+    result_val = result_stack_alloca.value;
+
+    TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice scratch_slice,
+                        assignment_.GetUniqueSlice(custom_call, {1}));
+    const Shape& scratch_shape = custom_call->shape().tuple_shapes(1);
+    scratch_value_ptr = EmitBufferPointer(scratch_slice, scratch_shape);
+    llvm::Type* scratch_type = IrShapeType(scratch_shape);
+    scratch_array =
+        llvm_ir::IrArray(scratch_value_ptr, scratch_type, scratch_shape);
+    scratch_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, scratch_array);
+    scratch_val = scratch_stack_alloca.value;
+  } else {
+    result_array = GetIrArrayFor(custom_call);
+    result_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, result_array);
+    result_val = result_stack_alloca.value;
+
+    scratch_val = llvm::ConstantPointerNull::get(b_.getPtrTy());
+  }
 
   EmitCallToFunc(std::move(runtime_symbol_name),
-                 {result_stack_alloca.value, args_ptr}, b_.getVoidTy());
+                 {result_val, scratch_val, args_ptr}, b_.getVoidTy());
+
+  if (custom_call->shape().IsTuple()) {
+    llvm_ir::EmitTuple(GetIrArrayFor(custom_call),
+                       {result_value_ptr, scratch_value_ptr}, &b_);
+  }
 
   // Lifetime ends for all stack allocations.
   b_.CreateLifetimeEnd(nargs_ptr, b_.getInt64(-1));
@@ -2603,6 +2641,9 @@ Status IrEmitter::HandleOneDnnMatMulCalls(HloInstruction* custom_call,
   }
   b_.CreateLifetimeEnd(args_ptr, b_.getInt64(-1));
   result_stack_alloca.EmitLifetimeEnd();
+  if (custom_call->shape().IsTuple()) {
+    scratch_stack_alloca.EmitLifetimeEnd();
+  }
 
   return OkStatus();
 }
