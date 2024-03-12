@@ -86,7 +86,6 @@ DeviceHostCopyThunk::DeviceHostCopyThunk(
     bool device_to_host)
     : DeviceToDeviceCopyThunk(thunk_info, source_buffer, destination_buffer,
                               mem_size),
-      stream_id_(thunk_info.execution_stream_id),
       async_events_(std::move(async_events)), instr_(instr),
       device_to_host_(device_to_host) {}
 
@@ -97,8 +96,9 @@ absl::Status DeviceHostCopyThunk::ExecuteOnStream(const ExecuteParams &params) {
       params.buffer_allocations->GetDeviceAddress(source());
   void *cpu_dst = destination_data.opaque();
   void *cpu_src = source_data.opaque();
-  TF_ASSIGN_OR_RETURN(se::Stream * stream,
-                      GetStreamForExecution(stream_id_, params));
+  TF_ASSIGN_OR_RETURN(
+      se::Stream * stream,
+      GetStreamForExecution(Thunk::execution_stream_id(), params));
   if (stream == params.stream) {
     if (device_to_host_) {
       VLOG(3) << "Memcpy D2H from the main stream";
@@ -136,7 +136,6 @@ DeviceHostCopyDoneThunk::DeviceHostCopyDoneThunk(
     std::shared_ptr<CopyAsyncEvents> async_events,
     const HloInstruction *copy_start_instr)
     : Thunk(kind, std::move(thunk_info)),
-      stream_id_(thunk_info.execution_stream_id),
       async_events_(std::move(async_events)),
       copy_start_instr_(copy_start_instr) {}
 

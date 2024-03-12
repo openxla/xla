@@ -100,7 +100,6 @@ public:
   absl::Status ExecuteOnStream(const ExecuteParams &params) override;
 
 private:
-  const ExecutionStreamId stream_id_;
   std::shared_ptr<CopyAsyncEvents> async_events_;
   const HloInstruction *instr_;
   bool device_to_host_;
@@ -119,7 +118,6 @@ public:
   absl::Status ExecuteOnStream(const ExecuteParams &params) override;
 
 private:
-  ExecutionStreamId stream_id_;
   std::shared_ptr<CopyAsyncEvents> async_events_;
   const HloInstruction *copy_start_instr_;
 };
