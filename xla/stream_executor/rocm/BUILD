@@ -155,6 +155,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor/integrations:device_mem_allocator",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:fingerprint",
     ]),
