@@ -93,6 +93,7 @@ class Thunk {
     kConvolution,
     kConvolutionReorder,
     kCopy,
+    kCopyDone,
     kCommandBuffer,
     kCubSort,
     kCublasLtMatmul,

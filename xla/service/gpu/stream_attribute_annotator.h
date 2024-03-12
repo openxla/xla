@@ -45,6 +45,8 @@ namespace xla::gpu {
 
 class StreamAttributeAnnotator : public HloModulePass {
  public:
+  explicit StreamAttributeAnnotator(bool copy_start_done = false)
+      : HloModulePass(), copy_start_done_(copy_start_done) {}
   absl::string_view name() const override {
     return "stream-attribute-annotator";
   }
@@ -53,6 +55,8 @@ class StreamAttributeAnnotator : public HloModulePass {
   absl::StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+ private:
+  bool copy_start_done_;
 };
 
 }  // namespace xla::gpu

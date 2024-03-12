@@ -2197,18 +2197,50 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     HloPassPipeline pipeline("remat-pipeline");
 
     HloCostAnalysis hlo_cost_analysis(ShapeSizeBytesFunction());
-    HloRematerialization::RematerializationModeConfig
-        rematerialization_mode_config(/*recompute=*/true, /*compress=*/true,
-                                      /*host_offload=*/false);
-    HloRematerialization::Options options(
-        hlo_cost_analysis, rematerialization_mode_config,
-        // Assume 75% of the total device memory is available for XLA.
-        /*memory_limit_bytes=*/scheduler_mem_limit,
-        /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
-        /*min_remat_size=*/0, /*compact_shape_function=*/nullptr,
-        /*host_memory_offload_config=*/std::nullopt);
+    int64_t offloading_memory_limits =
+        module->config().debug_options().xla_gpu_offloading_memory_limits();
+
+    bool enable_gpu_offloading =
+        module->config().debug_options().xla_gpu_enable_offloading();
+
+    float offloading_bandwidth =
+        module->config().debug_options().xla_gpu_offloading_bandwidth();
+
+    int64_t host_memory_space_color =
+        static_cast<int64_t>(se::MemoryType::kHost);
+
     HloRematerialization::RematerializationSizes sizes;
-    pipeline.AddPass<HloRematerialization>(options, sizes);
+    if (!enable_gpu_offloading) {
+      HloRematerialization::RematerializationModeConfig
+          rematerialization_mode_config(/*recompute=*/true, /*compress=*/true,
+                                        /*host_offload=*/false);
+      HloRematerialization::Options options(
+          hlo_cost_analysis, rematerialization_mode_config,
+          // Assume 75% of the total device memory is available for XLA.
+          /*memory_limit_bytes=*/scheduler_mem_limit,
+          /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+          /*min_remat_size=*/0, /*compact_shape_function=*/nullptr,
+          /*host_memory_offload_config=*/std::nullopt);
+      pipeline.AddPass<HloRematerialization>(options, sizes);
+    } else {
+      HloRematerialization::RematerializationModeConfig
+          rematerialization_mode_config(/*recompute=*/false, /*compress=*/false,
+                                        /*host_offload=*/true);
+      HloRematerialization::HostMemoryOffloadConfig
+          hlo_rematerialization_config(
+              /*host_memory_space=*/host_memory_space_color,
+              /*bandwidth_to_host_bytes_per_second=*/offloading_bandwidth,
+              /*bandwidth_from_host_bytes_per_second=*/offloading_bandwidth);
+      HloRematerialization::Options options(
+          hlo_cost_analysis, rematerialization_mode_config,
+          // Assume 75% of the total device memory is available for XLA.
+          /*memory_limit_bytes=*/offloading_memory_limits,
+          /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+          /*min_remat_size=*/0, /*compact_shape_function=*/nullptr,
+          /*host_memory_offload_config=*/hlo_rematerialization_config);
+      pipeline.AddPass<HloRematerialization>(options, sizes);
+    }
+    pipeline.AddPass<StreamAttributeAnnotator>(/*copy_start_done=*/true);
     pipeline.AddPass<OptimizationBarrierExpander>();
 
     TF_ASSIGN_OR_RETURN(bool changed, pipeline.Run(module));

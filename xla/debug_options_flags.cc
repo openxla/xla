@@ -249,6 +249,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   const int64_t kDefaultMinGemmRewriteSize = 100;
   opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
 
+  opts.set_xla_gpu_enable_offloading(false);
+  opts.set_xla_gpu_offloading_memory_limits(1LL << 30);
+  opts.set_xla_gpu_offloading_bandwidth(1e+9);
   return opts;
 }
 
@@ -1647,6 +1650,21 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Threshold to rewrite matmul to cuBLAS or Triton "
       "(minumum combined number of elements of both matrices "
       "in non-batch dimensions to be considered for a rewrite)."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_enable_offloading",
+                bool_setter_for(&DebugOptions::set_xla_gpu_enable_offloading),
+                debug_options->xla_gpu_enable_offloading(),
+                "Enable CPU offloading on GPUs."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_offloading_memory_limits)",
+      int64_setter_for(&DebugOptions::set_xla_gpu_offloading_memory_limits),
+      debug_options->xla_gpu_offloading_memory_limits(),
+      "GPU memory usage upper limits to trigger CPU memory offloading."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_offloading_bandwidth)",
+      float_setter_for(&DebugOptions::set_xla_gpu_offloading_bandwidth),
+      debug_options->xla_gpu_offloading_bandwidth(),
+      "The memory bandwidth, bytes per second, bwtween a CPU and a GPU."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

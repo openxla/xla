@@ -715,7 +715,6 @@ message DebugOptions {
   // elements of both matrices in non-batch dimensions to be considered for a
   // rewrite).
   int64 xla_gpu_gemm_rewrite_size_threshold = 283;
-
   // If true, will require complete AOT autotuning results; in the case of
   // missing AOT result, the model will not be compiled or executed, a
   // `NotFound` error will be returned.
@@ -727,7 +726,14 @@ message DebugOptions {
   // 1: fusions of GEMM, elementwise, transpose/reshape operations.
   int32 xla_gpu_cudnn_gemm_fusion_level = 285;
 
-  // Next id: 286
+  // Enable automatic cpu offloading via hlo rematerialization, bytes
+  bool xla_gpu_enable_offloading = 286;
+  // Specify the GPU memory limits in order to trigger offloading
+  int64 xla_gpu_offloading_memory_limits = 287;
+  // Specify the memory bandwidth, bytes per second, between CPU/GPU
+  float xla_gpu_offloading_bandwidth = 288;
+
+  // Next id: 289
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
