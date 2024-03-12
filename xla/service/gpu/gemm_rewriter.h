@@ -45,6 +45,8 @@ namespace gpu {
 // stored in the backend config.
 class GemmRewriter : public HloModulePass {
  public:
+  // When f8_rewrite is true, only FP8 GEMMs are rewritten. Otherwise, non-FP8
+  // GEMMs are rewritten.
   explicit GemmRewriter(se::GpuComputeCapability gpu_version,
                         bool f8_rewrite = false);
   absl::string_view name() const override { return "cublas-gemm-rewriter"; }

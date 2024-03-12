@@ -548,19 +548,22 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                            const_cast<HloInstruction *>(instr), b, b_scale,
                            b_mult_scale, b_ops);
                      })))) {
-        TF_RETURN_IF_ERROR(CreateF8CustomCall(instr, gpu_backend_config, a, b,
-                                              a_scale, b_scale, a_mult_scale,
-                                              b_mult_scale, a_ops, b_ops));
+        TF_ASSIGN_OR_RETURN(bool created_call,
+                            CreateF8CustomCall(instr, gpu_backend_config, a, b,
+                                               a_scale, b_scale, a_mult_scale,
+                                               b_mult_scale, a_ops, b_ops));
+        if (created_call) {
+          return absl::OkStatus();
+        }
+      }
+      if (IsF8Type(instr->operand(0))) {
+        // FP8 rewriter couldn't rewrite dot with FP8 inputs into cublasLt
+        // custom call, so turn into an FP16 dot which may be rewritten as an
+        // FP16 Triton, cublas or cublasLt call.
+        TF_ASSIGN_OR_RETURN(instr, TurnF8DotIntoF16Dot(instr));
       }
     } else {
       // Rewrite non-FP8 GEMMs into a cublas or cublasLT Custom Call.
-      if (IsF8Type(instr->operand(0))) {
-        // FP8 rewriter couldn't rewrite dot with FP8 inputs into cublasLt
-        // custom call, so turn into an FP16 dot and below it will be rewritten
-        // as an FP16 cublas or cublasLt call.
-        TF_ASSIGN_OR_RETURN(instr, TurnF8DotIntoF16Dot(instr));
-      }
-
       TF_ASSIGN_OR_RETURN(
           absl::string_view gemm_custom_call_target,
           GetNonFp8GemmCustomCallTarget(*instr, gemm_backend_config));
@@ -845,7 +848,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  absl::Status CreateF8CustomCall(
+  absl::StatusOr<bool> CreateF8CustomCall(
       HloInstruction *instr, GpuBackendConfig &gpu_backend_config,
       HloInstruction *a, HloInstruction *b, HloInstruction *a_scale,
       HloInstruction *b_scale, bool a_mult_scale, bool b_mult_scale,
@@ -861,12 +864,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!cuda_compute_capability_.IsAtLeast(8, 9)) {
       VLOG(1)
           << "FP8 Custom Calls require Ada, Hopper, or later architectures.";
-      return absl::OkStatus();
+      return false;
     }
 #if CUDA_VERSION < 12000
     // FP8 GEMM kernels are only available with CUDA 12.0 and above
     VLOG(1) << "FP8 Custom Calls require CUDA 12.0 or newer.";
-    return absl::OkStatus();
+    return false;
 #endif  // CUDA_VERSION < 12000
 
     PrimitiveType a_type = a->shape().element_type();
@@ -879,7 +882,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           << "Failed to rewrite " << instr->ToShortString()
           << " into FP8 Custom Call. The element type of one of the operands "
              "must be F8E4M3FN.";
-      return absl::OkStatus();
+      return false;
     }
     if ((a_type != F8E5M2 && a_type != F8E4M3FN) ||
         (b_type != F8E5M2 && b_type != F8E4M3FN)) {
@@ -888,7 +891,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                  "F8E4M3FN, but got "
               << PrimitiveType_Name(a_type) << " and "
               << PrimitiveType_Name(b_type);
-      return absl::OkStatus();
+      return false;
     }
 
     absl::Span<const int64_t> batch_dims =
@@ -908,7 +911,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           VLOG(1) << "Failed to rewrite " << instr->ToShortString()
                   << " into FP8 Custom Call. The scaling factors must be "
                      "scalars.";
-          return absl::OkStatus();
+          return false;
         }
         if (!mult_scale[i]) {
           inv_scales[i] = instr->AddInstruction(HloInstruction::CreateBinary(
@@ -936,7 +939,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                 << " into FP8 Custom Call. Output element type must be "
                    "F8E4M3FN, F8E5M2, BF16, F16 or F32. Actual element type is "
                 << PrimitiveType_Name(instr->shape().element_type());
-        return absl::OkStatus();
+        return false;
     }
 
     // Each operand must have exactly one contracting and one non-contracting
@@ -951,7 +954,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       VLOG(1) << "Failed to rewrite " << instr->ToShortString()
               << " into FP8 Custom Call. A and B must have one contracting "
                  "dimension.";
-      return absl::OkStatus();
+      return false;
     }
     if ((a_ops.empty() ? a : a_ops.back().first)->shape().dimensions_size() -
                 batch_dims.size() !=
@@ -962,7 +965,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       VLOG(1) << "Failed to rewrite " << instr->ToShortString()
               << "into FP8 Custom Call. A and B must have one non-contracting "
                  "dimension.";
-      return absl::OkStatus();
+      return false;
     }
 
     // Sequentially apply the collected unary, dynamic-slice, pad and select ops
@@ -1079,9 +1082,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(
         ReplaceInstruction(instr, slice ? slice : new_custom_call));
     VLOG(1) << instr->ToString() << " rewritten into FP8 Custom Call.";
-    return absl::OkStatus();
+    return true;
 #else  // TENSORFLOW_USE_ROCM
-    return absl::OkStatus();
+    return false;
 #endif
   }
 
