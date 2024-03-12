@@ -284,11 +284,12 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":traceback",
-        "//xla:statusor",
         "//xla:util",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@pybind11",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@nanobind",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profile_proto_cc",
     ],
