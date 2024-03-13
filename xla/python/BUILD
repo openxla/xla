@@ -891,6 +891,8 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
