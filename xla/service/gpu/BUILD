@@ -4157,6 +4157,7 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:layout_assignment",
         "//xla/service:logical_buffer",
+        "//xla/service:host_memory_offload_annotations_hdr",
         "//xla/stream_executor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
