@@ -194,7 +194,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
 }
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
-  PjRtRegisterCompiler(RocmName(),
+  PjRtRegisterCompiler(CudaName(),
                        std::make_unique<StreamExecutorGpuCompiler>());
 });
 }  // namespace xla

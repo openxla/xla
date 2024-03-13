@@ -133,6 +133,7 @@ xla_cc_test(
         "no_oss",
         "noasan",
         "nomsan",
+        "requires-gpu-nvidia:2",
     ],
     deps = [
         ":se_gpu_pjrt_client",
