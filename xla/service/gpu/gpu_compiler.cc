@@ -56,12 +56,12 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/Diagnostics.h"           // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"       // from @llvm-project
+#include "mlir/IR/OwningOpRef.h"           // from @llvm-project
+#include "mlir/Support/LLVM.h"             // from @llvm-project
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -131,7 +131,7 @@ limitations under the License.
 #include "xla/service/gpu/fusion_wrapper.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
 #include "xla/service/gpu/gemm_rewriter.h"
-#include "xla/service/gpu/gemm_rewriter_triton.h"
+#include "xla/service/gpu/gemm_fusion.h"
 #include "xla/service/gpu/gpu_all_gather_optimizer.h"
 #include "xla/service/gpu/gpu_async_collective_annotator.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -1393,7 +1393,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
-      pipeline.AddPass<GemmRewriterTriton>(gpu_version);
+      pipeline.AddPass<GemmFusion>(gpu_version);
     }
     // Rewrite non-FP8 GEMMs.
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/false);
@@ -1451,7 +1451,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // f32).
   add_float_normalization(pipeline);
 
-  TF_RETURN_IF_ERROR(AddTritonGemmAutotuningPasses(
+  TF_RETURN_IF_ERROR(AddGemmFusionAutotuningPasses(
       &pipeline, hlo_module, autotune_config, thread_pool));
   // Inline back the calls which have better performance with cuBLAS.
   pipeline.AddPass<CallInliner>();
