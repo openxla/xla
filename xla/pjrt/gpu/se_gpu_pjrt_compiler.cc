@@ -42,13 +42,14 @@ limitations under the License.
 #include "xla/service/hlo_proto_util.h"
 #include "xla/service/local_service.h"
 #include "xla/service/local_service_utils.h"
-#include "xla/stream_executor/cuda/cuda_platform_id.h"
 #endif
 
 #if GOOGLE_CUDA
 #include "xla/service/gpu/nvptx_compiler.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
 #elif TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/amdgpu_compiler.h"
+#include "xla/stream_executor/rocm/rocm_platform_id.h"
 #endif
 
 namespace xla {
@@ -193,7 +194,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
 }
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
-  PjRtRegisterCompiler(CudaName(),
+  PjRtRegisterCompiler(RocmName(),
                        std::make_unique<StreamExecutorGpuCompiler>());
 });
 }  // namespace xla
