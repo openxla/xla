@@ -117,6 +117,7 @@ cc_library(
         "//xla/service:platform_util",
         "//xla/tools:hlo_module_loader",
         "//xla/tools:run_hlo_module_lib",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -128,7 +129,6 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/util:command_line_flags",
     ] + if_gpu_is_configured([
         ":gpu_opt",
     ]) + if_cuda_is_configured([
