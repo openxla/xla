@@ -16,11 +16,11 @@ limitations under the License.
 #include <string>
 
 #include <gtest/gtest.h>
-#include "third_party/gpus/cudnn/cudnn_version.h"
 #include "xla/error_spec.h"
 #include "xla/stream_executor/device_description.h"
 
 #if GOOGLE_CUDA
+#include "third_party/gpus/cudnn/cudnn_version.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cudnn/cudnn.h"  // IWYU pragma: keep
 #endif
