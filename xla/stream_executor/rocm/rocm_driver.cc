@@ -1593,7 +1593,7 @@ struct BitPatternToValue {
           "failed to synchronous memcpy from host to device: Gpu dst: %p;"
           " host src: %p; size: %llu=0x%llx",
           absl::bit_cast<void*>(gpu_dst), host_src, size, size));
-  VLOG(2) << "successfully enqueued sync memcpy h2d of " << size << " bytes";
+  VLOG(2) << "successfully sync memcpy'd h2d of " << size << " bytes";
   return absl::OkStatus();
 }
 
@@ -1629,7 +1629,8 @@ struct BitPatternToValue {
   }
   VLOG(2) << "successfully enqueued async memcpy d2h of " << size
           << " bytes from " << absl::bit_cast<void*>(gpu_src) << " to "
-          << host_dst << " on stream " << stream;
+          << host_dst << " on stream " << stream
+          << " device: " << context->device_ordinal();
   return true;
 }
 
@@ -1649,8 +1650,10 @@ struct BitPatternToValue {
         size);
     return false;
   }
-  VLOG(2) << "successfully enqueued async memcpy h2d of " << size << " bytes"
-          << " on stream " << stream;
+  VLOG(2) << "successfully enqueued async memcpy h2d of " << size
+          << " bytes from " << host_src << " to "
+          << absl::bit_cast<void*>(gpu_dst) << " on stream " << stream
+          << " device: " << context->device_ordinal();
   return true;
 }
 
@@ -1677,7 +1680,11 @@ struct BitPatternToValue {
 
     return false;
   }
-  VLOG(2) << "successfully enqueued async memcpy d2d of " << size << " bytes";
+
+  VLOG(2) << "successfully enqueued async memcpy d2d of " << size
+          << " bytes from " << absl::bit_cast<void*>(gpu_src) << " to "
+          << absl::bit_cast<void*>(gpu_dst) << " on stream " << stream 
+          << " device: " << context->device_ordinal();
   return true;
 }
 
