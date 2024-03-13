@@ -596,7 +596,7 @@ PjRtFuture<absl::Status> StreamExecutorGpuClient::CopyRawSubBufferToHost(
   auto promise = PjRtFuture<absl::Status>::CreatePromise();
   auto stream_ptr = stream.get();
   auto callback_status = local_device->ThenExecuteCallback(
-      stream_ptr, [&promise, 
+      stream_ptr, [promise, 
                      free_stream = stream.release(), local_device]() mutable {
         auto stream = std::unique_ptr<se::Stream>(free_stream);
         local_device->ReturnStreamToPool(std::move(stream));
