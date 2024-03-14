@@ -19,17 +19,28 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/transforms/hlo_constant_splitter.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -3103,6 +3114,41 @@ ENTRY entry {
   if (GetParam().propagate_metadata && !GetParam().clear_metadata) {
     EXPECT_THAT(instruction->sharding(),
                 ShardingMetadata({CreateMetadata("b")}));
+  } else {
+    EXPECT_THAT(instruction->sharding(), ShardingMetadata({}));
+  }
+}
+
+TEST_P(ParameterizedMetadataTest, ConvolutionDataParallelism) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[256,512,16,32] parameter(0), sharding={devices=[2,2,2,2]<=[16] metadata={op_name="lhs_sharding"}}
+  p1 = f32[512,1,12,28] parameter(1), sharding={replicated metadata={op_name="rhs_sharding"}}
+  conv = f32[256,512,5,5] convolution(p0, p1), window={size=12x28}, dim_labels=bf01_oi01->bf01, feature_group_count=512
+  ROOT copy = f32[256,512,5,5] copy(conv)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  if (GetParam().clear_metadata) {
+    ClearMetadata(module.get());
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(/*is_spmd=*/true, GetParam().propagate_metadata)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  auto* instruction = FindInstruction(module.get(), "conv");
+  ASSERT_NE(instruction, nullptr);
+  EXPECT_THAT(
+      instruction,
+      op::Sharding("{devices=[2,1,1,1,8]<=[16] last_tile_dim_replicate}"));
+  if (GetParam().propagate_metadata && !GetParam().clear_metadata) {
+    EXPECT_THAT(instruction->sharding(),
+                ShardingMetadata({CreateMetadata("lhs_sharding")}));
   } else {
     EXPECT_THAT(instruction->sharding(), ShardingMetadata({}));
   }
@@ -10072,6 +10118,81 @@ ENTRY %entry {
               op::Sharding("{devices=[4]0,1,2,3}"));
 }
 
+TEST_F(ShardingPropagationTest, PropagateToTupleParameter_WithoutSharding) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %param = (f32[4], f32[4]) parameter(0)
+  %gte0 = f32[4] get-tuple-element(%param), index=0
+  %gte1 = f32[4] get-tuple-element(%param), index=1
+  ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{false},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{true, true})
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
+              op::Sharding("{{devices=[4]0,1,2,3}, {devices=[4]0,1,2,3}}"));
+}
+
+TEST_F(ShardingPropagationTest, PropagateToTupleParameter_WithSharding1) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %param = (f32[4], f32[4]) parameter(0), sharding={{replicated}, {replicated}}
+  %gte0 = f32[4] get-tuple-element(%param), index=0
+  %gte1 = f32[4] get-tuple-element(%param), index=1
+  ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{false},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{false, true})
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
+              op::Sharding("{{replicated}, {devices=[4]0,1,2,3}}"));
+}
+
+TEST_F(ShardingPropagationTest, PropagateToTupleParameter_WithSharding2) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %param = (f32[4], f32[4]) parameter(0), sharding={{replicated}, {replicated}}
+  %gte0 = f32[4] get-tuple-element(%param), index=0
+  %gte1 = f32[4] get-tuple-element(%param), index=1
+  ROOT %add = f32[4] add(%gte0, %gte1), sharding={devices=[4]0,1,2,3}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{false},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{true, false})
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
+              op::Sharding("{{devices=[4]0,1,2,3}, {replicated}}"));
+}
+
 TEST_F(ShardingPropagationTest, PropagateManualOutfeed) {
   const char* const hlo_string = R"(
 HloModule module
@@ -10198,6 +10319,35 @@ ENTRY %entry {
   // it.
   EXPECT_THAT(module->entry_computation()->parameter_instruction(1),
               op::Sharding("{replicated}"));
+}
+
+TEST_F(ShardingPropagationTest, DoNotPropagateToTupleParameterIfNotDivisible) {
+  const char* const hlo_string = R"(
+HloModule module
+
+ENTRY %entry {
+  %param0 = (f32[4], f32[3]) parameter(0), sharding={{replicated}, {replicated}}
+  %gte0 = f32[4] get-tuple-element(%param0), index=0
+  %gte1 = f32[3] get-tuple-element(%param0), index=1
+  %pad_value = f32[] constant(0)
+  %pad = f32[4] pad(%gte1, %pad_value), padding=0_1
+  ROOT %add = f32[4] add(%gte0, %pad), sharding={devices=[4]0,1,2,3}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{false},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{false, true})
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  // Replicate the second element of parameter since the propagated sharding
+  // does not evenly partition it.
+  EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
+              op::Sharding("{{replicated}, {replicated}}"));
 }
 
 TEST_F(ShardingPropagationTest,

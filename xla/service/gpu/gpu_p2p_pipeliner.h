@@ -1,4 +1,4 @@
-/* Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,20 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_TSL_C_TSL_STATUS_HELPER_H_
-#define TENSORFLOW_TSL_C_TSL_STATUS_HELPER_H_
+#ifndef XLA_SERVICE_GPU_GPU_P2P_PIPELINER_H_
+#define XLA_SERVICE_GPU_GPU_P2P_PIPELINER_H_
 
-#include <memory>
+#include "xla/service/hlo_pass_pipeline.h"
 
-#include "tsl/c/tsl_status.h"
-#include "tsl/platform/status.h"
+namespace xla {
+namespace gpu {
+// Adds a collective-pipeliner pass for pipelining P2P Send-Recv chains.
+void AddP2PPipeliner(HloPassPipeline& pipeline);
 
-namespace tsl {
+}  // namespace gpu
+}  // namespace xla
 
-TSL_Code TSLCodeFromStatusCode(absl::StatusCode code);
-
-absl::StatusCode StatusCodeFromTSLCode(TSL_Code code);
-
-}  // namespace tsl
-
-#endif  // TENSORFLOW_TSL_C_TSL_STATUS_HELPER_H_
+#endif  // XLA_SERVICE_GPU_GPU_P2P_PIPELINER_H_

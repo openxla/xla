@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/conditional_canonicalizer.h"
 #include "xla/service/conditional_simplifier.h"
+#include "xla/service/convert_memory_placement_to_internal_annotations.h"
 #include "xla/service/convert_mover.h"
 #include "xla/service/convolution_4d_expander.h"
 #include "xla/service/convolution_pred_expander.h"
@@ -114,6 +115,7 @@ limitations under the License.
 #include "xla/service/gather_expander.h"
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/address_computation_fusion_rewriter.h"
+#include "xla/service/gpu/algorithm_checker.h"
 #include "xla/service/gpu/alias_passthrough_params.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/autotuner_util.h"
@@ -183,6 +185,9 @@ limitations under the License.
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_rematerialization.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/host_memory_transfer_asyncifier.h"
+#include "xla/service/host_offload_legalize.h"
+#include "xla/service/host_offloader.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/layout_normalization.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -232,6 +237,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/integrations/device_mem_allocator.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
@@ -593,6 +599,7 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
   HloPassPipeline pre_spmd_pipeline("pre-spmd-partitioner");
   // Run some IR cleanup passes before running the SPMD partitioning
   // passes.
+  pre_spmd_pipeline.AddPass<ConvertMemoryPlacementToInternalAnnotations>();
   pre_spmd_pipeline.AddPass<CallInliner>();
   pre_spmd_pipeline.AddPass<ZeroSizedHloElimination>();
   pre_spmd_pipeline.AddPass<ConditionalCanonicalizer>();
@@ -1264,6 +1271,32 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(
       RunLayoutAssignmentPasses(hlo_module, gpu_version, dnn_version));
 
+  // TODO(b/328264715): Add tests to ensure that layout normalization pass is
+  // run before any fusion pass.
+  HloPassPipeline layout_normalization_pipeline("layout normalization");
+  const DebugOptions& debug_options = hlo_module->config().debug_options();
+  const AlgebraicSimplifierOptions simplifier_options = [&] {
+    AlgebraicSimplifierOptions opts =
+        GetAlgebraicSimplifierOptions(hlo_module->config());
+    opts.set_supports_non_canonical_dots(false);
+    opts.set_is_layout_sensitive(true);
+    opts.set_enable_conv_operand_swap(false);
+    // "slow" minmax means we propagate nan.
+    opts.set_minmax_propagate_nan(!debug_options.xla_gpu_enable_fast_min_max());
+    opts.set_enable_unconditional_reduce_of_concat_replacement(false);
+    return opts;
+  }();
+  if (debug_options.xla_gpu_normalize_layouts()) {
+    layout_normalization_pipeline.AddPass<ReshapeDecomposer>();
+    layout_normalization_pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
+    layout_normalization_pipeline.AddPass<LayoutNormalization>(
+        &NormalizeLayoutForGpuCustomCalls);
+    // The LayoutAssignment pass may leave behind kCopy instructions which are
+    // duplicate or NOPs, so remove them with algebraic simplification and CSE.
+    layout_normalization_pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(
+        simplifier_options);
+  }
+  TF_RETURN_IF_ERROR(layout_normalization_pipeline.Run(hlo_module).status());
   // Run target-specific HLO optimization passes after layout assignment.
   TF_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, thread_pool.get()));
@@ -1281,7 +1314,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       hlo_module, layout_insensitive_algsimp_opts));
 
   return absl::OkStatus();
-}
+}  // NOLINT(readability/fn_size)
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
     const HloModuleConfig& config) {
@@ -1322,12 +1355,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                       GetAutotuneConfig(stream_exec, debug_options, options,
                                         gpu_target_config));
   // Lambdas and related constants:
-  const GpuFloatSupport bf16_support(BF16);
-  const GpuFloatSupport f8e5m2_support(F8E5M2, F16);
-  const GpuFloatSupport f8e4m3fn_support(F8E4M3FN, F16);
+  const GpuFloatSupport bf16_support(gpu_version, BF16);
+  const GpuFloatSupport f8e5m2_support(gpu_version, F8E5M2, F16);
+  const GpuFloatSupport f8e4m3fn_support(gpu_version, F8E4M3FN, F16);
   const FloatSupport f8e4m3b11fnuz_support(F8E4M3B11FNUZ, F16);
-  const FloatSupport f8e5m2fnuz_support(F8E5M2FNUZ, F16);
-  const FloatSupport f8e4m3fnuz_support(F8E4M3FNUZ, F16);
+  const GpuFloatSupport f8e5m2fnuz_support(gpu_version, F8E5M2FNUZ, F16);
+  const GpuFloatSupport f8e4m3fnuz_support(gpu_version, F8E4M3FNUZ, F16);
   auto add_float_normalization = [&](HloPassPipeline& pipeline) {
     auto& sub_pipeline =
         pipeline.AddPass<HloPassPipeline>("float_normalization");
@@ -1357,11 +1390,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot,
                                        TransposeFolding::NeverFoldTranspose);
 
-    pipeline.AddPass<ReshapeDecomposer>();
     pipeline.AddPass<ReduceDecomposer>([&](const HloInstruction* r) {
       return IsReductionFromOrToContiguousDimensions(*r);
     });
-    pipeline.AddPass<HloPassFix<MoveCopyToUsers>>();
 
     // Greedy pattern matching for custom kernel fusions. We run it before
     // Triton rewriter or a regular Gemm rewriter to be able to match compatible
@@ -1378,20 +1409,22 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs into custom calls.
     se::GpuComputeCapability gpu_version =
         gpu_target_config.device_description.gpu_compute_capability();
+    pipeline.AddPass<AlgorithmChecker>(gpu_version);
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+
+    // Rewrite FP8 GEMMs ahead of Triton which currently lacks support for FP8
+    // and may rewrite quantized FP8 GEMMs as higher-precision GEMMs.
+    pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
       pipeline.AddPass<GemmRewriterTriton>(gpu_version);
     }
-    pipeline.AddPass<GemmRewriter>(gpu_version);
+    // Rewrite non-FP8 GEMMs.
+    pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/false);
 
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-    if (debug_options.xla_gpu_normalize_layouts()) {
-      pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
-      pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
-    }
     pipeline.AddPass<BroadcastCanonicalizer>();
 
     pipeline.AddPass<ReductionDegenerateDimRemover>();
@@ -1447,15 +1480,17 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<GemmRewriter>(gpu_version);
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
-  if (debug_options.xla_gpu_normalize_layouts()) {
-    pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
-    pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
-  }
+
+  pipeline.AddPass<HostOffloadLegalize>(
+      static_cast<int64_t>(stream_executor::MemoryType::kHost),
+      /* after_layout= */ true);
+  pipeline.AddPass<HostOffloader>(
+      static_cast<int64_t>(stream_executor::MemoryType::kHost));
 
   TF_RETURN_IF_ERROR(AddConvAndGemmAutotuningPasses(
       &pipeline, hlo_module, autotune_config, thread_pool));
 
-  // The Triton autotuner can insert new bf16 reductions that need to be
+  // The GEMM fusion autotuner can insert new bf16 reductions that need to be
   // normalized again.
   add_float_normalization(pipeline);
 
@@ -1481,6 +1516,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true,
                            /*only_fusion_computations=*/false,
                            /*ignore_control_dependencies=*/true);
+
+  pipeline.AddPass<HostMemoryTransferAsyncifier>(
+      static_cast<int64_t>(stream_executor::MemoryType::kHost));
 
 #ifdef NDEBUG
   // Verify the module in non-debug builds. For debug builds, the verifier

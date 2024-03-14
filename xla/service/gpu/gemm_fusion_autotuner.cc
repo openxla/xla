@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/triton_autotuner.h"
+#include "xla/service/gpu/gemm_fusion_autotuner.h"
 
 #include <algorithm>
 #include <array>
@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -35,6 +34,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/algorithm_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/float_normalization.h"
@@ -114,9 +115,9 @@ constexpr int kMaxTileSize = 512;
 // Default tiling when autotuning is disabled.
 constexpr TritonGemmConfig kDefaultGemmTiling = {32, 32, 32, 1, 1, 4};
 
-class TritonAutotunerVisitor : public DfsHloRewriteVisitor {
+class GemmFusionAutotunerVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit TritonAutotunerVisitor(const AutotuneConfig& config)
+  explicit GemmFusionAutotunerVisitor(const AutotuneConfig& config)
       : config_(config) {}
 
   absl::Status HandleFusion(HloInstruction* hlo) override {
@@ -377,22 +378,15 @@ std::vector<TritonGemmConfig> GetFixedMatmulAutotuneConfigs(
     const se::CudaComputeCapability compute_capability, const int max_split_k) {
   // Shorter name for better formatting.
   using Config = TritonGemmConfig;
-
-  std::vector<Config> configs;
-  auto filter_fn = [&](const Config& config) {
-    return config.split_k <= max_split_k;
-  };
-  absl::c_copy_if(
-      std::vector<Config>{
-          Config(32, 32, 256, 1, 1, 4), Config(64, 32, 32, 16, 1, 4),
-          Config(32, 64, 64, 4, 1, 4), Config(128, 128, 64, 4, 1, 4),
-          Config(16, 16, 256, 1, 1, 4), Config(16, 128, 32, 16, 1, 4),
-          Config(16, 64, 128, 1, 1, 4), Config(16, 128, 32, 8, 1, 4),
-          Config(16, 16, 512, 1, 1, 4), Config(32, 16, 512, 1, 1, 4),
-          Config(64, 32, 64, 1, 2, 8)},
-      std::back_inserter(configs), filter_fn);
+  std::vector<Config> configs = {
+      Config(32, 32, 256, 1, 1, 4), Config(64, 32, 32, 16, 1, 4),
+      Config(32, 64, 64, 4, 1, 4),  Config(128, 128, 64, 4, 1, 4),
+      Config(16, 16, 256, 1, 1, 4), Config(16, 128, 32, 16, 1, 4),
+      Config(16, 64, 128, 1, 1, 4), Config(16, 128, 32, 8, 1, 4),
+      Config(16, 16, 512, 1, 1, 4), Config(32, 16, 512, 1, 1, 4),
+      Config(64, 32, 64, 1, 2, 8)};
   if (compute_capability.IsAtLeast(se::CudaComputeCapability::AMPERE)) {
-    absl::c_copy_if(
+    absl::c_copy(
         std::vector<Config>{
             Config(128, 256, 32, 1, 3, 8),  Config(256, 128, 32, 1, 3, 8),
             Config(256, 64, 32, 1, 4, 4),   Config(64, 256, 32, 1, 4, 4),
@@ -405,17 +399,22 @@ std::vector<TritonGemmConfig> GetFixedMatmulAutotuneConfigs(
             Config(16, 16, 256, 1, 3, 4),   Config(128, 128, 64, 2, 1, 8),
             Config(64, 64, 64, 1, 2, 4),    Config(16, 64, 256, 8, 1, 4),
             Config(256, 256, 128, 1, 3, 8)},
-        std::back_inserter(configs), filter_fn);
+        std::back_inserter(configs));
   }
   if (compute_capability.IsAtLeast(se::CudaComputeCapability::HOPPER)) {
-    absl::c_copy_if(
+    absl::c_copy(
         std::vector<Config>{
             Config(16, 32, 32, 8, 1, 2),
             Config(16, 64, 128, 8, 1, 4),
             Config(16, 64, 128, 16, 3, 4),
         },
-        std::back_inserter(configs), filter_fn);
+        std::back_inserter(configs));
   }
+  configs.erase(std::remove_if(configs.begin(), configs.end(),
+                               [&](const Config& config) {
+                                 return config.split_k > max_split_k;
+                               }),
+                configs.end());
   return configs;
 }
 
@@ -476,7 +475,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
 
   if (config.split_k > 1) {
     TF_RETURN_IF_ERROR(MakeDotSplitKBatch(cloned_dot_fusion, config));
-    GpuFloatSupport bf16_support(BF16);
+    GpuFloatSupport bf16_support(gpu_device_info.cuda_compute_capability(),
+                                 BF16);
     FloatNormalization float_normalization(&bf16_support);
     TF_RETURN_IF_ERROR(float_normalization.Run(new_module.get()).status());
     GpuInstructionFusion instruction_fusion(/*may_duplicate=*/false,
@@ -507,6 +507,19 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion_computation);
   new_module->mutable_config().set_debug_options(debug_opts);
+
+  auto* dot = hlo_query::GetFirstInstructionWithOpcode(
+      *new_module->entry_computation(), HloOpcode::kDot);
+  // Substitute algorithms, which are not supported by cuBLAS for the check, but
+  // don't use cuBlas in the end. This assumes that the substituting algorithm
+  // has result which are close enough for the check in this file.
+  if (dot->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3 ||
+      dot->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6) {
+    dot->mutable_precision_config()->set_algorithm(
+        PrecisionConfig::ALG_DOT_F32_F32_F32);
+  }
 
   GemmRewriter rewriter(config.GetGpuComputeCapability());
   GpuInstructionFusion fusion_pass(
@@ -571,7 +584,27 @@ bool IsCuDnnEnabled(const AutotuneConfig& config,
                     const DebugOptions& debug_opts) {
   return std::get<se::CudaComputeCapability>(config.GetGpuComputeCapability())
              .IsAtLeastHopper() &&
-         debug_opts.xla_gpu_cudnn_gemm_fusion();
+         debug_opts.xla_gpu_cudnn_gemm_fusion_level() > 0 &&
+         GetDnnVersionInfo(config.GetExecutor()).major_version() >= 9;
+}
+
+bool HasAlgorithmSupportedByCublasOrCublasLt(
+    const HloFusionInstruction& fusion) {
+  const PrecisionConfig::Algorithm algorithm =
+      hlo_query::GetFirstInstructionWithOpcode(*fusion.called_computation(),
+                                               HloOpcode::kDot)
+          ->precision_config()
+          .algorithm();
+  return algorithm_util::IsSupportedByCublasOrCublasLt(algorithm);
+}
+
+bool HasAlgorithmSupportedByCudnn(const HloFusionInstruction& fusion) {
+  const PrecisionConfig::Algorithm algorithm =
+      hlo_query::GetFirstInstructionWithOpcode(*fusion.called_computation(),
+                                               HloOpcode::kDot)
+          ->precision_config()
+          .algorithm();
+  return algorithm_util::IsSupportedByCudnn(algorithm);
 }
 
 absl::StatusOr<absl::flat_hash_map<const HloFusionInstruction*, ExecutableSet>>
@@ -599,7 +632,8 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
 
     if (IsFusionKind(hlo, kTritonGemmFusionKind)) {
       config_count += gemm_config_set.configs.size();
-      if (IsCuDnnEnabled(config, debug_opts)) {
+      if (IsCuDnnEnabled(config, debug_opts) &&
+          HasAlgorithmSupportedByCudnn(hlo)) {
         config_count += GetCuDnnPlanCount(hlo, config);
       }
     } else if (IsFusionKind(hlo, kCuDnnFusionKind)) {
@@ -732,7 +766,8 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
 
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
-           IsCuDnnEnabled(config, debug_opts))) {
+           IsCuDnnEnabled(config, debug_opts) &&
+           HasAlgorithmSupportedByCudnn(*fusion))) {
         const int plan_count = GetCuDnnPlanCount(*fusion, config);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           thread_pool->Schedule([&, fusion, plan_id] {
@@ -774,7 +809,8 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
 
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
-           IsCuDnnEnabled(config, debug_opts))) {
+           IsCuDnnEnabled(config, debug_opts) &&
+           HasAlgorithmSupportedByCudnn(*fusion))) {
         const int plan_count = GetCuDnnPlanCount(*fusion, config);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           log(compile_cudnn_executable(fusion, plan_id));
@@ -950,7 +986,8 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
   }
 
   if (debug_opts.xla_gpu_cublas_fallback() &&
-      !debug_opts.xla_gpu_deterministic_ops()) {
+      !debug_opts.xla_gpu_deterministic_ops() &&
+      HasAlgorithmSupportedByCublasOrCublasLt(*fusion)) {
     if (cublas_duration <
         tsl::proto_utils::FromDurationProto(best.run_time())) {
       VLOG(2) << "Falling back to cuBLAS for " << fusion->name();
@@ -1096,10 +1133,10 @@ std::vector<TritonGemmConfig> GetPossibleMatmulAutotuneConfigs(
                                         compute_capability, max_split_k));
 }
 
-absl::StatusOr<bool> TritonAutotuner::Run(
+absl::StatusOr<bool> GemmFusionAutotuner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_SCOPED_LOGGING_TIMER("Triton autotuner");
+  XLA_SCOPED_LOGGING_TIMER("GEMM fusion autotuner");
   const DebugOptions& debug_options = module->config().debug_options();
   TF_ASSIGN_OR_RETURN(std::optional<AutotunerCompileUtil> opt_compile_util,
                       AutotunerCompileUtil::Create(config_, debug_options));
@@ -1137,7 +1174,8 @@ absl::StatusOr<bool> TritonAutotuner::Run(
     }
   }
 
-  return TritonAutotunerVisitor(config_).RunOnModule(module, execution_threads);
+  return GemmFusionAutotunerVisitor(config_).RunOnModule(module,
+                                                         execution_threads);
 }
 
 }  // namespace gpu

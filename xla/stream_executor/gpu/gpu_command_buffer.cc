@@ -160,6 +160,12 @@ static GpuDevicePtr AsDevicePtr(const DeviceMemoryBase& mem) {
 absl::Status GpuCommandBuffer::Trace(
     Stream* stream, absl::AnyInvocable<absl::Status()> function) {
   TF_RETURN_IF_ERROR(CheckNotFinalized());
+#if defined(TENSORFLOW_USE_ROCM)
+  TF_ASSIGN_OR_RETURN(size_t count, GpuDriver::GraphGetNodeCount(graph_));
+  if (count != 0 || !is_owned_graph_)
+    return absl::InternalError(
+        "Stream can't be traced on non empty command buffer");
+#endif  // TENSORFLOW_USE_ROCM
 
   VLOG(5) << "Trace into GPU command buffer graph " << graph_
           << " on a stream: " << stream;
@@ -168,15 +174,24 @@ absl::Status GpuCommandBuffer::Trace(
 
   // Switch stream into the capture mode.
   uint64_t start_nanos = tsl::Env::Default()->NowNanos();
+#if !defined(TENSORFLOW_USE_ROCM)
   TF_RETURN_IF_ERROR(GpuDriver::StreamBeginCaptureToGraph(
       gpu_stream, graph_, GpuDriver::StreamCaptureMode::kThreadLocal));
-
+#else
+  TF_RETURN_IF_ERROR(GpuDriver::StreamBeginCapture(
+      gpu_stream, GpuDriver::StreamCaptureMode::kThreadLocal));
+#endif  // TENSORFLOW_USE_ROCM
   auto traced = function();
 
   // Always stop capturing the stream before checking `traced` result.
   GpuGraphHandle captured_graph;
   TF_RETURN_IF_ERROR(GpuDriver::StreamEndCapture(gpu_stream, &captured_graph));
+#if !defined(TENSORFLOW_USE_ROCM)
   DCHECK(captured_graph == graph_) << "Stream capture should update graph_";
+#else
+  TF_RETURN_IF_ERROR(
+      GpuDriver::DestroyGraph(std::exchange(graph_, captured_graph)));
+#endif  // TENSORFLOW_USE_ROCM
   uint64_t end_nanos = tsl::Env::Default()->NowNanos();
 
   if (!traced.ok())
@@ -258,20 +273,22 @@ GpuCommandBuffer::GetSetWhileConditionKernel(StreamExecutor* executor) {
 
 absl::StatusOr<GpuCommandBuffer::NoOpKernel*> GpuCommandBuffer::GetNoOpKernel(
     StreamExecutor* executor) {
+#if !defined(TENSORFLOW_USE_ROCM)
   if (!noop_kernel_) {
     MultiKernelLoaderSpec spec(/*arity=*/0);
-#if !defined(TENSORFLOW_USE_ROCM)
     spec.AddCudaPtxInMemory(gpu::kNoOpKernel, "noop");
-#else
-    spec.AddInProcessSymbol(gpu::GetNoOpKernel(), "noop");
-#endif  // TENSORFLOW_USE_ROCM
     TF_ASSIGN_OR_RETURN(noop_kernel_, NoOpKernel::Create(executor, spec));
   }
   return &noop_kernel_;
+#else
+  return absl::UnimplementedError(
+      "GpuCommandBuffer::GetNoOpKernel is not implemented.");
+#endif  // TENSORFLOW_USE_ROCM
 }
 
 absl::Status GpuCommandBuffer::DisableBarriersExecution(
     GpuGraphExecHandle exec) {
+#if !defined(TENSORFLOW_USE_ROCM)
   ExecutionScope& execution_scope = execution_scopes_[kDefaulExecutionScope];
 
   for (GpuGraphBarrierInfo& barrier : execution_scope.barriers) {
@@ -286,6 +303,7 @@ absl::Status GpuCommandBuffer::DisableBarriersExecution(
       TF_RETURN_IF_ERROR(cmd_buffer->DisableBarriersExecution(exec));
     }
   }
+#endif  // TENSORFLOW_USE_ROCM
   return absl::OkStatus();
 }
 
@@ -308,16 +326,21 @@ absl::Status GpuCommandBuffer::CheckNumCommandBuffers(
 
 absl::StatusOr<GpuGraphNodeHandle> GpuCommandBuffer::CreateBarrierNode(
     StreamExecutor* executor, const Dependencies& dependencies) {
+  GpuGraphNodeHandle barrier_handle = nullptr;
+#if !defined(TENSORFLOW_USE_ROCM)
   // TODO(b/316343054): Instead of empty nodes we create no-op kernel nodes as
   // barriers because CUDA 12.3 does not support empty nodes inside
   // conditional command buffers. This should be fixed in CUDA 12.4.
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel(executor));
 
-  GpuGraphNodeHandle barrier_handle = nullptr;
   TF_RETURN_IF_ERROR(GpuDriver::GraphAddKernelNode(
       &barrier_handle, graph_, dependencies, "noop",
       AsGpuKernel(&**noop)->AsGpuFunctionHandle(), 1, 1, 1, 1, 1, 1, 0,
       /*kernel_params=*/nullptr, /*extra=*/nullptr));
+#else
+  TF_RETURN_IF_ERROR(
+      GpuDriver::GraphAddEmptyNode(&barrier_handle, graph_, dependencies));
+#endif  // TENSORFLOW_USE_ROCM
 
   return barrier_handle;
 }

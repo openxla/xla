@@ -15,29 +15,31 @@ limitations under the License.
 
 #include "xla/service/gpu/gemm_algorithm_picker.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <limits>
+#include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gpu_asm_opts_util.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/variant_visitor.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/statusor.h"
 #include "xla/stream_executor/blas.h"
@@ -45,6 +47,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/scratch_allocator.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -126,8 +129,9 @@ class GemmAutotuner {
     TF_ASSIGN_OR_RETURN(rhs_buffer_, CreateBuffer(gemm->operand(1)->shape()));
     TF_ASSIGN_OR_RETURN(output_buffer_, CreateBuffer(GetOutputShape(gemm)));
 
-    return IsCublasLtMatmul(*gemm) ? TuneGpuBlasLt(gemm, gemm_config)
-                                   : TuneGpuBlas(gemm, gemm_config);
+    return IsCublasLtMatmul(*gemm) || IsCublasLtMatmulF8(*gemm)
+               ? TuneGpuBlasLt(gemm, gemm_config)
+               : TuneGpuBlas(gemm, gemm_config);
   }
 
  private:
@@ -392,17 +396,19 @@ absl::StatusOr<bool> RunOnInstruction(HloInstruction* gemm,
                           gemm, config, [&] { return autotuner(gemm, key); }));
 
   auto old_algorithm = backend_config.selected_algorithm();
-  bool update_algorithm = std::visit(
-      VariantVisitor{[](const se::CudaComputeCapability& cc) {
-                       // We only set the 'algorithm' field on
-                       // non-Ampere architectures, as for Ampere
-                       // it's ignored in any case.
-                       return !cc.IsAtLeast(se::CudaComputeCapability::AMPERE);
-                     },
-                     [](const se::RocmComputeCapability&) {
-                       return true;  // TODO: not decided yet
-                     }},
-      config.GetGpuComputeCapability());
+  bool update_algorithm =
+      IsCublasLtMatmulF8(*gemm) ||
+      std::visit(VariantVisitor{[](const se::CudaComputeCapability& cc) {
+                                  // We only set the 'algorithm' field on
+                                  // non-Ampere architectures, as for Ampere
+                                  // it's ignored in any case.
+                                  return !cc.IsAtLeast(
+                                      se::CudaComputeCapability::AMPERE);
+                                },
+                                [](const se::RocmComputeCapability&) {
+                                  return true;  // TODO: not decided yet
+                                }},
+                 config.GetGpuComputeCapability());
 
   if (update_algorithm) {
     if (algorithm.has_gemm()) {
@@ -420,7 +426,7 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
                                       AutotuneConfig config) {
   bool changed = false;
   for (HloInstruction* instr : computation->instructions()) {
-    if (IsCublasGemm(*instr)) {
+    if (IsCublasGemm(*instr) || IsCublasLtMatmulF8(*instr)) {
       TF_ASSIGN_OR_RETURN(bool result, RunOnInstruction(instr, config));
       changed |= result;
     }

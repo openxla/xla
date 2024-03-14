@@ -339,37 +339,12 @@ static absl::Status InternalInit() {
   return absl::OkStatus();
 }
 
-bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
-                                 int* flags) {
-  static_assert(DeviceOptions::kMask == 0xf,
-                "needs update for new device options");
-
-  if (device_options.flags() & DeviceOptions::kDoNotReclaimStackAllocation) {
-    *flags |= hipDeviceLmemResizeToMax;
-  }
-
-  if (device_options.flags() & DeviceOptions::kScheduleSpin) {
-    *flags |= hipDeviceScheduleSpin;
-  }
-  if (device_options.flags() & DeviceOptions::kScheduleYield) {
-    *flags |= hipDeviceScheduleYield;
-  }
-  if (device_options.flags() & DeviceOptions::kScheduleBlockingSync) {
-    *flags |= hipDeviceScheduleBlockingSync;
-  }
-
-  return true;
-}
-
-/* static */ absl::Status GpuDriver::CreateContext(
-    int device_ordinal, hipDevice_t device, const DeviceOptions& device_options,
-    GpuContext** context) {
+/* static */ absl::Status GpuDriver::CreateContext(int device_ordinal,
+                                                   hipDevice_t device,
+                                                   GpuContext** context) {
   *context = nullptr;
 
   int flags = 0;
-  if (!DeviceOptionsToContextFlags(device_options, &flags)) {
-    LOG(WARNING) << "could not convert all device options into context flags";
-  }
 
   hipError_t res;
   hipCtx_t former_context;
@@ -767,6 +742,18 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
   return absl::UnimplementedError("unsupported node type");
 }
 
+/* static */ absl::Status GpuDriver::GraphAddEmptyNode(
+    hipGraphNode_t* node, hipGraph_t graph,
+    absl::Span<const hipGraphNode_t> deps) {
+  VLOG(2) << "Add empty node to a graph " << graph << "; deps: " << deps.size();
+
+  RETURN_IF_ROCM_ERROR(
+      wrap::hipGraphAddEmptyNode(node, graph, deps.data(), deps.size()),
+      "Failed to add empty node to a HIP graph");
+
+  return absl::OkStatus();
+}
+
 /* static */ absl::Status GpuDriver::GraphAddKernelNode(
     hipGraphNode_t* node, hipGraph_t graph,
     absl::Span<const hipGraphNode_t> deps, absl::string_view kernel_name,
@@ -807,6 +794,16 @@ GpuDriver::GraphAddNode(hipGraphNode_t* node, hipGraph_t graph,
                        "Failed to add kernel node to a HIP graph");
 
   return absl::OkStatus();
+}
+
+/* static */ absl::StatusOr<size_t> GpuDriver::GraphGetNodeCount(
+    hipGraph_t graph) {
+  VLOG(2) << "Get node count in graph " << graph;
+  size_t numNodes;
+  RETURN_IF_ROCM_ERROR(wrap::hipGraphGetNodes(graph, nullptr, &numNodes),
+                       "Failed to get HIP graph node count");
+
+  return numNodes;
 }
 
 /*static*/ absl::Status GpuDriver::GraphExecKernelNodeSetParams(
@@ -952,7 +949,7 @@ static hipMemAllocationType ToHipAllocationType(
 
   RETURN_IF_ROCM_ERROR(wrap::hipGraphAddMemAllocNode(node, graph, deps.data(),
                                                      deps.size(), &params),
-                       "Failed to add memory allocation node to a CUDA graph");
+                       "Failed to add memory allocation node to a HIP graph");
 
   VLOG(2) << "Add MemAllocNode to a graph " << graph << " size " << size
           << " address " << reinterpret_cast<void*>(params.dptr);
@@ -1058,7 +1055,7 @@ struct BitPatternToValue {
 
   RETURN_IF_ROCM_ERROR(wrap::hipGraphAddMemsetNode(node, graph, deps.data(),
                                                    deps.size(), &params),
-                       "Failed to add memset node to a CUDA graph");
+                       "Failed to add memset node to a HIP graph");
 
   return absl::OkStatus();
 }

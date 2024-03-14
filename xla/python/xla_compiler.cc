@@ -292,20 +292,13 @@ StatusOr<HloSharding> IotaTileHelper(
                    subgroup_types);
 }
 
-// Registers a 'fn_capsule' as a CPU custom call target.
-// 'fn_capsule' must be a void* pointer encapsulated in a PyCapsule object,
-// with name "xla._CUSTOM_CALL_TARGET".
+// Registers a 'fn_capsule' as a custom call target.
+// 'fn_capsule' must be a void* pointer encapsulated in a PyCapsule object.
 // 'platform' is an XLA platform name, e.g., "Host" or "CUDA".
 absl::Status PyRegisterCustomCallTarget(const std::string& fn_name,
                                         nb::capsule capsule,
                                         const std::string& platform,
                                         int api_version) {
-  static const char* const kName = "xla._CUSTOM_CALL_TARGET";
-  if (absl::string_view(capsule.name()) != kName) {
-    return InvalidArgument(
-        "Argument to RegisterCustomCallTarget was not a "
-        "xla._CUSTOM_CALL_TARGET capsule.");
-  }
   switch (api_version) {
     case 0:
       CustomCallTargetRegistry::Global()->Register(
@@ -947,12 +940,13 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
         nb::dict targets;
         for (const auto& [name, target] :
              CustomCallTargetRegistry::Global()->registered_symbols(platform)) {
-          targets[nb::cast(name)] = target;
+          targets[nb::str(name.data(), name.size())] = nb::capsule(target);
         }
 
         for (const auto& [name, target] :
              ffi::StaticRegisteredHandlers(platform)) {
-          targets[nb::cast(name)] = reinterpret_cast<void*>(target);
+          targets[nb::str(name.data(), name.size())] =
+              nb::capsule(reinterpret_cast<void*>(target));
         }
         return targets;
       },

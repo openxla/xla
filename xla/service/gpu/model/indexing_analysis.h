@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_MODEL_INDEXING_ANALYSIS_H_
 
 #include <cstdint>
+#include <functional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -76,6 +77,27 @@ HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
                                                     int input_id,
                                                     mlir::MLIRContext* ctx);
 
+// Computes the indexing for `epilogue_parent`'s epilogue. For example, if
+// `epilogue_parent` is a transpose, computes the input to output indexing for
+// everything below the transpose.
+//
+//   transpose
+//       |
+//     bitcast
+//       |
+//      ROOT
+//
+// Here, the result will be the input to output indexing for the bitcast.
+// `epilogue_root` may be identical to the root of the fusion (if there is no
+// epilogue). In this case, the result is the identity indexing map.
+// Note: this function assumes the epilogue is compatible with
+// FindNonTrivialHero, i.e., each instruction in the epilogue only has a single
+// user, or the users have identical indexing maps.
+IndexingMap ComputeEpilogueInputToOutputIndexing(
+    const HloInstruction* epilogue_root, mlir::MLIRContext* ctx,
+    std::function<bool(const HloInstruction*)> is_root =
+        [](const HloInstruction* instr) { return instr->IsRoot(); });
+
 using GroupedByOpIndexingMap =
     absl::flat_hash_map<const HloInstruction*, IndexingMapSet>;
 
@@ -130,7 +152,10 @@ IndexingMap GetIndexingMapForTiling(const Tiling& tiling,
                                     mlir::MLIRContext* ctx);
 IndexingMap GetIndexingMapForTiling(mlir::AffineMap block_offsets,
                                     mlir::AffineMap thread_offsets,
-                                    const Tiling& tiling);
+                                    int64_t threads_per_block,
+                                    int64_t num_blocks,
+                                    absl::Span<const int64_t> thread_tile_sizes,
+                                    absl::Span<const int64_t> tiled_shape);
 
 // Returns the shape of the output of the instruction.
 const Shape& GetOutputShape(const HloInstruction* instr, int64_t output_id);

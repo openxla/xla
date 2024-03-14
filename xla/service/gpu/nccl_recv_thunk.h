@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_NCCL_RECV_THUNK_H_
 
 #include <cstdint>
+#include <memory>
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
@@ -36,6 +37,7 @@ class NcclRecvThunk : public NcclCollectiveThunk {
   NcclRecvThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
                 const HloRecvInstruction* instr, int64_t replica_count,
                 int64_t partition_count, const Buffer& buffer);
+  absl::Status Initialize(const InitializeParams& params) override;
 
  protected:
   const NcclCollectiveConfig& config() const override { return config_.config; }
@@ -49,6 +51,7 @@ class NcclRecvThunk : public NcclCollectiveThunk {
   const NcclP2PConfig config_;
   const Buffer buffer_;
   const AsyncStreamKind stream_kind_;
+  std::shared_ptr<ExecutionCounters> execution_counters_;
 };
 
 absl::Status RunRecv(NcclApi* nccl_api,

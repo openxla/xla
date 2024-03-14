@@ -123,9 +123,11 @@ bool IsMatrixMultiplication(const HloInstruction& dot) {
   PrimitiveType output_primitive_type = dot.shape().element_type();
   bool type_is_allowed =
       (output_primitive_type == F8E4M3FN || output_primitive_type == F8E5M2 ||
-       output_primitive_type == F16 || output_primitive_type == BF16 ||
-       output_primitive_type == F32 || output_primitive_type == F64 ||
-       output_primitive_type == C64 || output_primitive_type == C128) ||
+       output_primitive_type == F8E4M3FNUZ ||
+       output_primitive_type == F8E5M2FNUZ || output_primitive_type == F16 ||
+       output_primitive_type == BF16 || output_primitive_type == F32 ||
+       output_primitive_type == F64 || output_primitive_type == C64 ||
+       output_primitive_type == C128) ||
       (output_primitive_type == S32 && lhs_shape.element_type() == S8 &&
        rhs_shape.element_type() == S8);
   bool shapes_are_valid =
@@ -216,13 +218,17 @@ bool IsContiguousSlice(const HloInstruction& instr) {
   // src and dst dimensions match.
   const Shape& src_shape = slice->operand(0)->shape();
   const Shape& dst_shape = slice->shape();
+  return IsContiguousSlice(src_shape, dst_shape);
+}
+
+bool IsContiguousSlice(const Shape& orig, const Shape& sliced) {
   bool sliced_dim_found = false;
-  for (auto dim : src_shape.layout().minor_to_major()) {
+  for (auto dim : orig.layout().minor_to_major()) {
     if (!sliced_dim_found) {
-      sliced_dim_found = dst_shape.dimensions(dim) < src_shape.dimensions(dim);
+      sliced_dim_found = sliced.dimensions(dim) < orig.dimensions(dim);
       continue;
     }
-    if (dst_shape.dimensions(dim) != 1) return false;
+    if (sliced.dimensions(dim) != 1) return false;
   }
   return true;
 }

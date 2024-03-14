@@ -228,6 +228,20 @@ absl::StatusOr<Value> GetSingleOperandValue(
   return operand.front();
 }
 
+SmallVector<Value> ConvertToSignless(const SmallVector<Value>& values,
+                                     ImplicitLocOpBuilder& b) {
+  mlir::mhlo::RemoveSignTypeConverter sign_converter;
+  SmallVector<Value> results;
+  results.reserve(values.size());
+  for (auto& value : values) {
+    auto signless_type = sign_converter.convertType(value.getType());
+    results.push_back(
+        b.create<mlir::UnrealizedConversionCastOp>(signless_type, value)
+            .getResult(0));
+  }
+  return results;
+}
+
 absl::StatusOr<SmallVector<Value>> EmitReduce(
     const HloInstruction* instr, ValueRange indices,
     const OperandProvider& operand_provider,
@@ -237,6 +251,13 @@ absl::StatusOr<SmallVector<Value>> EmitReduce(
   for (int i = instr->operand_count() / 2; i < instr->operand_count(); ++i) {
     TF_ASSIGN_OR_RETURN(accumulators.emplace_back(),
                         GetSingleOperandValue(operand_provider, instr, i, {}));
+    // Convert back to signed type.
+    TF_ASSIGN_OR_RETURN(auto element_mlir_type,
+                        ConvertPrimitiveTypeToMlirType(
+                            instr->operand(i)->shape().element_type(), b));
+    accumulators.back() = b.create<mlir::UnrealizedConversionCastOp>(
+                               element_mlir_type, accumulators.back())
+                              .getResult(0);
   }
   auto dims = llvm::to_vector(instr->dimensions());
   absl::c_sort(dims);
@@ -262,13 +283,20 @@ absl::StatusOr<SmallVector<Value>> EmitReduce(
     TF_ASSIGN_OR_RETURN(
         args.emplace_back(),
         GetSingleOperandValue(operand_provider, instr, i, reduction_indices));
+    // Convert back to signed type.
+    TF_ASSIGN_OR_RETURN(auto element_mlir_type,
+                        ConvertPrimitiveTypeToMlirType(
+                            instr->operand(i)->shape().element_type(), b));
+    args.back() = b.create<mlir::UnrealizedConversionCastOp>(element_mlir_type,
+                                                             args.back())
+                      .getResult(0);
   }
   auto reducer = call_target_provider(
       instr->called_computations().front()->root_instruction());
   b.create<YieldOp>(b.create<mlir::func::CallOp>(reducer, args).getResults());
 
   b.setInsertionPointAfter(outermost_loop);
-  return outermost_loop.getResults();
+  return ConvertToSignless(outermost_loop.getResults(), b);
 }
 
 absl::StatusOr<SmallVector<Value>> EmitConcat(
@@ -282,8 +310,8 @@ absl::StatusOr<SmallVector<Value>> EmitConcat(
   SmallVector<Value> operand_indices = indices;
   for (auto [index, operand] : llvm::enumerate(instr->operands())) {
     int64_t limit = offset + operand->shape().dimensions(concat_dim);
-    auto in_bounds = b.create<CmpIOp>(CmpIPredicate::ult, indices[concat_dim],
-                                      b.create<ConstantIndexOp>(limit));
+    auto ins = b.create<CmpIOp>(CmpIPredicate::ult, indices[concat_dim],
+                                b.create<ConstantIndexOp>(limit));
 
     auto generate_operand = [&, index = index]() {
       operand_indices[concat_dim] = b.create<arith::SubIOp>(
@@ -295,8 +323,8 @@ absl::StatusOr<SmallVector<Value>> EmitConcat(
     };
 
     if (index < instr->operand_count() - 1) {
-      auto if_op = b.create<IfOp>(mlir::TypeRange{result_element_type},
-                                  in_bounds, true, true);
+      auto if_op =
+          b.create<IfOp>(mlir::TypeRange{result_element_type}, ins, true, true);
       if (outermost_if == nullptr) {
         outermost_if = if_op;
       } else {
@@ -523,13 +551,13 @@ SmallVector<Value> ApplyAffineMap(mlir::AffineMap map, ValueRange dims,
   return result;
 }
 
-Value CheckConstraint(mlir::Value constrained_value, Range range,
+Value CheckConstraint(mlir::Value constrained_value, Interval range,
                       ImplicitLocOpBuilder& b) {
-  auto lb = b.create<ConstantOp>(b.getIndexAttr(range.lower_bound));
+  auto lb = b.create<ConstantOp>(b.getIndexAttr(range.lower));
   if (range.IsPoint()) {
     return b.create<CmpIOp>(CmpIPredicate::eq, constrained_value, lb);
   }
-  auto ub = b.create<ConstantOp>(b.getIndexAttr(range.upper_bound));
+  auto ub = b.create<ConstantOp>(b.getIndexAttr(range.upper));
   return b.create<AndIOp>(
       b.create<CmpIOp>(CmpIPredicate::sge, constrained_value, lb),
       b.create<CmpIOp>(CmpIPredicate::sle, constrained_value, ub));
@@ -737,7 +765,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
     case HloOpcode::kOr:
       return MapElementwiseOp<mhlo::OrOp>(arg_types, operands, builder);
     case HloOpcode::kPopulationCount:
-      return MapHloOp<mhlo::PopulationCountOp>(element_mlir_type, arg_types,
+      return MapHloOp<mhlo::PopulationCountOp>(result_element_type, arg_types,
                                                operands, builder);
     case HloOpcode::kPower:
       return MapElementwiseOp<mhlo::PowOp>(arg_types, operands, builder);
@@ -957,17 +985,10 @@ absl::StatusOr<SmallVector<Value>> SubgraphToMlir(
     if (&computation.FindSubgraph(operand) == &subgraph) {
       return emit_instr(operand, indices);
     }
-    auto results = ProvideParameter(computation, instr, index, indices,
-                                    call_target_provider, builder);
-    // Convert from signed to signless.
-    mlir::mhlo::RemoveSignTypeConverter sign_converter;
-    for (auto& result : results) {
-      auto signless_type = sign_converter.convertType(result.getType());
-      result =
-          builder
-              .create<mlir::UnrealizedConversionCastOp>(signless_type, result)
-              .getResult(0);
-    }
+    return ConvertToSignless(
+        ProvideParameter(computation, instr, index, indices,
+                         call_target_provider, builder),
+        builder);
     return results;
   };
 
@@ -1000,16 +1021,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphToMlir(
                         HloToMlir(instr, indices, provide_operand,
                                   call_target_provider, builder));
 
-    // Convert from signed to signless.
-    mlir::mhlo::RemoveSignTypeConverter sign_converter;
-    for (auto& lowered : lowered_instr) {
-      auto result_type = sign_converter.convertType(lowered.getType());
-      lowered = builder
-                    .create<mlir::UnrealizedConversionCastOp>(
-                        lowered.getLoc(), result_type, lowered)
-                    .getResult(0);
-    }
-    entry = lowered_instr;
+    entry = ConvertToSignless(lowered_instr, builder);
     TF_RET_CHECK(!absl::c_any_of(
         entry, [](const auto& entry) { return entry == nullptr; }))
         << "null result for " << instr->ToShortString();
@@ -1030,9 +1042,9 @@ void GetLoopBoundsFromIndexingMap(ImplicitLocOpBuilder& b,
                                   SmallVectorImpl<Value>* steps) {
   Value c1 = b.create<ConstantIndexOp>(1);
 
-  for (const Range& range : indexing_map.GetSymbolRanges()) {
-    lbs->push_back(b.create<ConstantIndexOp>(range.lower_bound));
-    ubs->push_back(b.create<ConstantIndexOp>(range.upper_bound + 1));
+  for (const Interval& range : indexing_map.GetSymbolRanges()) {
+    lbs->push_back(b.create<ConstantIndexOp>(range.lower));
+    ubs->push_back(b.create<ConstantIndexOp>(range.upper + 1));
     // Note that this is not optimal, when there are mod constraints on symbols,
     // e.g. for reduce-window. In that case we have to extract loop steps from
     // the mod constraints.

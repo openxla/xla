@@ -15,24 +15,18 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_windowed_einsum_handler.h"
 
-#include <algorithm>
 #include <cstdint>
-#include <memory>
-#include <optional>
-#include <utility>
-#include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -85,6 +79,7 @@ absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp,
                            m::GetTupleElement(m::Parameter(), 1)))) {
       // Dispatch the dot to additional compute stream.
       TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(matched_dot, stream_id));
+      ++stream_id;
       changed = true;
     }
   }
@@ -108,6 +103,7 @@ absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp,
                            m::GetTupleElement(m::Parameter(), 1)))) {
       // Dispatch the dot to additional compute stream.
       TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(matched_dot, stream_id));
+      ++stream_id;
       changed = true;
     }
   }
