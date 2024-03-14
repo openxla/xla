@@ -710,6 +710,7 @@ cc_library(
         "//xla/pjrt:exceptions",
         "//xla/pjrt:lru_cache",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_future",
         "//xla/python/ifrt",
         "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:errors",
@@ -717,7 +718,6 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@nanobind",
-        "@pybind11",
     ],
 )
 
@@ -756,6 +756,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_future",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
         "@tsl//tsl/concurrency:ref_count",
