@@ -322,6 +322,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:gpu_conv_runner",
         "//xla/service/gpu:thunk",
+        "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
