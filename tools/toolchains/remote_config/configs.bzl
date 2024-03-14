@@ -698,12 +698,12 @@ def initialize_rbe_configs():
         # Unclear why LIBC is set to 2.19 here, and yet manylinux2010 is 2.12
         # and manylinux2014 is 2.17.
         env = {
-            "ABI_LIBC_VERSION": "glibc_2.19",
+            "ABI_LIBC_VERSION": "glibc_2.37",
             "ABI_VERSION": "gcc",
             "BAZEL_COMPILER": "/usr/lib/llvm-17/bin/clang",
             "BAZEL_HOST_SYSTEM": "i686-unknown-linux-gnu",
             "BAZEL_TARGET_CPU": "k8",
-            "BAZEL_TARGET_LIBC": "glibc_2.19",
+            "BAZEL_TARGET_LIBC": "glibc_2.37",
             "BAZEL_TARGET_SYSTEM": "x86_64-unknown-linux-gnu",
             "CC": "/usr/lib/llvm-17/bin/clang",
             "CC_TOOLCHAIN_NAME": "linux_gnu_x86",
