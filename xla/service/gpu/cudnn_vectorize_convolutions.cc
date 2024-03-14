@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
+#include "xla/service/gpu/variant_visitor.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -622,13 +623,20 @@ absl::StatusOr<bool> CudnnVectorizeConvolutions::Run(
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloCustomCallInstruction* conv : GetRelevantConvs(comp)) {
-      // Try to (re)vectorize to int8x32 if this is an sm75+ GPU.  If we can't,
-      // fall back to int8x4.
       bool local_changed = false;
-      auto *ccc = std::get_if<se::CudaComputeCapability>(&compute_capability_);
-      bool isSM75_and_later = false;
-      if (ccc) isSM75_and_later = ccc->IsAtLeast(7, 5);
-      if (isSM75_and_later || se::isROCm(compute_capability_)) {
+      bool is8by32_supported = std::visit(VariantVisitor{
+        [](const se::CudaComputeCapability& cc) {
+        // Try to (re)vectorize to int8x32 if this is an sm75+ GPU.  If we can't,
+        // fall back to int8x4.
+          return cc.IsAtLeast(7, 5);
+        },
+        [](const se::RocmComputeCapability& cc) {
+          // Skip architectures below MI100
+          return cc.gfx9_mi100_or_later();
+        }},
+        compute_capability_);
+
+      if (is8by32_supported) {
         TF_ASSIGN_OR_RETURN(
             local_changed,
             TryRevectorizeConv(compute_capability_, cudnn_version_, conv, 32));

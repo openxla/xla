@@ -57,12 +57,12 @@ absl::StatusOr<bool> CudnnSupportsOptimizedIntegerConvolution(
       },
       [](const se::RocmComputeCapability& cc) {
         // Skip architectures below MI100
-        return !cc.gfx9_mi100_or_later(); 
+        return !cc.gfx9_mi100_or_later();
       }},
       compute_capability);
 
   if(disabled) {
-    VLOG(3) << "This compute capability is not sufficent for int8x" << 
+    VLOG(3) << "This compute capability is not sufficent for int8x" <<
               vector_size << " vectorization.";
     return false;
   }

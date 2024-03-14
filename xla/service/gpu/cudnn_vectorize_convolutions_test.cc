@@ -43,12 +43,16 @@ namespace m = ::xla::match;
 class CudnnVectorizeConvolutionsTest : public HloTestBase {
  protected:
   // Runs this pass and some cleanup to make pattern-matching easier.
-  absl::StatusOr<bool> Run(std::pair<int, int> compute_capability,
+  absl::StatusOr<bool> Run(se::GpuComputeCapability compute_capability,
                            HloModule* module) {
-    CudnnVectorizeConvolutions pass(
-        se::CudaComputeCapability{compute_capability.first,
-                                  compute_capability.second},
+#ifdef GOOGLE_CUDA
+    auto *ccc = std::get_if<se::CudaComputeCapability>(&compute_capability);
+    CudnnVectorizeConvolutions pass(*ccc,
         se::dnn::VersionInfo(8, 3, 0));
+#else
+    auto *rcc = std::get_if<se::RocmComputeCapability>(&compute_capability);
+    CudnnVectorizeConvolutions pass(*rcc);
+#endif
     TF_ASSIGN_OR_RETURN(bool changed, RunHloPass(&pass, module));
 
     CallInliner inliner;
@@ -71,7 +75,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo4) {
                   backend_config="{bar: 0}"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -110,7 +119,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4UnsupportedFilterType) {
                   backend_config="{bar: 0}"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -126,7 +140,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo4NCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -159,7 +178,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, IncrementAllDnums) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -192,7 +216,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, FilterDnums) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -225,10 +254,16 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
   CudnnVectorizeConvolutions pass(
-      /*compute_capability=*/{7, 5},
+      /*compute_capability=*/gpu_cc,
       /*cudnn_version=*/se::dnn::VersionInfo{8, 3, 0});
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+  CudnnVectorizeConvolutions pass(gpu_cc);
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
 
   SCOPED_TRACE(module->ToString());
   EXPECT_FALSE(changed);
@@ -248,7 +283,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4IfOutputIsS32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_FALSE(changed);
 }
@@ -267,7 +307,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4IfOutputIsF32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_FALSE(changed);
 }
@@ -284,7 +329,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -335,7 +385,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, BiasAndSideInput) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -388,7 +443,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, InputNHWC_OutputNCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -426,6 +486,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, InputNHWC_OutputNCHW) {
                   .reordered_int8_nchw_vect());
 }
 
+#ifdef GOOGLE_CUDA
 TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo32) {
   auto module = ParseAndReturnVerifiedModule(R"(
   HloModule TestModule
@@ -438,7 +499,8 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 0}, module.get()));
+  se::CudaComputeCapability gpu_cc{7, 0};
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -461,6 +523,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo32) {
                    ->cudnn_conv_backend_config()
                    .reordered_int8_nchw_vect());
 }
+#endif
 
 TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32) {
   auto module = ParseAndReturnVerifiedModule(R"(
@@ -476,7 +539,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -534,7 +602,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32NCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -592,7 +665,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32VectorDimFirst) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -650,7 +728,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorize4To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 0}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx906"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -666,7 +749,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize16To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());
@@ -718,7 +806,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeMixedTo32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run({7, 5}, module.get()));
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
   SCOPED_TRACE(module->ToString());

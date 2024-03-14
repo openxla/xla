@@ -46,7 +46,12 @@ TEST_F(CudnnPadForConvolutionsTest, DoNotPadF16ForwardConvWhenGrouped) {
       , custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_FALSE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
 }
 
 TEST_F(CudnnPadForConvolutionsTest, PadF16ForwardConvInputChannels) {
@@ -61,7 +66,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16ForwardConvInputChannels) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
 
   SCOPED_TRACE(module->ToString());
@@ -86,7 +96,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardInputConvOutputChannels) {
                   custom_call_target="__cudnn$convBackwardInput"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -108,7 +123,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16ForwardConvOutputChannels) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Tuple(
                         m::Slice(m::GetTupleElement(m::CustomCall(
@@ -130,7 +150,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardInputConvInputChannels) {
     ROOT gte = f16[10,20,30,41] get-tuple-element(result), index=0
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root,
               GmockMatch(m::GetTupleElement(m::Tuple(
@@ -153,7 +178,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardFilterConvInputChannels) {
     ROOT gte = f16[2,2,41,40] get-tuple-element(result), index=0
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root,
               GmockMatch(m::GetTupleElement(m::Tuple(
@@ -176,7 +206,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardFilterConvOutputChannels) {
     ROOT gte = f16[2,2,40,41] get-tuple-element(result), index=0
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root,
               GmockMatch(m::GetTupleElement(m::Tuple(
@@ -198,7 +233,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadInputFeatures3To4) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
 
   SCOPED_TRACE(module->ToString());
@@ -222,7 +262,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadIntForwardConvInputChannels) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
 
   SCOPED_TRACE(module->ToString());
@@ -246,7 +291,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadIntForwardConvOutputChannels) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Tuple(
                         m::Slice(m::GetTupleElement(m::CustomCall(
@@ -267,7 +317,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8To32OnSm75) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -279,6 +334,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8To32OnSm75) {
           m::Op())));
 }
 
+#ifdef GOOGLE_CUDA
 TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32OnSm70) {
   auto module = ParseAndReturnVerifiedModule(R"(
   HloModule TestModule
@@ -291,7 +347,8 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32OnSm70) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+  se::CudaComputeCapability gpu_cc{7, 0};
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -301,6 +358,7 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32OnSm70) {
               m::Pad(m::Parameter(1), m::Op()).WithShape(S8, {2, 2, 40, 44})))),
           m::Op())));
 }
+#endif
 
 TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32FloatOutputSm75) {
   // This test checks that the padding pass correctly calls
@@ -318,7 +376,12 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32FloatOutputSm75) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -345,7 +408,12 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8UnsupportedFilterTypeOutputSm75) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_FALSE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
 }
 
 TEST_F(CudnnPadForConvolutionsTest, NoPadToInt8x32ExcessiveBlowup) {
@@ -360,7 +428,12 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadToInt8x32ExcessiveBlowup) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_FALSE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
 }
 
 TEST_F(CudnnPadForConvolutionsTest, PadInt8x4To32) {
@@ -375,7 +448,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8x4To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -404,7 +482,12 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8x4To32BiasActivation) {
                   custom_call_target="__cudnn$convBiasActivationForward"
   })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 5};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
@@ -439,7 +522,12 @@ TEST_F(CudnnPadForConvolutionsTest,
     ROOT %get-tuple-element.1 = f32[1,3,3,5]{3,2,1,0} get-tuple-element((f32[1,3,3,5]{3,2,1,0}, u8[0]{0}) %custom-call.1), index=0
     })")
                     .value();
-  EXPECT_TRUE(CudnnPadForConvolutions({7, 0}).Run(module.get()).value());
+#ifdef GOOGLE_CUDA
+  se::CudaComputeCapability gpu_cc{7, 0};
+#else
+  se::RocmComputeCapability gpu_cc{"gfx908"};
+#endif
+  EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
   auto* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::GetTupleElement(m::Tuple(
                         m::Slice(m::GetTupleElement(m::CustomCall(
