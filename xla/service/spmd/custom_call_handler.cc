@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/custom_call_sharding_helper.h"
 #include "xla/service/hlo_lexer.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/spmd/spmd_partitioner.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
 #include "xla/shape.h"
@@ -455,6 +456,13 @@ Status SpmdPartitioningVisitor::HandleCustomCall(HloInstruction* hlo) {
 
   if (hlo->custom_call_target() == "TopK") {
     return HandleCustomCallTopK(hlo);
+  }
+
+  if (hlo->custom_call_target() ==
+          host_memory_offload_annotations::kMoveToHostCustomCallTarget ||
+      hlo->custom_call_target() ==
+          host_memory_offload_annotations::kMoveToDeviceCustomCallTarget) {
+    return HandleElementwise(hlo);
   }
 
   return DefaultAction(hlo);
