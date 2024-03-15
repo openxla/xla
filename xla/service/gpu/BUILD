@@ -1874,6 +1874,7 @@ cc_library(
         ":variant_visitor",
         ":autotuner_util",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -1898,7 +1899,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/util/proto:proto_utils",
-    ]) + ["@com_google_absl//absl/log"],
+    ]),
 )
 
 cc_library(
