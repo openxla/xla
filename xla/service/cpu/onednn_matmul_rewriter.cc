@@ -382,34 +382,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     auto dot_dim_numbers = dot_instr->dot_dimension_numbers();
     TF_RETURN_IF_ERROR(ValidateDotDimensionNumbers(dot_dim_numbers));
 
-    if (!OneDnnMatMulRewriter::ShouldRewrite(dot_instr)) {
-      if (LowPrecisionType(dot_instr)) {
-        // If rewrite is not possible, make sure that the dot operation
-        // and the operands are converted to FP32 in case of BF16/F16.
-        std::vector<HloInstruction*> new_operands;
-        std::transform(
-            dot_instr->operands().begin(), dot_instr->operands().end(),
-            std::back_inserter(new_operands),
-            [dot_instr](HloInstruction* operand) {
-              return (dot_instr->AddInstruction(HloInstruction::CreateConvert(
-                  ShapeUtil::ChangeElementType(operand->shape(),
-                                               PrimitiveType::F32),
-                  operand)));
-            });
-        auto new_dot =
-            dot_instr->AddInstruction(dot_instr->CloneWithNewOperands(
-                ShapeUtil::ChangeElementType(dot_instr->shape(),
-                                             PrimitiveType::F32),
-                new_operands));
-        auto new_instr =
-            dot_instr->AddInstruction(HloInstruction::CreateConvert(
-                ShapeUtil::ChangeElementType(dot_instr->shape(),
-                                             dot_instr->shape().element_type()),
-                new_dot));
-        TF_RETURN_IF_ERROR(ReplaceInstruction(dot_instr, new_instr));
-      }
-      return OkStatus();
-    }
+    if (!OneDnnMatMulRewriter::ShouldRewrite(dot_instr)) return OkStatus();
     const Shape& lhs_shape = dot_instr->operand(0)->shape();
     const Shape& rhs_shape = dot_instr->operand(1)->shape();
     const Shape& output_shape = dot_instr->shape();

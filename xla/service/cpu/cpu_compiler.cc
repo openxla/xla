@@ -713,8 +713,6 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // BF16/F8 lowering for most ops.
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
   CpuFloatSupport bf16_support(BF16);
-  CpuFloatSupport f16_support(F16);
-  pipeline.AddPass<FloatNormalization>(&f16_support);
 #else
   FloatSupport bf16_support(BF16);
 #endif
@@ -783,14 +781,10 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   //     desirable, thus the ability to disable this functionality.)
   //   - It matches more closely the GPU's behavior on fp16 dot/conv, where
   //     accumulation happens in f32.
-  // Skip the pass when oneDNN is enabled as the fp16 supported dots/convs
-  // are upcast to fp32 after float normalization.
-#if !defined(INTEL_MKL) || !defined(ENABLE_ONEDNN_V3)
   if (!module->config().debug_options().xla_cpu_strict_dot_conv_math()) {
     pipeline.AddPass<ChangeOpDataType>(
         F16, F32, HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kConvolution>);
   }
-#endif  // !INTEL_MKL || !ENABLE_ONEDNN_V3
 
   // Run the following passes to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),

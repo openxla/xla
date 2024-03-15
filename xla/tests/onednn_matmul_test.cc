@@ -592,40 +592,6 @@ TEST_F(MatmulTest, TestF32ConstantWeights) {
   )");
 }
 
-TEST_F(MatmulTest, SimpleTestBF16NoRewrite) {
-  if (!IsSupportedType(PrimitiveType::BF16)) {
-    GTEST_SKIP() << "CPU does not support BF16.";
-  }
-
-  const char* matmul_module_str = R"(
-  HloModule matmul.test.1, entry_computation_layout={(bf16[32,8,128,64]{3,1,2,0},bf16[32,8,128,64]{3,1,2,0})->bf16[32,8,128,128]{3,2,1,0}}
-
-  ENTRY matmul.test.1 {
-    arg.0 = bf16[32,8,128,64]{3,1,2,0} parameter(0), parameter_replication={false}
-    arg.1 = bf16[32,8,128,64]{3,1,2,0} parameter(1), parameter_replication={false}
-    ROOT dot.0 = bf16[32,8,128,128]{3,2,1,0} dot(arg.0, arg.1), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
-  })";
-
-  const char* expected_hlo = R"(
-  ; CHECK-LABEL:  ENTRY %matmul.test.1 (arg.0: bf16[32,8,128,64], arg.1: bf16[32,8,128,64]) -> bf16[32,8,128,128] {
-  ; CHECK-NEXT:  %arg.0 = bf16[32,8,128,64]{3,1,2,0} parameter(0), parameter_replication={false}
-  ; CHECK-NOT:      custom_call_target="__onednn$matmul"
-  ; CHECK-NEXT:  %convert = f32[32,8,128,64]{3,1,2,0} convert(bf16[32,8,128,64]{3,1,2,0} %arg.0)
-  ; CHECK-NEXT:  %arg.1 = bf16[32,8,128,64]{3,1,2,0} parameter(1), parameter_replication={false}
-  ; CHECK-NEXT:  %convert.1 = f32[32,8,128,64]{3,1,2,0} convert(bf16[32,8,128,64]{3,1,2,0} %arg.1)
-  ; CHECK-NEXT:  %dot.1 = f32[32,8,128,128]{3,2,1,0} dot(f32[32,8,128,64]{3,1,2,0} %convert, f32[32,8,128,64]{3,1,2,0} %convert.1), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
-  ; CHECK-NEXT:  ROOT %convert.2 = bf16[32,8,128,128]{3,2,1,0} convert(f32[32,8,128,128]{3,2,1,0} %dot.1)
-  })";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(matmul_module_str));
-  TF_ASSERT_OK_AND_ASSIGN(bool canonicalized,
-                          OneDnnMatMulRewriter().Run(module.get()));
-  StatusOr<bool> filecheck_result =
-      RunFileCheck(module->ToString(), expected_hlo);
-  EXPECT_TRUE(filecheck_result.value());
-}
-
 }  // namespace cpu
 }  // namespace xla
 
