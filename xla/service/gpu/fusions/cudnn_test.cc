@@ -414,6 +414,63 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+class CuDnnFusionLevel3Test : public CuDnnFusionExecutionTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options =
+        CuDnnFusionExecutionTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(3);
+    return debug_options;
+  }
+};
+
+TEST_F(CuDnnFusionLevel3Test,
+       DotWithSplitNonContractingInputExecutesCorrectly) {
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion1 {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  p1 = bf16[1,128,400]{2,1,0} parameter(1)
+  bc1 = bf16[128,400]{1,0} reshape(p1)
+  ROOT d = bf16[192,128]{1,0} dot(cvt0, bc1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY r {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  p1 = bf16[1,128,400]{2,1,0} parameter(1)
+  ROOT r = bf16[192,128]{1,0} fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionLevel3Test,
+       DotWithSplitNonContractingInOutExecutesCorrectly) {
+  EXPECT_TRUE(RunAndCompare(R"(
+fusion1 {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  p1 = bf16[1,128,400]{2,1,0} parameter(1)
+  bc1 = bf16[128,400]{1,0} reshape(p1)
+  d = bf16[192,128]{1,0} dot(cvt0, bc1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  bc = bf16[4,3,16,128]{3,2,1,0} bitcast(d)
+  ROOT cp = bf16[4,3,16,128]{2,1,3,0} copy(bc)
+}
+
+ENTRY r {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  p1 = bf16[1,128,400]{2,1,0} parameter(1)
+  ROOT r = bf16[4,3,16,128]{2,1,3,0} fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})",
+                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 class CuDnnFusionRewriteTest : public CuDnnFusionTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
