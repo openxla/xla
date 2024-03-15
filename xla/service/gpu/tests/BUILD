@@ -1080,3 +1080,15 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_cc_test(
+    name = "allocate_buffer_custom_call_test",
+    srcs = ["allocate_buffer_custom_call_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service:gpu_plugin",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
