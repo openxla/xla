@@ -1111,7 +1111,7 @@ ENTRY e {
 )"));
 }
 
-TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelWithForceDelay) {
+TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelWithForceEarliestSchedule) {
   const char* hlo_text = R"(
   HloModule AsyncAR
   apply_op {
@@ -1127,7 +1127,7 @@ TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelWithForceDelay) {
     p3 = f32[32] parameter(3)
 
     // Independent compute
-    dot0 = f32[32,32]{1,0} custom-call(p1, p2), custom_call_target="__cublas$gemm", backend_config={"should_force_delay_schedule":true}
+    dot0 = f32[32,32]{1,0} custom-call(p1, p2), custom_call_target="__cublas$gemm", backend_config={"force_earliest_schedule":true}
     dot1 = f32[32,32]{1,0} custom-call(p1, p2), custom_call_target="__cublas$gemm"
     add0 = f32[32,32] add(dot0, dot1)
 
@@ -1178,6 +1178,9 @@ TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelWithForceDelay) {
   // but since dot0 is marked as force delay, it should be scheduled
   // before ar-start now.
   EXPECT_LT(get_index("dot0", main), get_index("ar-start", main));
+  // Also verify that dot1 is scheduled between ar start and ar done.
+  EXPECT_GT(get_index("dot1", main), get_index("ar-start", main));
+  EXPECT_LT(get_index("dot1", main), get_index("ar-done", main));
 }
 
 class GpuHloScheduleParameterizedTest

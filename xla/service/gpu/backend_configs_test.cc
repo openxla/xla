@@ -134,7 +134,7 @@ TEST_F(BackendConfigsTest, DefaultGpuBackendConfigSetOpQueue) {
   EXPECT_THAT(add->set_backend_config(gpu_backend_config), IsOk());
   EXPECT_EQ(add->raw_backend_config_string(),
             "{\"operation_queue_id\":\"2\",\"wait_on_operation_queues\":[],"
-            "\"should_force_delay_schedule\":false}");
+            "\"force_earliest_schedule\":false}");
 }
 
 TEST_F(BackendConfigsTest, DefaultGpuBackendConfigSetWaitOnQueue) {
@@ -161,7 +161,7 @@ TEST_F(BackendConfigsTest, DefaultGpuBackendConfigSetWaitOnQueue) {
   EXPECT_THAT(add->set_backend_config(gpu_backend_config), IsOk());
   EXPECT_EQ(add->raw_backend_config_string(),
             "{\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[\"0\","
-            "\"1\"],\"should_force_delay_schedule\":false}");
+            "\"1\"],\"force_earliest_schedule\":false}");
   TF_ASSERT_OK_AND_ASSIGN(GpuBackendConfig config,
                           add->backend_config<GpuBackendConfig>());
 }

@@ -43,12 +43,6 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
       computation->CreateAsyncInstructions(
           instr, {}, StreamAttributeAsyncWrapper::kParallelExecutionThread,
           /*replace=*/true));
-  TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                      done->backend_config<GpuBackendConfig>());
-  // Set the false delay of done op to be false so it can be scheduled
-  // far apart from start.
-  gpu_config.set_should_force_delay_schedule(false);
-  TF_RETURN_IF_ERROR(done->set_backend_config(gpu_config));
   VLOG(5) << "Created async instruction: " << done->ToString();
   return true;
 }
