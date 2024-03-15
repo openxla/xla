@@ -92,7 +92,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(conv,
@@ -138,7 +138,7 @@ TEST_F(CudnnSupportUtilsTest,
               *conv, 32), IsOkAndHolds(false));
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(se::CudaComputeCapability{7, 5},
               *conv, 32), IsOkAndHolds(true));
-#else
+#elif TENSORFLOW_USE_ROCM
   // gfx908+ allows for int8x4
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(se::RocmComputeCapability("gfx906"),
               *conv, 4), IsOkAndHolds(false));
@@ -170,7 +170,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(
@@ -231,7 +231,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(
@@ -295,7 +295,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(conv,
@@ -323,7 +323,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(conv,
@@ -350,7 +350,7 @@ TEST_F(CudnnSupportUtilsTest,
   HloCustomCallInstruction* conv;
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   TF_ASSERT_OK_AND_ASSIGN(conv, GetCustomCall(moduleFilterCoversInput.get(),

@@ -48,7 +48,7 @@ TEST_F(CudnnPadForConvolutionsTest, DoNotPadF16ForwardConvWhenGrouped) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -68,7 +68,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16ForwardConvInputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -98,7 +98,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardInputConvOutputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -125,7 +125,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16ForwardConvOutputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -152,7 +152,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardInputConvInputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -180,7 +180,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardFilterConvInputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -208,7 +208,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadF16BackwardFilterConvOutputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -235,7 +235,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadInputFeatures3To4) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -264,7 +264,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadIntForwardConvInputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -293,7 +293,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadIntForwardConvOutputChannels) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -319,7 +319,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8To32OnSm75) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -378,7 +378,7 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8To32FloatOutputSm75) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -410,7 +410,7 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadInt8UnsupportedFilterTypeOutputSm75) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -430,7 +430,7 @@ TEST_F(CudnnPadForConvolutionsTest, NoPadToInt8x32ExcessiveBlowup) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_FALSE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -450,7 +450,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8x4To32) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -484,7 +484,7 @@ TEST_F(CudnnPadForConvolutionsTest, PadInt8x4To32BiasActivation) {
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 5};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());
@@ -524,7 +524,7 @@ TEST_F(CudnnPadForConvolutionsTest,
                     .value();
 #ifdef GOOGLE_CUDA
   se::CudaComputeCapability gpu_cc{7, 0};
-#else
+#elif TENSORFLOW_USE_ROCM
   se::RocmComputeCapability gpu_cc{"gfx908"};
 #endif
   EXPECT_TRUE(CudnnPadForConvolutions(gpu_cc).Run(module.get()).value());

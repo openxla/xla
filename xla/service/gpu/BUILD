@@ -2984,7 +2984,8 @@ cc_library(
 xla_cc_test(
     name = "cudnn_support_utils_test",
     srcs = ["cudnn_support_utils_test.cc"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +  if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         ":cudnn_support_utils",
@@ -3041,7 +3042,8 @@ cc_library(
 xla_cc_test(
     name = "cudnn_pad_for_convolutions_test",
     srcs = ["cudnn_pad_for_convolutions_test.cc"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +  if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         ":cublas_cudnn",
@@ -3091,7 +3093,8 @@ cc_library(
 xla_cc_test(
     name = "cudnn_vectorize_convolutions_test",
     srcs = ["cudnn_vectorize_convolutions_test.cc"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +  if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
