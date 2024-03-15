@@ -134,9 +134,7 @@ def pjrt_plugin_initialized(plugin_name: str) -> bool:
 def initialize_pjrt_plugin(plugin_name: str) -> None:
   ...
 
-def generate_pjrt_gpu_plugin_options(
-    visible_devices: str = 'all',
-) -> _NameValueMapping:
+def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   ...
 
 class OpMetadata:
@@ -249,3 +247,5 @@ def register_custom_call_handler(xla_platform_name: str, handler: Any) -> None:
   ...
 
 def encode_inspect_sharding_callback(handler: Any) -> bytes: ...
+
+def custom_call_targets(platform: str) -> dict[str, Any]: ...

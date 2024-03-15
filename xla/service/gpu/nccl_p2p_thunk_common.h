@@ -21,13 +21,32 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "xla/service/collective_ops_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/shape.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
 
 namespace xla {
 namespace gpu {
+
+// Count the number of times a Send or Recv instruction executed on a device.
+class ExecutionCounters {
+ public:
+  absl::Status Initialize(se::StreamExecutor* executor);
+  absl::StatusOr<int64_t*> GetCounter(se::StreamExecutor* executor);
+
+ private:
+  absl::Mutex mu_;
+  absl::flat_hash_map<se::StreamExecutor*, int64_t> counters_
+      ABSL_GUARDED_BY(mu_);
+};
 
 // Records the information for implementing CollectivePermute, Send and Recv.
 struct NcclP2PConfig {
@@ -40,6 +59,11 @@ struct NcclP2PConfig {
 
   using IdToSourceTargetMap =
       absl::flat_hash_map<int64_t, SourceTargetMapEntry>;
+
+  enum class ValidationKind { kValid = 0, kInvalid = 1, kConditional = 2 };
+
+  using SourceTargetToBounds = absl::flat_hash_map<std::pair<int64_t, int64_t>,
+                                                   std::pair<int64_t, int64_t>>;
 
   // Returns the source and target ID corresponding to the given ID (these IDs
   // are replica_ids for cross replica permute or partition_ids for cross
@@ -55,6 +79,11 @@ struct NcclP2PConfig {
 
   NcclCollectiveConfig config;
   IdToSourceTargetMap id_to_source_target;
+  ValidationKind validation_kind = ValidationKind::kValid;
+  // When a Send or Recv has validation_kind = ValidationKind::kConditional,
+  // record the valid execution numbers as a pair of [lower-bound, upper-bound]
+  // for each source and target pair.
+  SourceTargetToBounds source_target_to_bounds;
 };
 
 // Extracts source/target pairs for send/recv from frontend attributes.
@@ -66,6 +95,10 @@ NcclP2PConfig GetNcclP2PConfigForSendRecv(const HloSendRecvInstruction* instr,
                                           const Shape& shape,
                                           int64_t replica_count,
                                           int64_t partition_count);
+// Returns the stream kind for the asynchronous stream used to execute an HLO
+// Send or Recv instruction, by inspecting the frontend attributes of the
+// instruction.
+AsyncStreamKind GetStreamKindForSendRecv(const HloSendRecvInstruction* instr);
 
 }  // namespace gpu
 }  // namespace xla

@@ -36,14 +36,17 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
@@ -81,8 +84,6 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -753,6 +754,17 @@ StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                                     proto.replica_groups().end()),
           /*constrain_layout=*/proto.constrain_layout(),
           /*channel_id=*/channel_id, split_dimension);
+      break;
+    }
+    case HloOpcode::kCollectiveBroadcast: {
+      std::optional<int64_t> channel_id;
+      if (proto.channel_id() > 0) {
+        channel_id = proto.channel_id();
+      }
+      auto replica_groups = std::vector<ReplicaGroup>(
+          proto.replica_groups().begin(), proto.replica_groups().end());
+      instruction = CreateCollectiveBroadcast(
+          shape, all_operands(), replica_groups, false, channel_id);
       break;
     }
     case HloOpcode::kCollectivePermute:
@@ -1543,6 +1555,16 @@ HloInstruction::CreateAllReduceStart(
 }
 
 /* static */ std::unique_ptr<HloInstruction>
+HloInstruction::CreateCollectiveBroadcast(
+    const Shape& shape, absl::Span<HloInstruction* const> operands,
+    absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
+    const std::optional<int64_t>& channel_id) {
+  return std::make_unique<HloCollectiveBroadcastInstruction>(
+      HloOpcode::kCollectiveBroadcast, shape, operands, replica_groups,
+      constrain_layout, channel_id);
+}
+
+/* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateCollectivePermute(
     const Shape& shape, HloInstruction* operand,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
@@ -1630,6 +1652,12 @@ HloInstruction::CreateCollectivePermuteStart(
   CHECK(send_operand != nullptr)
       << "SendDone must take the context operand from Send";
   return std::make_unique<HloSendDoneInstruction>(send_operand,
+                                                  is_host_transfer);
+}
+
+/* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateSendDone(
+    HloInstruction* operand, int64_t channel_id, bool is_host_transfer) {
+  return std::make_unique<HloSendDoneInstruction>(operand, channel_id,
                                                   is_host_transfer);
 }
 
@@ -2073,10 +2101,6 @@ void HloInstruction::SetupDerivedInstruction(
   }
 }
 
-bool HloInstruction::IsRoot() const {
-  return parent_ != nullptr && this == parent_->root_instruction();
-}
-
 bool HloInstruction::HasSideEffectNoRecurse() const {
   switch (opcode_) {
     case HloOpcode::kSend:
@@ -2091,6 +2115,7 @@ bool HloInstruction::HasSideEffectNoRecurse() const {
     case HloOpcode::kAllReduceDone:
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kAllGatherDone:
+    case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kCollectivePermuteDone:
       return true;
@@ -2332,6 +2357,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kReduceScatter:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllToAll:
+    case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kInfeed:
@@ -3949,6 +3975,7 @@ HloInstruction::HloInstruction(HloOpcode opcode, const Shape& shape)
       is_default_config_(false),
       cleaned_up_(false),
       marked_as_dead_(false),
+      is_root_(false),
       shape_(shape),
       name_(HloOpcodeString(opcode)) {
   TF_DCHECK_OK(ShapeUtil::ValidateShapeWithOptionalLayout(shape_));
@@ -4049,6 +4076,8 @@ Status HloInstruction::Visit(DfsHloVisitorBase<HloInstructionPtr>* visitor) {
       return visitor->HandleAllReduceDone(this);
     case HloOpcode::kAllToAll:
       return visitor->HandleAllToAll(this);
+    case HloOpcode::kCollectiveBroadcast:
+      return visitor->HandleCollectiveBroadcast(this);
     case HloOpcode::kCollectivePermute:
       return visitor->HandleCollectivePermute(this);
     case HloOpcode::kCollectivePermuteStart:
@@ -4616,6 +4645,13 @@ std::string PrecisionToString(const PrecisionConfig::Precision& precision) {
   return absl::AsciiStrToLower(PrecisionConfig::Precision_Name(precision));
 }
 
+std::string AlgorithmToString(const PrecisionConfig::Algorithm& algorithm) {
+  constexpr absl::string_view kPrefix = "ALG_";
+  const std::string& name = PrecisionConfig::Algorithm_Name(algorithm);
+  DCHECK(absl::StartsWith(name, kPrefix));
+  return absl::AsciiStrToLower(name.substr(kPrefix.size()));
+}
+
 static std::string CustomCallScheduleToString(
     const CustomCallSchedule& schedule) {
   return absl::AsciiStrToLower(CustomCallSchedule_Name(schedule));
@@ -4756,7 +4792,28 @@ StatusOr<PrecisionConfig::Precision> StringToPrecision(
       }();
   auto found = map->find(absl::AsciiStrToLower(name));
   if (found == map->end()) {
-    return InvalidArgument("Unknown distribution");
+    return InvalidArgument("Unknown precision");
+  }
+  return found->second;
+}
+
+absl::StatusOr<PrecisionConfig::Algorithm> StringToAlgorithm(
+    const std::string& name) {
+  static absl::flat_hash_map<std::string, PrecisionConfig::Algorithm>* map =
+      [] {
+        static auto* map =
+            new absl::flat_hash_map<std::string, PrecisionConfig::Algorithm>;
+        for (int i = 0; i < PrecisionConfig::Algorithm_ARRAYSIZE; i++) {
+          if (PrecisionConfig::Algorithm_IsValid(i)) {
+            auto value = static_cast<PrecisionConfig::Algorithm>(i);
+            (*map)[AlgorithmToString(value)] = value;
+          }
+        }
+        return map;
+      }();
+  auto found = map->find(absl::AsciiStrToLower(name));
+  if (found == map->end()) {
+    return InvalidArgument("Unknown algorithm");
   }
   return found->second;
 }
@@ -4848,6 +4905,7 @@ Status HloInstruction::GetBackendConfigInternal(
 }
 
 const std::string& HloInstruction::BackendConfigRep::GetRawString() const {
+  absl::WriterMutexLock lock{&mutex_};
   if (proto_ && raw_string_.empty()) {
     raw_string_ = BackendConfigToRawString(*proto_).value();
   }
@@ -4861,6 +4919,8 @@ HloInstruction::BackendConfigRep HloInstruction::BackendConfigRep::Clone()
   if (auto* proto = GetProtoPtr()) {
     cloned.SetProto(*proto);
   } else {
+    absl::MutexLock source_lock{&mutex_};
+    absl::MutexLock target_lock{&cloned.mutex_};
     cloned.raw_string_ = raw_string_;
   }
   return cloned;
@@ -4868,6 +4928,7 @@ HloInstruction::BackendConfigRep HloInstruction::BackendConfigRep::Clone()
 
 HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
     std::string raw_string) {
+  absl::MutexLock lock{&mutex_};
   raw_string_ = std::move(raw_string);
   proto_.reset();
   return *this;
@@ -4876,6 +4937,7 @@ HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
 HloInstruction::BackendConfigRep& HloInstruction::BackendConfigRep::operator=(
     const tsl::protobuf::Message& proto) {
   SetProto(proto);
+  absl::MutexLock lock{&mutex_};
   raw_string_.clear();
   return *this;
 }

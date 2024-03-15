@@ -505,7 +505,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
         "//xla/service:compilation_environments",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -676,6 +679,7 @@ tsl_gpu_library(
         "//xla/service:xla_compile_result_proto_cc_impl",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_executable",
+        "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",

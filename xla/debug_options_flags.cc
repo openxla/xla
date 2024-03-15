@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/debug_options_parsers.h"
 #include "xla/parse_flags_from_env.h"
+#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/util/command_line_flags.h"
@@ -103,6 +104,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
   opts.set_xla_gpu_graph_num_runs_to_instantiate(-1);
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_graph_enable_concurrent_region(false);
@@ -125,6 +127,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_async_collectives(true);
   opts.set_xla_gpu_enable_async_all_reduce(true);
   opts.set_xla_gpu_enable_async_all_gather(false);
+  opts.set_xla_gpu_enable_async_collective_broadcast(true);
   opts.set_xla_gpu_enable_async_collective_permute(false);
   opts.set_xla_gpu_enable_async_all_to_all(false);
   opts.set_xla_gpu_enable_async_reduce_scatter(false);
@@ -206,6 +209,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_reduction_epilogue_fusion(true);
   opts.set_xla_gpu_enable_nccl_clique_optimization(false);
   opts.set_xla_gpu_cublas_fallback(true);
+  opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
   opts.set_xla_gpu_enable_while_loop_double_buffering(false);
   opts.set_xla_gpu_ensure_minor_dot_contraction_dims(false);
   opts.set_xla_gpu_filter_kernels_spilling_registers_on_autotuning(true);
@@ -227,8 +231,23 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_dot_strength_reduction(true);
 
   opts.set_xla_gpu_enable_bf16_6way_gemm(false);
+  opts.set_xla_gpu_enable_bf16_3way_gemm(false);
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
+
+  opts.set_xla_gpu_enable_mlir_emitters(false);
+  opts.set_xla_gpu_max_mlir_kernels(0);
+  opts.set_xla_gpu_skip_mlir_kernels(0);
+
+  opts.set_xla_gpu_multi_streamed_windowed_einsum(false);
+
+  // Minimum combined size of matrices in matrix multiplication to
+  // be rewritten to cuBLAS or Triton kernel call.
+  // This threshold is a conservative estimate and has been measured
+  // to be always beneficial (up to generally several times faster)
+  // on V100 and H100 GPUs. See openxla/xla #9319 for details.
+  const int64_t kDefaultMinGemmRewriteSize = 100;
+  opts.set_xla_gpu_gemm_rewrite_size_threshold(kDefaultMinGemmRewriteSize);
 
   return opts;
 }
@@ -963,6 +982,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_async_all_reduce(),
       "Converts synchronous all-reduce ops into asynchronous."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_async_collective_broadcast",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_async_collective_broadcast),
+      debug_options->xla_gpu_enable_async_collective_broadcast(),
+      "Converts synchronous collective-broadcast ops into asynchronous."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_async_collective_permute",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_enable_async_collective_permute),
@@ -1403,6 +1428,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "once per process. This only works on CUDA. In tests, the TEST_WORKSPACE "
       "prefix can be used to load files from their data dependencies."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_require_complete_aot_autotune_results",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_require_complete_aot_autotune_results),
+      debug_options->xla_gpu_multi_streamed_windowed_einsum(),
+      "Whether to require complete AOT autotuning results."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_auto_spmd_partitioning_memory_budget_gb",
       int32_setter_for(
           &DebugOptions::set_xla_gpu_auto_spmd_partitioning_memory_budget_gb),
@@ -1476,6 +1507,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_cublas_fallback(),
                 "Allow Triton GEMM autotuning to fall back to cuBLAS when that "
                 "is faster."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_cudnn_gemm_fusion_level",
+      int32_setter_for(&DebugOptions::set_xla_gpu_cudnn_gemm_fusion_level),
+      debug_options->xla_gpu_cudnn_gemm_fusion_level(),
+      "cuDNN GEMM fusion level; higher level corresponds to more kinds of "
+      "fused operations."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_mock_custom_calls",
                 bool_setter_for(&DebugOptions::set_xla_gpu_mock_custom_calls),
@@ -1530,6 +1567,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_threshold_for_windowed_einsum_mib),
       debug_options->xla_gpu_threshold_for_windowed_einsum_mib(),
       "Threshold to enable windowed einsum (collective matmul) in MB."
+      "Einsums that have partitioned operand(can be either LHS or RHS) that's "
+      "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_triton_hopper",
@@ -1538,7 +1577,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enable Hopper-specific optimizations such as MMA_V3 and pipelining."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_libnvptxcompiler",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_libnvptxcompiler),
+      [debug_options](bool enabled) {
+        if (enabled && !stream_executor::IsLibNvPtxCompilerSupported()) {
+          // This feature can't be enabled when XLA was built without
+          // libnvptxcompiler support.
+          return false;
+        }
+        debug_options->set_xla_gpu_enable_libnvptxcompiler(enabled);
+        return true;
+      },
       debug_options->xla_gpu_enable_libnvptxcompiler(),
       "Use libnvptxcompiler for PTX-to-GPU-assembly compilation instead of "
       "calling ptxas."));
@@ -1547,6 +1594,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_dot_strength_reduction),
       debug_options->xla_gpu_enable_dot_strength_reduction(),
       "Enable rewriting matmuls with a vector into reductions."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_bf16_6way_gemm",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_bf16_6way_gemm),
+      debug_options->xla_gpu_enable_bf16_6way_gemm(),
+      "Use BF16 6way gemm to compute F32 gemm."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_bf16_3way_gemm",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_bf16_3way_gemm),
+      debug_options->xla_gpu_enable_bf16_3way_gemm(),
+      "Use BF16 3way gemm to compute F32 gemm."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_nccl_collective_max_nchannels",
                 int64_setter_for(
@@ -1567,6 +1624,29 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_mlir_emitters),
       debug_options->xla_gpu_enable_mlir_emitters(),
       "Enable new MLIR-based emitters."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_max_mlir_kernels",
+                int64_setter_for(&DebugOptions::set_xla_gpu_max_mlir_kernels),
+                debug_options->xla_gpu_max_mlir_kernels(),
+                "Maximum number of kernels to emit with MLIR."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_skip_mlir_kernels",
+                int64_setter_for(&DebugOptions::set_xla_gpu_skip_mlir_kernels),
+                debug_options->xla_gpu_skip_mlir_kernels(),
+                "Number of initial kernels to skip MLIR emission for."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_multi_streamed_windowed_einsum",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_multi_streamed_windowed_einsum),
+      debug_options->xla_gpu_multi_streamed_windowed_einsum(),
+      "Whether to run windowed einsum using multiple compute streams."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_gemm_rewrite_size_threshold",
+      int64_setter_for(&DebugOptions::set_xla_gpu_gemm_rewrite_size_threshold),
+      debug_options->xla_gpu_gemm_rewrite_size_threshold(),
+      "Threshold to rewrite matmul to cuBLAS or Triton "
+      "(minumum combined number of elements of both matrices "
+      "in non-batch dimensions to be considered for a rewrite)."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

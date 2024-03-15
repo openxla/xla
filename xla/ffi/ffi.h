@@ -35,9 +35,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/memref_view.h"
-#include "xla/service/service_executable_run_options.h"
 #include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/xla_data.pb.h"
 
@@ -84,6 +86,20 @@ template <PrimitiveType dtype> using BufferR2 = Buffer<dtype, 2>;
 template <PrimitiveType dtype> using BufferR3 = Buffer<dtype, 3>;
 template <PrimitiveType dtype> using BufferR4 = Buffer<dtype, 4>;
 // clang-format on
+
+//===----------------------------------------------------------------------===//
+// Arguments binding
+//===----------------------------------------------------------------------===//
+
+template <>
+struct ArgBinding<BufferBase> {
+  using Arg = BufferBase;
+};
+
+template <PrimitiveType dtype, size_t rank>
+struct ArgBinding<Buffer<dtype, rank>> {
+  using Arg = Buffer<dtype, rank>;
+};
 
 //===----------------------------------------------------------------------===//
 // Arguments decoding
@@ -171,17 +187,33 @@ struct AttrDecoding<Pointer<T>> {
 // Context decoding
 //===----------------------------------------------------------------------===//
 
-// TODO(ezhulenev): We should remove `ServiceExecutableRunOptions` context and
-// pass only se::Stream to FFI handlers.
 template <>
-struct CtxDecoding<ServiceExecutableRunOptions> {
-  using Type = const ServiceExecutableRunOptions*;
+struct CtxDecoding<se::Stream> {
+  using Type = se::Stream*;
 
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
                                     XLA_FFI_ExecutionContext* ctx,
                                     DiagnosticEngine&) {
-    void* ptr = api->internal_api->XLA_FFI_ServiceExecutableRunOptions_Get(ctx);
+    void* ptr = api->internal_api->XLA_FFI_INTERNAL_Stream_Get(ctx);
     return reinterpret_cast<Type>(ptr);
+  }
+};
+
+template <size_t n>
+struct CtxDecoding<se::OwningScratchAllocator<n>> {
+  using Type = se::OwningScratchAllocator<n>;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine&) {
+    int32_t device_ordinal =
+        api->internal_api->XLA_FFI_INTERNAL_DeviceOrdinal_Get(ctx);
+    void* device_allocator =
+        api->internal_api->XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get(ctx);
+
+    return se::OwningScratchAllocator<n>(
+        device_ordinal,
+        reinterpret_cast<se::DeviceMemoryAllocator*>(device_allocator));
   }
 };
 
@@ -192,7 +224,7 @@ struct CtxDecoding<CalledComputation> {
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
                                     XLA_FFI_ExecutionContext* ctx,
                                     DiagnosticEngine&) {
-    void* ptr = api->internal_api->XLA_FFI_CalledComputation_Get(ctx);
+    void* ptr = api->internal_api->XLA_FFI_INTERNAL_CalledComputation_Get(ctx);
     return reinterpret_cast<Type>(ptr);
   }
 };
@@ -204,7 +236,7 @@ struct CtxDecoding<CalledComputation> {
 template <>
 struct ResultEncoding<Status> {
   static XLA_FFI_Error* Encode(XLA_FFI_Api* api, Status status) {
-    return api->internal_api->XLA_FFI_Error_Forward(&status);
+    return api->internal_api->XLA_FFI_INTERNAL_Error_Forward(&status);
   }
 };
 

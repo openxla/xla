@@ -643,6 +643,18 @@ TEST(XlaBuilderTest, AllReduceTuple) {
                                    .WithShapeEqualTo(&tuple_shape)));
 }
 
+TEST(XlaBuilderTest, CollectiveBroadcast) {
+  XlaBuilder b(TestName());
+  auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
+  ReplicaGroup replica_group;
+  replica_group.add_replica_ids(0);
+  replica_group.add_replica_ids(1);
+  CollectiveBroadcast(x, {replica_group});
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kCollectiveBroadcast);
+}
+
 TEST(XlaBuilderTest, CollectivePermute) {
   XlaBuilder b(TestName());
   auto x = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {5, 7}), "x");
@@ -1731,6 +1743,7 @@ struct BinaryOpTestCase {
 constexpr absl::string_view kBroadcastDimensionMismatch =
     "Broadcast dimension 0 mismatch: 2 != -9223372036854775808; f32[2] and "
     "f32[?,10].";
+std::array<const int64_t, 1> zero_array = {0};
 
 class XlaBuilderUnboundedUnaryOpTest
     : public ::testing::TestWithParam<UnaryOpTestCase> {};
@@ -1924,22 +1937,11 @@ TEST(XlaBuilderTest, UnboundedClamp) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedClampUnsupportedImplicitBroadcast) {
+TEST(XlaBuilderTest, UnboundedClampScalarMinImplicitBroadcast) {
   XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
-  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
-        Parameter(&b, 2, ehs, "ehs"));
-  EXPECT_THAT(BuildHloModule(b),
-              StatusIs(_, HasSubstr("Unimplemented implicit broadcast.")));
-}
-
-TEST(XlaBuilderTest, UnboundedClampScalarOperandMax) {
-  XlaBuilder b(TestName());
-  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
-  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
   Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
         Parameter(&b, 2, ehs, "ehs"));
@@ -1948,7 +1950,7 @@ TEST(XlaBuilderTest, UnboundedClampScalarOperandMax) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedClampScalarMinMax) {
+TEST(XlaBuilderTest, UnboundedClampScalarMinMaxImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
@@ -1961,7 +1963,20 @@ TEST(XlaBuilderTest, UnboundedClampScalarMinMax) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedClampScalarMinOperand) {
+TEST(XlaBuilderTest, UnboundedClampScalarOperandMaxImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape("f32[?, 10]"));
+  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+        Parameter(&b, 2, ehs, "ehs"));
+  TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedClampScalarMinOperandImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
@@ -1972,6 +1987,18 @@ TEST(XlaBuilderTest, UnboundedClampScalarMinOperand) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, BuildHloModule(b));
   EXPECT_THAT(GetRoot(*module),
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest,
+     UnboundedClampUnsupportedDegenerateOperandImplicitBroadcast) {
+  XlaBuilder b(TestName());
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
+  TF_ASSERT_OK_AND_ASSIGN(Shape ehs, ParseShape("f32[?, 10]"));
+  Clamp(Parameter(&b, 0, lhs, "lhs"), Parameter(&b, 1, rhs, "rhs"),
+        Parameter(&b, 2, ehs, "ehs"));
+  EXPECT_THAT(BuildHloModule(b),
+              StatusIs(_, HasSubstr("Unimplemented implicit broadcast.")));
 }
 
 TEST(XlaBuilderTest, UnboundedCompare) {
@@ -2261,7 +2288,7 @@ TEST(XlaBuilderTest, UnboundedSelectScalarPred) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedSelectScalarOnTrueOnFalse) {
+TEST(XlaBuilderTest, UnboundedSelectScalarOnTrueOnFalseImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
@@ -2274,7 +2301,7 @@ TEST(XlaBuilderTest, UnboundedSelectScalarOnTrueOnFalse) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedSelectScalarPredOnFalse) {
+TEST(XlaBuilderTest, UnboundedSelectScalarPredOnFalseImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[?, 10]"));
@@ -2287,7 +2314,7 @@ TEST(XlaBuilderTest, UnboundedSelectScalarPredOnFalse) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedSelectScalarPredOnTrue) {
+TEST(XlaBuilderTest, UnboundedSelectScalarPredOnTrueImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[]"));
@@ -2300,7 +2327,8 @@ TEST(XlaBuilderTest, UnboundedSelectScalarPredOnTrue) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
-TEST(XlaBuilderTest, UnboundedSelectUnsupportedImplicitBroadcast) {
+TEST(XlaBuilderTest,
+     UnboundedSelectUnsupportedDegenerateOperandImplicitBroadcast) {
   XlaBuilder b(TestName());
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape("pred[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape("f32[1]"));
@@ -2369,28 +2397,28 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::ValuesIn<BinaryOpTestCase>({
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Add},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Add},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Add},
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Div},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Div},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Div},
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Max},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Max},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Max},
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Mul},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Mul},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Mul},
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Pow},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Pow},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Pow},
         {"f32[1, ?, 2, ?, <=2, ?, ?]", "f32[?, 1, ?, 2, ?, <=2, ?]",
          /*broadcast_dimensions=*/{}, "f32[?, ?, 2, 2, <=2, <=2, ?]", &Sub},
-        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/{0}, "f32[?, 10]",
-         &Sub},
+        {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
+         "f32[?, 10]", &Sub},
     }));
 
 }  // namespace

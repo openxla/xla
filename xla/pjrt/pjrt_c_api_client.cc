@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -1079,12 +1080,11 @@ PjRtCApiExecutable::GetHloModules() const {
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
     if (mlir::failed(pm.run(module.get())))
       return xla::Internal("failed to convert to MHLO");
-    mlir::MlirToHloConversionOptions options;
     // TODO(jieying): Tuple args should really come from GetCompileOptions (or
     // equivalent) once implemented.
-    TF_RETURN_IF_ERROR(mlir::ConvertMlirHloToHlo(
-        module.get(), &hlo_proto, /*use_tuple_args=*/false,
-        /*return_tuple=*/false, options));
+    TF_RETURN_IF_ERROR(mlir::ConvertMlirHloToHlo(module.get(), &hlo_proto,
+                                                 /*use_tuple_args=*/false,
+                                                 /*return_tuple=*/false));
     xla::DebugOptions debug_options;
     TF_ASSIGN_OR_RETURN(xla::HloModuleConfig module_config,
                         xla::HloModule::CreateModuleConfigFromProto(
@@ -1710,7 +1710,7 @@ absl::Span<const int64_t> PjRtCApiBuffer::dimensions() const {
   return absl::Span<const int64_t>(args.dims, args.num_dims);
 }
 
-const Layout& PjRtCApiBuffer::layout() const {
+std::unique_ptr<PjRtLayout> PjRtCApiBuffer::layout() const {
   {
     absl::MutexLock lock(&mu_);
     if (!layout_.has_value()) {
@@ -1728,7 +1728,7 @@ const Layout& PjRtCApiBuffer::layout() const {
       layout_.emplace(*cpp_layout);
     }
   }
-  return *layout_;
+  return std::make_unique<PjRtXlaLayout>(*layout_);
 }
 
 bool PjRtCApiBuffer::has_dynamic_dimensions() const {
@@ -1786,6 +1786,15 @@ StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
       pjrt_c_api()->PJRT_Buffer_UnpaddedDimensions(&args), pjrt_c_api());
   return std::vector<int64_t>(args.unpadded_dims,
                               args.unpadded_dims + args.num_dims);
+}
+
+PjRtFuture<absl::Status> PjRtCApiBuffer::LazyToLiteral(
+    absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator) {
+  auto buffer = std::move(generator)();
+  if (!buffer.ok()) {
+    return PjRtFuture<Status>(buffer.status());
+  }
+  return ToLiteral(buffer.value());
 }
 
 PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
@@ -2203,10 +2212,8 @@ StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   PJRT_Client_Create_Args init_args;
   init_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   init_args.extension_start = nullptr;
-  TF_ASSIGN_OR_RETURN(
-      std::vector<PJRT_NamedValue> c_options,
-      pjrt::ConvertToPjRtNamedValueList(create_options,
-                                        c_api->pjrt_api_version.minor_version));
+  TF_ASSIGN_OR_RETURN(std::vector<PJRT_NamedValue> c_options,
+                      pjrt::ConvertToPjRtNamedValueList(create_options));
   init_args.create_options = c_options.data();
   init_args.num_options = c_options.size();
 
@@ -2242,10 +2249,8 @@ absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>> GetCApiTopology(
   PJRT_TopologyDescription_Create_Args init_args;
   init_args.struct_size = PJRT_TopologyDescription_Create_Args_STRUCT_SIZE;
   init_args.extension_start = nullptr;
-  TF_ASSIGN_OR_RETURN(
-      std::vector<PJRT_NamedValue> c_options,
-      pjrt::ConvertToPjRtNamedValueList(create_options,
-                                        c_api->pjrt_api_version.minor_version));
+  TF_ASSIGN_OR_RETURN(std::vector<PJRT_NamedValue> c_options,
+                      pjrt::ConvertToPjRtNamedValueList(create_options));
   init_args.create_options = c_options.data();
   init_args.num_options = c_options.size();
   init_args.topology_name = topology_name.data();

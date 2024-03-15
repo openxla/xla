@@ -87,6 +87,7 @@ class Thunk {
   static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
+    kAddressComputation,
     kCholesky,
     kConditional,
     kConvolution,
@@ -109,6 +110,9 @@ class Thunk {
     kNcclAllReduce,
     kNcclAllReduceStart,
     kNcclAllReduceDone,
+    kNcclCollectiveBroadcast,
+    kNcclCollectiveBroadcastStart,
+    kNcclCollectiveBroadcastDone,
     kNcclCollectivePermute,
     kNcclCollectivePermuteStart,
     kNcclCollectivePermuteDone,
@@ -308,6 +312,12 @@ class Thunk {
         CollectiveExecuteParams* collective_params,
         CollectiveCliques* collective_cliques,
         ExecutionStreamIdMap additional_compute_streams = {});
+
+    // Constructs execute parameters from an existing parameters but with
+    // different buffer allocations.
+    static ExecuteParams CloneWithNewAllocations(
+        const ExecuteParams& params,
+        const BufferAllocations& buffer_allocations);
 
     const BufferAllocations* buffer_allocations;  // never null
 

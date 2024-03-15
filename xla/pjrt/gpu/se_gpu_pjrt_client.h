@@ -145,6 +145,7 @@ class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
   StreamExecutorGpuDevice(int id,
                           std::unique_ptr<LocalDeviceState> local_device_state,
                           std::string device_kind, std::string device_vendor,
+                          std::string compute_capability, int core_count,
                           int node_id, int slice_index = 0);
 
   int slice_index() const;
@@ -233,6 +234,8 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
 std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
     int node_id);
+
+std::string MakeComputeCapabilityString(const se::DeviceDescription* desc);
 
 struct GpuClientOptions {
   GpuAllocatorConfig allocator_config;

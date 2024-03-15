@@ -297,6 +297,7 @@ class HloParserImpl : public HloParser {
     kShapeList,
     kEnum,
     kRandomAlgorithm,
+    kPrecisionAlgorithm,
     kAliasing,
     kBufferDonor,
     kComputationLayout,
@@ -548,6 +549,7 @@ class HloParserImpl : public HloParser {
   bool ParseRandomDistribution(RandomDistribution* result);
   bool ParseRandomAlgorithm(RandomAlgorithm* result);
   bool ParsePrecision(PrecisionConfig::Precision* result);
+  bool ParseAlgorithm(PrecisionConfig::Algorithm* result);
   bool ParseInt64(int64_t* result);
   bool ParseDouble(double* result);
   bool ParseComplex(std::complex<double>* result);
@@ -1765,6 +1767,23 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           constrain_layout ? *constrain_layout : false, channel_id,
           split_dimension));
     }
+    case HloOpcode::kCollectiveBroadcast: {
+      optional<std::vector<std::vector<int64_t>>> tmp_groups;
+      attrs["replica_groups"] = {/*required=*/true,
+                                 AttrTy::kBracedInt64ListList, &tmp_groups};
+      optional<int64_t> channel_id;
+      attrs["channel_id"] = {/*required=*/false, AttrTy::kInt64, &channel_id};
+      if ((!preset_operands && !ParseOperands(&operands, builder)) ||
+          !ParseAttributes(attrs, allow_attributes)) {
+        return nullptr;
+      }
+      std::vector<ReplicaGroup> replica_groups;
+      if (tmp_groups) {
+        replica_groups = CreateReplicaGroups(*tmp_groups);
+      }
+      return builder->AddInstruction(HloInstruction::CreateCollectiveBroadcast(
+          *shape, operands, replica_groups, false, channel_id));
+    }
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart: {
       optional<std::vector<std::vector<int64_t>>> source_targets;
@@ -2189,14 +2208,15 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           !ParseAttributes(attrs, allow_attributes)) {
         return nullptr;
       }
-      if (dynamic_cast<const HloChannelInstruction*>(operands[0]) == nullptr) {
-        return nullptr;
+
+      if (dynamic_cast<const HloChannelInstruction*>(operands[0]) != nullptr) {
+        if (channel_id != operands[0]->channel_id()) {
+          return nullptr;
+        }
       }
-      if (channel_id != operands[0]->channel_id()) {
-        return nullptr;
-      }
-      return builder->AddInstruction(
-          HloInstruction::CreateSendDone(operands[0], *is_host_transfer));
+
+      return builder->AddInstruction(HloInstruction::CreateSendDone(
+          operands[0], channel_id.value(), *is_host_transfer));
     }
     case HloOpcode::kGetTupleElement: {
       optional<int64_t> index;
@@ -3065,6 +3085,10 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       attrs["sparsity"] = {/*required=*/false, AttrTy::kSparsityDescriptor,
                            &sparsity};
 
+      optional<PrecisionConfig::Algorithm> algorithm;
+      attrs["algorithm"] = {/*required=*/false, AttrTy::kPrecisionAlgorithm,
+                            &algorithm};
+
       LocTy loc = lexer_.GetLoc();
       if ((!preset_operands && !ParseOperands(&operands, builder)) ||
           !ParseAttributes(attrs, allow_attributes)) {
@@ -3109,10 +3133,13 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         precision_config.mutable_operand_precision()->Resize(
             HloDotInstruction::kOperands, PrecisionConfig::DEFAULT);
       }
+      if (algorithm) {
+        precision_config.set_algorithm(*algorithm);
+      }
       if (!maybe_infer_shape([&] {
             return ShapeInference::InferDotOpShape(
                 operands[0]->shape(), operands[1]->shape(), dnum,
-                /*preferred_element_type=*/std::nullopt);
+                /*preferred_element_type=*/std::nullopt, sparsity);
           })) {
         return nullptr;
       }
@@ -4890,6 +4917,15 @@ bool HloParserImpl::ParseAttributeHelper(
         static_cast<optional<RandomAlgorithm>*>(attr_out_ptr)->emplace(result);
         return true;
       }
+      case AttrTy::kPrecisionAlgorithm: {
+        PrecisionConfig::Algorithm result;
+        if (!ParseAlgorithm(&result)) {
+          return false;
+        }
+        static_cast<optional<PrecisionConfig::Algorithm>*>(attr_out_ptr)
+            ->emplace(result);
+        return true;
+      }
       case AttrTy::kAliasing: {
         AliasingData aliasing_data;
         if (!ParseAliasing(&aliasing_data)) {
@@ -6395,6 +6431,22 @@ bool HloParserImpl::ParsePrecision(PrecisionConfig::Precision* result) {
   auto status_or_result = StringToPrecision(val);
   if (!status_or_result.ok()) {
     return TokenError(StrFormat("expects precision but sees: %s, error: %s",
+                                val, status_or_result.status().message()));
+  }
+  *result = status_or_result.value();
+  lexer_.Lex();
+  return true;
+}
+
+bool HloParserImpl::ParseAlgorithm(PrecisionConfig::Algorithm* result) {
+  VLOG(3) << "ParseAlgorithm";
+  if (lexer_.GetKind() != TokKind::kIdent) {
+    return TokenError("expects algorithm");
+  }
+  std::string val = lexer_.GetStrVal();
+  auto status_or_result = StringToAlgorithm(val);
+  if (!status_or_result.ok()) {
+    return TokenError(StrFormat("expects algorithm but sees: %s, error: %s",
                                 val, status_or_result.status().message()));
   }
   *result = status_or_result.value();

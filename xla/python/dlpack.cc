@@ -15,32 +15,48 @@ limitations under the License.
 
 #include "xla/python/dlpack.h"
 
+#include <Python.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "include/dlpack/dlpack.h"  // from @dlpack
+#include "llvm/Support/Casting.h"
+#include "nanobind/nanobind.h"  // from @nanobind
 #include "pybind11/gil.h"  // from @pybind11
 #include "pybind11/pytypes.h"  // from @pybind11
+#include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/ifrt/array.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/py_array.h"
+#include "xla/python/py_client.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/traceback.h"
 #include "xla/python/types.h"
 #include "xla/python/util.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 
+namespace nb = nanobind;
 namespace py = pybind11;
 
 namespace xla {
@@ -279,7 +295,9 @@ absl::StatusOr<PjRtDevice*> DeviceForDLDevice(const PjRtClient* cpu_client,
 
 absl::StatusOr<py::capsule> BufferToDLPackManagedTensor(
     py::handle py_buffer, std::optional<std::intptr_t> stream) {
-  ifrt::Array* ifrt_array = py::cast<xla::PyArray>(py_buffer).ifrt_array();
+  // TODO(phawkins): remove .ptr() when nanobind transition is complete.
+  ifrt::Array* ifrt_array =
+      nb::cast<xla::PyArray>(nb::handle(py_buffer.ptr())).ifrt_array();
   if (ifrt_array == nullptr) {
     return Unimplemented(
         "BufferToDLPackManagedTensor called on deleted array.");
@@ -328,9 +346,12 @@ absl::StatusOr<py::capsule> BufferToDLPackManagedTensor(
 
   pack->shape = std::vector<int64_t>(pjrt_buffer->dimensions().begin(),
                                      pjrt_buffer->dimensions().end());
-  pack->strides =
-      StridesForShape(pjrt_buffer->element_type(), pjrt_buffer->dimensions(),
-                      pjrt_buffer->layout());
+
+  // TODO(b/327524065): use PjRtLayout directly instead of xla::Layout
+  Layout xla_layout = GetXlaLayoutUnsafe(pjrt_buffer->layout());
+  pack->strides = StridesForShape(pjrt_buffer->element_type(),
+                                  pjrt_buffer->dimensions(), xla_layout);
+
   dt.shape = reinterpret_cast<std::int64_t*>(pack->shape.data());
   dt.strides = reinterpret_cast<std::int64_t*>(pack->strides.data());
   dt.byte_offset = 0;
@@ -359,11 +380,11 @@ absl::StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
   auto* cpu_pjrt_client = cpu_client ? cpu_client->pjrt_client() : nullptr;
   auto* gpu_pjrt_client = gpu_client ? gpu_client->pjrt_client() : nullptr;
 
-  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        absl::string_view(tensor.name()));
+        std::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor);
   if (dlmt->dl_tensor.ndim < 0) {
@@ -435,18 +456,20 @@ absl::StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
-                                            std::move(ifrt_array), false, true);
+  auto out = PyArray::MakeFromSingleDeviceArray(
+      std::move(client), Traceback::Get(), std::move(ifrt_array), false, true);
+  // TODO(phawkins): remove after nanobind transition is complete.
+  return py::reinterpret_steal<py::object>(out.release().ptr());
 }
 
 absl::StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
     const pybind11::capsule& tensor, PjRtDevice* device,
     std::shared_ptr<PyClient> client, std::optional<std::intptr_t> stream) {
-  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        absl::string_view(tensor.name()));
+        std::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor);
   if (dlmt->dl_tensor.ndim < 0) {
@@ -495,8 +518,10 @@ absl::StatusOr<pybind11::object> DLPackManagedTensorToBuffer(
   }
   TF_ASSIGN_OR_RETURN(auto ifrt_array,
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
-  return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
-                                            std::move(ifrt_array), false, true);
+  auto out = PyArray::MakeFromSingleDeviceArray(
+      std::move(client), Traceback::Get(), std::move(ifrt_array), false, true);
+  // TODO(phawkins): remove after nanobind transition is complete.
+  return py::reinterpret_steal<py::object>(out.release().ptr());
 }
 
 }  // namespace xla

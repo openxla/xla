@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/fft.h"
@@ -137,14 +136,13 @@ GpuExecutor::~GpuExecutor() {
   }
 }
 
-absl::Status GpuExecutor::Init(int device_ordinal,
-                               DeviceOptions device_options) {
+absl::Status GpuExecutor::Init(int device_ordinal) {
   device_ordinal_ = device_ordinal;
 
   TF_RETURN_IF_ERROR(GpuDriver::Init());
   TF_RETURN_IF_ERROR(GpuDriver::GetDevice(device_ordinal_, &device_));
-  TF_RETURN_IF_ERROR(GpuDriver::CreateContext(device_ordinal_, device_,
-                                              device_options, &context_));
+  TF_RETURN_IF_ERROR(
+      GpuDriver::CreateContext(device_ordinal_, device_, &context_));
   TF_RETURN_IF_ERROR(
       GpuDriver::GetComputeCapability(&cc_major_, &cc_minor_, device_));
   return absl::OkStatus();
@@ -220,7 +218,8 @@ absl::Status GpuExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
   if (spec.has_cuda_cubin_in_memory()) {
     absl::MutexLock lock{&in_memory_modules_mu_};
     kernel_name = &spec.cuda_cubin_in_memory().kernel_name();
-    const char* cubin = spec.cuda_cubin_in_memory().bytes();
+    const char* cubin = reinterpret_cast<const char*>(
+        spec.cuda_cubin_in_memory().cubin_bytes().data());
     TF_RETURN_IF_ERROR(LoadModuleFromCuBin(cubin, &module));
     kernel_to_gpu_binary_[kernel] = cubin;
 
@@ -544,8 +543,8 @@ absl::Status GpuExecutor::Submit(Stream* stream,
   }
 
   auto exec = GpuCommandBuffer::Cast(&command_buffer)->executable();
-  VLOG(3) << "Launch command buffer execuable graph " << exec
-          << " on a stream: " << stream->DebugStreamPointers();
+  VLOG(3) << "Launch command buffer executable graph " << exec
+          << " on a stream: " << stream;
   return GpuDriver::GraphLaunch(exec, AsGpuStreamValue(stream));
 }
 
@@ -986,8 +985,6 @@ std::unique_ptr<GpuCommandBuffer> GpuExecutor::CreateCommandBuffer(
   return std::make_unique<GpuCommandBuffer>(mode, /*parent=*/this, graph,
                                             is_owned_graph);
 }
-
-void* GpuExecutor::platform_specific_context() { return context_; }
 
 GpuContext* GpuExecutor::gpu_context() { return context_; }
 

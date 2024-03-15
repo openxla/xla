@@ -79,11 +79,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/global_device_id.h"
@@ -98,6 +100,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_norm_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/ir_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_nested.h"
 #include "xla/service/gpu/kernel_arguments.h"
@@ -107,6 +110,7 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nccl_api.h"
+#include "xla/service/gpu/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/nccl_recv_thunk.h"
 #include "xla/service/gpu/nccl_send_thunk.h"
@@ -139,7 +143,9 @@ limitations under the License.
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/kernel_support_library.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/service/llvm_ir/sort_util.h"
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
@@ -171,6 +177,16 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
+namespace {
+
+// Construct the key for looking up the AsyncEvents for Send and Recv. Input
+// kind is the thunk kind for the corresponding done thunk.
+inline std::pair<bool, int64_t> GetSendRecvAsyncEventsKey(Thunk::Kind kind,
+                                                          int64_t channel_id) {
+  return std::make_pair(kind == Thunk::Kind::kNcclRecvDone, channel_id);
+}
+
+}  // namespace
 
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
@@ -716,10 +732,6 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
   return absl::OkStatus();
 }
 
-#endif  // GOOGLE_CUDA || TF_HIPBLASLT
-
-#if GOOGLE_CUDA
-
 absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
     const HloCustomCallInstruction* instr) {
   TF_RET_CHECK(instr->operand_count() == 6 || instr->operand_count() == 7 ||
@@ -755,12 +767,17 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice b_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
+#if GOOGLE_CUDA
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice c_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 2)));
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice d_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
+#else  // TENSORFLOW_USE_ROCM
+  BufferAllocation::Slice c_scale;
+  BufferAllocation::Slice d_scale;
+#endif
 
   BufferAllocation::Slice bias;
   if (has_vector_bias) {
@@ -794,7 +811,9 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   AddThunkToThunkSequence(std::move(thunk));
   return absl::OkStatus();
 }
+#endif  // GOOGLE_CUDA || TF_HIPBLASLT
 
+#if GOOGLE_CUDA
 absl::Status IrEmitterUnnested::EmitConvolutionReorderThunk(
     const HloCustomCallInstruction* instr) {
   bool has_bias = instr->operand_count() > 1;
@@ -942,6 +961,7 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
   TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnfMHAKind kind,
                       xla::gpu::GetCudnnfMHAKind(instr));
   BufferAllocation::Slice mask_slice, bias_slice;
+  BufferAllocation::Slice seqlen_q_slice, seqlen_k_slice;
   std::optional<Shape> mask_shape, bias_shape;
   {
     bool has_mask = kind == CudnnfMHAKind::kScaleMaskSoftmax ||
@@ -966,6 +986,15 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
       const HloInstruction* bias = instr->operand(3);
       TF_ASSIGN_OR_RETURN(bias_slice, GetAllocationSliceForHlo(bias));
       bias_shape = bias->shape();
+    }
+    int64_t seqlen_qk_operand_index = 3 + has_mask + has_bias;
+    bool has_seqlen_qk = seqlen_qk_operand_index == instr->operand_count() - 2;
+    if (has_seqlen_qk) {
+      const HloInstruction* seqlen_q = instr->operand(seqlen_qk_operand_index);
+      TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
+      const HloInstruction* seqlen_k =
+          instr->operand(seqlen_qk_operand_index + 1);
+      TF_ASSIGN_OR_RETURN(seqlen_k_slice, GetAllocationSliceForHlo(seqlen_k));
     }
   }
 
@@ -999,7 +1028,8 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
   AddThunkToThunkSequence(std::make_unique<FusedMHAThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(fmha_config),
       lhs_bmm1_slice, rhs_bmm1_slice, rhs_bmm2_slice, output_slice,
-      scratch_slice, mask_slice, bias_slice, activation_slice));
+      scratch_slice, mask_slice, bias_slice, activation_slice, seqlen_q_slice,
+      seqlen_k_slice));
   return absl::OkStatus();
 }
 
@@ -1079,6 +1109,15 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunk(
     fwd_output_shape = instr->operand(input_index++)->shape();
   }
 
+  BufferAllocation::Slice seqlen_q_slice, seqlen_k_slice;
+  bool has_seqlen_qk = input_index == instr->operand_count() - 2;
+  if (has_seqlen_qk) {
+    const HloInstruction* seqlen_q = instr->operand(input_index);
+    TF_ASSIGN_OR_RETURN(seqlen_q_slice, GetAllocationSliceForHlo(seqlen_q));
+    const HloInstruction* seqlen_k = instr->operand(input_index + 1);
+    TF_ASSIGN_OR_RETURN(seqlen_k_slice, GetAllocationSliceForHlo(seqlen_k));
+    input_index += 2;
+  }
   TF_RET_CHECK(input_index == instr->operand_count());
 
   int output_index = 0;
@@ -1158,7 +1197,7 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunk(
       bmm2_grad_gemm2_rhs_slice, d_output_slice, scratch_slice,
       d_bmm1_lhs_slice, d_bmm1_rhs_slice, d_bmm2_rhs_slice, d_s_slice,
       softmax_sum_slice, d_Q_accum_slice, mask_slice, d_bias_slice,
-      fwd_output_slice, bias_slice));
+      fwd_output_slice, bias_slice, seqlen_q_slice, seqlen_k_slice));
 
   return absl::OkStatus();
 }
@@ -1684,16 +1723,17 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
     // Move function body into kernel prototype.
     llvm::Function* prototype_func = builder.GetInsertBlock()->getParent();
     prototype_func->splice(prototype_func->begin(), impl_fn);
-    for (const auto& [kernel_arg, arg, input] :
-         llvm::zip(kernel_arguments.args(), impl_fn->args(), inputs)) {
+    for (const auto& [arg, input] : llvm::zip(impl_fn->args(), inputs)) {
+      arg.replaceAllUsesWith(input.GetBasePointer());
+    }
+    impl_fn->eraseFromParent();
+
+    for (auto& arg : prototype_func->args()) {
       // Remove the alignment and aliasing attributes to avoid recompiling the
       // kernel for each alignment/aliasing combination.
       arg.removeAttr(llvm::Attribute::Alignment);
       arg.removeAttr(llvm::Attribute::NoAlias);
-
-      arg.replaceAllUsesWith(input.GetBasePointer());
     }
-    impl_fn->eraseFromParent();
 
     return {{kernel->getName().str(), launch_dimensions, result.cluster_dim,
              result.shmem_bytes}};
@@ -2208,8 +2248,7 @@ Status IrEmitterUnnested::EmitCollectivePermute(
         /*destination_buffer=*/result_slice,
         /*mem_size=*/ShapeUtil::ByteSizeOf(shape)));
     // Signal that start thunk not created with nullptr.
-    collectives_async_events_.try_emplace(instr, nullptr);
-
+    GetCollectivesAsyncEvents().try_emplace(instr, nullptr);
   } else {
     const NcclCollectiveThunk::Buffer buffer = {
         /*element_count=*/ShapeUtil::ElementsIn(shape),
@@ -2218,7 +2257,7 @@ Status IrEmitterUnnested::EmitCollectivePermute(
     auto thunk = std::make_unique<NcclCollectivePermuteStartThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), NcclApi::Default(),
         instr, replica_count, partition_count, buffer);
-    collectives_async_events_.try_emplace(instr, thunk->async_events());
+    GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
     AddThunkToThunkSequence(std::move(thunk));
   }
   return absl::OkStatus();
@@ -2298,7 +2337,7 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
     auto thunk = std::make_unique<NcclThunkType>(
         Thunk::ThunkInfo::WithProfileAnnotation(inst), NcclApi::Default(), inst,
         /*buffers=*/std::move(buffers));
-    collectives_async_events_.insert({async_start, thunk->async_events()});
+    GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2308,7 +2347,7 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
   }
 
   // Signal that start thunk not created with nullptr.
-  collectives_async_events_.insert({async_start, nullptr});
+  GetCollectivesAsyncEvents().insert({async_start, nullptr});
 
   VLOG(1) << "Collective call is degenerate, not doing NCCL call";
 
@@ -2334,8 +2373,27 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
 
 absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
                                                   const HloInstruction* inst) {
+  CollectivesAsyncEvents& collectives_async_events =
+      GetCollectivesAsyncEvents();
+  if (kind == Thunk::Kind::kNcclRecvDone ||
+      kind == Thunk::Kind::kNcclSendDone) {
+    const HloChannelInstruction* done = DynCast<HloChannelInstruction>(inst);
+    int64_t channel_id = done->channel_id().value();
+    // We only pipeline Send/Recv when channel_id > 0, and allows multiple
+    // and potentially interleaving Send/Recv chains using channel_id = 0.
+    if (MayPipelineSendRecvChannel(channel_id)) {
+      auto it = collectives_async_events.find(
+          GetSendRecvAsyncEventsKey(kind, channel_id));
+      TF_RET_CHECK(it != collectives_async_events.end())
+          << "couldn't find async events for channel_id " << channel_id;
+      AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
+          kind, Thunk::ThunkInfo::WithProfileAnnotation(inst), it->second));
+      return absl::OkStatus();
+    }
+  }
+
   const HloInstruction* start = inst->operand(0);
-  auto async_events = collectives_async_events_.extract(start);
+  auto async_events = collectives_async_events.extract(start);
   TF_RET_CHECK(async_events)
       << "couldn't find async events for start operation";
 
@@ -2619,7 +2677,26 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
     auto thunk = std::make_unique<NcclSendThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), NcclApi::Default(),
         instr, replica_count, partition_count, nccl_buffer);
-    collectives_async_events_.try_emplace(instr, thunk->async_events());
+    CollectivesAsyncEvents& collectives_async_events =
+        GetCollectivesAsyncEvents();
+    int64_t channel_id = instr->channel_id().value();
+    if (MayPipelineSendRecvChannel(channel_id)) {
+      std::pair<bool, int64_t> async_events_key =
+          GetSendRecvAsyncEventsKey(Thunk::Kind::kNcclSendDone, channel_id);
+      auto it = collectives_async_events.find(async_events_key);
+      if (it != collectives_async_events.end()) {
+        VLOG(0) << "Found async events " << it->second.get();
+        thunk->set_async_events(it->second);
+      } else {
+        VLOG(0) << "Used Async events create for thunk "
+                << thunk->async_events().get();
+        collectives_async_events.emplace(async_events_key,
+                                         thunk->async_events());
+      }
+    } else {
+      collectives_async_events.try_emplace(instr, thunk->async_events());
+    }
+
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2666,7 +2743,24 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
     auto thunk = std::make_unique<NcclRecvThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), NcclApi::Default(),
         instr, replica_count, partition_count, nccl_buffer);
-    collectives_async_events_.try_emplace(instr, thunk->async_events());
+    CollectivesAsyncEvents& collectives_async_events =
+        GetCollectivesAsyncEvents();
+    int64_t channel_id = instr->channel_id().value();
+    if (MayPipelineSendRecvChannel(channel_id)) {
+      std::pair<bool, int64_t> async_events_key =
+          GetSendRecvAsyncEventsKey(Thunk::Kind::kNcclRecvDone, channel_id);
+      auto it = collectives_async_events.find(async_events_key);
+
+      if (it != GetCollectivesAsyncEvents().end()) {
+        thunk->set_async_events(it->second);
+      } else {
+        collectives_async_events.emplace(async_events_key,
+                                         thunk->async_events());
+      }
+    } else {
+      collectives_async_events.try_emplace(instr, thunk->async_events());
+    }
+
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2717,7 +2811,6 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           Thunk::kNcclAllReduceStart, all_reduce, all_reduce,
           all_reduce->use_global_device_ids());
     }
-
     case HloOpcode::kAsyncDone: {
       const HloInstruction* wrapped = instr->async_wrapped_instruction();
       switch (wrapped->opcode()) {
@@ -2725,6 +2818,8 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr);
         case HloOpcode::kAllToAll:
           return EmitNcclAsyncDone(Thunk::kNcclAllToAllDone, instr);
+        case HloOpcode::kCollectiveBroadcast:
+          return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
         default: {
           if (wrapped->has_backend_config()) {
             TF_ASSIGN_OR_RETURN(
@@ -2759,6 +2854,14 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclThunk<NcclAllToAllStartThunk, HloAllToAllInstruction>(
               Thunk::kNcclAllToAll, instr, all_to_all, std::nullopt);
         }
+        case HloOpcode::kCollectiveBroadcast: {
+          auto* collective_broadcast =
+              Cast<HloCollectiveBroadcastInstruction>(wrapped);
+          return EmitNcclThunk<NcclCollectiveBroadcastStartThunk,
+                               HloCollectiveBroadcastInstruction>(
+              Thunk::kNcclCollectiveBroadcast, instr, collective_broadcast,
+              std::nullopt);
+        }
         default: {
           if (wrapped->has_backend_config()) {
             TF_ASSIGN_OR_RETURN(
@@ -2784,13 +2887,11 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
 
     case HloOpcode::kCall:
       return EmitCommandBufferThunk(instr);
-
     case HloOpcode::kCollectivePermuteDone:
       return EmitNcclAsyncDone(Thunk::kNcclCollectivePermuteDone, instr);
     case HloOpcode::kCollectivePermuteStart:
       return EmitCollectivePermute(
           Cast<HloCollectivePermuteInstruction>(instr));
-
     case HloOpcode::kConditional:
       return EmitConditional(instr);
     case HloOpcode::kConstant:
@@ -2804,11 +2905,11 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       if (IsCublasLtMatmul(*instr)) {
         return EmitCublasLtMatmulThunk(custom_call);
       }
-#endif  // GOOGLE_CUDA || TF_HIPBLASLT
-#if GOOGLE_CUDA
       if (IsCublasLtMatmulF8(*instr)) {
         return EmitCublasLtMatmulThunkF8(custom_call);
       }
+#endif  // GOOGLE_CUDA || TF_HIPBLASLT
+#if GOOGLE_CUDA
       if (IsCudnnConvolutionReorder(*instr)) {
         return EmitConvolutionReorderThunk(custom_call);
       }

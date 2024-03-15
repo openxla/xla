@@ -45,6 +45,7 @@ limitations under the License.
 
 #include <stddef.h>
 
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -54,6 +55,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "tsl/platform/logging.h"
 
 namespace stream_executor {
@@ -148,9 +150,7 @@ class CudaPtxInMemory : public KernelLoaderSpec {
   // "<cc_major>,<cc_minor>", i.e., "2,0", "3,0", "3,5". Because CC's
   // represented in this way have a clear sorting order, map::begin() will give
   // the lowest-numbered version available, i.e. the default.
-  std::map<std::tuple<int, int>, const char *,
-           bool (*)(const std::tuple<int, int> &, const std::tuple<int, int> &)>
-      ptx_by_compute_capability_;
+  std::map<std::tuple<int, int>, const char *> ptx_by_compute_capability_;
 
   // Defines the minimum compute capability possible. Used when PTX has no
   // compute capability specified (in the single-PTX constructor).
@@ -163,12 +163,13 @@ class CudaPtxInMemory : public KernelLoaderSpec {
 // Kernel loader specification for a CUBIN blob that resides in memory.
 class CudaCubinInMemory : public KernelLoaderSpec {
  public:
-  CudaCubinInMemory(const char *bytes, absl::string_view kernel_name);
+  CudaCubinInMemory(absl::Span<const uint8_t> cubin_bytes,
+                    absl::string_view kernel_name);
 
-  const char *bytes() const { return bytes_; }
+  absl::Span<const uint8_t> cubin_bytes() const { return cubin_bytes_; }
 
  private:
-  const char *bytes_;
+  absl::Span<const uint8_t> cubin_bytes_;
 
   CudaCubinInMemory(const CudaCubinInMemory &) = delete;
   void operator=(const CudaCubinInMemory &) = delete;
@@ -222,8 +223,8 @@ class MultiKernelLoaderSpec {
   // mangled by the compiler if it is not declared in an extern "C" scope.
   MultiKernelLoaderSpec *AddInProcessSymbol(void *symbol,
                                             absl::string_view kernel_name);
-  MultiKernelLoaderSpec *AddCudaCubinInMemory(const char *cubin_bytes,
-                                              absl::string_view kernel_name);
+  MultiKernelLoaderSpec *AddCudaCubinInMemory(
+      absl::Span<const uint8_t> cubin_bytes, absl::string_view kernel_name);
   MultiKernelLoaderSpec *AddCudaPtxInMemory(absl::string_view ptx,
                                             absl::string_view kernel_name);
 
