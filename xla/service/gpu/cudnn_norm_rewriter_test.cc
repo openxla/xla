@@ -1375,7 +1375,6 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrainBackward4D12) {
   TestNorm(hlo_text, optimized_hlo);
 }
 
-// Dbias not expected to be fused into norm gradient.
 TEST_F(CudnnNormRewriterTest, LayerNormTrainBackward4D12Degenerate2) {
 #if (CUDA_VERSION < 12000 || CUDNN_VERSION < 8905)
   GTEST_SKIP() << "Layer norm kernels require CUDA 12 and cuDNN 8.9.5.";
@@ -1486,9 +1485,9 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrainBackward4D12Degenerate2) {
 ; CHECK-DAG:     [[GTEF1:%[^ ]+]] = f32[2,4,1,8]{3,2,1,0} get-tuple-element([[FUSION0]]), index=1
 ; CHECK-DAG:     [[GTE4:%[^ ]+]] = f32[4,1,1,1]{3,2,1,0} get-tuple-element([[CC1]]), index=1
 ; CHECK-DAG:     [[GTE4_BITCAST:%[^ ]+]] = f32[4,1]{1,0} bitcast([[GTE4]])
-; CHECK-DAG:     [[FUSION1:%[^ ]+]] = f32[4]{0} fusion([[P3]]), kind=kInput, calls=[[FUSED_COMPUTATION1:%[^ ]+]]
-; CHECK-DAG:     [[FUSION1_BITCAST:%[^ ]+]] = f32[4,1]{1,0} bitcast([[FUSION1]])
-; CHECK-DAG:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,1,8]{3,2,1,0}, f32[2,4,1,8]{3,2,1,0}, f32[4,1]{1,0}, f32[4,1]{1,0}) tuple([[GTEF0]], [[GTEF1]], [[GTE4_BITCAST]], [[FUSION1_BITCAST]])
+; CHECK-DAG:     [[GTE5:%[^ ]+]] = f32[4,1,1,1]{3,2,1,0} get-tuple-element([[CC1]]), index=2
+; CHECK-DAG:     [[GTE5_BITCAST:%[^ ]+]] = f32[4,1]{1,0} bitcast([[GTE5]])
+; CHECK-DAG:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,1,8]{3,2,1,0}, f32[2,4,1,8]{3,2,1,0}, f32[4,1]{1,0}, f32[4,1]{1,0}) tuple([[GTEF0]], [[GTEF1]], [[GTE4_BITCAST]], [[GTE5_BITCAST]])
   )";
 
   TestNorm(hlo_text, optimized_hlo);

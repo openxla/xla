@@ -172,6 +172,28 @@ bool CompatibleElementType(const HloInstruction* instr) {
   return element_type == BF16 || element_type == F16 || element_type == F32;
 }
 
+// Returns the dimensions associated with shape, adjusted for the removal of any
+// degenerate dimensions in shape.
+std::vector<int64_t> AdjustedDimensions(const Shape& shape,
+                                        absl::Span<const int64_t> dimensions) {
+  absl::flat_hash_map<int64_t, int64_t> dimension_map;
+  for (int64_t dimension = 0, non_degen_dimension = 0; dimension < shape.rank();
+       ++dimension) {
+    if (shape.dimensions(dimension) > 1) {
+      dimension_map.insert({dimension, non_degen_dimension});
+      non_degen_dimension++;
+    }
+  }
+  std::vector<int64_t> adjusted_dimensions;
+  for (int64_t dimension : dimensions) {
+    auto non_degenerate_dimension = dimension_map.find(dimension);
+    if (non_degenerate_dimension != dimension_map.end()) {
+      adjusted_dimensions.emplace_back(non_degenerate_dimension->second);
+    }
+  }
+  return adjusted_dimensions;
+}
+
 // Returns the dimensions of broadcast or reduction instructions, adjusted for
 // the removal of any degenerate dimensions in the output or input.
 std::vector<int64_t> AdjustedDimensions(const HloInstruction* instr) {
@@ -183,22 +205,7 @@ std::vector<int64_t> AdjustedDimensions(const HloInstruction* instr) {
   } else {
     return {};
   }
-  absl::flat_hash_map<int64_t, int64_t> dimension_map;
-  for (int64_t dimension = 0, non_degen_dimension = 0; dimension < shape.rank();
-       ++dimension) {
-    if (shape.dimensions(dimension) > 1) {
-      dimension_map.insert({dimension, non_degen_dimension});
-      non_degen_dimension++;
-    }
-  }
-  std::vector<int64_t> dimensions;
-  for (int64_t dimension : instr->dimensions()) {
-    auto non_degenerate_dimension = dimension_map.find(dimension);
-    if (non_degenerate_dimension != dimension_map.end()) {
-      dimensions.emplace_back(non_degenerate_dimension->second);
-    }
-  }
-  return dimensions;
+  return AdjustedDimensions(shape, instr->dimensions());
 }
 
 // Returns whether the HLO Computation applied by instr calculates the sum of
@@ -305,6 +312,9 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
   auto dimension_product =
       [](const Shape& shape,
          absl::Span<const int64_t> product_dimensions) -> int64_t {
+    if (product_dimensions.empty()) {
+      return 0;
+    }
     int64_t product = 1;
     for (int64_t product_dimension : product_dimensions) {
       product *= shape.dimensions(product_dimension);
@@ -754,8 +764,8 @@ auto XCenter(UniqueHloInstruction* x_center, UniqueHloInstruction* x,
              UniqueHloInstruction* fused_expectation,
              UniqueHloInstruction* custom_call,
              const NormMetadataMap& norm_metadata) {
-  auto capture_or_verify_x = [x, x_center, custom_call, &norm_metadata](
-                                 const HloInstruction* instr) -> bool {
+  auto capture_or_verify_x =
+      [x, custom_call, &norm_metadata](const HloInstruction* instr) -> bool {
     return x->CaptureOrVerify(
         FindTarget(custom_call->Instr(), instr->operand(0),
                    custom_call->Instr()->operand(0), norm_metadata)
@@ -974,19 +984,15 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // If necessary, transpose the input so that the dimensions not being
       // normalized are the leading dimensions.
       std::vector<int64_t> non_norm_dims, non_norm_dims_adjusted;
-      for (int64_t x_dim = 0, degen_dims = 0; x_dim < x.Instr()->shape().rank();
-           ++x_dim) {
+      for (int64_t x_dim = 0; x_dim < x.Instr()->shape().rank(); ++x_dim) {
         if (std::find(norm_dims.begin(), norm_dims.end(), x_dim) ==
             norm_dims.end()) {
           non_norm_dims.emplace_back(x_dim);
-          if (x.Instr()->shape().dimensions(x_dim) != 1) {
-            non_norm_dims_adjusted.emplace_back(x_dim - degen_dims);
-          }
-        }
-        if (x.Instr()->shape().dimensions(x_dim) == 1) {
-          degen_dims++;
         }
       }
+      non_norm_dims_adjusted =
+          AdjustedDimensions(x.Instr()->shape(), non_norm_dims);
+
       std::vector<int64_t> x_transpose_order = non_norm_dims;
       x_transpose_order.insert(x_transpose_order.end(), norm_dims.begin(),
                                norm_dims.end());
