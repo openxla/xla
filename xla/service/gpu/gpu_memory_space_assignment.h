@@ -53,10 +53,10 @@ inline BufferAssigner::Colorer CollectiveColorer() {
       for (const auto& alias : buffer.values()) {
         // opcode or async wrapped opcode is in kSupportedOpcodes.
         if (kSupportedOpcodes->contains(alias->instruction()->opcode()) ||
-            (alias->instruction()->opcode() == HloOpcode::kAsyncStart ||
-             alias->instruction()->opcode() == HloOpcode::kAsyncDone) &&
-                kSupportedOpcodes->contains(
-                    alias->instruction()->async_wrapped_opcode())) {
+            ((alias->instruction()->opcode() == HloOpcode::kAsyncStart ||
+              alias->instruction()->opcode() == HloOpcode::kAsyncDone) &&
+             kSupportedOpcodes->contains(
+                 alias->instruction()->async_wrapped_opcode()))) {
           value->set_color(kCollectiveMemorySpaceColor);
         }
       }
