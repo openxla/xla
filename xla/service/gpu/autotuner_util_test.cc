@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/status_matchers.h"
 #include "tsl/platform/logging.h"   // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
@@ -45,7 +46,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Not;
 using ::testing::TempDir;
-using ::testing::status::StatusIs;
+using ::tsl::testing::StatusIs;
 
 class AutotunerUtilTest : public HloTestBase {
  protected:
