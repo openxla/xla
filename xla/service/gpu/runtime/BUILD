@@ -520,9 +520,10 @@ cc_library(
     srcs = ["copy_thunk.cc"],
     hdrs = ["copy_thunk.h"],
     deps = [
-        "//xla:status",
+        "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu/runtime:thunk",
+        "//xla:status",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
         "@llvm-project//mlir:IR",
