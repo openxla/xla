@@ -522,19 +522,13 @@ TEST_F(MatmulTest, TestF32ConstantWeights) {
 
 TEST_F(MatmulTest, WeightsPrepackAndScratch) {
   const char* matmul_module_str = R"(
-  HloModule matmul.test.f32, entry_computation_layout={(f32[1,384,1024]{2,1,0})->f32[1,384,2]{2,1,0}}
+  HloModule matmul.test.f32, entry_computation_layout={(f32[64,256,16]{2,1,0})->f32[64,256,32]{2,1,0}}
 
   ENTRY matmul.test.f32 {
-  arg.0 = f32[1,384,1024]{2,1,0} parameter(0), parameter_replication={false}
-  reshape.1 = f32[384,1024]{1,0} reshape(arg.0)
-  constant.2 = f32[2,1024]{1,0} constant(1)
-  dot.3 = f32[384,2]{1,0} dot(reshape.1, constant.2), lhs_contracting_dims={1}, rhs_contracting_dims={1}, frontend_attributes={grad_x="false",grad_y="false"}
-  transpose.4 = f32[384,2]{1,0} transpose(dot.3), dimensions={0,1}
-  constant.5 = f32[2]{0} constant({0.00709904358, 0.00671061035})
-  broadcast.6 = f32[384,2]{1,0} broadcast(constant.5), dimensions={1}
-  add.7 = f32[384,2]{1,0} add(transpose.4, broadcast.6)
-  ROOT reshape.8 = f32[1,384,2]{2,1,0} reshape(add.7)
-
+    arg.0 = f32[64,256,16]{2,1,0} parameter(0), parameter_replication={false}
+    constant = f32[] constant(1)
+    arg.1 = f32[16,32]{1,0} broadcast(constant), dimensions={}
+    ROOT onednn.matmul.0 = f32[64,256,32]{2,1,0} dot(arg.0, arg.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
@@ -545,7 +539,6 @@ TEST_F(MatmulTest, WeightsPrepackAndScratch) {
   ; CHECK-SAME:       backend_config={
   ; CHECK-SAME:           "outer_dimension_partitions":[],
   ; CHECK-SAME:           "onednn_matmul_config":{
-  ; CHECK-SAME:               "fused_ops":["BIAS"],
   ; CHECK-SAME:               "weights_prepacked":true,"user_scratch":true
   ; CHECK-SAME:           }
   ; CHECK-SAME:       }
