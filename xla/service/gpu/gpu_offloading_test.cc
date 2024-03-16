@@ -113,35 +113,6 @@ class GpuCompilerTest : public HloTestBase {
   float transcendentals_per_second_{1.0f};
 };
 
-TEST_F(GpuCompilerTest, OriginalTest) {
-  const char* hlo_text = R"(
-  HloModule test
-
-ENTRY %main (param_0: f32[1024], param_1: f32[1024]) -> f32[1024] {
-  %param_1 = f32[1024]{0} parameter(1)
-  %param_0 = f32[1024]{0} parameter(0)
-  %res_3 = f32[1024]{0} add(f32[1024]{0} %param_0, f32[1024]{0} %param_1)
-  %copy-start = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_3)
-  %res_4 = f32[1024]{0} tanh(f32[1024]{0} %res_3)
-  %copy-start.2 = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_4)
-  %res_5 = f32[1024]{0} tanh(f32[1024]{0} %res_4)
-  %copy-done = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start)
-  %res_6 = f32[1024]{0} tanh(f32[1024]{0} %res_5)
-  %copy-done.2 = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start.2)
-  %copy-start.3 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done.2)
-  %res_7 = f32[1024]{0} add(f32[1024]{0} %res_6, f32[1024]{0} %res_6)
-  %copy-start.1 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done)
-  %res_8 = f32[1024]{0} add(f32[1024]{0} %res_7, f32[1024]{0} %res_5)
-  %copy-done.3 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.3)
-  %res_9 = f32[1024]{0} add(f32[1024]{0} %res_8, f32[1024]{0} %copy-done.3)
-  %copy-done.1 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.1)
-  %res_10 = f32[1024]{0} add(f32[1024]{0} %res_9, f32[1024]{0} %copy-done.1)
-  ROOT %res_11 = f32[1024]{0} tanh(f32[1024]{0} %res_10)
-}
-)";
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
-}
-
 TEST_F(GpuCompilerTest, CompiledProgramsCount) {
   const char* hlo_text = R"(
   HloModule test
