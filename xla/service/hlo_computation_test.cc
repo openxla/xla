@@ -19,9 +19,11 @@ limitations under the License.
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -592,6 +594,43 @@ TEST_F(HloComputationTest, CloneWithReplacements) {
       ShapeUtil::Equal(clone->parameter_instruction(2)->shape(), r0s32));
   EXPECT_TRUE(
       ShapeUtil::Equal(clone->parameter_instruction(3)->shape(), r0u32));
+}
+
+TEST_F(HloComputationTest, CheckInstructionInClone) {
+  const char* const kHloModule = R"(
+    HloModule ModuleWithWhile
+
+    body {
+      p_body = (f32[2], s32[]) parameter(0)
+      val = f32[2] get-tuple-element(p_body), index=0
+      const = s32[] constant(-1)
+      ROOT root = (f32[2], s32[]) tuple(val, const)
+    }
+
+    condition {
+      p_cond = (f32[2], s32[]) parameter(0)
+      gte = s32[] get-tuple-element(p_cond), index=1
+      const = s32[] constant(42)
+      ROOT result = pred[] compare(gte, const), direction=EQ
+    }
+
+    ENTRY entry {
+      param.1 = s32[] parameter(0)
+      const = f32[2] constant({0,1})
+      while_init = (f32[2], s32[]) tuple(const, param.1)
+      while = (f32[2], s32[]) while(while_init), condition=condition, body=body
+      ROOT out = s32[] get-tuple-element(while), index=1
+    })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnUnverifiedModule(kHloModule));
+
+  ASSERT_TRUE(module->GetComputationWithName("body")->IsWhileBodyComputation());
+
+  std::unique_ptr<HloModule> clone = module->Clone("clone");
+
+  ASSERT_TRUE(std::move(clone)
+                  ->GetComputationWithName("body.clone")
+                  ->IsWhileBodyComputation());
 }
 
 TEST_F(HloComputationTest, CloneInContext) {
