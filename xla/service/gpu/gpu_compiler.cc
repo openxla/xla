@@ -2193,8 +2193,8 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
         /*min_remat_size=*/0, /*compact_shape_function=*/nullptr,
         /*host_memory_offload_config=*/std::nullopt);
     HloRematerialization::RematerializationSizes sizes;
-    pipeline.AddPass<StreamAttributeAnnotator>(/*copy_start_done=*/true);
     pipeline.AddPass<HloRematerialization>(options, sizes);
+    pipeline.AddPass<StreamAttributeAnnotator>(/*copy_start_done=*/true);
     pipeline.AddPass<OptimizationBarrierExpander>();
 
     TF_ASSIGN_OR_RETURN(bool changed, pipeline.Run(module));
