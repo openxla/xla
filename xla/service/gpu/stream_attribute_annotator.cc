@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h",
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/statusor.h"
@@ -125,20 +126,31 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
   XLA_VLOG_LINES(
       5, "StreamAttributeAnnotator::Run(), before:\n" + module->ToString());
   bool changed = false;
+  int64_t channel_id = hlo_query::NextChannelId(*module);
   for (const HloComputation* comp : module->computations(execution_threads)) {
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
       auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
       if (!instr_gpu_config.ok()) {
         continue;
       }
-      // For fusion instruction, only annotate
-      // when the root of fusion is a single instruction
-      // running on non-default stream.
-      if (instr->opcode() == HloOpcode::kFusion) {
-        TF_ASSIGN_OR_RETURN(bool comp_result,
-                            AnnotateStreamAttributesForInstruction(
-                                instr, instr_gpu_config.value()));
-        changed |= comp_result;
+      if (!copy_start_done_) {
+        // For fusion instruction, only annotate
+        // when the root of fusion is a single instruction
+        // running on non-default stream.
+        if (instr->opcode() == HloOpcode::kFusion) {
+          TF_ASSIGN_OR_RETURN(bool comp_result,
+                              AnnotateStreamAttributesForInstruction(
+                                  instr, instr_gpu_config.value()));
+          changed |= comp_result;
+        }
+      } else {
+        if (instr->opcode() == HloOpcode::kCopyStart) {
+          GpuBackendConfig gpu_backend_config;
+          gpu_backend_config.set_operation_queue_id(channel_id);
+          VLOG(3) << "Add copy-start's backend config: " << channel_id;
+          TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_backend_config));
+          changed = true;
+	    }
       }
 
       TF_ASSIGN_OR_RETURN(
