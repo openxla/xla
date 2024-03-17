@@ -61,6 +61,8 @@ const absl::string_view kDeviceVendorAMD = "AMD";
 
 const absl::string_view kTaskEnvPlaneName = "Task Environment";
 
+const absl::string_view kBmcPowerPlaneName = "/bmc:power";
+
 namespace {
 
 constexpr int kNumHostEventTypes =
