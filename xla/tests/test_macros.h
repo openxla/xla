@@ -81,6 +81,11 @@ limitations under the License.
 # define DISABLED_ON_DEBUG(X) XLA_TEST_PASTE(DISABLED_, X)
 #endif  // !NDEBUG
 
+#ifdef XLA_TEST_BACKEND_TPU
+# undef DISABLED_ON_TPU
+# define DISABLED_ON_TPU(X) XLA_TEST_PASTE(DISABLED_, X)
+#endif  // XLA_TEST_BACKEND_TPU
+
 // clang-format on
 
 namespace xla {
