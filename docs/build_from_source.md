@@ -41,8 +41,8 @@ apt install clang
 ```
 
 Then configure and build targets using the following commands:
-``` ./configure.py --backend=CPU
-
+``` 
+./configure.py --backend=CPU
 bazel build --test_output=all --spawn_strategy=sandboxed //xla/...
 ```
 
