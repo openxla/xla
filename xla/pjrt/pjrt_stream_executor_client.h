@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/pjrt/transpose.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
@@ -849,6 +850,21 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     const HloProto* proto = executables_[0]->executable()->hlo_proto();
     if (proto != nullptr) {
       memory_stats.serialized_hlo_proto = proto->SerializeAsString();
+    }
+    if (auto exec = dynamic_cast<xla::gpu::GpuExecutable*>(executables_[0]->executable()); exec != nullptr) {
+      // TODO: Instead of using buffer_assignment, recompute stats from exec->Allocations() 
+      auto buffer_assignment = exec->buffer_assignment();
+      CHECK(buffer_assignment && "expected buffer assignment in GPU executable");
+      auto& stats = buffer_assignment->GetStats();
+      memory_stats.argument_size_in_bytes = stats.parameter_allocation_bytes;
+      memory_stats.output_size_in_bytes = stats.maybe_live_out_allocation_bytes;
+      memory_stats.temp_size_in_bytes = stats.preallocated_temp_allocation_bytes;
+      memory_stats.alias_size_in_bytes = 0;
+      for (auto& alloc : buffer_assignment->Allocations()) {
+        if (alloc.is_entry_computation_parameter() && alloc.is_parameter_aliased_with_output()) {
+          memory_stats.alias_size_in_bytes += alloc.size();
+        }
+      }
     }
     return memory_stats;
   }
