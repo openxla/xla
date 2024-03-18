@@ -1453,12 +1453,8 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
   // Activation output is used by backward gemm.
   HloInstruction* activation_output = nullptr;
 
-  std::vector<Shape> output_shapes = {
-      output_shape,
-      ShapeUtil::MakeShape(
-          U8, {is_flash_attention
-                   ? 16
-                   : 0})};  // reserved 2 int64 for dropout seed and offset
+  std::vector<Shape> output_shapes = {output_shape,
+                                      ShapeUtil::MakeShape(U8, {0})};
   if (is_training) {
     activation_output = bmm_2->mutable_operand(0);
     // Sometimes activation output is bitcast, the actual activation is the
@@ -1736,10 +1732,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
         ShapeUtil::MakeShape(F32, bmm_1_grad_2->shape().dimensions()));
   }
   // Reserved placeholder for workspace
-  output_shapes.push_back(ShapeUtil::MakeShape(
-      U8, {is_flash_attention
-               ? 16
-               : 0}));  // reserved 2 int64 for dropout seed and offset
+  output_shapes.push_back(ShapeUtil::MakeShape(U8, {0}));
 
   if (dbias) {
     // Cudnn kernel only outputs dbias in this shape [1, num_heads, seq, seq],
