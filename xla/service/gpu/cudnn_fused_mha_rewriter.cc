@@ -324,9 +324,9 @@ std::vector<int64_t> GetDimensionVector(absl::Span<const int64_t> dimensions,
   return vec;
 }
 
-absl::StatusOr<bool> GetBHSD(HloInstruction* bmm_1, HloInstruction* bmm_2,
-                             bool need_canonicalization,
-                             std::vector<int64_t>& bhsd) {
+absl::StatusOr<std::vector<int64_t>> GetBHSD(HloInstruction* bmm_1,
+                                             HloInstruction* bmm_2,
+                                             bool need_canonicalization) {
   // get bhsd from bmm1
   const DotDimensionNumbers& bmm1_dnums = bmm_1->dot_dimension_numbers();
   TF_ASSIGN_OR_RETURN(
@@ -405,11 +405,12 @@ absl::StatusOr<bool> GetBHSD(HloInstruction* bmm_1, HloInstruction* bmm_2,
   if (bmm1_bh[0] != bmm2_bh[0] || bmm1_bh[1] != bmm2_bh[1] ||
       bmm1_s_q[0] != bmm2_s_q[0] || bmm1_s_kv[0] != bmm2_s_kv[0] ||
       bmm1_d[0] != bmm2_d[0]) {
-    return false;
+    return std::vector<int64_t>{};
   }
 
-  bhsd = {bmm1_bh[0], bmm1_bh[1], bmm1_s_q[0], bmm1_s_kv[0], bmm1_d[0]};
-  return true;
+  std::vector<int64_t> bhsd = {bmm1_bh[0], bmm1_bh[1], bmm1_s_q[0],
+                               bmm1_s_kv[0], bmm1_d[0]};
+  return bhsd;
 }
 
 absl::StatusOr<bool> IsFusedAttention(
@@ -1205,10 +1206,9 @@ absl::StatusOr<bool> IsMHABlockSupported(
 
   // get batch/num heads/sequence length/hidden dim from bmm1 and bmm2
   // also make sure they are the same between bmm1 and bmm2
-  std::vector<int64_t> bhsd;
-  TF_ASSIGN_OR_RETURN(bool success,
-                      GetBHSD(bmm_1, bmm_2, need_canonicalization, bhsd));
-  if (!success) {
+  TF_ASSIGN_OR_RETURN(std::vector<int64_t> bhsd,
+                      GetBHSD(bmm_1, bmm_2, need_canonicalization));
+  if (bhsd.size() == 0) {
     VLOG(2) << "bmm1 and bmm2 have different bhsd length.";
     return false;
   }
