@@ -41,7 +41,9 @@ namespace {
 bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
   HloInstruction* root = computation->root_instruction();
   auto root_gpu_config = root->backend_config<GpuBackendConfig>();
-  if (!root_gpu_config.ok() || root->opcode() == HloOpcode::kTuple) {
+  // Disable the annotation if its root is copy-start
+  if (!root_gpu_config.ok() || root->opcode() == HloOpcode::kTuple ||
+      root->opcode() == HloOpcode::kCopyStart) {
     return false;
   }
   int64_t root_stream_id = root_gpu_config->operation_queue_id();
@@ -142,24 +144,21 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
       if (!instr_gpu_config.ok()) {
         continue;
       }
-      if (!copy_start_) {
-        // For fusion instruction, only annotate
-        // when the root of fusion is a single instruction
-        // running on non-default stream.
-        if (instr->opcode() == HloOpcode::kFusion) {
-          TF_ASSIGN_OR_RETURN(bool comp_result,
-                              AnnotateStreamAttributesForInstruction(
-                                  instr, instr_gpu_config.value()));
-          changed |= comp_result;
-        }
-      } else {
-        if (instr->opcode() == HloOpcode::kCopyStart) {
-          TF_ASSIGN_OR_RETURN(bool comp_result,
-                              AnnotateStreamAttributesForCopyStart(
-                                  instr, channel_id));
-          changed |= comp_result;
-          continue;
-	}
+      // For fusion instruction, only annotate
+      // when the root of fusion is a single instruction
+      // running on non-default stream.
+      if (instr->opcode() == HloOpcode::kFusion) {
+        TF_ASSIGN_OR_RETURN(bool comp_result,
+                            AnnotateStreamAttributesForInstruction(
+                                instr, instr_gpu_config.value()));
+        changed |= comp_result;
+      }
+      if (instr->opcode() == HloOpcode::kCopyStart) {
+        TF_ASSIGN_OR_RETURN(bool comp_result,
+                            AnnotateStreamAttributesForCopyStart(
+                                instr, channel_id));
+        changed |= comp_result;
+        continue;
       }
 
       TF_ASSIGN_OR_RETURN(

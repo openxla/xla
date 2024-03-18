@@ -193,7 +193,7 @@ TEST_F(StreamAttributeAnnotatorTest, CopyStartIsAnnotated) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHloString));
 
-  StreamAttributeAnnotator attr_annotator(/*copy_start_done=*/true);
+  StreamAttributeAnnotator attr_annotator;
   bool changed;
   TF_ASSERT_OK_AND_ASSIGN(changed, attr_annotator.Run(module.get()));
   EXPECT_TRUE(changed);
