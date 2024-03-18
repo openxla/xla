@@ -14,7 +14,6 @@
 
 load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("@tsl//tsl:tsl.bzl", "if_google")
-load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -494,9 +493,17 @@ ifrt_proxy_cc_test(
     ],
 )
 
-tsl_pybind_extension(
+cc_library(
     name = "py_module",
     srcs = ["py_module.cc"],
+    hdrs = ["py_module.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//xla/python:__pkg__"],
     deps = [
         ":grpc_client",
         ":registry",
@@ -512,7 +519,6 @@ tsl_pybind_extension(
         "@com_google_absl//absl/strings:string_view",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@pybind11_protobuf//pybind11_protobuf:native_proto_caster",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:statusor",
     ],
