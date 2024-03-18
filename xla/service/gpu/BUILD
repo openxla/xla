@@ -5968,6 +5968,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
     ]) + [
