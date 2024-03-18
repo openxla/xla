@@ -1,6 +1,6 @@
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
@@ -8,11 +8,11 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tensorflow/c/experimental/filesystem:__pkg__",
         "//tensorflow/c/experimental/filesystem/plugins/posix:__pkg__",
         "//tsl/lib/io/snappy:__pkg__",
-        "//tensorflow/compiler/xla:__subpackages__",
+        "@xla//xla:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
         "//tensorflow/core/util:__subpackages__",
         "//tensorflow/core:__pkg__",
@@ -388,7 +388,7 @@ filegroup(
         "//tsl/lib/io/snappy:snappy_inputstream.h",
         "//tsl/lib/io/snappy:snappy_outputbuffer.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -406,7 +406,7 @@ filegroup(
         "table_builder.h",
         "table_options.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -422,7 +422,7 @@ filegroup(
         "//tsl/lib/io/snappy:snappy_inputstream.h",
         "//tsl/lib/io/snappy:snappy_outputbuffer.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 filegroup(
@@ -432,7 +432,7 @@ filegroup(
         "block_builder.h",
         "format.h",
     ],
-    visibility = set_external_visibility(["//tensorflow/core:__pkg__"]),
+    visibility = internal_visibility(["//tensorflow/core:__pkg__"]),
 )
 
 tsl_cc_test(

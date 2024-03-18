@@ -1,17 +1,16 @@
 # Description: StreamExecutor Interface for TPUs
 
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.bzl", "set_external_visibility")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//learning/brain/experimental/dtensor:__subpackages__",
         "//learning/brain/google/xla/kernels:__subpackages__",
         "//learning/brain/research/pjrt:__subpackages__",
         "//learning/brain/tfrc/executor:__subpackages__",
-        "//learning/brain/tfrc/runtime/tpu_driver:__subpackages__",
         "//learning/brain/tfrt/tpu_plugin:__subpackages__",
         "//tensorflow/compiler/jit:__subpackages__",
         "//tensorflow/compiler/mlir:__subpackages__",
@@ -142,9 +141,9 @@ cc_library(
     hdrs = ["tsl_status_helper.h"],
     deps = [
         ":c_api_decl",
+        "//xla/tsl/c:tsl_status",
+        "//xla/tsl/c:tsl_status_helper",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/c:tsl_status",
-        "@tsl//tsl/c:tsl_status_helper",
         "@tsl//tsl/platform:status",
     ],
 )
@@ -309,6 +308,7 @@ cc_library(
         "//xla:status",
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_internal",
+        "//xla/tsl/c:tsl_status_internal",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
@@ -317,7 +317,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/c:tsl_status_internal",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",

@@ -17,10 +17,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "absl/strings/str_replace.h"
+#include "absl/status/status.h"
+#include "xla/error_spec.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/verified_hlo_module.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -134,7 +136,7 @@ TEST_F(GpuKernelTilingTest, SimpleFusionWithTransposeTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @fusion
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{[a-z_]*}}fusion
 ; CHECK: call void BARRIER()
 ; CHECK: }
 )";
@@ -170,7 +172,7 @@ TEST_F(GpuKernelTilingTest, MultipleOutputFusionWithOnePossibleTransposeTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @fusion
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{[a-z_]*}}fusion
 ; CHECK: call void BARRIER()
 ; CHECK: }
 )";
@@ -202,7 +204,7 @@ TEST_F(GpuKernelTilingTest, TransposedInputWithUserReverseNotTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @fusion
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{[a-z_]*}}fusion
 ; CHECK-NOT: call void BARRIER()
 ; CHECK: }
 )";
@@ -231,7 +233,7 @@ TEST_F(GpuKernelTilingTest, TransposedInputWithUserBitcastNotTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @fusion
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{[a-z_]*}}fusion
 ; CHECK-NOT: call void BARRIER()
 ; CHECK: }
 )";
@@ -268,7 +270,7 @@ TEST_F(GpuKernelTilingTest, TransposedInputWithoutUnsafeUseTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @fusion
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{[a-z_]*}}fusion
 ; CHECK: call void BARRIER()
 ; CHECK: }
 )";
@@ -342,7 +344,7 @@ TEST_F(GpuKernelTilingTest, ColumnReductionWithLayoutChangeTiled) {
                      /*match_optimized_ir=*/true);
 
   // Check that the kernel runs correctly.
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{0.001}));
+  EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.001}));
 }
 
 TEST_F(GpuKernelTilingTest, RowReductionWithLayoutChangeTiled) {
@@ -366,7 +368,7 @@ TEST_F(GpuKernelTilingTest, RowReductionWithLayoutChangeTiled) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|fusion)}}
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|.*fusion)}}
 ; CHECK: call SHUFFLE
 ; CHECK: }
 )";
@@ -375,7 +377,7 @@ TEST_F(GpuKernelTilingTest, RowReductionWithLayoutChangeTiled) {
                      /*match_optimized_ir=*/true);
 
   // Check that the kernel runs correctly.
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{0.001}));
+  EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.001}));
 }
 
 TEST_F(GpuKernelTilingTest, RowReductionTwoRowsPerWarp) {
@@ -400,7 +402,7 @@ TEST_F(GpuKernelTilingTest, RowReductionTwoRowsPerWarp) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|fusion)}}
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|.*fusion)}}
 ; CHECK: %[[TID_X:.*]] = tail call i32 TIDX()
 ; CHECK: %[[TID_LOGICAL:.*]] = and i32 %[[TID_X]], 15
 ; CHECK: call SHUFFLE
@@ -439,14 +441,11 @@ TEST_F(GpuKernelTilingTest, RowReductionFourRowsPerWarp) {
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|fusion)}}
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|.*fusion)}}
 ; CHECK: %[[TID_X:.*]] = tail call i32 TIDX()
 ; CHECK: %[[TID_LOGICAL:.*]] = and i32 %[[TID_X]], 7
 ; CHECK: call SHUFFLE
 ; CHECK: %[[LOGICAL_T0:.*]] = icmp eq i32 %[[TID_LOGICAL]], 0
-; CHECK: LCAL
-; CHECK: EXTV
-; CHECK: BR_CAL
 )";
 
   CompileAndVerifyIr(std::move(hlo_module),
@@ -479,7 +478,7 @@ TEST_F(GpuKernelTilingTest,
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   const char *expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|fusion)}}
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|.*fusion)}}
 ; CHECK: store float %{{.*}}, ptr addrspace(1)
 ; CHECK: }
 )";
@@ -557,7 +556,7 @@ TEST_F(GpuKernelTilingTest,
       ParseAndReturnVerifiedModule(kHloString, ConfigWithoutLayoutAssignment())
           .value();
   auto expected_ir = R"(
-; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|fusion)}}
+; CHECK-LABEL: define KERNEL_ANNOTATION @{{(wrapped_reduce|.*fusion)}}
 ; CHECK-NOT: call SHUFFLE
 ; CHECK: }
 )";
@@ -637,10 +636,11 @@ TEST_F(GpuKernelTilingTest, RowReductionCorrectShmemUsage) {
   )";
   auto hlo_module = ParseAndReturnVerifiedModule(kHloString).value();
   auto expected_ir = is_built_with_rocm_ ? R"(
-; CHECK: initial_value_addr = internal unnamed_addr addrspace({{[0-9]*}}) global [1024 x float] poison, align 4
+; CHECK: %llvm.amdgcn.kernel.input_reduce_fusion.lds.t = type { [4 x [2 x float]] }
+; CHECK: @llvm.amdgcn.kernel.input_reduce_fusion.lds = internal addrspace(3) global %llvm.amdgcn.kernel.input_reduce_fusion.lds.t poison
   )"
                                          : R"(
-; CHECK: shared_cache = private unnamed_addr addrspace({{[0-9]*}}) global [1 x [1 x [2 x float]]]
+; CHECK: shared_cache = private unnamed_addr addrspace({{[0-9]*}}) global [4 x [2 x float]]
   )";
   CompileAndVerifyIr(std::move(hlo_module), expected_ir,
                      /*match_optimized_ir=*/true);
@@ -657,9 +657,9 @@ TEST_F(GpuKernelTilingTest, ReductionInputTooLarge) {
   }
 
   ENTRY reduce.1 {
-    parameter = f32[4,1048576,1024,1024] parameter(0)
+    parameter = f32[16,1048576,1024,1024] parameter(0)
     init_value = f32[] constant(0)
-    ROOT reduce = f32[4,1048576,1024] reduce(parameter, init_value), dimensions={3}, to_apply=Sum
+    ROOT reduce = f32[16,1048576,1024] reduce(parameter, init_value), dimensions={3}, to_apply=Sum
   }
   )";
   auto hlo_module = ParseAndReturnVerifiedModule(kHloString).value();

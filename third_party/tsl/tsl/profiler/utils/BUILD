@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
@@ -6,7 +6,7 @@ load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//tsl/profiler:internal",
     ]),
     licenses = ["notice"],
@@ -36,7 +36,7 @@ cc_library(
     name = "time_utils",
     hdrs = ["time_utils.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":math_utils",
     ] + if_static([
@@ -51,8 +51,8 @@ cc_library(
         "time_utils.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla:__subpackages__",
+    visibility = internal_visibility([
+        "@xla//xla:__subpackages__",
         "//tsl/platform/cloud:__pkg__",
         "//tsl/profiler:internal",
     ]),
@@ -114,7 +114,7 @@ cc_library(
     srcs = ["xplane_schema.cc"],
     hdrs = ["xplane_schema.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":tf_op_utils",
         "//tsl/lib/gtl:map_util",
@@ -134,7 +134,7 @@ cc_library(
     srcs = ["xplane_visitor.cc"],
     hdrs = ["xplane_visitor.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":timespan",
         "//tsl/platform:logging",
@@ -151,7 +151,7 @@ cc_library(
     srcs = ["xplane_builder.cc"],
     hdrs = ["xplane_builder.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":math_utils",
         ":timespan",
@@ -185,14 +185,13 @@ cc_library(
     name = "trace_utils",
     hdrs = ["trace_utils.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+    visibility = internal_visibility([
+        "@xla//xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:optional",
     ],
 )
 
@@ -201,7 +200,7 @@ cc_library(
     srcs = ["xplane_utils.cc"],
     hdrs = ["xplane_utils.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":math_utils",
         ":tf_xplane_visitor",
@@ -247,7 +246,7 @@ cc_library(
     name = "tf_xplane_visitor",
     hdrs = ["tf_xplane_visitor.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":xplane_schema",
         ":xplane_visitor",
@@ -260,7 +259,7 @@ cc_library(
     srcs = ["parse_annotation.cc"],
     hdrs = ["parse_annotation.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@com_google_absl//absl/strings",
     ],
@@ -282,7 +281,7 @@ cc_library(
     srcs = ["group_events.cc"],
     hdrs = ["group_events.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":tf_xplane_visitor",
         ":xplane_builder",
@@ -310,7 +309,7 @@ cc_library(
     srcs = ["xplane_test_utils.cc"],
     hdrs = ["xplane_test_utils.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([":friends"]),
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":xplane_builder",
         ":xplane_schema",
@@ -375,8 +374,8 @@ cc_library(
     name = "file_system_utils",
     hdrs = ["file_system_utils.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla/python:__pkg__",
+    visibility = internal_visibility([
+        "@xla//xla/python:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -390,8 +389,8 @@ cc_library(
     srcs = ["buffer_pool.cc"],
     hdrs = ["buffer_pool.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/gpu:__pkg__",
+    visibility = internal_visibility([
+        "@xla//xla/backends/profiler/gpu:__pkg__",
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -417,7 +416,7 @@ cc_library(
     srcs = ["preprocess_xplane.cc"],
     hdrs = ["preprocess_xplane.h"],
     copts = tf_profiler_copts(),
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":tpu_xplane_utils",
         ":trace_utils",
@@ -461,5 +460,31 @@ cc_library(
         "//tsl/profiler/lib:profiler_session",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+cc_library(
+    name = "timestamp_utils",
+    srcs = ["timestamp_utils.cc"],
+    hdrs = ["timestamp_utils.h"],
+    deps = [
+        ":xplane_builder",
+        ":xplane_schema",
+        ":xplane_utils",
+        "//tsl/profiler/protobuf:xplane_proto_cc",
+        "@com_google_absl//absl/log",
+    ],
+)
+
+tsl_cc_test(
+    name = "timestamp_utils_test",
+    srcs = ["timestamp_utils_test.cc"],
+    deps = [
+        ":timestamp_utils",
+        ":xplane_schema",
+        ":xplane_utils",
+        ":xplane_visitor",
+        "//tsl/platform:test",
+        "//tsl/platform:test_main",
     ],
 )

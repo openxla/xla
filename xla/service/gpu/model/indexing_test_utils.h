@@ -1,4 +1,4 @@
-/* Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,47 +16,75 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_MODEL_INDEXING_TEST_UTILS_H_
 #define XLA_SERVICE_GPU_MODEL_INDEXING_TEST_UTILS_H_
 
+#include <memory>
+#include <string_view>
+
 #include <gmock/gmock.h>
 #include "absl/strings/string_view.h"
+#include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "xla/service/gpu/model/affine_map_printer.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
+#include "xla/service/gpu/model/indexing_context.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/verified_hlo_module.h"
 
 namespace xla {
 namespace gpu {
 
-MATCHER_P2(MatchRange, lower_bound, upper_bound,
-           absl::StrCat(negation ? "equals " : "doesn't equal ", "range [",
-                        lower_bound, ", ", upper_bound, "]")) {
-  return ExplainMatchResult(::testing::FieldsAre(lower_bound, upper_bound), arg,
+// Matches two strings ignoring whitespaces.
+bool ApproximateMatch(std::string_view lhs, std::string_view rhs);
+
+MATCHER(UndefinedMap, "") { return arg.IsUndefined(); }
+
+MATCHER_P(MatchIndexingMap, indexing_string, "") {
+  if (arg.IsUndefined()) {
+    return false;
+  }
+  return ExplainMatchResult(
+      true, ApproximateMatch(indexing_string, arg.ToString()), result_listener);
+}
+
+MATCHER_P(MatchIndexingString, indexing_string, "") {
+  return ExplainMatchResult(true, ApproximateMatch(indexing_string, arg),
                             result_listener);
 }
 
-MATCHER_P3(MatchIndexingMap, affine_map_string, dim_ranges, symbol_ranges, "") {
-  if (!arg.has_value()) {
-    return false;
-  }
-  return ExplainMatchResult(::testing::HasSubstr(affine_map_string),
-                            AffineMapPrinter().ToString(arg->affine_map),
-                            result_listener) &&
-         ExplainMatchResult(dim_ranges, arg->domain.dimension_ranges,
-                            result_listener) &&
-         ExplainMatchResult(symbol_ranges, arg->domain.symbol_ranges,
-                            result_listener);
-}
+class IndexingTestBase : public HloTestBase {
+ public:
+  IndexingTestBase()
+      : HloTestBase(), mlir_context_(), indexing_context_(&mlir_context_) {}
+  HloInstruction* ParseAndGetRoot(absl::string_view hlo_string);
+
+  HloInstructionIndexing GetOutputToInputIndexing(
+      const HloInstruction* instr, int output_id = 0,
+      bool use_physical_layout = false);
+
+  HloInstructionIndexing GetInputToOutputIndexing(
+      const HloInstruction* instr, int input_id = 0,
+      bool use_physical_layout = false);
+
+  mlir::MLIRContext mlir_context_;
+  IndexingContext indexing_context_;
+  std::unique_ptr<VerifiedHloModule> module_;
+};
 
 HloInstructionIndexing ComputeOutputToInputIndexingForEntryComputation(
     HloTestBase* test_base, mlir::MLIRContext* mlir_context,
-    absl::string_view hlo_string, int output_id = 0);
+    absl::string_view hlo_string, int output_id = 0,
+    bool use_physical_layout = false);
 
 HloInstructionIndexing ComputeInputToOutputIndexingForEntryComputation(
     HloTestBase* test_base, mlir::MLIRContext* mlir_context,
-    absl::string_view hlo_string, int input_id = 0);
+    absl::string_view hlo_string, int input_id = 0,
+    bool use_physical_layout = false);
 
 mlir::AffineMap ParseAffineMap(absl::string_view serialized_affine_map,
                                mlir::MLIRContext* context);
+
+mlir::AffineExpr ParseAffineExpr(absl::string_view serialized_affine_expr,
+                                 mlir::MLIRContext* context);
 
 }  // namespace gpu
 }  // namespace xla

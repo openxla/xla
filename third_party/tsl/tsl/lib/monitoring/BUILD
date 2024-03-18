@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "set_external_visibility")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
@@ -7,7 +7,7 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = set_external_visibility([
+    default_visibility = internal_visibility([
         "//learning/brain/google/data:__subpackages__",
         "//learning/brain/google/monitoring:__subpackages__",
         # tensorflow/core:lib effectively exposes all targets under tensorflow/core/lib/**
@@ -15,17 +15,18 @@ package(
         # tensorflow/core/platform:monitoring depends on this package
         "//tensorflow/core/platform:__subpackages__",
         # tensorflow/compiler/xla/pjrt:metrics depends on this package
-        "//tensorflow/compiler/xla/pjrt:__subpackages__",
-        "//tensorflow/compiler/xla/service/gpu:__subpackages__",
+        "@xla//xla/pjrt:__subpackages__",
+        "@xla//xla/service/gpu:__subpackages__",
         # tensorflow/compiler/mlir/tfrt:tf_jitrt depends on this package
         "//tensorflow/compiler/mlir/tfrt:__subpackages__",
-        "//tensorflow/compiler/xla/stream_executor:__subpackages__",
-        "//tensorflow/compiler/xla/hlo/experimental:__subpackages__",
+        "@xla//xla/stream_executor:__subpackages__",
+        "@xla//xla/hlo/experimental:__subpackages__",
         "//tensorflow/core/lib/monitoring:__subpackages__",
-        "//tensorflow/compiler/xla/service:__subpackages__",
+        "@xla//xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
         "//tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
+        "//tensorflow_serving/model_servers:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -94,7 +95,7 @@ cc_library(
 cc_library(
     name = "metric_def",
     hdrs = ["metric_def.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
     ]),
     deps = [
@@ -109,8 +110,9 @@ cc_library(
     name = "collection_registry",
     srcs = ["collection_registry.cc"],
     hdrs = ["collection_registry.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__subpackages__",
+        "//tensorflow_serving/model_servers:__pkg__",
     ]),
     deps = [
         ":collected_metrics",
@@ -230,7 +232,7 @@ filegroup(
         "timed.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),
@@ -251,7 +253,7 @@ filegroup(
         "timed.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),
@@ -271,7 +273,7 @@ filegroup(
         "test_utils.h",
         "types.h",
     ],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/monitoring:__pkg__",
     ]),

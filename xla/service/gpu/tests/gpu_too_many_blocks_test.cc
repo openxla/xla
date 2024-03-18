@@ -13,10 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
+#include "absl/status/statusor.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/executable.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace xla {
@@ -55,7 +59,7 @@ ENTRY primitive_computation_mul.8 {
   EXPECT_FALSE(failed_executable.ok());
   EXPECT_THAT(
       failed_executable.status().ToString(),
-      ::testing::ContainsRegex("Kernel 'fusion.*' launch needs more blocks"));
+      ::testing::ContainsRegex("Kernel '.*fusion.*' launch needs more blocks"));
 }
 
 }  // namespace

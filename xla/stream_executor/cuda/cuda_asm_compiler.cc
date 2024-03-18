@@ -13,21 +13,32 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/call_once.h"
+#include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
-#include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
+#include "xla/stream_executor/stream_executor.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/subprocess.h"
 
 namespace stream_executor {
@@ -53,8 +64,10 @@ absl::StatusOr<std::vector<uint8_t>> LinkUsingNvlink(
     absl::call_once(log_once,
                     [] { LOG(INFO) << "Using nvlink for parallel linking"; });
   }
-  const std::string bin_path =
-      FindCudaExecutable("nvlink", std::string(preferred_cuda_dir));
+
+  TF_ASSIGN_OR_RETURN(
+      std::string bin_path,
+      FindCudaExecutable("nvlink", std::string(preferred_cuda_dir)));
 
   if (images.empty()) {
     return std::vector<uint8>();

@@ -118,6 +118,7 @@ cc_library(
         "//xla/tools:hlo_module_loader",
         "//xla/tools:run_hlo_module_lib",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -125,6 +126,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/util:command_line_flags",
     ] + if_gpu_is_configured([
@@ -153,8 +155,10 @@ lit_test_suite(
         ],
     ),
     args = if_cuda_is_configured([
-        "--param=GPU=a100",
+        "--param=PTX=PTX",
+        "--param=GPU=a100_80",
     ]) + if_rocm_is_configured([
+        "--param=PTX=GCN",
         "--param=GPU=mi200",
     ]),
     cfg = "//xla:lit.cfg.py",
@@ -174,11 +178,16 @@ filegroup(
     name = "test_utilities",
     testonly = True,
     data = [
-        "gpu_specs/a100.txtpb",
+        "gpu_specs/a100_80.txtpb",
         "gpu_specs/mi200.txtpb",
         "//xla/tools:hlo-opt",
         "@llvm-project//llvm:FileCheck",
     ],
+)
+
+filegroup(
+    name = "all_gpu_specs",
+    data = glob(["gpu_specs/*.txtpb"]),
 )
 
 exports_files(glob([

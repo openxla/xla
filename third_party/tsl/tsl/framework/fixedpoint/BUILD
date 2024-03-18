@@ -1,5 +1,6 @@
-load("//tsl/platform:rules_cc.bzl", "cc_library")
+load("//tsl:tsl.bzl", "internal_visibility")
 load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -47,10 +48,10 @@ filegroup(
         "TypeCastingAVX512.h",
     ],
     compatible_with = get_compatible_with_portable(),
-    visibility = [
+    visibility = internal_visibility([
         "//tensorflow:__subpackages__",
         "//tsl:internal",
-    ],
+    ]),
 )
 
 # Files needed for core:mobile_srcs_no_runtime.

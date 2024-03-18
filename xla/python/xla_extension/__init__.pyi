@@ -37,6 +37,7 @@ from typing import (
 
 import numpy as np
 
+from . import ifrt_proxy
 from . import jax_jit
 from . import mlir
 from . import ops
@@ -258,7 +259,7 @@ class CompileOptions:
   env_option_overrides: List[Tuple[str, str]]
 
 def register_custom_call_target(
-    fn_name: str, capsule: Any, platform: str
+    fn_name: str, capsule: Any, platform: str, api_version: int = ...,
 ) -> _Status: ...
 def register_custom_call_partitioner(
     name: str,
@@ -302,11 +303,15 @@ class DebugOptions:
   xla_dump_hlo_pipeline_re: str
   xla_gpu_enable_async_all_reduce: bool
   xla_gpu_enable_async_all_gather: bool
+  xla_gpu_enable_async_collective_broadcast: bool
   xla_gpu_enable_async_collective_permute: bool
   xla_gpu_enable_async_all_to_all: bool
   xla_gpu_enable_async_reduce_scatter: bool
+  xla_gpu_cuda_data_dir: str
   xla_detailed_logging: bool
   xla_enable_dumping: bool
+  xla_gpu_dump_autotune_results_to: str
+  xla_gpu_load_autotune_results_from: str
 
 class CompiledMemoryStats:
   generated_code_size_in_bytes: int
@@ -314,6 +319,11 @@ class CompiledMemoryStats:
   output_size_in_bytes: int
   alias_size_in_bytes: int
   temp_size_in_bytes: int
+  host_generated_code_size_in_bytes: int
+  host_argument_size_in_bytes: int
+  host_output_size_in_bytes: int
+  host_alias_size_in_bytes: int
+  host_temp_size_in_bytes: int
   serialized_hlo_proto: bytes
   def __str__(self) -> str: ...
 
@@ -441,6 +451,13 @@ class Memory:
   def __str__(self) -> str: ...
   def addressable_by_devices(self) -> List[Device]: ...
 
+class PjRtLayout:
+  def __str__(self) -> str: ...
+  def __eq__(self, other: PjRtLayout) -> bool: ...
+  def __hash__(self) -> int: ...
+  def __getstate__(self) -> Any: ...
+  def __setstate__(self, Any): ...
+
 class GpuAllocatorConfig:
   class Kind(enum.IntEnum):
     DEFAULT: int
@@ -453,6 +470,7 @@ class GpuAllocatorConfig:
       kind: Kind = ...,
       memory_fraction: float = ...,
       preallocate: bool = ...,
+      collective_memory_size: int = ...,
   ) -> None: ...
 
 class HostBufferSemantics(enum.IntEnum):
@@ -560,7 +578,7 @@ def get_default_c_api_topology(
     options: Dict[str, Union[str, int, List[int], float]],
 ) -> DeviceTopology: ...
 def get_topology_for_devices(devices: List[Device]) -> DeviceTopology: ...
-def load_pjrt_plugin(platform_name: str, library_path: str) -> _Status: ...
+def load_pjrt_plugin(platform_name: str, library_path: Optional[str], c_api: Optional[Any]) -> _Status: ...
 def pjrt_plugin_loaded(plugin_name: str) -> bool: ...
 def pjrt_plugin_initialized(plugin_name: str) -> bool: ...
 def initialize_pjrt_plugin(platform_name: str) -> _Status: ...
@@ -599,6 +617,9 @@ ArrayImpl = Any
 def copy_array_to_devices_with_sharding(
     self: ArrayImpl, devices: List[Device], sharding: Any
 ) -> ArrayImpl: ...
+
+def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
+
 def batched_device_put(
     aval: Any,
     sharding: Any,
@@ -683,16 +704,27 @@ class DeviceTopology:
 def buffer_to_dlpack_managed_tensor(
     buffer: ArrayImpl, stream: int | None = None
 ) -> Any: ...
+@overload
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
 ) -> ArrayImpl: ...
-
-# Legacy overload
-def dlpack_managed_tensor_to_buffer(
+@overload
+def dlpack_managed_tensor_to_buffer( # Legacy overload
     tensor: Any,
     cpu_backend: Optional[Client] = ...,
     gpu_backend: Optional[Client] = ...,
 ) -> ArrayImpl: ...
+
+def cuda_array_interface_to_buffer(
+    cai: Dict[str, Union[
+      str, int, None,
+      Tuple[int, ...], Tuple[int, bool],
+      List[Tuple[str, str]],
+      List[Tuple[str, str, Tuple[int, ...]]]]
+    ],
+    gpu_backend: Optional[Client] = ...,
+) -> ArrayImpl: ...
+
 
 # === BEGIN py_traceback.cc
 
@@ -735,6 +767,7 @@ class DistributedRuntimeClient:
   def key_value_dir_get(self, key: str) -> _Status: ...
   def key_value_dir_get_bytes(self, key: str) -> _Status: ...
   def key_value_set(self, key: str, value: str) -> _Status: ...
+  def key_value_set_bytes(self, key: str, value: bytes) -> _Status: ...
   def key_value_delete(self, key: str) -> _Status: ...
   def wait_at_barrier(self, barrier_id: str, timeout_in_ms: int) -> _Status: ...
 
@@ -768,7 +801,6 @@ def is_optimized_build() -> bool: ...
 def json_to_pprof_profile(json: str) -> bytes: ...
 def pprof_profile_to_json(proto: bytes) -> str: ...
 
-CompiledFunction = Any
 
 class PmapFunction:
   def __call__(self, *args, **kwargs) -> Any: ...
@@ -844,6 +876,7 @@ class GSPMDSharding(XLACompatibleSharding):
       op_sharding: Union[OpSharding, HloSharding],
       *,
       memory_kind: Optional[str] = None,
+      _device_list: Optional[DeviceList] = None,
   ): ...
   _devices: Tuple[Device, ...]
   _hlo_sharding: HloSharding

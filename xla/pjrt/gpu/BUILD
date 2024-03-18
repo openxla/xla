@@ -2,13 +2,13 @@ load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm", "if_gpu_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = internal_visibility(["//xla:internal"]),
     licenses = ["notice"],
 )
 
@@ -16,7 +16,7 @@ cc_library(
     name = "gpu_helpers",
     srcs = ["gpu_helpers.cc"],
     hdrs = ["gpu_helpers.h"],
-    visibility = ["//xla/pjrt:friends"],
+    visibility = internal_visibility(["//xla/pjrt:friends"]),
     deps = [
         "//xla:statusor",
         "//xla:types",
@@ -38,7 +38,7 @@ cc_library(
     srcs = ["se_gpu_pjrt_client.cc"],
     hdrs = ["se_gpu_pjrt_client.h"],
     defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]),
-    visibility = ["//xla/pjrt:friends"],
+    visibility = internal_visibility(["//xla/pjrt:friends"]),
     deps = [
         ":gpu_helpers",
         ":gpu_metrics",
@@ -126,7 +126,6 @@ cc_library(
 xla_cc_test(
     name = "se_gpu_pjrt_client_test",
     srcs = if_gpu_is_configured(["se_gpu_pjrt_client_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "gpu",
         "no_oss",
@@ -242,7 +241,6 @@ cc_library(
         "//xla/service:local_service",
         "//xla/service:local_service_utils",
         "//xla/service/gpu:executable_proto_cc",
-        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:casts",
@@ -252,11 +250,13 @@ cc_library(
         "//xla/service/gpu:gpu_compiler",
     ]) + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/cuda:cuda_activation_header",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "//xla/service/gpu:nvptx_compiler_impl",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocm_headers",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/service/gpu:amdgpu_compiler_impl",
     ]),
     alwayslink = True,

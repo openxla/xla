@@ -32,12 +32,15 @@ Status VerifyS4U4Usage(HloInstruction* instruction) {
   switch (instruction->opcode()) {
     case HloOpcode::kBitcast:
     case HloOpcode::kConstant:
+    case HloOpcode::kConcatenate:
     case HloOpcode::kConvert:
     case HloOpcode::kCopy:
     case HloOpcode::kFusion:
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kParameter:
+    case HloOpcode::kSlice:
     case HloOpcode::kTuple:
+    case HloOpcode::kWhile:
       break;
     default:
       TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(

@@ -589,7 +589,7 @@ Value materializeErfcApproximationF32(ConversionPatternRewriter &rewriter,
                                          erfcApprox);
 }
 
-struct ConvertErfOp : public OpConversionPattern<ErfOp> {
+struct BasisConvertErfOp : public OpConversionPattern<ErfOp> {
   using OpConversionPattern<ErfOp>::OpConversionPattern;
   LogicalResult matchAndRewrite(
       ErfOp op, OpAdaptor adaptor,
@@ -1126,6 +1126,13 @@ Value materializeDigamma(ConversionPatternRewriter &rewriter, Location loc,
 
 Value materializeZeta(ConversionPatternRewriter &rewriter, Location loc,
                       ValueRange args) {
+  // Implementation ported from:
+  // https://github.com/openxla/xla/blob/7a067a7b88d2ffb15b1dc5e3c06f701a15f0391d/xla/client/lib/math.cc#L1912-L1917
+  // Reference: Johansson, Fredrik.
+  // "Rigorous high-precision computation of the Hurwitz zeta function and its
+  // derivatives." Numerical Algorithms 69.2 (2015): 253-270.
+  // https://arxiv.org/abs/1309.2877 - formula (5)
+  // Notation is more or less kept as a reference to the whitepaper.
   assert(args.size() == 2);
   Value x = args[0];
   Value q = args[1];
@@ -1176,9 +1183,9 @@ Value materializeZeta(ConversionPatternRewriter &rewriter, Location loc,
   // Using Horner's rule allows to avoid some NaN's and Infs from happening,
   // resulting in more numerically stable code.
   for (int i = 0; i < 11; ++i) {
-    Value factorLhs = rewriter.create<mhlo::SubtractOp>(
+    Value factorLhs = rewriter.create<mhlo::AddOp>(
         loc, x, chlo::getConstantLike(rewriter, loc, 22 - 2 * i, x));
-    Value factorRhs = rewriter.create<mhlo::SubtractOp>(
+    Value factorRhs = rewriter.create<mhlo::AddOp>(
         loc, x, chlo::getConstantLike(rewriter, loc, 21 - 2 * i, x));
     factor = rewriter.create<mhlo::MulOp>(loc, factorLhs, factorRhs);
     hornerSum = rewriter.create<mhlo::MulOp>(
@@ -1553,10 +1560,7 @@ struct ConvertSinhOp : public OpConversionPattern<SinhOp> {
 //                              (tensor<16x16xf32>) -> tensor<16x8xf32>
 // %6 = "mhlo.slice"(%4) ...
 //
-// TODO(b/284078162): Decide what to do with this pattern given that we now
-// have mhlo::TopKOp. No action needed for now given that mhlo::TopKOp is
-// currently categorized as `hasPrivateFeaturesNotInStablehlo`.
-struct ConvertTopKOp : public OpConversionPattern<TopKOp> {
+struct BasisConvertTopKOp : public OpConversionPattern<TopKOp> {
   using OpConversionPattern<TopKOp>::OpConversionPattern;
   LogicalResult matchAndRewrite(
       TopKOp op, OpAdaptor /*adaptor*/,
@@ -1941,6 +1945,14 @@ void populateChloBroadcastingPatterns(MLIRContext *context,
           context);
 }
 
+void populateChloLegalizeToHloBasisOpsPatterns(MLIRContext *context,
+                                               RewritePatternSet *patterns) {
+  // Patterns that decompose to a basis set of HLOs
+  // These are guaranteed to be convertible to StableHLO, but discard some
+  // higher level information that is useful to XLA compilation.
+  patterns->add<BasisConvertErfOp, BasisConvertTopKOp>(context);
+}
+
 void populateDecomposeChloPatterns(MLIRContext *context,
                                    RewritePatternSet *patterns) {
   populateWithGenerated(*patterns);
@@ -1950,14 +1962,12 @@ void populateDecomposeChloPatterns(MLIRContext *context,
   patterns->add<ConvertBesselI1eOp,
                    ConvertCoshOp,
                    ConvertDigammaOp,
-                   ConvertErfOp,
                    ConvertErfcOp,
                    ConvertErfInvOp,
                    ConvertLgammaOp,
                    ConvertNextAfterOp,
                    ConvertPolygammaOp,
                    ConvertSinhOp,
-                   ConvertTopKOp,
                    ConvertZetaOp>(context);
   // clang-format on
 }

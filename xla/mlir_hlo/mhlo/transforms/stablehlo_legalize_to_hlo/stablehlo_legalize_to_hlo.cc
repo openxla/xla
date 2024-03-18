@@ -52,6 +52,11 @@ Attribute convertAttr(Attribute stablehloAttr) {
         RankedTensorType::get(attr.getSize(), attr.getElementType()),
         attr.asArrayRef());
   }
+  if (auto attr = stablehloAttr.dyn_cast<DenseBoolArrayAttr>()) {
+    return DenseIntElementsAttr::get(
+        RankedTensorType::get(attr.getSize(), attr.getElementType()),
+        attr.asArrayRef());
+  }
 
   // Handle StableHLO attributes.
   // The logic that handles attributes from other dialects (e.g. builtin
@@ -352,12 +357,12 @@ class StablehloToHloOpConverter : public OpConversionPattern<StablehloOpTy> {
     // for the generic builder.
     StablehloToHloOp<StablehloOpTy> hloOp;
     if constexpr (std::is_same<StablehloOpTy, stablehlo::CaseOp>::value) {
-      hloOp = rewriter.replaceOpWithNewOp<mhlo::CaseOp>(
-          stablehloOp, hloTypes, hloOperands, hloAttrs,
-          stablehloOp.getBranches().size());
+      hloOp = rewriter.create<mhlo::CaseOp>(stablehloOp.getLoc(), hloTypes,
+                                            hloOperands, hloAttrs,
+                                            stablehloOp.getBranches().size());
     } else {
-      hloOp = rewriter.replaceOpWithNewOp<StablehloToHloOp<StablehloOpTy>>(
-          stablehloOp, hloTypes, hloOperands, hloAttrs);
+      hloOp = rewriter.create<StablehloToHloOp<StablehloOpTy>>(
+          stablehloOp.getLoc(), hloTypes, hloOperands, hloAttrs);
     }
 
     // For backward compatibility, fix custom call with mhlo.backend_config
@@ -374,6 +379,8 @@ class StablehloToHloOpConverter : public OpConversionPattern<StablehloOpTy> {
                                              /*entryConversion=*/nullptr)))
         return failure();
     }
+
+    rewriter.replaceOp(stablehloOp, hloOp);
     return success();
   }
 };

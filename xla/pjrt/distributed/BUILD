@@ -107,6 +107,7 @@ cc_library(
         ":client",
         ":service",
         "//xla:statusor",
+        "@tsl//tsl/platform:grpc_credentials",
     ] + tsl_grpc_cc_dependencies(),
 )
 

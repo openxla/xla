@@ -1,8 +1,8 @@
-load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl/platform:build_config_root.bzl", "if_static")
+load("//tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
 load("//tsl:tsl.default.bzl", "filegroup")
-load("//tsl:tsl.bzl", "if_not_android", "set_external_visibility")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//tsl/platform:build_config_root.bzl", "if_static")
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -53,7 +53,7 @@ cc_library(
     name = "profiler_controller",
     srcs = ["profiler_controller.cc"],
     hdrs = ["profiler_controller.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
     ]),
     deps = [
@@ -68,10 +68,10 @@ cc_library(
 cc_library(
     name = "profiler_factory",
     hdrs = ["profiler_factory.h"],
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
-        "//tensorflow/compiler/xla/python:__pkg__",
+        "@xla//xla/python:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [
@@ -89,7 +89,7 @@ cc_library(
         "profiler_factory.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
@@ -123,7 +123,7 @@ cc_library(
     name = "profiler_interface",
     hdrs = ["profiler_interface.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl:internal",
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
@@ -139,7 +139,7 @@ cc_library(
     srcs = ["profiler_lock.cc"],
     hdrs = ["profiler_lock.h"],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_internal",
     ]),
@@ -148,6 +148,7 @@ cc_library(
         "//tsl/platform:macros",
         "//tsl/platform:statusor",
         "//tsl/util:env_var",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -156,6 +157,7 @@ tsl_cc_test(
     srcs = ["profiler_lock_test.cc"],
     deps = [
         ":profiler_lock",
+        "//tsl/platform:statusor",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
     ],
@@ -164,7 +166,7 @@ tsl_cc_test(
 cc_library(
     name = "profiler_session",
     hdrs = ["profiler_session.h"],
-    visibility = set_external_visibility(["//tsl:internal"]),
+    visibility = internal_visibility(["//tsl:internal"]),
     deps = [
         "//tsl/platform",
         "//tsl/platform:errors",
@@ -189,7 +191,7 @@ cc_library(
         "profiler_session.h",
     ],
     copts = tf_profiler_copts(),
-    visibility = set_external_visibility([
+    visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
         "//tsl/profiler:internal",
     ]),
@@ -235,6 +237,7 @@ tsl_cc_test(
         ":traceme_encode",
         "//tsl/platform",
         "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
         "//tsl/platform:test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -244,7 +247,7 @@ tsl_cc_test(
 tf_profiler_pybind_cc_library_wrapper(
     name = "traceme_for_pybind",
     actual = ":traceme",
-    visibility = set_external_visibility(["//tsl/profiler:xla_internal"]),
+    visibility = internal_visibility(["//tsl/profiler:xla_internal"]),
 )
 
 cc_library(
@@ -267,15 +270,14 @@ cc_library(
 cc_library(
     name = "nvtx_utils",
     hdrs = ["nvtx_utils.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     visibility = ["//visibility:public"],
     deps = [
         "//tsl/platform:logging",
         "//tsl/platform:macros",
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
-    ] + if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",  # NVTX headers
-    ]),
+    ] + if_cuda_is_configured(nvtx_headers()),
 )
 
 cc_library(
@@ -292,28 +294,12 @@ cc_library(
     ]),
 )
 
-cc_library(
-    name = "scoped_annotation_stack",
-    hdrs = ["scoped_annotation_stack.h"],
-    visibility = set_external_visibility([
-        "//tsl/profiler:internal",
-        "//tsl/profiler:xla_internal",
-    ]),
-    deps = [
-        "@com_google_absl//absl/strings",
-    ] + if_not_android([
-        ":nvtx_utils",
-        "//tsl/profiler/backends/cpu:annotation_stack",
-    ]),
-)
-
 tsl_cc_test(
     name = "scoped_annotation_test",
     size = "small",
     srcs = ["scoped_annotation_test.cc"],
     deps = [
         ":scoped_annotation",
-        ":scoped_annotation_stack",
         "//tsl/platform:test",
         "//tsl/platform:test_benchmark",
         "//tsl/platform:test_main",
@@ -340,8 +326,8 @@ cc_library(
     name = "profiler_collection",
     srcs = ["profiler_collection.cc"],
     hdrs = ["profiler_collection.h"],
-    visibility = set_external_visibility([
-        "//tensorflow/compiler/xla/backends/profiler/plugin:__pkg__",
+    visibility = internal_visibility([
+        "@xla//xla/backends/profiler/plugin:__pkg__",
         "//learning/brain/tfrc/executor/stream_executor:__pkg__",
     ]),
     deps = [

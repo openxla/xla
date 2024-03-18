@@ -1,6 +1,7 @@
 # Tensorflow windows-specific implementations of tensorflow/core/platform libraries.
 load(
     "//tsl:tsl.bzl",
+    "internal_visibility",
     "tsl_copts",
 )
 load("//tsl:tsl.default.bzl", "filegroup")
@@ -11,10 +12,10 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
+    default_visibility = internal_visibility([
         "//tensorflow/core/platform:__pkg__",
         "//tsl/platform:__pkg__",
-    ],
+    ]),
     licenses = ["notice"],
 )
 
@@ -265,5 +266,5 @@ filegroup(
 
 exports_files(
     srcs = ["intrinsics_port.h"],
-    visibility = ["//tensorflow/core/platform:__pkg__"],
+    visibility = internal_visibility(["//tensorflow/core/platform:__pkg__"]),
 )

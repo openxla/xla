@@ -1,4 +1,4 @@
-/* Copyright 2024 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -39,6 +40,9 @@ class HloOpProfiles {
   using ProfilesNestedMap =
       absl::flat_hash_map<std::string,  // compute capability.
                           HloOpProfile>;
+
+  // Returns singleton with profiler data.
+  static const HloOpProfiles& Singleton();
 
   // Returns profile name for the gived device.
   // For CUDA, the format is "sm_XX".

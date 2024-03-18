@@ -17,17 +17,36 @@ limitations under the License.
 
 #include "xla/service/gpu/target_util.h"
 
+#include <functional>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/FPEnv.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/status.h"
+#include "xla/util.h"
 #include "tsl/platform/logging.h"
 
 namespace xla {
@@ -205,6 +224,9 @@ struct TargetDeviceFunction GetDeviceFunctionRoot(
     case TargetDeviceFunctionID::kCos: {
       return {"__nv_cos", "__ocml_cos", "_Z15__spirv_ocl_cos"};
     }
+    case TargetDeviceFunctionID::kErf: {
+      return {"__nv_erf", "__ocml_erf", "_Z15__spirv_ocl_erf"};
+    }
     case TargetDeviceFunctionID::kExp: {
       return {"__nv_exp", "__ocml_exp", "_Z15__spirv_ocl_exp"};
     }
@@ -256,6 +278,8 @@ absl::StatusOr<TargetDeviceFunctionID> GetTargetDeviceFunctionID(HloOpcode op) {
       return TargetDeviceFunctionID::kCos;
     case HloOpcode::kExp:
       return TargetDeviceFunctionID::kExp;
+    case HloOpcode::kErf:
+      return TargetDeviceFunctionID::kErf;
     case HloOpcode::kExpm1:
       return TargetDeviceFunctionID::kExpm1;
     case HloOpcode::kLog:

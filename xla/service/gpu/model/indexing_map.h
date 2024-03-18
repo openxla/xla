@@ -18,62 +18,127 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/service/gpu/model/affine_map_printer.h"
 
 namespace xla {
 namespace gpu {
 
-// Range represents a closed interval [lower_bound, upper_bound].
-struct Range {
+class IndexingContext;
+
+// Interval represents a closed interval [lower_bound, upper_bound].
+struct Interval {
   std::string ToString() const;
   void Print(std::ostream& out) const;
 
-  bool IsPoint() const { return lower_bound == upper_bound; }
+  bool IsPoint() const { return lower == upper; }
 
-  int64_t lower_bound = 0;
-  int64_t upper_bound = 0;
+  bool Contains(int64_t value) const {
+    return value >= lower && value <= upper;
+  }
+
+  // The result of a range comparison. We wrap std::optional in a struct to
+  // avoid accidental implicit conversion to bool:
+  // if (range < 42) {
+  //   Executed if the result of the comparison is known to be false!
+  // }
+  struct ComparisonResult {
+    // true or false if the result is known, nullopt otherwise.
+    std::optional<bool> result;
+
+    ComparisonResult operator!() const {
+      if (result) return {!*result};
+      return {result};
+    }
+    bool operator==(const ComparisonResult& other) const {
+      return result == other.result;
+    }
+    bool operator==(bool other) const { return result && *result == other; }
+    bool operator==(std::nullopt_t) const { return !result; }
+    bool operator!=(std::nullopt_t) const { return result.has_value(); }
+    bool operator*() const { return *result; }
+  };
+
+  // All comparison operators here return true or false if the result is known,
+  // or nullopt if it may be either true or false.
+  ComparisonResult operator>(int64_t value) const {
+    if (lower > value) {
+      return {true};
+    }
+    if (upper <= value) {
+      return {false};
+    }
+    return {std::nullopt};
+  }
+  ComparisonResult operator<(int64_t value) const {
+    if (upper < value) {
+      return {true};
+    }
+    if (lower >= value) {
+      return {false};
+    }
+    return {std::nullopt};
+  }
+  ComparisonResult operator>=(int64_t value) const { return !(*this < value); }
+  ComparisonResult operator<=(int64_t value) const { return !(*this > value); }
+  ComparisonResult operator==(int64_t value) const {
+    if (IsPoint()) return {lower == value};
+    if (!Contains(value)) return {false};
+    return {std::nullopt};
+  }
+  ComparisonResult operator!=(int64_t value) const { return !(*this == value); }
+
+  int64_t lower = 0;
+  int64_t upper = 0;
 };
-std::ostream& operator<<(std::ostream& out, const Range& range);
-bool operator==(const Range& lhs, const Range& rhs);
+
+std::ostream& operator<<(std::ostream& out, const Interval& range);
+bool operator==(const Interval& lhs, const Interval& rhs);
 
 template <typename H>
-H AbslHashValue(H h, const Range& range) {
-  return H::combine(std::move(h), range.lower_bound, range.upper_bound);
+H AbslHashValue(H h, const Interval& range) {
+  return H::combine(std::move(h), range.lower, range.upper);
 }
 
-// Domain contains ranges for symbols and dimensions of an affine map.
-struct Domain {
-  std::string ToString(
-      const AffineMapPrinter& printer = AffineMapPrinter()) const;
+// Evaluates lower and upper bounds for expressions given the domain.
+// Not thread safe.
+class RangeEvaluator {
+ public:
+  RangeEvaluator(absl::Span<const Interval> dim_ranges,
+                 absl::Span<const Interval> symbol_ranges,
+                 mlir::MLIRContext* mlir_context);
 
-  void Print(std::ostream& out, const AffineMapPrinter& printer) const;
+  // Checks whether an `AffineExpr` always describes a non-negative value.
+  bool IsAlwaysPositiveOrZero(mlir::AffineExpr expr);
 
-  static Domain FromUpperBounds(
-      absl::Span<const int64_t> dimension_upper_bounds,
-      absl::Span<const int64_t> symbol_upper_bounds);
+  // Checks whether an `AffineExpr` always describes a non-positive value.
+  bool IsAlwaysNegativeOrZero(mlir::AffineExpr expr);
 
-  std::vector<Range> dimension_ranges;
-  std::vector<Range> symbol_ranges;
+  // Computes the range of expression using its subexpression ranges.
+  Interval ComputeExpressionRange(mlir::AffineExpr expr);
+
+  // Return MLIR context.
+  mlir::MLIRContext* GetMLIRContext() const { return mlir_context_; }
+
+ private:
+  mlir::MLIRContext* mlir_context_;
+  llvm::DenseMap<mlir::AffineExpr, Interval> expression_ranges_cache_;
 };
-std::ostream& operator<<(std::ostream& out, const Domain& domain);
-bool operator==(const Domain& lhs, const Domain& rhs);
 
-template <typename H>
-H AbslHashValue(H h, const Domain& domain) {
-  return H::combine(std::move(h), domain.dimension_ranges,
-                    domain.symbol_ranges);
-}
+std::vector<Interval> RangesFromTensorSizes(
+    absl::Span<const int64_t> tensor_sizes);
 
 // Contains an affine map with N dimension expressions and M symbols:
 //   (d0, ..., d_{N - 1})[s_0, ..., s_{M - 1}] -> f(d_i, s_j)
@@ -100,7 +165,38 @@ H AbslHashValue(H h, const Domain& domain) {
 // ```
 // can be written as `(d0, d1, d2, d3) -> (d0, -d1 + 16, -d2 + 8, d3)` with
 // d0 in [0, 1), d1 in [0, 16], d2 in [0, 8] and d3 in [0, 8].
-struct IndexingMap {
+class IndexingMap {
+ public:
+  IndexingMap(
+      IndexingContext* indexing_context, mlir::AffineMap affine_map,
+      std::vector<Interval> dim_ranges, std::vector<Interval> symbol_ranges,
+      absl::Span<std::pair<mlir::AffineExpr, Interval>> constraints = {})
+      : indexing_context_(indexing_context),
+        affine_map_(affine_map),
+        dim_ranges_(std::move(dim_ranges)),
+        symbol_ranges_(std::move(symbol_ranges)) {
+    for (const auto& [expr, range] : constraints) {
+      AddConstraint(expr, range);
+    }
+  }
+
+  IndexingMap(IndexingContext* indexing_context, mlir::AffineMap affine_map,
+              std::vector<Interval> dim_ranges,
+              std::vector<Interval> symbol_ranges,
+              const llvm::DenseMap<mlir::AffineExpr, Interval>& constraints)
+      : indexing_context_(indexing_context),
+        affine_map_(affine_map),
+        dim_ranges_(std::move(dim_ranges)),
+        symbol_ranges_(std::move(symbol_ranges)),
+        constraints_(constraints) {}
+
+  static IndexingMap GetUndefined() { return IndexingMap(); }
+
+  static IndexingMap FromTensorSizes(
+      IndexingContext* indexing_context, mlir::AffineMap affine_map,
+      absl::Span<const int64_t> dim_upper_bounds,
+      absl::Span<const int64_t> symbol_upper_bounds);
+
   std::string ToString(
       const AffineMapPrinter& printer = AffineMapPrinter()) const;
 
@@ -109,77 +205,101 @@ struct IndexingMap {
   // Returns true if the map was simplified.
   bool Simplify();
 
-  mlir::AffineMap affine_map;
-  Domain domain;
+  // Return MLIRContext.
+  mlir::MLIRContext* GetMLIRContext() const;
+
+  // Return IndexingContext.
+  IndexingContext* GetIndexingContext() const;
+
+  // Returns the affine map.
+  mlir::AffineMap GetAffineMap() const { return affine_map_; }
+
+  // Getters for dimension ranges.
+  Interval GetDimensionRange(int64_t id) const { return dim_ranges_[id]; }
+  const std::vector<Interval>& GetDimensionRanges() const {
+    return dim_ranges_;
+  }
+  int64_t GetDimensionCount() const { return dim_ranges_.size(); }
+
+  // Getters for symbol ranges.
+  Interval GetSymbolRange(int64_t id) const { return symbol_ranges_[id]; }
+  const std::vector<Interval>& GetSymbolRanges() const {
+    return symbol_ranges_;
+  }
+  int64_t GetSymbolCount() const { return symbol_ranges_.size(); }
+
+  // Getters for affine expression constraints.
+  const llvm::DenseMap<mlir::AffineExpr, Interval>& GetConstraints() const {
+    return constraints_;
+  }
+  int64_t GetConstraintsCount() const { return constraints_.size(); }
+
+  // Allows to add bounds for the affine expression `expr`. If there are
+  // bounds for the `expr`, then computes intersection of the current and new
+  // ranges.
+  void AddConstraint(mlir::AffineExpr expr, Interval range);
+
+  // Evaluates the constraints at a given point and returns `true` if all
+  // constraints are satisfied.
+  bool ConstraintsSatisfied(
+      llvm::ArrayRef<mlir::AffineExpr> dim_const_exprs,
+      llvm::ArrayRef<mlir::AffineExpr> symbol_const_exprs) const;
+
+  // Evaluates indexing map results at a given point.
+  llvm::SmallVector<int64_t, 4> Evaluate(
+      llvm::ArrayRef<mlir::AffineExpr> dim_const_exprs,
+      llvm::ArrayRef<mlir::AffineExpr> symbol_const_exprs) const;
+
+  // Returns true if the domain is empty. Right now it scans through all
+  // constraints to find the one where lower_bound > upper_bound. If it returns
+  // true, that does not mean that the domain is not effectively empty.
+  // For example, if there are two constraints 0 <= d0 mod 7 <= 0 and
+  // 0 <= d0 mod 11 <= 0 for a dimension 0<= d0 <= 50 then there is no d0 that
+  // satisfies both constraints.
+  bool IsKnownEmpty() const;
+
+  bool IsUndefined() const { return affine_map_ == mlir::AffineMap(); }
+
+  // Removes unused symbols from the `affine_map_` and constraints.
+  void RemoveUnusedSymbols();
+
+ private:
+  IndexingMap() = default;
+
+  // Performs AffineExpr simplification for all constraints.
+  // Returns true if simplification was performed.
+  bool SimplifyConstraintExprs();
+
+  // Performs range simplification for all constraints.
+  // Returns true if simplification was performed.
+  bool SimplifyConstraintRanges();
+
+  IndexingContext* indexing_context_ = nullptr;
+  mlir::AffineMap affine_map_;
+  std::vector<Interval> dim_ranges_;
+  std::vector<Interval> symbol_ranges_;
+  // Inequality constraints for affine expressions. They restrict the feasible
+  // set for the domain of the indexing map. It contains affine expressions
+  // other than AffineDimExpr and AffineSymbolExpr.
+  llvm::DenseMap<mlir::AffineExpr, Interval> constraints_;
 };
 std::ostream& operator<<(std::ostream& out, const IndexingMap& indexing_map);
 bool operator==(const IndexingMap& lhs, const IndexingMap& rhs);
+IndexingMap operator*(const IndexingMap& lhs, const IndexingMap& rhs);
 
-// Composes affine maps, i.e. consumer_map ∘ producer_map.
-// Right now the ranges of the composed indexing map are correct only when there
-// is no composition with concat.
-// TODO(b/319410501): Generalize domain modelling.
-std::optional<IndexingMap> ComposeIndexingMaps(
-    const std::optional<IndexingMap>& producer_map,
-    const std::optional<IndexingMap>& consumer_map);
+// Composes affine maps, i.e. second ∘ first.
+IndexingMap ComposeIndexingMaps(const IndexingMap& first,
+                                const IndexingMap& second);
 
 template <typename H>
 H AbslHashValue(H h, const IndexingMap& indexing_map) {
-  llvm::hash_code affine_map_hash = llvm::hash_combine(indexing_map.affine_map);
+  llvm::hash_code affine_map_hash =
+      llvm::hash_combine(indexing_map.GetAffineMap());
   return H::combine(std::move(h), static_cast<size_t>(affine_map_hash),
-                    indexing_map.domain);
+                    indexing_map.GetDimensionRanges(),
+                    indexing_map.GetSymbolRanges(),
+                    indexing_map.GetConstraintsCount());
 }
-
-class IndexingMapSimplifier {
- public:
-  explicit IndexingMapSimplifier(mlir::MLIRContext* mlir_context)
-      : mlir_context_(mlir_context) {}
-
-  // Derives an indexing map simplifier for the parameter indexing map.
-  static IndexingMapSimplifier FromIndexingMap(const IndexingMap& indexing_map);
-
-  // Sets the [lower, upper] range for the given expression. It can be used to
-  // set bounds for dimensions and symbols.
-  void SetRange(mlir::AffineExpr expr, int64_t lower, int64_t upper);
-
-  // Simplifies the map as much as possible.
-  mlir::AffineMap Simplify(mlir::AffineMap affine_map);
-
-  // Simplifies the expression as much as possible.
-  mlir::AffineExpr Simplify(mlir::AffineExpr expr);
-
-  // Checks whether an `AffineExpr` always describes a non-negative value.
-  bool IsAlwaysPositiveOrZero(mlir::AffineExpr expr);
-
-  // Checks whether an `AffineExpr` always describes a non-positive value.
-  bool IsAlwaysNegativeOrZero(mlir::AffineExpr expr);
-
- private:
-  Range GetRange(mlir::AffineExpr expr);
-
-  std::optional<int64_t> GetConstantRhsMultiplier(mlir::AffineExpr expr);
-
-  // Simplifier for mod.
-  // - Rewrites (a * 100 + ...) % 100 to (...) % 100
-  // - Rewrites a % b to a if a is known to be less than b.
-  mlir::AffineExpr RewriteMod(mlir::AffineBinaryOpExpr mod);
-
-  // Simplifier for floordiv.
-  // - Rewrites (a * 100 + ...) / 100 to a + (...) / 100
-  // - Rewrites a / 100 to 0 when a is known to be less than 100.
-  mlir::AffineExpr RewriteFloorDiv(mlir::AffineBinaryOpExpr div);
-
-  mlir::AffineExpr RewriteSumIf(
-      mlir::AffineExpr expr, const std::function<bool(mlir::AffineExpr)>& pred);
-
-  // Attempts to simplify the expression, but doesn't attempt to simplify the
-  // result further.
-  mlir::AffineExpr SimplifyOnce(mlir::AffineExpr expr);
-
-  mlir::MLIRContext* mlir_context_;
-  llvm::DenseMap<mlir::AffineExpr, Range> ranges_{};
-};
-
 
 }  // namespace gpu
 }  // namespace xla

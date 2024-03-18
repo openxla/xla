@@ -82,6 +82,8 @@ FLAGS = flags.FLAGS
 # use widely for parameterizing tests.
 # pylint: disable=g-complex-comprehension
 
+_CUSTOM_CALLS_REGISTERED = False
+
 
 def TestFactory(xla_backend,
                 cloud_tpu=False,
@@ -108,6 +110,12 @@ def TestFactory(xla_backend,
     def setUp(self):
       super(ComputationTest, self).setUp()
       self.backend = xla_backend()
+
+      global _CUSTOM_CALLS_REGISTERED
+      if self.backend.platform == "cpu" and not _CUSTOM_CALLS_REGISTERED:
+        for name, fn in custom_call_for_test.cpu_custom_call_targets.items():
+          xla_client.register_custom_call_target(name, fn, platform="cpu")
+        _CUSTOM_CALLS_REGISTERED = True
 
     def _NewComputation(self, name=None):
       if name is None:
@@ -223,8 +231,9 @@ def TestFactory(xla_backend,
       executable = self.backend.compile(
           xla_computation_to_mlir_module(computation))
       fingerprint = executable.fingerprint
-      if self.backend.platform == "tpu" and not (cloud_tpu or pathways or
-                                                 pathways_ifrt):
+      if (
+          self.backend.platform == "tpu" or self.backend.platform == "gpu"
+      ) and not (cloud_tpu or pathways or pathways_ifrt):
         logging.info("fingerprint: %s", fingerprint)
         self.assertNotEmpty(fingerprint)
       else:
@@ -402,8 +411,6 @@ def TestFactory(xla_backend,
       if self.backend.platform != "cpu":
         self.skipTest("Test requires cpu platform")
       c = self._NewComputation()
-      for name, fn in custom_call_for_test.cpu_custom_call_targets.items():
-        xla_client.register_custom_call_target(name, fn, platform="cpu")
       ops.CustomCallWithLayout(
           c,
           b"test_subtract_f32",
@@ -425,8 +432,6 @@ def TestFactory(xla_backend,
       if self.backend.platform != "cpu":
         self.skipTest("Test requires cpu platform")
       c = self._NewComputation()
-      for name, fn in custom_call_for_test.cpu_custom_call_targets.items():
-        xla_client.register_custom_call_target(name, fn, platform="cpu")
 
       opaque_str = b"foo"
       ops.CustomCallWithLayout(
@@ -447,6 +452,22 @@ def TestFactory(xla_backend,
           api_version=xla_client.ops.CustomCallApiVersion
           .API_VERSION_STATUS_RETURNING_UNIFIED)
       self._ExecuteAndCompareClose(c, expected=[1.25 + len(opaque_str)])
+
+    def testCustomCallLookup(self):
+      if self.backend.platform != "cpu":
+        self.skipTest("Test requires cpu platform")
+      if xla_client._version < 241:
+        self.skipTest("Test requires jaxlib version 241")
+
+      self.assertTrue(_CUSTOM_CALLS_REGISTERED)
+      xla_client.make_cpu_client()
+      self.assertContainsSubset(
+          [
+              call.decode()
+              for call in custom_call_for_test.cpu_custom_call_targets.keys()
+          ],
+          xla_client.custom_call_targets("Host").keys(),
+      )
 
   tests.append(ComputationsWithConstantsTest)
 
@@ -2511,6 +2532,12 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
     def testPlatform(self):
       for device in self.backend.local_devices():
         self.assertEqual(device.platform, self.backend.platform)
+
+    def testCoreCount(self):
+      if self.backend.platform != "gpu":
+        self.skipTest("core_count is only supported on GPU")
+      for device in self.backend.local_devices():
+        self.assertGreater(device.core_count, 0)
 
     def testLocalHardwareId(self):
       for device in self.backend.devices():

@@ -16,7 +16,6 @@ limitations under the License.
 #define XLA_SERVICE_GPU_FUSIONS_CUSTOM_H_
 
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/mlir_hlo/lhlo/IR/lhlo_ops.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
@@ -26,11 +25,12 @@ namespace xla {
 namespace gpu {
 
 // A wrapper for fusions implemented using the mechanism in
-// xla/service/gpu/kernels. See custom_fusion.h in that folder for details.
-class CustomFusionEmitter : public FusionInterface {
+// xla/service/gpu/kernels. See custom_kernel_fusion.h in that folder for
+// details.
+class CustomFusion : public FusionInterface {
  public:
   absl::StatusOr<FusionEmissionResult> Emit(
-      IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
+      IrEmitterContext& ir_emitter_context,
       const HloFusionInstruction& fusion) const final;
 };
 
@@ -50,13 +50,13 @@ class CustomFusionEmitter : public FusionInterface {
 // compile-time instead of allocating a new buffer for it at runtime by
 // translating the static slice into offset + size of the original buffer passed
 // into the custom call `%gemm`.
-class AddressComputationFusionEmitter : public FusionInterface {
+class AddressComputationFusion : public FusionInterface {
  public:
-  explicit AddressComputationFusionEmitter(const HloFusionAnalysis& analysis)
+  explicit AddressComputationFusion(const HloFusionAnalysis& analysis)
       : analysis_(analysis) {}
 
   absl::StatusOr<FusionEmissionResult> Emit(
-      IrEmitterContext& ir_emitter_context, mlir::lmhlo::FusionOp fusion_op,
+      IrEmitterContext& ir_emitter_context,
       const HloFusionInstruction& fusion) const final;
 
  private:

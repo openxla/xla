@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -174,30 +173,25 @@ absl::StatusOr<Shape> GetConsistentInputShapeForRootSlices(
   return first_slice_operand_shape;
 }
 
-constexpr int kUnrollFactor = 1;
-
 }  // namespace
 
 LaunchDimensions InputSlicesFusion::launch_dimensions() const {
   auto* root = analysis_.fusion_roots().front();
   const auto& shape = root->operands()[0]->shape();
   return CalculateLaunchDimensions(shape, analysis_.device_info(),
-                                   {kUnrollFactor});
+                                   {unroll_factor_});
 }
 
 std::optional<IndexingMap> InputSlicesFusion::ComputeThreadIdToOutputIndexing(
-    int64_t output_id, mlir::MLIRContext* ctx) const {
+    int64_t output_id, IndexingContext* indexing_context) const {
   // The mapping here is trivial and the same for all outputs - slice offsets
   // are applied in the indexing from slice outputs to slice inputs.
   auto launch_dims = launch_dimensions();
   // The implementation requires the shapes and layouts to be the same, but we
   // still use the requested output's shape for clarity.
   const auto& shape = analysis_.fusion_roots()[output_id]->shape();
-  IndexingMap result{GetDefaultThreadIdToOutputIndexingMap(
-                         launch_dims, kUnrollFactor, shape, ctx),
-                     GetThreadIdDomain(launch_dims, kUnrollFactor)};
-  result.Simplify();
-  return result;
+  return GetDefaultThreadIdToOutputIndexingMap(launch_dims, unroll_factor_,
+                                               shape, indexing_context);
 }
 
 absl::Status InputSlicesFusion::EmitKernel(
@@ -207,6 +201,8 @@ absl::Status InputSlicesFusion::EmitKernel(
   TF_ASSIGN_OR_RETURN(Shape element_shape,
                       GetConsistentInputShapeForRootSlices(
                           fusion.fused_instructions_computation()));
+  LaunchDimensionsConfig launch_config;
+  launch_config.unroll_factor = unroll_factor_;
   GpuElementalIrEmitter elemental_emitter(ir_emitter_context, builder);
   return ParallelLoopEmitter(
              [&](const llvm_ir::IrArray::Index index) -> absl::Status {
@@ -214,7 +210,7 @@ absl::Status InputSlicesFusion::EmitKernel(
                    elemental_emitter, fusion.fused_instructions_computation(),
                    inputs, outputs, index, builder);
              },
-             element_shape, launch_dims, builder)
+             element_shape, launch_dims, builder, launch_config)
       .EmitLoop(
           fusion.name(),
           GetIndexTypeForKernel(&fusion, launch_dims.launch_bound(), builder));
