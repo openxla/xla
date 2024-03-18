@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/lib/monitoring/collection_registry.h"
 
+#include <memory>
+
 // We replace this implementation with a null implementation for mobile
 // platforms.
 #ifndef IS_MOBILE_PLATFORM
@@ -41,9 +43,8 @@ void Collector::CollectMetricDescriptor(
   auto* const metric_descriptor = [&]() {
     mutex_lock l(mu_);
     return collected_metrics_->metric_descriptor_map
-        .insert(std::make_pair(
-            string(metric_def->name()),
-            std::unique_ptr<MetricDescriptor>(new MetricDescriptor())))
+        .insert(std::make_pair(string(metric_def->name()),
+                               std::make_unique<MetricDescriptor>()))
         .first->second.get();
   }();
   metric_descriptor->name = string(metric_def->name());
@@ -91,8 +92,7 @@ CollectionRegistry::Register(const AbstractMetricDef* const metric_def,
       {metric_def->name(),
        {metric_def, collection_function, env_->NowMicros() / 1000}});
 
-  return std::unique_ptr<RegistrationHandle>(
-      new RegistrationHandle(this, metric_def));
+  return std::make_unique<RegistrationHandle>(this, metric_def);
 }
 
 void CollectionRegistry::Unregister(const AbstractMetricDef* const metric_def) {
