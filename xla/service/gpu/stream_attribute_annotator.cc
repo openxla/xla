@@ -89,6 +89,15 @@ absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
   return true;
 }
 
+absl::StatusOr<bool> AnnotateStreamAttributesForCopyStart(
+    HloInstruction* instr, int64_t channel_id) {
+  GpuBackendConfig gpu_backend_config;
+  gpu_backend_config.set_operation_queue_id(channel_id);
+  VLOG(3) << "Add copy-start's backend config: " << channel_id;
+  TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_backend_config));
+  return true;
+}
+
 absl::StatusOr<bool> AnnotateStreamAttributesForUsers(
     HloInstruction* instr, GpuBackendConfig& instr_gpu_config) {
   bool changed = false;
@@ -133,7 +142,7 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
       if (!instr_gpu_config.ok()) {
         continue;
       }
-      if (!copy_start_done_) {
+      if (!copy_start_) {
         // For fusion instruction, only annotate
         // when the root of fusion is a single instruction
         // running on non-default stream.
@@ -145,12 +154,12 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
         }
       } else {
         if (instr->opcode() == HloOpcode::kCopyStart) {
-          GpuBackendConfig gpu_backend_config;
-          gpu_backend_config.set_operation_queue_id(channel_id);
-          VLOG(3) << "Add copy-start's backend config: " << channel_id;
-          TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_backend_config));
-          changed = true;
-	    }
+          TF_ASSIGN_OR_RETURN(bool comp_result,
+                              AnnotateStreamAttributesForCopyStart(
+                                  instr, channel_id));
+          changed |= comp_result;
+          continue;
+	}
       }
 
       TF_ASSIGN_OR_RETURN(
