@@ -994,6 +994,10 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
   VLOG(2) << fusion->name() << ": time with cuBLAS: " << cublas_duration;
   AutotuneResult best;
   best.mutable_failure()->set_kind(AutotuneResult::DISQUALIFIED);
+
+  absl::Duration best_duration_cudnn = absl::InfiniteDuration();
+  absl::Duration best_duration_triton = absl::InfiniteDuration();
+
   if (!triton_results.empty()) {
     TF_ASSIGN_OR_RETURN(const AutotuneResult triton_best,
                         PickBestResult(triton_results, root.ToString(),
@@ -1001,6 +1005,8 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     VLOG(2) << "Best time with Triton: "
             << tsl::proto_utils::FromDurationProto(triton_best.run_time());
     best = triton_best;
+    best_duration_triton =
+        tsl::proto_utils::FromDurationProto(triton_best.run_time());
   }
   if (!cudnn_results.empty()) {
     TF_ASSIGN_OR_RETURN(const AutotuneResult cudnn_best,
@@ -1008,10 +1014,33 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
                                        root.GetModule()->config()));
     VLOG(2) << "Best time with cuDNN: "
             << tsl::proto_utils::FromDurationProto(cudnn_best.run_time());
+
+    best_duration_cudnn =
+        tsl::proto_utils::FromDurationProto(cudnn_best.run_time());
     TF_ASSIGN_OR_RETURN(best,
                         PickBestResult({best, cudnn_best}, root.ToString(),
                                        root.GetModule()->config()));
   }
+
+  // add results of all backends to AutotuneResult
+  auto add_all_backends_to_results = [&](AutotuneResult& res) {
+    // add information about all 3 backends to proto
+    auto backend_cublas = res.mutable_backends()->add_tried_backends();
+    auto backend_cudnn = res.mutable_backends()->add_tried_backends();
+    auto backend_triton = res.mutable_backends()->add_tried_backends();
+
+    *backend_cublas->mutable_run_time() =
+        tsl::proto_utils::ToDurationProto(cublas_duration);
+    backend_cublas->set_backend(AutotuneResult::CUBLAS);
+
+    *backend_triton->mutable_run_time() =
+        tsl::proto_utils::ToDurationProto(best_duration_triton);
+    backend_triton->set_backend(AutotuneResult::TRITON);
+
+    *backend_cudnn->mutable_run_time() =
+        tsl::proto_utils::ToDurationProto(best_duration_cudnn);
+    backend_cudnn->set_backend(AutotuneResult::CUDNN);
+  };
 
   if (debug_opts.xla_gpu_cublas_fallback() &&
       !debug_opts.xla_gpu_deterministic_ops() &&
@@ -1025,14 +1054,17 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
           tsl::proto_utils::ToDurationProto(cublas_duration);
       // We will ignore this value anyway.
       cublas.mutable_gemm()->set_algorithm(CUBLAS_GEMM_DEFAULT);
-
+      add_all_backends_to_results(cublas);
       return cublas;
     }
   }
   if (!best.has_triton()) {
     VLOG(2) << "Using cuDNN plan " << best.algorithm().algo_id() << " for "
             << fusion->name();
+  } else {
+    VLOG(2) << "Using triton for " << fusion->name();
   }
+  add_all_backends_to_results(best);
   return best;
 }
 
@@ -1108,6 +1140,8 @@ absl::Status Autotune(
 
     TF_ASSIGN_OR_RETURN(AutotuneResult result, Execute(config, util, debug_opts,
                                                        fusion, executable_set));
+
+    result.set_fusion_name(std::string(fusion->name()));
 
     if (debug_opts.xla_gpu_dump_autotuned_triton_fusions()) {
       TF_RETURN_IF_ERROR(
