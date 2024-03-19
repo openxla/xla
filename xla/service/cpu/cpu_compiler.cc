@@ -712,8 +712,8 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // backend can support BF16/F8 operations without directly implementing a
   // BF16/F8 lowering for most ops.
   FloatSupport bf16_support(BF16);
-  CpuFloatSupport onednn_bf16_support(BF16);
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  CpuFloatSupport onednn_bf16_support(BF16);
   if (!is_aot_compile) {
     pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
   } else {
