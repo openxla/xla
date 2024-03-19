@@ -273,9 +273,15 @@ NB_MODULE(xla_extension, m_nb) {
       nb::arg("distributed_client"), nb::arg("hostname").none() = std::nullopt,
       nb::arg("interface").none() = std::nullopt);
 
+#ifndef _WIN32
+  nb::class_<cpu::MpiCollectives> mpi_collectives(m_nb, "MpiCollectives", cpu_collectives);
+  mpi_collectives.def("Init", &cpu::MpiCollectives::Init);
+  mpi_collectives.def("Finalize", &cpu::MpiCollectives::Finalize);
+#endif // _WIN32
+
   m_nb.def(
       "make_mpi_collectives",
-      []() -> std::shared_ptr<xla::cpu::CollectivesInterface> {
+      []() -> std::shared_ptr<cpu::MpiCollectives> {
 #ifndef _WIN32
         return std::make_shared<cpu::MpiCollectives>();
 #else  // _WIN32

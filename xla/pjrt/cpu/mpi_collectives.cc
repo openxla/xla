@@ -236,7 +236,7 @@ absl::Status MpiCollectivesCommunicator::ReduceScatter(
       input_buffer, output_buffer, recvcounts.data(), type, op, comm_));
 }
 
-MpiCollectives::MpiCollectives() {
+void MpiCollectives::Init() {
   int provided;
   MPI_Init_thread(NULL, NULL, MPI_THREAD_FUNNELED, &provided);
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_world_rank_);
@@ -244,7 +244,7 @@ MpiCollectives::MpiCollectives() {
   VLOG(1) << "MPI rank=" << mpi_world_rank_ << " size=" << mpi_world_size_;
 }
 
-MpiCollectives::~MpiCollectives() {
+void MpiCollectives::Finalize() {
   contexts_.clear();
   MPI_Finalize();
 }

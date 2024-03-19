@@ -71,8 +71,9 @@ class MpiCollectivesCommunicator : public CollectivesCommunicator {
 
 class MpiCollectives : public CollectivesInterface {
  public:
-  MpiCollectives();
-  ~MpiCollectives() override;
+
+  void Init();
+  void Finalize();
 
   absl::StatusOr<std::shared_ptr<CollectivesCommunicator>> GetCommunicator(
       absl::Span<GlobalDeviceId const> global_devices, int rank) override;
