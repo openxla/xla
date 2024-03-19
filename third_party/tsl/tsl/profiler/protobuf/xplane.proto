@@ -99,7 +99,7 @@ message XEvent {
 // An XStat is a named value associated with an XEvent, e.g., a performance
 // counter value, a metric computed by a formula applied over nested XEvents
 // and XStats.
-// Next ID: 8
+// Next ID: 9
 message XStat {
   // XStatMetadata.id of corresponding metadata.
   int64 metadata_id = 1;
@@ -113,6 +113,8 @@ message XStat {
     bytes bytes_value = 6;
     // A string value that stored in XStatMetadata::name.
     uint64 ref_value = 7;
+    // Gzip compressed string
+    bytes compressed_str_value = 8;
   }
 }
 
