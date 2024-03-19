@@ -239,6 +239,9 @@ void CompilationEnvironments::EnvAdded(std::string_view env_type) {
   GlobalCompEnvStats::GetSingleton().EnvAdded(env_type);
 }
 
+// TODO(b/281903400) : This function is not thread safe. For example, if
+// multiple threads access an HloModule, which does not have a TpuCompEnv
+// already created, then there would be a race when an environment is created.
 Status CompilationEnvironments::AddEnvImpl(
     const tsl::protobuf::Descriptor& descriptor,
     std::unique_ptr<tsl::protobuf::Message> env) {
