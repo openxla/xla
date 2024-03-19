@@ -119,6 +119,7 @@ limitations under the License.
 #include "xla/service/gpu/alias_passthrough_params.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/autotuner_util.h"
+#include "xla/service/gpu/collective_permute_cycle_decomposer.h"
 #include "xla/service/gpu/command_buffer_scheduling.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
@@ -130,8 +131,8 @@ limitations under the License.
 #include "xla/service/gpu/fusion_pipeline.h"
 #include "xla/service/gpu/fusion_wrapper.h"
 #include "xla/service/gpu/gemm_broadcast_folding_rewriter.h"
+#include "xla/service/gpu/gemm_fusion.h"
 #include "xla/service/gpu/gemm_rewriter.h"
-#include "xla/service/gpu/gemm_rewriter_triton.h"
 #include "xla/service/gpu/gpu_all_gather_optimizer.h"
 #include "xla/service/gpu/gpu_async_collective_annotator.h"
 #include "xla/service/gpu/gpu_constants.h"
@@ -141,6 +142,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_layout_assignment.h"
+#include "xla/service/gpu/gpu_p2p_pipeliner.h"
 #include "xla/service/gpu/gpu_reduce_scatter_creator.h"
 #include "xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "xla/service/gpu/gpu_scatter_expander.h"
@@ -952,6 +954,11 @@ absl::Status RunCollectiveOptimizationPasses(
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
 
+  collectives_pipeline.AddPass<CollectivePermuteCycleDecomposer>(
+      hlo_module->config()
+          .debug_options()
+          .xla_gpu_collective_permute_decomposer_threshold());
+
   // Run algebraic simplifier to reshape(broadcast) into a broadcast when
   // the reshape is just adding a unit dimension. This will help with the
   // AllGatherBroadcastReorder pass.
@@ -1169,29 +1176,7 @@ absl::Status RunPostFusionCollectiveOptimizationPasses(HloModule* hlo_module) {
           .debug_options()
           .xla_gpu_enable_pipelined_collectives() ||
       hlo_module->config().debug_options().xla_gpu_enable_pipelined_p2p()) {
-    auto may_pipeline_p2p = [](const HloInstruction* instruction) {
-      const HloRecvDoneInstruction* recv_done =
-          DynCast<const HloRecvDoneInstruction>(instruction);
-      if (!recv_done || recv_done->is_host_transfer()) return false;
-      // Check that the recv-done is used for non-trivial computation, which
-      // can also help avoid repeatedly pipelining a loop.
-      return recv_done->user_count() == 1 && recv_done->parent() != nullptr &&
-             recv_done->users()[0] != recv_done->parent()->root_instruction();
-    };
-    // We currently use one asynchronous stream to execute P2P operations,
-    // as such, can only support pipelining at most one P2P chain in each
-    // loop.
-    CollectivePipeliner::Config config{
-        /*level_to_operate_on=*/0,
-        /*max_pipelining_per_loop=*/1,
-        /*last_run=*/true,
-        /*pipeline_use_tree=*/false,
-        /*process_different_sized_ops=*/true,
-        /*pipelining_direction=*/
-        CollectivePipeliner::PipeliningDirection::kBackward,
-        /*should_process=*/may_pipeline_p2p,
-        /*acceptable_formatting=*/[](const HloInstruction*) { return true; }};
-    pipeline.AddPass<CollectivePipeliner>(config);
+    AddP2PPipeliner(pipeline);
   }
   return pipeline.Run(hlo_module).status();
 }
@@ -1417,7 +1402,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
-      pipeline.AddPass<GemmRewriterTriton>(gpu_version);
+      pipeline.AddPass<GemmFusion>(gpu_version);
     }
     // Rewrite non-FP8 GEMMs.
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/false);
@@ -1471,7 +1456,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // f32).
   add_float_normalization(pipeline);
 
-  TF_RETURN_IF_ERROR(AddTritonGemmAutotuningPasses(
+  TF_RETURN_IF_ERROR(AddGemmFusionAutotuningPasses(
       &pipeline, hlo_module, autotune_config, thread_pool));
   // Inline back the calls which have better performance with cuBLAS.
   pipeline.AddPass<CallInliner>();

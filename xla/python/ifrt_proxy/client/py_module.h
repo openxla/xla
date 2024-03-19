@@ -1,4 +1,4 @@
-/* Copyright 2023 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,9 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "pybind11/pybind11.h"  // from @pybind11
-#include "xla/python/xla.h"
+#ifndef XLA_PYTHON_IFRT_PROXY_CLIENT_PY_MODULE_H_
+#define XLA_PYTHON_IFRT_PROXY_CLIENT_PY_MODULE_H_
 
-extern "C" PYBIND11_EXPORT PyObject *PyInit_xla_extension() {
-  return xla::InitializeXlaExtension();
-}
+#include "nanobind/nanobind.h"  // from @nanobind
+
+namespace xla {
+namespace ifrt {
+namespace proxy {
+
+void BuildIfrtProxySubmodule(nanobind::module_& m);
+
+}  // namespace proxy
+}  // namespace ifrt
+}  // namespace xla
+
+#endif  // XLA_PYTHON_IFRT_PROXY_CLIENT_PY_MODULE_H_

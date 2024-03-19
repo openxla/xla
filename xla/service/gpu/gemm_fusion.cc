@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/gemm_rewriter_triton.h"
+#include "xla/service/gpu/gemm_fusion.h"
 
 #include <array>
 #include <cstddef>
@@ -162,14 +162,17 @@ struct HlosAndRequirements {
 HloInstruction& FuseDot(const HloDotInstruction& dot,
                         const HloInstruction& fused_lhs,
                         const HloInstruction& fused_rhs,
+                        std::optional<const HloInstruction*> fused_meta,
                         HloComputation::Builder& builder  // append
 ) {
-  CHECK_EQ(dot.operand_count(), 2);
   VLOG(3) << "Fusing " << dot.ToString();
 
-  std::array<HloInstruction*, 2> hlo_new_operands = {
+  std::vector<HloInstruction*> hlo_new_operands = {
       const_cast<HloInstruction*>(&fused_lhs),
       const_cast<HloInstruction*>(&fused_rhs)};
+  if (fused_meta.has_value()) {
+    hlo_new_operands.push_back(const_cast<HloInstruction*>(fused_meta.value()));
+  }
   return *builder.AddInstruction(
       dot.CloneWithNewOperands(dot.shape(), hlo_new_operands));
 }
@@ -620,12 +623,33 @@ absl::StatusOr<FusionDecision> CreateDotFusion(
     return can_handle;
   }
 
+  // Verify sparse dot constraints.
+  if (dot.sparse_operands()) {
+    const SparsityDescriptor& descriptor = dot.sparsity().front();
+    if (dot.sparse_operands() != 1 || descriptor.index() != 0) {
+      return InvalidArgument("Sparsity is only supported on left operand");
+    }
+    if (descriptor.type() != SparsityType::SPARSITY_STRUCTURED_N_M ||
+        descriptor.n() != 2 || descriptor.m() != 4) {
+      return InvalidArgument("Only 2:4 structured sparsity is supported");
+    }
+    // DotDimensionSorter pass makes sure the sparse dimension is minor.
+    CHECK_EQ(descriptor.dimension(), dot.operand(0)->shape().rank() - 1);
+  }
+
   HlosAndRequirements lhs_hlos_and_reqs = FuseDotOperand(
       dot, /*operand_index=*/0, gpu_version, builder, fusion_inputs);
   HlosAndRequirements rhs_hlos_and_reqs = FuseDotOperand(
       dot, /*operand_index=*/1, gpu_version, builder, fusion_inputs);
-  HloInstruction& fused_dot = FuseDot(dot, *lhs_hlos_and_reqs.fused_hlo,
-                                      *rhs_hlos_and_reqs.fused_hlo, builder);
+  std::optional<const HloInstruction*> meta_hlo;
+  if (dot.sparse_operands()) {
+    HlosAndRequirements meta_hlos_and_reqs = FuseDotOperand(
+        dot, /*operand_index=*/2, gpu_version, builder, fusion_inputs);
+    meta_hlo.emplace(meta_hlos_and_reqs.fused_hlo);
+  }
+  HloInstruction& fused_dot =
+      FuseDot(dot, *lhs_hlos_and_reqs.fused_hlo, *rhs_hlos_and_reqs.fused_hlo,
+              meta_hlo, builder);
   // For now the RHS doesn't support splits, so it also doesn't impose any
   // requirements.
   HlosAndRequirements fused_output_and_reqs =
@@ -642,7 +666,8 @@ absl::StatusOr<FusionDecision> CreateDotFusion(
       dot.precision_config().algorithm();
   if (algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6 ||
       algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3 ||
-      dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any()) {
+      dot.GetModule()->config().debug_options().xla_gpu_triton_gemm_any() ||
+      dot.sparse_operands()) {
     return FusionDecision{};
   }
 
@@ -667,10 +692,9 @@ absl::StatusOr<FusionDecision> CreateDotFusion(
 
 // Extracts into fused computations parts of HLO graph including dot()
 // operations that can target the triton GEMM emitter.
-class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
+class GemmFusionVisitor : public DfsHloRewriteVisitor {
  public:
-  explicit GemmRewriterTritonVisitor(
-      const se::GpuComputeCapability& gpu_version)
+  explicit GemmFusionVisitor(const se::GpuComputeCapability& gpu_version)
       : gpu_version_(gpu_version) {}
   // Checks that a dot() should be targeting the triton GEMM emitter;
   // if so - fuses all its compatible inputs and outputs as a new computation
@@ -690,7 +714,7 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    std::string fusion_name = absl::StrCat("triton_gemm_", dot->name());
+    std::string fusion_name = absl::StrCat("gemm_fusion_", dot->name());
     HloComputation::Builder builder(absl::StrCat(fusion_name, "_computation"));
     std::vector<HloInstruction*> fusion_inputs;
     HloInstruction* fusion_output = nullptr;
@@ -747,7 +771,7 @@ class GemmRewriterTritonVisitor : public DfsHloRewriteVisitor {
 
 absl::StatusOr<bool> RunOnComputation(
     HloComputation* computation, const se::GpuComputeCapability& gpu_version) {
-  GemmRewriterTritonVisitor visitor(gpu_version);
+  GemmFusionVisitor visitor(gpu_version);
   TF_RETURN_IF_ERROR(computation->Accept(&visitor));
   return visitor.changed();
 }
@@ -863,7 +887,7 @@ bool ShouldTritonHandleGEMM(HloDotInstruction& dot,
       ->CanFuse();
 }
 
-absl::StatusOr<bool> GemmRewriterTriton::Run(
+absl::StatusOr<bool> GemmFusion::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

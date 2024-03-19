@@ -267,8 +267,10 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   }
 
   HloPassPipeline pre_pipeline("nvptx post-layout_assignment part 1");
-  // Rewrite normalization patterns into cuDNN Custom Calls.
-  pre_pipeline.AddPass<CudnnNormRewriter>(cuda_compute_capability);
+  if (hlo_module->config().debug_options().xla_gpu_enable_cudnn_layer_norm()) {
+    // Rewrite normalization patterns into cuDNN Custom Calls.
+    pre_pipeline.AddPass<CudnnNormRewriter>(cuda_compute_capability);
+  }
 
   pre_pipeline.AddPass<DotDimensionMerger>();
 
@@ -328,7 +330,7 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
   return absl::OkStatus();
 }
 
-absl::Status NVPTXCompiler::AddTritonGemmAutotuningPasses(
+absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     HloPassPipeline* pipeline, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool) {
   pipeline->AddPass<GemmFusionAutotuner>(autotune_config, thread_pool);

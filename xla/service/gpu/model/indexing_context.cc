@@ -1,4 +1,4 @@
-/* Copyright 2023 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,16 +13,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_XLA_H_
-#define XLA_PYTHON_XLA_H_
+#include "xla/service/gpu/model/indexing_context.h"
 
-// placeholder for index annotation headers
-#include "pybind11/pybind11.h"  // from @pybind11
+#include <utility>
+
+#include "xla/service/gpu/model/indexing_map.h"
 
 namespace xla {
+namespace gpu {
 
-PyObject *InitializeXlaExtension();
+static RTVarID rt_var_count = 0;
 
+RTVar IndexingContext::RegisterRTVar(RTVarData rt_var_data) {
+  rt_vars_registry_.insert(std::make_pair(rt_var_count, rt_var_data));
+  return RTVar{rt_var_count++};
+}
+
+RTVarData& IndexingContext::GetRTVarData(RTVarID id) {
+  return rt_vars_registry_.at(id);
+}
+
+}  // namespace gpu
 }  // namespace xla
-
-#endif  // XLA_PYTHON_XLA_H_

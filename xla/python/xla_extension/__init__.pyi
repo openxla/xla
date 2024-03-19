@@ -37,6 +37,7 @@ from typing import (
 
 import numpy as np
 
+from . import ifrt_proxy
 from . import jax_jit
 from . import mlir
 from . import ops
@@ -616,6 +617,9 @@ ArrayImpl = Any
 def copy_array_to_devices_with_sharding(
     self: ArrayImpl, devices: List[Device], sharding: Any
 ) -> ArrayImpl: ...
+
+def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
+
 def batched_device_put(
     aval: Any,
     sharding: Any,
@@ -796,9 +800,6 @@ def collect_garbage() -> None: ...
 def is_optimized_build() -> bool: ...
 def json_to_pprof_profile(json: str) -> bytes: ...
 def pprof_profile_to_json(proto: bytes) -> str: ...
-
-
-CompiledFunction = Any
 
 
 class PmapFunction:

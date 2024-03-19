@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nccl_recv_thunk.h"
+#include "xla/service/gpu/runtime/nccl_recv_thunk.h"
 
 #include <cstdint>
 #include <optional>
@@ -24,14 +24,13 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
-#include "xla/service/gpu/nccl_p2p_thunk_common.h"
+#include "xla/service/gpu/runtime/nccl_p2p_thunk_common.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
@@ -94,6 +93,8 @@ absl::Status NcclRecvThunk::RunNcclCollective(const ExecuteParams& params,
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing Recv from device ordinal: " << device_ordinal
           << "current_id " << current_id;
+  TF_RETURN_IF_ERROR(
+      MaybeRegisterBuffers(nccl_api(), device_ordinal, {buffer}, comm));
 
   const std::optional<int64_t> source_id = source_target.source;
   se::DeviceMemoryBase dest_addr = buffer.destination_buffer;
