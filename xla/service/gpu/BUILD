@@ -177,6 +177,7 @@ xla_cc_test(
         "//xla/service:custom_call_target_registry",
         "//xla/service:executable",
         "//xla/service:gpu_plugin",
+        "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/tests:client_library_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
@@ -299,6 +300,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:name_uniquer",
+        "//xla/service/gpu/model:indexing_map",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -378,7 +380,10 @@ cc_library(
         "//xla/service/gpu/runtime:nccl_all_gather_thunk",
         "//xla/service/gpu/runtime:nccl_all_reduce_thunk",
         "//xla/service/gpu/runtime:nccl_all_to_all_thunk",
+        "//xla/service/gpu/runtime:nccl_collective_broadcast_thunk",
         "//xla/service/gpu/runtime:nccl_collective_permute_thunk",
+        "//xla/service/gpu/runtime:nccl_recv_thunk",
+        "//xla/service/gpu/runtime:nccl_send_thunk",
         "//xla/service/gpu/runtime:norm_thunk",
         "//xla/service/gpu/runtime:outfeed_thunk",
         "//xla/service/gpu/runtime:replica_id_thunk",
@@ -760,8 +765,9 @@ xla_test(
     deps = [
         ":autotuner_util",
         ":backend_configs_cc",
+        ":gemm_fusion",
         ":gemm_fusion_autotuner",
-        ":gemm_rewriter_triton",
+        ":ir_emission_utils",
         ":matmul_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
@@ -887,18 +893,10 @@ cc_library(
 cc_library(
     name = "nccl_collective_thunks",
     srcs = [
-        "nccl_collective_broadcast_thunk.cc",
         "nccl_collective_thunk.cc",
-        "nccl_p2p_thunk_common.cc",
-        "nccl_recv_thunk.cc",
-        "nccl_send_thunk.cc",
     ],
     hdrs = [
-        "nccl_collective_broadcast_thunk.h",
         "nccl_collective_thunk.h",
-        "nccl_p2p_thunk_common.h",
-        "nccl_recv_thunk.h",
-        "nccl_send_thunk.h",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW=1",
@@ -1215,6 +1213,7 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/service:rendezvous",
         "//xla/service:lockable",
+        "//xla/service/gpu/runtime:nccl_p2p_thunk_common",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_activation",
         "//xla/stream_executor/gpu:gpu_stream",
@@ -1249,6 +1248,7 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
+        "//xla/service/gpu/runtime:nccl_p2p_thunk_common",
         "//xla/service:collective_ops_utils",
         "//xla/service:global_device_id",
         "//xla/service:lockable",
@@ -1573,6 +1573,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1641,7 +1642,7 @@ xla_cc_test(
     name = "triton_fusion_analysis_test",
     srcs = ["triton_fusion_analysis_test.cc"],
     deps = [
-        ":gemm_rewriter_triton",
+        ":gemm_fusion",
         ":triton_fusion_analysis",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
@@ -1657,9 +1658,9 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "gemm_rewriter_triton",
-    srcs = ["gemm_rewriter_triton.cc"],
-    hdrs = ["gemm_rewriter_triton.h"],
+    name = "gemm_fusion",
+    srcs = ["gemm_fusion.cc"],
+    hdrs = ["gemm_fusion.h"],
     deps = [
         ":backend_configs_cc",
         ":cublas_padding_requirements",
@@ -1692,11 +1693,11 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "gemm_rewriter_triton_test",
-    srcs = ["gemm_rewriter_triton_test.cc"],
+    name = "gemm_fusion_test",
+    srcs = ["gemm_fusion_test.cc"],
     deps = [
         ":cublas_padding_requirements",
-        ":gemm_rewriter_triton",
+        ":gemm_fusion",
         ":triton_fusion_analysis",
         "//xla:autotuning_proto_cc",
         "//xla:statusor",
@@ -1874,6 +1875,7 @@ cc_library(
         ":variant_visitor",
         ":autotuner_util",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -3182,7 +3184,7 @@ cc_library(
     srcs = ["cublas_pad_for_gemms.cc"],
     hdrs = ["cublas_pad_for_gemms.h"],
     deps = [
-        ":gemm_rewriter_triton",
+        ":gemm_fusion",
         ":ir_emission_utils",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -3564,6 +3566,7 @@ xla_cc_test(
         "//xla/service:executable",
         "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_module_config",
+        "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/algorithm:container",
@@ -3637,6 +3640,8 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = if_gpu_is_configured([
+        ":gpu_p2p_pipeliner",
+        ":collective_permute_cycle_decomposer",
         ":address_computation_fusion_rewriter",
         ":algorithm_checker",
         ":alias_passthrough_params",
@@ -3654,7 +3659,7 @@ cc_library(
         ":fusion_merger",
         ":fusion_wrapper",
         ":gemm_broadcast_folding_rewriter",
-        ":gemm_rewriter_triton",
+        ":gemm_fusion",
         ":gemm_rewriter",
         ":gpu_all_gather_optimizer",
         ":gpu_async_collective_annotator",
@@ -3936,6 +3941,7 @@ xla_cc_test(
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
     tags = tf_cuda_tests_tags() + ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
     deps = [
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_module_config",
@@ -5978,6 +5984,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
     ]) + [

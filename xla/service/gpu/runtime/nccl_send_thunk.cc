@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nccl_send_thunk.h"
+#include "xla/service/gpu/runtime/nccl_send_thunk.h"
 
 #include <cstdint>
 #include <optional>
@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
-#include "xla/service/gpu/nccl_p2p_thunk_common.h"
+#include "xla/service/gpu/runtime/nccl_p2p_thunk_common.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream.h"
@@ -93,6 +93,8 @@ absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing collective permute from device ordinal: "
           << device_ordinal << "current_id " << current_id;
+  TF_RETURN_IF_ERROR(
+      MaybeRegisterBuffers(nccl_api(), device_ordinal, {buffer}, comm));
 
   const std::optional<int64_t> target_id = source_target.target;
   se::DeviceMemoryBase src_addr = buffer.source_buffer;

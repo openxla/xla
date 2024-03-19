@@ -51,11 +51,11 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_clique_key.h"
-#include "xla/service/gpu/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/annotation.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
+#include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/service/service_executable_run_options.h"
@@ -502,6 +502,7 @@ CommandBufferCmd::BufferUsageVector ComputationIdCmd::buffers() {
 
 absl::Status ComputationIdCmd::Initialize(const Thunk::InitializeParams& params,
                                           StateManager& state) {
+#if defined(GOOGLE_CUDA)
   {
     absl::MutexLock lock(&mutex_);
     if (memset_kernels_.contains(params.executor)) return absl::OkStatus();
@@ -514,6 +515,7 @@ absl::Status ComputationIdCmd::Initialize(const Thunk::InitializeParams& params,
 
   absl::MutexLock lock(&mutex_);
   memset_kernels_.emplace(params.executor, std::move(kernel));
+#endif  // GOOGLE_CUDA
   return absl::OkStatus();
 }
 
@@ -540,6 +542,7 @@ absl::Status ComputationIdCmd::Record(
           << "; execution_scope_id=" << execution_scope_id.value();
   VLOG(5) << "  Id: " << dest_ << " (" << dst.opaque() << ")";
 
+#if defined(GOOGLE_CUDA)
   se::Kernel* memset_kernel = [&] {
     absl::MutexLock lock(&mutex_);
     return memset_kernels_[execute_params.stream->parent()].get();
@@ -553,6 +556,10 @@ absl::Status ComputationIdCmd::Record(
   auto args = se::PackKernelArgs(/*shmem_bytes=*/0, int64_t{1}, value, dst);
   return command_buffer->Launch(execution_scope_id, se::ThreadDim(1),
                                 se::BlockDim(1), *memset_kernel, *args);
+#else
+  return command_buffer->Memset(execution_scope_id, &dst, value,
+                                /*num_elements=*/1);
+#endif  // GOOGLE_CUDA
 }
 
 //===----------------------------------------------------------------------===//

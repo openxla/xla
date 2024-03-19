@@ -79,58 +79,6 @@ absl::StatusOr<std::unique_ptr<Thunk>> BuildCustomKernelThunkForFusion(
       &fusion, std::move(custom_kernel), std::move(kernel_arguments.args()));
 }
 
-// TODO(vuson): this is duplicated from ir_emitter_unnested.cc
-// Converts MLIR dictionary attribute attached to a custom call operation to a
-// custom call thunk attributes that are forwarded to the FFI handler.
-static absl::StatusOr<CustomCallThunk::AttributesMap> BuildAttributesMap(
-    mlir::DictionaryAttr dict) {
-  CustomCallThunk::AttributesMap attributes;
-  for (auto& kv : dict) {
-    std::string_view name = kv.getName().strref();
-
-    auto integer = [&](mlir::IntegerAttr integer) {
-      switch (integer.getType().getIntOrFloatBitWidth()) {
-        case 32:
-          attributes[name] = static_cast<int32_t>(integer.getInt());
-          return absl::OkStatus();
-        case 64:
-          attributes[name] = static_cast<int64_t>(integer.getInt());
-          return absl::OkStatus();
-        default:
-          return absl::InvalidArgumentError(absl::StrCat(
-              "Unsupported integer attribute bit width for attribute: ", name));
-      }
-    };
-
-    auto fp = [&](mlir::FloatAttr fp) {
-      switch (fp.getType().getIntOrFloatBitWidth()) {
-        case 32:
-          attributes[name] = static_cast<float>(fp.getValue().convertToFloat());
-          return absl::OkStatus();
-        default:
-          return absl::InvalidArgumentError(absl::StrCat(
-              "Unsupported float attribute bit width for attribute: ", name));
-      }
-    };
-
-    auto str = [&](mlir::StringAttr str) {
-      attributes[name] = str.getValue().str();
-      return absl::OkStatus();
-    };
-
-    TF_RETURN_IF_ERROR(
-        llvm::TypeSwitch<mlir::Attribute, Status>(kv.getValue())
-            .Case<mlir::IntegerAttr>(integer)
-            .Case<mlir::FloatAttr>(fp)
-            .Case<mlir::StringAttr>(str)
-            .Default([&](mlir::Attribute) {
-              return absl::InvalidArgumentError(absl::StrCat(
-                  "Unsupported attribute type for attribute: ", name));
-            }));
-  }
-  return attributes;
-}
-
 absl::StatusOr<BufferAllocation::Slice> GetSliceWithUpdatedOffsetAndSize(
     const BufferAssignment& buffer_assignment, const HloFusionAdaptor& fusion,
     const HloInstruction& fusion_instr, const HloInstruction& start,
@@ -239,7 +187,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   const BufferAssignment& buffer_assignment =
       ir_emitter_context.buffer_assignment();
 
-  const std::string call_target_name = custom_call.custom_call_target();
+  const std::string& call_target_name = custom_call.custom_call_target();
 
   // Typed FFI custom calls is a replacement for legacy custom calls with
   // a rich type safe API. It's under construction and not fully supported.
@@ -249,12 +197,12 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   void* call_target = CustomCallTargetRegistry::Global()->Lookup(
       call_target_name, std::string(ir_emitter_context.platform_name()));
 
-  absl::StatusOr<XLA_FFI_Handler*> handler =
+  absl::StatusOr<ffi::HandlerRegistration> registration =
       ffi::FindHandler(call_target_name, ir_emitter_context.platform_name());
 
   // At least one implementation should be available at run time.
   bool found_custom_call = !is_ffi_custom_call && call_target != nullptr;
-  bool found_ffi_handler = is_ffi_custom_call && handler.ok();
+  bool found_ffi_handler = is_ffi_custom_call && registration.ok();
 
   if (!found_custom_call && !found_ffi_handler) {
     return absl::InternalError(
@@ -375,8 +323,9 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   auto ffi_thunk = [&] {
     auto& called_computations = custom_call.called_computations();
     return std::make_unique<CustomCallThunk>(
-        Thunk::ThunkInfo::WithProfileAnnotation(&custom_call), *handler,
-        std::move(operands), std::move(results), std::move(attributes),
+        Thunk::ThunkInfo::WithProfileAnnotation(&custom_call),
+        registration->handler, std::move(operands), std::move(results),
+        std::move(attributes),
         called_computations.empty() ? nullptr : called_computations[0]);
   };
 

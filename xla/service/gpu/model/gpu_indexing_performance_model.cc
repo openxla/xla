@@ -97,8 +97,8 @@ int64_t GetIterationSpaceSize(const IndexingMap& indexing_map,
         return num_iters;
       };
 
-  return get_ranges_iteration_space_size(indexing_map.GetSymbolRanges()) *
-         get_ranges_iteration_space_size(indexing_map.GetDimensionRanges());
+  return get_ranges_iteration_space_size(indexing_map.GetSymbolBounds()) *
+         get_ranges_iteration_space_size(indexing_map.GetDimensionBounds());
 }
 
 EstimateRunTimeData
@@ -123,7 +123,7 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
   // operands. For each instruction, tells which elements of the instructions
   // result will be used to compute one result element of the fusion.
   auto grouped_fusion_indexing = ComputeGroupedOutputToInputIndexing(
-      fusion_adaptor, roots[0], mlir_context_);
+      fusion_adaptor, roots[0], &indexing_context_);
 
   int64_t flops = 0;
   int64_t bytes_read = 0;

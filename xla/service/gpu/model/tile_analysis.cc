@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/service/gpu/model/affine_map_printer.h"
+#include "xla/service/gpu/model/indexing_context.h"
 #include "xla/service/gpu/model/indexing_map.h"
 
 namespace xla {
@@ -219,7 +220,7 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
         if (symbol_expr && symbol_expr.getPosition() < num_known_symbols) {
           CHECK(!size_expr);
           const Interval& symbol_range =
-              indexing_map.GetSymbolRange(symbol_expr.getPosition());
+              indexing_map.GetSymbolBound(symbol_expr.getPosition());
           size_expr = getAffineConstantExpr(
               symbol_range.upper - symbol_range.lower + 1, mlir_context);
         } else if (auto dim_expr = llvm::dyn_cast<AffineDimExpr>(expr)) {
@@ -252,21 +253,25 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
 
 /*static*/ std::optional<SymbolicTile> SymbolicTile::FromIndexingMap(
     const IndexingMap& indexing_map) {
-  MLIRContext* mlir_context = indexing_map.GetAffineMap().getContext();
+  if (indexing_map.GetRTVarsCount()) {
+    return std::nullopt;
+  }
+  IndexingContext* indexing_context = indexing_map.GetIndexingContext();
+  MLIRContext* mlir_context = indexing_context->GetMLIRContext();
   int64_t num_input_dims = indexing_map.GetDimensionCount();
   std::vector<AffineExpr> exprs;
   exprs.reserve(num_input_dims);
 
-  std::vector<Interval> tile_dimension_ranges;
-  tile_dimension_ranges.reserve(num_input_dims);
-  std::vector<Interval> tile_symbol_ranges;
-  tile_symbol_ranges.reserve(kNumTileParametersPerInputDim * num_input_dims +
-                             indexing_map.GetAffineMap().getNumSymbols());
+  std::vector<DimVar> tile_dim_vars;
+  tile_dim_vars.reserve(num_input_dims);
+  std::vector<RangeVar> tile_range_vars;
+  tile_range_vars.reserve(kNumTileParametersPerInputDim * num_input_dims +
+                          indexing_map.GetAffineMap().getNumSymbols());
 
   // The symbols declared in 'indexing_map.affine_map' will precede those
   // defined in the producer map we construct here.
-  absl::c_copy(indexing_map.GetSymbolRanges(),
-               std::back_inserter(tile_symbol_ranges));
+  absl::c_copy(indexing_map.GetRangeVars(),
+               std::back_inserter(tile_range_vars));
 
   // For each input dims we add kNumTileParametersPerInputDim = 3 symbols, as
   // well as a single dim. Symbols are ordered in (offset, size, stride)
@@ -280,12 +285,12 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
 
     exprs.push_back(offset + stride * index);
 
-    Interval range = indexing_map.GetDimensionRange(dim);
-    tile_dimension_ranges.push_back(range);
+    Interval range = indexing_map.GetDimensionBound(dim);
+    tile_dim_vars.push_back({range});
 
     for (int64_t symbol_index = 0; symbol_index < kNumTileParametersPerInputDim;
          ++symbol_index) {
-      tile_symbol_ranges.push_back(range);
+      tile_range_vars.push_back({range});
     }
   }
 
@@ -294,8 +299,8 @@ std::optional<RawSymbolicTile> RawSymbolicTileFromIndexingMap(
       mlir_context);
 
   IndexingMap composed_indexing_map(
-      indexing_map.GetAffineMap().compose(producer_map), tile_dimension_ranges,
-      tile_symbol_ranges);
+      indexing_context, indexing_map.GetAffineMap().compose(producer_map),
+      tile_dim_vars, tile_range_vars, /*rt_vars=*/{});
 
   composed_indexing_map.Simplify();
 

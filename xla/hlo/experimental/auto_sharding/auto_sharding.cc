@@ -1834,6 +1834,7 @@ AutoShardingSolverResult CallSolver(
   request.set_saltiplier(kSaltiplier);
   request.set_deterministic_mode(deterministic_mode);
   request.set_request_name(std::string(request_name));
+  request.set_enable_memory_edge_costs(option.model_resharding_memory_costs);
   if (max_cost) {
     request.mutable_max_cost()->set_coeff(*max_cost);
   }
@@ -3630,9 +3631,16 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
         return changed.status();
       }
     }
-    std::vector<int64_t> device_mesh_ids = std::vector<int64_t>(total_devices);
-    std::iota(device_mesh_ids.begin(), device_mesh_ids.end(), 0);
-    device_mesh.SetValues(device_mesh_ids);
+    if (option_.device_mesh_ids.size() == total_devices) {
+      // It is unclear what device order to use for partial meshes. So we only
+      // use the actual device order only for the final full mesh.
+      device_mesh.SetValues(option_.device_mesh_ids);
+    } else {
+      std::vector<int64_t> device_mesh_ids =
+          std::vector<int64_t>(total_devices);
+      std::iota(device_mesh_ids.begin(), device_mesh_ids.end(), 0);
+      device_mesh.SetValues(device_mesh_ids);
+    }
 
     // TODO (zhuohan): Include the prof result as an option.
     spmd::ProfilingResult prof_result;

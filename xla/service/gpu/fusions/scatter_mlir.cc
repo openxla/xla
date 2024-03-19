@@ -83,13 +83,13 @@ bool MlirScatterFusion::IsSupported(const HloFusionAnalysis& analysis) {
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToOutputIndexing(
-    int64_t root_index, mlir::MLIRContext* ctx) const {
+    int64_t root_index, IndexingContext* indexing_context) const {
   return std::nullopt;
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
-    mlir::MLIRContext* ctx) const {
+    IndexingContext* indexing_context) const {
   auto* scatter =
       DynCast<HloScatterInstruction>(analysis_.fusion_heroes().front());
   int64_t scatter_operand_count = scatter->scatter_operand_count();
@@ -106,7 +106,8 @@ std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
   // Compute thread id mapping based on the first update operand.
   Shape scatter_update_shape = scatter->scatter_updates().front()->shape();
   IndexingMap scatter_update_map = GetDefaultThreadIdToOutputIndexingMap(
-      launch_dimensions(), config_.unroll_factor, scatter_update_shape, ctx);
+      launch_dimensions(), config_.unroll_factor, scatter_update_shape,
+      indexing_context);
 
   // For scatter indices we project indexing for scatter updates and take the
   // first result of the affine map only, because they coincide.
@@ -114,14 +115,17 @@ std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
     Shape scatter_indices_shape = scatter->scatter_indices()->shape();
     CHECK_EQ(scatter_indices_shape.rank(), 2) << scatter->ToString();
     // Create a map from scatter update to scatter indices.
+    auto* mlir_context = indexing_context->GetMLIRContext();
     IndexingMap updates_to_indices_map{
+        indexing_context,
         mlir::AffineMap::get(
             /*dimCount=*/scatter_update_shape.rank(), /*symbolCount=*/1,
-            {mlir::getAffineDimExpr(0, ctx), mlir::getAffineSymbolExpr(0, ctx)},
-            ctx),
-        /*dim_ranges=*/RangesFromTensorSizes(scatter_update_shape.dimensions()),
-        /*symbol_ranges=*/
-        RangesFromTensorSizes({scatter_indices_shape.dimensions(1)})};
+            {mlir::getAffineDimExpr(0, mlir_context),
+             mlir::getAffineSymbolExpr(0, mlir_context)},
+            mlir_context),
+        DimVarsFromTensorSizes(scatter_update_shape.dimensions()),
+        RangeVarsFromTensorSizes({scatter_indices_shape.dimensions(1)}),
+        /*rt_vars=*/{}};
     auto scatter_indices_map = scatter_update_map * updates_to_indices_map;
     scatter_indices_map.Simplify();
     return scatter_indices_map;
@@ -136,10 +140,10 @@ LaunchDimensions MlirScatterFusion::launch_dimensions() const {
   return CalculateLaunchDimensions(shape, analysis_.device_info());
 }
 
-absl::flat_hash_set<const HloInstruction*>
+std::vector<const HloInstruction*>
 MlirScatterFusion::GetInstructionsWithCustomCodegen(
     const HloFusionInstruction& fusion) const {
-  return {analysis_.fusion_heroes()[0]};
+  return analysis_.fusion_heroes();
 }
 
 mlir::Value EmitScatterComputation(
@@ -147,14 +151,14 @@ mlir::Value EmitScatterComputation(
     Value output_tensor,
     const mlir_converter::PartitionedComputation& root_computation,
     const mlir_converter::CallTargetProvider& call_targets,
-    mlir::ImplicitLocOpBuilder& b) {
+    mlir::func::FuncOp entry_function, mlir::ImplicitLocOpBuilder& b) {
   constexpr int kScatterOperandIndex = 0;
   auto reducer =
       call_targets(scatter->called_computations()[0]->root_instruction());
   if (scatter->unique_indices()) {
-    auto operand_elem =
-        ProvideParameter(root_computation, scatter, kScatterOperandIndex,
-                         indices, call_targets, b)[0];
+    auto operand_elem = ProvideParameter(root_computation.FindSubgraph(scatter),
+                                         scatter, kScatterOperandIndex, indices,
+                                         call_targets, entry_function, b)[0];
     auto reduced_val = mlir_converter::InlineBlock(
         b, reducer.getBody().front(), {operand_elem, update_elem})[0];
 
@@ -185,16 +189,18 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
   const HloInstruction* scatter_update = scatter->operand(kScatterUpdateIndex);
 
   mlir::MLIRContext* mlir_context = entry_function.getContext();
+  IndexingContext indexing_context{mlir_context};
   auto thread_id_to_update_map =
       ComputeThreadIdToInputIndexing(
           /*root_index=*/0, /*hero_operand_index=*/kScatterUpdateIndex,
-          mlir_context)
+          &indexing_context)
           .value();
   thread_id_to_update_map.Simplify();
   thread_id_to_update_map.RemoveUnusedSymbols();
 
   const auto& root_computation = computations.FindPartitionedComputation(
       fusion.fused_instructions_computation());
+  const auto& scatter_subgraph = root_computation.FindSubgraph(scatter);
   mlir::ImplicitLocOpBuilder b(entry_function.getLoc(), entry_function);
   b.setInsertionPointToStart(entry_function.addEntryBlock());
 
@@ -210,8 +216,9 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
             ApplyAffineMap(thread_id_to_update_map.GetAffineMap(), dim_values,
                            symbol_values, b);
         auto update_elem =
-            ProvideParameter(root_computation, scatter, kScatterUpdateIndex,
-                             update_tensor_indices, call_targets, b)
+            ProvideParameter(scatter_subgraph, scatter, kScatterUpdateIndex,
+                             update_tensor_indices, call_targets,
+                             entry_function, b)
                 .front();
 
         // Extract slice offsets from scatter_indices operand, compute if the
@@ -226,8 +233,8 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
             SmallVector<Value, 4> indices_tensor_indices = {
                 update_tensor_indices.front(), b.create<ConstantIndexOp>(i)};
             extracted_index = ProvideParameter(
-                root_computation, scatter, kScatterIndicesIndex,
-                indices_tensor_indices, call_targets, b)[0];
+                scatter_subgraph, scatter, kScatterIndicesIndex,
+                indices_tensor_indices, call_targets, entry_function, b)[0];
             if (extracted_index.getType() != b.getIndexType()) {
               extracted_index = b.create<mlir::arith::IndexCastOp>(
                   b.getIndexType(), extracted_index);
@@ -252,7 +259,7 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
                  [&](OpBuilder& then_builder, Location then_loc) -> void {
                    Value updated_output = EmitScatterComputation(
                        scatter, indices, update_elem, output_tensor,
-                       root_computation, call_targets, b);
+                       root_computation, call_targets, entry_function, b);
                    b.create<scf::YieldOp>(updated_output);
                  },
                  [&](OpBuilder& else_b, Location else_loc) {

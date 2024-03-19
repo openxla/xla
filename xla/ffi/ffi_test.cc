@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status_matchers.h"
@@ -48,13 +49,17 @@ TEST(FfiTest, StaticRegistration) {
   XLA_FFI_DEFINE_HANDLER(NoOp1, noop);
 
   XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-0", "Host", NoOp0);
-  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-1", "Host", NoOp1);
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-1", "Host", NoOp1,
+                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
 
   auto handler0 = FindHandler("no-op-0", "Host");
   auto handler1 = FindHandler("no-op-1", "Host");
 
   TF_ASSERT_OK(handler0.status());
   TF_ASSERT_OK(handler1.status());
+
+  ASSERT_EQ(handler0->traits, 0);
+  ASSERT_EQ(handler1->traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
 
   EXPECT_THAT(StaticRegisteredHandlers("Host"),
               UnorderedElementsAre(Pair("no-op-0", _), Pair("no-op-1", _)));
@@ -466,15 +471,18 @@ TEST(FfiTest, RemainingArgs) {
 
 TEST(FfiTest, RunOptionsCtx) {
   auto call_frame = CallFrameBuilder().Build();
-  auto* expected = reinterpret_cast<ServiceExecutableRunOptions*>(0x01234567);
+  auto* expected = reinterpret_cast<se::Stream*>(0x01234567);
 
-  auto fn = [&](const ServiceExecutableRunOptions* run_options) {
+  ServiceExecutableRunOptions opts;
+  opts.mutable_run_options()->set_stream(expected);
+
+  auto fn = [&](const se::Stream* run_options) {
     EXPECT_EQ(run_options, expected);
     return absl::OkStatus();
   };
 
-  auto handler = Ffi::Bind().Ctx<ServiceExecutableRunOptions>().To(fn);
-  auto status = Call(*handler, call_frame, {expected});
+  auto handler = Ffi::Bind().Ctx<Stream>().To(fn);
+  auto status = Call(*handler, call_frame, {&opts});
 
   TF_ASSERT_OK(status);
 }

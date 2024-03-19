@@ -594,11 +594,11 @@ PjRtFuture<absl::Status> StreamExecutorGpuClient::CopyRawSubBufferToHost(
                         /*reference_held=*/false);
 
   auto promise = PjRtFuture<absl::Status>::CreatePromise();
+  auto stream_ptr = stream.get();
   auto callback_status = local_device->ThenExecuteCallback(
-      stream.get(), [promise, free_sub_range = sub_buffer.release(),
-                     free_stream = stream.release(), local_device]() mutable {
+      stream_ptr,
+      [promise, free_stream = stream.release(), local_device]() mutable {
         auto stream = std::unique_ptr<se::Stream>(free_stream);
-        auto sub_range = std::unique_ptr<se::DeviceMemoryBase>(free_sub_range);
         local_device->ReturnStreamToPool(std::move(stream));
         promise.Set(OkStatus());
       });
@@ -1078,6 +1078,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options) {
 #if TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::RocmName();
+#elif TENSORFLOW_USE_SYCL
+  auto pjrt_platform_name = xla::SyclName();
 #else   // TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::CudaName();
 #endif  // TENSORFLOW_USE_ROCM
