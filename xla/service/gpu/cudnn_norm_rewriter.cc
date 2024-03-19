@@ -173,7 +173,10 @@ bool CompatibleElementType(const HloInstruction* instr) {
 }
 
 // Returns the dimensions associated with shape, adjusted for the removal of any
-// degenerate dimensions in shape.
+// degenerate dimensions in shape. Specifically, for each dimension d in
+// dimensions, returns the new index of d if all dimensions of size 1 are
+// removed from shape. If d has size 1, it is not included in the returned
+// vector.
 std::vector<int64_t> AdjustedDimensions(const Shape& shape,
                                         absl::Span<const int64_t> dimensions) {
   absl::flat_hash_map<int64_t, int64_t> dimension_map;
@@ -312,9 +315,6 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
   auto dimension_product =
       [](const Shape& shape,
          absl::Span<const int64_t> product_dimensions) -> int64_t {
-    if (product_dimensions.empty()) {
-      return 0;
-    }
     int64_t product = 1;
     for (int64_t product_dimension : product_dimensions) {
       product *= shape.dimensions(product_dimension);
@@ -327,8 +327,9 @@ std::vector<int64_t> MapDimensions(const Shape& original_shape,
   for (int64_t original_dimension = 0, reshaped_dimension = 0;
        original_dimension < original_shape.rank(); ++original_dimension) {
     original_dimensions.emplace_back(original_dimension);
-    while (dimension_product(reshaped_shape, reshaped_dimensions) <
-               dimension_product(original_shape, original_dimensions) &&
+    while ((reshaped_dimensions.empty() ||
+            dimension_product(reshaped_shape, reshaped_dimensions) <
+                dimension_product(original_shape, original_dimensions)) &&
            reshaped_dimension < reshaped_shape.rank()) {
       reshaped_dimensions.emplace_back(reshaped_dimension++);
     }
@@ -983,14 +984,14 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // If necessary, transpose the input so that the dimensions not being
       // normalized are the leading dimensions.
-      std::vector<int64_t> non_norm_dims, non_norm_dims_adjusted;
+      std::vector<int64_t> non_norm_dims;
       for (int64_t x_dim = 0; x_dim < x.Instr()->shape().rank(); ++x_dim) {
         if (std::find(norm_dims.begin(), norm_dims.end(), x_dim) ==
             norm_dims.end()) {
           non_norm_dims.emplace_back(x_dim);
         }
       }
-      non_norm_dims_adjusted =
+      std::vector<int64_t> non_norm_dims_adjusted =
           AdjustedDimensions(x.Instr()->shape(), non_norm_dims);
 
       std::vector<int64_t> x_transpose_order = non_norm_dims;
