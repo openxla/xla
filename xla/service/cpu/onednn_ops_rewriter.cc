@@ -432,10 +432,12 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   Status HandleConvert(HloInstruction* instr) override {    
     HloInstruction* custom_call;
     HloInstruction* convert_instr;
-    auto pattern = m::Convert(OneDnnConvertibleInstr(&custom_call)
-                                  .WithOneUser()
-                                  .WithElementType(PrimitiveType::F32))
-                       .WithElementType(PrimitiveType::BF16);
+    auto pattern =
+        m::Op(&convert_instr)
+            .WithOpcode(HloOpcode::kConvert)
+            .WithOperand(0, OneDnnConvertibleInstr(&custom_call)
+                                .WithOneUser()
+                                .WithElementType(PrimitiveType::F32));
 
     if (!IsSupportedType(instr->shape().element_type())) return OkStatus();
     if (Match(instr, pattern)) {
