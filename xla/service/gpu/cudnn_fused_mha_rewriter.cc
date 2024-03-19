@@ -324,10 +324,17 @@ std::vector<int64_t> GetDimensionVector(absl::Span<const int64_t> dimensions,
   return vec;
 }
 
-absl::StatusOr<std::vector<int64_t>> GetBHSD(HloInstruction* bmm_1,
-                                             HloInstruction* bmm_2,
-                                             bool need_canonicalization) {
-  // get bhsd from bmm1
+struct QKVLayout {
+  int64_t batch;
+  int64_t num_heads;
+  int64_t seqlen_q;
+  int64_t seqlen_kv;
+  int64_t hidden_dim;
+};
+
+absl::StatusOr<std::optional<QKVLayout>> GetQKVLayout(
+    HloInstruction* bmm_1, HloInstruction* bmm_2, bool need_canonicalization) {
+  // get layout from bmm1
   const DotDimensionNumbers& bmm1_dnums = bmm_1->dot_dimension_numbers();
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> bmm1_s_q_dims,
@@ -360,7 +367,7 @@ absl::StatusOr<std::vector<int64_t>> GetBHSD(HloInstruction* bmm_1,
   TF_RET_CHECK(bmm1_s_kv.size() == 1);
   TF_RET_CHECK(bmm1_d.size() == 1);
 
-  // get bhsd from bmm2
+  // get layout from bmm2
   const DotDimensionNumbers& bmm2_dnums = bmm_2->dot_dimension_numbers();
   TF_ASSIGN_OR_RETURN(
       std::vector<int64_t> bmm2_lhs_non_contracting_dims,
@@ -405,38 +412,43 @@ absl::StatusOr<std::vector<int64_t>> GetBHSD(HloInstruction* bmm_1,
   if (bmm1_bh[0] != bmm2_bh[0] || bmm1_bh[1] != bmm2_bh[1] ||
       bmm1_s_q[0] != bmm2_s_q[0] || bmm1_s_kv[0] != bmm2_s_kv[0] ||
       bmm1_d[0] != bmm2_d[0]) {
-    return std::vector<int64_t>{};
+    return std::nullopt;
   }
 
-  std::vector<int64_t> bhsd = {bmm1_bh[0], bmm1_bh[1], bmm1_s_q[0],
-                               bmm1_s_kv[0], bmm1_d[0]};
-  return bhsd;
+  QKVLayout qkv_layout;
+  qkv_layout.batch = bmm1_bh[0];
+  qkv_layout.num_heads = bmm1_bh[1];
+  qkv_layout.seqlen_q = bmm1_s_q[0];
+  qkv_layout.seqlen_kv = bmm1_s_kv[0];
+  qkv_layout.hidden_dim = bmm1_d[0];
+  return qkv_layout;
 }
 
 absl::StatusOr<bool> IsFusedAttention(
-    std::vector<int64_t>& bhsd, bool is_training,
+    QKVLayout qkv_layout, bool is_training,
     stream_executor::CudaComputeCapability cc,
     stream_executor::dnn::VersionInfo cudnn_version) {
   // otherwise check if it is supported by regular attention
-  int64_t s_q = bhsd[2];
-  int64_t s_kv = bhsd[3];
-  int64_t hidden_dim = bhsd[4];
-  bool is_seqlen_supported = (s_q <= 512 && s_kv <= 512) &&
-                             (!is_training || s_q % 64 == 0 && s_kv % 64 == 0);
+  int64_t s_q = qkv_layout.seqlen_q;
+  int64_t s_kv = qkv_layout.seqlen_kv;
+  int64_t hidden_dim = qkv_layout.hidden_dim;
+  bool is_seqlen_supported =
+      (s_q <= 512 && s_kv <= 512) &&
+      (!is_training || (s_q % 64 == 0 && s_kv % 64 == 0));
   bool is_hidden_dim_supported = hidden_dim == 64;
   bool is_fused_attention = is_seqlen_supported && is_hidden_dim_supported;
   return is_fused_attention;
 }
 
 absl::StatusOr<bool> IsFlashAttention(
-    std::vector<int64_t>& bhsd, bool is_training,
+    QKVLayout qkv_layout, bool is_training,
     stream_executor::CudaComputeCapability cc,
     stream_executor::dnn::VersionInfo cudnn_version) {
-  int64_t s_q = bhsd[2];
-  int64_t s_kv = bhsd[3];
-  int64_t hidden_dim = bhsd[4];
+  int64_t s_q = qkv_layout.seqlen_q;
+  int64_t s_kv = qkv_layout.seqlen_kv;
+  int64_t hidden_dim = qkv_layout.hidden_dim;
   bool is_seqlen_supported = (s_q > 512 || s_kv > 512) &&
-                             (!is_training || s_q % 2 == 0 && s_kv % 2 == 0);
+                             (!is_training || (s_q % 2 == 0 && s_kv % 2 == 0));
   bool is_hidden_dim_supported = hidden_dim <= 128 && hidden_dim % 8 == 0;
   bool is_flash_attention = is_seqlen_supported && is_hidden_dim_supported;
 
@@ -1206,16 +1218,17 @@ absl::StatusOr<bool> IsMHABlockSupported(
 
   // get batch/num heads/sequence length/hidden dim from bmm1 and bmm2
   // also make sure they are the same between bmm1 and bmm2
-  TF_ASSIGN_OR_RETURN(std::vector<int64_t> bhsd,
-                      GetBHSD(bmm_1, bmm_2, need_canonicalization));
-  if (bhsd.size() == 0) {
-    VLOG(2) << "bmm1 and bmm2 have different bhsd length.";
+  TF_ASSIGN_OR_RETURN(std::optional<QKVLayout> qkv_layout,
+                      GetQKVLayout(bmm_1, bmm_2, need_canonicalization));
+  if (!qkv_layout.has_value()) {
+    VLOG(2) << "bmm1 and bmm2 have different qkv layout.";
     return false;
   }
 
   // check if matched attention block is supported by cuDNN flash attention.
-  TF_ASSIGN_OR_RETURN(is_flash_attention,
-                      IsFlashAttention(bhsd, is_training, cc, cudnn_version));
+  TF_ASSIGN_OR_RETURN(
+      is_flash_attention,
+      IsFlashAttention(qkv_layout.value(), is_training, cc, cudnn_version));
   if (is_flash_attention) {
     if (is_causal_mask) {
       // if bias is causal mask, needs to remove bias from name
@@ -1233,8 +1246,9 @@ absl::StatusOr<bool> IsMHABlockSupported(
     return true;
   }
   // check if matched attention block is supported by cuDNN fused attention.
-  TF_ASSIGN_OR_RETURN(bool is_fused_attention,
-                      IsFusedAttention(bhsd, is_training, cc, cudnn_version));
+  TF_ASSIGN_OR_RETURN(
+      bool is_fused_attention,
+      IsFusedAttention(qkv_layout.value(), is_training, cc, cudnn_version));
   return is_fused_attention;
 }
 
