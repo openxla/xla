@@ -19,6 +19,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>  // NOLINT(build/c++11)
@@ -62,15 +63,26 @@ limitations under the License.
 namespace pjrt {
 namespace {
 
+void InitializeExpectedOutputsAndRegister() {
+  std::string platform_name;
 #ifdef TENSORFLOW_USE_ROCM
-const bool kUnused = (RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); },
-                                                  /*platform_name=*/"rocm"),
-                      true);
+  platform_name = "rocm";
+  expected_device_debug_string = "rocm:0";
+  expected_device_to_string = "rocm(id=0)";
 #else   // TENSORFLOW_USE_ROCM
-const bool kUnused = (RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); },
-                                                  /*platform_name=*/"cuda"),
-                      true);
+  platform_name = "cuda";
+  std::string expected_device_debug_string = "cuda:0";
+  std::string expected_device_to_string = "cuda(id=0)";
 #endif  // TENSORFLOW_USE_ROCM
+  std::optional<ExpectedOutputs> expected_outputs =
+      std::make_optional(InitializeExpectedOutputs(expected_device_debug_string,
+                                                   expected_device_to_string));
+
+  RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); }, platform_name,
+                              expected_outputs);
+}
+
+const bool kUnused = (InitializeExpectedOutputsAndRegister(), true);
 
 class PjrtCApiGpuTest : public PjrtCApiTestBase {
  public:
