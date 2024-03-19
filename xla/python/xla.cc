@@ -283,7 +283,7 @@ NB_MODULE(xla_extension, m_nb) {
         return std::make_shared<cpu::MpiCollectives>();
       });
 #else  // _WIN32
-m_nb.def(
+  m_nb.def(
       "make_mpi_collectives",
       []() -> std::shared_ptr<xla::cpu::CollectivesInterface> {
         throw xla::XlaRuntimeError(
