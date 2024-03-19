@@ -17,8 +17,11 @@ limitations under the License.
 #include <utility>
 
 #include "xla/pjrt/cpu/cpu_client.h"
+#include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/statusor.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {

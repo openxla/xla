@@ -25,8 +25,11 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/host_callback.h"
+#include "xla/statusor.h"
+#include "tsl/concurrency/ref_count.h"
 
 namespace xla {
 namespace ifrt {

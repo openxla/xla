@@ -21,9 +21,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "llvm/Support/ExtensibleRTTI.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
+#include "xla/statusor.h"
 
 namespace xla {
 namespace ifrt {

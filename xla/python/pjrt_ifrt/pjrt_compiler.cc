@@ -19,11 +19,16 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "llvm/Support/Casting.h"
+#include "xla/python/ifrt/compiler.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
+#include "xla/statusor.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
