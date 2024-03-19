@@ -1,4 +1,4 @@
-/* Copyright 2023 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,16 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_XLA_H_
-#define XLA_PYTHON_XLA_H_
+#ifndef XLA_PYTHON_NB_ABSL_FLAT_HASH_SET_H_
+#define XLA_PYTHON_NB_ABSL_FLAT_HASH_SET_H_
 
-// placeholder for index annotation headers
-#include "pybind11/pybind11.h"  // from @pybind11
+#include "absl/container/flat_hash_set.h"
+#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/stl/detail/nb_set.h"  // from @nanobind
 
-namespace xla {
+namespace nanobind {
+namespace detail {
 
-PyObject *InitializeXlaExtension();
+template <typename Key, typename Hash, typename Eq, typename Alloc>
+struct type_caster<absl::flat_hash_set<Key, Hash, Eq, Alloc>>
+    : set_caster<absl::flat_hash_set<Key, Hash, Eq, Alloc>, Key> {};
 
-}  // namespace xla
+}  // namespace detail
+}  // namespace nanobind
 
-#endif  // XLA_PYTHON_XLA_H_
+#endif  // XLA_PYTHON_NB_ABSL_FLAT_HASH_SET_H_

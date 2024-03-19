@@ -16,13 +16,13 @@ limitations under the License.
 #ifndef XLA_PYTHON_IFRT_PROXY_CLIENT_PY_MODULE_H_
 #define XLA_PYTHON_IFRT_PROXY_CLIENT_PY_MODULE_H_
 
-#include "pybind11/pybind11.h"  // from @pybind11
+#include "nanobind/nanobind.h"  // from @nanobind
 
 namespace xla {
 namespace ifrt {
 namespace proxy {
 
-void BuildIfrtProxySubmodule(pybind11::module_& m);
+void BuildIfrtProxySubmodule(nanobind::module_& m);
 
 }  // namespace proxy
 }  // namespace ifrt
