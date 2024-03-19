@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/pjrt/transpose.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
@@ -839,6 +840,78 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     return size;
   }
 
+  // Recomputes the memory stats from allocations. Why recompute?
+  // Firstly, there are cases in which gpu::Executable inherits its allocations
+  // from elsewhere, and no buffer assignment is available.
+  // Secondly, exec->buffer_assignment()->GetStats() provides the statistics we
+  // want, but does not distinguish between device and host memory, and does
+  // not account for aliased memory.
+  static void PopulateBufferStatsFromAllocations(
+      absl::Span<const BufferAllocation> allocs, CompiledMemoryStats& stats) {
+    stats.argument_size_in_bytes = 0;
+    stats.output_size_in_bytes = 0;
+    stats.temp_size_in_bytes = 0;
+    stats.alias_size_in_bytes = 0;
+    stats.host_argument_size_in_bytes = 0;
+    stats.host_output_size_in_bytes = 0;
+    stats.host_temp_size_in_bytes = 0;
+    stats.host_alias_size_in_bytes = 0;
+
+    for (auto& alloc : allocs) {
+      // All logical buffers assigned to a buffer allocation share a color.
+      // With buffer assigner's default colorer the color happens to be the
+      // memory space of the underlying HLO value. Callers may choose other
+      // colorers, however, e.g.: https://github.com/openxla/xla/blob/50c6489cb058881cc65622605c9c55029abebc5b/xla/service/gpu/compile_module_to_llvm_ir.cc#L152
+      // Until buffer allocations provide a stronger guarantee about colors,
+      // we sanity-check that the default coloring behavior was used.
+      int64_t alloc_memory_space = -1;
+      for (const auto &[value, _] : alloc.assigned_buffers()) {
+        const HloPosition& defining_position = value->defining_position();
+        int64_t memory_space = Layout::kDefaultMemorySpace;
+        if (defining_position.shape().has_layout()) {
+          memory_space = defining_position.shape().layout().memory_space();
+        }
+        if (alloc_memory_space == -1) {
+          alloc_memory_space = memory_space;
+        } else {
+          CHECK(alloc_memory_space == memory_space && \
+              "expected same memory space for all assignments in allocation");
+        }
+      }
+
+      bool is_host = alloc_memory_space == Layout::kHostMemorySpace;
+      int64_t size = alloc.size();
+      if (alloc.is_entry_computation_parameter()) {
+        if (is_host) {
+          stats.host_argument_size_in_bytes += size;
+        } else {
+          stats.argument_size_in_bytes += size;
+        }
+        if (alloc.is_parameter_aliased_with_output()) {
+          if (is_host) {
+            stats.host_alias_size_in_bytes += size;
+          } else {
+            stats.alias_size_in_bytes += size;
+          }
+        }
+      }
+      if (alloc.maybe_live_out()) {
+        if (is_host) {
+          stats.host_output_size_in_bytes += size;
+        } else {
+          stats.output_size_in_bytes += size;
+        }
+      }
+      if (alloc.IsPreallocatedTempBuffer()) {
+        if (is_host) {
+          stats.host_temp_size_in_bytes += size;
+        } else {
+          stats.temp_size_in_bytes += size;
+        }
+      }
+    }
+  }
+
   StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
     if (executables_.size() != 1) {
       return Unimplemented(
@@ -851,20 +924,16 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     if (proto != nullptr) {
       memory_stats.serialized_hlo_proto = proto->SerializeAsString();
     }
-    if (auto exec = dynamic_cast<xla::gpu::GpuExecutable*>(executables_[0]->executable()); exec != nullptr) {
-      // TODO: Instead of using buffer_assignment, recompute stats from exec->Allocations() 
-      auto buffer_assignment = exec->buffer_assignment();
-      CHECK(buffer_assignment && "expected buffer assignment in GPU executable");
-      auto& stats = buffer_assignment->GetStats();
-      memory_stats.argument_size_in_bytes = stats.parameter_allocation_bytes;
-      memory_stats.output_size_in_bytes = stats.maybe_live_out_allocation_bytes;
-      memory_stats.temp_size_in_bytes = stats.preallocated_temp_allocation_bytes;
-      memory_stats.alias_size_in_bytes = 0;
-      for (auto& alloc : buffer_assignment->Allocations()) {
-        if (alloc.is_entry_computation_parameter() && alloc.is_parameter_aliased_with_output()) {
-          memory_stats.alias_size_in_bytes += alloc.size();
-        }
-      }
+    // TODO: Should this code live in backend-specific subclasses?
+    // (There is TfrtCpuExecutable, but no equivalent for GPUs.)
+    if (auto exec = dynamic_cast<xla::cpu::CpuExecutable*>(
+          executables_[0]->executable()); exec != nullptr) {
+      PopulateBufferStatsFromAllocations(
+          exec->buffer_assignment().Allocations(),
+          memory_stats);
+    } else if (auto exec = dynamic_cast<xla::gpu::GpuExecutable*>(
+          executables_[0]->executable()); exec != nullptr) {
+      PopulateBufferStatsFromAllocations(exec->GetAllocations(), memory_stats);
     }
     return memory_stats;
   }

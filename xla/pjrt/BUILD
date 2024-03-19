@@ -474,6 +474,7 @@ cc_library(
         "//xla/service:maybe_owning_device_memory",
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
+        "//xla/service/cpu:cpu_executable",
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor",
