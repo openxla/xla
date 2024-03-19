@@ -277,18 +277,19 @@ NB_MODULE(xla_extension, m_nb) {
   nb::class_<cpu::MpiCollectives> mpi_collectives(m_nb, "MpiCollectives", cpu_collectives);
   mpi_collectives.def("Init", &cpu::MpiCollectives::Init);
   mpi_collectives.def("Finalize", &cpu::MpiCollectives::Finalize);
-#endif // _WIN32
-
   m_nb.def(
       "make_mpi_collectives",
       []() -> std::shared_ptr<cpu::MpiCollectives> {
-#ifndef _WIN32
         return std::make_shared<cpu::MpiCollectives>();
+      });
 #else  // _WIN32
+m_nb.def(
+      "make_mpi_collectives",
+      []() -> std::shared_ptr<xla::cpu::CollectivesInterface> {
         throw xla::XlaRuntimeError(
             "make_mpi_collectives is not implemented for Windows");
-#endif // _WIN32
       });
+#endif // _WIN32
 
   m_nb.def(
       "get_tfrt_cpu_client",
