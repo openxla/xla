@@ -51,7 +51,8 @@ class NcclCollectiveBroadcastStartThunk : public NcclCollectiveThunk {
 
  protected:
   Status RunNcclCollective(const ExecuteParams& params, se::Stream& stream,
-                           NcclApi::NcclCommHandle comm) override;
+                           NcclApi::NcclCommHandle comm,
+                           bool is_local) override;
 
  private:
   const NcclCollectiveConfig config_;

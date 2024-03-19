@@ -1448,12 +1448,13 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
+  std::pair<NcclApi::NcclCommHandle, bool> comm_pair;
+  TF_ASSIGN_OR_RETURN(comm_pair,
                       GetNcclComm(*execute_params.collective_params,
                                   *execute_params.collective_cliques,
                                   config().replica_groups, config().group_mode,
                                   /*stream_id=*/0, GetAsyncStreamKind()));
-
+  NcclApi::NcclCommHandle comm = comm_pair.first;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1516,12 +1517,13 @@ absl::Status ReduceScatterCmd::Record(
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
+  std::pair<NcclApi::NcclCommHandle, bool> comm_pair;
+  TF_ASSIGN_OR_RETURN(comm_pair,
                       GetNcclComm(*execute_params.collective_params,
                                   *execute_params.collective_cliques,
                                   config().replica_groups, config().group_mode,
                                   /*stream_id=*/0, GetAsyncStreamKind()));
-
+  NcclApi::NcclCommHandle comm = comm_pair.first;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1581,12 +1583,13 @@ absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
+  std::pair<NcclApi::NcclCommHandle, bool> comm_pair;
+  TF_ASSIGN_OR_RETURN(comm_pair,
                       GetNcclComm(*execute_params.collective_params,
                                   *execute_params.collective_cliques,
                                   config().replica_groups, config().group_mode,
                                   /*stream_id=*/0, GetAsyncStreamKind()));
-
+  NcclApi::NcclCommHandle comm = comm_pair.first;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1646,12 +1649,13 @@ absl::Status CollectiveBroadcastCmd::Record(
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
+  std::pair<NcclApi::NcclCommHandle, bool> comm_pair;
+  TF_ASSIGN_OR_RETURN(comm_pair,
                       GetNcclComm(*execute_params.collective_params,
                                   *execute_params.collective_cliques,
                                   config().replica_groups, config().group_mode,
                                   /*stream_id=*/0, GetAsyncStreamKind()));
-
+  NcclApi::NcclCommHandle comm = comm_pair.first;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(

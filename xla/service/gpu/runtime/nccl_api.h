@@ -248,6 +248,9 @@ class NcclApi {
                             PrimitiveType dtype, size_t count, int32_t peer,
                             NcclCommHandle comm, se::Stream* stream) = 0;
 
+  virtual absl::Status SendPtrToPeer(void* ptr, int32_t peer,
+                                     NcclCommHandle comm,
+                                     se::Stream* stream) = 0;
   // Receive data from rank `peer` into `recv_buff`.
   //
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/p2p.html#ncclrecv
@@ -255,6 +258,9 @@ class NcclApi {
                             PrimitiveType dtype, size_t count, int32_t peer,
                             NcclCommHandle comm, se::Stream* stream) = 0;
 
+  virtual absl::Status RecvPtrFromPeer(void* ptr, int32_t peer,
+                                       NcclCommHandle comm,
+                                       se::Stream* stream) = 0;
   // Register `buffer` with communicator `comm` for zero-copy communication.
   // Returned handle can be used for future unregistration.
   //

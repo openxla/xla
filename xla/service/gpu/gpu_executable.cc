@@ -507,6 +507,19 @@ absl::Status ExecuteThunks(
 
     TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(execute_params));
   }
+
+  {  // Cleans up any resource occupied by thunks.
+    Thunk::CleanupParams cleanup_params{
+        /*executor=*/executor,
+        /*collective_params=*/&collective_params,
+    };
+
+    tsl::profiler::TraceMe trace([&] { return "Thunks::Cleanup"; });
+    for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
+      TF_RETURN_IF_ERROR(thunk->Cleanup(cleanup_params));
+    }
+  }
+
   return MaybeSyncAndProfile(run_options, std::move(execution_timer),
                              block_host_until_done ? main_stream : nullptr);
 }

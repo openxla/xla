@@ -177,7 +177,7 @@ CollectiveOpGroupMode NcclAllReduceStartThunk::GetGroupMode(
 
 absl::Status NcclAllReduceStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclApi::NcclCommHandle comm) {
+    NcclApi::NcclCommHandle comm, bool is_local) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
@@ -211,7 +211,7 @@ NcclReduceScatterStartThunk::NcclReduceScatterStartThunk(
 
 absl::Status NcclReduceScatterStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclApi::NcclCommHandle comm) {
+    NcclApi::NcclCommHandle comm, bool is_local) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,

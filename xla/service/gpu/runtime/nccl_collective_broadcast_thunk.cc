@@ -57,7 +57,8 @@ NcclCollectiveBroadcastStartThunk::GetGroupMode(
 
 Status NcclCollectiveBroadcastStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclApi::NcclCommHandle comm) {
+    NcclApi::NcclCommHandle comm,
+    bool is_local) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_, config_.operand_element_type));

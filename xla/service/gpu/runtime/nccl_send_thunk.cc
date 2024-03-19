@@ -66,7 +66,8 @@ absl::Status NcclSendThunk::Initialize(const InitializeParams& params) {
 
 absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
                                               se::Stream& stream,
-                                              NcclApi::NcclCommHandle comm) {
+                                              NcclApi::NcclCommHandle comm,
+                                              bool is_local) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, {buffer_},

@@ -311,6 +311,20 @@ void StreamExecutor::HostMemoryDeallocate(void* data, uint64_t size) {
   return implementation_->HostMemoryDeallocate(data);
 }
 
+bool StreamExecutor::HostMemoryRegister(void* location, uint64_t size) {
+  VLOG(1) << "Called StreamExecutor::HostMemoryRegister(data=" << location
+          << ")" << StackTraceIfVLOG10();
+
+  return implementation_->HostMemoryRegister(location, size);
+}
+
+bool StreamExecutor::HostMemoryUnregister(void* location) {
+  VLOG(1) << "Called StreamExecutor::HostMemoryUnregister(data=" << location
+          << ")" << StackTraceIfVLOG10();
+
+  return implementation_->HostMemoryUnregister(location);
+}
+
 bool StreamExecutor::SynchronizeAllActivity() {
   VLOG(1) << "Called StreamExecutor::SynchronizeAllActivity()"
           << StackTraceIfVLOG10();

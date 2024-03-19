@@ -46,8 +46,11 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
   NcclCollectivePermuteStartThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
                                   const HloCollectivePermuteInstruction* instr,
                                   int64_t replica_count,
-                                  int64_t partition_count,
-                                  const Buffer& buffer);
+                                  int64_t partition_count, const Buffer& buffer,
+                                  bool p2p_memcpy_enabled);
+  absl::Status Initialize(const InitializeParams& params) override;
+
+  absl::Status Cleanup(const CleanupParams& params) override;
 
   static const char* GetHloOpName() { return "collective-permute-start"; }
 
@@ -55,17 +58,22 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
   const NcclCollectiveConfig& config() const override { return config_.config; }
   absl::Status RunNcclCollective(const ExecuteParams& params,
                                  se::Stream& stream,
-                                 NcclApi::NcclCommHandle comm) override;
+                                 NcclApi::NcclCommHandle comm,
+                                 bool is_local) override;
 
  private:
   const NcclP2PConfig config_;
   const Buffer buffer_;
+  std::unordered_map<int64_t, uint64_t> send_value_map_;
+  std::unordered_map<int64_t, uint64_t> recv_value_map_;
+  bool p2p_memcpy_enabled_ = false;
 };
 
 absl::Status RunCollectivePermute(
     NcclApi* nccl_api, NcclP2PConfig::SourceTargetMapEntry source_target,
     DeviceBufferPair& buffer, se::Stream& stream, NcclApi::NcclCommHandle comm,
-    absl::string_view device_string, int64_t current_id);
+    absl::string_view device_string, int64_t current_id, bool use_memcpy,
+    uint64_t& send_ptr_value, uint64_t& recv_ptr_value);
 
 }  // namespace gpu
 }  // namespace xla

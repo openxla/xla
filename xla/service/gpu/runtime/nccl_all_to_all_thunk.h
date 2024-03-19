@@ -56,7 +56,8 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
   const NcclCollectiveConfig& config() const override { return config_.config; }
   absl::Status RunNcclCollective(const ExecuteParams& params,
                                  se::Stream& stream,
-                                 NcclApi::NcclCommHandle comm) override;
+                                 NcclApi::NcclCommHandle comm,
+                                 bool is_local) override;
 
  private:
   const NcclAllToAllConfig config_;
