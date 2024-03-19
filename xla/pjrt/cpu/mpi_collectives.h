@@ -72,6 +72,15 @@ class MpiCollectivesCommunicator : public CollectivesCommunicator {
 class MpiCollectives : public CollectivesInterface {
  public:
 
+  /*
+  The user has to explicitly call Init() and Finalize() before and
+  after use.
+  For example, using the Python client, this can be achieved with:
+
+  collectives = xla_client._xla.make_mpi_collectives()
+  collectives.Init()
+  atexit.register(collectives.Finalize)
+  */
   void Init();
   void Finalize();
 
