@@ -311,7 +311,7 @@ cc_library(
     ],
 )
 
-cc_library(
+cc_shared_library(
     name = "metrics",
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
