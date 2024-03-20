@@ -129,6 +129,25 @@ namespace {
 
 static_assert(CUDNN_VERSION >= 7300, "cuDNN needs to be version 7.3 or higher");
 
+// If 'expr' returns an error, then this returns from the current
+// function with a non-successful absl::Status.
+#define RETURN_IF_CUDNN_FRONTEND_ERROR(expr)                                \
+  do {                                                                      \
+    if (ABSL_PREDICT_TRUE((expr).is_bad())) {                               \
+      std::ostringstream oss;                                               \
+      oss << (expr).get_message() << "\nin " << __FILE__ << "(" << __LINE__ \
+          << "): '" << #expr << "' ";                                       \
+      return absl::UnknownError(oss.str());                                 \
+    }                                                                       \
+  } while (false)
+
+#define RETURN_FALSE_IF_CUDNN_FRONTEND_ERROR(expr) \
+  do {                                             \
+    if (ABSL_PREDICT_TRUE((expr).is_bad())) {      \
+      return false;                                \
+    }                                              \
+  } while (false)
+
 // Exits the program if 'expr' doesn't return CUDNN_STATUS_SUCCESS.
 #define CHECK_CUDNN_OK(expr) CHECK_EQ(expr, CUDNN_STATUS_SUCCESS)
 
