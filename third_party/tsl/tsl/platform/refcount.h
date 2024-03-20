@@ -73,6 +73,10 @@ class RefCounted {
  private:
   mutable std::atomic_int_fast32_t ref_;
 
+  // Movable, not copyable
+  RefCounted(RefCounted&&) = default;
+  RefCounted& operator=(RefCounted&&) = default;
+
   RefCounted(const RefCounted&) = delete;
   void operator=(const RefCounted&) = delete;
 };
