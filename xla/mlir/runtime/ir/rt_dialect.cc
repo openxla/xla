@@ -15,12 +15,16 @@ limitations under the License.
 
 #include "xla/mlir/runtime/ir/rt_dialect.h"
 
+#include "absl/status/statusor.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/DialectImplementation.h"  // from @llvm-project  // IWYU pragma: keep
+#include "mlir/Interfaces/FunctionInterfaces.h"  // from @llvm-project
+#include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "xla/mlir/runtime/ir/rt_interfaces.h"
-#include "xla/mlir/runtime/ir/rt_ops.h"
 #include "xla/runtime/constraints.h"
 
 //===----------------------------------------------------------------------===//
