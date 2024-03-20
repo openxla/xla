@@ -6301,7 +6301,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
       .set_attn_scale(scale);
 
   // Setting bias
-  std::shared_ptr<Tensor_attributes> bias = nullptr;
   if (bias_descriptor.has_value()) {
     auto bias_tensor =
         graph.tensor(Tensor_attributes()
@@ -6311,8 +6310,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                          .set_uid(CudnnfMHAUid::BIAS_ID));
     sdpa_options.set_bias(bias_tensor);
   }
-  // Setting seed and bias
-  if (use_dropout && dropout_rate.has_value() && *dropout_rate > 0.0) {
+  // Setting seed and offset
+  if (use_dropout) {
     auto seed_tensor =
         graph.tensor(Tensor_attributes()
                          .set_name("seed")
@@ -6346,12 +6345,17 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
   if (stats_descriptor.has_value()) {
     cudnn_frontend::DataType_t statsType =
         ToCudnnFrontendDataType(stats_descriptor->type());
+    auto stat_dims = stats_descriptor->dimensions();
+    auto stat_strides = stats_descriptor->GetLogicalStrides();
+    stat_dims.push_back(1);
+    stat_strides.push_back(1);
     stats_tensor->set_name("stats")
         .set_output(true)
         .set_data_type(statsType)
+        .set_dim(stat_dims)
+        .set_stride(stat_strides)
         .set_uid(CudnnfMHAUid::P_ID);
   }
-
   CudnnGraph cudnnGraph(std::move(graph));
   TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare());
   if (!supported) {
@@ -6362,6 +6366,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\b flash attention operation graph: " << graph;
   }
+  std::cerr << graph << "\n";
+  std::cerr << "Forward graph building successful\n";
   return cudnnGraph;
 }
 
@@ -6372,9 +6378,10 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     const dnn::MatmulTensorDescriptor& v_desc,
     const dnn::MatmulTensorDescriptor& do_desc,
     const dnn::TensorDescriptor& dq_desc, const dnn::TensorDescriptor& dk_desc,
-    const dnn::TensorDescriptor& dv_desc, dnn::FusedMHAKind kind,
-    std::optional<double> dropout_rate, std::optional<int64_t> seed,
-    CudnnHandle& cudnn, double scale, std::vector<int64_t>& intermediate_shape,
+    const dnn::TensorDescriptor& dv_desc,
+    const std::optional<dnn::TensorDescriptor> bias_descriptor,
+    dnn::FusedMHAKind kind, std::optional<double> dropout_rate,
+    std::optional<int64_t> seed, CudnnHandle& cudnn, double scale,
     bool use_dropout = false, bool use_mask = false, bool use_bias = false,
     bool use_causal_mask = false) {
   if (VLOG_IS_ON(4)) {
@@ -6455,14 +6462,49 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
                        .set_dim(p_reduction_dims)
                        .set_stride(p_reduction_strides)
                        .set_uid(CudnnfMHAUid::P_ID)
-                       .set_data_type(ioDataType));
+                       .set_data_type(cudnn_frontend::DataType_t::FLOAT));
 
   auto sdpa_backward_options =
       cudnn_frontend::graph::SDPA_backward_attributes()
           .set_name("flash_attention_backward")
-          .set_causal_mask(true)
+          .set_causal_mask(use_causal_mask)
           .set_attn_scale(scale)
           .set_compute_data_type(cudnn_frontend::DataType_t::FLOAT);
+
+  // Setting bias
+  if (use_bias) {
+    DCHECK(bias_descriptor != std::nullopt);
+    auto bias_tensor =
+        graph.tensor(Tensor_attributes()
+                         .set_name("bias")
+                         .set_dim(bias_descriptor->dimensions())
+                         .set_stride(bias_descriptor->GetLogicalStrides())
+                         .set_uid(CudnnfMHAUid::BIAS_ID));
+    sdpa_backward_options.set_bias(bias_tensor);
+  }
+
+  // Setting seed and offset
+  if (use_dropout) {
+    DCHECK(dropout_rate != std::nullopt);
+    auto seed_tensor =
+        graph.tensor(Tensor_attributes()
+                         .set_name("seed")
+                         .set_dim({1, 1, 1, 1})
+                         .set_stride({1, 1, 1, 1})
+                         .set_data_type(cudnn_frontend::DataType_t::INT64)
+                         .set_is_pass_by_value(true)
+                         .set_uid(CudnnfMHAUid::D_SEED_ID));
+    auto offset_tensor =
+        graph.tensor(Tensor_attributes()
+                         .set_name("offset")
+                         .set_dim({1, 1, 1, 1})
+                         .set_stride({1, 1, 1, 1})
+                         .set_data_type(cudnn_frontend::DataType_t::INT64)
+                         .set_is_pass_by_value(true)
+                         .set_uid(CudnnfMHAUid::D_OFFSET_ID));
+    sdpa_backward_options.set_dropout((float)dropout_rate.value(), seed_tensor,
+                                      offset_tensor);
+  }
 
   auto [dQ, dK, dV] =
       graph.sdpa_backward(q, k, v, o, dO, stats, sdpa_backward_options);
@@ -6486,8 +6528,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
       .set_uid(CudnnfMHAUid::dV_ID)
       .set_data_type(ioDataType);
 
-  std::cerr << graph << "\n";
-
   CudnnGraph cudnnGraph(std::move(graph));
   TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare());
   if (!supported) {
@@ -6499,7 +6539,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     VLOG(4) << "\b flash attention operation backward graph: " << graph;
   }
 
-  std::cerr << "Graph building successful\n";
+  std::cerr << graph << "\n";
+  std::cerr << "Backward graph building successful\n";
 
   return cudnnGraph;
 }
@@ -7365,10 +7406,17 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
     CudnnHandle handle = cudnn_->GetHandle(parent_, stream);
     std::unordered_map<int64_t, void*> variant_pack;
     std::vector<void*> vec = {inputs.opaque()...};
+
+    // add device buffers to the variant pack
     for (int i = 0; i < uids_.size(); ++i) {
       if (uids_[i].has_value()) {
         variant_pack[*uids_[i]] = vec[i];
       }
+    }
+
+    // add scalars to the variant pack
+    for (const std::pair<int64_t, ScalingParam>& p : scalars_) {
+      variant_pack[p.first] = const_cast<void*>(p.second.ToVoidPointer());
     }
 
     if (dropout_rng_offset_increment_ > 0) {
@@ -8560,12 +8608,10 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
             bmm1_grad_gemm1_rhs_descriptor, bmm1_grad_gemm2_rhs_descriptor,
             bmm2_grad_gemm1_lhs_descriptor, bmm2_grad_gemm2_rhs_descriptor,
             d_output_descriptor, d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor,
-            d_bmm2_rhs_descriptor, kind, dropout_rate, seed, cudnn, scale,
-            intermediate_shape, use_dropout,
+            d_bmm2_rhs_descriptor, bias_descriptor, kind, dropout_rate, seed,
+            cudnn, scale, use_dropout,
             /*use_mask*/ mask_descriptor != std::nullopt,
             /*use_bias*/ bias_descriptor != std::nullopt, is_causal_mask));
-    std::cerr << "Plans built: " << graph.Graph().get_execution_plan_count()
-              << "\n";
 
     std::vector<int64_t> p_dims =
         bmm2_grad_gemm1_lhs_descriptor.GetCudnnCompatibleDimensions(false);
@@ -8579,7 +8625,10 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
             CudnnfMHAUid::V_ID,  CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
             CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID, std::nullopt,
             std::nullopt,        std::nullopt,        std::nullopt,
-            std::nullopt,        CudnnfMHAUid::O_ID,  std::nullopt};
+            std::nullopt,        CudnnfMHAUid::O_ID};
+    if (bias_descriptor) {
+      uids.push_back(CudnnfMHAUid::BIAS_ID);
+    }
     TF_ASSIGN_OR_RETURN(
         auto runner, CudnnGraphRunner<dnn::FusedMHABackwardSignature>::Create(
                          parent_, cudnn_.get(), graph, dropout_rng_seed,
@@ -9715,6 +9764,7 @@ absl::StatusOr<bool> CudnnGraph::Prepare(dnn::DnnSupport& dnn_support) {
       graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
   if (auto result = graph_.check_support(cudnn->handle()); result.is_bad()) {
     VLOG(3) << result.get_message();
+    std::cerr << "error message: " << result.get_message();
     return false;
   }
   return true;
