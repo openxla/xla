@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_query.h",
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/thunk.h"
 #include "xla/statusor.h"
@@ -41,15 +41,12 @@ namespace {
 bool IsOnlyRootNonDefaultStream(HloComputation* computation) {
   HloInstruction* root = computation->root_instruction();
   auto root_gpu_config = root->backend_config<GpuBackendConfig>();
-  // Disable the annotation if its root is copy-start
-  if (!root_gpu_config.ok() || root->opcode() == HloOpcode::kTuple ||
-      root->opcode() == HloOpcode::kCopyStart) {
+  if (!root_gpu_config.ok() || root->opcode() == HloOpcode::kTuple) {
     return false;
   }
   int64_t root_stream_id = root_gpu_config->operation_queue_id();
   VLOG(2) << "Found fusion computation's root stream id to be "
           << root_stream_id;
-
   if (root_stream_id == Thunk::kDefaultExecutionStreamId.value()) {
     return false;
   }
@@ -92,11 +89,16 @@ absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
 }
 
 absl::StatusOr<bool> AnnotateStreamAttributesForCopyStart(
-    HloInstruction* instr, int64_t channel_id) {
-  GpuBackendConfig gpu_backend_config;
-  gpu_backend_config.set_operation_queue_id(channel_id);
+    HloInstruction* instr, int64_t channel_id,
+    GpuBackendConfig& instr_gpu_config) {
+  // Do nothing if copy-start has already been annotated
+  if (instr_gpu_config.operation_queue_id() !=
+      Thunk::kDefaultExecutionStreamId.value()) {
+    return false;
+  }
+  instr_gpu_config.set_operation_queue_id(channel_id);
+  TF_RETURN_IF_ERROR(instr->set_backend_config(instr_gpu_config));
   VLOG(3) << "Add copy-start's backend config: " << channel_id;
-  TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_backend_config));
   return true;
 }
 
@@ -152,11 +154,10 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
                             AnnotateStreamAttributesForInstruction(
                                 instr, instr_gpu_config.value()));
         changed |= comp_result;
-      }
-      if (instr->opcode() == HloOpcode::kCopyStart) {
+      } else if (instr->opcode() == HloOpcode::kCopyStart) {
         TF_ASSIGN_OR_RETURN(bool comp_result,
                             AnnotateStreamAttributesForCopyStart(
-                                instr, channel_id));
+                                instr, channel_id, instr_gpu_config.value()));
         changed |= comp_result;
         continue;
       }
