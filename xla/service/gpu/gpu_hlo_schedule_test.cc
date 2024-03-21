@@ -1161,7 +1161,6 @@ TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelWithForceEarliestSchedule) {
                           /*fdo_profile=*/ar_long_latency_proto_binary)));
   SequentialHloOrdering order = BuildHloOrdering(module.get());
 
-  HloComputation* entry = module->entry_computation();
   const std::vector<HloInstruction*>& main =
       order.SequentialOrder(*module->GetComputationWithName("main"))
           ->instructions();
