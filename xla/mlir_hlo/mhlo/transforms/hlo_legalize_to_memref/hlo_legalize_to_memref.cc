@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -261,6 +262,65 @@ struct DynamicReshapeOpInterface
   }
 };
 
+struct TensorReshapeOpInterface
+    : public BufferizableOpInterface::ExternalModel<DynamicReshapeOpInterface,
+                                                    tensor::ReshapeOp> {
+  bool bufferizesToMemoryRead(Operation * /*op*/, OpOperand & /*opOperand*/,
+                              const AnalysisState & /*state*/) const {
+    return false;
+  }
+
+  bool bufferizesToMemoryWrite(Operation * /*op*/, OpOperand & /*opOperand*/,
+                               const AnalysisState & /*state*/) const {
+    return false;
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand & /*opOperand*/,
+                                      const AnalysisState & /*state*/) const {
+    return {{op->getResult(0), BufferRelation::Equivalent}};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto reshapeOp = cast<tensor::ReshapeOp>(op);
+
+    // The buffer still has the old (pre-reshape) type.
+    FailureOr<Value> operandBuffer =
+        getBuffer(rewriter, reshapeOp.getOperand(0), options);
+    FailureOr<Value> outputShapeBuffer =
+        getBuffer(rewriter, reshapeOp.getOperand(1), options);
+    if (failed(operandBuffer) || failed(outputShapeBuffer)) return failure();
+
+    ShapedType resultType;
+    TensorType opResultType = reshapeOp.getType();
+    if (auto rankedType = opResultType.dyn_cast<RankedTensorType>()) {
+      resultType =
+          MemRefType::get(rankedType.getShape(), rankedType.getElementType());
+    } else if (auto unrankedType =
+                   opResultType.dyn_cast<UnrankedTensorType>()) {
+      resultType = UnrankedMemRefType::get(unrankedType.getElementType(), 0);
+    }
+    auto operand = *operandBuffer;
+    // If the operand has a non-identity affine map, we will have to add a copy.
+    auto bufferType = operandBuffer->getType().dyn_cast<MemRefType>();
+    if (bufferType && !bufferType.getLayout().isIdentity()) {
+      // TODO(springerm): Create alloc_tensor ops during TensorCopyInsertion.
+      AnalysisState analysisState(options);
+      FailureOr<Value> tensorAlloc =
+          bufferization::allocateTensorForShapedValue(rewriter, op->getLoc(),
+                                                      *operandBuffer, options);
+      if (failed(tensorAlloc)) return failure();
+      auto memrefType =
+          MemRefType::get(bufferType.getShape(), bufferType.getElementType());
+      operand = rewriter.create<bufferization::ToMemrefOp>(
+          op->getLoc(), memrefType, *tensorAlloc);
+    }
+    bufferization::replaceOpWithNewBufferizedOp<memref::ReshapeOp>(
+        rewriter, op, resultType, operand, *outputShapeBuffer);
+    return success();
+  }
+};
+
 // Inserts dynamic memref to change the layout of the memref to put 0-stride
 // and size of the target dimension if size-1 dimension expansion is
 // necessary.
@@ -407,6 +467,7 @@ struct HloLegalizeToMemrefPass
     bufferization::BufferizationOptions options =
         bufferization::getPartialBufferizationOptions();
     options.opFilter.allowDialect<mhlo::MhloDialect>();
+    options.opFilter.allowDialect<tensor::TensorDialect>();
     if (failed(bufferizeOp(getOperation(), options))) signalPassFailure();
   }
 };
@@ -425,9 +486,14 @@ void registerBufferizableOpInterfaceExternalModels(DialectRegistry &registry) {
     DynamicBroadcastInDimOp::attachInterface<DynamicBroadcastInDimOpInterface>(
         *ctx);
 
+    // DynamicReshapeOp's that operate on unranked tensors have been repalced
+    // by ReshapeOp.
+    tensor::ReshapeOp::attachInterface<TensorReshapeOpInterface>(*ctx);
+
     // Load additional dialects of which ops may get created.
     ctx->loadDialect<arith::ArithDialect, bufferization::BufferizationDialect,
-                     lmhlo::LmhloDialect, memref::MemRefDialect>();
+                     lmhlo::LmhloDialect, tensor::TensorDialect,
+                     memref::MemRefDialect>();
   });
 }
 
