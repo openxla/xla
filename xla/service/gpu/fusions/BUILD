@@ -562,7 +562,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/runtime:cudnn_thunk",
-        "@com_google_absl//absl/strings",
     ],
 )
 
@@ -577,11 +576,15 @@ xla_test(
     ],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/service:executable",
         "//xla/service/gpu:stream_executor_util",
         "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/tests:filecheck",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
