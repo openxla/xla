@@ -251,21 +251,23 @@ def : Pat<(CHLO_AsinhOp NonComplexElementType:$input),
   )>;
 
 // Expand asinh for complex arguments to MHLO dialect as
+//   asinh(x) = I*asin(-I*x)
+//
+// The alternative
 //   asinh(x) = log(x + sqrt(x^2 + 1))
+// has overflow deficiency when abs(x) is large.
 //
 // Per tensorflow/compiler/xla/client/lib/math.cc at the time of writing:
 // "For now, we ignore the question of overflow if x is a
 // complex type, because we don't yet have exhaustive tests for complex trig
 // functions".
 def : Pat<(CHLO_AsinhOp ComplexElementType:$input),
-  (MHLO_LogOp
-    (MHLO_AddOp
-      $input,
-      (MHLO_SqrtOp
-        (MHLO_AddOp
-          (MHLO_MulOp $input, $input),
-          (MHLO_ConstantLike<"1"> $input)
-        )
+  (MHLO_MulOp
+    (MHLO_ComplexOp (MHLO_ConstantLike<"0"> (MHLO_RealOp $input)), (MHLO_ConstantLike<"1"> (MHLO_ImagOp $input))),
+    (CHLO_AsinOp
+      (MHLO_MulOp
+        (MHLO_ComplexOp (MHLO_ConstantLike<"0"> (MHLO_RealOp $input)), (MHLO_ConstantLike<"-1"> (MHLO_ImagOp $input))),
+        $input
       )
     )
   )>;
