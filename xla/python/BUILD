@@ -195,6 +195,7 @@ cc_library(
         "//xla/pjrt:exceptions",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
+        "//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
@@ -204,7 +205,6 @@ cc_library(
         "@nanobind",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -375,6 +375,7 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
+        "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
@@ -385,7 +386,6 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/python/lib/core:numpy",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -747,11 +747,11 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
+        "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/python/lib/core:numpy",
         "@nanobind",
     ],
 )
@@ -1236,12 +1236,12 @@ tsl_pybind_extension(
         "//xla/python/ifrt_proxy/client:py_module",
         "//xla/python/pjrt_ifrt",
         "//xla/service/cpu:collectives_interface",
+        "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform/cloud:gcs_file_system",
-        "@tsl//tsl/python/lib/core:numpy",
         "@nanobind",
     ] + select({
         # gloo transport only builds on linux
@@ -1340,10 +1340,10 @@ cc_library(
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
+        "//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",
         "@nanobind",
-        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
