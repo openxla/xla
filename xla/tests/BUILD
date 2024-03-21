@@ -1751,6 +1751,7 @@ xla_test(
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
