@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
 #include "xla/util.h"
+#include "third_party/gpus/cudnn/cudnn_version.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -107,6 +108,10 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::POW;
     case HloOpcode::kRsqrt:
       return m::RSQRT;
+#if CUDNN_VERSION >= 90100
+    case HloOpcode::kSelect:
+      return m::BINARY_SELECT;
+#endif  // CUDNN_VERSION
     case HloOpcode::kSin:
       return m::SIN;
     case HloOpcode::kSqrt:
@@ -378,8 +383,13 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
       } else if (hlo->operand_count() == 2) {
         hlo_to_cudnn[hlo] = graph.pointwise(operand(0), operand(1), attrs);
       } else if (hlo->operand_count() == 3) {
+        if (hlo->opcode() != HloOpcode::kSelect) {
+          VLOG(3) << "Unexpected ternary operation: " << hlo->ToString();
+          return std::nullopt;
+        }
+        // Operand order for select differs between HLO and cuDNN.
         hlo_to_cudnn[hlo] =
-            graph.pointwise(operand(0), operand(1), operand(2), attrs);
+            graph.pointwise(operand(1), operand(2), operand(0), attrs);
       } else {
         VLOG(3) << "Unimplemented elementwise operation.";
         return std::nullopt;
