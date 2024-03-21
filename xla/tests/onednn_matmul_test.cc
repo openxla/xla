@@ -605,11 +605,11 @@ TEST_F(MatmulTest, SimpleTestBF16Gemv1) {
   }
 
   const char* matmul_module_str = R"(
-  HloModule matmul.test.bf16, entry_computation_layout={(bf16[300,3000]{1,0},bf16[3000]{0})->bf16[300]{0}}
+  HloModule matmul.test.bf16, entry_computation_layout={(bf16[1000,10000]{1,0},bf16[10000]{0})->bf16[1000]{0}}
   ENTRY matmul.test.bf16 {
-    arg.0 = bf16[300,3000]{1,0} parameter(0)
-    arg.1 = bf16[3000]{0} parameter(1)
-    ROOT onednn.matmul.0 = bf16[300]{0} dot(arg.0, arg.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    arg.0 = bf16[1000,10000]{1,0} parameter(0)
+    arg.1 = bf16[10000]{0} parameter(1)
+    ROOT onednn.matmul.0 = bf16[1000]{0} dot(arg.0, arg.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{2e-2, 1e-4}));
