@@ -23,7 +23,7 @@ def if_mkldnn_openmp(if_true, if_false = []):
 
 def if_mkldnn_aarch64_acl(if_true, if_false = []):
     return select({
-        "@tsl//third_party/mkl:build_with_mkl_aarch64": if_true,
+        "@xla//xla/tsl/mkl:build_with_mkl_aarch64": if_true,
         "//conditions:default": if_false,
     })
 

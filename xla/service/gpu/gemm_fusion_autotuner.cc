@@ -21,7 +21,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -35,6 +34,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/algorithm_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/float_normalization.h"
@@ -187,6 +188,9 @@ class GemmFusionAutotunerVisitor : public DfsHloRewriteVisitor {
 // This contains all alternative Triton GEMM configs related to one fusion.
 struct GemmConfigSet {
   std::vector<TritonGemmConfig> configs;
+  // Setting this to true disallows verification and fallback to cuBLAS, and
+  // the usage of cuDNN.
+  bool has_sparsity = false;
 };
 
 using CuDnnPlanId = int64_t;
@@ -258,10 +262,12 @@ class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
         fusion->GetModule()->config().debug_options();
     auto cuda_comp =
         std::get<se::CudaComputeCapability>(config_.GetGpuComputeCapability());
-    return {GetPossibleMatmulAutotuneConfigs(
-        *Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
-            *fusion->called_computations().at(0), HloOpcode::kDot)),
-        cuda_comp, debug_options, config_.ExhaustiveTilingSearch())};
+    const HloDotInstruction* dot_instr =
+        Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
+            *fusion->called_computations().at(0), HloOpcode::kDot));
+    auto configs = GetPossibleMatmulAutotuneConfigs(
+        *dot_instr, cuda_comp, debug_options, config_.ExhaustiveTilingSearch());
+    return {configs, /*has_sparsity=*/dot_instr->sparse_operands() > 0};
   }
 
   AutotuneConfig config_;
@@ -293,8 +299,11 @@ TileSizeLimit GetUpperLimit(const HloDotInstruction& dot) {
       std::max<int64_t>(tsl::NextPowerOfTwoS64(m), kMinTileSize);
   const int64_t block_n_limit =
       std::max<int64_t>(tsl::NextPowerOfTwoS64(n), kMinTileSize);
+  // Increase minimum tile size for the contracting dimension proportionally
+  // to the sparsity multiplier (assume 2:4 structured sparsity).
   const int64_t block_k_limit =
-      std::max<int64_t>(tsl::NextPowerOfTwoS64(k), kMinTileSize);
+      std::max<int64_t>(tsl::NextPowerOfTwoS64(k),
+                        kMinTileSize * (dot.sparse_operands() ? 2 : 1));
   return {block_m_limit, block_n_limit, block_k_limit};
 }
 
@@ -342,6 +351,12 @@ std::vector<TritonGemmConfig> GetExhaustiveMatmulAutotuneConfigs(
           }
           for (int block_k : BLOCK_SIZES) {
             if (block_k > limit.block_k) {
+              continue;
+            }
+            // Sparse meta should have at least one element per thread.
+            // Note: only 2:4 structured sparsity is currently supported.
+            if (dot.sparse_operands() &&
+                block_m * block_k / 16 < num_warps * WarpSize()) {
               continue;
             }
             for (int split_k : SPLIT_K) {
@@ -428,6 +443,13 @@ std::vector<TritonGemmConfig> ReduceTileSizes(
     config.block_k = std::min<int64_t>(config.block_k, limit.block_k);
     config.split_k = std::min<int64_t>(
         config.split_k, GetSplitKLimit(config.block_k, limit.block_k));
+    // Sparse meta should have at least one element per thread.
+    // Note: only 2:4 structured sparsity is currently supported.
+    if (dot.sparse_operands()) {
+      int meta_elements = config.block_m * config.block_k / 16;
+      config.num_warps =
+          std::min<int64_t>(config.num_warps, meta_elements / WarpSize());
+    }
   }
 
   // Remove duplicates.
@@ -474,7 +496,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
 
   if (config.split_k > 1) {
     TF_RETURN_IF_ERROR(MakeDotSplitKBatch(cloned_dot_fusion, config));
-    GpuFloatSupport bf16_support(BF16);
+    GpuFloatSupport bf16_support(gpu_device_info.cuda_compute_capability(),
+                                 BF16);
     FloatNormalization float_normalization(&bf16_support);
     TF_RETURN_IF_ERROR(float_normalization.Run(new_module.get()).status());
     GpuInstructionFusion instruction_fusion(/*may_duplicate=*/false,
@@ -506,6 +529,19 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
       ExtractComputationIntoNewModule(*fusion_computation);
   new_module->mutable_config().set_debug_options(debug_opts);
 
+  auto* dot = hlo_query::GetFirstInstructionWithOpcode(
+      *new_module->entry_computation(), HloOpcode::kDot);
+  // Substitute algorithms, which are not supported by cuBLAS for the check, but
+  // don't use cuBlas in the end. This assumes that the substituting algorithm
+  // has result which are close enough for the check in this file.
+  if (dot->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3 ||
+      dot->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6) {
+    dot->mutable_precision_config()->set_algorithm(
+        PrecisionConfig::ALG_DOT_F32_F32_F32);
+  }
+
   GemmRewriter rewriter(config.GetGpuComputeCapability());
   GpuInstructionFusion fusion_pass(
       /*may_duplicate=*/false, config.GetExecutor()->GetDeviceDescription());
@@ -535,8 +571,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> CudnnGemmAutotuneExtractor(
   TF_RETURN_IF_ERROR(
       new_module->entry_computation()->root_instruction()->set_backend_config(
           gpu_config));
-  CuDnnFusionCompiler compiler(autotune_config);
-  TF_RETURN_IF_ERROR(compiler.Run(new_module.get()).status());
 
   return new_module;
 }
@@ -556,20 +590,41 @@ bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind) {
 
 int GetCuDnnPlanCount(const HloInstruction& hlo,
                       const AutotuneConfig& autotune_config) {
-  auto gpu_config = hlo.backend_config<GpuBackendConfig>();
-  if (!gpu_config.ok() ||
+  if (auto gpu_config = hlo.backend_config<GpuBackendConfig>();
+      !gpu_config.ok() ||
       gpu_config->fusion_backend_config().has_cudnn_fusion_config()) {
     return {};
   }
-  return CuDnnFusionCompiler(autotune_config)
-      .GetAvailablePlanCount(*DynCast<HloFusionInstruction>(&hlo));
+  return CuDnnFusionCompiler::GetAvailablePlanCount(
+      *autotune_config.GetExecutor(), *DynCast<HloFusionInstruction>(&hlo));
 }
 
 bool IsCuDnnEnabled(const AutotuneConfig& config,
                     const DebugOptions& debug_opts) {
-  return std::get<se::CudaComputeCapability>(config.GetGpuComputeCapability())
+  return !config.IsDeviceless() &&
+         std::get<se::CudaComputeCapability>(config.GetGpuComputeCapability())
              .IsAtLeastHopper() &&
-         debug_opts.xla_gpu_cudnn_gemm_fusion();
+         debug_opts.xla_gpu_cudnn_gemm_fusion_level() > 0 &&
+         GetDnnVersionInfo(config.GetExecutor()).major_version() >= 9;
+}
+
+bool HasAlgorithmSupportedByCublasOrCublasLt(
+    const HloFusionInstruction& fusion) {
+  const PrecisionConfig::Algorithm algorithm =
+      hlo_query::GetFirstInstructionWithOpcode(*fusion.called_computation(),
+                                               HloOpcode::kDot)
+          ->precision_config()
+          .algorithm();
+  return algorithm_util::IsSupportedByCublasOrCublasLt(algorithm);
+}
+
+bool HasAlgorithmSupportedByCudnn(const HloFusionInstruction& fusion) {
+  const PrecisionConfig::Algorithm algorithm =
+      hlo_query::GetFirstInstructionWithOpcode(*fusion.called_computation(),
+                                               HloOpcode::kDot)
+          ->precision_config()
+          .algorithm();
+  return algorithm_util::IsSupportedByCudnn(algorithm);
 }
 
 absl::StatusOr<absl::flat_hash_map<const HloFusionInstruction*, ExecutableSet>>
@@ -597,15 +652,16 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
 
     if (IsFusionKind(hlo, kTritonGemmFusionKind)) {
       config_count += gemm_config_set.configs.size();
-      if (IsCuDnnEnabled(config, debug_opts)) {
+      if (!gemm_config_set.has_sparsity && IsCuDnnEnabled(config, debug_opts) &&
+          HasAlgorithmSupportedByCudnn(hlo)) {
         config_count += GetCuDnnPlanCount(hlo, config);
       }
     } else if (IsFusionKind(hlo, kCuDnnFusionKind)) {
       config_count += GetCuDnnPlanCount(hlo, config);
     }
+    // Reference config for verification (uses cuBLAS).
+    config_count += !gemm_config_set.has_sparsity;
   }
-  // cuBLAS configs: one per fusion.
-  config_count += gemm_config_sets.size();
 
   std::atomic<int> done_count = 0;
   std::atomic<int> good_count = 0;
@@ -720,17 +776,21 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
         });
       }
 
-      thread_pool->Schedule([&, fusion] {
-        absl::StatusOr<bool> has_executable =
-            compile_reference_executable(fusion);
-        TF_CHECK_OK(has_executable.status());
-        log(has_executable.value());
-        counter.DecrementCount();
-      });
+      if (!gemm_config_set.has_sparsity) {
+        thread_pool->Schedule([&, fusion] {
+          absl::StatusOr<bool> has_executable =
+              compile_reference_executable(fusion);
+          TF_CHECK_OK(has_executable.status());
+          log(has_executable.value());
+          counter.DecrementCount();
+        });
+      }
 
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
-           IsCuDnnEnabled(config, debug_opts))) {
+           !gemm_config_set.has_sparsity &&
+           IsCuDnnEnabled(config, debug_opts) &&
+           HasAlgorithmSupportedByCudnn(*fusion))) {
         const int plan_count = GetCuDnnPlanCount(*fusion, config);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           thread_pool->Schedule([&, fusion, plan_id] {
@@ -766,13 +826,17 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
         log(has_executable);
       }
 
-      TF_ASSIGN_OR_RETURN(bool has_executable,
-                          compile_reference_executable(fusion));
-      log(has_executable);
+      if (!gemm_config_set.has_sparsity) {
+        TF_ASSIGN_OR_RETURN(bool has_executable,
+                            compile_reference_executable(fusion));
+        log(has_executable);
+      }
 
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
-           IsCuDnnEnabled(config, debug_opts))) {
+           !gemm_config_set.has_sparsity &&
+           IsCuDnnEnabled(config, debug_opts) &&
+           HasAlgorithmSupportedByCudnn(*fusion))) {
         const int plan_count = GetCuDnnPlanCount(*fusion, config);
         for (int plan_id = 0; plan_id < plan_count; ++plan_id) {
           log(compile_cudnn_executable(fusion, plan_id));
@@ -826,11 +890,10 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     input_shapes.push_back(param->shape());
   }
 
-  // Run with cuBLAS.
+  // Run with cuBLAS (optional).
   std::optional<ScopedShapedBuffer> reference_buffer;
-  absl::Duration cublas_duration;
-  {
-    TF_RET_CHECK(executable_set.reference != nullptr);
+  absl::Duration cublas_duration = absl::InfiniteDuration();
+  if (executable_set.reference != nullptr) {
     TF_ASSIGN_OR_RETURN(std::optional<ProfilingOutput> output,
                         util.ProfileExecutable(&*executable_set.reference,
                                                stream, inputs, input_shapes));
@@ -887,7 +950,9 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     *res.mutable_run_time() =
         tsl::proto_utils::ToDurationProto(profiling_output->duration);
 
-    if (config.should_check_correctness()) {
+    // Reference buffer is available when `config.should_check_correctness()`
+    // is set and reference executable was compiled.
+    if (reference_buffer.has_value()) {
       TF_ASSIGN_OR_RETURN(
           se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
           rz_allocator.CheckRedzones());
@@ -948,7 +1013,8 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
   }
 
   if (debug_opts.xla_gpu_cublas_fallback() &&
-      !debug_opts.xla_gpu_deterministic_ops()) {
+      !debug_opts.xla_gpu_deterministic_ops() &&
+      HasAlgorithmSupportedByCublasOrCublasLt(*fusion)) {
     if (cublas_duration <
         tsl::proto_utils::FromDurationProto(best.run_time())) {
       VLOG(2) << "Falling back to cuBLAS for " << fusion->name();
@@ -1111,11 +1177,19 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
 
   if (debug_options.xla_gpu_autotune_level() == 0 ||
       debug_options.xla_gpu_deterministic_ops()) {
-    // Pick the first option for each gemm instead of autotuning..
+    // Pick the first option for each gemm instead of autotuning.
     for (const auto& [fusion, tilings] : gemm_config_sets) {
       const AutotuneCacheKey key = AutotunerUtil::GetKey(fusion, config_);
       AutotuneResult res;
-      *res.mutable_triton() = kDefaultGemmTiling.ToProto();
+      if (IsFusionKind(*fusion, kCuDnnFusionKind)) {
+        res.mutable_algorithm()->set_algo_id(-1);
+      } else {
+        const HloDotInstruction* dot_instr =
+            Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
+                *fusion->called_computations().at(0), HloOpcode::kDot));
+        auto config = ReduceTileSizes(*dot_instr, {kDefaultGemmTiling}).front();
+        *res.mutable_triton() = config.ToProto();
+      }
       *res.mutable_run_time() =
           tsl::proto_utils::ToDurationProto(absl::ZeroDuration());
       AutotunerUtil::AddResult(key, res);

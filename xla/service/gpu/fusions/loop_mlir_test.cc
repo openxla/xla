@@ -47,16 +47,15 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingUnrolled) {
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
   MlirLoopFusion fusion(analysis);
-  auto thread_id_to_output_indexing =
-      fusion.ComputeThreadIdToOutputIndexing(/*root_index=*/0, &mlir_context_);
+  auto thread_id_to_output_indexing = fusion.ComputeThreadIdToOutputIndexing(
+      /*root_index=*/0, &indexing_context_);
 
   EXPECT_THAT(thread_id_to_output_indexing->ToString(thread_id_printer_),
               MatchIndexingString(R"(
   (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
    (((bl_x * 16 + th_x floordiv 8) floordiv 3 + chunk_id * 5376) floordiv 625) mod 100,
    (((th_x + bl_x * 128) floordiv 3 + chunk_id * 43008) floordiv 25) mod 200,
-   th_x * 4 + bl_x * 512 + chunk_id * 516096 + unroll_id -
-     (((th_x + bl_x * 128) floordiv 3 + chunk_id * 43008) floordiv 25) * 300
+   (th_x * 4 + bl_x * 512 + chunk_id * 516096) mod 300 + unroll_id
   )
   domain:
   th_x in [0, 127]
@@ -91,8 +90,8 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingNotUnrolled) {
   auto analysis = AnalyzeFusion(*root, device_info_);
 
   MlirLoopFusion fusion(analysis);
-  auto thread_id_to_output_indexing =
-      fusion.ComputeThreadIdToOutputIndexing(/*root_index=*/0, &mlir_context_);
+  auto thread_id_to_output_indexing = fusion.ComputeThreadIdToOutputIndexing(
+      /*root_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_output_indexing->ToString(thread_id_printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
@@ -107,7 +106,7 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingNotUnrolled) {
               unroll_id in [0, 0]
             )"));
   auto thread_id_to_input_indexing = fusion.ComputeThreadIdToInputIndexing(
-      /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
+      /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_input_indexing->ToString(thread_id_printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
@@ -143,8 +142,8 @@ TEST_F(MlirLoopFusionTest, ThreadId_Broadcast) {
   auto analysis = AnalyzeFusion(*root, device_info_);
 
   MlirLoopFusion fusion(analysis);
-  auto thread_id_to_output_indexing =
-      fusion.ComputeThreadIdToOutputIndexing(/*root_index=*/0, &mlir_context_);
+  auto thread_id_to_output_indexing = fusion.ComputeThreadIdToOutputIndexing(
+      /*root_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_output_indexing->ToString(thread_id_printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
@@ -163,7 +162,7 @@ TEST_F(MlirLoopFusionTest, ThreadId_Broadcast) {
                 th_x + bl_x * 128 in [0, 5999]
             )"));
   auto thread_id_to_input_indexing = fusion.ComputeThreadIdToInputIndexing(
-      /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
+      /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_input_indexing->ToString(thread_id_printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
@@ -243,8 +242,8 @@ TEST_F(MlirLoopFusionTest, TwoUsersConsistentIndexing) {
     // CHECK-NEXT: return
 
     // CHECK: func.func private @fused_computation_atan2
-    // CHECK-NEXT: xla_gpu.pure_call
-    // CHECK-NEXT: xla_gpu.pure_call
+    // CHECK-NEXT: tensor.extract
+    // CHECK-NEXT: tensor.extract
     // CHECK-NEXT: addf
     // CHECK-NEXT: subf
     // CHECK-NEXT: mulf

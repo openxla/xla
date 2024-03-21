@@ -123,6 +123,7 @@ class GpuCompiler : public LLVMCompiler {
   struct BackendCompileResult {
     std::string asm_text;
     std::vector<uint8_t> binary;
+    Thunk::BinaryMap dnn_compiled_graphs;
   };
 
   // During compilation with device, stream_exec != null and autotune_results
@@ -152,8 +153,8 @@ class GpuCompiler : public LLVMCompiler {
     return absl::OkStatus();
   }
 
-  // Add autotuning passes for triton gemm.
-  virtual absl::Status AddTritonGemmAutotuningPasses(
+  // Add autotuning passes for GEMM fusions.
+  virtual absl::Status AddGemmFusionAutotuningPasses(
       HloPassPipeline* pipeline, HloModule* hlo_module,
       AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool) {
     return absl::OkStatus();

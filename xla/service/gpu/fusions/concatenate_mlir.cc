@@ -66,23 +66,23 @@ LaunchDimensions MlirConcatenateFusion::launch_dimensions() const {
 
 std::optional<IndexingMap>
 MlirConcatenateFusion::ComputeThreadIdToOutputIndexing(
-    int64_t root_index, mlir::MLIRContext* ctx) const {
+    int64_t root_index, IndexingContext* indexing_context) const {
   return std::nullopt;
 }
 
 std::optional<IndexingMap>
 MlirConcatenateFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
-    mlir::MLIRContext* ctx) const {
+    IndexingContext* indexing_context) const {
   return GetDefaultThreadIdToOutputIndexingMap(
       launch_dimensions(), /*unroll_factor=*/1,
-      GetLargestConcatOperandShape(analysis_), ctx);
+      GetLargestConcatOperandShape(analysis_), indexing_context);
 }
 
-absl::flat_hash_set<const HloInstruction*>
+std::vector<const HloInstruction*>
 MlirConcatenateFusion::GetInstructionsWithCustomCodegen(
     const HloFusionInstruction& fusion) const {
-  return {analysis_.fusion_heroes()[0]};
+  return analysis_.fusion_heroes();
 }
 
 absl::Status MlirConcatenateFusion::EmitEntryFunction(
@@ -96,7 +96,8 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
   const auto* concat = analysis_.fusion_heroes()[0];
   mlir::ImplicitLocOpBuilder builder(entry_function.getLoc(), entry_function);
   builder.setInsertionPointToStart(entry_function.addEntryBlock());
-  auto* ctx = entry_function.getContext();
+  auto* mlir_context = entry_function.getContext();
+  IndexingContext indexing_context{mlir_context};
 
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
   SmallVector<Value> input_tensors(
@@ -109,13 +110,15 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
 
   auto thread_id_to_input_map =
       ComputeThreadIdToInputIndexing(
-          /*root_index=*/0, /*hero_operand_index=*/0, ctx)
+          /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context)
           .value();
-  auto epilogue_indexing = ComputeEpilogueInputToOutputIndexing(concat, ctx);
+  auto epilogue_indexing =
+      ComputeEpilogueInputToOutputIndexing(concat, &indexing_context);
 
   for (auto [operand_index, operand] : llvm::enumerate(concat->operands())) {
     auto input_to_output_map =
-        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index, ctx)
+        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index,
+                                      &indexing_context)
              .indexing_maps.front()
              .begin();
     auto thread_id_to_output_map = ComposeIndexingMaps(
@@ -131,14 +134,13 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
                                          dim_values, symbol_values, builder);
 
       auto result_scalars = mlir_converter::ProvideParameter(
-          root_computation, concat, operand_index, input_indices, call_targets,
-          builder);
+          root_computation.FindSubgraph(concat), concat, operand_index,
+          input_indices, call_targets, entry_function, builder);
       auto output_indices =
           mlir_converter::ApplyAffineMap(thread_id_to_output_map.GetAffineMap(),
                                          dim_values, symbol_values, builder);
-      result_scalars =
-          EmitEpilogue(analysis_.fusion_roots()[0], concat, call_targets,
-                       result_scalars, output_indices, builder);
+      result_scalars = EmitEpilogue(computations, entry_function,
+                                    result_scalars, output_indices, builder);
 
       SmallVector<Value> result_tensors;
       result_tensors.reserve(output_tensor_args.size());

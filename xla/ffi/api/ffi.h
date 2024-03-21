@@ -172,6 +172,20 @@ template <DataType dtype> using BufferR4 = Buffer<dtype, 4>;
 // clang-format on
 
 //===----------------------------------------------------------------------===//
+// Arguments binding
+//===----------------------------------------------------------------------===//
+
+template <>
+struct ArgBinding<BufferBase> {
+  using Arg = BufferBase;
+};
+
+template <DataType dtype, size_t rank>
+struct ArgBinding<Buffer<dtype, rank>> {
+  using Arg = Buffer<dtype, rank>;
+};
+
+//===----------------------------------------------------------------------===//
 // Arguments decoding
 //===----------------------------------------------------------------------===//
 
@@ -226,6 +240,31 @@ struct ArgDecoding<Buffer<dtype, rank>> {
     buffer.data = static_cast<internal::NativeType<dtype>*>(buf->data);
     buffer.dimensions = Span<const int64_t>(buf->dims, buf->rank);
     return buffer;
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Attributes decoding
+//===----------------------------------------------------------------------===//
+
+// A type tag to mark i64 attributes as pointers to `T`.
+template <typename T>
+struct Pointer {};
+
+template <typename T>
+struct AttrDecoding<Pointer<T>> {
+  using Type = T*;
+
+  static std::optional<Type> Decode(XLA_FFI_AttrType type, void* attr,
+                                    DiagnosticEngine& diagnostic) {
+    if (type != XLA_FFI_AttrType_I64) {
+      return diagnostic.Emit("Wrong attribute type: ")
+             << "expected i64 for passing user data but got " << type;
+    }
+
+    static_assert(sizeof(uintptr_t) == sizeof(int64_t));
+    uintptr_t ptr = *reinterpret_cast<uintptr_t*>(attr);
+    return reinterpret_cast<Type>(ptr);
   }
 };
 

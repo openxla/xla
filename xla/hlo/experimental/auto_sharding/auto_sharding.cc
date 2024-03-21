@@ -162,6 +162,7 @@ std::vector<double> MemoryReshardingCostVector(
   auto required_sharding_for_resharding = required_sharding.IsTileMaximal()
                                               ? HloSharding::Replicate()
                                               : required_sharding;
+  CHECK_OK(required_sharding.Validate(operand_shape));
   for (const auto& x : strategy_group->strategies) {
     ret.push_back(ComputeMemoryReshardingCost(operand_shape, x.output_sharding,
                                               required_sharding_for_resharding,
@@ -421,8 +422,8 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
     strategy_group->following = src_strategy_group;
     strategy_group->strategies.reserve(src_strategy_group->strategies.size());
     // Map operand dims to inst dim
-    // Example: f32[1,16]{1,0} reduce(f32[1,16,4096]{2,1,0} %param0, f32[]
-    // %param1), dimensions={2}
+    // Example: f32[1,16]{1,0} reduce(f32[1,16,4096]{2,1,0} %param0,
+    //                               f32[] %param1), dimensions={2}
     // op_dim_to_output_dim = [0, 1, -1]
     std::vector<int64_t> op_dim_to_output_dim =
         GetDimensionMapping(/*reduced_dimensions=*/ins->dimensions(),
@@ -458,12 +459,12 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
       std::unique_ptr<HloInstruction> unit_clone = unit->Clone();
       // Creates a new reduce op with one output, which is easier to use
       // GetShardingFromUser() to get the input sharding.
-      auto new_reduce = HloInstruction::CreateReduce(
+      std::unique_ptr<HloInstruction> new_reduce = HloInstruction::CreateReduce(
           output_shape, operand_clone.get(), unit_clone.get(),
           ins->dimensions(), ins->to_apply());
       operand_clone->set_sharding(
           src_strategy_group->strategies[sid].output_sharding);
-      auto s = new_reduce->ReplaceOperandWith(0, operand_clone.get());
+      absl::Status s = new_reduce->ReplaceOperandWith(0, operand_clone.get());
       if (!s.ok()) {
         continue;
       }
@@ -477,22 +478,24 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
 
       double compute_cost = 0, communication_cost = 0;
       double memory_cost = GetBytes(output_shape) / output_spec.NumTiles();
-      for (auto mesh_dim : all_reduce_dims) {
+      for (int64_t mesh_dim : all_reduce_dims) {
         communication_cost += cluster_env.AllReduceCost(memory_cost, mesh_dim);
       }
       ReshardingCosts communication_resharding_costs;
       ReshardingCosts memory_resharding_costs;
       for (int64_t k = 0; k < ins->operand_count(); ++k) {
-        auto cur_operand = ins->operand(k);
+        const HloInstruction* cur_operand = ins->operand(k);
         if (ToString(cur_operand->shape().dimensions()) ==
             ToString(operand->shape().dimensions())) {
-          auto operand_strategies = strategy_map.at(cur_operand).get();
+          const StrategyGroup* operand_strategies =
+              strategy_map.at(cur_operand).get();
           communication_resharding_costs.push_back(
               CommunicationReshardingCostVector(operand_strategies,
-                                                output_shape, input_sharding,
-                                                cluster_env));
+                                                cur_operand->shape(),
+                                                input_sharding, cluster_env));
           memory_resharding_costs.push_back(MemoryReshardingCostVector(
-              operand_strategies, output_shape, input_sharding, cluster_env));
+              operand_strategies, cur_operand->shape(), input_sharding,
+              cluster_env));
         } else {
           communication_resharding_costs.push_back(std::vector<double>(
               strategy_map.at(cur_operand)->strategies.size(), 0.0));
@@ -1831,6 +1834,7 @@ AutoShardingSolverResult CallSolver(
   request.set_saltiplier(kSaltiplier);
   request.set_deterministic_mode(deterministic_mode);
   request.set_request_name(std::string(request_name));
+  request.set_enable_memory_edge_costs(option.model_resharding_memory_costs);
   if (max_cost) {
     request.mutable_max_cost()->set_coeff(*max_cost);
   }
@@ -2633,24 +2637,28 @@ int64_t MemoryBudgetLowerBound(const HloModule& module,
   // as aliasing HloValues are mapped to the same buffer.
   absl::flat_hash_map<HloBuffer::Id, const HloValue*>
       buffer_to_sharded_value_mapping;
+  bool vlog_is_on_5 = VLOG_IS_ON(5);
   for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
     for (const HloValue* value : liveness_set[time_idx]) {
       const auto& buffer = alias_analysis->GetBufferContainingValue(*value);
       if (value->instruction()->has_sharding()) {
-        auto this_value_sharding = get_value_sharding(value);
-        auto iter = buffer_to_sharded_value_mapping.find(buffer.id());
-        if (iter != buffer_to_sharded_value_mapping.end()) {
-          auto buffer_value_sharding = get_value_sharding(iter->second);
-          if (this_value_sharding != buffer_value_sharding) {
-            // TODO(pratikf): This is an unavoidable situation, but possibly
-            // there is a better design decision that can be made here.
-            VLOG(1) << "We have a situation where two HloValues alias, but "
-                       "they have different shardings. This can happen in the "
-                       "presence of user-specified shardings, and is expected. "
-                       "This, however, means that the memory budget estimate "
-                       "is not very accurate. The aliasing HLOs are "
-                    << value->ToShortString() << " and "
-                    << iter->second->ToShortString();
+        if (vlog_is_on_5) {
+          auto this_value_sharding = get_value_sharding(value);
+          auto iter = buffer_to_sharded_value_mapping.find(buffer.id());
+          if (iter != buffer_to_sharded_value_mapping.end()) {
+            auto buffer_value_sharding = get_value_sharding(iter->second);
+            if (this_value_sharding != buffer_value_sharding) {
+              // TODO(pratikf): This is an unavoidable situation, but possibly
+              // there is a better design decision that can be made here.
+              VLOG(1)
+                  << "We have a situation where two HloValues alias, but "
+                     "they have different shardings. This can happen in the "
+                     "presence of user-specified shardings, and is expected. "
+                     "This, however, means that the memory budget estimate "
+                     "is not very accurate. The aliasing HLOs are "
+                  << value->ToShortString() << " and "
+                  << iter->second->ToShortString();
+            }
           }
         }
         buffer_to_sharded_value_mapping[buffer.id()] = value;
@@ -3627,9 +3635,16 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
         return changed.status();
       }
     }
-    std::vector<int64_t> device_mesh_ids = std::vector<int64_t>(total_devices);
-    std::iota(device_mesh_ids.begin(), device_mesh_ids.end(), 0);
-    device_mesh.SetValues(device_mesh_ids);
+    if (option_.device_mesh_ids.size() == total_devices) {
+      // It is unclear what device order to use for partial meshes. So we only
+      // use the actual device order only for the final full mesh.
+      device_mesh.SetValues(option_.device_mesh_ids);
+    } else {
+      std::vector<int64_t> device_mesh_ids =
+          std::vector<int64_t>(total_devices);
+      std::iota(device_mesh_ids.begin(), device_mesh_ids.end(), 0);
+      device_mesh.SetValues(device_mesh_ids);
+    }
 
     // TODO (zhuohan): Include the prof result as an option.
     spmd::ProfilingResult prof_result;
@@ -3757,7 +3772,7 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
     XLA_VLOG_LINES(5, PrintAutoShardingSolution(sequence, liveness_set,
                                                 strategy_map, strategy_groups,
                                                 cost_graph, s_val, objective));
-    XLA_VLOG_LINES(1, PrintSolutionMemoryUsage(liveness_set, strategy_map,
+    XLA_VLOG_LINES(6, PrintSolutionMemoryUsage(liveness_set, strategy_map,
                                                cost_graph, s_val));
 
     // ----- Substitute all-reduce with reduce-scatter -----

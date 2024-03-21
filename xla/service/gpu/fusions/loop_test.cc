@@ -37,6 +37,7 @@ namespace {
 
 class LoopTest : public HloTestBase {
  public:
+  LoopTest() : indexing_context_(&mlir_context_) {}
   void SetUp() override {
     HloTestBase::SetUp();
 
@@ -50,6 +51,7 @@ class LoopTest : public HloTestBase {
       TestGpuDeviceInfo::RTXA6000DeviceInfo();
   AffineMapPrinter printer_;
   mlir::MLIRContext mlir_context_;
+  IndexingContext indexing_context_;
 };
 
 absl::StatusOr<std::unique_ptr<KernelFusionInterface>> GetFusion(
@@ -84,15 +86,14 @@ TEST_F(LoopTest, ThreadIndexingUnrolled) {
   TF_ASSERT_OK_AND_ASSIGN(auto loop_fusion, GetFusion(analysis));
   auto thread_id_to_output_indexing =
       loop_fusion->ComputeThreadIdToOutputIndexing(/*root_index=*/0,
-                                                   &mlir_context_);
+                                                   &indexing_context_);
 
   EXPECT_THAT(thread_id_to_output_indexing->ToString(printer_),
               MatchIndexingString(R"(
   (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
    (((bl_x * 16 + th_x floordiv 8) floordiv 3 + chunk_id * 5376) floordiv 625) mod 100,
    (((th_x + bl_x * 128) floordiv 3 + chunk_id * 43008) floordiv 25) mod 200,
-   th_x * 4 + bl_x * 512 + chunk_id * 516096 + unroll_id -
-     (((th_x + bl_x * 128) floordiv 3 + chunk_id * 43008) floordiv 25) * 300
+   (th_x * 4 + bl_x * 512 + chunk_id * 516096) mod 300 + unroll_id
   )
   domain:
   th_x in [0, 127]
@@ -128,7 +129,7 @@ TEST_F(LoopTest, ThreadIndexingNotUnrolled) {
   TF_ASSERT_OK_AND_ASSIGN(auto loop_fusion, GetFusion(analysis));
   auto thread_id_to_output_indexing =
       loop_fusion->ComputeThreadIdToOutputIndexing(/*root_index=*/0,
-                                                   &mlir_context_);
+                                                   &indexing_context_);
   EXPECT_THAT(thread_id_to_output_indexing->ToString(printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
@@ -144,7 +145,7 @@ TEST_F(LoopTest, ThreadIndexingNotUnrolled) {
             )"));
   auto thread_id_to_input_indexing =
       loop_fusion->ComputeThreadIdToInputIndexing(
-          /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
+          /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_input_indexing->ToString(printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
@@ -181,7 +182,7 @@ TEST_F(LoopTest, Broadcast) {
   TF_ASSERT_OK_AND_ASSIGN(auto loop_fusion, GetFusion(analysis));
   auto thread_id_to_output_indexing =
       loop_fusion->ComputeThreadIdToOutputIndexing(/*root_index=*/0,
-                                                   &mlir_context_);
+                                                   &indexing_context_);
   EXPECT_THAT(thread_id_to_output_indexing->ToString(printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
@@ -201,7 +202,7 @@ TEST_F(LoopTest, Broadcast) {
             )"));
   auto thread_id_to_input_indexing =
       loop_fusion->ComputeThreadIdToInputIndexing(
-          /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
+          /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context_);
   EXPECT_THAT(thread_id_to_input_indexing->ToString(printer_),
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
