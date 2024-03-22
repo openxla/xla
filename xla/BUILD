@@ -871,11 +871,10 @@ cc_library(
     hdrs = ["test_helpers.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        ":status",
         ":statusor",
         ":types",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:regexp",
         "@tsl//tsl/platform:test",
     ],
 )
