@@ -188,6 +188,28 @@ ENTRY %elementwise {
   EXPECT_THAT(instruction, op::Sharding("{devices=[2,2]0,2,1,3}"));
 }
 
+TEST_F(AutoShardingTest, Unsupported3DShardingTest) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+ENTRY %elementwise {
+  %param0 = f32[32,32,32,32] parameter(0)
+  %param1 = f32[32,32,32,32] parameter(1)
+  %add = f32[32,32,32,32] add(%param0, %param1), sharding={devices=[2,2,1,2]<=[8]}
+  ROOT %copy = f32[32,32,32,32] copy(%add)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  AutoShardingOption option;
+  option.enable = true;
+  // The case of a fleet HLO when run with try_multiple_mesh_shapes = true
+  option.device_mesh_shape = {2, 4};
+  option.device_mesh_alpha = {1.0, 1.0};
+  option.device_mesh_beta = {0.01, 1.0};
+  EXPECT_DEATH(auto status = AutoSharding(option).Run(module.get()),
+               ".*too many axes.*");
+}
+
 TEST_F(AutoShardingTest, NDIterativeSolveTest) {
   constexpr absl::string_view hlo_string = R"(
 HloModule module
@@ -245,6 +267,43 @@ ENTRY %elementwise {
       slice,
       AnyOf(op::Sharding("{devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}"),
             op::Sharding("{devices=[2,1,2]0,2,1,3 last_tile_dim_replicate}")));
+}
+
+TEST_F(AutoShardingTest, SliceMixedUserShardingTest) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY %elementwise {
+  param = s32[512,3084]{1,0} parameter(0), sharding={devices=[4,1]0,2,1,3}
+  slice = s32[512,2048]{1,0} slice(param), slice={[0:512], [0:2048]}
+  ROOT copy = s32[512,2048]{1,0} copy(slice)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      AutoSharding(
+          /* option */ {
+              .enable = true,
+              .preserve_shardings =
+                  AutoShardingOption::PreserveShardingsType::kKeepAllShardings,
+              .solve_nd_sharding_iteratively = true,
+              .device_mesh_shape = {2, 2},
+              .device_mesh_ids = {0, 2, 1, 3},
+              .device_mesh_alpha = {1.0, 1.0},
+              .device_mesh_beta = {0.01, 1.0}})
+          .Run(module.get()));
+  VLOG(10) << module->ToString();
+  EXPECT_TRUE(changed);
+
+  std::vector<HloInstruction*> instructions =
+      module->entry_computation()->MakeInstructionPostOrder();
+  EXPECT_THAT(instructions,
+              Each(ResultOf(
+                  [](const HloInstruction* ins) { return ins->has_sharding(); },
+                  IsTrue())));
+  EXPECT_THAT(instructions, Each(op::Sharding("{devices=[4,1]0,2,1,3}")));
 }
 
 TEST_F(AutoShardingTest, RngBitGeneratorArrayInput) {

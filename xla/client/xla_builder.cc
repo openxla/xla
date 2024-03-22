@@ -1182,12 +1182,16 @@ XlaOp XlaBuilder::BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
                                   this, rhs, lhs, *lhs_shape));
         }
       } else {
-        TF_ASSIGN_OR_RETURN(UnboundedBroadcastResult broadcast_result,
-                            BroadcastToOutputShapeWithUnbounded(
-                                this, lhs, *lhs_shape, rhs, *rhs_shape, shape,
-                                broadcast_dimensions));
-        updated_lhs = broadcast_result.lhs;
-        updated_rhs = broadcast_result.rhs;
+        if (!ShapeUtil::SameDimensions(*lhs_shape, *rhs_shape)) {
+          Shape output_shape = shape;
+          output_shape.set_element_type(lhs_shape->element_type());
+          TF_ASSIGN_OR_RETURN(UnboundedBroadcastResult broadcast_result,
+                              BroadcastToOutputShapeWithUnbounded(
+                                  this, lhs, *lhs_shape, rhs, *rhs_shape,
+                                  output_shape, broadcast_dimensions));
+          updated_lhs = broadcast_result.lhs;
+          updated_rhs = broadcast_result.rhs;
+        }
       }
     }
 
@@ -1882,6 +1886,35 @@ StatusOr<XlaOp> XlaBuilder::DotGeneralInternal(
     *instr.mutable_precision_config() = *precision_config;
   }
   return AddInstruction(std::move(instr), HloOpcode::kDot, {lhs, rhs});
+}
+
+XlaOp XlaBuilder::SparseDot(
+    XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
+    absl::Span<const SparsityDescriptor> sparsity,
+    const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config,
+    std::optional<PrimitiveType> preferred_element_type) {
+  return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
+    TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
+    TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeInference::InferDotOpShape(
+                            *lhs_shape, *rhs_shape, dimension_numbers,
+                            preferred_element_type, sparsity));
+    std::vector<XlaOp> operands{lhs, rhs};
+    operands.insert(operands.end(), sparse_meta.begin(), sparse_meta.end());
+
+    HloInstructionProto instr;
+    *instr.mutable_shape() = shape.ToProto();
+    *instr.mutable_dot_dimension_numbers() = dimension_numbers;
+    if (precision_config != nullptr) {
+      *instr.mutable_precision_config() = *precision_config;
+    }
+    for (const SparsityDescriptor& descriptor : sparsity) {
+      *instr.add_dot_sparsity() = descriptor;
+    }
+    return AddInstruction(std::move(instr), HloOpcode::kDot, operands);
+  });
 }
 
 Status XlaBuilder::VerifyConvolution(
@@ -3762,7 +3795,7 @@ XlaOp XlaBuilder::AllToAllTuple(
   return ReportErrorOrReturn([&]() -> StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
 
-    // The HloInstruction for Alltoall currently only handles the data
+    // The HloInstruction for AllToAll currently only handles the data
     // communication: it accepts N already split parts and scatters them to N
     // cores, and each core gathers the N received parts into a tuple as the
     // output. So here we explicitly split the operand before the hlo alltoall,
@@ -4859,6 +4892,17 @@ XlaOp DotGeneral(const XlaOp lhs, const XlaOp rhs,
                  std::optional<PrimitiveType> preferred_element_type) {
   return lhs.builder()->DotGeneral(lhs, rhs, dimension_numbers,
                                    precision_config, preferred_element_type);
+}
+
+XlaOp SparseDot(const XlaOp lhs, const XlaOp rhs,
+                absl::Span<const XlaOp> sparse_meta,
+                absl::Span<const SparsityDescriptor> sparsity,
+                const DotDimensionNumbers& dimension_numbers,
+                const PrecisionConfig* precision_config,
+                std::optional<PrimitiveType> preferred_element_type) {
+  return lhs.builder()->SparseDot(lhs, rhs, sparse_meta, sparsity,
+                                  dimension_numbers, precision_config,
+                                  preferred_element_type);
 }
 
 XlaOp Conv(const XlaOp lhs, const XlaOp rhs,

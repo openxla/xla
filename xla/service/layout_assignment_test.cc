@@ -1722,5 +1722,117 @@ TEST_F(LayoutAssignmentTest, PartialEntryParameterLayout) {
                  {0, 1, 2});
 }
 
+// Test the ability to enforce aliasing .
+TEST_F(LayoutAssignmentTest, AliasParameterAndOutput) {
+  const char* module_str = R"(
+ HloModule EntryAlias, input_output_alias={ {}: (0, {}, may-alias) }
+ 
+ ENTRY %main {
+   p0 = f32[65,65] parameter(0)
+   p1 = f32[4225] parameter(1)
+   r = f32[65,65] reshape(p1)
+   a = add(p0,r)
+   ROOT t = transpose(a), dimensions={1,0}
+ } )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(module_str));
+  m->mutable_entry_computation_layout()->SetToDefaultLayout();
+  m->mutable_entry_computation_layout()->mutable_result_layout()->Clear();
+  m->mutable_entry_computation_layout()->mutable_parameter_layout(0)->Clear();
+
+  LayoutAssignment layout_assignment(m->mutable_entry_computation_layout(),
+                                     nullptr);
+  EXPECT_IS_OK(layout_assignment.Run(m.get()).status());
+  EXPECT_EQ(m->entry_computation_layout().result_layout().shape(),
+            m->entry_computation_layout().parameter_layout(0).shape());
+}
+
+// Test the ability to enforce aliasing .
+TEST_F(LayoutAssignmentTest, AliasUnconstrainedParamterWithConstrainedOutput) {
+  const char* module_str = R"(
+ HloModule EntryAlias, input_output_alias={ {}: (0, {}, may-alias) }
+ 
+ ENTRY %main {
+   p0 = f32[65,65] parameter(0)
+   p1 = f32[4225] parameter(1)
+   r = f32[65,65] reshape(p1)
+   a = add(p0,r)
+   ROOT t = transpose(a), dimensions={1,0}
+ } )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(module_str));
+  m->mutable_entry_computation_layout()->SetToDefaultLayout();
+  m->mutable_entry_computation_layout()->mutable_parameter_layout(0)->Clear();
+
+  LayoutAssignment layout_assignment(m->mutable_entry_computation_layout(),
+                                     nullptr);
+  EXPECT_IS_OK(layout_assignment.Run(m.get()).status());
+  EXPECT_EQ(m->entry_computation_layout().result_layout().shape(),
+            m->entry_computation_layout().parameter_layout(0).shape());
+}
+
+TEST_F(LayoutAssignmentTest, AliasConstrainedParamterWithUnconstrainedOutput) {
+  const char* module_str = R"(
+ HloModule EntryAlias, input_output_alias={ {}: (0, {}, may-alias) }
+ 
+ ENTRY %main {
+   p0 = f32[65,65] parameter(0)
+   p1 = f32[4225] parameter(1)
+   r = f32[65,65] reshape(p1)
+   a = add(p0,r)
+   ROOT t = transpose(a), dimensions={1,0}
+ } )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(module_str));
+  m->mutable_entry_computation_layout()->SetToDefaultLayout();
+  m->mutable_entry_computation_layout()->mutable_result_layout()->Clear();
+
+  LayoutAssignment layout_assignment(m->mutable_entry_computation_layout(),
+                                     nullptr);
+  EXPECT_IS_OK(layout_assignment.Run(m.get()).status());
+  EXPECT_EQ(m->entry_computation_layout().result_layout().shape(),
+            m->entry_computation_layout().parameter_layout(0).shape());
+}
+
+TEST_F(LayoutAssignmentTest, NestedTupleInLoop) {
+  const char* module_str = R"(
+HloModule Module
+
+condition  {
+    p = (f32[100,100], (f32[100,100], u32[], token[])) parameter(0)
+    ROOT lt = pred[] constant(1)
+}
+
+body {
+    p = (f32[100,100], (f32[100,100], u32[], token[])) parameter(0)
+
+    t1 = f32[100,100] get-tuple-element(p), index=0
+    t = (f32[100,100], u32[], token[]) get-tuple-element(p), index=1
+    sdone = token[] send-done(t), channel_id=0
+    tk = token[] after-all()
+    snd = (f32[100,100], u32[], token[]) send(t1, tk), channel_id=0
+    a = add(t1, t1)
+    ROOT tup =  tuple(a, snd)
+}
+
+ENTRY %main {
+    p0 = f32[100,100] parameter(0)
+    tk = token[] after-all()
+    snd = (f32[100,100], u32[], token[]) send(p0, tk), channel_id=1
+    t = tuple(p0, snd)
+    ROOT loop = while(t), condition=condition, body=body
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(module_str));
+
+  LayoutAssignment layout_assignment(m->mutable_entry_computation_layout(),
+                                     nullptr);
+  EXPECT_IS_OK(layout_assignment.Run(m.get()).status());
+}
+
 }  // namespace
 }  // namespace xla

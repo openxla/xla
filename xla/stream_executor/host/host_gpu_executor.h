@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -52,9 +51,7 @@ class HostExecutor : public internal::StreamExecutorInterface {
  public:
   HostExecutor() = default;
 
-  // The stack size used for host streams can be set via
-  // device_options.non_portable_tags["host_stack_size"].
-  absl::Status Init(int device_ordinal, DeviceOptions device_options) override;
+  absl::Status Init(int device_ordinal) override;
 
   absl::Status GetKernel(const MultiKernelLoaderSpec& spec,
                          Kernel* kernel) override {
@@ -145,10 +142,6 @@ class HostExecutor : public internal::StreamExecutorInterface {
       override;
 
   std::unique_ptr<internal::StreamInterface> GetStreamImplementation() override;
-
- private:
-  // Size of thread stacks for streams in bytes. '0' means "the default size".
-  size_t thread_stack_size_in_bytes_ = 0;
 };
 
 }  // namespace host

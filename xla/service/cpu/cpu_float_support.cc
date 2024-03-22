@@ -18,12 +18,20 @@ limitations under the License.
 #include "xla/service/cpu/cpu_float_support.h"
 
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
+#include "xla/service/cpu/onednn_convolution_rewriter.h"
 
 namespace xla {
 namespace cpu {
 
 bool CpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
   switch (hlo.opcode()) {
+    // oneDNN rewritable ops
+    case HloOpcode::kDot:
+      return LowPrecisionType() == BF16 &&
+             OneDnnMatMulRewriter::ShouldRewrite(&hlo) && DotSupported(hlo);
+    case HloOpcode::kConvolution:
+      return LowPrecisionType() == BF16 &&
+             OneDnnConvolutionRewriter::ShouldRewrite(&hlo);
     // Collective ops.
     case HloOpcode::kAllGather:
     case HloOpcode::kAllReduce:
@@ -32,10 +40,6 @@ bool CpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kAllToAll:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kReduceScatter:
-    case HloOpcode::kDot:
-      return LowPrecisionType() == BF16 &&
-             OneDnnMatMulRewriter::ShouldRewrite(&hlo) && DotSupported(hlo);
-    case HloOpcode::kConvolution:
     // Data movement only ops.
     case HloOpcode::kBroadcast:
     case HloOpcode::kConcatenate:

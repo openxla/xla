@@ -33,7 +33,6 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -49,19 +48,7 @@ HostStream* AsHostStream(Stream* stream) {
   return dynamic_cast<HostStream*>(stream->implementation());
 }
 
-absl::Status HostExecutor::Init(int device_ordinal,
-                                DeviceOptions device_options) {
-  auto it =
-      device_options.non_portable_tags.find("host_thread_stack_size_in_bytes");
-  if (it != device_options.non_portable_tags.end()) {
-    if (!absl::SimpleAtoi(it->second, &thread_stack_size_in_bytes_)) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Unable to parse host_thread_stack_size_in_bytes as an integer: ",
-          it->second));
-    }
-  }
-  return absl::OkStatus();
-}
+absl::Status HostExecutor::Init(int device_ordinal) { return absl::OkStatus(); }
 
 bool HostExecutor::DeviceMemoryUsage(int64_t* free, int64_t* total) const {
   tsl::port::MemoryInfo mem_info = tsl::port::GetMemoryInfo();
@@ -279,8 +266,7 @@ HostExecutor::CreateDeviceDescription(int device_ordinal) {
 
 std::unique_ptr<internal::StreamInterface>
 HostExecutor::GetStreamImplementation() {
-  return std::unique_ptr<internal::StreamInterface>(
-      new HostStream(thread_stack_size_in_bytes_));
+  return std::make_unique<HostStream>();
 }
 
 }  // namespace host

@@ -61,9 +61,8 @@ message OneDnnMatMulConfig {
   bool transpose_a = 1;
   bool transpose_b = 2;
   
-  bool bias_broadcast = 3;
-  
-  OneDnnFusionConfig fusions = 4;
+  OneDnnFusionConfig fusions = 3;
+  bool bias_broadcast = 4;
 }
 
 message TensorLayoutProto {
@@ -90,7 +89,8 @@ message OneDnnNormConfig {
     SCALE_AND_SHIFT = 3;
   }
   ScaleAndShift rescale = 1;
-  OneDnnFusionConfig fusions = 2;
+  int32 epsilon_typecast = 2;
+  OneDnnFusionConfig fusions = 3;
 }
 
 message OneDnnConvolutionConfig {
