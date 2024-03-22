@@ -38,6 +38,7 @@ limitations under the License.
 #include "nanobind/stl/function.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/set.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
