@@ -72,9 +72,14 @@ class SymbolicTileAnalysis {
   std::vector<int64_t> TileStrides(absl::Nonnull<const HloInstruction*> hlo,
                                    const InstructionPathFromRoot& path) const;
 
-  // Populates input tile sizes. This is a prerequisite in order to extract
+  // Populates tile parameters. This is a prerequisite in order to extract
   // concrete values using `TileOffsets`, `TileSizes`, and `TileStrides`.
-  void SetTileSizes(absl::Span<int64_t const> sizes);
+  void SetTileParameters(absl::Span<int64_t const> parameters);
+
+  // Populates tile parameters with given sizes. All offsets are 0 and strides
+  // are 1.
+  void SetTileParametersWithDefaultOffsetsAndStrides(
+      absl::Span<int64_t const> sizes);
 
   // Return the underlying MLIRContext.
   mlir::MLIRContext* GetMLIRContext() const { return context_; };
