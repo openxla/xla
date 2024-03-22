@@ -200,7 +200,7 @@ struct LhloLegalizeToGpuPass
 
 }  // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createLegalizeToGpuPass() {
+static std::unique_ptr<OperationPass<func::FuncOp>> createLegalizeToGpuPass() {
   return std::make_unique<LhloLegalizeToGpuPass>();
 }
 
