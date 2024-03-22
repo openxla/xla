@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 
+#include <cstdint>
 #include <memory>
 #include <variant>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -62,7 +64,7 @@ ENTRY main {
   SymbolicTileAnalysis analysis =
       std::get<SymbolicTileAnalysis>(analysis_or_error);
 
-  analysis.SetTileSizes(/*sizes=*/{1, 10});
+  analysis.SetTileParametersWithDefaultOffsetsAndStrides(/*sizes=*/{1, 10});
 
   const HloInstruction* p0 =
       module->entry_computation()->parameter_instruction(0);
