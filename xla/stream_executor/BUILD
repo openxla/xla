@@ -690,6 +690,7 @@ cc_library(
         ":platform_manager",
         ":scratch_allocator",
         ":stream_executor",
+        # for comparison cl/531332780.
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/stream_executor/platform:dso_loader",
