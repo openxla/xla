@@ -174,6 +174,8 @@ cc_library(
     deps = [
         ":c_api_decl",
         ":libtftpu_header",
+        "//third_party/protobuf",
+        "@com_google_absl//absl/strings:string_view",
     ],
     alwayslink = True,
 )
