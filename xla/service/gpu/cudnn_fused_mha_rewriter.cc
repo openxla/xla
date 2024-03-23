@@ -1470,7 +1470,7 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       output_shape,
       ShapeUtil::MakeShape(
           U8, {is_flash_attention
-                   ? 16
+                   ? 3194896
                    : 0})};  // reserved 2 int64 for dropout seed and offset
   if (is_training) {
     activation_output = bmm_2->mutable_operand(0);
@@ -1734,24 +1734,16 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
 
   // Output order:
   // {dQ(bmm_1_grad_2), dK(bmm_1_grad_1), dV(bmm_2_grad_1),
-  // d_intermediate_tensor*, softmax_sum*, d_Q_accum*, scratch, dbias*}
+  // d_intermediate_tensor*, scratch, dbias*}
   std::vector<Shape> output_shapes = {
       bmm_1_grad_2->shape(), bmm_1_grad_1->shape(), bmm_2_grad_1->shape()};
   if (!fwd_config.is_flash_attention()) {
     output_shapes.push_back(lhs_bmm2_grad_gemm1->shape());
-  } else {
-    // softmax_sum, d_Q_accum
-    // add softmax sum here and change the data type
-    // softmax sum and d_Q_accum should both be fp32 datatype
-    output_shapes.push_back(
-        ShapeUtil::MakeShape(F32, fwd_act->shape().dimensions()));
-    output_shapes.push_back(
-        ShapeUtil::MakeShape(F32, bmm_1_grad_2->shape().dimensions()));
   }
   // Reserved placeholder for workspace
   output_shapes.push_back(ShapeUtil::MakeShape(
       U8, {is_flash_attention
-               ? 16
+               ? 3194896
                : 0}));  // reserved 2 int64 for dropout seed and offset
 
   if (dbias) {

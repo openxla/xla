@@ -3800,13 +3800,10 @@ enum CudnnfMHAUid {
   NEG_INFINITY_ID,
   ALPHA_SCALE_ID,
   DROPOUT_SCALE_ID,
-  SCALE_PROB_ID,
   Q_SEQLEN_ID,
   K_SEQLEN_ID,
   D_OFFSET_ID,
   D_SEED_ID,
-  S_SUM_ID,
-  d_Q_accum_ID,
   VIRTUAL_ID = 34857
 };
 
@@ -6280,6 +6277,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                        .set_dim(q_descriptor.GetCudnnCompatibleDimensions(true))
                        .set_stride(q_descriptor.GetCudnnCompatibleStrides(true))
                        .set_uid(CudnnfMHAUid::Q_ID));
+  auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
+
   std::shared_ptr<Tensor_attributes> k_tensor =
       graph.tensor(Tensor_attributes()
                        .set_name("K")
@@ -6366,8 +6365,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\b flash attention operation graph: " << graph;
   }
-  std::cerr << graph << "\n";
-  std::cerr << "Forward graph building successful\n";
   return cudnnGraph;
 }
 
@@ -6538,9 +6535,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\b flash attention operation backward graph: " << graph;
   }
-
-  std::cerr << graph << "\n";
-  std::cerr << "Backward graph building successful\n";
 
   return cudnnGraph;
 }
@@ -7235,7 +7229,7 @@ class CudnnExecutionPlanRunner<void(Args...)>
       data_ptrs_vec.pop_back();
     }
 
-    if (sizeof...(Args) == 9 || sizeof...(Args) == 17) {
+    if (sizeof...(Args) == 9 || sizeof...(Args) == 15) {
       // is attention fwd or bwd
       data_ptrs_vec.erase(
           std::remove(data_ptrs_vec.begin(), data_ptrs_vec.end(), nullptr),
@@ -7413,14 +7407,14 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
         variant_pack[*uids_[i]] = vec[i];
       }
     }
-
     // add scalars to the variant pack
     for (const std::pair<int64_t, ScalingParam>& p : scalars_) {
       variant_pack[p.first] = const_cast<void*>(p.second.ToVoidPointer());
     }
-
     if (dropout_rng_offset_increment_ > 0) {
 #if CUDNN_VERSION >= 8800
+      // variant_pack[CudnnfMHAUid::D_SEED_ID] = scratch_memory.opaque();
+      // variant_pack[CudnnfMHAUid::D_OFFSET_ID] = static_cast<void*>(static_cast<int64_t*>(scratch_memory.opaque()) + 1);
       variant_pack[CudnnfMHAUid::D_SEED_ID] = (void*)&dropout_rng_seed_;
       current_dropout_rng_offset_ += dropout_rng_offset_increment_;
       variant_pack[CudnnfMHAUid::D_OFFSET_ID] =
@@ -7431,7 +7425,7 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
           "8.8.0");
 #endif  // CUDNN_VERSION >= 8800
     }
-
+    std::cerr << graph_.Graph().get_workspace_size() << "\n";
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.Graph().execute(
         handle.handle(), variant_pack, scratch_memory.opaque()));
 
@@ -8624,8 +8618,7 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
     uids = {CudnnfMHAUid::Q_ID,  CudnnfMHAUid::K_ID,  CudnnfMHAUid::P_ID,
             CudnnfMHAUid::V_ID,  CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
             CudnnfMHAUid::dK_ID, CudnnfMHAUid::dV_ID, std::nullopt,
-            std::nullopt,        std::nullopt,        std::nullopt,
-            std::nullopt,        CudnnfMHAUid::O_ID};
+            std::nullopt,        std::nullopt,        CudnnfMHAUid::O_ID};
     if (bias_descriptor) {
       uids.push_back(CudnnfMHAUid::BIAS_ID);
     }
@@ -9764,7 +9757,6 @@ absl::StatusOr<bool> CudnnGraph::Prepare(dnn::DnnSupport& dnn_support) {
       graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
   if (auto result = graph_.check_support(cudnn->handle()); result.is_bad()) {
     VLOG(3) << result.get_message();
-    std::cerr << "error message: " << result.get_message();
     return false;
   }
   return true;
@@ -9786,6 +9778,7 @@ absl::Status CudnnGraph::Execute(Stream& stream,
                      void*>
       tensor_to_ptr_map;
   int operand_number = 0;
+
   CHECK_EQ(graph_.get_workspace_size(), 0);
   for (DeviceMemoryBase operand : operands) {
     const cudnn_frontend::graph::Tensor_attributes attr =
