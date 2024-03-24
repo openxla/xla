@@ -20,6 +20,7 @@ def repo():
         "flags",
         "functional",
         "hash",
+        "log",
         "memory",
         "meta",
         "numeric",
