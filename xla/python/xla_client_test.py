@@ -2553,9 +2553,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
     def testLocalHardwareId(self):
       for device in self.backend.devices():
-        local_hardware_id = device.local_hardware_id
-        if local_hardware_id is not None:
-          self.assertGreaterEqual(local_hardware_id, 0)
+        if hasattr(device, "local_hardware_id"):
+          self.assertGreaterEqual(device.local_hardware_id, 0)
 
     @unittest.skipIf(pathways_ifrt, "not implemented")
     def testLocalDeviceFromLocalHardwareId(self):
