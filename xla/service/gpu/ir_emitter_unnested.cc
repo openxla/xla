@@ -2619,15 +2619,9 @@ absl::Status IrEmitterUnnested::EmitCopyStartThunk(
 // In the CopyDone thunk, the corresponding copy start instruction is passed
 // in order to finding the matching event and make sure it's completed.
 absl::Status IrEmitterUnnested::EmitCopyDoneThunk(const HloInstruction *instr) {
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_buffer,
-                      GetAllocationSliceForHlo(instr,
-                                               /*ShapeIndex=*/{}));
-
   const HloInstruction *src = instr->operand(0);
   const Shape shape = src->shape();
 
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice src_buffer,
-                      GetAllocationSliceForHlo(src, {0}));
   CHECK(shape.IsTuple());
 
   TF_ASSIGN_OR_RETURN(bool has_host_shape, HasHostMemorySpace(shape));
