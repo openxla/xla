@@ -19,6 +19,8 @@ limitations under the License.
 
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
 
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/util/onednn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -32,8 +34,6 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/util/onednn_threadpool.h"
 
 namespace xla {
 namespace cpu {
@@ -246,11 +246,6 @@ inline bool IsRowMajor(const Shape& shape) {
 inline bool CompatibleElementType(const HloInstruction* instr) {
   PrimitiveType element_type = instr->shape().element_type();
   return element_type == BF16 || element_type == F32 || element_type == F16;
-}
-
-inline bool LowPrecisionType(const HloInstruction* instr) {
-  PrimitiveType element_type = instr->shape().element_type();
-  return element_type == BF16 || element_type == F16;
 }
 
 // Type conversion from and to any of BF16, F16 and FP32.
@@ -520,7 +515,8 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       // for bf16 case to avoid datatype mismatch.
       if (optional_dot_bitcast != nullptr &&
           optional_dot_bitcast->opcode() == HloOpcode::kBitcast) {
-        if (LowPrecisionType(matmul_call)) {
+        if (optional_dot_convert != nullptr &&
+            optional_dot_convert->opcode() == HloOpcode::kConvert) {
           auto bitcast_call =
               matmul_call->AddInstruction(HloInstruction::CreateBitcast(
                   ShapeUtil::ChangeElementType(
@@ -528,18 +524,21 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
                   matmul_call));
           new_instr =
               bitcast_call->AddInstruction(HloInstruction::CreateConvert(
-                  ShapeUtil::ChangeElementType(bitcast_call->shape(),
-                                               PrimitiveType::F32),
+                  ShapeUtil::ChangeElementType(
+                      bitcast_call->shape(),
+                      optional_dot_convert->shape().element_type()),
                   bitcast_call));
         } else {
           new_instr = matmul_call->AddInstruction(
               HloInstruction::CreateBitcast(instr->shape(), matmul_call));
         }
       } else {
-        if (LowPrecisionType(matmul_call)) {
+        if (optional_dot_convert != nullptr &&
+            optional_dot_convert->opcode() == HloOpcode::kConvert) {
           new_instr = matmul_call->AddInstruction(HloInstruction::CreateConvert(
-              ShapeUtil::ChangeElementType(matmul_call->shape(),
-                                           PrimitiveType::F32),
+              ShapeUtil::ChangeElementType(
+                  matmul_call->shape(),
+                  optional_dot_convert->shape().element_type()),
               matmul_call));
         } else {
           new_instr = matmul_call;

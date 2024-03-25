@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "tsl/platform/cpu_info.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
@@ -27,7 +28,6 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -511,7 +511,7 @@ TEST_F(MatmulTest, DivisionByConstantWithEltwiseLinearF32) {
   )");
 }
 
-TEST_F(MatmulTest, SimpleBiasTestFP16_PARAM_F32) {
+TEST_F(MatmulTest, SimpleBiasTestF16_PARAM_F32) {
   if (!IsSupportedType(PrimitiveType::F16)) {
     GTEST_SKIP() << "CPU does not support F16.";
   }
@@ -537,7 +537,7 @@ TEST_F(MatmulTest, SimpleBiasTestFP16_PARAM_F32) {
   MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_);
 }
 
-TEST_F(MatmulTest, SimpleBiasTestFP16_PARAM_FP16) {
+TEST_F(MatmulTest, SimpleBiasTestF16_PARAM_F16) {
   if (!IsSupportedType(PrimitiveType::F16)) {
     GTEST_SKIP() << "CPU does not support F16.";
   }

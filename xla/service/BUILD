@@ -20,6 +20,7 @@ load(
     "if_rocm",
     "if_rocm_is_configured",
 )
+load("@tsl//tsl:tsl.bzl", "tsl_copts")
 load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
@@ -7278,6 +7279,7 @@ cc_library(
     name = "change_op_data_type",
     srcs = ["change_op_data_type.cc"],
     hdrs = ["change_op_data_type.h"],
+    copts = tsl_copts(),
     deps = [
         ":hlo_creation_utils",
         ":hlo_pass",
