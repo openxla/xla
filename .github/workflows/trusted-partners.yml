@@ -15,54 +15,23 @@
 
 name: Trusted Partner PR
 on:
-  pull_request_target:
+  pull_request:
+
+env:
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   assign-partner-tags:
     runs-on: ubuntu-latest
-    permissions:
-      # Needed to attach tags into the PR
-      issues: write
-      contents: write
-      pull-requests: write
-    if: |
-      github.event.pull_request.draft == false &&
-      github.event.sender.type == 'User'
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 1
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # v3.2.0
-      - name: Trusted-Partners-PR
-        uses: actions/github-script@d556feaca394842dc55e4734bf3bb9f685482fa0 # v6.3.3
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const script = require('./.github/workflows/trusted_partners.js');
-            const username = context.payload.pull_request.user.login;
-            const domain = await script.get_email_domain({github, username});
-            switch(domain) {
-            case "intel.com":
-              console.log(await script.filter({github, context, domain}));
-              break;
-            case "apple.com":
-              console.log(await script.filter({github, context, domain}));
-              break;
-            case "nvidia.com":
-              console.log(await script.filter({github, context, domain}));
-              break;
-            case "linaro.org":
-              console.log(await script.filter({github, context, domain}));
-              break;
-            case "arm.com":
-              console.log(await script.filter({github, context, domain}));
-              break;
-            // Disable googler flow, so default reviewers are added for now
-            // case "google.com":
-              // console.log("Googler. No action necessary");
-              // break;
-            default:
-              // For now, add default reviewers to all PRs to ensure none are
-              // missed until further reviewer processes are setup.
-              console.log(await script.filter({github, context, domain}));
-              console.log("Default reviewers added");
-              // console.log("Skip Trusted Partner Action");
-            }
+      - name: github_api
+        run: |
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /orgs/openxla/members \
+          | jq --exit-status '.[].login | select(. == "tlongeri")'
