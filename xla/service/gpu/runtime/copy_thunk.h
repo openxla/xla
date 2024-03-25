@@ -1,4 +1,4 @@
-/* Copyright 2017 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -31,29 +31,29 @@ namespace gpu {
 
 // A thunk that copies data from a device buffer to another device buffer.
 class DeviceToDeviceCopyThunk : public Thunk {
-public:
+ public:
   // Constructs a CopyThunk that copies host data from `source_buffer` to the
   // device buffer `destination_buffer`. `mem_size` is the size of the data in
   // bytes.
   DeviceToDeviceCopyThunk(ThunkInfo thunk_info,
-                          const BufferAllocation::Slice &source_buffer,
-                          const BufferAllocation::Slice &destination_buffer,
+                          const BufferAllocation::Slice& source_buffer,
+                          const BufferAllocation::Slice& destination_buffer,
                           uint64_t mem_size);
 
-  DeviceToDeviceCopyThunk(const DeviceToDeviceCopyThunk &) = delete;
-  DeviceToDeviceCopyThunk &operator=(const DeviceToDeviceCopyThunk &) = delete;
+  DeviceToDeviceCopyThunk(const DeviceToDeviceCopyThunk&) = delete;
+  DeviceToDeviceCopyThunk& operator=(const DeviceToDeviceCopyThunk&) = delete;
 
-  absl::Status ExecuteOnStream(const ExecuteParams &params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   void ClearCompileTimeInfo() override { Thunk::ClearCompileTimeInfo(); }
 
-  const BufferAllocation::Slice &source() const { return source_buffer_; }
-  const BufferAllocation::Slice &destination() const {
+  const BufferAllocation::Slice& source() const { return source_buffer_; }
+  const BufferAllocation::Slice& destination() const {
     return destination_buffer_;
   }
   uint64_t size_bytes() const { return mem_size_; }
 
-private:
+ private:
   const BufferAllocation::Slice source_buffer_;
   const BufferAllocation::Slice destination_buffer_;
   const uint64_t mem_size_;
@@ -84,6 +84,9 @@ private:
 //===----------------------------------------------------------------------===//
 // DeviceHostCopyThunk
 //===----------------------------------------------------------------------===//
+// The memcpy between a host and a device
+enum class CopyDirection { kHostToDevice = 0, kDeviceToHost = 1, kUnknownCopy = -1 };
+
 // A thunk that copies data from a device buffer to a host buffer.
 class DeviceHostCopyThunk : public DeviceToDeviceCopyThunk {
 public:
@@ -96,13 +99,13 @@ public:
                       const BufferAllocation::Slice &destination_buffer,
                       uint64_t mem_size,
                       std::shared_ptr<CopyAsyncEvents> events,
-                      const HloInstruction *instr, bool device_to_host);
+                      const HloInstruction *instr, CopyDirection dir);
   absl::Status ExecuteOnStream(const ExecuteParams &params) override;
 
 private:
   std::shared_ptr<CopyAsyncEvents> async_events_;
   const HloInstruction *instr_;
-  bool device_to_host_;
+  CopyDirection dir_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -122,7 +125,7 @@ private:
   const HloInstruction *copy_start_instr_;
 };
 
-} // namespace gpu
-} // namespace xla
+}  // namespace gpu
+}  // namespace xla
 
-#endif // XLA_SERVICE_GPU_RUNTIME_COPY_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_COPY_THUNK_H_

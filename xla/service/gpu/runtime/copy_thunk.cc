@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/thunk.h"
@@ -27,13 +28,15 @@ namespace xla {
 namespace gpu {
 
 DeviceToDeviceCopyThunk::DeviceToDeviceCopyThunk(
-    ThunkInfo thunk_info, const BufferAllocation::Slice &source_buffer,
-    const BufferAllocation::Slice &destination_buffer, uint64_t mem_size)
-    : Thunk(Kind::kCopy, thunk_info), source_buffer_(source_buffer),
-      destination_buffer_(destination_buffer), mem_size_(mem_size) {}
+    ThunkInfo thunk_info, const BufferAllocation::Slice& source_buffer,
+    const BufferAllocation::Slice& destination_buffer, uint64_t mem_size)
+    : Thunk(Kind::kCopy, thunk_info),
+      source_buffer_(source_buffer),
+      destination_buffer_(destination_buffer),
+      mem_size_(mem_size) {}
 
-absl::Status
-DeviceToDeviceCopyThunk::ExecuteOnStream(const ExecuteParams &params) {
+absl::Status DeviceToDeviceCopyThunk::ExecuteOnStream(
+    const ExecuteParams& params) {
   se::DeviceMemoryBase destination_data =
       params.buffer_allocations->GetDeviceAddress(destination_buffer_);
   se::DeviceMemoryBase source_data =
@@ -83,13 +86,13 @@ DeviceHostCopyThunk::DeviceHostCopyThunk(
     ThunkInfo thunk_info, const BufferAllocation::Slice &source_buffer,
     const BufferAllocation::Slice &destination_buffer, uint64_t mem_size,
     std::shared_ptr<CopyAsyncEvents> async_events, const HloInstruction *instr,
-    bool device_to_host)
+    CopyDirection dir)
     : DeviceToDeviceCopyThunk(thunk_info, source_buffer, destination_buffer,
                               mem_size),
-      async_events_(std::move(async_events)), instr_(instr),
-      device_to_host_(device_to_host) {}
+      async_events_(std::move(async_events)), instr_(instr), dir_(dir) {}
 
-absl::Status DeviceHostCopyThunk::ExecuteOnStream(const ExecuteParams &params) {
+absl::Status DeviceHostCopyThunk::ExecuteOnStream(
+    const ExecuteParams& params) {
   se::DeviceMemoryBase destination_data =
       params.buffer_allocations->GetDeviceAddress(destination());
   se::DeviceMemoryBase source_data =
@@ -99,24 +102,19 @@ absl::Status DeviceHostCopyThunk::ExecuteOnStream(const ExecuteParams &params) {
   TF_ASSIGN_OR_RETURN(
       se::Stream * stream,
       GetStreamForExecution(Thunk::execution_stream_id(), params));
-  if (stream == params.stream) {
-    if (device_to_host_) {
-      VLOG(3) << "Memcpy D2H from the main stream";
-      return params.stream->Memcpy(cpu_dst, source_data, size_bytes());
-    } else {
-      VLOG(3) << "Memcpy H2D from the main stream";
-      return params.stream->Memcpy(&destination_data, cpu_src, size_bytes());
-    }
-  }
-  // memcpy is issued from the other stream, not the main compute stream
-  if (device_to_host_) {
-    VLOG(3) << "Memcpy D2H from the other stream";
+  std::string vlog_string = "Memcpy ";
+  if (dir_ == CopyDirection::kDeviceToHost) {
+    vlog_string += "D2H from ";
     TF_RETURN_IF_ERROR(stream->Memcpy(cpu_dst, source_data, size_bytes()));
   } else {
-    VLOG(3) << "Memcpy H2D from the other stream";
+    vlog_string += "H2D from ";
     TF_RETURN_IF_ERROR(
         stream->Memcpy(&destination_data, cpu_src, size_bytes()));
   }
+  if (stream == params.stream) {
+    return absl::OkStatus();
+  }
+  VLOG(2) << vlog_string + "the other stream";
   se::StreamExecutor *executor = params.stream->parent();
   se::Event event(executor);
   if (!event.Init()) {
@@ -151,5 +149,5 @@ DeviceHostCopyDoneThunk::ExecuteOnStream(const ExecuteParams &params) {
   return params.stream->WaitFor(&event);
 }
 
-} // namespace gpu
-} // namespace xla
+}  // namespace gpu
+}  // namespace xla
