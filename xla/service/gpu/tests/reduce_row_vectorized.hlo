@@ -160,12 +160,8 @@ ENTRY reduce.1 {
 // CHECK:         %[[VAL_94:.*]] = mul nuw nsw i32 %[[VAL_90]], 2
 // CHECK:         %[[VAL_95:.*]] = add nuw nsw i32 %[[VAL_93]], %[[VAL_94]]
 // CHECK:         %[[VAL_96:.*]] = udiv i32 %[[VAL_95]], 1024
-// CHECK:         %[[VAL_97:.*]] = mul nuw nsw i32 %[[VAL_89]], 1
-// CHECK:         %[[VAL_98:.*]] = add nuw nsw i32 0, %[[VAL_97]]
-// CHECK:         %[[VAL_99:.*]] = udiv i32 %[[VAL_98]], 131072
-// CHECK:         %[[VAL_100:.*]] = mul nuw nsw i32 %[[VAL_88]], 1
-// CHECK:         %[[VAL_101:.*]] = add nuw nsw i32 0, %[[VAL_100]]
-// CHECK:         %[[VAL_102:.*]] = getelementptr inbounds [131072 x [1024 x float]], ptr %[[VAL_103:.*]], i32 0, i32 %[[VAL_98]], i32 %[[VAL_95]]
+// CHECK:         %[[VAL_99:.*]] = udiv i32 %[[VAL_89]], 131072
+// CHECK:         %[[VAL_102:.*]] = getelementptr inbounds [131072 x [1024 x float]], ptr %[[VAL_103:.*]], i32 0, i32 %[[VAL_89]], i32 %[[VAL_95]]
 // CHECK:         %[[VAL_104:.*]] = load float, ptr %[[VAL_102]], align 4, !invariant.load !7
 // CHECK:         store float %[[VAL_104]], ptr %[[VAL_29]], align 4
 // CHECK:         call void @[[SUM]](ptr %[[VAL_28]], ptr %[[VAL_29]], ptr %[[VAL_24]])
@@ -214,12 +210,8 @@ ENTRY reduce.1 {
 // CHECK:         %[[VAL_129:.*]] = mul nuw nsw i32 %[[VAL_125]], 2
 // CHECK:         %[[VAL_130:.*]] = add nuw nsw i32 %[[VAL_128]], %[[VAL_129]]
 // CHECK:         %[[VAL_131:.*]] = udiv i32 %[[VAL_130]], 1024
-// CHECK:         %[[VAL_132:.*]] = mul nuw nsw i32 %[[VAL_124]], 1
-// CHECK:         %[[VAL_133:.*]] = add nuw nsw i32 0, %[[VAL_132]]
-// CHECK:         %[[VAL_134:.*]] = udiv i32 %[[VAL_133]], 131072
-// CHECK:         %[[VAL_135:.*]] = mul nuw nsw i32 %[[VAL_123]], 1
-// CHECK:         %[[VAL_136:.*]] = add nuw nsw i32 0, %[[VAL_135]]
-// CHECK:         %[[VAL_137:.*]] = getelementptr inbounds [131072 x [1024 x float]], ptr %[[VAL_103]], i32 0, i32 %[[VAL_133]], i32 %[[VAL_130]]
+// CHECK:         %[[VAL_134:.*]] = udiv i32 %[[VAL_124]], 131072
+// CHECK:         %[[VAL_137:.*]] = getelementptr inbounds [131072 x [1024 x float]], ptr %[[VAL_103]], i32 0, i32 %[[VAL_124]], i32 %[[VAL_130]]
 // CHECK:         %[[VAL_138:.*]] = load float, ptr %[[VAL_137]], align 4, !invariant.load !7
 // CHECK:         store float %[[VAL_138]], ptr %[[VAL_29]], align 4
 // CHECK:         call void @[[SUM]](ptr %[[VAL_28]], ptr %[[VAL_29]], ptr %[[VAL_21]])
