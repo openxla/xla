@@ -20,8 +20,7 @@ load(
     "if_rocm",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.bzl", "tsl_copts")
-load("@tsl//tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility")
+load("@tsl//tsl:tsl.bzl", "tsl_copts", "if_google", "if_libtpu", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "internal_hlo_deps")
 load(
     "@tsl//tsl/platform:build_config.bzl",
