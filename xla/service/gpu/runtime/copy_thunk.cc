@@ -86,10 +86,11 @@ DeviceHostCopyThunk::DeviceHostCopyThunk(
     ThunkInfo thunk_info, const BufferAllocation::Slice &source_buffer,
     const BufferAllocation::Slice &destination_buffer, uint64_t mem_size,
     std::shared_ptr<CopyAsyncEvents> async_events, const HloInstruction *instr,
-    CopyDirection dir)
+    CopyDirection copy_direction)
     : DeviceToDeviceCopyThunk(thunk_info, source_buffer, destination_buffer,
                               mem_size),
-      async_events_(std::move(async_events)), instr_(instr), dir_(dir) {}
+      async_events_(std::move(async_events)), instr_(instr),
+      copy_direction_(copy_direction) {}
 
 absl::Status DeviceHostCopyThunk::ExecuteOnStream(
     const ExecuteParams& params) {
@@ -103,7 +104,7 @@ absl::Status DeviceHostCopyThunk::ExecuteOnStream(
       se::Stream * stream,
       GetStreamForExecution(Thunk::execution_stream_id(), params));
   std::string vlog_string = "Memcpy ";
-  if (dir_ == CopyDirection::kDeviceToHost) {
+  if (copy_direction_ == CopyDirection::kDeviceToHost) {
     vlog_string += "D2H from ";
     TF_RETURN_IF_ERROR(stream->Memcpy(cpu_dst, source_data, size_bytes()));
   } else {
@@ -124,7 +125,7 @@ absl::Status DeviceHostCopyThunk::ExecuteOnStream(
   // Record memcpy operation completion.
   TF_RETURN_IF_ERROR(stream->RecordEvent(&event));
   VLOG(3) << "Emplace events: " << event.implementation()
-          << " for inst: " << instr_->ToString();
+          << " for instr: " << instr_->ToString();
   return async_events_->Emplace(executor, instr_, std::move(event));
 }
 

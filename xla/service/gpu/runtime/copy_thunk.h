@@ -65,7 +65,6 @@ class DeviceToDeviceCopyThunk : public Thunk {
 class CopyAsyncEvents {
 public:
   // Add a new copy-start completion event.
-  // absl::StatusOr<std::shared_ptr<se::Event>> Emplace(
   absl::Status Emplace(se::StreamExecutor *executor,
                        const HloInstruction *instr, se::Event &&event);
 
@@ -85,27 +84,28 @@ private:
 // DeviceHostCopyThunk
 //===----------------------------------------------------------------------===//
 // The memcpy between a host and a device
-enum class CopyDirection { kHostToDevice = 0, kDeviceToHost = 1, kUnknownCopy = -1 };
+enum class CopyDirection { kHostToDevice = 0, kDeviceToHost = 1 };
 
 // A thunk that copies data from a device buffer to a host buffer.
 class DeviceHostCopyThunk : public DeviceToDeviceCopyThunk {
 public:
   // Constructs a CopyThunk that copies host data from `source_buffer` to the
   // device buffer `destination_buffer`. `mem_size` is the size of the data in
-  // bytes. `instr` is the copy-start instruction. `device_to_host` indicates
+  // bytes. `instr` is the copy-start instruction. `copy_direction` indicates
   // whether to generate device-to-host or host-to-device memcpy.
   DeviceHostCopyThunk(ThunkInfo thunk_info,
                       const BufferAllocation::Slice &source_buffer,
                       const BufferAllocation::Slice &destination_buffer,
                       uint64_t mem_size,
                       std::shared_ptr<CopyAsyncEvents> events,
-                      const HloInstruction *instr, CopyDirection dir);
+                      const HloInstruction *instr,
+                      CopyDirection copy_direction);
   absl::Status ExecuteOnStream(const ExecuteParams &params) override;
 
 private:
   std::shared_ptr<CopyAsyncEvents> async_events_;
   const HloInstruction *instr_;
-  CopyDirection dir_;
+  CopyDirection copy_direction_;
 };
 
 //===----------------------------------------------------------------------===//
