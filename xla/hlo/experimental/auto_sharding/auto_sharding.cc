@@ -2650,7 +2650,7 @@ int64_t MemoryBudgetLowerBound(
     const HloAliasAnalysis& alias_analysis, const int64_t num_devices,
     const absl::flat_hash_map<std::string, std::vector<HloSharding>>&
         preserved_shardings) {
-  auto get_value_sharding = [](const HloValue* value) {
+  auto get_value_sharding = [](const HloValue* value) -> HloSharding {
     return !value->index().empty()
                ? value->instruction()->sharding().GetSubSharding(
                      value->instruction()->shape(), value->index())
@@ -2664,9 +2664,8 @@ int64_t MemoryBudgetLowerBound(
   absl::flat_hash_map<HloBuffer::Id, const HloValue*>
       buffer_to_sharded_value_mapping;
   bool vlog_is_on_5 = VLOG_IS_ON(5);
-  for (LivenessIdx time_idx = 0; time_idx < liveness_set.size(); ++time_idx) {
-    for (const HloValue* value : liveness_set[time_idx]) {
-      const HloBuffer& buffer = alias_analysis.GetBufferContainingValue(*value);
+  for (const HloBuffer& buffer : alias_analysis.buffers()) {
+    for (const HloValue* value : buffer.values()) {
       if (value->instruction()->has_sharding()) {
         if (vlog_is_on_5) {
           const HloSharding& this_value_sharding = get_value_sharding(value);
@@ -2700,30 +2699,35 @@ int64_t MemoryBudgetLowerBound(
       if (value->instruction()->shape().IsTuple() && value->index().empty()) {
         continue;
       }
-      Shape shape =
-          ShapeUtil::GetSubshape(value->instruction()->shape(), value->index());
+      std::optional<HloSharding> optional_sharding = std::nullopt;
       const HloBuffer& buffer = alias_analysis.GetBufferContainingValue(*value);
       auto iter = buffer_to_sharded_value_mapping.find(buffer.id());
-      std::optional<HloSharding> optional_sharding = std::nullopt;
       if (iter != buffer_to_sharded_value_mapping.end()) {
         // The instructions here can have partial sharding annotations from
         // previous iterations with partial mesh shapes when
         // solve_nd_sharding_iteratively is true. To exclude these, we only
         // utilize those shardings which corresponding to the current device
         // mesh.
-        const HloSharding& value_sharding = get_value_sharding(iter->second);
         if (preserved_shardings.find(value->instruction()->name()) !=
-                preserved_shardings.end() ||
-            !value_sharding.IsTiled() ||
-            value_sharding.TotalNumTiles() == num_devices) {
-          optional_sharding = value_sharding;
+            preserved_shardings.end()) {
+          optional_sharding = get_value_sharding(iter->second);
+        } else {
+          const HloSharding& value_sharding = get_value_sharding(iter->second);
+          if (!value_sharding.IsTiled() ||
+              value_sharding.TotalNumTiles() == num_devices) {
+            optional_sharding = get_value_sharding(iter->second);
+          }
         }
       }
+
+      const Shape& shape =
+          ShapeUtil::GetSubshape(value->instruction()->shape(), value->index());
       memory_usage +=
           GetShardedInstructionSize(shape, num_devices, optional_sharding);
     }
     max_memory_usage = std::max(max_memory_usage, memory_usage);
   }
+
   return max_memory_usage;
 }
 
