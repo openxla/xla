@@ -996,7 +996,9 @@ using FusedMHASignature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
                                DeviceMemoryBase /* output_data */,
                                DeviceMemoryBase /* mask_data */,
                                DeviceMemoryBase /* bias_data */,
-                               DeviceMemoryBase /* activation_data */);
+                               DeviceMemoryBase /* activation_data */,
+                               DeviceMemoryBase /* seqlen_q_data */,
+                               DeviceMemoryBase /* seqlen_k_data */);
 using FusedMHARunner = OpRunner<FusedMHASignature>;
 
 using FusedMHABackwardSignature = void(
@@ -1011,7 +1013,8 @@ using FusedMHABackwardSignature = void(
     DeviceMemoryBase /* softmax_sum_data */,
     DeviceMemoryBase /* d_Q_accum_data */, DeviceMemoryBase /* mask_data */,
     DeviceMemoryBase /* d_bias_data */, DeviceMemoryBase /* fwd_output_data */,
-    DeviceMemoryBase /* bias_data */);
+    DeviceMemoryBase /* bias_data */, DeviceMemoryBase /* seqlen_q_data */,
+    DeviceMemoryBase /* seqlen_k_data */);
 using FusedMHABackwardRunner = OpRunner<FusedMHABackwardSignature>;
 
 // Describes the configuration for the algorithms that will used.
@@ -1247,6 +1250,8 @@ class VersionInfo {
   int patch_;
 };
 
+class DnnSupport;
+
 class DnnGraph {
  public:
   DnnGraph() = default;
@@ -1256,11 +1261,13 @@ class DnnGraph {
   // anything else unexpected),
   // false on expected ones (graph is valid but not supported),
   // true on success.
-  virtual absl::StatusOr<bool> Prepare() = 0;
-  virtual absl::Status Build(int64_t plan_id) = 0;
+  virtual absl::StatusOr<bool> Prepare(DnnSupport&) = 0;
+  virtual absl::Status Build(DnnSupport&, int64_t plan_id) = 0;
   virtual absl::Status Execute(Stream& stream,
                                absl::Span<DeviceMemoryBase> operands) const = 0;
 };
+
+using LazyDnnGraph = std::unique_ptr<DnnGraph>;
 
 // Suite of operations typically used for implementing Deep/Convolutional Neural
 // Nets. Note: A false return value of an operation indicates the

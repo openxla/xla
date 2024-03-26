@@ -127,8 +127,8 @@ struct BinaryOpTestCase {
   std::optional<std::string_view> error_message;
 };
 
-// Subclass for testing unbounded dynamic and op
-class UnboundedAndOpShapeInferenceTest
+// Subclass for testing unbounded dynamic logical ops
+class UnboundedLogicalOpShapeInferenceTest
     : public ::testing::TestWithParam<BinaryOpTestCase> {};
 
 // Subclass for testing unbounded dynamic binary ops
@@ -181,10 +181,8 @@ TEST_F(ShapeInferenceTest, SelectScalarPredBetweenTuples) {
 TEST_F(ShapeInferenceTest, SelectScalarPredBetweenArrays) {
   auto inferred_status = ShapeInference::InferTernaryOpShape(
       HloOpcode::kSelect, pred_, matrix_64_48_, matrix_64_48_);
-  ASSERT_FALSE(inferred_status.ok());
-  ASSERT_THAT(
-      inferred_status.status().message(),
-      HasSubstr("Operands to select and predicate must be the same shape"));
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(matrix_64_48_, *inferred_status));
 }
 
 TEST_F(ShapeInferenceTest, SelectArrayPredBetweenArrays) {
@@ -243,17 +241,15 @@ TEST_F(ShapeInferenceTest, ClampAllScalar) {
 TEST_F(ShapeInferenceTest, ClampMinScalar) {
   auto inferred_status = ShapeInference::InferTernaryOpShape(
       HloOpcode::kClamp, f32_, matrix_64_48_, matrix_64_48_);
-  ASSERT_FALSE(inferred_status.ok());
-  ASSERT_THAT(inferred_status.status().message(),
-              HasSubstr("Clamp with incompatible shapes"));
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(matrix_64_48_, *inferred_status));
 }
 
 TEST_F(ShapeInferenceTest, ClampMaxScalar) {
   auto inferred_status = ShapeInference::InferTernaryOpShape(
       HloOpcode::kClamp, matrix_64_48_, matrix_64_48_, f32_);
-  ASSERT_FALSE(inferred_status.ok());
-  ASSERT_THAT(inferred_status.status().message(),
-              HasSubstr("Clamp with incompatible shapes"));
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(matrix_64_48_, *inferred_status));
 }
 
 TEST_F(ShapeInferenceTest, ClampOperandScalar) {
@@ -283,9 +279,8 @@ TEST_F(ShapeInferenceTest, ClampMaxMatrix) {
 TEST_F(ShapeInferenceTest, ClampOperandMatrix) {
   auto inferred_status = ShapeInference::InferTernaryOpShape(
       HloOpcode::kClamp, f32_, matrix_64_48_, f32_);
-  ASSERT_FALSE(inferred_status.ok());
-  ASSERT_THAT(inferred_status.status().message(),
-              HasSubstr("Clamp with incompatible shapes"));
+  ASSERT_IS_OK(inferred_status.status());
+  ASSERT_TRUE(ShapeUtil::Equal(matrix_64_48_, *inferred_status));
 }
 
 TEST_F(ShapeInferenceTest, ClampBadShapes) {
@@ -2037,7 +2032,7 @@ TEST_F(ShapeInferenceTest, SparseDotMetadata) {
                               ShapeUtil::MakeShape(F32, {5, 10, 16}), dot_dnums,
                               sparsity_descriptor));
   EXPECT_TRUE(
-      ShapeUtil::Equal(inferred_shape, ShapeUtil::MakeShape(U16, {10, 2})));
+      ShapeUtil::Equal(inferred_shape, ShapeUtil::MakeShape(U16, {5, 10, 2})));
 }
 
 TEST_F(ShapeInferenceTest, BinOpBroadcastMatrixVector) {
@@ -3915,7 +3910,7 @@ TEST_P(UnboundedBinaryOpShapeInferenceTest, UnboundedAdd) {
   }
 }
 
-TEST_P(UnboundedAndOpShapeInferenceTest, UnboundedAnd) {
+TEST_P(UnboundedLogicalOpShapeInferenceTest, UnboundedAnd) {
   TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape(GetParam().lhs));
   TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape(GetParam().rhs));
   absl::StatusOr<Shape> inferred_status = ShapeInference::InferBinaryOpShape(
@@ -3930,6 +3925,34 @@ TEST_P(UnboundedAndOpShapeInferenceTest, UnboundedAnd) {
     EXPECT_THAT(inferred_status.status().message(),
                 HasSubstr(*GetParam().error_message));
   }
+}
+
+TEST_P(UnboundedBinaryOpShapeInferenceTest, UnboundedAtan2) {
+  TF_ASSERT_OK_AND_ASSIGN(Shape lhs, ParseShape(GetParam().lhs));
+  TF_ASSERT_OK_AND_ASSIGN(Shape rhs, ParseShape(GetParam().rhs));
+  absl::StatusOr<Shape> inferred_status = ShapeInference::InferBinaryOpShape(
+      HloOpcode::kAtan2, lhs, rhs, GetParam().broadcast_dimensions);
+  if (inferred_status.ok()) {
+    TF_ASSERT_OK_AND_ASSIGN(Shape expected, ParseShape(GetParam().expected));
+    EXPECT_TRUE(ShapeUtil::Equal(*inferred_status, expected))
+        << "inferred: " << ShapeUtil::HumanString(*inferred_status)
+        << " expected: " << ShapeUtil::HumanString(expected);
+  } else {
+    ASSERT_TRUE(GetParam().error_message.has_value());
+    EXPECT_THAT(inferred_status.status().message(),
+                HasSubstr(*GetParam().error_message));
+  }
+}
+
+TEST_F(ShapeInferenceTest, UnboundedBitcastConvert) {
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?, 10]"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_status,
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::F16));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f16[?, 10, 2]"));
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_status, expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_status)
+      << " expected: " << ShapeUtil::HumanString(expected);
 }
 
 TEST_F(ShapeInferenceTest, UnboundedBatchNormGrad) {
@@ -4286,6 +4309,25 @@ TEST_P(UnboundedBinaryOpShapeInferenceTest, UnboundedMul) {
   }
 }
 
+TEST_P(UnboundedLogicalOpShapeInferenceTest, UnboundedOr) {
+  TF_ASSERT_OK_AND_ASSIGN(const Shape lhs, ParseShape(GetParam().lhs));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape rhs, ParseShape(GetParam().rhs));
+  const absl::StatusOr<Shape> inferred_status =
+      ShapeInference::InferBinaryOpShape(HloOpcode::kOr, lhs, rhs,
+                                         GetParam().broadcast_dimensions);
+  if (inferred_status.ok()) {
+    TF_ASSERT_OK_AND_ASSIGN(const Shape expected,
+                            ParseShape(GetParam().expected));
+    EXPECT_TRUE(ShapeUtil::Equal(*inferred_status, expected))
+        << "inferred: " << ShapeUtil::HumanString(*inferred_status)
+        << " expected: " << ShapeUtil::HumanString(expected);
+  } else {
+    ASSERT_TRUE(GetParam().error_message.has_value());
+    EXPECT_THAT(inferred_status.status().message(),
+                HasSubstr(*GetParam().error_message));
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnboundedPad) {
   TF_ASSERT_OK_AND_ASSIGN(Shape operand, ParseShape("f32[?, 10]"));
   TF_ASSERT_OK_AND_ASSIGN(Shape padding_value, ParseShape("f32[]"));
@@ -4523,7 +4565,8 @@ TEST_F(ShapeInferenceTest, UnboundedTransposeRank1) {
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
-INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, UnboundedAndOpShapeInferenceTest,
+INSTANTIATE_TEST_SUITE_P(UnboundedDynamism,
+                         UnboundedLogicalOpShapeInferenceTest,
                          ::testing::ValuesIn<BinaryOpTestCase>(
                              {// LHS | RHS | bdims | Res
                               // 1   | ?   | []    | ?
@@ -4649,6 +4692,12 @@ INSTANTIATE_TEST_SUITE_P(
     UnboundedDynamism, UnboundedClampOpShapeInferenceTest,
     ::testing::Values(
         // MIN shape | OPERAND shape | MAX shape  | Result
+        // []        | [?]           | []         | [?]
+        std::vector<std::string>({"f32[]", "f32[?]", "f32[]", "f32[?]", ""}),
+        // []        | [?]           | [X]        | [?]
+        std::vector<std::string>({"f32[]", "f32[?]", "f32[2]", "f32[?]", ""}),
+        // []        | [?]           | [<=B]      | [?]
+        std::vector<std::string>({"f32[]", "f32[?]", "f32[<=2]", "f32[?]", ""}),
         // [X]       | [?]           | [X]        | [?]
         std::vector<std::string>({"f32[2]", "f32[?]", "f32[2]", "f32[?]", ""}),
         // [?]       | [X]           | [X]        | [X]
@@ -4659,14 +4708,16 @@ INSTANTIATE_TEST_SUITE_P(
         // [<=B]     | [?]           | [<=B]      | [?]
         std::vector<std::string>({"f32[<=2]", "f32[?]", "f32[<=2]", "f32[?]",
                                   ""}),
+        // [?]       | [?]           | [?]        | [?]
+        std::vector<std::string>({"f32[?]", "f32[?]", "f32[?]", "f32[?]", ""}),
+        // [?]       | []            | [?]        | error
+        std::vector<std::string>(
+            {"f32[?]", "f32[]", "f32[?]", "",
+             "Clamp with incompatible shapes: f32[?], f32[], f32[?]."}),
         // A[]       | B[?]          | B[?]       | error
         std::vector<std::string>(
             {"s32[]", "f32[?]", "f32[?]", "",
-             "Clamp with incompatible shapes: s32[], f32[?], f32[?]."}),
-        // []        | [?]           | [<=B]      | error
-        std::vector<std::string>(
-            {"f32[]", "f32[?]", "f32[<=2]", "",
-             "Clamp with incompatible shapes: f32[], f32[?], f32[<=2]."}),
+             "Clamp with incompatible element types: s32[], f32[?], f32[?]."}),
         // [X]       | [<=B]         | [X]        | error
         std::vector<std::string>(
             {"f32[3]", "f32[<=2]", "f32[3]", "",
@@ -4674,16 +4725,17 @@ INSTANTIATE_TEST_SUITE_P(
         // [X]       | [?]           | [Y]        | error
         std::vector<std::string>(
             {"f32[2]", "f32[?]", "f32[3]", "",
-             "Clamp with incompatible shapes: f32[2], f32[?], f32[3]."}),
-        // []        | [?]           | []         | error
-        std::vector<std::string>(
-            {"f32[]", "f32[?]", "f32[]", "",
-             "Clamp with incompatible shapes: f32[], f32[?], f32[]."})));
+             "Clamp with incompatible shapes: f32[2], f32[?], f32[3]."})));
 
 INSTANTIATE_TEST_SUITE_P(
     UnboundedDynamism, UnboundedSelectOpShapeInferenceTest,
     ::testing::Values(
         // PRED shape | ON_TRUE shape | ON_FALSE shape  | Result
+        // []         | [?]           | [X]             | [X]
+        std::vector<std::string>({"pred[]", "f32[?]", "f32[2]", "f32[2]", ""}),
+        // []         | [?]           | [<=B]           | [<=B]
+        std::vector<std::string>({"pred[]", "f32[?]", "f32[<=2]", "f32[<=2]",
+                                  ""}),
         // [X]        | [?]           | [X]             | [X]
         std::vector<std::string>({"pred[2]", "f32[?]", "f32[2]", "f32[2]", ""}),
         // [?]        | [X]           | [X]             | [X]
@@ -4714,6 +4766,11 @@ INSTANTIATE_TEST_SUITE_P(
             {"pred[2]", "f32[?]", "f32[3]", "f32[3]",
              "Operands to select and predicate must be the same shape; got "
              "f32[?] and f32[3] and pred[2]."}),
+        // [?]        | []            | []              | error
+        std::vector<std::string>(
+            {"pred[?]", "f32[]", "f32[]", "",
+             "Operands to select and predicate must be the same shape; got "
+             "f32[] and f32[] and pred[?]."}),
         // []         | [?]           | []              | error
         std::vector<std::string>({"pred[]", "f32[?]", "f32[]", "",
                                   "Operands to select must be the same shape; "

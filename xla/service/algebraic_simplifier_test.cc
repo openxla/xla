@@ -3100,7 +3100,6 @@ TEST_F(AlgebraicSimplifierTest, DoNotRemoveUnaryConcatenateWithCtrlDep) {
 
   EXPECT_THAT(computation->root_instruction(),
               GmockMatch(m::Concatenate(m::Parameter(0))));
-  LOG(ERROR) << "module: " << m->ToString();
 
   AlgebraicSimplifier simplifier(default_options_);
   ASSERT_FALSE(simplifier.Run(m.get()).value());
@@ -5663,7 +5662,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeReshapeToConcatSlice) {
 HloModule TransposeReshapeDepthToSpace
 
 ENTRY entry {
-  %param = f32[8,14,14,128]{0,1,2,3} parameter(0)
+  %param = f32[8,14,14,128] parameter(0)
   %reshape.1 = f32[8,14,14,2,64] reshape(%param)
   %transpose = transpose(%reshape.1), dimensions={0,1,3,2,4}
   ROOT %reshape.2 = f32[8,28,14,64] reshape(%transpose)
@@ -5690,7 +5689,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeReshapeTooLarge) {
 HloModule TransposeReshapeDepthToSpaceBig
 
 ENTRY entry {
-  %param = f32[8,14,14,128]{0,1,2,3} parameter(0)
+  %param = f32[8,14,14,128] parameter(0)
   %reshape.1 = f32[8,14,14,8,16] reshape(%param)
   %transpose = transpose(%reshape.1), dimensions={0,1,3,2,4}
   ROOT %reshape.2 = f32[8,112,14,16] reshape(%transpose)
@@ -5710,7 +5709,7 @@ TEST_F(AlgebraicSimplifierTest, TransposeReshapeNotDepthToSpace) {
 HloModule TransposeReshapeDepthToSpace
 
 ENTRY entry {
-  %param = f32[8,14,14,128]{0,1,2,3} parameter(0)
+  %param = f32[8,14,14,128] parameter(0)
   %reshape.1 = f32[8,14,14,2,64] reshape(%param)
   %transpose = transpose(%reshape.1), dimensions={0,3,1,2,4}
   ROOT %reshape.2 = f32[8,28,14,64] reshape(%transpose)
@@ -6434,6 +6433,11 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfNonCanonicalBatchDotCantSimplify) {
 }
 
 TEST_F(AlgebraicSimplifierTest, DynamicSliceOfTranspose) {
+  // This test is without layouts so we have to set the verifier to be layout
+  // insensitive.
+  verifier_layout_sensitive_ = false;
+  instruction_can_change_layout_func_ = {};
+
   const char* hlo_string = R"(
     HloModule module
 
@@ -7959,6 +7963,7 @@ TEST_F(AlgebraicSimplifierTest, DividedByConstantInstructionWithoutLayout) {
   // This test is without layouts so we have to set the verifier to be layout
   // insensitive.
   verifier_layout_sensitive_ = false;
+  instruction_can_change_layout_func_ = {};
 
   Shape shape = ShapeUtil::MakeShape(F32, {});
   shape.clear_layout();
@@ -10720,6 +10725,98 @@ GetUpcastDowncastTestCases() {
 
 INSTANTIATE_TEST_SUITE_P(AllTypes, AlgebraicSimplifierUpcastDowncastTest,
                          ::testing::ValuesIn(GetUpcastDowncastTestCases()));
+
+template <typename Arg0, typename Arg1, typename Arg2>
+auto SparseDotMatcher(Arg0&& arg0, Arg1&& arg1, Arg2&& arg2) {
+  return match::Op()
+      .WithOpcode(HloOpcode::kDot)
+      .WithOperand(0, std::forward<Arg0>(arg0))
+      .WithOperand(1, std::forward<Arg1>(arg1))
+      .WithOperand(2, std::forward<Arg2>(arg2));
+}
+
+TEST_F(AlgebraicSimplifierTest, SparseDotRemoveDegenerateDimensions) {
+  const char* kHlo = R"(
+    HloModule m
+    ENTRY test {
+      %lhs = f32[1,5,10,16,1] parameter(0)
+      %rhs = f32[5,1,20,1,32] parameter(1)
+      %meta = u16[1,5,10,2,1] parameter(2)
+      ROOT %dot = f32[1,5,10,20] dot(%lhs, %rhs, %meta),
+          lhs_batch_dims={0,1}, rhs_batch_dims={1,0},
+          lhs_contracting_dims={3,4}, rhs_contracting_dims={4,3},
+          sparsity=L.3@2:4
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root, GmockMatch(m::Reshape(SparseDotMatcher(m::Reshape(m::Parameter(0)),
+                                                   m::Reshape(m::Parameter(1)),
+                                                   m::Reshape(m::Parameter(2)))
+                                      .WithShape(F32, {5, 10, 20}))));
+  auto dot = Cast<HloDotInstruction>(root->operand(0));
+  auto descriptor = dot->sparsity().front();
+  EXPECT_EQ(descriptor.index(), 0);
+  EXPECT_EQ(descriptor.dimension(), 2);
+}
+
+TEST_F(AlgebraicSimplifierTest, SparseDotMoveSliceToOperands) {
+  const char* kHlo = R"(
+    HloModule m
+    ENTRY test {
+      %lhs = f32[7,12,16] parameter(0)
+      %rhs = f32[7,22,32] parameter(1)
+      %meta = u16[7,12,2] parameter(2)
+      %dot = f32[7,12,22] dot(%lhs, %rhs, %meta),
+          lhs_batch_dims={0}, rhs_batch_dims={0},
+          lhs_contracting_dims={2}, rhs_contracting_dims={2},
+          sparsity=L.2@2:4
+      ROOT %slice = f32[5,10,20] slice(%dot), slice={[0:5], [0:10], [0:20]}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  AlgebraicSimplifierOptions options;
+  options.set_use_associative_reordering(true);
+  ASSERT_TRUE(AlgebraicSimplifier(options).Run(module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(SparseDotMatcher(m::Slice(m::Parameter(0)),
+                                                m::Slice(m::Parameter(1)),
+                                                m::Slice(m::Parameter(2)))
+                                   .WithShape(F32, {5, 10, 20})));
+  auto dot = Cast<HloDotInstruction>(root);
+  auto descriptor = dot->sparsity().front();
+  EXPECT_EQ(descriptor.index(), 0);
+  EXPECT_EQ(descriptor.dimension(), 2);
+}
+
+TEST_F(AlgebraicSimplifierTest, SparseDotTranspose) {
+  const char* hlo_string = R"(
+    HloModule m
+    ENTRY test {
+      %lhs = f32[10,16] parameter(0)
+      %rhs = f32[32,20] parameter(1)
+      %meta = u16[10,2] parameter(2)
+      %dot = f32[10,20] dot(%lhs, %rhs, %meta),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0},
+          sparsity=L.1@2:4
+      ROOT %transpose = f32[20,10] transpose(%dot), dimensions={1,0}
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              GmockMatch(SparseDotMatcher(m::Parameter(1), m::Parameter(0),
+                                          m::Parameter(2))
+                             .WithShape(F32, {20, 10})));
+  auto dot = Cast<HloDotInstruction>(root);
+  auto descriptor = dot->sparsity().front();
+  EXPECT_EQ(descriptor.index(), 1);
+  EXPECT_EQ(descriptor.dimension(), 1);
+}
 
 }  // namespace
 }  // namespace xla

@@ -48,7 +48,7 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.xla_extension_version.
-_version = 241
+_version = 249
 
 # Version number for MLIR:Python components.
 mlir_api_version = 55
@@ -543,6 +543,7 @@ NamedSharding = _xla.NamedSharding
 SingleDeviceSharding = _xla.SingleDeviceSharding
 PmapSharding = _xla.PmapSharding
 GSPMDSharding = _xla.GSPMDSharding
+PjRtLayout = _xla.PjRtLayout
 
 
 def LoadedExecutable_execute(self, arguments, device=None):
@@ -932,5 +933,7 @@ weakref_lru_cache = _xla.weakref_lru_cache
 array_result_handler = _xla.array_result_handler
 copy_array_to_devices_with_sharding = _xla.copy_array_to_devices_with_sharding
 batched_device_put = _xla.batched_device_put
+batched_block_until_ready = _xla.batched_block_until_ready
 check_and_canonicalize_memory_kind = _xla.check_and_canonicalize_memory_kind
 Layout = _xla.Layout
+custom_call_targets = _xla.custom_call_targets

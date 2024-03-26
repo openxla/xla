@@ -37,8 +37,6 @@ class MlirConcatenateFusion : public MlirFusionEmitterBase {
   explicit MlirConcatenateFusion(const HloFusionAnalysis& analysis)
       : analysis_(analysis) {}
 
-  static bool IsSupported(const HloFusionAnalysis& analysis);
-
   LaunchDimensions launch_dimensions() const override;
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
@@ -55,7 +53,7 @@ class MlirConcatenateFusion : public MlirFusionEmitterBase {
       mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion) const override;
 
-  absl::flat_hash_set<const HloInstruction*> GetInstructionsWithCustomCodegen(
+  std::vector<const HloInstruction*> GetInstructionsWithCustomCodegen(
       const HloFusionInstruction& fusion) const override;
 
  private:

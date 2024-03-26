@@ -579,7 +579,8 @@ class HloSendDoneInstruction : public HloSendRecvInstruction {
  public:
   explicit HloSendDoneInstruction(HloSendInstruction* operand,
                                   bool is_host_transfer);
-
+  explicit HloSendDoneInstruction(HloInstruction* operand, int64_t channel_id,
+                                  bool is_host_transfer);
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kSendDone;
   }
@@ -2213,6 +2214,8 @@ class HloDynamicUpdateSliceInstruction : public HloDynamicIndexInstruction {
       absl::Span<HloInstruction* const> start_indices);
 
   int64_t first_index_operand_number() const override { return 2; }
+
+  const HloInstruction* update() const { return operand(1); }
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kDynamicUpdateSlice;

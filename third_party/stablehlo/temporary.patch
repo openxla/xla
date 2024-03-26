@@ -1,3 +1,14 @@
+diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
+--- stablehlo/BUILD.bazel
++++ stablehlo/BUILD.bazel
+@@ -422,7 +422,6 @@
+     hdrs = [
+         "stablehlo/reference/Api.h",
+     ],
+-    strip_include_prefix = ".",
+     deps = [
+         ":interpreter_ops",
+         ":reference_configuration",
 diff --ruN a/stablehlo/CMakeLists.txt b/stablehlo/CMakeLists.txt
 --- stablehlo/CMakeLists.txt
 +++ stablehlo/CMakeLists.txt
@@ -174,64 +185,96 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
  add_subdirectory(integrations)
  add_subdirectory(reference)
  add_subdirectory(tests)
-diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.cpp b/stablehlo/stablehlo/dialect/AssemblyFormat.cpp
---- stablehlo/stablehlo/dialect/AssemblyFormat.cpp
-+++ stablehlo/stablehlo/dialect/AssemblyFormat.cpp
-@@ -465,10 +465,10 @@
-   if (failed(innerOpNameInfo)) return failure();
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
+--- stablehlo/stablehlo/dialect/TypeInference.cpp
++++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -65,25 +65,6 @@
  
-   StringRef innerOpName = innerOpNameInfo->getStringRef();
--  Dialect* innerOpDialect = innerOpNameInfo->getDialect();
-   StringRef reduceOpDialect = result.name.getDialectNamespace();
-   LLVM_DEBUG(llvm::dbgs() << "Reduce: " << reduceOpDialect << "\n");
--  LLVM_DEBUG(llvm::dbgs() << "Inner: " << innerOpDialect->getNamespace()
-+  LLVM_DEBUG(llvm::dbgs() << "Inner: "
-+                          << innerOpNameInfo->getDialect()->getNamespace()
-                           << "\n");
-   if (!isCommutativeNoRegionMatchingDialect(*innerOpNameInfo, reduceOpDialect))
-     return parser.emitError(
-diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
---- stablehlo/stablehlo/dialect/StablehloOps.td
-+++ stablehlo/stablehlo/dialect/StablehloOps.td
-@@ -1895,14 +1895,14 @@
-     must be disjoint and they must be a subset of the operand's dimensions.
-   }];
-   let arguments = (ins
--    HLO_Tensor:$operand,
-+    HLO_TensorOrPerAxisQuantizedTensor:$operand,
-     HLO_StaticDimensionTensor:$output_dimensions,
-     DenseI64ArrayAttr:$broadcast_dimensions,
-     OptionalAttr<DenseI64ArrayAttr>:$known_expanding_dimensions,
-     OptionalAttr<DenseI64ArrayAttr>:$known_nonexpanding_dimensions
-   );
+ namespace mlir {
+ namespace hlo {
+-namespace {
+-//===----------------------------------------------------------------------===//
+-// Utils for quantization specific verifications
+-//===----------------------------------------------------------------------===//
+-template <typename T>
+-bool allQuantized(ArrayRef<Type> typeRange) {
+-  return llvm::all_of(typeRange, [&](Type val) {
+-    return val.cast<ShapedType>().getElementType().isa<T>();
+-  });
+-}
+-
+-template <typename T>
+-bool noneQuantized(ArrayRef<Type> typeRange) {
+-  return llvm::all_of(typeRange, [&](Type val) {
+-    return !val.cast<ShapedType>().getElementType().isa<T>();
+-  });
+-}
+-
+-}  // namespace
  
--  let results = (outs HLO_Tensor);
-+  let results = (outs HLO_TensorOrPerAxisQuantizedTensor);
+ //===----------------------------------------------------------------------===//
+ // Utils for shape functions.
+@@ -3472,60 +3453,6 @@
+                              "is incompatible with return type of operation ",
+                              shapedResultType, "");
  
-   let builders = [
-       OpBuilder<(ins
-@@ -2413,7 +2413,7 @@
-     ```
-   }];
-   let arguments = (ins
--    HLO_Tensor:$operand, /*get_dimension_size_i1*/
-+    HLO_TensorOrPerAxisQuantizedTensor:$operand, /*get_dimension_size_i1*/
-     I64Attr:$dimension /*get_dimension_size_i2*/
-   );
-   // TODO(hinsu): Allow 64-bit result types once XLA HLO dialect based on the
-@@ -3126,9 +3126,9 @@
-   }];
+-  llvm::SmallVector<Type, 3> typeEntries{lhsType, rhsType, resultType};
+-  if (noneQuantized<quant::QuantizedType>(typeEntries)) return success();
+-  // convolution_c28
+-  if (!allQuantized<quant::QuantizedType>(typeEntries)) {
+-    return emitOptionalError(location,
+-                             "not all of operands and result are quantized");
+-  }
+-
+-  auto lhsQType =
+-      getElementTypeOrSelf(lhsType).dyn_cast<quant::QuantizedType>();
+-  auto rhsQType =
+-      getElementTypeOrSelf(rhsType).dyn_cast<quant::QuantizedType>();
+-  auto resultQType =
+-      getElementTypeOrSelf(resultType).dyn_cast<quant::QuantizedType>();
+-  // convolution_c29
+-  if (lhsQType.getStorageType() != rhsQType.getStorageType())
+-    return emitOptionalError(location, "mismatched operand storage types ",
+-                             lhsQType.getStorageType(), " and ",
+-                             rhsQType.getStorageType());
+-  // convolution_c30
+-  auto expressedType = lhsQType.getExpressedType();
+-  if (expressedType != rhsQType.getExpressedType() ||
+-      expressedType != resultQType.getExpressedType())
+-    return emitOptionalError(location,
+-                             "mismatched operands and result expressed types");
+-
+-  llvm::SmallVector<Type, 2> typeEntriesPerAxis{rhsType, resultType};
+-  if (noneQuantized<quant::UniformQuantizedPerAxisType>(typeEntriesPerAxis))
+-    return success();
+-  // convolution_c31
+-  auto rhsQPAType = rhsQType.dyn_cast<quant::UniformQuantizedPerAxisType>();
+-  auto resultQPAType =
+-      resultQType.dyn_cast<quant::UniformQuantizedPerAxisType>();
+-  if (!rhsQPAType && resultQPAType) {
+-    return emitOptionalError(
+-        location, "per-tensor rhs expects per-tensor result but received ",
+-        rhsType, " and ", resultType, " respectively");
+-  }
+-
+-  // convolution_c32
+-  if (rhsQPAType &&
+-      rhsQPAType.getQuantizedDimension() != kernelOutputFeatureDimension)
+-    return emitOptionalError(
+-        location, "mismatched kernel_output_feature_dimension ",
+-        kernelOutputFeatureDimension, " and rhs quantized dimension ",
+-        rhsQPAType.getQuantizedDimension());
+-  // convolution_c33
+-  if (resultQPAType &&
+-      resultQPAType.getQuantizedDimension() != outputFeatureDimension)
+-    return emitOptionalError(location, "mismatched output_feature_dimension ",
+-                             outputFeatureDimension,
+-                             " and result quantized dimension ",
+-                             resultQPAType.getQuantizedDimension());
+-
+   return success();
  }
  
--def StableHLO_ReducePrecisionOp :
--    StableHLO_Op<"reduce_precision", [Pure,
--    HLO_CompatibleOperandsAndResultType /*reduce_precision_c1*/]> {
-+def StableHLO_ReducePrecisionOp : StableHLO_Op<"reduce_precision",
-+      [Pure, Elementwise,
-+       HLO_CompatibleOperandsAndResultType /*reduce_precision_c1*/]> {
-   let summary = "ReducePrecision operation";
-   let description = [{
-     Performs element-wise conversion of `operand` to another floating-point type
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
@@ -2005,7 +2048,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stable
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 --- stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 +++ stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,178 @@
 +/* Copyright 2024 The StableHLO Authors.
 +Licensed under the Apache License, Version 2.0 (the "License");
 +you may not use this file except in compliance with the License.
@@ -2028,12 +2071,14 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +#include "mlir/IR/Attributes.h"
 +#include "mlir/IR/BuiltinAttributes.h"
 +#include "mlir/IR/PatternMatch.h"
++#include "mlir/Pass/PassManager.h"
 +#include "mlir/Support/LogicalResult.h"
 +#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 +#include "stablehlo/dialect/ChloOps.h"
 +#include "stablehlo/dialect/StablehloOps.h"
 +#include "stablehlo/experimental/dialect/StablehloOps.h"
 +#include "stablehlo/experimental/transforms/Passes.h"
++#include "stablehlo/transforms/Passes.h"
 +
 +namespace mlir {
 +namespace stablehlo {
@@ -2171,13 +2216,21 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +  }
 +};
 +
++void createChloLegalizeToStablehloPipeline(OpPassManager& pm) {
++  pm.addPass(mlir::stablehlo::experimental::createChloRecomposeOpsPass());
++  pm.addNestedPass<mlir::func::FuncOp>(
++      mlir::stablehlo::createChloLegalizeToStablehloPass());
++  pm.addNestedPass<mlir::func::FuncOp>(
++      mlir::stablehlo::createShapeLegalizeToStablehloPass());
++}
++
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/stablehlo/experimental/transforms/Passes.h
 --- stablehlo/stablehlo/experimental/transforms/Passes.h
 +++ stablehlo/stablehlo/experimental/transforms/Passes.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,38 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -2208,6 +2261,8 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/st
 +#define GEN_PASS_DECL
 +#define GEN_PASS_REGISTRATION
 +#include "stablehlo/experimental/transforms/Passes.h.inc"
++
++void createChloLegalizeToStablehloPipeline(OpPassManager &pm);
 +
 +}  // namespace experimental
 +}  // namespace stablehlo
@@ -2606,241 +2661,83 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
-diff --ruN a/stablehlo/stablehlo/tests/shape_legalize_to_stablehlo.mlir b/stablehlo/stablehlo/tests/shape_legalize_to_stablehlo.mlir
---- stablehlo/stablehlo/tests/shape_legalize_to_stablehlo.mlir
-+++ stablehlo/stablehlo/tests/shape_legalize_to_stablehlo.mlir
-@@ -279,6 +279,16 @@
- 
- // -----
- 
-+func.func @index_cast_scalar_i32_to_index(%arg0: i32) -> index {
-+  //      CHECK: %[[CAST_I32:.*]] = builtin.unrealized_conversion_cast %arg0 : i32 to tensor<i32>
-+  // CHECK-NEXT: %[[CAST_INDEX:.*]] = builtin.unrealized_conversion_cast %[[CAST_I32]] : tensor<i32> to index
-+  // CHECK-NEXT: return %[[CAST_INDEX]] : index
-+  %0 = arith.index_cast %arg0 : i32 to index
-+  return %0 : index
-+}
-+
-+// -----
-+
- func.func @index_cast_index_to_i8(%arg0: tensor<2xindex>) -> tensor<2xi8> {
-   // expected-error@+1 {{failed to legalize operation 'arith.index_cast' that was explicitly marked illegal}}
-   %0 = arith.index_cast %arg0 : tensor<2xindex> to tensor<2xi8>
-@@ -291,14 +301,6 @@
-   // expected-error@+1 {{failed to legalize operation 'arith.index_cast' that was explicitly marked illegal}}
-   %0 = arith.index_cast %arg0 : tensor<2xi8> to tensor<2xindex>
-   return %0 : tensor<2xindex>
+diff --ruN a/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir b/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
+--- stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
++++ stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
+@@ -821,75 +821,3 @@
+   %0 = "stablehlo.uniform_dequantize"(%arg0) : (tensor<4x!quant.uniform<si8:f32, 1.000000e+00>>) -> tensor<4xf32>
+   func.return %0 : tensor<4xf32>
+ }
+-
+-// -----
+-
+-func.func @convolution_c28(%arg0: tensor<1x8x8x207xf32>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>> {
+-  // expected-error@+1 {{not all of operands and result are quantized}}
+-  %0 = stablehlo.convolution(%arg0, %arg1)
+-         dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-         window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-         {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-       (tensor<1x8x8x207xf32>, tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
+-  func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
 -}
 -
 -// -----
 -
--func.func @index_cast_scalar_i32_to_index(%arg0: i32) -> index {
--  // expected-error@+1 {{failed to legalize operation 'arith.index_cast' that was explicitly marked illegal}}
--  %0 = arith.index_cast %arg0 : i32 to index
--  return %0 : index
- }
- 
- // -----
-@@ -336,3 +338,52 @@
-   %0 = arith.muli %arg0, %arg1 : i32
-   return %0 : i32
- }
-+
-+// -----
-+
-+// CHECK-LABEL: func @tensor_extract
-+func.func @tensor_extract(%arg0: tensor<3x3xindex>) -> index {
-+  %c1 = arith.constant 0 : index
-+  %c2 = arith.constant 1 : index
-+  %0 = tensor.extract %arg0[%c1, %c2] : tensor<3x3xindex>
-+  return %0 : index
-+  //      CHECK: %[[CAST:.*]] = builtin.unrealized_conversion_cast %arg0 : tensor<3x3xindex> to tensor<3x3xi32>
-+  //      CHECK: %[[SLICE:.*]] = stablehlo.slice %[[CAST]] [0:1, 1:2] : (tensor<3x3xi32>) -> tensor<1x1xi32>
-+  // CHECK-NEXT: %[[RESHAPE:.*]] = stablehlo.reshape %[[SLICE]] : (tensor<1x1xi32>) -> tensor<i32>
-+  // CHECK-NEXT: %[[RES_INDEX:.*]] = builtin.unrealized_conversion_cast %[[RESHAPE]] : tensor<i32> to index
-+  // CHECK-NEXT: return %[[RES_INDEX]] : index
-+}
-+
-+// -----
-+
-+// CHECK-LABEL: func @tensor_extract_i32
-+func.func @tensor_extract_i32(%arg0: tensor<3x3xi32>) -> i32 {
-+  %c1 = arith.constant 0 : index
-+  %c2 = arith.constant 1 : index
-+  %0 = tensor.extract %arg0[%c1, %c2] : tensor<3x3xi32>
-+  return %0 : i32
-+  //      CHECK: %[[SLICE:.*]] = stablehlo.slice %arg0 [0:1, 1:2] : (tensor<3x3xi32>) -> tensor<1x1xi32>
-+  // CHECK-NEXT: %[[RESHAPE:.*]] = stablehlo.reshape %[[SLICE]] : (tensor<1x1xi32>) -> tensor<i32>
-+  // CHECK-NEXT: %[[RES_I32:.*]] = builtin.unrealized_conversion_cast %[[RESHAPE]] : tensor<i32> to i32
-+  // CHECK-NEXT: return %[[RES_I32]] : i32
-+}
-+
-+// -----
-+
-+func.func @tensor_extract_out_of_range(%arg0: tensor<3x3xindex>) -> index {
-+  %c1 = arith.constant 4 : index
-+  %c2 = arith.constant 4 : index
-+  // expected-error@+1 {{failed to legalize operation 'tensor.extract' that was explicitly marked illegal}}
-+  %0 = tensor.extract %arg0[%c1, %c2] : tensor<3x3xindex>
-+  return %0 : index
-+}
-+
-+// -----
-+
-+func.func @tensor_extract_dynamic(%arg0: tensor<?x3xindex>) -> index {
-+  %c1 = arith.constant 0 : index
-+  %c2 = arith.constant 2 : index
-+  // expected-error@+1 {{failed to legalize operation 'tensor.extract' that was explicitly marked illegal}}
-+  %0 = tensor.extract %arg0[%c1, %c2] : tensor<?x3xindex>
-+  return %0 : index
-+}
-diff --ruN a/stablehlo/stablehlo/transforms/ShapeLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/ShapeLegalizeToStablehlo.cpp
---- stablehlo/stablehlo/transforms/ShapeLegalizeToStablehlo.cpp
-+++ stablehlo/stablehlo/transforms/ShapeLegalizeToStablehlo.cpp
-@@ -324,6 +324,21 @@
-                                  op.getLoc(), op.getOut().getType(), result));
-       return success();
-     }
-+    if (!op.getIn().getType().isa<ShapedType>() &&
-+        isIndexOrShapedOfIndex(op.getOut())) {
-+      // Handle a special case of i32 -> index.
-+      // This is converted to the following sequence:
-+      //   unrealized_conversion_cast i32 -> tensor<i32>
-+      //   unrealized_conversion_cast tensor<i32> -> index
-+      result = rewriter
-+                   .create<UnrealizedConversionCastOp>(
-+                       op.getLoc(), RankedTensorType::get({}, result.getType()),
-+                       result)
-+                   .getResult(0);
-+      rewriter.replaceOp(op, rewriter.create<UnrealizedConversionCastOp>(
-+                                 op.getLoc(), op.getOut().getType(), result));
-+      return success();
-+    }
- 
-     if (isIndexOrShapedOfIndex(result)) {
-       result = castToI32(rewriter, op.getLoc(), result);
-@@ -435,6 +450,58 @@
-                                                    constIndex.value());
-     auto dimIndex = castToIndex(rewriter, op.getLoc(), dim);
-     rewriter.replaceOp(op, dimIndex);
-+    return success();
-+  }
-+};
-+
-+struct ConvertTensorExtractPattern
-+    : public OpRewritePattern<tensor::ExtractOp> {
-+  using OpRewritePattern::OpRewritePattern;
-+  LogicalResult matchAndRewrite(tensor::ExtractOp op,
-+                                PatternRewriter& rewriter) const override {
-+    SmallVector<int64_t> indices;
-+    auto tensorType = op.getTensor().getType();
-+    // We only support getting static indices.
-+    for (auto index : op.getIndices()) {
-+      auto constIndex =
-+          dyn_cast_or_null<arith::ConstantIndexOp>(index.getDefiningOp());
-+      if (!constIndex)
-+        return rewriter.notifyMatchFailure(op, "expected constant index op");
-+
-+      // Check if the index is out of range.
-+      int idx = indices.size();
-+      if (tensorType.isDynamicDim(idx) ||
-+          constIndex.value() >= tensorType.getDimSize(idx))
-+        return rewriter.notifyMatchFailure(op, "index out of range");
-+
-+      indices.push_back(constIndex.value());
-+    }
-+    auto input = castToI32(rewriter, op.getLoc(), op.getTensor());
-+    auto startIndices = rewriter.getDenseI64ArrayAttr(indices);
-+    for (auto& index : indices) {
-+      index += 1;
-+    }
-+    auto limitIndices = rewriter.getDenseI64ArrayAttr(indices);
-+
-+    Value extractedTensor = rewriter.create<SliceOp>(
-+        op.getLoc(), input, startIndices, limitIndices,
-+        /*strides=*/
-+        rewriter.getDenseI64ArrayAttr(SmallVector<int64_t>(indices.size(), 1)));
-+    Value extractedScalarTensor = rewriter.create<ReshapeOp>(
-+        op.getLoc(), RankedTensorType::get({}, rewriter.getI32Type()),
-+        extractedTensor);
-+    if (getElementTypeOrSelf(op.getResult().getType()).isIndex()) {
-+      auto extractedIndex =
-+          castToIndex(rewriter, op.getLoc(), extractedScalarTensor);
-+      rewriter.replaceOp(op, extractedIndex);
-+    } else {
-+      // For the special case when the input is a i32 tensor and output is i32,
-+      // convert the result back to i32 to be consistent:
-+      //   unrealized_conversion_cast tensor<i32> -> i32
-+      rewriter.replaceOp(op, rewriter.create<UnrealizedConversionCastOp>(
-+                                 op.getLoc(), op.getResult().getType(),
-+                                 extractedScalarTensor));
-+    }
-     return success();
-   }
- };
-@@ -599,6 +666,7 @@
-   patterns->add<CastOperandsPattern<DynamicBroadcastInDimOp>>(context);
-   patterns->add<CastOperandsPattern<DynamicReshapeOp>>(context);
-   patterns->add<ConvertTensorDimPattern>(context);
-+  patterns->add<ConvertTensorExtractPattern>(context);
-   patterns->add<ConvertTensorFromElementsPattern>(context);
- }
- 
-diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
---- stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
-+++ stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
-@@ -828,12 +828,12 @@
-     // additional argument for the generic builder.
-     StablehloToVhloOp<StablehloOpTy> vhloOp;
-     if constexpr (std::is_same<StablehloOpTy, stablehlo::CaseOp>::value) {
--      vhloOp = rewriter.replaceOpWithNewOp<vhlo::CaseOpV1>(
--          stablehloOp, vhloTypes, vhloOperands, vhloAttrs,
-+      vhloOp = rewriter.create<vhlo::CaseOpV1>(
-+          stablehloOp.getLoc(), vhloTypes, vhloOperands, vhloAttrs,
-           stablehloOp.getBranches().size());
-     } else {
--      vhloOp = rewriter.replaceOpWithNewOp<StablehloToVhloOp<StablehloOpTy>>(
--          stablehloOp, vhloTypes, vhloOperands, vhloAttrs);
-+      vhloOp = rewriter.create<StablehloToVhloOp<StablehloOpTy>>(
-+          stablehloOp.getLoc(), vhloTypes, vhloOperands, vhloAttrs);
-     }
- 
-     for (auto [stablehloRegion, vhloRegion] :
-@@ -845,6 +845,7 @@
-                                              /*entryConversion=*/nullptr)))
-         return failure();
-     }
-+    rewriter.replaceOp(stablehloOp, vhloOp);
-     return success();
-   }
- };
-diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
---- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
-+++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
-@@ -837,12 +837,12 @@
-     // additional argument for the generic builder.
-     VhloToStablehloOp<VhloOpTy> stablehloOp;
-     if constexpr (std::is_same<VhloOpTy, vhlo::CaseOpV1>::value) {
--      stablehloOp = rewriter.replaceOpWithNewOp<stablehlo::CaseOp>(
--          vhloOp, stablehloTypes, stablehloOperands, stablehloAttrs,
-+      stablehloOp = rewriter.create<stablehlo::CaseOp>(
-+          vhloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs,
-           vhloOp.getBranches().size());
-     } else {
--      stablehloOp = rewriter.replaceOpWithNewOp<VhloToStablehloOp<VhloOpTy>>(
--          vhloOp, stablehloTypes, stablehloOperands, stablehloAttrs);
-+      stablehloOp = rewriter.create<VhloToStablehloOp<VhloOpTy>>(
-+          vhloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs);
-     }
- 
-     for (auto [vhloRegion, stablehloRegion] :
-@@ -854,6 +854,8 @@
-                                              /*entryConversion=*/nullptr)))
-         return failure();
-     }
-+
-+    rewriter.replaceOp(vhloOp, stablehloOp);
-     return success();
-   }
- };
+-func.func @convolution_c29(%arg0: tensor<1x8x8x207x!quant.uniform<i16:f32, 2.0:15>>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>> {
+-  // expected-error@+1 {{mismatched operand storage types 'i16' and 'i8'}}
+-  %0 = stablehlo.convolution(%arg0, %arg1)
+-         dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-         window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-         {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-       (tensor<1x8x8x207x!quant.uniform<i16:f32, 2.0:15>>, tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
+-  func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
+-}
+-
+-// -----
+-
+-func.func @convolution_c30(%arg0: tensor<1x8x8x207x!quant.uniform<i8:f64, 2.0:15>>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>> {
+-  // expected-error@+1 {{mismatched operands and result expressed types}}
+-  %0 = stablehlo.convolution(%arg0, %arg1)
+-         dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-         window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-         {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-       (tensor<1x8x8x207x!quant.uniform<i8:f64, 2.0:15>>, tensor<3x3x207x16x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
+-  func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32, 10.0:50>>
+-}
+-
+-// -----
+-
+-func.func @convolution_c31(%arg0: tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32, 0.1:-30>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {10.0:50}>> {
+-  // expected-error@+1 {{per-tensor rhs expects per-tensor result but received 'tensor<3x3x207x16x!quant.uniform<i8:f32, 1.000000e-01:-30>>' and 'tensor<1x8x8x16x!quant.uniform<i8:f32:0, {1.000000e+01:50}>>' respectively}}
+-  %0 = stablehlo.convolution(%arg0, %arg1)
+-         dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-         window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-         {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-       (tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, tensor<3x3x207x16x!quant.uniform<i8:f32, 0.1:-30>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {10.0:50}>>
+-  func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32:0, {10.0:50}>>
+-}
+-
+-// -----
+-
+-func.func @convolution_c32(%arg0: tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32:0, {0.1:-30}>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {0.1:-30}>> {
+-  // expected-error@+1 {{mismatched kernel_output_feature_dimension 3 and rhs quantized dimension 0}}
+-  %0 = stablehlo.convolution(%arg0, %arg1)
+-         dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-         window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-         {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-       (tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, tensor<3x3x207x16x!quant.uniform<i8:f32:0, {0.1:-30}>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {0.1:-30}>>
+-  func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32:0, {0.1:-30}>>
+-}
+-
+-// -----
+-
+-func.func @convolution_c33(%arg0: tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, %arg1: tensor<3x3x207x16x!quant.uniform<i8:f32:3, {0.1:-30}>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {2.0:-30}>> {
+- // expected-error@+1 {{mismatched output_feature_dimension 3 and result quantized dimension 0}}
+- %0 = stablehlo.convolution(%arg0, %arg1)
+-     dim_numbers = [b, 0, 1, f]x[0, 1, i, o]->[b, 0, 1, f],
+-     window = {stride = [1, 1], pad = [[1, 1], [1, 1]], lhs_dilate = [1, 1], rhs_dilate = [1, 1]}
+-     {batch_group_count = 1 : i64, feature_group_count = 1 : i64, precision_config = [#stablehlo<precision DEFAULT>, #stablehlo<precision DEFAULT>]} :
+-    (tensor<1x8x8x207x!quant.uniform<i8:f32, 2.0:15>>, tensor<3x3x207x16x!quant.uniform<i8:f32:3, {0.1:-30}>>) -> tensor<1x8x8x16x!quant.uniform<i8:f32:0, {2.0:-30}>>
+- func.return %0 : tensor<1x8x8x16x!quant.uniform<i8:f32:0, {2.0:-30}>>
+-}
 

@@ -4,7 +4,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = ["//xla:internal"],
+    default_visibility = ["//xla:friends"],
     licenses = ["notice"],
 )
 
@@ -44,7 +44,6 @@ cc_library(
         "//xla/mlir/runtime/utils:custom_calls",
         "//xla/mlir/xla_cpu/ir:xla_cpu",
         "//xla/mlir_hlo",
-        "//xla/mlir_hlo:lhlo",
         "//xla/service:hlo_parser",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:Analysis",

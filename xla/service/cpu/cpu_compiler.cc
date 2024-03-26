@@ -473,8 +473,7 @@ std::unique_ptr<HloModule> CpuAotCompilationResult::consume_optimized_module() {
   return std::move(module_);
 }
 
-CpuCompiler::CpuCompiler(bool allow_sparse_shapes)
-    : allow_sparse_shapes_(allow_sparse_shapes) {
+CpuCompiler::CpuCompiler() {
   // Initialize LLVM the first time the CpuCompiler is initialized.
   static bool llvm_initialized = []() {
     InitializeLLVMTarget();
@@ -482,8 +481,6 @@ CpuCompiler::CpuCompiler(bool allow_sparse_shapes)
   }();
   (void)llvm_initialized;
 }
-
-CpuCompiler::CpuCompiler() : CpuCompiler(false) {}
 
 absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
     std::unique_ptr<HloModuleGroup> module_group,
@@ -594,16 +591,11 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
 };
 
 // Adds the HloVerifier for CPU to the given pipeline.
-void AddHloVerifier(HloPassPipeline* pipeline, bool allow_sparse_shapes,
-                    HloVerifierOpts&& opts = {}, bool debug_only = false) {
-  std::unique_ptr<TargetVerifierMetadata> verifier_metadata;
-  if (allow_sparse_shapes) {
-    verifier_metadata =
-        std::make_unique<DefaultVerifierMetadata>(std::move(opts));
-  } else {
-    verifier_metadata =
-        std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
-  }
+void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
+                    bool debug_only = false) {
+  auto verifier_metadata =
+      std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
+
   if (debug_only) {
     pipeline->AddInvariantCheckerDebug<HloVerifier>(
         std::move(verifier_metadata), "hlo verifier (debug)");
@@ -628,7 +620,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloPassPipeline spmd_pipeline("spmd-partitioner");
     // Run some IR cleanup passes before running the SPMD partitioning
     // passes.
-    AddHloVerifier(&spmd_pipeline, allow_sparse_shapes_);
+    AddHloVerifier(&spmd_pipeline);
     spmd_pipeline.AddPass<CallInliner>();
     spmd_pipeline.AddPass<ZeroSizedHloElimination>();
     spmd_pipeline.AddPass<ConditionalCanonicalizer>();
@@ -642,7 +634,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     TF_RETURN_IF_ERROR(spmd_pipeline.Run(module).status());
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
-    AddHloVerifier(&sharding_removal_pipeline, allow_sparse_shapes_);
+    AddHloVerifier(&sharding_removal_pipeline);
     // Remove redundant sharding ops when partition_count == 1.
     sharding_removal_pipeline.AddPass<ShardingRemover>();
     sharding_removal_pipeline.AddPass<HloDCE>();
@@ -660,7 +652,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   HloPassPipeline pipeline("HLO passes through layout assignment");
-  AddHloVerifier(&pipeline, allow_sparse_shapes_);
+  AddHloVerifier(&pipeline);
 
   pipeline.AddPass<OperandUpcaster>();
   pipeline.AddPass<ResultCaster>();
@@ -719,12 +711,17 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // Convert BF16 and F8 operations to F32 and F16 respectively so that the CPU
   // backend can support BF16/F8 operations without directly implementing a
   // BF16/F8 lowering for most ops.
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-  CpuFloatSupport bf16_support(BF16);
-#else
   FloatSupport bf16_support(BF16);
-#endif
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  CpuFloatSupport onednn_bf16_support(BF16);
+  if (!is_aot_compile) {
+    pipeline.AddPass<FloatNormalization>(&onednn_bf16_support);
+  } else {
+    pipeline.AddPass<FloatNormalization>(&bf16_support);
+  }
+#else
   pipeline.AddPass<FloatNormalization>(&bf16_support);
+#endif
   FloatSupport f8e5m2_support(F8E5M2, F16);
   pipeline.AddPass<FloatNormalization>(&f8e5m2_support);
   FloatSupport f8e4m3fn_support(F8E4M3FN, F16);
@@ -797,7 +794,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // Run the following passes to a fixed point.
   [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>("simplification"),
    this] {
-    AddHloVerifier(&pipeline, allow_sparse_shapes_, HloVerifierOpts{},
+    AddHloVerifier(&pipeline, HloVerifierOpts{},
                    /*debug_only=*/true);
 
     AlgebraicSimplifierOptions options;
@@ -900,8 +897,8 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 
   // After layout assignment, use a layout-sensitive verifier.
   pipeline.AddPass<HloPassPipeline>("after layout assignment");
-  AddHloVerifier(&pipeline, allow_sparse_shapes_,
-                 HloVerifierOpts{}.MakeLayoutSensitive(), /*debug_only=*/true);
+  AddHloVerifier(&pipeline, HloVerifierOpts{}.MakeLayoutSensitive(),
+                 /*debug_only=*/true);
 
   pipeline.AddPass<ReshapeDecomposer>();
 
@@ -913,14 +910,20 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
   // AOT compiled code runs in single thread.
   if (!is_aot_compile) {
+    auto debug_options = module->config().debug_options();
     // Run SimplifyFPConversions pass to simplify the BF16 pattern and make it
     // easier to match.
-    pipeline.AddPass<SimplifyFPConversions>();
+    // Remove `f32 -> bf16 -> f32` casts inserted by bf16 normalization.
+    if (debug_options.xla_allow_excess_precision()) {
+      pipeline.AddPass<SimplifyFPConversions>();
+    }
     pipeline.AddPass<OneDnnMatMulRewriter>(max_parallelism,
                                            compile_options.thread_pool);
     // Run SimplifyFPConversions pass again to remove redundant Convert ops
     // that may exist as a result of running OneDnnMatMulRewriter pass.
-    pipeline.AddPass<SimplifyFPConversions>();
+    if (debug_options.xla_allow_excess_precision()) {
+      pipeline.AddPass<SimplifyFPConversions>();
+    }
   }
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
 
@@ -934,7 +937,7 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
        "simplification after layout assignment"),
    this] {
     AddHloVerifier(
-        &pipeline, allow_sparse_shapes_,
+        &pipeline,
         HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
             LayoutAssignment::InstructionCanChangeLayout),
         /*debug_only=*/true);
@@ -1104,11 +1107,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
           CompilerTargetOptions(module->config()),
           CodeGenOptLevel(module->config()));
 
-  TF_RETURN_IF_ERROR(RunHloPasses(
-      module.get(), /*is_aot_compile=*/false, jit_target_machine.get(),
-      /*compile_options=*/options,
-      /*is_mlir_compile=*/
-      module->config().debug_options().xla_cpu_use_xla_runtime()));
+  TF_RETURN_IF_ERROR(RunHloPasses(module.get(), /*is_aot_compile=*/false,
+                                  jit_target_machine.get(),
+                                  /*compile_options=*/options,
+                                  /*is_mlir_compile=*/false));
   return std::move(module);
 }
 
@@ -1609,14 +1611,8 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
                   &InitializeLLVMCommandLineOptions, module->config());
 
   std::unique_ptr<CpuExecutable> cpu_executable;
-  if (module->config().debug_options().xla_cpu_use_xla_runtime()) {
-    TF_ASSIGN_OR_RETURN(
-        cpu_executable,
-        CompileXlaRuntimeCpuExecutable(std::move(module), options.registry));
-  } else {
-    TF_ASSIGN_OR_RETURN(cpu_executable,
-                        CompileLegacyCpuExecutable(std::move(module)));
-  }
+  TF_ASSIGN_OR_RETURN(cpu_executable,
+                      CompileLegacyCpuExecutable(std::move(module)));
 
   cpu_executable->set_debug_info(
       cpu_executable->buffer_assignment().GetStats().ToString());
@@ -1904,18 +1900,8 @@ se::Platform::Id CpuCompiler::PlatformId() const {
   return se::host::kHostPlatformId;
 }
 
-// A special version that assigns zero size to sparse types
-// and passes all other shapes to the cpu executable function.
-static int64_t ShapeSizeBytesZeroSparse(const Shape& shape) {
-  if (LayoutUtil::IsSparseArray(shape)) {
-    return 0;
-  }
-  return CpuExecutable::ShapeSizeBytes(shape);
-}
-
 HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
-  return allow_sparse_shapes_ ? ShapeSizeBytesZeroSparse
-                              : CpuExecutable::ShapeSizeBytes;
+  return CpuExecutable::ShapeSizeBytes;
 }
 
 namespace {

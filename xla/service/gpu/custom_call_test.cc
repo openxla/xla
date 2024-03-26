@@ -21,13 +21,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-#include "absl/algorithm/container.h"
-#include "absl/strings/str_format.h"
-#include "xla/shape.h"
-#include "tsl/platform/statusor.h"
-
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
@@ -38,8 +31,13 @@ limitations under the License.
 #define PLATFORM "ROCM"
 #endif
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/types/span.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/xla_builder.h"
 #include "xla/ffi/ffi.h"
@@ -49,13 +47,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/service/service_executable_run_options.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
+#include "xla/stream_executor/scratch_allocator.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/client_library_test_base.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
 #define gpuSuccess cudaSuccess
@@ -375,9 +375,9 @@ TEST_F(CustomCallTest, RuntimeCustomCallAlwaysFail) {
   EXPECT_THAT(status.message(), ::testing::HasSubstr("Uh oh, wrong value: 42"));
 }
 
-static absl::Status Memcpy(const ServiceExecutableRunOptions* run_options,
-                           ffi::BufferBase src, ffi::BufferBase dst) {
-  return run_options->stream()->MemcpyD2D(
+static absl::Status Memcpy(se::Stream* stream, ffi::BufferBase src,
+                           ffi::BufferBase dst) {
+  return stream->MemcpyD2D(
       &dst.data, src.data,
       absl::c_accumulate(src.dimensions, 1.0, std::multiplies<int64_t>()) *
           sizeof(float));
@@ -385,7 +385,7 @@ static absl::Status Memcpy(const ServiceExecutableRunOptions* run_options,
 
 XLA_FFI_DEFINE_HANDLER(kMemcpy, Memcpy,
                        ffi::Ffi::Bind()
-                           .Ctx<ServiceExecutableRunOptions>()
+                           .Ctx<ffi::Stream>()
                            .Arg<ffi::BufferBase>()  // src
                            .Arg<ffi::BufferBase>()  // dst
 );
@@ -616,12 +616,48 @@ TEST_F(CustomCallTest, ExportedFfiWithStatusSucceeded) {
 }
 
 //===----------------------------------------------------------------------===//
+// XLA:FFI handler for testing attributes decoding
+//===----------------------------------------------------------------------===//
+
+static absl::Status FfiAttributes(ffi::BufferBase,
+                                  absl::Span<const int32_t> i32_arr) {
+  if (i32_arr.size() != 4)
+    return absl::InternalError("i32_arr size does not match");
+
+  if (i32_arr[0] != 1 || i32_arr[1] != 2 || i32_arr[2] != 3 || i32_arr[3] != 4)
+    return absl::InternalError("i32_arr values do not match");
+
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kFfiAttributes, FfiAttributes,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::BufferBase>()
+                           .Attr<absl::Span<const int32_t>>("i32_arr"));
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla.gpu.ffi_attributes",
+                         PLATFORM, kFfiAttributes);
+
+TEST_F(CustomCallTest, FfiAttributes) {
+  XlaBuilder b(TestName());
+  CustomCall(&b, "xla.gpu.ffi_attributes", /*operands=*/{},
+             ShapeUtil::MakeShape(F32, {}),
+             /*opaque=*/"{ i32_arr = array<i32: 1, 2, 3, 4> }",
+             /*has_side_effect=*/false,
+             /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
+             /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
+             /*api_version=*/CustomCallApiVersion::API_VERSION_TYPED_FFI);
+  TF_ASSERT_OK(Execute(&b, {}).status());
+}
+
+//===----------------------------------------------------------------------===//
 // XLA:FFI handler with attached HloComputation
 //===----------------------------------------------------------------------===//
 
 static absl::Status MemcpyWithCalledComputation(
-    const ServiceExecutableRunOptions* run_options, ffi::BufferBase src,
-    ffi::BufferBase dst, const HloComputation* called_computation) {
+    se::Stream* stream, se::OwningScratchAllocator<> scratch_allocator,
+    ffi::BufferBase src, ffi::BufferBase dst,
+    const HloComputation* called_computation) {
   if (called_computation == nullptr)
     return absl::InternalError("Called computation is not defined");
 
@@ -631,15 +667,20 @@ static absl::Status MemcpyWithCalledComputation(
   if (!DynCast<HloParameterInstruction>(called_computation->root_instruction()))
     return absl::InternalError("ROOT must be a paremeter");
 
-  return Memcpy(run_options, src, dst);
+  // Check that scratch allocator is working.
+  auto scratch = scratch_allocator.AllocateBytes(1024);
+  if (!scratch.ok()) return scratch.status();
+
+  return Memcpy(stream, src, dst);
 }
 
 XLA_FFI_DEFINE_HANDLER(kMemcpyWithCalledComputation,
                        MemcpyWithCalledComputation,
                        ffi::Ffi::Bind()
-                           .Ctx<ServiceExecutableRunOptions>()
-                           .Arg<ffi::BufferBase>()  // src
-                           .Arg<ffi::BufferBase>()  // dst
+                           .Ctx<ffi::Stream>()
+                           .Ctx<ffi::ScratchAllocator>()  // scratch
+                           .Arg<ffi::BufferBase>()        // src
+                           .Arg<ffi::BufferBase>()        // dst
                            .Ctx<ffi::CalledComputation>());
 
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),

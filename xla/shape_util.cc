@@ -117,7 +117,7 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
 namespace {
 // Constructs and returns the new shape with the given minor_to_major order in
 // its Layout.
-StatusOr<Shape> MakeShapeWithLayoutInternal(
+absl::StatusOr<Shape> MakeShapeWithLayoutInternal(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> minor_to_major,
     absl::Span<const DimLevelType> dim_level_types,
@@ -304,7 +304,7 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   return output;
 }
 
-/* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
+/* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
   Shape shape;
   if (!FillNewShape(element_type, dimensions, &shape)) {
@@ -315,7 +315,7 @@ Shape MakeTupleShapeImpl(absl::Span<ShapePtrOrRef> shapes) {
   return std::move(shape);
 }
 
-/* static */ StatusOr<Shape> ShapeUtil::MakeValidatedShape(
+/* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     const std::vector<bool>& dynamic_dimensions) {
   if (dynamic_dimensions.size() != dimensions.size()) {
@@ -1091,7 +1091,16 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   return *return_shape;
 }
 
-/* static */ StatusOr<const Shape*> ShapeUtil::TryGetSubshape(
+/* static */ const Shape& ShapeUtil::GetSubshapeOneIndex(const Shape& shape,
+                                                         int64_t index) {
+  const Shape* return_shape = &shape;
+  CHECK(return_shape->IsTuple())
+      << "Invalid index " << index << " for shape " << shape;
+  return_shape = &return_shape->tuple_shapes(index);
+  return *return_shape;
+}
+
+/* static */ absl::StatusOr<const Shape*> ShapeUtil::TryGetSubshape(
     const Shape& shape, ShapeIndexView index) {
   const Shape* return_shape = &shape;
   for (auto i : index) {
@@ -1121,15 +1130,24 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
   return !GetSubshape(shape, index).IsTuple();
 }
 
+/* static */ int64_t ShapeUtil::GetLeafCountTuple(const Shape& shape) {
+  DCHECK(shape.IsTuple());
+  int64_t count = 0;
+  for (const Shape& subshape : shape.tuple_shapes()) {
+    if (subshape.IsTuple()) {
+      count += GetLeafCount(subshape);
+    } else {
+      ++count;
+    }
+  }
+  return count;
+}
+
 /* static */ int64_t ShapeUtil::GetLeafCount(const Shape& shape) {
   if (!shape.IsTuple()) {
     return 1;
   }
-  int64_t count = 0;
-  for (const Shape& subshape : shape.tuple_shapes()) {
-    count += GetLeafCount(subshape);
-  }
-  return count;
+  return GetLeafCountTuple(shape);
 }
 
 /* static */ std::vector<ShapeUtil::IndexedShape> ShapeUtil::GetLeafShapes(
@@ -1913,7 +1931,7 @@ struct ParallelState {
     auto indexes_copy = s.indexes;
     pstate.pool->Schedule([indexes_copy, &visitor_function, &pstate] {
       const int thread_id = pstate.pool->CurrentThreadId();
-      StatusOr<bool> result = visitor_function(indexes_copy, thread_id);
+      absl::StatusOr<bool> result = visitor_function(indexes_copy, thread_id);
       if (!result.ok()) {
         absl::MutexLock lock(&pstate.mu);
         if (pstate.status.ok()) {

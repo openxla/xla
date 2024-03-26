@@ -424,7 +424,7 @@ Service::ExecuteParallelAndRegisterResult(
     Status block_status = streams[i]->BlockHostUntilDone();
     if (!block_status.ok()) {
       return Internal("failed to complete execution for stream %d: %s", i,
-                           block_status.message());
+                      block_status.message());
     }
   }
 
@@ -470,7 +470,7 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
 
   if (options_.number_of_replicas() == 1) {
     TF_ASSIGN_OR_RETURN(auto result, executable->ExecuteOnStreamWrapper(
-                                         &run_options[0], arguments[0]));
+                                         run_options.data(), arguments[0]));
     return allocation_tracker_.Register(std::move(result), result_tag);
   }
 
@@ -790,10 +790,10 @@ absl::StatusOr<std::unique_ptr<Executable>> Service::BuildExecutable(
       buffer_assignment_proto_after_opt != nullptr) {
     CHECK(DumpingEnabledForHloModule(executable->module()));
     *hlo_proto_before_opt->mutable_buffer_assignment() =
-        std::move(*buffer_assignment_proto_after_opt);
+        *buffer_assignment_proto_after_opt;
     executable->set_hlo_proto(std::move(hlo_proto_before_opt));
   }
-  return std::move(executable);
+  return executable;
 }
 
 Status Service::Compile(const CompileRequest* arg, CompileResponse* result) {

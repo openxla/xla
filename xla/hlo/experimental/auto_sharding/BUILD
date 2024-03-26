@@ -143,6 +143,7 @@ cc_library(
 
 cc_library(
     name = "auto_sharding_cost_graph",
+    srcs = ["auto_sharding_cost_graph.cc"],
     hdrs = ["auto_sharding_cost_graph.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
@@ -317,11 +318,17 @@ xla_cc_test(
     deps = [
         ":auto_sharding",
         ":auto_sharding_option",
+        ":auto_sharding_strategy",
         ":auto_sharding_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:buffer_value",
+        "//xla/service:hlo_alias_analysis",
+        "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_parser",
+        "//xla/service:hlo_value",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:flat_hash_map",

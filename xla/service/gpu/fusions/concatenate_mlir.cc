@@ -51,14 +51,6 @@ using llvm::SmallVector;
 using mlir::Value;
 using mlir::ValueRange;
 
-/*static*/ bool MlirConcatenateFusion::IsSupported(
-    const HloFusionAnalysis& analysis) {
-  if (analysis.fusion_roots().size() != 1) return false;
-
-  return mlir_converter::IsHloConversionSupported(
-      analysis.fusion(), analysis.device_info().gpu_compute_capability());
-}
-
 LaunchDimensions MlirConcatenateFusion::launch_dimensions() const {
   return CalculateLaunchDimensions(GetLargestConcatOperandShape(analysis_),
                                    analysis_.device_info());
@@ -79,10 +71,10 @@ MlirConcatenateFusion::ComputeThreadIdToInputIndexing(
       GetLargestConcatOperandShape(analysis_), ctx);
 }
 
-absl::flat_hash_set<const HloInstruction*>
+std::vector<const HloInstruction*>
 MlirConcatenateFusion::GetInstructionsWithCustomCodegen(
     const HloFusionInstruction& fusion) const {
-  return {analysis_.fusion_heroes()[0]};
+  return analysis_.fusion_heroes();
 }
 
 absl::Status MlirConcatenateFusion::EmitEntryFunction(
@@ -90,12 +82,12 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
     const mlir_converter::CallTargetProvider& call_targets,
     mlir::func::FuncOp entry_function,
     const HloFusionInstruction& fusion) const {
-  CHECK(IsSupported(analysis_));
   const auto& root_computation = computations.FindPartitionedComputation(
       fusion.fused_instructions_computation());
   const auto* concat = analysis_.fusion_heroes()[0];
   mlir::ImplicitLocOpBuilder builder(entry_function.getLoc(), entry_function);
   builder.setInsertionPointToStart(entry_function.addEntryBlock());
+  auto* ctx = entry_function.getContext();
 
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
   SmallVector<Value> input_tensors(
@@ -106,37 +98,37 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
   SmallVector<Value> result_tensors{output_tensor_args.begin(),
                                     output_tensor_args.end()};
 
-  auto thread_id_to_output_map = ComputeThreadIdToInputIndexing(
-                                     /*root_index=*/0, /*hero_operand_index=*/0,
-                                     entry_function.getContext())
-                                     .value();
+  auto thread_id_to_input_map =
+      ComputeThreadIdToInputIndexing(
+          /*root_index=*/0, /*hero_operand_index=*/0, ctx)
+          .value();
+  auto epilogue_indexing = ComputeEpilogueInputToOutputIndexing(concat, ctx);
 
   for (auto [operand_index, operand] : llvm::enumerate(concat->operands())) {
     auto input_to_output_map =
-        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index,
-                                      entry_function.getContext())
+        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index, ctx)
              .indexing_maps.front()
              .begin();
-    auto thread_id_to_input_map =
-        ComposeIndexingMaps(thread_id_to_output_map, input_to_output_map);
+    auto thread_id_to_output_map = ComposeIndexingMaps(
+        ComposeIndexingMaps(thread_id_to_input_map, input_to_output_map),
+        epilogue_indexing);
 
     auto loop_nest_body_builder =
         [&, operand_index = operand_index](
             ValueRange output_tensors, ValueRange dim_values,
             ValueRange symbol_values) -> SmallVector<Value> {
       auto input_indices =
-          mlir_converter::ApplyAffineMap(thread_id_to_output_map.GetAffineMap(),
+          mlir_converter::ApplyAffineMap(thread_id_to_input_map.GetAffineMap(),
                                          dim_values, symbol_values, builder);
 
       auto result_scalars = mlir_converter::ProvideParameter(
-          root_computation, concat, operand_index, input_indices, call_targets,
-          builder);
+          root_computation.FindSubgraph(concat), concat, operand_index,
+          input_indices, call_targets, entry_function, builder);
       auto output_indices =
-          mlir_converter::ApplyAffineMap(thread_id_to_input_map.GetAffineMap(),
+          mlir_converter::ApplyAffineMap(thread_id_to_output_map.GetAffineMap(),
                                          dim_values, symbol_values, builder);
-      result_scalars =
-          EmitEpilogue(analysis_.fusion_roots()[0], concat, call_targets,
-                       result_scalars, output_indices, builder);
+      result_scalars = EmitEpilogue(computations, entry_function,
+                                    result_scalars, output_indices, builder);
 
       SmallVector<Value> result_tensors;
       result_tensors.reserve(output_tensor_args.size());
@@ -151,7 +143,7 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
     };
 
     result_tensors =
-        EmitThreadLoopNest(builder, result_tensors, thread_id_to_input_map,
+        EmitThreadLoopNest(builder, result_tensors, thread_id_to_output_map,
                            loop_nest_body_builder);
   }
 

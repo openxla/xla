@@ -87,6 +87,7 @@ class Thunk {
   static constexpr auto kDefaultExecutionStreamId = ExecutionStreamId(0);
 
   enum Kind {
+    kAddressComputation,
     kCholesky,
     kConditional,
     kConvolution,
@@ -141,6 +142,9 @@ class Thunk {
     kCuDnn
   };
 
+  // <HLO computation fingerprint, serialized compiled object>.
+  using BinaryMap = absl::flat_hash_map<std::string, std::string>;
+
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
   // for now we keep it here as a Thunk implementation detail. It's not yet
   // clear what else should become a part of "executable source", we likely
@@ -148,6 +152,7 @@ class Thunk {
   struct ExecutableSource {
     std::string_view text;             // PTX for NVIDIA backend
     absl::Span<const uint8_t> binary;  // CUBIN for NVIDIA backends
+    BinaryMap dnn_compiled_graphs;
   };
 
   struct ThunkInfo {
@@ -311,6 +316,12 @@ class Thunk {
         CollectiveExecuteParams* collective_params,
         CollectiveCliques* collective_cliques,
         ExecutionStreamIdMap additional_compute_streams = {});
+
+    // Constructs execute parameters from an existing parameters but with
+    // different buffer allocations.
+    static ExecuteParams CloneWithNewAllocations(
+        const ExecuteParams& params,
+        const BufferAllocations& buffer_allocations);
 
     const BufferAllocations* buffer_allocations;  // never null
 

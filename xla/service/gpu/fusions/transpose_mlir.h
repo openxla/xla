@@ -17,15 +17,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
-#include "absl/container/flat_hash_set.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/mlir_fusion_emitter.h"
@@ -52,35 +51,25 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   explicit MlirTransposeFusion(const HloFusionAnalysis& analysis);
   LaunchDimensions launch_dimensions() const override;
 
-  static bool IsSupported(const HloFusionAnalysis& analysis);
-
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
-      int64_t root_index, mlir::MLIRContext* ctx) const override;
+      int64_t root_index, mlir::MLIRContext* mlir_context) const override;
 
   std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
       int64_t root_index, int64_t hero_operand_index,
-      mlir::MLIRContext* ctx) const override;
+      mlir::MLIRContext* mlir_context) const override;
 
  protected:
+  IndexingMap ComputeThreadIdToInputIndexing(
+      const HloInstruction& hero, mlir::MLIRContext* mlir_context) const;
+
   absl::Status EmitEntryFunction(
       const mlir_converter::PartitionedComputations& computations,
       const mlir_converter::CallTargetProvider& call_targets,
       mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion) const override;
 
-  absl::flat_hash_set<const HloInstruction*> GetInstructionsWithCustomCodegen(
-      const HloFusionInstruction& fusion) const override {
-    if (fusion.fused_expression_root()->opcode() == HloOpcode::kTuple) {
-      absl::flat_hash_set<const HloInstruction*> result{
-          shmem_transposes_.begin(), shmem_transposes_.end()};
-      // In multi-output fusion with transpose, each root epilogue will be
-      // generated separately.
-      result.insert(fusion.fused_expression_root());
-      return result;
-    }
-
-    return shmem_transposes_;
-  }
+  std::vector<const HloInstruction*> GetInstructionsWithCustomCodegen(
+      const HloFusionInstruction& fusion) const override;
 
   absl::StatusOr<llvm::SmallVector<mlir::Value, 4>> EmitWriteToShMemMlir(
       mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
@@ -90,6 +79,7 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   absl::Status EmitReadFromShMemMlir(
       mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion,
+      const mlir_converter::PartitionedComputations& computations,
       const mlir_converter::CallTargetProvider& call_target_provider,
       mlir::ValueRange shmem_tensors) const;
 
@@ -97,7 +87,7 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   const HloFusionAnalysis& analysis_;
   Tiling tiling_;
   Vector3 permutation_;
-  absl::flat_hash_set<const HloInstruction*> shmem_transposes_;
+  std::vector<const HloInstruction*> shmem_transposes_;
 };
 
 }  // namespace gpu

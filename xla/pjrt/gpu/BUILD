@@ -5,7 +5,6 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -127,7 +126,6 @@ cc_library(
 xla_cc_test(
     name = "se_gpu_pjrt_client_test",
     srcs = if_gpu_is_configured(["se_gpu_pjrt_client_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = [
         "gpu",
         "no_oss",
@@ -141,6 +139,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:statusor",
         "//xla:test",
+        "//xla/pjrt:pjrt_future",
         "//xla/pjrt:utils",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/service:gpu_plugin",
@@ -243,7 +242,6 @@ cc_library(
         "//xla/service:local_service",
         "//xla/service:local_service_utils",
         "//xla/service/gpu:executable_proto_cc",
-        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:casts",
@@ -253,11 +251,13 @@ cc_library(
         "//xla/service/gpu:gpu_compiler",
     ]) + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/cuda:cuda_activation_header",
         "//xla/stream_executor/gpu:gpu_cudamallocasync_allocator",
         "//xla/service/gpu:nvptx_compiler_impl",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocm_headers",
+        "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/service/gpu:amdgpu_compiler_impl",
     ]),
     alwayslink = True,

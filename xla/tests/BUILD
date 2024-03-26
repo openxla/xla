@@ -331,6 +331,7 @@ cc_library(
     data = [
         "@llvm-project//llvm:FileCheck",
     ],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla:statusor",
         "//xla:types",
@@ -1000,10 +1001,13 @@ xla_test(
         ":hlo_test_base",
         ":test_macros_header",
         ":xla_internal_test_main",
+        "//xla:array2d",
         "//xla:error_spec",
         "//xla:literal",
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:test",
+        "//xla:types",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -1736,6 +1740,7 @@ xla_test(
         ":test_macros_header",
         ":test_utils",
         ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -1747,6 +1752,8 @@ xla_test(
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -2863,6 +2870,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/service/cpu:onednn_util",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -2893,6 +2901,7 @@ xla_test(
         "cpu",
     ],
     copts = tsl_copts(),
+    shard_count = 4,
     deps = [
         ":hlo_test_base",
         ":test_macros_header",
@@ -2901,6 +2910,8 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/service/cpu:onednn_util",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 

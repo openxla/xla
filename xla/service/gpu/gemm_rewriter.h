@@ -31,9 +31,10 @@ namespace gpu {
 //    (kMultiply (kDot A B) alpha)
 //    (kMultiply C beta))
 //
-// where A, B, C are matrixes and `alpha` and `beta` are host constants.
-// The additional requirement is that C has no other users (otherwise,
-// it does not make sense to fuse it inside the custom call).
+// where A, B, C are matrices or vectors and `alpha` and `beta` are host
+// constants. In matrix-vector multiplication, one operand must be a matrix and
+// the other must be a vector. The additional requirement is that C has no other
+// users (otherwise, it does not make sense to fuse it inside the custom call).
 //
 // Both multiplication and addition can be avoided (equivalent to setting
 // `alpha` to one and `beta` to zero).
@@ -44,7 +45,10 @@ namespace gpu {
 // stored in the backend config.
 class GemmRewriter : public HloModulePass {
  public:
-  explicit GemmRewriter(se::GpuComputeCapability gpu_version);
+  // When f8_rewrite is true, only FP8 GEMMs are rewritten. Otherwise, non-FP8
+  // GEMMs are rewritten.
+  explicit GemmRewriter(se::GpuComputeCapability gpu_version,
+                        bool f8_rewrite = false);
   absl::string_view name() const override { return "cublas-gemm-rewriter"; }
 
   using HloPassInterface::Run;
@@ -54,6 +58,7 @@ class GemmRewriter : public HloModulePass {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  bool f8_rewrite_;
 };
 
 }  // namespace gpu
