@@ -447,15 +447,38 @@ absl::StatusOr<bool> IsFlashAttention(
   int64_t s_q = qkv_layout.seqlen_q;
   int64_t s_kv = qkv_layout.seqlen_kv;
   int64_t hidden_dim = qkv_layout.hidden_dim;
+  // start with most relaxed constraint
   bool is_seqlen_supported = (s_q > 512 || s_kv > 512) &&
                              (!is_training || (s_q % 2 == 0 && s_kv % 2 == 0));
   bool is_hidden_dim_supported = hidden_dim <= 128 && hidden_dim % 8 == 0;
   bool is_flash_attention = is_seqlen_supported && is_hidden_dim_supported;
-
-  // flash attention requires cuDNN 8.9.4 to run non-fused QKV
-  // once we have fused QKV support, we can relax this contraint
-  if (is_flash_attention &&
+  if (!is_flash_attention) return false;
+  // going backwards to check compatibility
+  if ((is_training && (s_q < 64 || s_kv < 64)) &&
       !IsComputeCapabilityAndCudnnSupported(
+          cc, cudnn_version, stream_executor::dnn::VersionInfo(9, 0, 0))) {
+    VLOG(2) << "Flash attention training with seq < 64 not supported cuDNN < "
+               "9.0.0.";
+    return false;
+  }
+
+  if ((hidden_dim != 64 && hidden_dim != 128) &&
+      !IsComputeCapabilityAndCudnnSupported(
+          cc, cudnn_version, stream_executor::dnn::VersionInfo(8, 9, 6))) {
+    VLOG(2) << "Flash attention head dim != 64 or 128 not supported with cuDNN "
+               "< 8.9.6.";
+    return false;
+  }
+
+  if ((is_training && s_kv % 64 != 0) &&
+      !IsComputeCapabilityAndCudnnSupported(
+          cc, cudnn_version, stream_executor::dnn::VersionInfo(8, 9, 5))) {
+    VLOG(2) << "Flash attention training with seq kv % 64 != 0 not supported "
+               "with cuDNN < 8.9.5.";
+    return false;
+  }
+
+  if (!IsComputeCapabilityAndCudnnSupported(
           cc, cudnn_version, stream_executor::dnn::VersionInfo(8, 9, 4))) {
     VLOG(2) << "Require cuDNN 8.9.4 to run flash attention.";
     return false;
