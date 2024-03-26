@@ -2556,13 +2556,14 @@ cc_library(
     srcs = ["priority_fusion.cc"],
     hdrs = ["priority_fusion.h"],
     deps = [
+        ":backend_configs_cc",
         ":fusion_process_dump_proto_cc",
         ":gpu_fusible",
         ":hlo_fusion_analysis",
         ":hlo_traversal",
+        ":triton_fusion_analysis",
         "//xla:debug_options_flags",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:dump",
@@ -2599,7 +2600,9 @@ xla_cc_test(
     srcs = ["priority_fusion_test.cc"],
     tags = ["no_pip"],
     deps = [
+        ":backend_configs_cc",
         ":gpu_device_info_for_tests",
+        ":gpu_fusible",
         ":hlo_fusion_analysis",
         ":priority_fusion",
         "//xla:shape_util",
@@ -2614,6 +2617,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
