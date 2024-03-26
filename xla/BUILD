@@ -30,6 +30,7 @@ package_group(
         "//third_party/py/jax/...",
         "//third_party/py/t5x/...",
         "//third_party/py/tpu_graphs/...",
+        "//third_party/sparse_conv/...",
         "//tensorflow/compiler/...",
         "//tensorflow/python/tpu/...",
     ],
