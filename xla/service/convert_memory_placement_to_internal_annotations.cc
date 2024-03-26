@@ -68,11 +68,13 @@ absl::StatusOr<bool> ConvertMemoryPlacementToInternalAnnotations::Run(
                 instruction->name(), instruction->operand_count());
           }
           HloInstruction* input = instruction->mutable_operand(0);
+          Shape input_shape = input->shape();
+          LayoutUtil::SetToDefaultLayout(&input_shape);
           TF_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(
               c->AddInstruction(HloInstruction::CreateCustomCall(
-                  input->shape(), {input},
-                  host_memory_offload_annotations::
-                      kMoveToHostCustomCallTarget))));
+                  input_shape, {input},
+                  host_memory_offload_annotations::kMoveToHostCustomCallTarget,
+                  {input_shape}))));
           TF_RETURN_IF_ERROR(
               c->RemoveInstructionAndUnusedOperands(instruction));
           changed = true;
@@ -83,11 +85,14 @@ absl::StatusOr<bool> ConvertMemoryPlacementToInternalAnnotations::Run(
             VLOG(1) << "Skip because operand is used by more than one user";
             continue;
           }
+          Shape operand_shape = custom_call_operand->shape();
+          LayoutUtil::SetToDefaultLayout(&operand_shape);
           HloInstruction* new_result =
               c->AddInstruction(HloInstruction::CreateCustomCall(
-                  custom_call_operand->shape(), {custom_call_operand},
+                  operand_shape, {custom_call_operand},
                   host_memory_offload_annotations::
-                      kMoveToDeviceCustomCallTarget));
+                      kMoveToDeviceCustomCallTarget,
+                  {operand_shape}));
           TF_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(new_result));
           TF_RETURN_IF_ERROR(
               c->RemoveInstructionAndUnusedOperands(instruction));
