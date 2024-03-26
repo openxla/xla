@@ -671,7 +671,8 @@ struct LhloLegalizeToAffinePass
 
 }  // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createLhloLegalizeToAffinePass() {
+static std::unique_ptr<OperationPass<func::FuncOp>>
+createLhloLegalizeToAffinePass() {
   return std::make_unique<LhloLegalizeToAffinePass>();
 }
 
