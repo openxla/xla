@@ -673,7 +673,9 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
                       instr->backend_config<xla::gpu::GpuBackendConfig>());
   xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
   xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
+  std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n";
   if (epilogue != GemmBackendConfig::D_RELU && epilogue != GemmBackendConfig::D_RELU_BGRAD) {
+     std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1111111111\n";
     TF_ASSIGN_OR_RETURN(bool has_vector_bias,
                         xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
     bool has_matrix_bias = config.beta() != 0;
@@ -730,6 +732,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
         c_scale, d_scale, d_amax);
     AddThunkToThunkSequence(std::move(thunk));
   } else {
+     std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee222222222222222222222\n";
     TF_ASSIGN_OR_RETURN(
       bool has_aux_input,
       xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));

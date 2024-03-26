@@ -1618,11 +1618,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         break;
       }
     }
-
+    auto fwd_gemm_num_rows = fwd_gemm->shape().dimensions(0);
     if (!valid_relu_bwd ||
-        !SupportsEpilogueFusion(fwd_gemm->shape().element_type())) {
+        !SupportsEpilogueFusion(fwd_gemm->shape().element_type()) ||
+        !(fwd_gemm_num_rows >= 128 && fwd_gemm_num_rows % 128 == 0)) {
+      VLOG(1) << "Possible GEMM with ReLU epilogue is "
+              << "not fused into Custom Call.";          
       return absl::OkStatus();
     }
+        
       std::cout <<"1111111111111111111\n";
     //  return absl::OkStatus();
     //(a) rewrite Fwd Relu with Aux

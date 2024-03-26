@@ -160,7 +160,7 @@ class GemmAutotuner {
     const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
 
     bool has_matrix_bias = gemm_config.beta != 0.;
-
+  
     TF_ASSIGN_OR_RETURN(
         bool has_vector_bias,
         gpublas_lt::EpilogueAddsVectorBias(backend_config.epilogue()));
@@ -168,6 +168,11 @@ class GemmAutotuner {
     TF_ASSIGN_OR_RETURN(
         bool has_aux_output,
         gpublas_lt::EpilogueHasAuxiliaryOutput(backend_config.epilogue()));
+
+    // auxiliary buffer is only used for either input or output.
+    TF_ASSIGN_OR_RETURN(
+        bool has_aux_input,
+        xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(backend_config.epilogue()));
 
     TF_ASSIGN_OR_RETURN(auto epilogue,
                         AsBlasLtEpilogue(backend_config.epilogue()));
@@ -183,6 +188,12 @@ class GemmAutotuner {
     if (has_aux_output) {
       TF_ASSIGN_OR_RETURN(aux_buffer,
                           CreateBuffer(gemm->shape().tuple_shapes(1)));
+    }
+    if (has_aux_input) {
+      // The last operand is for ReLU bitmask for D_RELU epilogue
+      TF_ASSIGN_OR_RETURN(
+          aux_buffer,
+          CreateBuffer(gemm->operand(gemm->operand_count() - 1)->shape()));
     }
 
     TF_ASSIGN_OR_RETURN(auto plan,
