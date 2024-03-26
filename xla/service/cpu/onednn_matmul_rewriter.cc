@@ -511,8 +511,8 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       HloInstruction* new_instr;
       // If matched pattern has custom-call -> bitcast -> add, then we need to
       // insert bitcast after the new fusion to maintain the correct shape
-      // (new-custom-call -> bitcast). Also, this will be followed by -> convert
-      // for bf16 case to avoid datatype mismatch.
+      // (new-custom-call -> bitcast). Also, this will optionally be followed
+      // by -> convert for bf16 case to avoid datatype mismatch.
       if (optional_dot_bitcast != nullptr &&
           optional_dot_bitcast->opcode() == HloOpcode::kBitcast) {
         if (optional_dot_convert != nullptr &&
