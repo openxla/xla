@@ -40,14 +40,14 @@ namespace m = match;
 
 class GemmReLUBwdVisitor : public DfsHloRewriteVisitor {
  public:
- auto CublasLtMatmulF8(HloInstruction **instr) {
-  return m::CustomCall(
-      instr, {kCublasLtMatmulF8CallTarget});
-}
-absl::Status ReluConvertDF8(HloInstruction *instr, HloInstruction *fwd_gemm,
-                          HloInstruction *d_scale, HloInstruction *clamp_lower,
-                          HloInstruction *clamp_upper, HloInstruction *maximum) {
-    std::cout << "shuw:in side F8CnvertD\n";
+  auto CublasLtMatmulF8(HloInstruction **instr) {
+    return m::CustomCall(instr, {kCublasLtMatmulF8CallTarget});
+  }
+  absl::Status ReluConvertDF8(HloInstruction *instr, HloInstruction *fwd_gemm,
+                              HloInstruction *d_scale,
+                              HloInstruction *clamp_lower,
+                              HloInstruction *clamp_upper,
+                              HloInstruction *maximum) {
     // Verify the data types and the operands of clamp.
     if (instr->shape().element_type() == F8E4M3FN) {
       if (!clamp_lower->literal().IsAllFloat(static_cast<float>(
@@ -76,14 +76,13 @@ absl::Status ReluConvertDF8(HloInstruction *instr, HloInstruction *fwd_gemm,
     // unknown in what form this operation will be used, it is identified in a
     // top-down approach by inspecting the users of the GEMM.
     const std::vector<HloInstruction *> gemm_users = fwd_gemm->users();
-    std::cout << "shuw: fwd_gemm" << fwd_gemm->ToString()<<std::endl;
     HloInstruction *reduce_damax = nullptr;
     HloInstruction *compare = nullptr;
     HloInstruction *select = nullptr;
     if (gemm_users.size() == 2) {
-      // Assume the user of fwd gemm are maximum and compare, due to what happens in gemm_rewriter.
-      // In the presence of a ReLU activation, the abs instruction is elided
-      // since abs(ReLU(x)) = ReLU(x).
+      // Assume the user of fwd gemm are maximum and compare, due to what
+      // happens in gemm_rewriter. In the presence of a ReLU activation, the abs
+      // instruction is elided since abs(ReLU(x)) = ReLU(x).
       TF_ASSIGN_OR_RETURN(auto gpu_config,
                           fwd_gemm->backend_config<GpuBackendConfig>());
       const GemmBackendConfig &config = gpu_config.gemm_backend_config();
@@ -97,58 +96,43 @@ absl::Status ReluConvertDF8(HloInstruction *instr, HloInstruction *fwd_gemm,
           for (int j = 0; i < gemm_users[i]->users().size(); ++j) {
             if (gemm_users[i]->users()[j]->opcode() == HloOpcode::kReduce) {
               maybe_reduce = gemm_users[i]->users()[j];
-              std::cout << "shuw: 111111\n";
               reduce_damax = maybe_reduce;
               break;
             }
           }
-          std::cout << "shuw: 444444444444\n";
         } else if (gemm_users[i]->opcode() == HloOpcode::kCompare) {
-          std::cout << "shuw: 333333333\n";
           maybe_compare = gemm_users[i];
           maybe_select = gemm_users[i]->users()[0];
-                  select = maybe_select;
-        compare = maybe_compare;
-          std::cout << "shuw: 222222222\n";
+          select = maybe_select;
+          compare = maybe_compare;
         }
- 
       }
-   
- std::cout << "shuw: end of for\n";
- std::cout << reduce_damax->ToString() <<std::endl;
- std::cout << "shuw: end of reduce_damax\n";
- std::cout << select->ToString() <<std::endl;
-  std::cout << "shuw: end of select\n";
- std::cout << compare->ToString() <<std::endl;
- std::cout << "shuw: end of for compare\n";
+
       if (!reduce_damax || !select || !compare) {
         return absl::OkStatus();
       }
     } else {
       return absl::OkStatus();
     }
-std::cout << "shuw:in side F8CnvertD 11111111111\n";
     HloInstruction *bwd_gemm = nullptr;
     if (!Match(
             select,
-            m::Select(
-                m::Compare(m::CustomCall({kCublasLtMatmulF8CallTarget}),
-                           m::Broadcast(m::ConstantScalar(0)))
-                    .WithOneUser(),
-                m::CustomCall(&bwd_gemm, {kCublasLtMatmulF8CallTarget})
-                    .WithOneUser(),
-                m::Broadcast(m::ConstantScalar(0))))) {
+            m::Select(m::Compare(m::CustomCall({kCublasLtMatmulF8CallTarget}),
+                                 m::Broadcast(m::ConstantScalar(0)))
+                          .WithOneUser(),
+                      m::CustomCall(&bwd_gemm, {kCublasLtMatmulF8CallTarget})
+                          .WithOneUser(),
+                      m::Broadcast(m::ConstantScalar(0))))) {
       return absl::OkStatus();
     }
 
-   // Step (a), replace maximum with RELU_AUX 
-   // Step (b), deal with select
-   // Step (c), add dmax to output
+    // Step (a), replace maximum with RELU_AUX
+    // Step (b), deal with select
+    // Step (c), add dmax to output
     TF_ASSIGN_OR_RETURN(auto gpu_config,
                         fwd_gemm->backend_config<GpuBackendConfig>());
     GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
-std::cout << "shuw:in side F8CnvertD 2222222222222\n";
-    // Step (a), replace maximum with RELU_AUX 
+    // Step (a), replace maximum with RELU_AUX
     if (config.epilogue() == GemmBackendConfig::DEFAULT) {
       config.set_epilogue(GemmBackendConfig::RELU_AUX);
     } else if (config.epilogue() == GemmBackendConfig::BIAS) {
@@ -169,10 +153,6 @@ std::cout << "shuw:in side F8CnvertD 2222222222222\n";
     std::unique_ptr<HloInstruction> output = fwd_gemm->CloneWithNewShape(
         ShapeUtil::MakeTupleShape({fwd_gemm->shape(), mask_shape}));
     TF_RETURN_IF_ERROR(output->set_backend_config(gpu_config));
-    // TF_RETURN_IF_ERROR(SetName(output->GetModule(), output.get()));
-        std::cout << "shuw:in side F8CnvertD 33333333333333333333333\n";
-
-    //  return absl::OkStatus();
     HloInstruction *tuple_output =
         fwd_gemm->parent()->AddInstruction(std::move(output));
     TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
@@ -180,10 +160,9 @@ std::cout << "shuw:in side F8CnvertD 2222222222222\n";
 
     HloInstruction *get_tuple1 = fwd_gemm->parent()->AddInstruction(
         HloInstruction::CreateGetTupleElement(tuple_output, 1));
-        std::cout << "shuw:in side F8CnvertD 44444444444444444\n";
     // Step (b), deal with select to have DRELu in bwd_gemm
-std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
-                                        bwd_gemm->operands().end());
+    std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
+                                           bwd_gemm->operands().end());
     operands.insert(operands.end(), get_tuple1);
 
     HloInstruction *new_bwd_custom_call =
@@ -203,21 +182,16 @@ std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
         new_bwd_custom_call->set_backend_config(bwd_gpu_backend_config));
 
     TF_RETURN_IF_ERROR(ReplaceInstruction(select, new_bwd_custom_call));
-    std::cout << "shuw: bwd_gemm" << new_bwd_custom_call->ToString()<<std::endl;
-  // Step (c) add dmax to output 
-
-
-    // If present, elide the calculation of the maximum of the absolute values
-    // of the result of the GEMM.
-    // Damax is sure there
-    return RewriteFwdBwdGemm(tuple_output, new_bwd_custom_call, reduce_damax, instr); // instr is convert
+    // Step (c) add dmax to output
+    return RewriteFwdBwdGemm(tuple_output, new_bwd_custom_call, reduce_damax,
+                             instr);  // instr is convert
   }
 
   absl::Status HandleReduce(HloInstruction *instr) override {
     HloInstruction *gemm = nullptr;
-     if (Match(instr, m::Reduce(m::CustomCall(&gemm,
-                                              {kCublasLtMatmulF8CallTarget}), 
-                                m::ConstantScalar(0)))) {
+    if (Match(instr,
+              m::Reduce(m::CustomCall(&gemm, {kCublasLtMatmulF8CallTarget}),
+                        m::ConstantScalar(0)))) {
       TF_ASSIGN_OR_RETURN(auto gpu_config,
                           gemm->backend_config<GpuBackendConfig>());
       GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
@@ -226,7 +200,7 @@ std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
       }
       config.set_epilogue(GemmBackendConfig::D_RELU_BGRAD);
       std::unique_ptr<HloInstruction> output = gemm->CloneWithNewShape(
-        ShapeUtil::MakeTupleShape({gemm->shape(), instr->shape()}));
+          ShapeUtil::MakeTupleShape({gemm->shape(), instr->shape()}));
 
       TF_RETURN_IF_ERROR(output->set_backend_config(gpu_config));
 
@@ -241,67 +215,63 @@ std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
   }
 
   // Adds a scalar DAmax return value to an FP8 GEMM.
-  absl::Status RewriteFwdBwdGemm(HloInstruction *fwd_gemm, 
-                          HloInstruction *bwd_gemm,
-                          HloInstruction *fwd_reduce_damax, HloInstruction *next_fwd_convert) {
-    
-        std::cout << "shuw:in side F8CnvertD 5555555555555555\n";
+  absl::Status RewriteFwdBwdGemm(HloInstruction *fwd_gemm,
+                                 HloInstruction *bwd_gemm,
+                                 HloInstruction *fwd_reduce_damax,
+                                 HloInstruction *next_fwd_convert) {
+    // Assume reduce, bwd_gemm, and divide-clamp-convert for next fwd gemm are 3
+    // users of fwd_gemm(via get-tuple-element)
 
-      std::cout << "fwd_gemm users="<<fwd_gemm->users().size()<<std::endl;
-    //   // Assume reduce, bwd_gemm, and divide-clamp-convert for next fwd gemm are 3 users of fwd_gemm(via get-tuple-element)
-
-    // Change the output shape of the fwd_gemm Custom Call to tuple(D, bitmask, DAmax) from (D, bitmask).
+    // Change the output shape of the fwd_gemm Custom Call to tuple(D, bitmask,
+    // DAmax) from (D, bitmask).
     Shape damax_shape = ShapeUtil::MakeScalarShape(F32);
-    std::cout << "fwd_gemm="<<fwd_gemm->ToString()<<std::endl;
-     std::cout << "new tuple shape="<<fwd_gemm->shape().tuple_shapes(0)<<std::endl;
-      std::cout << "new tuple shape="<<fwd_gemm->shape().tuple_shapes(1)<<std::endl;
-    Shape tuple_shape =
-        ShapeUtil::MakeTupleShape({next_fwd_convert->shape(), fwd_gemm->shape().tuple_shapes(1), damax_shape});
+
+    Shape tuple_shape = ShapeUtil::MakeTupleShape(
+        {next_fwd_convert->shape(), fwd_gemm->shape().tuple_shapes(1),
+         damax_shape});
     HloInstruction *gemm_and_damax =
         fwd_gemm->AddInstruction(fwd_gemm->CloneWithNewShape(tuple_shape));
-  std::cout << "shuw:in side F8CnvertD 66666666666666666\n";
     // Obtain D and DAmax separately from the output tuple.
     HloInstruction *d =
         fwd_gemm->AddInstruction(HloInstruction::CreateGetTupleElement(
             next_fwd_convert->shape(), gemm_and_damax, 0));
-    HloInstruction *bitmask = fwd_gemm->AddInstruction(
-        HloInstruction::CreateGetTupleElement(fwd_gemm->shape().tuple_shapes(1), gemm_and_damax, 1));            
+    HloInstruction *bitmask =
+        fwd_gemm->AddInstruction(HloInstruction::CreateGetTupleElement(
+            fwd_gemm->shape().tuple_shapes(1), gemm_and_damax, 1));
     HloInstruction *damax = fwd_gemm->AddInstruction(
         HloInstruction::CreateGetTupleElement(damax_shape, gemm_and_damax, 2));
-  std::cout << "shuw:in side F8CnvertD 777777777777777777777\n";
-  // in case non-f32, there is bitcast and convert later.
-  if (!ShapeUtil::SameElementType(fwd_reduce_damax->shape(), damax->shape())) {
-    if (fwd_reduce_damax->users()[0]->opcode() == HloOpcode::kBitcast &&
-        fwd_reduce_damax->users()[0]->users()[0]->opcode() == HloOpcode::kConvert) {
-      auto convert_to_f32 = fwd_reduce_damax->users()[0]->users()[0];
-      auto bitcast = fwd_reduce_damax->AddInstruction(
-          HloInstruction::CreateBitcast(convert_to_f32->shape(), damax));
-      TF_RETURN_IF_ERROR(ReplaceInstruction(convert_to_f32, bitcast));
+    // In case non-f32, there is bitcast and convert later.
+    if (!ShapeUtil::SameElementType(fwd_reduce_damax->shape(),
+                                    damax->shape())) {
+      if (fwd_reduce_damax->users()[0]->opcode() == HloOpcode::kBitcast &&
+          fwd_reduce_damax->users()[0]->users()[0]->opcode() ==
+              HloOpcode::kConvert) {
+        auto convert_to_f32 = fwd_reduce_damax->users()[0]->users()[0];
+        auto bitcast = fwd_reduce_damax->AddInstruction(
+            HloInstruction::CreateBitcast(convert_to_f32->shape(), damax));
+        TF_RETURN_IF_ERROR(ReplaceInstruction(convert_to_f32, bitcast));
+      } else {
+        return absl::OkStatus();
+      }
     } else {
-      return absl::OkStatus();
+      TF_RETURN_IF_ERROR(ReplaceInstruction(fwd_reduce_damax, damax));
     }
-  }  else {
-    TF_RETURN_IF_ERROR(ReplaceInstruction(fwd_reduce_damax, damax));
-  }
-      std::cout << "shuw:in side F8CnvertD 88888888888888888888\n";
     TF_RETURN_IF_ERROR(ReplaceInstruction(next_fwd_convert, d));
-      std::cout << "shuw:in side F8CnvertD 9999999999999999999\n";
     // Replace bwd_gemm's last operand
-    std::vector<HloInstruction *> bwd_gemm_operands(bwd_gemm->operands().begin(),
-                                                    bwd_gemm->operands().end());
+    std::vector<HloInstruction *> bwd_gemm_operands(
+        bwd_gemm->operands().begin(), bwd_gemm->operands().end());
     bwd_gemm_operands.back() = bitmask;
 
     HloInstruction *new_bwd_gemm = bwd_gemm->AddInstruction(
         bwd_gemm->CloneWithNewOperands(bwd_gemm->shape(), bwd_gemm_operands));
 
-    TF_RETURN_IF_ERROR(ReplaceInstruction(bwd_gemm,new_bwd_gemm));
-std::cout << "shuw:in side F8CnvertD 10000000000000000\n";
+    TF_RETURN_IF_ERROR(ReplaceInstruction(bwd_gemm, new_bwd_gemm));
     return absl::OkStatus();
   }
 
   absl::Status HandleConvert(HloInstruction *instr) override {
-    HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm, *binary,
-        *maximum;
+    HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
+        *binary, *maximum;
     if (Match(
             instr,
             m::Convert(m::Clamp(
@@ -322,115 +292,11 @@ std::cout << "shuw:in side F8CnvertD 10000000000000000\n";
                                    m::Broadcast(m::ConstantScalar(0))),
                         m::Broadcast(m::Op(&d_scale)))),
                 m::Broadcast(m::ConstantScalar(&clamp_upper)))))) {
-      return ReluConvertDF8(instr, existing_gemm, d_scale, clamp_lower, clamp_upper,
-                            maximum);
-     }
-    return absl::OkStatus();
-  }
-
- /****
-  absl::Status HandleSelect(HloInstruction *instr) override {
-    HloInstruction *fwd_gemm = nullptr;
-    HloInstruction *bwd_gemm = nullptr;
-    HloInstruction *bwd_gemm2 = nullptr;
-    HloInstruction *get_tuple = nullptr;
-    // std::cout << "55555555555555555\n";
-    if (Match(instr, m::Select(m::Bitcast(m::Convert(m::GetTupleElement(&get_tuple, m::CustomCall(&fwd_gemm, {kCublasLtMatmulCallTarget}), 1))),
-    m::CustomCall(&bwd_gemm,{kCublasLtMatmulCallTarget}),
-    m::Broadcast(m::Constant())))) {
-        std::cout << "RRRRRRRRRRR\n";
-    std::cout << get_tuple->ToString()<<std::endl;
-     
-     bwd_gemm2 = instr->users()[0];
-    std::vector<HloInstruction *> operands_list = {bwd_gemm->mutable_operand(0),
-                                                   bwd_gemm->mutable_operand(1),
-                                                   get_tuple};
-
-    TF_ASSIGN_OR_RETURN(auto bwd_gpu_backend_config,
-                        bwd_gemm->backend_config<GpuBackendConfig>());
-    GemmBackendConfig &bwd_config = *bwd_gpu_backend_config.mutable_gemm_backend_config();
-    bwd_config.set_epilogue(GemmBackendConfig::D_RELU);
-    std::cout << "777777777777777\n";
-    std::cout << bwd_gemm->mutable_operand(0)->ToString()<<std::endl;
-    std::cout << "88888888888\n";
-     std::cout << bwd_gemm->mutable_operand(1)->ToString()<<std::endl;
-    HloInstruction *new_bwd_custom_call =
-        bwd_gemm->parent()->AddInstruction(HloInstruction::CreateCustomCall(
-            ShapeUtil::MakeShapeWithDenseLayout(
-                bwd_gemm->shape().element_type(), bwd_gemm->shape().dimensions(),
-                bwd_gemm->shape().layout().minor_to_major()),
-            operands_list, kCublasLtMatmulCallTarget));
-            std::cout << "ssssss111111\n";
-            std::cout << new_bwd_custom_call->ToString()<<std::endl;
-    TF_RETURN_IF_ERROR(new_bwd_custom_call->set_backend_config(bwd_gpu_backend_config));
-    std::cout << "ssssss2222222222\n";
-    return ReplaceInstruction(instr, new_bwd_custom_call);
-    
+      return ReluConvertDF8(instr, existing_gemm, d_scale, clamp_lower,
+                            clamp_upper, maximum);
     }
     return absl::OkStatus();
   }
-*/
-//   absl::Status HandleCustomCall(HloInstruction *instr) override {
-//     HloInstruction *existing_gemm;
-//     HloInstruction *bcast;
-//     if (Match(instr, m::CustomCall(&existing_gemm,
-//                                    {kGemmCallTarget, kCublasLtMatmulCallTarget})
-//                          .WithOperand(0, m::Broadcast(&bcast, m::Op()))) ||
-//         (Match(instr, m::CustomCall(&existing_gemm, {kGemmCallTarget,
-//                                                      kCublasLtMatmulCallTarget})
-//                           .WithOperand(1, m::Broadcast(&bcast, m::Op()))))) {
-//       TF_ASSIGN_OR_RETURN(auto gpu_config,
-//                           existing_gemm->backend_config<GpuBackendConfig>());
-//       GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
-//       DotDimensionNumbers *dim_nums = config.mutable_dot_dimension_numbers();
-//       int bcast_operand_index = instr->operand_index(bcast);
-//       int num_bcast_dims = (bcast->shape().dimensions_size() -
-//                             bcast->operand(0)->shape().dimensions_size());
-//       int num_batch_dims = dim_nums->lhs_batch_dimensions_size();
-
-//       const tsl::protobuf::RepeatedField<int64_t> &batch_dimensions =
-//           (bcast_operand_index == 1) ? dim_nums->rhs_batch_dimensions()
-//                                      : dim_nums->lhs_batch_dimensions();
-//       // This optimization is only valid if the set of broadcasted dimensions
-//       // is exactly the set of batch dimensions. First, check that all newly
-//       // broadcast dimensions have been inserted on the left i.e. all new
-//       // dimensions must be in [0, num_bcast_dims) or equivalently all original
-//       // dimensions are >= num_bcast_dims.
-//       for (int64_t bcast_dim : bcast->dimensions()) {
-//         if (bcast_dim < num_bcast_dims) {
-//           return absl::OkStatus();
-//         }
-//         // bcast_dim should not be in batch_dimensions.
-//         if (absl::c_linear_search(batch_dimensions, bcast_dim)) {
-//           return absl::OkStatus();
-//         }
-//       }
-
-//       // Then check that all batch dimensions are being broadcast, and that
-//       // there is at least one batch dimension.
-//       CHECK_GT(num_bcast_dims, 0);
-//       if (num_bcast_dims != num_batch_dims) {
-//         return absl::OkStatus();
-//       }
-
-//       if (bcast_operand_index == 1) {
-//         CHECK_EQ(dim_nums->rhs_contracting_dimensions_size(), 1);
-//         dim_nums->set_rhs_contracting_dimensions(
-//             0, dim_nums->rhs_contracting_dimensions(0) - num_batch_dims);
-//         dim_nums->clear_rhs_batch_dimensions();
-//       } else {
-//         CHECK_EQ(dim_nums->lhs_contracting_dimensions_size(), 1);
-//         dim_nums->set_lhs_contracting_dimensions(
-//             0, dim_nums->lhs_contracting_dimensions(0) - num_batch_dims);
-//         dim_nums->clear_lhs_batch_dimensions();
-//       }
-//       TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWithDifferentShape(
-//           bcast_operand_index, bcast->mutable_operand(0)));
-//       TF_RETURN_IF_ERROR(existing_gemm->set_backend_config(gpu_config));
-//       MarkAsChanged();
-//     }
-//     return absl::OkStatus();
-//   }
 };
 
 static absl::StatusOr<bool> RunOnComputation(HloComputation *computation) {
