@@ -20,6 +20,7 @@ load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/git:git_configure.bzl", "git_configure")
 load("//third_party/gpus:cuda_configure.bzl", "cuda_configure")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
+load("//third_party/gpus:sycl_configure.bzl", "sycl_configure")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
 load("//third_party/implib_so:workspace.bzl", implib_so = "repo")
 load("//third_party/llvm:setup.bzl", "llvm_setup")
@@ -77,6 +78,7 @@ def _tf_toolchains():
     python_configure(name = "local_config_python")
     rocm_configure(name = "local_config_rocm")
     remote_execution_configure(name = "local_config_remote_execution")
+    sycl_configure(name = "local_config_sycl")
 
     # For windows bazel build
     # TODO: Remove def file filter when TensorFlow can export symbols properly on Windows.
