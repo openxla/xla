@@ -343,8 +343,9 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
   if (lhs_shape.rank() <= 0 || lhs_shape.rank() > kOneDnnMaxNDims ||
       rhs_shape.rank() <= 0 || rhs_shape.rank() > kOneDnnMaxNDims ||
       output_shape.rank() > std::min({lhs_shape.rank(), rhs_shape.rank(),
-                                      static_cast<int64_t>(kOneDnnMaxNDims)}))
+                                     static_cast<int64_t>(kOneDnnMaxNDims)})) {
     return false;
+  }
 
   // Layout should be row-major, contraction dimensions captures transpose
   // scenarios in last two dimensions.
@@ -637,7 +638,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
 
   // This function changes dot instruction for supported matrix
   // multiplication scenarios. In particular, it changes the shape
-  // of lhs, rhs and restult arrays.
+  // of lhs, rhs and result arrays.
   //    - lhs configuration scenario
   //      lhs:    [batch_dims,contracting_dim] to [batch_dims,1,contracting_dim]
   //      result: [batch_dims,feature_dim] to [batch_dims,1,feature_dim]
@@ -657,14 +658,14 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     DotDimensionNumbers dim_numbers = dot_instr->dot_dimension_numbers();
 
     auto lhs_batch_dims = dim_numbers.lhs_batch_dimensions();
-    auto lhs_contration_dims = dim_numbers.lhs_contracting_dimensions();
+    auto lhs_contraction_dims = dim_numbers.lhs_contracting_dimensions();
     bool is_lhs_vector = lhs->shape().rank() ==
-                         (lhs_batch_dims.size() + lhs_contration_dims.size());
+                         (lhs_batch_dims.size() + lhs_contraction_dims.size());
 
     auto rhs_batch_dims = dim_numbers.rhs_batch_dimensions();
-    auto rhs_contration_dims = dim_numbers.rhs_contracting_dimensions();
+    auto rhs_contraction_dims = dim_numbers.rhs_contracting_dimensions();
     bool is_rhs_vector = rhs->shape().rank() ==
-                         (rhs_batch_dims.size() + rhs_contration_dims.size());
+                         (rhs_batch_dims.size() + rhs_contraction_dims.size());
 
     if (!is_lhs_vector && !is_rhs_vector) return dot_instr;
 
@@ -681,16 +682,6 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       adjusted_lhs_dims.insert(lhs_it, 1, 1);
       auto result_it = adjusted_dot_dims.begin() + lhs_batch_dims.size();
       adjusted_dot_dims.insert(result_it, 1, 1);
-    }
-
-    if (is_rhs_vector) {
-      auto it = adjusted_rhs_dims.end();
-      adjusted_rhs_dims.insert(it, 1, 1);
-      auto result_it = adjusted_dot_dims.end();
-      adjusted_dot_dims.insert(result_it, 1, 1);
-    }
-
-    if (!absl::c_equal(adjusted_lhs_dims, lhs->shape().dimensions())) {
       auto lhs_contraction_dim =
           dot_instr->dot_dimension_numbers().lhs_contracting_dimensions(0);
       dim_numbers.set_lhs_contracting_dimensions(0, lhs_contraction_dim + 1);
@@ -699,7 +690,11 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
           lhs));
     }
 
-    if (!absl::c_equal(adjusted_rhs_dims, rhs->shape().dimensions())) {
+    if (is_rhs_vector) {
+      auto it = adjusted_rhs_dims.end();
+      adjusted_rhs_dims.insert(it, 1, 1);
+      auto result_it = adjusted_dot_dims.end();
+      adjusted_dot_dims.insert(result_it, 1, 1);
       rhs = rhs->AddInstruction(HloInstruction::CreateBitcast(
           ShapeUtil::MakeShape(rhs->shape().element_type(), adjusted_rhs_dims),
           rhs));
@@ -714,10 +709,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     HloInstruction* replacement_instr = adjusted_dot->AddInstruction(
         HloInstruction::CreateBitcast(dot_instr->shape(), adjusted_dot));
 
-    auto status = ReplaceInstruction(dot_instr, replacement_instr);
-    if (!status.ok()) {
-      return absl::CancelledError("Dot could not be reconfigured.");
-    }
+    TF_RETURN_IF_ERROR(ReplaceInstruction(dot_instr, replacement_instr));
     return adjusted_dot;
   }
 };
