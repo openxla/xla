@@ -778,12 +778,12 @@ absl::StatusOr<bool> EpilogueHasAuxiliaryOutput(
     case GemmBackendConfig::BIAS_RELU:
     case GemmBackendConfig::BIAS_GELU:
     case GemmBackendConfig::D_RELU:
+    case GemmBackendConfig::D_RELU_BGRAD:
       return false;
     case GemmBackendConfig::RELU_AUX:
     case GemmBackendConfig::BIAS_RELU_AUX:
     case GemmBackendConfig::GELU_AUX:
     case GemmBackendConfig::BIAS_GELU_AUX:
-    case GemmBackendConfig::D_RELU_BGRAD:
       return true;
     default:
       return Internal("Unknown Epilogue.");
@@ -807,6 +807,27 @@ absl::StatusOr<bool> EpilogueHasAuxiliaryInput(
     case GemmBackendConfig::D_RELU:
     case GemmBackendConfig::D_RELU_BGRAD:
       return true;
+    default:
+      return Internal("Unknown Epilogue.");
+  }
+}
+
+absl::StatusOr<bool> EpilogueForForward(GemmBackendConfig_Epilogue epilogue) {
+  switch (epilogue) {
+    case GemmBackendConfig::DEFAULT:
+    case GemmBackendConfig::RELU:
+    case GemmBackendConfig::GELU:
+    case GemmBackendConfig::BIAS:
+    case GemmBackendConfig::BIAS_RELU:
+    case GemmBackendConfig::BIAS_GELU:
+    case GemmBackendConfig::RELU_AUX:
+    case GemmBackendConfig::BIAS_RELU_AUX:
+    case GemmBackendConfig::GELU_AUX:
+    case GemmBackendConfig::BIAS_GELU_AUX:    
+      return true;
+    case GemmBackendConfig::D_RELU:
+    case GemmBackendConfig::D_RELU_BGRAD:
+      return false;
     default:
       return Internal("Unknown Epilogue.");
   }
