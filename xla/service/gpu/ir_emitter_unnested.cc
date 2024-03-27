@@ -1700,7 +1700,8 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
 
   AddThunkToThunkSequence(std::make_unique<KernelThunk>(
       instr, entry->kernel_name, kernel_arguments.args(),
-      entry->launch_dimensions, entry->cluster_dim, entry->shmem_bytes));
+      entry->launch_dimensions, entry->cluster_dim, entry->shmem_bytes,
+      /*dedup_kernel_args=*/false));
   return absl::OkStatus();
 #endif  // GOOGLE_CUDA
 }
