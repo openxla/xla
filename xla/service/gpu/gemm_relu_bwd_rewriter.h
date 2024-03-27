@@ -24,15 +24,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// cuBLAS GEMM has support for strided batched calls, where the stride is used
-// to determine the offset between the batches.
-//
-// This allows (kCustomCall:gemm A kBroadcast(B)) or
-//             (kCustomCall:gemm kBroadcast(A) B)
-// to be rewritten as (kCustomCall:gemm A B) with a zero stride for the
-// broadcasted operand if the broadcast operates on all the batch dimensions.
-//
-// This pattern matches the above case and removes the unnecessary broadcast.
+// cuBLASLt GEMM has support for ReLU or dReLU epilogue fusion for fp8 matmuls.
+// This pattern matches the above case.
 class GemmReLUBwdRewriter : public HloModulePass {
  public:
   absl::string_view name() const override {
