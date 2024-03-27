@@ -417,6 +417,7 @@ cc_library(
         ":python_ref_manager",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
+        "//xla/pjrt:host_callback",
         "//xla/pjrt:transpose",
         "//xla/service:custom_call_status",
         "@com_google_absl//absl/base",
