@@ -1,5 +1,5 @@
 load(
-    "//tsl/platform:rules_cc.bzl",
+    "@tsl//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 

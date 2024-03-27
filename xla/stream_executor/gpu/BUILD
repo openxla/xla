@@ -445,6 +445,7 @@ gpu_only_cc_library(
         "//xla/stream_executor/cuda:ptx_compiler",
         "//xla/stream_executor/cuda:ptx_compiler_support",
         "//xla/stream_executor/platform",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
@@ -469,7 +470,6 @@ gpu_only_cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:subprocess",
-        "@tsl//tsl/util:env_var",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_asm_compiler",
         "//xla/stream_executor/cuda:cuda_driver",
@@ -591,6 +591,7 @@ tsl_gpu_library(
     deps = [
         ":gpu_init_impl",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
@@ -598,7 +599,6 @@ tsl_gpu_library(
         "@tsl//tsl/framework:device_id",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/util:env_var",
     ],
 )
 
