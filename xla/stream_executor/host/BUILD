@@ -1,10 +1,10 @@
 # Description:
 #   Host-platform specific StreamExecutor support code.
 
-load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
