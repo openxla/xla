@@ -1619,6 +1619,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (!valid_relu_bwd ||
         !SupportsEpilogueFusion(fwd_gemm->shape().element_type()) ||
         !(fwd_gemm_num_rows >= 128 && fwd_gemm_num_rows % 128 == 0)) {
+      // cublasLt requires that CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD Must be
+      // divisible by 128 and be no less than the number of rows in the output
+      // matrix.
       VLOG(1) << "Possible GEMM with ReLU epilogue is "
               << "not fused into Custom Call.";
       return absl::OkStatus();
