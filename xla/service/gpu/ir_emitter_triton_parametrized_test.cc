@@ -136,7 +136,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
                              //  TritonRewriteTest2Params{F32, F16},
                              //  TritonRewriteTest2Params{F32, BF16},
                              MixTypeParams{S8, BF16, 24, 40, 8},
-                             MixTypeParams{S8, F16, 80, 16, 32},
+                             MixTypeParams{S8, F16, 80, 16, 32, 1e-3, 1e-6},
                              MixTypeParams{F16, F32, 127, 3, 300, 1e-2, 1e-2},
                              MixTypeParams{F16, BF16, 544, 96, 16, 1e-3, 1e-3},
                              MixTypeParams{BF16, F32, 77, 500, 333, 3e-3, 3e-3},
@@ -2393,17 +2393,16 @@ ENTRY main {
 }
 )";
 
-  // Param order is arbitrary. We test that only param_1 is in the fused root
-  // instruction below.
   const std::string hlo_ref = R"(
 ; CHECK:    ENTRY
 ; CHECK-DAG:    %[[param_0:.*]] = f32[125,127]{1,0} parameter(0)
 ; CHECK-DAG:    %[[param_1:.*]] = f32[127]{0} parameter(1)
 ; CHECK:      ROOT
 ; CHECK-SAME:   f32[125,127]{1,0} fusion
-; CHECK-SAME:   %[[param_1]]
-; CHECK-SAME:   kind=kCustom
-; CHECK-SAME:   triton_softmax
+; CHECK-SAME:    %[[param_0]]
+; CHECK-SAME:    %[[param_1]]
+; CHECK-SAME:          kind=kCustom
+; CHECK-SAME:          triton_softmax
 )";
   MatchOptimizedHlo(hlo_text, hlo_ref);
 

@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -480,15 +481,15 @@ HlosAndRequirements FuseTowardOperands(
 //
 // The return value contains the HLOs corresponding to the given dot operand and
 // the requirements corresponding to the whole fusion so far.
-HlosAndRequirements FuseDotOperand(
+absl::StatusOr<HlosAndRequirements> FuseDotOperand(
     const HloInstruction& dot, int operand_index,
     const se::GpuComputeCapability& gpu_version,
     HloComputation::Builder& builder,            // append
     std::vector<HloInstruction*>& fusion_params  // append
 ) {
   // Direct dot inputs have well defined dimension orders.
-  const FusionContext context =
-      FusionContext::FromDotOperand(dot, operand_index);
+  TF_ASSIGN_OR_RETURN(const FusionContext context,
+                      FusionContext::FromDotOperand(dot, operand_index));
   const HloInstruction& operand = *dot.operand(operand_index);
   return FuseTowardOperands(operand, context.dim_orders().at(&operand),
                             TritonFusionAnalysis::kMaxParameterPerDotOperand,
@@ -637,14 +638,17 @@ absl::StatusOr<FusionDecision> CreateDotFusion(
     CHECK_EQ(descriptor.dimension(), dot.operand(0)->shape().rank() - 1);
   }
 
-  HlosAndRequirements lhs_hlos_and_reqs = FuseDotOperand(
-      dot, /*operand_index=*/0, gpu_version, builder, fusion_inputs);
-  HlosAndRequirements rhs_hlos_and_reqs = FuseDotOperand(
-      dot, /*operand_index=*/1, gpu_version, builder, fusion_inputs);
+  TF_ASSIGN_OR_RETURN(HlosAndRequirements lhs_hlos_and_reqs,
+                      FuseDotOperand(dot, /*operand_index=*/0, gpu_version,
+                                     builder, fusion_inputs));
+  TF_ASSIGN_OR_RETURN(HlosAndRequirements rhs_hlos_and_reqs,
+                      FuseDotOperand(dot, /*operand_index=*/1, gpu_version,
+                                     builder, fusion_inputs));
   std::optional<const HloInstruction*> meta_hlo;
   if (dot.sparse_operands()) {
-    HlosAndRequirements meta_hlos_and_reqs = FuseDotOperand(
-        dot, /*operand_index=*/2, gpu_version, builder, fusion_inputs);
+    TF_ASSIGN_OR_RETURN(HlosAndRequirements meta_hlos_and_reqs,
+                        FuseDotOperand(dot, /*operand_index=*/2, gpu_version,
+                                       builder, fusion_inputs));
     meta_hlo.emplace(meta_hlos_and_reqs.fused_hlo);
   }
   HloInstruction& fused_dot =
@@ -728,9 +732,14 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     // If a GEMM requiring padding for cuBLAS is encountered here this
     // happened because earlier ShouldTritonHandleGEMM() accepted it and padding
     // was skipped. Accept it ignoring profitability checks.
-    if (!CublasRequiresPadding(*Cast<HloDotInstruction>(dot), gpu_version_) &&
-        !should_fuse) {
-      return absl::OkStatus();
+    // TODO(rocm): check ROCM padding requirements.
+    if (std::holds_alternative<se::CudaComputeCapability>(gpu_version_)) {
+      if (!CublasRequiresPadding(
+              *Cast<HloDotInstruction>(dot),
+              std::get<se::CudaComputeCapability>(gpu_version_)) &&
+          !should_fuse) {
+        return OkStatus();
+      }
     }
 
     HloComputation* computation =
@@ -776,17 +785,29 @@ absl::StatusOr<bool> RunOnComputation(
   return visitor.changed();
 }
 
-bool IsSupportedByTriton(
-    PrecisionConfig::Algorithm algorithm,
-    const se::CudaComputeCapability& cuda_compute_capability) {
+bool IsSupportedByTriton(PrecisionConfig::Algorithm algorithm,
+                         const se::GpuComputeCapability& gpu_version) {
+  auto cuda_compute_capability =
+      std::get_if<se::CudaComputeCapability>(&gpu_version);
+  auto rocm_compute_capability =
+      std::get_if<se::RocmComputeCapability>(&gpu_version);
   switch (algorithm) {
-    case PrecisionConfig::ALG_DOT_BF16_BF16_F32:
-      return true;
-
     case PrecisionConfig::ALG_DOT_TF32_TF32_F32:
+      if (cuda_compute_capability) {
+        return cuda_compute_capability->IsAtLeastAmpere();
+      }
+      return false;
+    case PrecisionConfig::ALG_DOT_BF16_BF16_F32:
+
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3:
     case PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6:
-      return cuda_compute_capability.IsAtLeastAmpere();
+      if (cuda_compute_capability) {
+        return cuda_compute_capability->IsAtLeastAmpere();
+      }
+      if (rocm_compute_capability) {
+        return rocm_compute_capability->has_bf16_dtype_support();
+      }
+      return false;
 
     // TODO(b/326579472): Fix the support of this algorithm and maybe allow it
     // here.
@@ -804,8 +825,12 @@ FusionDecision CanTritonHandleGEMM(
     const HloDotInstruction& dot, const se::GpuComputeCapability& gpu_version) {
   auto cuda_compute_capability =
       std::get_if<se::CudaComputeCapability>(&gpu_version);
+  auto rocm_compute_capability =
+      std::get_if<se::RocmComputeCapability>(&gpu_version);
 
-  if (!cuda_compute_capability) return "Non CUDA device.";
+  if (!cuda_compute_capability && !rocm_compute_capability) {
+    return "Non CUDA or ROCM device.";
+  }
 
   if (dot.precision_config().algorithm() == PrecisionConfig::ALG_UNSET) {
     if (!tsl::tensor_float_32_execution_enabled() ||
@@ -826,8 +851,14 @@ FusionDecision CanTritonHandleGEMM(
       case F32:
         return true;
       case BF16:
-        return cuda_compute_capability->IsAtLeast(
-            stream_executor::CudaComputeCapability::AMPERE);
+        if (cuda_compute_capability) {
+          return cuda_compute_capability->IsAtLeast(
+              stream_executor::CudaComputeCapability::AMPERE);
+        }
+        if (rocm_compute_capability) {
+          return rocm_compute_capability->has_bf16_dtype_support();
+        }
+        return false;
       default:
         return false;
     }
@@ -860,19 +891,6 @@ FusionDecision CanTritonHandleGEMM(
               dim_numbers.rhs_contracting_dimensions().size() ==
           dot.operand(1)->shape().rank()) {
     return "No non-contracting dimensions.";
-  }
-
-  for (int operand_number = 0; operand_number <= 1; ++operand_number) {
-    // This pass relies on dot decomposer which ensures that all non-contracting
-    // dimensions are merged into one. Using NonContractingDimensionIndex is
-    // sufficient.
-    const int64_t nc_size =
-        dot.operand(operand_number)
-            ->shape()
-            .dimensions(NonContractingDimensionIndex(dot, operand_number));
-    if (nc_size <= 1) {
-      return "Trivial non-contracting dimensions.";
-    }
   }
 
   return FusionDecision{};

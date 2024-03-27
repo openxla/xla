@@ -110,7 +110,6 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/nccl_api.h"
-#include "xla/service/gpu/nccl_collective_thunk.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd_emitter.h"
@@ -129,6 +128,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_all_to_all_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_permute_thunk.h"
+#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/nccl_recv_thunk.h"
 #include "xla/service/gpu/runtime/nccl_send_thunk.h"
 #include "xla/service/gpu/runtime/norm_thunk.h"
@@ -136,9 +136,9 @@ limitations under the License.
 #include "xla/service/gpu/runtime/replica_id_thunk.h"
 #include "xla/service/gpu/runtime/send_recv_thunk.h"
 #include "xla/service/gpu/runtime/sequential_thunk.h"
+#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/gpu/runtime/wait_for_streams_thunk.h"
 #include "xla/service/gpu/runtime/while_thunk.h"
-#include "xla/service/gpu/thunk.h"
 #include "xla/service/gpu/triton_call.h"
 #include "xla/service/llvm_ir/buffer_assignment_util.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -2625,7 +2625,10 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
     const auto& hlo_config = ir_emitter_context_->hlo_module().config();
     const int64_t replica_count = hlo_config.replica_count();
     const int64_t partition_count = hlo_config.num_partitions();
-    const int64_t memory_space = src->shape().layout().memory_space();
+    const int64_t memory_space =
+        instr->shape().IsTuple()
+            ? instr->shape().tuple_shapes(0).layout().memory_space()
+            : instr->shape().layout().memory_space();
     const NcclCollectiveThunk::Buffer nccl_buffer = {
         /*element_count=*/ShapeUtil::ElementsIn(src->shape()),
         /*source_buffer=*/buffer,
@@ -2690,11 +2693,17 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
   TF_RET_CHECK(instr->shape().IsTuple());
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
                       GetAllocationSliceForHlo(instr, {0}));
+
   if (!instr->is_host_transfer()) {
     const auto& hlo_config = ir_emitter_context_->hlo_module().config();
     const int64_t replica_count = hlo_config.replica_count();
     const int64_t partition_count = hlo_config.num_partitions();
-    const int64_t memory_space = instr->shape().layout().memory_space();
+
+    const int64_t memory_space =
+        instr->shape().IsTuple()
+            ? instr->shape().tuple_shapes(0).layout().memory_space()
+            : instr->shape().layout().memory_space();
+
     const NcclCollectiveThunk::Buffer nccl_buffer = {
         /*element_count=*/ShapeUtil::ElementsIn(instr->shape().tuple_shapes(0)),
         /*source_buffer=*/buffer,

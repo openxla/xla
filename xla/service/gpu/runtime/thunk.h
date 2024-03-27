@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_THUNK_H_
-#define XLA_SERVICE_GPU_THUNK_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_THUNK_H_
+#define XLA_SERVICE_GPU_RUNTIME_THUNK_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -142,6 +142,9 @@ class Thunk {
     kCuDnn
   };
 
+  // <HLO computation fingerprint, serialized compiled object>.
+  using BinaryMap = absl::flat_hash_map<std::string, std::string>;
+
   // TODO(ezhulenev): This should become a part of StreamExecutor library, but
   // for now we keep it here as a Thunk implementation detail. It's not yet
   // clear what else should become a part of "executable source", we likely
@@ -149,6 +152,7 @@ class Thunk {
   struct ExecutableSource {
     std::string_view text;             // PTX for NVIDIA backend
     absl::Span<const uint8_t> binary;  // CUBIN for NVIDIA backends
+    BinaryMap dnn_compiled_graphs;
   };
 
   struct ThunkInfo {
@@ -454,4 +458,4 @@ bool IsReductionCollective(Thunk::Kind kind);
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_SERVICE_GPU_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_THUNK_H_

@@ -922,3 +922,6 @@ build:rbe_cross_compile_macos_x86 --jobs=100
 test:rbe_cross_compile_macos_x86 --jobs=100
 # END MACOS CROSS-COMPILE CONFIGS
 # END CROSS-COMPILE CONFIGS
+
+# Try to load the XLA warnings config if available
+try-import %workspace%/warnings.bazelrc

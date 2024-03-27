@@ -241,11 +241,12 @@ ENTRY e {
                                                   .value();
   const se::CudaComputeCapability compute_capability{
       se::CudaComputeCapability::VOLTA, /*minor=*/0};
-  const std::vector<TritonGemmConfig> configs =
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
           *Cast<HloDotInstruction>(
               module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest());
+          compute_capability, GetDebugOptionsForTest()));
   EXPECT_FALSE(std::any_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.num_stages > 2; }));
@@ -262,11 +263,12 @@ ENTRY e {
                                                   .value();
   const se::CudaComputeCapability compute_capability{
       se::CudaComputeCapability::AMPERE, /*minor=*/0};
-  const std::vector<TritonGemmConfig> configs =
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
           *Cast<HloDotInstruction>(
               module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest());
+          compute_capability, GetDebugOptionsForTest()));
   EXPECT_TRUE(std::any_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.num_stages > 2; }));
@@ -283,11 +285,12 @@ ENTRY e {
                                                   .value();
   const se::CudaComputeCapability compute_capability{
       se::CudaComputeCapability::AMPERE, /*minor=*/0};
-  const std::vector<TritonGemmConfig> configs =
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
           *Cast<HloDotInstruction>(
               module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest());
+          compute_capability, GetDebugOptionsForTest()));
   EXPECT_TRUE(std::any_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.split_k >= 16; }));
@@ -304,11 +307,12 @@ ENTRY e {
                                                   .value();
   const se::CudaComputeCapability compute_capability{
       se::CudaComputeCapability::AMPERE, /*minor=*/0};
-  const std::vector<TritonGemmConfig> configs =
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
           *Cast<HloDotInstruction>(
               module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest());
+          compute_capability, GetDebugOptionsForTest()));
   EXPECT_FALSE(std::any_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.split_k > 1; }));
@@ -695,7 +699,7 @@ ENTRY e {
         RunFileCheck(
             module->ToString(HloPrintOptions{}.set_print_operand_shape(false)),
             R"(
-// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"16","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}}}
+// CHECK: backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"16","block_k":"16","split_k":"1","num_stages":"1","num_warps":"4","num_ctas":"1"}},"force_earliest_schedule":false}
             )"));
     EXPECT_TRUE(filecheck_matches);
   } else {
@@ -761,11 +765,12 @@ ENTRY e {
                                                   .value();
   const se::CudaComputeCapability compute_capability{
       se::CudaComputeCapability::AMPERE, /*minor=*/0};
-  const std::vector<TritonGemmConfig> configs =
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
           *Cast<HloDotInstruction>(
               module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest());
+          compute_capability, GetDebugOptionsForTest()));
   EXPECT_TRUE(std::all_of(
       configs.begin(), configs.end(),
       [](const TritonGemmConfig& config) { return config.split_k == 1; }));
@@ -789,9 +794,11 @@ ENTRY wais {
   auto dot =
       Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
 
-  auto configs = GetPossibleMatmulAutotuneConfigs(
-      *dot, se::CudaComputeCapability{8, 0}, GetDebugOptionsForTest(),
-      /*exhaustive_tiling_search=*/GetParam());
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto configs,
+      GetPossibleMatmulAutotuneConfigs(
+          *dot, se::CudaComputeCapability{8, 0}, GetDebugOptionsForTest(),
+          /*exhaustive_tiling_search=*/GetParam()));
   for (const auto& config : configs) {
     int metadata_size = config.block_m * config.block_k / 16;
     EXPECT_LE(config.num_warps * WarpSize(), metadata_size);

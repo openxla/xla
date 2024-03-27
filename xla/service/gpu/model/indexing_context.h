@@ -16,12 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_MODEL_INDEXING_CONTEXT_H_
 #define XLA_SERVICE_GPU_MODEL_INDEXING_CONTEXT_H_
 
-#include <cstdint>
-#include <utility>
-
-#include "absl/container/flat_hash_map.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/model/indexing_map.h"
 
 namespace xla {
@@ -29,23 +24,13 @@ namespace gpu {
 
 class IndexingContext {
  public:
-  using RTValsID = int64_t;
-
   explicit IndexingContext(mlir::MLIRContext* mlir_context)
       : mlir_context_(mlir_context) {}
 
   mlir::MLIRContext* GetMLIRContext() const { return mlir_context_; }
 
-  // TBD: This method should behave like a thread-safe counter. It will register
-  // a new RTSymbol by adding it to `rt_vals_registry_` with the newly generated
-  // ID.
-  RTValsID RegisterRTSymbol(const HloInstruction* instr,
-                            IndexingMap indexing_map);
-
  private:
   mlir::MLIRContext* mlir_context_;
-  absl::flat_hash_map<RTValsID, std::pair<const HloInstruction*, IndexingMap>>
-      rt_vals_registry_;
 };
 
 }  // namespace gpu

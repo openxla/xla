@@ -655,6 +655,17 @@ std::vector<std::vector<int64_t>> InferOrEnumerateMeshShapesToTry(
     const HloModule& module, int64_t num_devices, int num_mesh_dims,
     bool symmetrical_mesh_dims);
 
+// Check if the sharding is "misaligned" wrt the shape. This is true if there is
+// at least one dimension of the tensor that is sharded over a number of devices
+// that do not complete divide the size of the tensor dimension.
+bool IsShardingMisaligned(const HloSharding& sharding, const Shape& shape);
+
+// In a given tuple sharding, replace certain leaves with
+// HloSharding::Unknown()
+HloSharding ReplaceGivenShardingsWithUnknownForTuple(
+    const HloSharding& sharding, const Shape& shape,
+    absl::Span<const bool> to_replace_sharding_ids);
+
 }  // namespace spmd
 }  // namespace xla
 

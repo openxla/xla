@@ -93,12 +93,13 @@ bool IsCustomCall(const HloInstruction* hlo, absl::string_view platform_name) {
 // Returns true if the slice is 128-byte-aligned. The slice starting
 // address is determined by the product of all non-sliced dimensions and an
 // offset defined by `slice_starts` of the slice op.
-bool IsAlignedSlice(const HloInstruction& instr) {
-  if (!IsContiguousSlice(instr)) return false;
-
-  auto slice = Cast<HloSliceInstruction>(&instr);
-  const Shape& src_shape = instr.operand(0)->shape();
-  const Shape& dst_shape = instr.shape();
+//
+// For dynamic cases, we don't have info about the start indices, so we have to
+// be conservative by only accepting sliced shapes that have the product of all
+// non-sliced dimensions being a multiple of `kXlaAllocatedBufferAlignBytes`.
+bool IsAlignedSlice(const Shape& src_shape, const Shape& dst_shape,
+                    const HloSliceInstruction* slice) {
+  if (!IsContiguousSlice(src_shape, dst_shape)) return false;
 
   auto strides = ShapeUtil::ByteStrides(dst_shape);
   if (!strides.has_value()) return false;
@@ -107,19 +108,26 @@ bool IsAlignedSlice(const HloInstruction& instr) {
     if ((strides.value()[dim] % kXlaAllocatedBufferAlignBytes) == 0)
       return true;
     if (dst_shape.dimensions(dim) < src_shape.dimensions(dim)) {
-      return ((strides.value()[dim] * slice->slice_starts(dim)) %
-                  kXlaAllocatedBufferAlignBytes ==
-              0);
+      return (slice != nullptr &&
+              ((strides.value()[dim] * slice->slice_starts(dim)) %
+                   kXlaAllocatedBufferAlignBytes ==
+               0));
     }
   }
   return true;
 }
 
-absl::InlinedVector<HloInstruction*, 8> GetSlicedOperandChains(
-    const HloInstruction* instr) {
-  absl::InlinedVector<HloInstruction*, 8> sliced_operand_chains = {
+absl::InlinedVector<HloInstruction*, 8> GetSlicedChains(
+    const HloInstruction* instr, bool dynamic,
+    absl::flat_hash_map<const HloInstruction*, const HloInstruction*>&
+        replacement_map) {
+  replacement_map[instr] = instr;
+  absl::InlinedVector<HloInstruction*, 8> dyn_slice_chains = {
       const_cast<HloInstruction*>(instr)};
+  absl::InlinedVector<HloInstruction*, 8> dus_chain;
   auto fusion = HloFusionAdaptor::ForComputation(instr->parent());
+  // This set is used to avoid duplicates in the matched results. It contains
+  // the matched instructions that we have seen so far.
   absl::flat_hash_set<HloInstruction*> processed_sliced_chain_set;
 
   const auto& aliasing_pairs =
@@ -135,31 +143,96 @@ absl::InlinedVector<HloInstruction*, 8> GetSlicedOperandChains(
     // operand.
     if (aliased_operands.contains(instr->operand_index(operand))) continue;
     absl::InlinedVector<HloInstruction*, 4> maybe_sliced_operand_chain;
+    bool slice_found = false;
     auto maybe_slice_adaptor =
         HloFindIf({HloInstructionAdaptor(*operand)}, *fusion, [&](auto node) {
           const HloInstruction* cur = &node.instruction();
+          // If the node is a match that has been processed, stop the traversal.
           if (processed_sliced_chain_set.contains(cur)) return true;
           maybe_sliced_operand_chain.push_back(
               const_cast<HloInstruction*>(cur));
+          if (dynamic) {
+            if (const auto slice_instr =
+                    DynCast<HloDynamicSliceInstruction>(cur)) {
+              if (IsAlignedSlice(slice_instr->operand(0)->shape(),
+                                 slice_instr->shape(), nullptr)) {
+                slice_found = true;
+                return slice_found;
+              }
+            }
+          } else {
+            if (const auto slice_instr = DynCast<HloSliceInstruction>(cur)) {
+              if (IsAlignedSlice(slice_instr->operand(0)->shape(),
+                                 slice_instr->shape(), slice_instr)) {
+                slice_found = true;
+                return slice_found;
+              }
+            }
+          }
           // TODO(vuson): lift the first restriction by considering fusing other
           // uses of the operand to reuse the address computation. Only worth it
           // if other uses are also custom calls though.
-          // TODO(vuson): lift the second restriction by considering fusing the
-          // non-noop instructions to the computation if possible.
-          return cur->user_count() > 1 || !IsNoOp(cur) || IsAlignedSlice(*cur);
+          return cur->user_count() > 1 || !IsNoOp(cur);
         });
     if (maybe_slice_adaptor == std::nullopt) continue;
     const auto& maybe_slice_instr = maybe_slice_adaptor->instruction();
-    if (IsAlignedSlice(maybe_slice_instr) ||
+    if (slice_found ||
         processed_sliced_chain_set.contains(&maybe_slice_instr)) {
-      sliced_operand_chains.insert(sliced_operand_chains.end(),
-                                   maybe_sliced_operand_chain.begin(),
-                                   maybe_sliced_operand_chain.end());
+      // Even in the case of stopping at a match that has been processed, we
+      // still need to add instructions encountered in the sliced operand chain
+      // during the latest traversal.
+      dyn_slice_chains.insert(dyn_slice_chains.end(),
+                              maybe_sliced_operand_chain.begin(),
+                              maybe_sliced_operand_chain.end());
       processed_sliced_chain_set.insert(maybe_sliced_operand_chain.begin(),
                                         maybe_sliced_operand_chain.end());
     }
   }
-  return sliced_operand_chains;
+
+  if (dynamic) {
+    for (auto* user : instr->users()) {
+      absl::InlinedVector<HloInstruction*, 4> maybe_sliced_user_chain;
+      bool dus_found = false;
+      auto maybe_dus_adaptor = HloFindIf(
+          {HloInstructionAdaptor(*user)}, *fusion,
+          [&](auto node) {
+            const HloInstruction* cur = &node.instruction();
+            // If the node is a match that has been processed, stop the
+            // traversal.
+            if (processed_sliced_chain_set.contains(cur)) return true;
+            maybe_sliced_user_chain.push_back(const_cast<HloInstruction*>(cur));
+            if (const auto slice_instr =
+                    DynCast<HloDynamicUpdateSliceInstruction>(cur)) {
+              if (IsAlignedSlice(slice_instr->shape(),
+                                 slice_instr->update()->shape(), nullptr)) {
+                dus_found = true;
+                replacement_map[instr] = cur;
+                return dus_found;
+              }
+            }
+            // TODO(vuson): lift the first restriction by considering fusing
+            // other uses of the user to reuse the address computation. Only
+            // worth it if other uses are also custom calls though.
+            return cur->user_count() > 1 || !IsNoOp(cur);
+          },
+          /*visit_operands=*/false);
+      if (maybe_dus_adaptor == std::nullopt) continue;
+      const auto& maybe_dus_instr = maybe_dus_adaptor->instruction();
+      if (dus_found || processed_sliced_chain_set.contains(&maybe_dus_instr)) {
+        // Even in the case of stopping at a match that has been processed, we
+        // still need to add instructions encountered in the sliced user chain
+        // during the latest traversal.
+        dus_chain.insert(dus_chain.end(), maybe_sliced_user_chain.rbegin(),
+                         maybe_sliced_user_chain.rend());
+        processed_sliced_chain_set.insert(maybe_sliced_user_chain.begin(),
+                                          maybe_sliced_user_chain.end());
+      }
+    }
+  }
+
+  dus_chain.insert(dus_chain.end(), dyn_slice_chains.begin(),
+                   dyn_slice_chains.end());
+  return dus_chain;
 }
 
 absl::InlinedVector<HloInstruction*, 4> GetPatternCaptures(
@@ -267,7 +340,8 @@ absl::StatusOr<HloComputation*> CreateFusionBody(
 
 absl::StatusOr<HloInstruction*> CreateFusionInstruction(
     HloModule* module, HloInstruction* orig,
-    absl::Span<HloInstruction* const> captures, HloComputation* body) {
+    absl::Span<HloInstruction* const> captures, HloComputation* body,
+    bool dynamic) {
   HloComputation* parent = orig->parent();
 
   // Add a fusion operation calling outlined fusion computation.
@@ -285,7 +359,8 @@ absl::StatusOr<HloInstruction*> CreateFusionInstruction(
       *gpu_config.mutable_fusion_backend_config();
   backend_config.set_kind("__custom_fusion");
   CustomFusionConfig config;
-  config.set_name("address_computation");
+  config.set_name(dynamic ? "dynamic_address_computation"
+                          : "address_computation");
   *backend_config.mutable_custom_fusion_config() = config;
   TF_RETURN_IF_ERROR(fusion->set_backend_config(std::move(gpu_config)));
 
@@ -298,56 +373,70 @@ absl::StatusOr<bool> AddressComputationFusionRewriter::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   if (!module->has_schedule()) return Internal("module is not scheduled");
-  bool changed = false;
 
-  absl::flat_hash_map<HloInstruction*, absl::InlinedVector<HloInstruction*, 8>>
-      matches;
+  auto process_slices = [&](bool dynamic) -> absl::StatusOr<bool> {
+    absl::flat_hash_map<HloInstruction*,
+                        absl::InlinedVector<HloInstruction*, 8>>
+        matches;
+    absl::flat_hash_map<const HloInstruction*, const HloInstruction*>
+        replacement_map;
 
-  // Collect all potential custom call matches in the non-fusion computations.
-  for (HloComputation* computation : module->computations()) {
-    if (computation->IsFusionComputation()) continue;
-    for (HloInstruction* instr : computation->instructions()) {
-      if (IsLegacyCublasMatmul(*instr) || IsCustomCall(instr, platform_name_)) {
-        auto sliced_operand_chains = GetSlicedOperandChains(instr);
-        if (!(sliced_operand_chains.size() == 1 &&
-              sliced_operand_chains.front() == instr)) {
-          matches[instr] = std::move(sliced_operand_chains);
+    // Collect all potential custom call matches in the non-fusion computations.
+    for (HloComputation* computation : module->computations()) {
+      if (computation->IsFusionComputation()) continue;
+      for (HloInstruction* instr : computation->instructions()) {
+        if (IsLegacyCublasMatmul(*instr) ||
+            (!dynamic && IsCustomCall(instr, platform_name_))) {
+          auto sliced_operand_chains =
+              GetSlicedChains(instr, dynamic, replacement_map);
+          if (!(sliced_operand_chains.size() == 1 &&
+                sliced_operand_chains.front() == instr)) {
+            matches[instr] = std::move(sliced_operand_chains);
+          }
         }
       }
     }
-  }
 
-  HloSchedule& schedule = module->schedule();
-  for (auto& kv : matches) {
-    auto captures = GetPatternCaptures(kv.second);
-    auto sorted = GetSortedMatched(kv.second);
+    if (matches.empty()) return false;
 
-    TF_ASSIGN_OR_RETURN(HloComputation * fusion_body,
-                        CreateFusionBody(module, sorted, captures));
-    TF_ASSIGN_OR_RETURN(
-        HloInstruction * fusion,
-        CreateFusionInstruction(module, kv.first, captures, fusion_body));
+    HloSchedule& schedule = module->schedule();
+    for (auto& kv : matches) {
+      auto captures = GetPatternCaptures(kv.second);
+      auto sorted = GetSortedMatched(kv.second);
 
-    // As we are running after scheduling we have to keep it valid.
-    HloComputation* parent = kv.first->parent();
+      TF_ASSIGN_OR_RETURN(HloComputation * fusion_body,
+                          CreateFusionBody(module, sorted, captures));
+      TF_ASSIGN_OR_RETURN(HloInstruction * fusion,
+                          CreateFusionInstruction(module, kv.first, captures,
+                                                  fusion_body, dynamic));
 
-    // Update schedule to replace the custom call instruction with the fusion
-    // instruction.
-    // Removal of the rest of the instructions in the sequence is handled by
-    // schedule update below.
-    HloInstructionSequence& sequence = schedule.GetOrCreateSequence(parent);
-    sequence.replace_instruction(kv.first, fusion);
+      // As we are running after scheduling we have to keep it valid.
+      HloComputation* parent = kv.first->parent();
 
-    // TODO(vuson): handle control dependencies
-    TF_RETURN_IF_ERROR(parent->ReplaceInstruction(kv.first, fusion));
-    changed = true;
-  }
+      // Update schedule to replace the custom call instruction with the fusion
+      // instruction.
+      // Removal of the rest of the instructions in the sequence is handled by
+      // schedule update below.
+      HloInstructionSequence& sequence = schedule.GetOrCreateSequence(parent);
+      sequence.replace_instruction(kv.first, fusion);
 
-  if (changed) {
+      // TODO(vuson): handle control dependencies
+      TF_RETURN_IF_ERROR(parent->ReplaceInstruction(
+          const_cast<HloInstruction*>(replacement_map[kv.first]), fusion));
+    }
+
     TF_RETURN_IF_ERROR(module->schedule().Update());
-  }
 
-  return changed;
+    return true;
+  };
+
+  // TODO(vuson): unify dynamic_address_computation and address_computation
+  TF_ASSIGN_OR_RETURN(bool processed_pattern_with_static_slices,
+                      process_slices(false));
+  TF_ASSIGN_OR_RETURN(bool processed_pattern_with_dynamic_slices,
+                      process_slices(true));
+  return processed_pattern_with_static_slices ||
+         processed_pattern_with_dynamic_slices;
 }
 
 }  // namespace gpu

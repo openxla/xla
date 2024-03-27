@@ -38,6 +38,7 @@ limitations under the License.
 #include "nanobind/stl/function.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/set.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
@@ -230,8 +231,9 @@ NB_MODULE(xla_extension, m_nb) {
         // generic method on PjRtCompiler instead, although we'll have
         // somehow have to attach a compiler to this PjRtLayout (something
         // like ClientAndPtr).
-        absl::StatusOr<PjRtXlaLayout> layout =
-            PjRtXlaLayout::Deserialize(nb::cast<std::string_view>(t[0]));
+        nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
+        absl::StatusOr<PjRtXlaLayout> layout = PjRtXlaLayout::Deserialize(
+            std::string_view(serialized.c_str(), serialized.size()));
         ThrowIfError(layout.status());
         new (self) PjRtXlaLayout(std::move(*layout));
       });
@@ -899,7 +901,8 @@ NB_MODULE(xla_extension, m_nb) {
       .def("get_output_layouts",
            xla::ValueOrThrowWrapper(&PjRtExecutable::GetOutputLayouts))
       .def("get_parameter_shardings", &PjRtExecutable::GetParameterShardings)
-      .def("get_compiled_memory_stats", &PjRtExecutable::GetCompiledMemoryStats)
+      .def("get_compiled_memory_stats",
+           xla::ValueOrThrowWrapper(&PjRtExecutable::GetCompiledMemoryStats))
       .def("compile_options",
            xla::ValueOrThrowWrapper(&PjRtExecutable::GetCompileOptions))
       .def("serialize",

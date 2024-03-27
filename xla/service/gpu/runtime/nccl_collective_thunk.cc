@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/nccl_collective_thunk.h"
+#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -47,7 +47,7 @@ limitations under the License.
 #include "xla/service/gpu/nccl_api.h"
 #include "xla/service/gpu/nccl_clique.h"
 #include "xla/service/gpu/nccl_clique_key.h"
-#include "xla/service/gpu/thunk.h"
+#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
 #include "xla/status.h"
@@ -527,12 +527,12 @@ absl::Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op) {
 
 absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
   if (!LayoutUtil::IsDenseArray(shape)) {
-    return tsl::errors::Unimplemented(
+    return absl::AbortedError(
         absl::StrFormat("input is not a dense array: %s",
                         shape.ToString(/*print_layout=*/true)));
   }
   if (!IsTypeSupportedByNccl(shape.element_type(), reduction_op)) {
-    return tsl::errors::Unimplemented(absl::StrFormat(
+    return absl::AbortedError(absl::StrFormat(
         "element type %s not suppored by NCCL",
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }

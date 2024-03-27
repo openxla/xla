@@ -15,14 +15,21 @@ limitations under the License.
 
 #include "xla/service/gpu/runtime/custom_call_thunk.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/call_frame.h"
@@ -31,7 +38,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_status_internal.h"
-#include "xla/service/gpu/thunk.h"
+#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
@@ -141,6 +148,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(const ExecuteParams& params) {
   // execution context, as apparently it's not easily accessible from Thunk.
   ExecutableRunOptions run_options;
   run_options.set_stream(params.stream);
+  run_options.set_allocator(params.buffer_allocations->memory_allocator());
+  run_options.set_device_ordinal(params.buffer_allocations->device_ordinal());
   ServiceExecutableRunOptions service_run_options(run_options);
 
   CallOptions options = {&service_run_options, called_computation_};
@@ -182,6 +191,19 @@ absl::StatusOr<CustomCallThunk::AttributesMap> BuildAttributesMap(
       }
     };
 
+    auto arr = [&](mlir::DenseArrayAttr arr) {
+      if (auto dense = mlir::dyn_cast<mlir::DenseI32ArrayAttr>(arr)) {
+        attributes[name] = dense.asArrayRef().vec();
+        return absl::OkStatus();
+      } else if (auto dense = mlir::dyn_cast<mlir::DenseI64ArrayAttr>(arr)) {
+        attributes[name] = dense.asArrayRef().vec();
+        return absl::OkStatus();
+      }
+
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported array element type for attribute: ", name));
+    };
+
     auto str = [&](mlir::StringAttr str) {
       attributes[name] = str.getValue().str();
       return absl::OkStatus();
@@ -191,6 +213,7 @@ absl::StatusOr<CustomCallThunk::AttributesMap> BuildAttributesMap(
         llvm::TypeSwitch<mlir::Attribute, Status>(kv.getValue())
             .Case<mlir::IntegerAttr>(integer)
             .Case<mlir::FloatAttr>(fp)
+            .Case<mlir::DenseArrayAttr>(arr)
             .Case<mlir::StringAttr>(str)
             .Default([&](mlir::Attribute) {
               return absl::InvalidArgumentError(absl::StrCat(
