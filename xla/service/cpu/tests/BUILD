@@ -1,9 +1,9 @@
 # Description:
 #    Tests for LLVM-based CPU backend for XLA.
 
-load("//xla:xla.bzl", "xla_cc_test")
 load("@tsl//tsl:tsl.bzl", "tsl_copts")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
