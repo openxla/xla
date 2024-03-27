@@ -1,5 +1,14 @@
 # Description:
 #   ROCm-platform specific StreamExecutor support code.
+# buildifier: disable=out-of-order-load
+
+load(
+    "//xla/stream_executor:build_defs.bzl",
+    "stream_executor_friends",
+)
+
+# copybara:comment_begin(oss-only)
+load("//xla/stream_executor/rocm:build_defs.bzl", "rocm_embedded_test_modules")
 
 # copybara:comment_end
 load(
@@ -11,13 +20,6 @@ load(
 load("@tsl//tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "//xla/stream_executor:build_defs.bzl",
-    "stream_executor_friends",
-)
-
-# copybara:comment_begin(oss-only)
-load("//xla/stream_executor/rocm:build_defs.bzl", "rocm_embedded_test_modules")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
