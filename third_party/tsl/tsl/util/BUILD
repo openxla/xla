@@ -12,12 +12,12 @@ load(
 )
 load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
-    "//tsl/platform:build_config_root.bzl",
-    "if_static",
-)
-load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
+)
+load(
+    "//tsl/platform:build_config_root.bzl",
+    "if_static",
 )
 load(
     "//tsl/platform:rules_cc.bzl",
