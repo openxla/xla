@@ -307,7 +307,10 @@ using ExhaustiveBF16UnaryTest = Exhaustive32BitOrLessUnaryTest<BF16>;
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA" && ty_ == F32) {
-    error_spec_gen = +[](NativeT x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](NativeT x) {
+      auto tol = 2 * std::numeric_limits<NativeT>::epsilon();
+      return ErrorSpec(tol, tol);
+    };
   }
   Run(Log, std::log, error_spec_gen);
 })
@@ -315,7 +318,10 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log, {
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(Log1p, {
   ErrorSpecGen error_spec_gen = GetDefaultSpecGenerator();
   if (platform_ != "Host" && platform_ != "CUDA" && ty_ == F32) {
-    error_spec_gen = +[](NativeT x) { return ErrorSpec{0.001, 0.001}; };
+    error_spec_gen = +[](NativeT x) {
+      auto tol = 2 * std::numeric_limits<NativeT>::epsilon();
+      return ErrorSpec(tol, tol);
+    };
   }
   Run(Log1p, std::log1p, error_spec_gen);
 })
