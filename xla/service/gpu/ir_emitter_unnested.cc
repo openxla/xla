@@ -766,7 +766,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));
   TF_ASSIGN_OR_RETURN(bool has_vector_bias,
                       xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
-  bool has_matrix_bias = config.beta() != 0;                      
+  bool has_matrix_bias = config.beta() != 0;
   bool is_relu_epilogue = (epilogue == GemmBackendConfig::RELU_AUX ||
                            epilogue == GemmBackendConfig::D_RELU ||
                            epilogue == GemmBackendConfig::BIAS_RELU_AUX ||
@@ -786,9 +786,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   int a_scale_index = has_matrix_bias ? 3 : 2;
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
                       GetAllocationSliceForHlo(instr, output_index));
-  TF_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice a_scale,
-      GetAllocationSliceForHlo(instr->operand(a_scale_index)));
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a_scale,
+                      GetAllocationSliceForHlo(instr->operand(a_scale_index)));
   TF_ASSIGN_OR_RETURN(
       BufferAllocation::Slice b_scale,
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 1)));
@@ -800,7 +799,6 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       GetAllocationSliceForHlo(instr->operand(a_scale_index + 3)));
   BufferAllocation::Slice aux, bias, d_amax;
   if (!is_relu_epilogue) {
-
     if (has_vector_bias) {
       TF_ASSIGN_OR_RETURN(
           bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
@@ -813,28 +811,17 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
     // aux not used.
   } else if (epilogue == GemmBackendConfig::D_RELU) {  // D_RELU
     // cublasLt does not support fp8 output for D_RELU or D_RELU_BGRAD
-    std::cout << "shuw: here in D_RELU epilog\n";
-
     if (has_vector_bias) {
       TF_ASSIGN_OR_RETURN(
           bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
     }
 
     if (has_aux_input) {
-      std::cout <<"shuw::::::" << "yes aux input in last one!\n";
-      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(instr->operand_count()-1)));
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(
+                                   instr->operand(instr->operand_count() - 1)));
     }
     // d_amax not used.
-
-   
-    // std::cout << "d_amax == nullptr ? :" <<d_amax <<std::endl;
-    std::cout << "aux == nullptr ? :" << aux <<std::endl;
-    // std::cout << "bias == nullptr ? :" << bias <<std::endl;
-    std::cout << "shuw: here end in D_RELU epilog\n";
-
   } else if (epilogue == GemmBackendConfig::RELU_AUX) {
-    std::cout << "shuw:: fp8 RELU_AUX\n";
-
     BufferAllocation::Slice bias;
     if (has_vector_bias) {
       TF_ASSIGN_OR_RETURN(
@@ -844,45 +831,23 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
     if (has_aux_output) {
       TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr, {1}));
     }
-    bool has_damax = has_tuple_output && instr->shape().tuple_shapes().size() > 1;
+    bool has_damax =
+        has_tuple_output && instr->shape().tuple_shapes().size() > 1;
     if (has_damax) {
       TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {2}));
     }
-
-    TF_ASSIGN_OR_RETURN(
-        auto gemm_config,
-        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
-    std::cout << "d_amax == nullptr ? :" <<d_amax  <<std::endl;
-    std::cout << "aux == nullptr ? :" << aux  <<std::endl;
-    std::cout << "a_scale == nullptr ? :" << a_scale  <<std::endl;
-    // std::cout << "bias == nullptr ? :" << bias  <<std::endl;
-    std::cout << "shuw: here end in RELU_AUX epilog\n";
-
   } else if (epilogue == GemmBackendConfig::D_RELU_BGRAD) {
-    std::cout << "shuw: here in D_RELU_BGRAD epilog\n";
-    bool has_damax = instr->shape().IsTuple();
-
-
     if (has_vector_bias) {  // DRELU_BGRAD
       TF_ASSIGN_OR_RETURN(bias, GetAllocationSliceForHlo(instr, {1}));
     }
 
-    
     if (has_aux_input) {
-      std::cout <<"shuw::::::" << "yes aux input in last one!\n";
-      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(instr->operand_count()-1)));
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(
+                                   instr->operand(instr->operand_count() - 1)));
     }
     // d_amax not used.
     // aux Not used.
-
-    // std::cout << "d_amax == nullptr ? :" <<d_amax <<std::endl;
-    std::cout << "aux == nullptr ? :" << aux <<std::endl;
-    std::cout << "bias == nullptr ? :" << bias <<std::endl;
-    std::cout << "shuw: here end in D_RELU_BGRAD epilog\n";
-
   } else if (epilogue == GemmBackendConfig::BIAS_RELU_AUX) {
-    std::cout << "shuw:: fp8 BIAS_RELU_AUX\n";
-
     if (has_vector_bias) {
       TF_ASSIGN_OR_RETURN(
           bias, GetAllocationSliceForHlo(instr->operand(a_scale_index + 4)));
@@ -892,16 +857,11 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr, {1}));
     }
 
-    bool has_damax = has_tuple_output && instr->shape().tuple_shapes().size() > 1;
+    bool has_damax =
+        has_tuple_output && instr->shape().tuple_shapes().size() > 1;
     if (has_damax) {
       TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {2}));
     }
-
-    std::cout << "d_amax == nullptr ? :" <<d_amax  <<std::endl;
-    std::cout << "aux == nullptr ? :" << aux  <<std::endl;
-    std::cout << "a_scale == nullptr ? :" << a_scale  <<std::endl;
-    std::cout << "bias == nullptr ? :" << bias << std::endl;
-    std::cout << "shuw: here end in BIAS_RELU_AUX epilog\n";
   }
   // Use the first algorithm by default (i.e. fastest according to
   // heuristics).
@@ -909,10 +869,10 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
-          
-    TF_ASSIGN_OR_RETURN(
-        auto gemm_config,
-        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+
+  TF_ASSIGN_OR_RETURN(
+      auto gemm_config,
+      GemmConfig::For(static_cast<const HloInstruction*>(instr)));
 
   TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                       gpublas_lt::AsBlasLtEpilogue(epilogue));
