@@ -673,15 +673,14 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
                       instr->backend_config<xla::gpu::GpuBackendConfig>());
   xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
   xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
-  std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n";
-  if (epilogue != GemmBackendConfig::D_RELU && epilogue != GemmBackendConfig::D_RELU_BGRAD) {
-     std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1111111111\n";
+  if (epilogue != GemmBackendConfig::D_RELU &&
+      epilogue != GemmBackendConfig::D_RELU_BGRAD) {
     TF_ASSIGN_OR_RETURN(bool has_vector_bias,
                         xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
     bool has_matrix_bias = config.beta() != 0;
 
     TF_RET_CHECK(instr->operand_count() ==
-                2 + int{has_matrix_bias} + int{has_vector_bias});
+                 2 + int{has_matrix_bias} + int{has_vector_bias});
 
     TF_ASSIGN_OR_RETURN(
         bool has_aux_output,
@@ -717,7 +716,8 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
         auto gemm_config,
         GemmConfig::For(static_cast<const HloInstruction*>(instr)));
 
-    // Use the first algorithm by default (i.e. fastest according to heuristics).
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
     int64_t algorithm =
         config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
             ? config.selected_algorithm()
@@ -732,63 +732,61 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunk(
         c_scale, d_scale, d_amax);
     AddThunkToThunkSequence(std::move(thunk));
   } else {
-     std::cout << "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee222222222222222222222\n";
     TF_ASSIGN_OR_RETURN(
-      bool has_aux_input,
-      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));
+        bool has_aux_input,
+        xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(epilogue));
 
-  TF_RET_CHECK(instr->operand_count() == 2 + int{has_aux_input});
+    TF_RET_CHECK(instr->operand_count() == 2 + int{has_aux_input});
 
     TF_ASSIGN_OR_RETURN(
-      bool has_aux_output,
-      xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
-    
+        bool has_aux_output,
+        xla::gpu::gpublas_lt::EpilogueHasAuxiliaryOutput(epilogue));
+
     xla::ShapeIndex output_index =
         has_aux_output ? xla::ShapeIndex{0} : xla::ShapeIndex{};
 
     TF_ASSIGN_OR_RETURN(bool has_vector_bias,
                         xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
 
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
-                      GetAllocationSliceForHlo(instr->operand(0)));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
-                      GetAllocationSliceForHlo(instr->operand(1)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice a,
+                        GetAllocationSliceForHlo(instr->operand(0)));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice b,
+                        GetAllocationSliceForHlo(instr->operand(1)));
 
-  BufferAllocation::Slice c;
-  TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
-  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
-                      GetAllocationSliceForHlo(instr, output_index));
+    BufferAllocation::Slice c;
+    TF_ASSIGN_OR_RETURN(c, GetAllocationSliceForHlo(instr, output_index));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d,
+                        GetAllocationSliceForHlo(instr, output_index));
 
-  BufferAllocation::Slice aux;
-  if (has_aux_input) {
-    std::cout <<"shuw::::::" << "yes aux input!\n";
-    TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(2)));
-  }
-  
-  TF_ASSIGN_OR_RETURN(
-      auto gemm_config,
-      GemmConfig::For(static_cast<const HloInstruction*>(instr)));
+    BufferAllocation::Slice aux;
+    if (has_aux_input) {
+      TF_ASSIGN_OR_RETURN(aux, GetAllocationSliceForHlo(instr->operand(2)));
+    }
 
-  // Use the first algorithm by default (i.e. fastest according to heuristics).
-  int64_t algorithm =
-      config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
-          ? config.selected_algorithm()
-          : 0;
+    TF_ASSIGN_OR_RETURN(
+        auto gemm_config,
+        GemmConfig::For(static_cast<const HloInstruction*>(instr)));
 
-  BufferAllocation::Slice a_scale, b_scale, c_scale, d_scale, d_amax;
-  BufferAllocation::Slice bias;
-    if (has_vector_bias && has_aux_output) { // DRELU_BGRAD
+    // Use the first algorithm by default (i.e. fastest according to
+    // heuristics).
+    int64_t algorithm =
+        config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
+            ? config.selected_algorithm()
+            : 0;
+
+    BufferAllocation::Slice a_scale, b_scale, c_scale, d_scale, d_amax;
+    BufferAllocation::Slice bias;
+    if (has_vector_bias && has_aux_output) {  // DRELU_BGRAD
       TF_ASSIGN_OR_RETURN(bias, GetAllocationSliceForHlo(instr, {1}));
     }
 
-  TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
-                      gpublas_lt::AsBlasLtEpilogue(epilogue));
-  std::cout <<"shuw::::::" << "here!\n";
-  auto thunk = std::make_unique<CublasLtMatmulThunk>( /// ???????
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
-      blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
-      c_scale, d_scale, d_amax);
-  AddThunkToThunkSequence(std::move(thunk));
+    TF_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
+                        gpublas_lt::AsBlasLtEpilogue(epilogue));
+    auto thunk = std::make_unique<CublasLtMatmulThunk>(
+        Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(gemm_config),
+        blas_lt_epilogue, algorithm, a, b, c, d, bias, aux, a_scale, b_scale,
+        c_scale, d_scale, d_amax);
+    AddThunkToThunkSequence(std::move(thunk));
   }
   return absl::OkStatus();
 }

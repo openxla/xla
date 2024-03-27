@@ -160,7 +160,7 @@ class GemmAutotuner {
     const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
 
     bool has_matrix_bias = gemm_config.beta != 0.;
-  
+
     TF_ASSIGN_OR_RETURN(
         bool has_vector_bias,
         gpublas_lt::EpilogueAddsVectorBias(backend_config.epilogue()));

@@ -44,11 +44,6 @@ bool IsCublasLtMatmul(const HloInstruction& hlo) {
          hlo.custom_call_target() == kCublasLtMatmulCallTarget;
 }
 
-bool IsBwdCublasLtMatmul(const HloInstruction& hlo) {
-  return hlo.opcode() == HloOpcode::kCustomCall &&
-         hlo.custom_call_target() == kCublasLtMatmulBackwardCallTarget;
-}
-
 bool IsCublasLtMatmulF8(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kCublasLtMatmulF8CallTarget;
@@ -63,10 +58,6 @@ const absl::string_view kGemmCallTarget = "__cublas$gemm";
 const absl::string_view kCublasLtMatmulCallTarget = "__cublas$lt$matmul";
 const absl::string_view kCublasLtMatmulF8CallTarget = "__cublas$lt$matmul$f8";
 const absl::string_view kTriangularSolveCallTarget = "__cublas$triangularSolve";
-
-// cublasLt backward call targets.
-const absl::string_view kCublasLtMatmulBackwardCallTarget =
-    "__cublas$lt$matmulBackward";
 
 const absl::string_view kCudnnConvBackwardInputCallTarget =
     "__cudnn$convBackwardInput";
