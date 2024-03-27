@@ -455,6 +455,7 @@ cc_library(
         ":nb_numpy",
         "//xla:comparison_util",
         "//xla/pjrt:exceptions",
+        "//xla/pjrt:host_callback",
         "//xla/service:custom_call_status",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
