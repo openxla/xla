@@ -975,7 +975,7 @@ absl::Status CreateTritonPipeline(
   }
 
   pm.addPass(mt::gpu::createOptimizeDotOperandsPass());
-  pm.addPass(mt::gpu::createRemoveLayoutConversionsPass());
+  // pm.addPass(mt::gpu::createRemoveLayoutConversionsPass());
   pm.addPass(mt::gpu::createReduceDataDuplicationPass());
   pm.addPass(mt::gpu::createReorderInstructionsPass());
   pm.addPass(mlir::createCSEPass());
