@@ -434,19 +434,9 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   config.is_causal_mask = desc.is_causal_mask;
   const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
-
-  auto assign_scale = [&]() {
-    config.fmha_scale.emplace(backend_config.fmha_scale());
-  };
-
-  auto assign_dropout_rate = [&]() {
-    config.dropout_rate.emplace(backend_config.dropout_rate());
-  };
-
-  auto assign_seed = [&]() { config.seed.emplace(backend_config.seed()); };
-  assign_scale();
-  assign_dropout_rate();
-  assign_seed();
+  config.fmha_scale.emplace(backend_config.fmha_scale());
+  config.dropout_rate.emplace(backend_config.dropout_rate());
+  config.seed.emplace(backend_config.seed());
   return config;
 }
 
@@ -587,19 +577,9 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   config.is_causal_mask = desc.is_causal_mask;
   const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
-
-  auto assign_scale = [&]() {
-    config.fmha_scale.emplace(backend_config.fmha_scale());
-  };
-
-  auto assign_dropout_rate = [&]() {
-    config.dropout_rate.emplace(backend_config.dropout_rate());
-  };
-
-  auto assign_seed = [&]() { config.seed.emplace(backend_config.seed()); };
-  assign_scale();
-  assign_dropout_rate();
-  assign_seed();
+  config.fmha_scale.emplace(backend_config.fmha_scale());
+  config.dropout_rate.emplace(backend_config.dropout_rate());
+  config.seed.emplace(backend_config.seed());
   return config;
 }
 
