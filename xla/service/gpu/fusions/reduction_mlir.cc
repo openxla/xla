@@ -29,18 +29,18 @@ limitations under the License.
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"           // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"          // from @llvm-project
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"        // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"               // from @llvm-project
-#include "mlir/IR/AffineExpr.h"                    // from @llvm-project
-#include "mlir/IR/AffineMap.h"                     // from @llvm-project
-#include "mlir/IR/Builders.h"                      // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"          // from @llvm-project
-#include "mlir/IR/Location.h"                      // from @llvm-project
-#include "mlir/IR/TypeRange.h"                     // from @llvm-project
-#include "mlir/IR/Value.h"                         // from @llvm-project
-#include "mlir/IR/ValueRange.h"                    // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
+#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"  // from @llvm-project
+#include "mlir/IR/AffineMap.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/TypeRange.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
 #include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
