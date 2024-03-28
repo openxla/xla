@@ -3373,7 +3373,17 @@ void IrEmitter::TracingState::EmitTracingStart(llvm::IRBuilder<>* b,
     fn->setDoesNotThrow();
     fn->setOnlyAccessesArgMemory();
   }
-  auto* hlo_name = b->CreateGlobalStringPtr(hlo->name());
+
+  // Pass opcode as argument to TraceMe call
+  auto hlo_name_str = hlo->name();
+  if (hlo->opcode() == HloOpcode::kCustomCall) {
+    // For custom call, passing custom call target is more informative
+    hlo_name_str = hlo->custom_call_target();
+  } else {
+    hlo_name_str = HloOpcodeString(hlo->opcode());
+  }
+  auto* hlo_name = b->CreateGlobalStringPtr(hlo_name_str);
+
   auto* activity_id = b->CreateCall(trace_func, {run_options, hlo_name});
   activity_id->setName(IrName(hlo, "activity_id"));
   activity_ids_[hlo] = activity_id;
