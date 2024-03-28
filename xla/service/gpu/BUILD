@@ -4061,6 +4061,7 @@ cc_library(
         ":conv_algorithm_picker",
         ":cublas_pad_for_gemms",
         ":cublas_padding_requirements",
+        ":cudnn_fused_conv_rewriter",
         ":cusolver_rewriter",
         ":gemm_algorithm_picker",
         ":gemm_rewriter",

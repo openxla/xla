@@ -1769,7 +1769,8 @@ class DnnSupport {
       bool is_flash_attention, bool is_causal_mask);
 
   virtual bool GetMIOpenConvolveAlgorithms(
-      ConvolutionKind kind, DataType element_type, Stream* stream,
+      ConvolutionKind kind, DataType element_type, DataType output_type,
+      Stream* stream,
       const BatchDescriptor& input_descriptor, DeviceMemoryBase input_data,
       const FilterDescriptor& filter_descriptor, DeviceMemoryBase filter_data,
       const BatchDescriptor& output_descriptor, DeviceMemoryBase output_data,
