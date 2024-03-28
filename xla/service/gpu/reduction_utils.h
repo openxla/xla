@@ -42,6 +42,8 @@ struct ReductionDimensions {
   constexpr static int kColReducedDimension = 1;
   constexpr static int kColMinorKeptDimension = 2;
 
+  constexpr static int kVectorizedDimension = 3;
+
   // Indicates whether the reduction is a row reduction or a column reduction.
   bool is_row_reduction;
 
