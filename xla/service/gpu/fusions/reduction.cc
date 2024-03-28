@@ -288,6 +288,7 @@ ReductionGroupEmitter::ReductionGroupEmitter(
            << reduction_emitter_.fusion_.ToString();
 
   auto* builder = reduction_emitter_.builder_;
+  const Tiling& tiling = reduction_info.GetTiling();
   for (const HloReduceInstruction* reduce_hlo : reduce_instr_index_group) {
     for (int op_result_idx = 0;
          op_result_idx < GetNumOutputs(reduce_hlo->shape()); op_result_idx++) {
@@ -312,7 +313,9 @@ ReductionGroupEmitter::ReductionGroupEmitter(
             element_type, "partial_reduction_result", builder);
         builder->CreateStore(init_ir_value, result_address);
       } else {
-        auto vectorize_size = tiling.GetThreadTileSize()[kVectorizedDimension];
+        auto vectorize_size =
+            tiling
+                .GetThreadTileSize()[ReductionDimensions::kVectorizedDimension];
         reduction_input_address = llvm_ir::EmitAllocaAtFunctionEntryWithCount(
             element_type,
             llvm::ConstantInt::get(builder->getInt32Ty(), vectorize_size),
@@ -840,12 +843,14 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
           kept_index,
           output_tile_bounds[ReductionDimensions::kColReducedDimension]));
 
-  constexpr kVectorizedDimension = ReductionDimensions::kVectorizedDimension;
+  constexpr int kVectorizedDimension =
+      ReductionDimensions::kVectorizedDimension;
   if (tile_size[kVectorizedDimension] > 1) {
     std::vector<llvm::Value*> tile_index = tile_origin.multidim();
-    tile_index[kColMinorKeptDimension] = builder->CreateMul(
-        tile_index[ReductionDimensions::kColMinorKeptDimension],
-        output_tile_bounds[kVectorizedDimension]);
+    tile_index[ReductionDimensions::kColMinorKeptDimension] =
+        builder->CreateMul(
+            tile_index[ReductionDimensions::kColMinorKeptDimension],
+            output_tile_bounds[kVectorizedDimension]);
     tile_origin = llvm_ir::IrArray::Index(tile_index, tiling.GetShape(),
                                           reduction_emitter_.index_ty_);
   }
@@ -880,7 +885,7 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
                                          tiling.GetNumThreadsPerBlock(),
                                          /*num_results_per_warp=*/1);
 
-    thread_ids[kColReducedDimension] = builder->CreateAdd(
+    thread_ids[ReductionDimensions::kColReducedDimension] = builder->CreateAdd(
         builder->CreateMul(reduced_index,
                            output_tile_bounds[kVectorizedDimension]),
         llvm::ConstantInt::get(reduction_emitter_.index_ty_, vec_dim));
