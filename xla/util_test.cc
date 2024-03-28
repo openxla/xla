@@ -187,8 +187,8 @@ namespace {
 template <typename T>
 void TotalOrderHelper(T x, T y) {
   auto x_sm = ToSignMagnitude(x);
-  bool x_sign = static_cast<bool>(Eigen::numext::signbit(x));
-  bool y_sign = static_cast<bool>(Eigen::numext::signbit(y));
+  bool x_sign = Eigen::numext::signbit(x) != T(0);
+  bool y_sign = Eigen::numext::signbit(y) != T(0);
   auto y_sm = ToSignMagnitude(y);
   if (x_sign && !y_sign) {
     EXPECT_LT(x_sm, y_sm) << x << " " << y;
