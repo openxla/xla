@@ -38,6 +38,13 @@ message AutotuneResult {
     DISQUALIFIED = 3;
   }
 
+  enum Backend {
+    UNKNOWN_BACKEND = 0;
+    TRITON = 1;
+    CUDNN = 2;
+    CUBLAS = 3;
+  }
+
   message FailureResult {
     FailureKind kind = 1;
     string msg = 2;
@@ -85,6 +92,16 @@ message AutotuneResult {
     int64 num_ctas = 7;
   }
 
+  message Option {
+    google.protobuf.Duration run_time = 1;
+    Backend backend = 2;
+    FailureResult failure = 3;
+  }
+
+  message TriedBackends {
+    repeated Option tried_backends = 1;
+  }
+
   int64 scratch_bytes = 8;
   google.protobuf.Duration run_time = 9;
 
@@ -98,7 +115,9 @@ message AutotuneResult {
     stream_executor.dnn.AlgorithmProto algorithm = 16;
   }
 
-  // Next ID: 17
+  string fusion_name = 18;
+  TriedBackends backends = 19;
+  // Next ID: 20
 }
 
 message AutotuningLog {
