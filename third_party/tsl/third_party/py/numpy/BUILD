@@ -8,10 +8,10 @@ py_library(
     srcs_version = "PY3",
 )
 
-alias(
-    name = "headers",
-    actual = "@local_config_python//:numpy_headers",
-)
+#alias(
+#    name = "headers",
+#    actual = "@local_config_python//:numpy_headers",
+#)
 
 genrule(
     name = "dummy",
