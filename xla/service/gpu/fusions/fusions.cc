@@ -211,9 +211,18 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
     }
     case HloFusionAnalysis::EmitterFusionKind::kReduction:
       if (check_mlir_emitters(MlirReductionFusion::IsSupported)) {
-        return std::make_unique<MlirReductionFusion>(analysis);
+        return std::make_unique<MlirReductionFusion>(analysis,
+                                                     /*adjust_tiling*/ false);
       }
-      return std::make_unique<ReductionFusion>(analysis);
+      // Due to tiling adjustment will introduce more atomic operations, it is
+      // hard to evaluate. The conservative solution is disabling
+      // `adjust_tiling` when estimate reduction performance.
+      if (dynamic_cast<const PreBufferAssignmentFusionInfo*>(&fusion_info)) {
+        return std::make_unique<ReductionFusion>(analysis,
+                                                 /*adjust_tiling*/ false);
+      }
+      return std::make_unique<ReductionFusion>(analysis,
+                                               /*adjust_tiling*/ true);
     case HloFusionAnalysis::EmitterFusionKind::kScatter: {
       if (check_mlir_emitters(MlirScatterFusion::IsSupported)) {
         return std::make_unique<MlirScatterFusion>(analysis);

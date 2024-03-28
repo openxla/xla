@@ -44,7 +44,11 @@ struct ReductionGroups {
 
 class ReductionInfo {
  public:
-  static ReductionInfo Create(const HloFusionAnalysis& analysis);
+  // For mlir codegen path, column reduction don't support vary tiling
+  // currently. Set `adjust_tiling` as false temporarily for mlir reduction
+  // emitter. Remove this argument if mlir codegen support tiling adjustment.
+  static ReductionInfo Create(const HloFusionAnalysis& analysis,
+                              bool adjust_tiling);
 
   const Tiling& GetTiling() const { return tiling_; }
   const ReductionGroups& GetGroups() const { return groups_; }
@@ -89,8 +93,10 @@ class ReductionInfo {
 template <typename Base>
 class ReductionFusionBase : public Base {
  public:
-  explicit ReductionFusionBase(const HloFusionAnalysis& analysis)
-      : analysis_(analysis), reduction_info_(ReductionInfo::Create(analysis)) {}
+  explicit ReductionFusionBase(const HloFusionAnalysis& analysis,
+                               bool adjust_tiling)
+      : analysis_(analysis),
+        reduction_info_(ReductionInfo::Create(analysis, adjust_tiling)) {}
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
       int64_t root_index, mlir::MLIRContext* ctx) const override {
