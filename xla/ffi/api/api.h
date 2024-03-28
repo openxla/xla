@@ -73,7 +73,13 @@ limitations under the License.
 #define XLA_FFI_ATTRIBUTE_NEVER_INLINE
 #endif
 
-#if __has_builtin(__builtin_expect)
+#if !defined(__has_builtin) && defined(__GNUC__) && __GNUC__ < 10
+#define HAS_BUILTIN_EXPECT 1
+#else
+#define HAS_BUILTIN_EXPECT __has_builtin(__builtin_expect)
+#endif
+
+#if HAS_BUILTIN_EXPECT
 #define XLA_FFI_PREDICT_FALSE(x) (__builtin_expect(false || (x), false))
 #define XLA_FFI_PREDICT_TRUE(x) (__builtin_expect(false || (x), true))
 #else
