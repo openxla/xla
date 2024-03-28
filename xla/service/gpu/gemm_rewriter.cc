@@ -1572,7 +1572,147 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return true;
   }
 
-  absl::Status FuseReluActivation(HloInstruction *instr,
+  absl::Status HandleSelect(HloInstruction *instr) override {
+    // Attempt to elide select and fuse gradient of ReLU into GEMM as epilogue.
+    // Rewrite the matmul as producer of bitmask into relu with Aux.
+    // 1. Check for both fwd and bwd pattern.
+    // 2. Rewrite ReLU with ReLUAux;
+    // 3. Insert DRelu as epiloguefor backward matmul.
+    HloInstruction *fwd_gemm = nullptr;
+    HloInstruction *bwd_gemm = nullptr;
+    HloInstruction *maximum = nullptr;
+    HloInstruction *compare = nullptr;
+
+    if (!Match(instr,
+               m::Select(m::Compare(&compare,
+                                    m::CustomCall(&fwd_gemm,
+                                                  {kCublasLtMatmulCallTarget}),
+                                    m::Broadcast(m::ConstantScalar(0))),
+                         m::CustomCall(&bwd_gemm, {kCublasLtMatmulCallTarget})
+                             .WithOneUser(),
+                         m::Broadcast(m::ConstantScalar(0))))) {
+      return absl::OkStatus();
+    }
+
+    if (fwd_gemm->user_count() != 2) {
+      // Require fwd_gemm only have 2 consumers: maximum and compare.
+      return absl::OkStatus();
+    }
+
+    bool valid_relu_bwd = false;
+
+    for (auto user : fwd_gemm->users()) {
+      if (user->opcode() == HloOpcode::kMaximum &&
+          Match(user,
+                m::MaximumAnyOrder(
+                    m::AnyOf<HloInstruction>(
+                        m::Slice(m::CustomCall({kCublasLtMatmulCallTarget})),
+                        m::Bitcast(m::CustomCall({kCublasLtMatmulCallTarget})),
+                        m::CustomCall({kCublasLtMatmulCallTarget})),
+                    m::Broadcast(m::ConstantScalar(0))))) {
+        maximum = user;
+        valid_relu_bwd = true;
+        break;
+      }
+    }
+    auto fwd_gemm_num_rows = fwd_gemm->shape().dimensions(0);
+    if (!valid_relu_bwd ||
+        !SupportsEpilogueFusion(fwd_gemm->shape().element_type()) ||
+        !(fwd_gemm_num_rows >= 128 && fwd_gemm_num_rows % 128 == 0)) {
+      // cublasLt requires that CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD Must be
+      // divisible by 128 and be no less than the number of rows in the output
+      // matrix.
+      VLOG(1) << "Possible GEMM with ReLU epilogue is "
+              << "not fused into Custom Call.";
+      return absl::OkStatus();
+    }
+
+    // Rewrite Fwd Relu with ReluAux
+    TF_ASSIGN_OR_RETURN(auto gpu_config,
+                        fwd_gemm->backend_config<GpuBackendConfig>());
+    GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
+    if (config.epilogue() == GemmBackendConfig::DEFAULT) {
+      config.set_epilogue(GemmBackendConfig::RELU_AUX);
+    } else if (config.epilogue() == GemmBackendConfig::BIAS) {
+      config.set_epilogue(GemmBackendConfig::BIAS_RELU_AUX);
+    } else {
+      return absl::OkStatus();
+    }
+    auto total_elements = [](const HloInstruction *gemm) {
+      int64_t num_e = 1;
+      for (int i = 0; i < gemm->shape().rank(); ++i) {
+        num_e *= gemm->shape().dimensions(i);
+      }
+      return num_e;
+    };
+    Shape mask_shape =
+        ShapeUtil::MakeShape(PrimitiveType::U8, {total_elements(fwd_gemm)});
+    mask_shape.mutable_layout()->set_element_size_in_bits(1);
+    std::unique_ptr<HloInstruction> output = fwd_gemm->CloneWithNewShape(
+        ShapeUtil::MakeTupleShape({fwd_gemm->shape(), mask_shape}));
+    TF_RETURN_IF_ERROR(output->set_backend_config(gpu_config));
+    TF_RETURN_IF_ERROR(SetName(output->GetModule(), output.get()));
+    HloInstruction *tuple_output =
+        fwd_gemm->parent()->AddInstruction(std::move(output));
+    TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+        maximum, HloInstruction::CreateGetTupleElement(tuple_output, 0)));
+
+    HloInstruction *get_tuple1 = fwd_gemm->parent()->AddInstruction(
+        HloInstruction::CreateGetTupleElement(tuple_output, 1));
+
+    // Insert DRELU in backward matmul
+    std::vector<HloInstruction *> operands(bwd_gemm->operands().begin(),
+                                           bwd_gemm->operands().end());
+    operands.insert(operands.end(), get_tuple1);
+
+    HloInstruction *new_bwd_custom_call =
+        bwd_gemm->parent()->AddInstruction(HloInstruction::CreateCustomCall(
+            ShapeUtil::MakeShapeWithDenseLayout(
+                bwd_gemm->shape().element_type(),
+                bwd_gemm->shape().dimensions(),
+                bwd_gemm->shape().layout().minor_to_major()),
+            operands, kCublasLtMatmulCallTarget));
+
+    TF_ASSIGN_OR_RETURN(auto bwd_gpu_backend_config,
+                        bwd_gemm->backend_config<GpuBackendConfig>());
+    GemmBackendConfig &bwd_config =
+        *bwd_gpu_backend_config.mutable_gemm_backend_config();
+    bwd_config.set_epilogue(GemmBackendConfig::D_RELU);
+    TF_RETURN_IF_ERROR(
+        new_bwd_custom_call->set_backend_config(bwd_gpu_backend_config));
+
+    return ReplaceInstruction(instr, new_bwd_custom_call);
+  }
+
+  absl::Status HandleReduce(HloInstruction *instr) override {
+    HloInstruction *gemm = nullptr;
+     if (Match(instr, m::Reduce(m::CustomCall(&gemm,
+                                              {kCublasLtMatmulCallTarget}), 
+                                m::ConstantScalar(0)))) {
+      TF_ASSIGN_OR_RETURN(auto gpu_config,
+                          gemm->backend_config<GpuBackendConfig>());
+      GemmBackendConfig &config = *gpu_config.mutable_gemm_backend_config();
+      if (config.epilogue() != GemmBackendConfig::D_RELU) {
+        return absl::OkStatus();
+      }
+      config.set_epilogue(GemmBackendConfig::D_RELU_BGRAD);
+      std::unique_ptr<HloInstruction> output = gemm->CloneWithNewShape(
+        ShapeUtil::MakeTupleShape({gemm->shape(), instr->shape()}));
+
+      TF_RETURN_IF_ERROR(output->set_backend_config(gpu_config));
+      TF_RETURN_IF_ERROR(SetName(instr->GetModule(), output.get()));
+
+      HloInstruction *tuple_output =
+          gemm->parent()->AddInstruction(std::move(output));
+      TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(
+          gemm, HloInstruction::CreateGetTupleElement(tuple_output, 0)));
+      output = HloInstruction::CreateGetTupleElement(tuple_output, 1);
+      return ReplaceWithNewInstruction(instr, std::move(output));
+    }
+    return absl::OkStatus();
+  }
+
+absl::Status FuseReluActivation(HloInstruction *instr,
                                   HloInstruction *broadcast,
                                   HloInstruction *gemm,
                                   HloInstruction *slice_or_bitcast = nullptr) {
