@@ -68,13 +68,15 @@ int RowReductionGetRowsPerWarp(int reduced_dimension_size) {
 
 int GetVectorSize(const HloFusionAnalysis& analysis,
                   const ReductionDimensions& reduction_dimensions,
-                  int num_threads, Vector3 reduction_tiling) {
+                  int num_threads, Vector3 reduction_tiling,
+                  bool vectorize_column_reduction) {
   if (MayPreventVectorization(analysis.fusion())) {
     return 1;
   }
 
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   if (!reduction_dimensions.is_row_reduction) {
+    if (!vectorize_column_reduction) return 1;
     // Check if the last dimension is divisible by (vector_size * num_threads).
     auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
     return num_kept_minor % (2 * num_threads) == 0 ? 2 : 1;
@@ -288,7 +290,8 @@ LaunchDimensions ReductionInfo::launch_dimensions() const {
                         /*y=*/1, /*z=*/1)};
 }
 
-ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
+ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
+                                    bool adjust_tiling) {
   auto* hero_reduction = analysis.FindHeroReduction();
   CHECK_NE(hero_reduction, nullptr);
   Shape input_shape = hero_reduction->operand(0)->shape();
@@ -348,9 +351,9 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
   }
 
   int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_x,
-                                  reduction_tiling);
+                                  reduction_tiling, adjust_tiling);
   bool tile_size_decreased = false;
-  if (!reduction_dimensions.is_row_reduction) {
+  if (!reduction_dimensions.is_row_reduction && adjust_tiling) {
     // Adjust tile_y and vector size for column reduction if device occupancy is
     // low.
     std::tie(reduction_tiling, vector_size, tile_size_decreased) =
@@ -374,7 +377,8 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
     // uses the thread ID as the coordinate.
     tile_per_thread[2] = 1;
   }
-  if (!reduction_dimensions.is_row_reduction || vector_size != 1) {
+  if ((!reduction_dimensions.is_row_reduction && adjust_tiling) ||
+      vector_size != 1) {
     num_threads.push_back(1);  // The vector dimension is a loop.
     tiled_shape.push_back(vector_size);
     tile_per_thread.push_back(vector_size);

@@ -29,18 +29,18 @@ limitations under the License.
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"           // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"          // from @llvm-project
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"        // from @llvm-project
+#include "mlir/Dialect/SCF/IR/SCF.h"               // from @llvm-project
+#include "mlir/IR/AffineExpr.h"                    // from @llvm-project
+#include "mlir/IR/AffineMap.h"                     // from @llvm-project
+#include "mlir/IR/Builders.h"                      // from @llvm-project
+#include "mlir/IR/ImplicitLocOpBuilder.h"          // from @llvm-project
+#include "mlir/IR/Location.h"                      // from @llvm-project
+#include "mlir/IR/TypeRange.h"                     // from @llvm-project
+#include "mlir/IR/Value.h"                         // from @llvm-project
+#include "mlir/IR/ValueRange.h"                    // from @llvm-project
 #include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -95,8 +95,9 @@ struct MlirReductionFusion::EmitterState {
   mlir::ImplicitLocOpBuilder builder;
 };
 
-MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
-    : ReductionFusionBase(analysis) {
+MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis,
+                                         bool adjust_tiling)
+    : ReductionFusionBase(analysis, adjust_tiling) {
   for (auto [index, hero] : llvm::enumerate(analysis.fusion_heroes())) {
     if (reduction_info().GetGroups().is_reduction_root[index]) {
       reduction_roots_[hero].push_back(index);
@@ -109,7 +110,7 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
 }
 
 bool MlirReductionFusion::IsSupported(const HloFusionAnalysis& analysis) {
-  auto info = ReductionInfo::Create(analysis);
+  auto info = ReductionInfo::Create(analysis, /*adjust_tiling*/ false);
   return info.GetGroups().grouped_roots.size() == 1 &&
          !absl::c_linear_search(info.GetGroups().is_reduction_root, false) &&
          info.IsRaceFree();
