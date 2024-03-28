@@ -599,6 +599,30 @@ TEST_F(MatmulTest, TestF32ConstantWeights) {
   )");
 }
 
+TEST_F(MatmulTest, WeightsPrepackAndScratch) {
+  const char* matmul_module_str = R"(
+  HloModule matmul.test.f32, entry_computation_layout={(f32[64,256,16]{2,1,0})->f32[64,256,32]{2,1,0}}
+  ENTRY matmul.test.f32 {
+    arg.0 = f32[64,256,16]{2,1,0} parameter(0), parameter_replication={false}
+    constant = f32[] constant(1)
+    arg.1 = f32[16,32]{1,0} broadcast(constant), dimensions={}
+    ROOT onednn.matmul.0 = f32[64,256,32]{2,1,0} dot(arg.0, arg.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  })";
+
+  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(matmul_module_str,
+                    R"(
+  ; CHECK:        %matmul.test.f32
+  ; CHECK:        custom_call_target="__onednn$matmul",
+  ; CHECK-SAME:       backend_config={
+  ; CHECK-SAME:           "outer_dimension_partitions":[],
+  ; CHECK-SAME:           "onednn_matmul_config":{
+  ; CHECK-SAME:               "weights_prepacked":true,"user_scratch":true
+  ; CHECK-SAME:           }
+  ; CHECK-SAME:       }
+  )");
+}
+
 TEST_F(MatmulTest, TestTransposeBNoRewriteF32) {
   const char* matmul_module_str = R"(
   HloModule matmul.test.f32, entry_computation_layout={(f32[384,1024]{1,0},f32[2,1024]{1,0})->f32[384,2]{1,0}}
