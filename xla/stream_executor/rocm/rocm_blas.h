@@ -38,6 +38,7 @@ limitations under the License.
 #if TF_HIPBLASLT
 #include "xla/stream_executor/rocm/hip_blas_lt.h"
 #endif
+#include "xla/stream_executor/stream_executor_internal.h"
 
 namespace stream_executor {
 
@@ -161,6 +162,21 @@ class ROCMBlas : public blas::BlasSupport {
     return ret.ok();
   }
 
+  absl::Status DoBlasGemmImpl(
+    Stream *stream, blas::Transpose transa, blas::Transpose transb, uint64_t m,
+    uint64_t n, uint64_t k, blas::DataType dtype, const void *alpha,
+    const DeviceMemoryBase &a, int lda, const DeviceMemoryBase &b, int ldb,
+    const void *beta, DeviceMemoryBase *c, int ldc,
+    const NumericOptions &numeric_options, blas::ProfileResult* result);
+  absl::Status DoBlasGemmStridedBatchedImpl(
+    Stream *stream, blas::Transpose transa, blas::Transpose transb,
+    uint64_t m, uint64_t n, uint64_t k, blas::DataType dtype,
+    const void *alpha, const DeviceMemoryBase &a, int lda, int64_t stride_a,
+    const DeviceMemoryBase &b, int ldb, int64_t stride_b, const void *beta,
+    DeviceMemoryBase *c, int ldc, int64_t stride_c, int batch_count,
+    const NumericOptions &numeric_options, blas::ProfileResult* result);
+
+
   // A helper function to implement DoBlasGemmBatched interfaces for generic
   // types.
   //
@@ -198,6 +214,9 @@ class ROCMBlas : public blas::BlasSupport {
 
   // container holding solutions vector (to avoid reallocating it each time)
   std::vector<rocblas_int> solutions_;
+
+  void MaybeLogGemmOp(internal::StreamExecutorInterface::GemmCallTrace::GemmType op,
+    bool profiling, NumericOptions numeric_options, uint64_t size1, uint64_t size2);
 
 #if TF_HIPBLASLT
   rocm::BlasLt blas_lt_;

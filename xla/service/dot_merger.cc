@@ -120,8 +120,7 @@ absl::StatusOr<HloInstruction*> TryMergeSameOperand(HloInstruction* a,
     return nullptr;
   }
 
-  if (!absl::c_equal(a->precision_config().operand_precision(),
-                     b->precision_config().operand_precision())) {
+  if (!equal_configs(a->precision_config(), b->precision_config())) {
     VLOG(3) << "Can't merge dots because they have mismatching operand "
                "precisions:\n"
             << "\t" << a->ToString() << "\n"

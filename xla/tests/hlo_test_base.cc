@@ -210,10 +210,7 @@ absl::StatusOr<bool> HloTestBase::RunHloPass(HloPassInterface&& hlo_pass,
 
 /* static */
 PrecisionConfig HloTestBase::DefaultPrecisionConfig(int operands) {
-  PrecisionConfig precision_config;
-  precision_config.mutable_operand_precision()->Resize(
-      operands, PrecisionConfig::DEFAULT);
-  return precision_config;
+  return PrecisionToPrecisionConfig(PrecisionConfig::DEFAULT, operands);
 }
 
 void HloTestBase::SetAotFastMathDebugOptions(DebugOptions* options) {

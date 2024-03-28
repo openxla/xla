@@ -117,9 +117,7 @@ TEST_F(AddressComputationFusionTest, CublasGemmSimple) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   })";
 
@@ -149,9 +147,7 @@ TEST_F(AddressComputationFusionTest, CublasGemmSimple) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   }
 
@@ -196,9 +192,7 @@ TEST_F(AddressComputationFusionTest, CublasGemmWithWorkspace) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   })";
 
@@ -228,9 +222,7 @@ TEST_F(AddressComputationFusionTest, CublasGemmWithWorkspace) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
     %get-tuple-element.0 = f16[8,8]{1,0} get-tuple-element(%custom-call.1), index=0
     %get-tuple-element.1 = s8[256]{0} get-tuple-element(%custom-call.1), index=1
@@ -278,9 +270,7 @@ TEST_F(AddressComputationFusionTest, ContiguousSlice) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   })";
 
@@ -310,9 +300,7 @@ TEST_F(AddressComputationFusionTest, ContiguousSlice) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   }
 
@@ -357,9 +345,7 @@ TEST_F(AddressComputationFusionTest, ContiguousSliceNonDefaultLayout) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   })";
 
@@ -389,9 +375,7 @@ TEST_F(AddressComputationFusionTest, ContiguousSliceNonDefaultLayout) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   }
 
@@ -434,9 +418,7 @@ TEST_F(AddressComputationFusionTest, OperandIsSlicedGetTupleElement) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"20000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.97 = f32[200,100]{1,0} get-tuple-element(%custom-call.16), index=0
@@ -457,9 +439,7 @@ TEST_F(AddressComputationFusionTest, OperandIsSlicedGetTupleElement) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
   })";
@@ -487,9 +467,7 @@ TEST_F(AddressComputationFusionTest, OperandIsSlicedGetTupleElement) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.221 = f32[100,100]{1,0} get-tuple-element(%cublas-gemm.23), index=0
@@ -518,9 +496,7 @@ TEST_F(AddressComputationFusionTest, OperandIsSlicedGetTupleElement) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"20000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.97 = f32[200,100]{1,0} get-tuple-element(%custom-call.16), index=0
@@ -568,9 +544,7 @@ TEST_F(AddressComputationFusionTest, ReversedOperandOrder) {
         "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
         "epilogue":"DEFAULT",
         "lhs_stride":"64",
-        "rhs_stride":"64",
-        "grad_x":false,
-        "grad_y":false
+        "rhs_stride":"64"
       }}
   })";
 
@@ -600,9 +574,7 @@ TEST_F(AddressComputationFusionTest, ReversedOperandOrder) {
           "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"64",
-          "rhs_stride":"64",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"64"
         }
       }
   }
@@ -652,9 +624,7 @@ TEST_F(AddressComputationFusionTest, SingleOperandComputation) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"20000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.97 = f32[200,100]{1,0} get-tuple-element(%custom-call.16), index=0
@@ -675,9 +645,7 @@ TEST_F(AddressComputationFusionTest, SingleOperandComputation) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
   })";
@@ -704,9 +672,7 @@ TEST_F(AddressComputationFusionTest, SingleOperandComputation) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.221 = f32[100,100]{1,0} get-tuple-element(%cublas-gemm.23), index=0
@@ -735,9 +701,7 @@ TEST_F(AddressComputationFusionTest, SingleOperandComputation) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"20000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element.97 = f32[200,100]{1,0} get-tuple-element(%custom-call.16), index=0
@@ -785,9 +749,7 @@ TEST_F(AddressComputationFusionTest, SlicedOperandAliasingOutput) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }}
   })";
 
@@ -815,9 +777,7 @@ TEST_F(AddressComputationFusionTest, SlicedOperandAliasingOutput) {
           "precision_config":{"operand_precision":["HIGHEST","HIGHEST"]},
           "epilogue":"DEFAULT",
           "lhs_stride":"10000",
-          "rhs_stride":"10000",
-          "grad_x":false,
-          "grad_y":false
+          "rhs_stride":"10000"
         }
       }
     %get-tuple-element = f32[100,100]{1,0} get-tuple-element(%cublas-gemm.0), index=0
