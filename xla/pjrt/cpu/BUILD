@@ -286,3 +286,33 @@ cc_library(
         "@tsl//tsl/platform:logging",
     ],
 )
+cc_library(
+    name = "mpi_collectives",
+    srcs = ["mpi_collectives.cc"],
+    hdrs = ["mpi_collectives.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:collective_ops_utils",
+        "//xla/service:global_device_id",
+        "//xla/service/cpu:collectives_interface",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@mpitrampoline",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
