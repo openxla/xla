@@ -73,6 +73,15 @@ class CudnnSupportUtilsTest : public HloTestBase {
     }
     return call;
   }
+
+  const se::GpuComputeCapability get_gpu_compute_capability() const {
+#ifdef GOOGLE_CUDA
+    return se::CudaComputeCapability{7, 5};
+#elif TENSORFLOW_USE_ROCM
+    return se::RocmComputeCapability{"gfx908"};
+#endif
+  }
+
 };
 
 TEST_F(CudnnSupportUtilsTest,
@@ -90,11 +99,7 @@ TEST_F(CudnnSupportUtilsTest,
                     .value();
 
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(conv,
                           GetCustomCall(module.get(), "__cudnn$convForward"));
 
@@ -168,11 +173,7 @@ TEST_F(CudnnSupportUtilsTest,
                        .value();
 
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(
       conv, GetCustomCall(moduleFwd.get(), "__cudnn$convForward"));
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(gpu_cc, *conv, 32),
@@ -229,11 +230,7 @@ TEST_F(CudnnSupportUtilsTest,
   })")
                            .value();
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(
       conv, GetCustomCall(moduleS8InOut.get(), "__cudnn$convForward"));
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(gpu_cc, *conv, 4),
@@ -293,11 +290,7 @@ TEST_F(CudnnSupportUtilsTest,
   })")
                     .value();
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(conv,
                           GetCustomCall(module.get(), "__cudnn$convForward"));
 
@@ -321,11 +314,7 @@ TEST_F(CudnnSupportUtilsTest,
   })")
                     .value();
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(conv,
                           GetCustomCall(module.get(), "__cudnn$convForward"));
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(gpu_cc, *conv, 4),
@@ -348,11 +337,7 @@ TEST_F(CudnnSupportUtilsTest,
   })")
                                      .value();
   HloCustomCallInstruction* conv;
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(conv, GetCustomCall(moduleFilterCoversInput.get(),
                                               "__cudnn$convForward"));
   EXPECT_THAT(CudnnSupportsOptimizedIntegerConvolution(gpu_cc, *conv, 4),

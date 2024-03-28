@@ -63,6 +63,16 @@ class CudnnVectorizeConvolutionsTest : public HloTestBase {
 
     return changed;
   }
+
+#ifdef GOOGLE_CUDA
+  const se::CudaComputeCapability get_gpu_compute_capability() const {
+    return se::CudaComputeCapability{7, 5};
+  }
+#elif TENSORFLOW_USE_ROCM
+  const se::RocmComputeCapability get_gpu_compute_capability() const {
+    return se::RocmComputeCapability{"gfx908"};
+  }
+#endif
 };
 
 TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo4) {
@@ -78,11 +88,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo4) {
                   backend_config="{bar: 0}"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -122,11 +128,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4UnsupportedFilterType) {
                   backend_config="{bar: 0}"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_FALSE(changed);
 }
@@ -143,11 +145,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo4NCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -181,11 +179,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, IncrementAllDnums) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -219,11 +213,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, FilterDnums) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -257,13 +247,12 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
+  auto gpu_cc = get_gpu_compute_capability();
 #ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
   CudnnVectorizeConvolutions pass(
       /*compute_capability=*/gpu_cc,
       /*cudnn_version=*/se::dnn::VersionInfo{8, 3, 0});
 #elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
   CudnnVectorizeConvolutions pass(gpu_cc);
 #endif
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
@@ -286,11 +275,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4IfOutputIsS32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_FALSE(changed);
@@ -310,11 +295,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, NoVectorizeTo4IfOutputIsF32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   SCOPED_TRACE(module->ToString());
   EXPECT_FALSE(changed);
@@ -332,11 +313,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeTo32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -388,11 +365,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, BiasAndSideInput) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -446,11 +419,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, InputNHWC_OutputNCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -542,11 +511,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -605,11 +570,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32NCHW) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -668,11 +629,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize4To32VectorDimFirst) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -752,11 +709,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, Vectorize16To32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
@@ -809,11 +762,7 @@ TEST_F(CudnnVectorizeConvolutionsTest, VectorizeMixedTo32) {
                   custom_call_target="__cudnn$convForward"
   })")
                     .value();
-#ifdef GOOGLE_CUDA
-  se::CudaComputeCapability gpu_cc{7, 5};
-#elif TENSORFLOW_USE_ROCM
-  se::RocmComputeCapability gpu_cc{"gfx908"};
-#endif
+  auto gpu_cc = get_gpu_compute_capability();
   TF_ASSERT_OK_AND_ASSIGN(bool changed, Run(gpu_cc, module.get()));
   EXPECT_TRUE(changed);
 
