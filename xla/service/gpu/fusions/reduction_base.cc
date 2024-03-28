@@ -69,14 +69,20 @@ int RowReductionGetRowsPerWarp(int reduced_dimension_size) {
 int GetVectorSize(const HloFusionAnalysis& analysis,
                   const ReductionDimensions& reduction_dimensions,
                   int num_threads, Vector3 reduction_tiling) {
-  if (!reduction_dimensions.is_row_reduction) {
+  if (MayPreventVectorization(analysis.fusion())) {
     return 1;
+  }
+
+  constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
+  if (!reduction_dimensions.is_row_reduction) {
+    // Check if the last dimension is divisible by (vector_size * num_threads).
+    auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
+    return num_kept_minor % (2 * num_threads) == 0 ? 2 : 1;
   }
 
   constexpr int kRowMinorReduced =
       ReductionDimensions::kRowMinorReducedDimension;
-  if (reduction_dimensions.dimensions[kRowMinorReduced] % 2 != 0 ||
-      MayPreventVectorization(analysis.fusion())) {
+  if (reduction_dimensions.dimensions[kRowMinorReduced] % 2 != 0) {
     return 1;
   }
 
@@ -99,6 +105,63 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
                : 1;
   }
   return 1;
+}
+
+std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
+    const HloFusionAnalysis& analysis, Vector3 reduction_dimensions,
+    Vector3 reduction_tiling, int64_t num_threads_y, int64_t num_threads_x,
+    int vector_size) {
+  constexpr int kColMajorKept = ReductionDimensions::kColMajorKeptDimension;
+  constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
+  constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
+  // Compute active core number by assuming each block occupy one sm core. It is
+  // a conservative but easy approach otherwise we should consider shared memory
+  // size. Due to column reduction always use 1024 as block size, the computed
+  // active core num has not much difference from the actual situation.
+  auto active_core_num = [&](int64_t tile_size) {
+    int64_t blocks_x = CeilOfRatio(reduction_dimensions[kColMinorKept],
+                                   num_threads_x * vector_size);
+    int64_t block_tile_y = num_threads_y * tile_size;
+    int64_t blocks_y =
+        CeilOfRatio(reduction_dimensions[kColReduced], block_tile_y);
+    int64_t blocks = reduction_dimensions[kColMajorKept] * blocks_x * blocks_y;
+    return blocks;
+  };
+
+  auto core_count = analysis.device_info().core_count();
+  constexpr int minimum_tile_size = 8;
+
+  // Early return if device occupancy is already high.
+  if (active_core_num(reduction_tiling[kColReduced]) >= core_count) {
+    return {reduction_tiling, vector_size, false};
+  }
+
+  auto roots = analysis.fusion().GetRoots();
+  for (auto [root, hero] : llvm::zip(roots, analysis.fusion_heroes())) {
+    // Only adjust tile_y if hero is reduction and output element type is F32.
+    // F32 atomic is fast so that we can ignore the extra atomic overhead
+    // by adjusting tile_y to increase the parallelism of the kernel.
+    if (hero->opcode() == HloOpcode::kReduce) {
+      if (hero != (&root.instruction()) ||
+          hero->shape().element_type() != F32) {
+        // If we can not adjust tile_y but active core number is small, reset
+        // vector size as 1.
+        return {reduction_tiling, 1, false};
+      }
+    }
+  }
+
+  auto actual_tile_size =
+      CeilOfRatio(reduction_dimensions[kColReduced], num_threads_y);
+  auto current_tile_size = actual_tile_size;
+  while (current_tile_size >= minimum_tile_size * 2) {
+    if (active_core_num(current_tile_size) >= core_count) break;
+    current_tile_size = current_tile_size / 2;
+  }
+  bool tile_size_decreased = current_tile_size != actual_tile_size;
+  reduction_tiling[kColReduced] = current_tile_size;
+  return {reduction_tiling, tile_size_decreased ? vector_size : 1,
+          tile_size_decreased};
 }
 
 ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis) {
@@ -286,13 +349,23 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
 
   int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_x,
                                   reduction_tiling);
+  bool tile_size_decreased = false;
+  if (!reduction_dimensions.is_row_reduction) {
+    // Adjust tile_y and vector size for column reduction if device occupancy is
+    // low.
+    std::tie(reduction_tiling, vector_size, tile_size_decreased) =
+        AdjustColReductionTilingConfig(analysis, shape, reduction_tiling,
+                                       num_threads_y, num_threads_x,
+                                       vector_size);
+  }
 
   absl::InlinedVector<int64_t, 4> num_threads{1, num_threads_y, num_threads_x};
   absl::InlinedVector<int64_t, 4> tiled_shape{shape[0], shape[1],
                                               shape[2] / vector_size};
   absl::InlinedVector<int64_t, 4> tile_per_thread{
       reduction_tiling[0], reduction_tiling[1],
-      reduction_tiling[2] / vector_size};
+      reduction_dimensions.is_row_reduction ? reduction_tiling[2] / vector_size
+                                            : reduction_tiling[2]};
   if (rows_per_warp > 1) {
     // If we produce more than one element per thread, that means the reduced
     // dimension is small and it can't be tiled - we already have more threads
@@ -301,7 +374,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
     // uses the thread ID as the coordinate.
     tile_per_thread[2] = 1;
   }
-  if (vector_size != 1) {
+  if (!reduction_dimensions.is_row_reduction || vector_size != 1) {
     num_threads.push_back(1);  // The vector dimension is a loop.
     tiled_shape.push_back(vector_size);
     tile_per_thread.push_back(vector_size);
@@ -311,6 +384,8 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
                 /*loops_to_unroll=*/{false, false, true, false});
   bool reduction_is_race_free = ReductionIsRaceFree(
       hero_reduction->GetModule()->config(), reduction_dimensions);
+  // If tile_y is decreased, reduction is not race free.
+  reduction_is_race_free = reduction_is_race_free && !tile_size_decreased;
   return ReductionInfo(analysis, tiling, reduction_dimensions.is_row_reduction,
                        reduction_is_race_free,
                        GroupDisjointReductions(analysis), hero_reduction);
