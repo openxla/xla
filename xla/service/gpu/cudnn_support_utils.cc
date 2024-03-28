@@ -50,7 +50,7 @@ absl::StatusOr<bool> CudnnSupportsOptimizedIntegerConvolution(
   }
 
   bool disabled = std::visit(VariantVisitor{
-      [vector_size](const se::CudaComputeCapability& cc) {
+      [&](const se::CudaComputeCapability& cc) {
        // Require cc6.1+ for any vectorized integer convolutions
        // Require cc7.5+ for any IMMA convolutions
         return (vector_size == 32 && !cc.IsAtLeast(7, 5)) || !cc.IsAtLeast(6, 1);

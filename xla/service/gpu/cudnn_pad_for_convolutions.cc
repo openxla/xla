@@ -525,7 +525,7 @@ absl::StatusOr<bool> CudnnPadForConvolutions::Run(
       }
       changed |= local_changed;
     }
-    bool isVOLTA = std::visit(VariantVisitor{
+    bool isVolta = std::visit(VariantVisitor{
         [](const se::CudaComputeCapability& cc) {
           return cc.IsAtLeast(se::CudaComputeCapability::VOLTA);
         },
@@ -534,7 +534,7 @@ absl::StatusOr<bool> CudnnPadForConvolutions::Run(
         }},
         compute_capability_);
 
-    if (isVOLTA) {
+    if (isVolta) {
       for (HloCustomCallInstruction* conv : GetRelevantConvs(comp)) {
         TF_ASSIGN_OR_RETURN(
             bool local_changed,
