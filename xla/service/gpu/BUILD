@@ -160,7 +160,8 @@ cc_library(
 xla_cc_test(
     name = "custom_call_test",
     srcs = if_gpu_is_configured(["custom_call_test.cc"]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + 
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:debug_options_flags",
