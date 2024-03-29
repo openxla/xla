@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -23,6 +24,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "tsl/platform/logging.h"
 
 namespace stream_executor {
@@ -33,31 +35,22 @@ KernelLoaderSpec::KernelLoaderSpec(absl::string_view kernel_name)
 InProcessSymbol::InProcessSymbol(void *symbol, std::string kernel_name)
     : KernelLoaderSpec(std::move(kernel_name)), symbol_(symbol) {}
 
-CudaCubinInMemory::CudaCubinInMemory(const char *bytes,
+CudaCubinInMemory::CudaCubinInMemory(absl::Span<const uint8_t> cubin_bytes,
                                      absl::string_view kernel_name)
-    : KernelLoaderSpec(kernel_name), bytes_(bytes) {}
-
-static bool CompareComputeCapability(const std::tuple<int, int> &lhs,
-                                     const std::tuple<int, int> &rhs) {
-  return std::get<0>(lhs) < std::get<0>(rhs) ||
-         (std::get<0>(lhs) == std::get<0>(rhs) &&
-          std::get<1>(lhs) < std::get<1>(rhs));
-}
+    : KernelLoaderSpec(kernel_name), cubin_bytes_(cubin_bytes) {}
 
 const std::tuple<int, int> CudaPtxInMemory::kMinimumCapability{1, 0};
 
 CudaPtxInMemory::CudaPtxInMemory(absl::string_view ptx,
                                  absl::string_view kernel_name)
-    : KernelLoaderSpec(kernel_name),
-      ptx_by_compute_capability_(CompareComputeCapability) {
+    : KernelLoaderSpec(kernel_name) {
   ptx_by_compute_capability_[kMinimumCapability] = ptx.data();
 }
 
 CudaPtxInMemory::CudaPtxInMemory(
     const std::initializer_list<CudaPtxInMemory::PtxSpec> &spec_list,
     absl::string_view kernel_name)
-    : KernelLoaderSpec(kernel_name),
-      ptx_by_compute_capability_(CompareComputeCapability) {
+    : KernelLoaderSpec(kernel_name) {
   for (const auto &spec : spec_list) {
     int major, minor;
     absl::string_view ptx;
@@ -65,6 +58,15 @@ CudaPtxInMemory::CudaPtxInMemory(
     ptx_by_compute_capability_[std::tuple<int, int>{major, minor}] = ptx.data();
   }
 }
+
+LlvmHostKernel::LlvmHostKernel(absl::string_view ir,
+                               absl::string_view entrypoint,
+                               absl::string_view kernel_name,
+                               absl::Span<std::string> options)
+    : KernelLoaderSpec(std::move(kernel_name)),
+      ir_(ir),
+      entrypoint_(entrypoint),
+      options_(options.cbegin(), options.cend()) {}
 
 const char *CudaPtxInMemory::default_text() const {
   if (ptx_by_compute_capability_.empty()) {
@@ -91,14 +93,14 @@ MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddInProcessSymbol(
     void *symbol, absl::string_view kernel_name) {
   CHECK(in_process_symbol_ == nullptr);
   in_process_symbol_ =
-      std::make_unique<InProcessSymbol>(symbol, std::string(kernel_name));
+      std::make_shared<InProcessSymbol>(symbol, std::string(kernel_name));
   return this;
 }
 
 MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaCubinInMemory(
-    const char *bytes, absl::string_view kernel_name) {
+    absl::Span<const uint8_t> cubin_bytes, absl::string_view kernel_name) {
   CHECK(cuda_cubin_in_memory_ == nullptr);
-  cuda_cubin_in_memory_.reset(new CudaCubinInMemory{bytes, kernel_name});
+  cuda_cubin_in_memory_.reset(new CudaCubinInMemory{cubin_bytes, kernel_name});
   return this;
 }
 
@@ -106,6 +108,15 @@ MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddCudaPtxInMemory(
     absl::string_view ptx, absl::string_view kernel_name) {
   CHECK(cuda_ptx_in_memory_ == nullptr);
   cuda_ptx_in_memory_.reset(new CudaPtxInMemory{ptx, kernel_name});
+  return this;
+}
+
+MultiKernelLoaderSpec *MultiKernelLoaderSpec::AddLlvmHostKernel(
+    absl::string_view ir, absl::string_view entrypoint,
+    absl::string_view kernel_name, absl::Span<std::string> options) {
+  CHECK(llvm_host_kernel_ == nullptr);
+  llvm_host_kernel_ =
+      std::make_shared<LlvmHostKernel>(ir, entrypoint, kernel_name, options);
   return this;
 }
 

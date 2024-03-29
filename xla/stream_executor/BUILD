@@ -1,10 +1,10 @@
-load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends", "stream_executor_internal")
 load("@tsl//tsl:tsl.bzl", "internal_visibility", "transitive_hdrs")
 load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends", "stream_executor_internal")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -61,7 +61,6 @@ filegroup(
         "device_description.h",
         "device_memory.h",
         "device_memory_allocator.h",
-        "device_options.h",
         "event.h",
         "executor_cache.h",
         "host_memory_allocation.h",
@@ -70,7 +69,6 @@ filegroup(
         "launch_dim.h",
         "memory_allocation.h",
         "module_spec.h",
-        "multi_platform_manager.h",
         "numeric_options.h",
         "platform.h",
         "platform_manager.h",
@@ -98,7 +96,6 @@ filegroup(
 STREAM_EXECUTOR_DEPENDENCIES = [
     ":device_description_proto_cc",
     ":host_or_device_scalar",
-    ":multi_platform_manager",
     "@com_google_absl//absl/algorithm:container",
     "@com_google_absl//absl/base:core_headers",
     "@com_google_absl//absl/container:inlined_vector",
@@ -206,15 +203,6 @@ cc_library(
 )
 
 cc_library(
-    name = "device_options",
-    hdrs = ["device_options.h"],
-    deps = [
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-cc_library(
     name = "host_memory_allocation",
     srcs = ["host_memory_allocation.cc"],
     hdrs = ["host_memory_allocation.h"],
@@ -263,15 +251,6 @@ cc_library(
     ],
 )
 
-# TODO(hebecker): Remove compatibility target when all users have been migrated to :platform_manager
-cc_library(
-    name = "multi_platform_manager",
-    hdrs = ["multi_platform_manager.h"],
-    deprecation = "The type MultiPlatformManager is being renamed to PlatformManager. " +
-                  "Use target :platform_manager instead.",
-    deps = [":platform_manager"],
-)
-
 cc_library(
     name = "numeric_options",
     hdrs = ["numeric_options.h"],
@@ -283,7 +262,6 @@ cc_library(
     hdrs = ["platform.h"],
     deps = [
         ":device_description",
-        ":device_options",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
     ],
@@ -512,6 +490,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -587,6 +566,7 @@ cc_library(
         ":platform",
         ":stream_executor_headers",
         ":stream_executor_internal",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
@@ -603,7 +583,6 @@ cc_library(
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/util:env_var",
     ],
 )
 

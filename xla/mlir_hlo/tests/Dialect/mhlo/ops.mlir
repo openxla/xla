@@ -1496,7 +1496,7 @@ func.func @concatenate_c4(%arg0: tensor<1xi32>, %arg1: tensor<2xi32>)  -> tensor
 
 func.func @concatenate_c6(%arg0: tensor<1x3xi32>, %arg1: tensor<2x2xi32>)  -> tensor<3x3xi32> {
   // @expected-error@+2 {{'mhlo.concatenate' op failed to infer returned types}}
-  // expected-error@+1 {{shapes of operand (0) and (1) do not match at non-concat index: (1, 3) != (2, 2) at non-concat index 1}}
+  // expected-error@+1 {{shapes of operand (0) and (1) are not compatible at non-concat index 1: (1, 3) != (2, 2)}}
   %0 = "mhlo.concatenate"(%arg0, %arg1) { dimension = 0 : i64 } : (tensor<1x3xi32>, tensor<2x2xi32>) -> tensor<3x3xi32>
   func.return %0 : tensor<3x3xi32>
 }
@@ -3385,6 +3385,70 @@ func.func @dot_general_three_element_precision_config(%arg0: tensor<2x3x4xf32>, 
     precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]
   } : (tensor<2x3x4xf32>, tensor<2x3x5xf32>) -> tensor<2x4x5xf32>
   func.return %0 : tensor<2x4x5xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func @sparse_dot
+func.func @sparse_dot(%arg0: tensor<2x16xf32>, %arg1: tensor<32x2xf32>, %meta: tensor<2x2xi16>) -> tensor<2x2xf32> {
+  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
+    lhs_sparsity = #mhlo.sparsity<dimension = 1, n = 2, m = 4>,
+    dot_dimension_numbers = #mhlo.dot<
+      lhs_batching_dimensions = [],
+      rhs_batching_dimensions = [],
+      lhs_contracting_dimensions = [1],
+      rhs_contracting_dimensions = [0]
+    >
+  } : (tensor<2x16xf32>, tensor<32x2xf32>, tensor<2x2xi16>) -> tensor<2x2xf32>
+  func.return %0 : tensor<2x2xf32>
+}
+
+// -----
+
+func.func @sparse_dot_incorrect_dimension(%arg0: tensor<2x16xf32>, %arg1: tensor<32x2xf32>, %meta: tensor<2x2xi16>) -> tensor<2x2xf32> {
+  // expected-error@+1 {{sparsity dimension is incorrect}}
+  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
+    lhs_sparsity = #mhlo.sparsity<dimension = 2, n = 2, m = 4>,
+    dot_dimension_numbers = #mhlo.dot<
+      lhs_batching_dimensions = [],
+      rhs_batching_dimensions = [],
+      lhs_contracting_dimensions = [1],
+      rhs_contracting_dimensions = [0]
+    >
+  } : (tensor<2x16xf32>, tensor<32x2xf32>, tensor<2x2xi16>) -> tensor<2x2xf32>
+  func.return %0 : tensor<2x2xf32>
+}
+
+// -----
+
+func.func @sparse_dot_incorrect_dimension(%arg0: tensor<2x16xf32>, %arg1: tensor<32x2xf32>, %meta: tensor<2x2xi16>) -> tensor<2x2xf32> {
+  // expected-error@+1 {{only 2:4 sparsity is supported}}
+  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
+    lhs_sparsity = #mhlo.sparsity<dimension = 1, n = 1, m = 4>,
+    dot_dimension_numbers = #mhlo.dot<
+      lhs_batching_dimensions = [],
+      rhs_batching_dimensions = [],
+      lhs_contracting_dimensions = [1],
+      rhs_contracting_dimensions = [0]
+    >
+  } : (tensor<2x16xf32>, tensor<32x2xf32>, tensor<2x2xi16>) -> tensor<2x2xf32>
+  func.return %0 : tensor<2x2xf32>
+}
+
+// -----
+
+func.func @sparse_dot(%arg0: tensor<2x32xf32>, %arg1: tensor<32x2xf32>, %meta: tensor<2x2xi16>) -> tensor<2x2xf32> {
+  // expected-error@+1 {{contracting dimension sizes must match for lhs/rhs}}
+  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
+    lhs_sparsity = #mhlo.sparsity<dimension = 1, n = 2, m = 4>,
+    dot_dimension_numbers = #mhlo.dot<
+      lhs_batching_dimensions = [],
+      rhs_batching_dimensions = [],
+      lhs_contracting_dimensions = [1],
+      rhs_contracting_dimensions = [0]
+    >
+  } : (tensor<2x32xf32>, tensor<32x2xf32>, tensor<2x2xi16>) -> tensor<2x2xf32>
+  func.return %0 : tensor<2x2xf32>
 }
 
 // -----
@@ -5783,16 +5847,10 @@ func.func @is_compatible_dynamism_dim_mismatch(%arg0: tensor<1x?xf32>) {
 
 // -----
 
-// TODO(b/230263270): For mhlo.add, the plan is to only allow fp+fp=fp, q+q=q and q+q=fp.
 func.func @is_compatible_quant_mix_non_quant(%arg0: tensor<1xf32>, %arg1: tensor<1x!quant.uniform<i8:f32, 1.0:17>>) {
   %0 = "mhlo.add"(%arg0, %arg0) : (tensor<1xf32>, tensor<1xf32>) -> tensor<1xf32>
-  %1 = "mhlo.add"(%arg0, %arg0) : (tensor<1xf32>, tensor<1xf32>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
-  %2 = "mhlo.add"(%arg0, %arg1) : (tensor<1xf32>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
-  %3 = "mhlo.add"(%arg0, %arg1) : (tensor<1xf32>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
-  %4 = "mhlo.add"(%arg1, %arg0) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1xf32>) -> tensor<1xf32>
-  %5 = "mhlo.add"(%arg1, %arg0) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1xf32>) -> tensor<1xf32>
-  %6 = "mhlo.add"(%arg1, %arg1) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
-  %7 = "mhlo.add"(%arg1, %arg1) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
+  %1 = "mhlo.add"(%arg1, %arg1) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
+  %2 = "mhlo.add"(%arg1, %arg1) : (tensor<1x!quant.uniform<i8:f32, 1.0:17>>, tensor<1x!quant.uniform<i8:f32, 1.0:17>>) -> tensor<1x!quant.uniform<i8:f32, 1.0:17>>
   func.return
 }
 
@@ -6364,4 +6422,163 @@ func.func @topk_last_dimension_at_least_k(%arg0 : tensor<4xf32>) {
   // expected-error@+1 {{operand's last dimension must be at least 8}}
   %0:2 = mhlo.topk(%arg0, k=8, largest=true) : tensor<4xf32> -> (tensor<8xf32>, tensor<8xi32>)
   return
+}
+
+// -----
+
+func.func @first(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<f32> {
+  func.return %arg0 : tensor<f32>
+}
+
+func.func @composite_generic(%arg0: tensor<f32>, %arg1: tensor<f32>) {
+  %0 = "mhlo.composite"(%arg0, %arg1) {
+    name = "mhlo.first",
+    decomposition = @first,
+    version = 1 : i32,
+    composite_attributes = {
+      an_attribute = "foo"
+    }
+  } : (tensor<f32>, tensor<f32>) -> tensor<f32>
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "foo" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "." { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "foo." { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite ".foo" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "0.foo" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "foo.%" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // @expected-error@+1 {{name must be a valid namespaced op name}}
+  mhlo.composite "foo.foo.%" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @foo() { func.return }
+func.func @composite_c1() {
+  // valid name
+  mhlo.composite "f00._.$" { decomposition = @foo } : () -> ()
+  func.return
+}
+
+// -----
+
+func.func @composite_c2(%arg0: tensor<f32>) {
+  // @expected-error@+1 {{'nonexistent' does not reference a valid function}}
+  %0 = mhlo.composite "mhlo.nonexistent" %arg0 {
+    decomposition = @nonexistent
+  } : (tensor<f32>) -> tensor<f32>
+  func.return
+}
+
+// -----
+
+func.func @foo() -> !mhlo.token {
+  %0 = mhlo.create_token : !mhlo.token
+  func.return %0 : !mhlo.token
+}
+
+func.func @composite_c3(%arg0: tensor<f32>) {
+  // @expected-error@+1 {{has 1 operand(s), but decomposition has 0}}
+  %0 = mhlo.composite "mhlo.identity" %arg0 {
+    decomposition = @foo
+  } : (tensor<f32>) -> !mhlo.token
+  func.return
+}
+
+// -----
+
+func.func @foo(%arg0: tensor<f64>) -> !mhlo.token {
+  %0 = mhlo.create_token : !mhlo.token
+  func.return %0 : !mhlo.token
+}
+
+func.func @composite_c3(%arg0: tensor<f32>) {
+  // @expected-error@+1 {{operand at index 0 has type 'tensor<f32>', but decomposition has type 'tensor<f64>'}}
+  %0 = mhlo.composite "mhlo.identity" %arg0 {
+    decomposition = @foo
+  } : (tensor<f32>) -> !mhlo.token
+  func.return
+}
+
+// -----
+
+func.func @foo(%arg0: !mhlo.token) {
+  func.return
+}
+
+func.func @composite_c4(%arg0: !mhlo.token) {
+  // @expected-error@+1 {{has 1 result(s), but decomposition has 0}}
+  %0 = mhlo.composite "mhlo.identity" %arg0 {
+    decomposition = @foo
+  } : (!mhlo.token) -> tensor<f32>
+  func.return
+}
+
+// -----
+
+func.func @foo(%arg0: !mhlo.token) -> tensor<f64> {
+  %0 = mhlo.constant dense<0.> : tensor<f64>
+  func.return %0 : tensor<f64>
+}
+
+func.func @composite_c4(%arg0: !mhlo.token) {
+  // @expected-error@+1 {{result at index 0 has type 'tensor<f32>', but decomposition has type 'tensor<f64>'}}
+  %0 = mhlo.composite "mhlo.identity" %arg0 {
+    decomposition = @foo
+  } : (!mhlo.token) -> tensor<f32>
+  func.return
 }

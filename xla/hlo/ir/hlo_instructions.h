@@ -449,9 +449,9 @@ class HloCholeskyInstruction : public HloInstruction {
 
 // Class that represents instructions that synchronize and transfer data between
 // partitioned devices. Send/Recv and collective instructions (AllReduce,
-// AllToAll, CollectivePermute) belong to this instruction type. A group of
-// instructions (of the same opcode) with the same channel_id communicate during
-// execution.
+// AllToAll, CollectivePermute, CollectiveBroadcast) belong to this instruction
+// type. A group of instructions (of the same opcode) with the same channel_id
+// communicate during execution.
 class HloChannelInstruction : public HloInstruction {
  public:
   // Returns the channel id associated with the instruction. The id is
@@ -579,7 +579,8 @@ class HloSendDoneInstruction : public HloSendRecvInstruction {
  public:
   explicit HloSendDoneInstruction(HloSendInstruction* operand,
                                   bool is_host_transfer);
-
+  explicit HloSendDoneInstruction(HloInstruction* operand, int64_t channel_id,
+                                  bool is_host_transfer);
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kSendDone;
   }
@@ -849,6 +850,28 @@ class HloAllToAllInstruction : public HloCollectiveInstruction {
   std::optional<int64_t> split_dimension_;
 };
 
+class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
+ public:
+  explicit HloCollectiveBroadcastInstruction(
+      HloOpcode opcode, const Shape& shape,
+      absl::Span<HloInstruction* const> operands,
+      absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
+      const std::optional<int64_t>& channel_id);
+
+  // Returns a serialized representation of this instruction.
+  HloInstructionProto ToProto() const override;
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kCollectiveBroadcast;
+  }
+
+ private:
+  // Implementation for non-common logic of CloneWithNewOperands.
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+};
+
 class HloCollectivePermuteInstruction : public HloChannelInstruction {
  public:
   explicit HloCollectivePermuteInstruction(
@@ -904,6 +927,7 @@ inline bool HloAllReduceInstructionBase::ClassOf(const HloInstruction* hlo) {
 
 inline bool HloCollectiveInstruction::ClassOf(const HloInstruction* hlo) {
   return HloAllReduceInstructionBase::ClassOf(hlo) ||
+         HloCollectiveBroadcastInstruction::ClassOf(hlo) ||
          HloAllGatherInstruction::ClassOf(hlo) ||
          HloAllToAllInstruction::ClassOf(hlo);
 }
@@ -2190,6 +2214,8 @@ class HloDynamicUpdateSliceInstruction : public HloDynamicIndexInstruction {
       absl::Span<HloInstruction* const> start_indices);
 
   int64_t first_index_operand_number() const override { return 2; }
+
+  const HloInstruction* update() const { return operand(1); }
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kDynamicUpdateSlice;

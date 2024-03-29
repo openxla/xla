@@ -174,55 +174,10 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
  add_subdirectory(integrations)
  add_subdirectory(reference)
  add_subdirectory(tests)
-diff --ruN a/stablehlo/stablehlo/dialect/AssemblyFormat.cpp b/stablehlo/stablehlo/dialect/AssemblyFormat.cpp
---- stablehlo/stablehlo/dialect/AssemblyFormat.cpp
-+++ stablehlo/stablehlo/dialect/AssemblyFormat.cpp
-@@ -465,10 +465,10 @@
-   if (failed(innerOpNameInfo)) return failure();
- 
-   StringRef innerOpName = innerOpNameInfo->getStringRef();
--  Dialect* innerOpDialect = innerOpNameInfo->getDialect();
-   StringRef reduceOpDialect = result.name.getDialectNamespace();
-   LLVM_DEBUG(llvm::dbgs() << "Reduce: " << reduceOpDialect << "\n");
--  LLVM_DEBUG(llvm::dbgs() << "Inner: " << innerOpDialect->getNamespace()
-+  LLVM_DEBUG(llvm::dbgs() << "Inner: "
-+                          << innerOpNameInfo->getDialect()->getNamespace()
-                           << "\n");
-   if (!isCommutativeNoRegionMatchingDialect(*innerOpNameInfo, reduceOpDialect))
-     return parser.emitError(
-diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.td b/stablehlo/stablehlo/dialect/StablehloOps.td
---- stablehlo/stablehlo/dialect/StablehloOps.td
-+++ stablehlo/stablehlo/dialect/StablehloOps.td
-@@ -1895,14 +1895,14 @@
-     must be disjoint and they must be a subset of the operand's dimensions.
-   }];
-   let arguments = (ins
--    HLO_Tensor:$operand,
-+    HLO_TensorOrPerAxisQuantizedTensor:$operand,
-     HLO_StaticDimensionTensor:$output_dimensions,
-     DenseI64ArrayAttr:$broadcast_dimensions,
-     OptionalAttr<DenseI64ArrayAttr>:$known_expanding_dimensions,
-     OptionalAttr<DenseI64ArrayAttr>:$known_nonexpanding_dimensions
-   );
- 
--  let results = (outs HLO_Tensor);
-+  let results = (outs HLO_TensorOrPerAxisQuantizedTensor);
- 
-   let builders = [
-       OpBuilder<(ins
-@@ -2413,7 +2413,7 @@
-     ```
-   }];
-   let arguments = (ins
--    HLO_Tensor:$operand, /*get_dimension_size_i1*/
-+    HLO_TensorOrPerAxisQuantizedTensor:$operand, /*get_dimension_size_i1*/
-     I64Attr:$dimension /*get_dimension_size_i2*/
-   );
-   // TODO(hinsu): Allow 64-bit result types once XLA HLO dialect based on the
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,116 @@
 +# Copyright 2023 The StableHLO Authors. All Rights Reserved.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -296,6 +251,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/
 +        "transforms/ChloRecomposeOps.cpp",
 +        "transforms/StablehloCanonicalizeDynamism.cpp",
 +        "transforms/StablehloRefineShapes.cpp",
++        "transforms/StablehloTrivialDce.cpp",
 +    ],
 +    hdrs = [
 +        "transforms/Passes.h",
@@ -1948,7 +1904,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/tools/StablehloOptMain.cpp b/stabl
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
 --- stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
 +++ stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,41 @@
 +# Copyright 2023 The StableHLO Authors.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -1972,6 +1928,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stable
 +  ChloRecomposeOps.cpp
 +  StablehloCanonicalizeDynamism.cpp
 +  StablehloRefineShapes.cpp
++  StablehloTrivialDce.cpp
 +
 +  DEPENDS
 +  ExperimentalPassesIncGen
@@ -1992,7 +1949,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stable
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 --- stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 +++ stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,178 @@
 +/* Copyright 2024 The StableHLO Authors.
 +Licensed under the Apache License, Version 2.0 (the "License");
 +you may not use this file except in compliance with the License.
@@ -2015,12 +1972,14 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +#include "mlir/IR/Attributes.h"
 +#include "mlir/IR/BuiltinAttributes.h"
 +#include "mlir/IR/PatternMatch.h"
++#include "mlir/Pass/PassManager.h"
 +#include "mlir/Support/LogicalResult.h"
 +#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 +#include "stablehlo/dialect/ChloOps.h"
 +#include "stablehlo/dialect/StablehloOps.h"
 +#include "stablehlo/experimental/dialect/StablehloOps.h"
 +#include "stablehlo/experimental/transforms/Passes.h"
++#include "stablehlo/transforms/Passes.h"
 +
 +namespace mlir {
 +namespace stablehlo {
@@ -2158,13 +2117,21 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +  }
 +};
 +
++void createChloLegalizeToStablehloPipeline(OpPassManager& pm) {
++  pm.addPass(mlir::stablehlo::experimental::createChloRecomposeOpsPass());
++  pm.addNestedPass<mlir::func::FuncOp>(
++      mlir::stablehlo::createChloLegalizeToStablehloPass());
++  pm.addNestedPass<mlir::func::FuncOp>(
++      mlir::stablehlo::createShapeLegalizeToStablehloPass());
++}
++
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/stablehlo/experimental/transforms/Passes.h
 --- stablehlo/stablehlo/experimental/transforms/Passes.h
 +++ stablehlo/stablehlo/experimental/transforms/Passes.h
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,38 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -2196,6 +2163,8 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/st
 +#define GEN_PASS_REGISTRATION
 +#include "stablehlo/experimental/transforms/Passes.h.inc"
 +
++void createChloLegalizeToStablehloPipeline(OpPassManager &pm);
++
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
@@ -2204,7 +2173,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/st
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.td b/stablehlo/stablehlo/experimental/transforms/Passes.td
 --- stablehlo/stablehlo/experimental/transforms/Passes.td
 +++ stablehlo/stablehlo/experimental/transforms/Passes.td
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,55 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -2243,6 +2212,22 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.td b/stablehlo/s
 +    Experimental version of CHLO serialization support.
 +  }];
 +  let dependentDialects = ["chlo::ChloDialect"];
++}
++
++def StablehloTrivialDcePass : Pass<"experimental-stablehlo-trivial-dce", "ModuleOp"> {
++  let summary = "(Experimental) Performs a single bottom up pass to remove values that are trivially dead.";
++  let description = [{
++    An experimental pass to remove dead values prior to running other passes
++    that may fail to converge otherwise. For example, running shape refinement
++    on a program that has a lot of dead values can fail because shape refinement
++    is top down and removing values causes a new iteration to be triggered, and
++    removing all the dead values with a top down traversal can take a lot of
++    iterations (10+), which is slow.
++
++    Performing a single pass should be fast, and doing it bottom up means that
++    values that are transitively dead can be removed since leaf values will be
++    processed first.
++  }];
 +}
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
 --- stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
@@ -2593,61 +2578,71 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
-diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
---- stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
-+++ stablehlo/stablehlo/transforms/StablehloLegalizeToVhlo.cpp
-@@ -828,12 +828,12 @@
-     // additional argument for the generic builder.
-     StablehloToVhloOp<StablehloOpTy> vhloOp;
-     if constexpr (std::is_same<StablehloOpTy, stablehlo::CaseOp>::value) {
--      vhloOp = rewriter.replaceOpWithNewOp<vhlo::CaseOpV1>(
--          stablehloOp, vhloTypes, vhloOperands, vhloAttrs,
-+      vhloOp = rewriter.create<vhlo::CaseOpV1>(
-+          stablehloOp.getLoc(), vhloTypes, vhloOperands, vhloAttrs,
-           stablehloOp.getBranches().size());
-     } else {
--      vhloOp = rewriter.replaceOpWithNewOp<StablehloToVhloOp<StablehloOpTy>>(
--          stablehloOp, vhloTypes, vhloOperands, vhloAttrs);
-+      vhloOp = rewriter.create<StablehloToVhloOp<StablehloOpTy>>(
-+          stablehloOp.getLoc(), vhloTypes, vhloOperands, vhloAttrs);
-     }
- 
-     for (auto [stablehloRegion, vhloRegion] :
-@@ -845,6 +845,7 @@
-                                              /*entryConversion=*/nullptr)))
-         return failure();
-     }
-+    rewriter.replaceOp(stablehloOp, vhloOp);
-     return success();
-   }
- };
-diff --ruN a/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
---- stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
-+++ stablehlo/stablehlo/transforms/VhloLegalizeToStablehlo.cpp
-@@ -837,12 +837,12 @@
-     // additional argument for the generic builder.
-     VhloToStablehloOp<VhloOpTy> stablehloOp;
-     if constexpr (std::is_same<VhloOpTy, vhlo::CaseOpV1>::value) {
--      stablehloOp = rewriter.replaceOpWithNewOp<stablehlo::CaseOp>(
--          vhloOp, stablehloTypes, stablehloOperands, stablehloAttrs,
-+      stablehloOp = rewriter.create<stablehlo::CaseOp>(
-+          vhloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs,
-           vhloOp.getBranches().size());
-     } else {
--      stablehloOp = rewriter.replaceOpWithNewOp<VhloToStablehloOp<VhloOpTy>>(
--          vhloOp, stablehloTypes, stablehloOperands, stablehloAttrs);
-+      stablehloOp = rewriter.create<VhloToStablehloOp<VhloOpTy>>(
-+          vhloOp.getLoc(), stablehloTypes, stablehloOperands, stablehloAttrs);
-     }
- 
-     for (auto [vhloRegion, stablehloRegion] :
-@@ -854,6 +854,8 @@
-                                              /*entryConversion=*/nullptr)))
-         return failure();
-     }
+diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp b/stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
+--- stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
++++ stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
+@@ -0,0 +1,63 @@
++/* Copyright 2022 The StableHLO Authors.
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
 +
-+    rewriter.replaceOp(vhloOp, stablehloOp);
-     return success();
-   }
- };
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++==============================================================================*/
++
++#include <cstdint>
++
++#include "llvm/ADT/SmallVector.h"
++#include "mlir/Dialect/Func/IR/FuncOps.h"
++#include "mlir/IR/PatternMatch.h"
++#include "mlir/Support/LogicalResult.h"
++#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
++#include "stablehlo/experimental/transforms/Passes.h"
++
++namespace mlir {
++namespace stablehlo {
++namespace experimental {
++
++#define GEN_PASS_DEF_STABLEHLOTRIVIALDCEPASS
++#include "stablehlo/experimental/transforms/Passes.h.inc"
++
++namespace {
++
++struct StablehloTrivialDcePass
++    : public impl::StablehloTrivialDcePassBase<StablehloTrivialDcePass> {
++  using StablehloTrivialDcePassBase::StablehloTrivialDcePassBase;
++
++  void runOnOperation() override {
++    GreedyRewriteConfig config;
++
++    // Hardcode defaults for stability.
++    config.enableRegionSimplification = true;
++    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
++    config.strictMode = GreedyRewriteStrictness::AnyOp;
++
++    // Run a single bottom up pass.
++    config.useTopDownTraversal = false;
++    config.maxIterations = 1;
++
++    // Running a greedy rewrite will cause trivially dead values to be removed.
++    // Doing it without patterns ensures that no other changes are made to the
++    // IR. Doing it bottom-up ensures that values that are transitively dead are
++    // also removed. Although 1 pass should be enough,
++    // applyPatternsAndFoldGreedily will want to run at least 1 more iteration
++    // to confirm convergence, but we don't need to check for convergence, so we
++    // ignore the return value.
++    (void)applyPatternsAndFoldGreedily(getOperation(), RewritePatternSet(&getContext()), config);
++  }
++};
++
++}  // namespace
++}  // namespace experimental
++}  // namespace stablehlo
++}  // namespace mlir
 

@@ -431,8 +431,7 @@ XLA_ShapeIndex ToC(const xla::ShapeIndex& xla_shape) {
 }
 
 xla::ShapeIndex FromC(XLA_ShapeIndex* c_shape) {
-  return xla::ShapeIndex(&c_shape->indices[0],
-                         &c_shape->indices[c_shape->count]);
+  return xla::ShapeIndex(c_shape->indices, c_shape->indices + c_shape->count);
 }
 
 void ToC(const xla::LiteralSlice& literal, XLA_Literal* c_literal) {
@@ -500,7 +499,7 @@ XLA_HloModule ToC(const xla::HloModule& module) {
   return c_module;
 }
 
-xla::StatusOr<std::unique_ptr<xla::HloModule>> FromC(
+absl::StatusOr<std::unique_ptr<xla::HloModule>> FromC(
     const XLA_HloModule& c_module) {
   xla::HloModuleProto module_proto =
       stream_executor::tpu::DeserializeProto<xla::HloModuleProto>(
@@ -591,13 +590,12 @@ xla::HloModuleConfig FromC(const XLA_HloModuleConfig& c_config) {
       MakeSpan(c_config.allow_spmd_sharding_propagation_to_output));
   absl::Span<const int64_t> mesh_shape_span =
       MakeSpan(c_config.auto_spmd_partitioning_mesh_shape);
-  std::vector<int64_t> mesh_shape(mesh_shape_span.begin(),
-                                  mesh_shape_span.end());
-  config.set_auto_spmd_partitioning_mesh_shape(mesh_shape);
+  config.set_auto_spmd_partitioning_mesh_shape(
+      std::vector<int64_t>(mesh_shape_span.begin(), mesh_shape_span.end()));
   absl::Span<const int64_t> mesh_ids_span =
       MakeSpan(c_config.auto_spmd_partitioning_mesh_ids);
-  std::vector<int64_t> mesh_ids(mesh_ids_span.begin(), mesh_ids_span.end());
-  config.set_auto_spmd_partitioning_mesh_ids(mesh_ids);
+  config.set_auto_spmd_partitioning_mesh_ids(
+      std::vector<int64_t>(mesh_ids_span.begin(), mesh_ids_span.end()));
   if (c_config.has_static_device_assignment) {
     auto device_assignment = xla::DeviceAssignment::Deserialize(
         stream_executor::tpu::DeserializeProto<xla::DeviceAssignmentProto>(

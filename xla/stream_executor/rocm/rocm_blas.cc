@@ -40,8 +40,8 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/util/determinism.h"
 #include "tsl/platform/logging.h"
-#include "tsl/util/determinism.h"
 using tsl::OpDeterminismRequired;
 
 namespace stream_executor {
@@ -126,7 +126,7 @@ bool ROCMBlas::Init() {
   if (result == hipSuccess) {
     auto cap = RocmComputeCapability(props.gcnArchName);
     has_mfma_ = cap.has_mfma_instr_support();
-    use_hgemm_alt_impl_ = (cap.gfx_version() == "90a");
+    use_hgemm_alt_impl_ = (cap.gfx_version() == "gfx90a");
   }
 
   return true;
@@ -868,8 +868,8 @@ absl::StatusOr<AllocateStridedResult<T>> AllocateStridedBuffer(
   res.device_mem = DeviceMemory<MAPPED_T>(batch_matrix_bytes);
   res.reallocated = true;
   if (copy_data) {
-    return ReorganizeMemory(stream, &res.device_mem, raw_ptrs, batch_count,
-                            batch_stride, true);
+    TF_RETURN_IF_ERROR(ReorganizeMemory(stream, &res.device_mem, raw_ptrs,
+                                        batch_count, batch_stride, true));
   }
   return res;
 }

@@ -1,6 +1,7 @@
 load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -35,6 +36,37 @@ cc_test(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "type_util",
+    srcs = ["type_util.cc"],
+    hdrs = ["type_util.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "type_util_test",
+    srcs = ["type_util_test.cc"],
+    deps = [
+        ":type_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )

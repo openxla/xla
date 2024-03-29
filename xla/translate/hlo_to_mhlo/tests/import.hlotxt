@@ -261,6 +261,17 @@ add {
   ROOT %clamp.3 = f32[4] clamp(f32[] %Arg_0.1, f32[4] %Arg_1.2, f32[] %Arg_2.3)
 }
 
+// CHECK-LABEL:  func private @test_collective_broadcast
+// CHECK-SAME:  ([[ARG:%.*]]: tensor<128x32xf32>) -> tensor<128x32xf32>
+%test_collective_broadcast (input: f32[128,32]) -> f32[128,32] {
+  %input = f32[128,32]{1,0} parameter(0)
+  // CHECK-NEXT:  "mhlo.collective_broadcast"([[ARG]]) {
+  // CHECK-SAME:    channel_handle = #mhlo.channel_handle<handle = 1, type = 0>,
+  // CHECK-SAME{LITERAL}    replica_groups = {{0,1}{2,3}}
+  // CHECK-SAME:  } : (tensor<128x32xf32>) -> tensor<128x32xf32>
+  ROOT root = f32[128,32]{1,0} collective-broadcast(%input), replica_groups={{0,1},{2,3}}, channel_id=1
+}
+
 // CHECK-LABEL:  func private @test_collective_permute
 // CHECK-SAME:  ([[ARG:%.*]]: tensor<128x32xf32>) -> tensor<128x32xf32>
 %test_collective_permute (input: f32[128,32]) -> f32[128,32] {
@@ -711,6 +722,18 @@ add {
   // CHECK-SAME: precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}
   ROOT %dot.1 = s16[14,1,12,16,3] dot(%Arg_0.1, %Arg_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
+
+// CHECK-LABEL:  @test_dot_sparse
+// CHECK-SAME:  [[LHS:%.*]]: tensor<10x16xf32>, [[RHS:%.*]]: tensor<32x20xf32>, [[META:%.*]]: tensor<10x2xui16>
+%test_dot_sparse (Arg_0: f32[10,16], Arg_1: f32[32,20], Arg_2: u16[10,2]) -> f32[10,20] {
+  %lhs = f32[10,16] parameter(0)
+  %rhs = f32[32,20] parameter(1)
+  %meta = u16[10,2] parameter(2)
+  // CHECK:  "mhlo.sparse_dot"([[LHS]], [[RHS]], [[META]])
+  // CHECK-SAME: lhs_sparsity = #mhlo.sparsity<dimension = 1, n = 2, m = 4>
+  ROOT %dot = f32[10,20] dot(%lhs, %rhs, %meta), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
+}
+
 
 // CHECK-LABEL:  func private @test_dynamic_slice
 // CHECK-SAME:  [[OPERAND:%.*]]: tensor<2x2x258xi32>, [[START_IDX_1:%.*]]: tensor<i32>, [[START_IDX_2:%.*]]: tensor<i32>, [[START_IDX_3:%.*]]: tensor<i32>

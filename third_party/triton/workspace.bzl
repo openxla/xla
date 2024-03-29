@@ -5,8 +5,8 @@ load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 def repo():
     """Imports Triton."""
 
-    TRITON_COMMIT = "cl608559313"
-    TRITON_SHA256 = "d37c0a2921f756cb355dc7ea7e91ea708cef867117edff37106f5a947c5a5a38"
+    TRITON_COMMIT = "cl617459344"
+    TRITON_SHA256 = "f23e65175a67b1091ab6782720b0bcb969f33c19cae8168bf93eea523dab8a3f"
     tf_http_archive(
         name = "triton",
         sha256 = TRITON_SHA256,
@@ -15,8 +15,8 @@ def repo():
         # For temporary changes which haven't landed upstream yet.
         patch_file = [
             "//third_party/triton:cl607293980.patch",  # long standing :(
-            "//third_party/triton:cl610393680.patch",
-            "//third_party/triton:cl610484237.patch",
-            "//third_party/triton:cl610740193.patch",
+            "//third_party/triton:cl617812302.patch",
+            "//third_party/triton:cl619146327.patch",
+            "//third_party/triton:cl619443019.patch",
         ],
     )

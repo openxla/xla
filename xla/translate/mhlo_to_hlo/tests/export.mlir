@@ -587,6 +587,20 @@ func.func @callee(%arg0: tensor<4xi32>, %arg1: tensor<4xi32>) -> (tensor<4xi32>,
 
 // CHECK:  HloModule
 func.func @main(%arg0: tensor<128x32xf32>) -> tensor<128x32xf32> {
+  %0 = "mhlo.collective_broadcast"(%arg0) {
+    replica_groups = dense<[[0, 1], [2, 3]]> : tensor<2x2xi64>,
+    channel_handle = #mhlo.channel_handle<handle = 1, type = 0>
+  } : (tensor<128x32xf32>) -> tensor<128x32xf32>
+  func.return %0 : tensor<128x32xf32>
+}
+// CHECK:  ENTRY
+// CHECK:  [[ARG:%.*]] = f32[128,32] parameter(0)
+// CHECK:  ROOT [[RESULT:%.*]] = f32[128,32] collective-broadcast(f32[128,32] [[ARG]]), channel_id=1
+// CHECK-SAME{LITERAL}:  replica_groups={{0,1},{2,3}}
+// -----
+
+// CHECK:  HloModule
+func.func @main(%arg0: tensor<128x32xf32>) -> tensor<128x32xf32> {
   %0 = "mhlo.collective_permute"(%arg0) {
     source_target_pairs = dense<[[0, 1], [1, 2], [2, 3]]> : tensor<3x2xi64>,
     channel_handle = #mhlo.channel_handle<handle = 1, type = 0>
@@ -1737,6 +1751,21 @@ func.func @main(%arg0: tensor<2x2x2xi8>, %arg1: tensor<2x2x3xi8>) -> tensor<2x2x
 // -----
 
 // CHECK:  HloModule
+func.func @main(%arg0: tensor<10x16xbf16>, %arg1: tensor<32x20xbf16>, %meta: tensor<10x2xui16>) -> tensor<10x20xf32> {
+  // CHECK:  dot(bf16[10,16] %{{.*}}, bf16[32,20] %{{.*}}, u16[10,2] %{{.*}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
+  %0 = "mhlo.sparse_dot"(%arg0, %arg1, %meta) {
+    lhs_sparsity = #mhlo.sparsity<dimension=1, n=2, m=4>,
+    dot_dimension_numbers = #mhlo.dot<
+      lhs_contracting_dimensions = [1],
+      rhs_contracting_dimensions = [0]
+    >,
+    precision_config = []} : (tensor<10x16xbf16>, tensor<32x20xbf16>, tensor<10x2xui16>) -> tensor<10x20xf32>
+  func.return %0 : tensor<10x20xf32>
+}
+
+// -----
+
+// CHECK:  HloModule
 func.func @main(%arg0: tensor<3x4xi32>, %arg1: tensor<4x5xi32>) -> tensor<3x5xi32> {
   // Simple einsum is lowered to HLO dot op.
   // CHECK:  dot(s32[3,4] %{{.*}}, s32[4,5] %{{.*}}), lhs_contracting_dims={1}, rhs_contracting_dims={0}
@@ -2144,10 +2173,8 @@ func.func @main(%token: !mhlo.token) -> (tensor<3x4xi32>, !mhlo.token) {
 // CHECK-SAME:  sharding={
 // CHECK-SAME:    {maximal device=0}, {maximal device=0}
 // CHECK-SAME:  }
-// CHECK:  [[TUPLE0:%.*]] = s32[3,4] get-tuple-element((s32[3,4], token[]) [[RECV_DONE]]), index=0
-// CHECK-NOT: sharding=
-// CHECK:  [[TUPLE1:%.*]] = token[] get-tuple-element((s32[3,4], token[]) [[RECV_DONE]]), index=1
-// CHECK-NOT: sharding=
+// CHECK:  [[TUPLE0:%.*]] = s32[3,4] get-tuple-element((s32[3,4], token[]) [[RECV_DONE]]), index=0, sharding={maximal device=0}
+// CHECK:  [[TUPLE1:%.*]] = token[] get-tuple-element((s32[3,4], token[]) [[RECV_DONE]]), index=1, sharding={maximal device=0}
 // CHECK:  ROOT {{%.*}} = (s32[3,4], token[]) tuple(s32[3,4] [[TUPLE0]], token[] [[TUPLE1]])
 
 // -----
@@ -2826,9 +2853,12 @@ func.func @main(%arg: tensor<3x4xf32>) -> tensor<3x4x1xf32> {
 func.func @main(%arg0: tensor<4x4xf32>, %arg1: tensor<3x4xf32>) -> (tensor<4x4xf32>, tensor<3x4xf32>) {
 // CHECK: %[[ARG0:.*]] = f32[4,4] parameter(0)
 // CHECK: %[[ARG1:.*]] = f32[3,4] parameter(1)
-// CHECK: %[[ARGS:.*]] = (f32[4,4], f32[3,4]) tuple(f32[4,4] %[[ARG0]], f32[3,4] %[[ARG1]])
-// CHECK: %[[RESULT:.*]] = (f32[4,4], f32[3,4]) opt-barrier((f32[4,4], f32[3,4]) %[[ARGS]])
-  %0, %1 = "mhlo.optimization_barrier"(%arg0, %arg1) : (tensor<4x4xf32>, tensor<3x4xf32>) -> (tensor<4x4xf32>, tensor<3x4xf32>)
+// CHECK: %[[ARGS:.*]] = (f32[4,4], f32[3,4]) tuple(f32[4,4] %[[ARG0]], f32[3,4] %[[ARG1]]), sharding={{\{}}{replicated}, {devices=[1,2]<=[2]}}
+// CHECK: %[[OPT:.*]] = (f32[4,4], f32[3,4]) opt-barrier((f32[4,4], f32[3,4]) %[[ARGS]]), sharding={{\{}}{replicated}, {devices=[1,2]<=[2]}}
+// CHECK: %[[GTE0:.*]] = f32[4,4] get-tuple-element((f32[4,4], f32[3,4]) %[[OPT]]), index=0, sharding={replicated}
+// CHECK: %[[GTE1:.*]] = f32[3,4] get-tuple-element((f32[4,4], f32[3,4]) %[[OPT]]), index=1, sharding={devices=[1,2]<=[2]}
+// CHECK: ROOT %[[ROOT:.*]] = (f32[4,4], f32[3,4]) tuple(f32[4,4] %[[GTE0]], f32[3,4] %[[GTE1]])
+  %0, %1 = "mhlo.optimization_barrier"(%arg0, %arg1) {mhlo.sharding = "{{replicated}, {devices=[1,2]<=[2]}}"} : (tensor<4x4xf32>, tensor<3x4xf32>) -> (tensor<4x4xf32>, tensor<3x4xf32>)
   func.return %0, %1 : tensor<4x4xf32>, tensor<3x4xf32>
 }
 
@@ -3119,7 +3149,7 @@ func.func @main(%operand: tensor<?x784xf32>) -> tensor<?x784xf32> {
 // CHECK: ROOT
 // CHECK: ENTRY
 // CHECK: {{.*}} reduce{{.*}} to_apply=[[REG0]]
-// CEHCK: ROOT
+// CHECK: ROOT
 func.func @main(%arg0: tensor<2x2xf32>) -> tuple<tensor<i1>> {
   %0 = mhlo.constant dense<1.000000e+00> : tensor<f32>
   %1 = mhlo.constant dense<0.000000e+00> : tensor<f32>
@@ -3185,7 +3215,7 @@ func.func @main(%data: tensor<4x16xf32>) -> tensor<4x4xf32> {
 // CHECK: f32[] constant(0)
 // CHECK: ROOT
 // CHECK: ENTRY
-// DCHECK: ROOT {{.*}} reduce-window{{.*}} to_apply=[[REG0]]
+// CHECK: ROOT {{.*}} reduce-window{{.*}} to_apply=[[REG0]]
 func.func @main(%arg0: tensor<2x17x31x7xf32>, %arg1: tensor<f32>) -> tensor<2x16x30x7xf32> {
     %c = mhlo.constant dense<0.0> : tensor<f32>
     %0 = "mhlo.reduce_window"(%arg0, %arg1) ({

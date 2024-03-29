@@ -19,6 +19,7 @@ limitations under the License.
 #define MLIR_HLO_DIALECT_MHLO_IR_HLO_OPS
 
 include "mlir/Dialect/Shape/IR/ShapeBase.td"
+include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
@@ -959,7 +960,7 @@ def MHLO_SubtractOp : MHLO_BinaryElementwiseOp<"subtract",
 }
 
 def MHLO_StochasticConvertOp : MHLO_Op<"stochastic_convert",
-      [Pure, AllShapesMatch<["operand", "random", "result"]>]> {
+      [Pure, Elementwise, AllShapesMatch<["operand", "random", "result"]>]> {
   let summary = "StochasticConvert operation";
   let description = [{
     This operation is a work in progress, so it is not yet included in
@@ -2331,6 +2332,44 @@ def MHLO_CollectivePermuteOp: MHLO_Op<"collective_permute",
       "::mlir::DenseIntElementsAttr":$source_target_pairs)>];
 }
 
+def MHLO_CompositeOp : MHLO_Op<"composite", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Composite operation";
+  let description = [{
+    Encapsulates an operation made up (composed) of other StableHLO operations,
+    taking `inputs` and `composite_attributes` and producing `results`. The
+    semantics of the op are implemented by the `decomposition` attribute. The
+    `composite` op can be replaced with its decomposition without changing program
+    semantics. In cases where inlining the decomposition does not provide the same
+    op semantics, prefer using `custom_call`.
+
+    The `version` field (defaults to `0`) is used to denote when a composite's
+    semantics change.
+
+    See:
+    https://github.com/openxla/stablehlo/blob/main/docs/spec.md#composite
+
+    Example:
+    ```mlir
+    %results = mhlo.composite "my.op" %arg0, %arg1 {
+      decomposition = @my_op,
+      composite_attributes = { my_attribute = "my_value" },
+      version = 1 : i32
+    } : (tensor<f32>, tensor<f32>) -> tensor<f32>
+    ```
+  }];
+
+  let arguments = (ins
+    Variadic<MHLO_TensorOrTokenOrTuple>:$inputs,
+    StrAttr:$name,
+    DefaultValuedOptionalAttr<DictionaryAttr, "{}">:$composite_attributes,
+    FlatSymbolRefAttr:$decomposition,
+    DefaultValuedOptionalAttr<I32Attr, "0">:$version
+  );
+  let results = (outs Variadic<MHLO_TensorOrTokenOrTuple>);
+  let hasCustomHLOConverter = 1;
+  let assemblyFormat = "$name $inputs attr-dict `:` functional-type(operands, results)";
+}
+
 def MHLO_ConvolutionOp : MHLO_Op<"convolution", [Pure]> {
   let summary = "Convolution operation";
   let description = [{
@@ -2384,7 +2423,8 @@ def MHLO_ConvolutionOp : MHLO_Op<"convolution", [Pure]> {
   }];
 }
 
-def MHLO_CopyOp: MHLO_Op<"copy", [Pure, HLO_CompatibleOperandsAndResultType]> {
+def MHLO_CopyOp: MHLO_Op<"copy",
+      [Pure, Elementwise, HLO_CompatibleOperandsAndResultType]> {
   let summary = "Copy operation";
   let description = [{
     This operation is private to the XLA compiler, so it is does not yet have
@@ -2587,6 +2627,29 @@ def MHLO_DotGeneralOp: MHLO_ShapedInterfaceOp<"dot_general", [Pure]> {
 
   let results = (outs MHLO_Tensor);
   // DotGeneral op required custom exporter to pass the preferred element type
+  // to Xla builder.
+  let hasCustomHLOConverter = 1;
+  let hasVerifier = 1;
+}
+
+def MHLO_SparseDotOp: MHLO_Op<"sparse_dot", [Pure]> {
+  let summary = "Sparse dot operation";
+  let description = [{
+    Similar to `dot_general` operation, with one or both of the operands being
+    sparse. An additional argument provides sparsity meta information.
+    Disclaimer: this op is experimental / a work in progress.
+  }];
+  let arguments = (ins
+    MHLO_Tensor:$lhs,
+    MHLO_Tensor:$rhs,
+    Variadic<MHLO_Tensor>:$meta,
+    OptionalAttr<MHLO_SparsityDescriptor>:$lhs_sparsity,
+    OptionalAttr<MHLO_SparsityDescriptor>:$rhs_sparsity,
+    MHLO_DotDimensionNumbers:$dot_dimension_numbers,
+    MHLO_PrecisionConfigAttr:$precision_config
+  );
+  let results = (outs MHLO_Tensor);
+  // SparseDot op required custom exporter to pass the preferred element type
   // to Xla builder.
   let hasCustomHLOConverter = 1;
   let hasVerifier = 1;
@@ -3610,8 +3673,8 @@ def MHLO_BitcastOp : MHLO_Op<"bitcast", [Pure]> {
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
 
-def MHLO_ReducePrecisionOp :
-    MHLO_Op<"reduce_precision", [HLO_CompatibleOperandsAndResultType, Pure]> {
+def MHLO_ReducePrecisionOp : MHLO_Op<"reduce_precision",
+      [HLO_CompatibleOperandsAndResultType, Pure, Elementwise]> {
   let summary = "ReducePrecision operation";
   let description = [{
     Performs element-wise conversion of `operand` to another floating-point type

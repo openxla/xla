@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
 #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
@@ -47,6 +48,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+using llvm::SmallVector;
+using mlir::Value;
+using mlir::ValueRange;
 
 const Shape& GetFusionResultShape(const HloFusionAnalysis& analysis) {
   const Shape* shape = &analysis.fusion_roots().front()->shape();
@@ -61,8 +66,8 @@ const Shape& GetFusionResultShape(const HloFusionAnalysis& analysis) {
 std::optional<IndexingMap> MlirLoopFusion::ComputeThreadIdToOutputIndexing(
     int64_t root_index, mlir::MLIRContext* ctx) const {
   auto launch_dims = launch_dimensions();
-  return GetDefaultThreadIdToOutputIndexingMap(
-      launch_dims, config_.unroll_factor, GetFusionResultShape(analysis_), ctx);
+  return GetDefaultThreadIdIndexingMap(launch_dims, config_.unroll_factor,
+                                       GetFusionResultShape(analysis_), ctx);
 }
 
 std::optional<IndexingMap> MlirLoopFusion::ComputeThreadIdToInputIndexing(
@@ -83,7 +88,7 @@ std::optional<IndexingMap> MlirLoopFusion::ComputeThreadIdToInputIndexing(
   CHECK_EQ(output_to_input_indexing_set.size(), 1);
   IndexingMap thread_id_to_input_indexing_map = ComposeIndexingMaps(
       *thread_id_to_output_indexing, *output_to_input_indexing_set.begin());
-  thread_id_to_input_indexing_map.Simplify();
+  thread_id_to_input_indexing_map.Simplify(GetIndexingMapForInstruction);
   return thread_id_to_input_indexing_map;
 }
 
@@ -92,70 +97,50 @@ LaunchDimensions MlirLoopFusion::launch_dimensions() const {
                                    analysis_.device_info(), config_);
 }
 
-absl::Status MlirLoopFusion::EmitMlir(
-    mlir::ModuleOp module, mlir::func::FuncOp entry_function,
+absl::Status MlirLoopFusion::EmitEntryFunction(
+    const mlir_converter::PartitionedComputations& computations,
+    const mlir_converter::CallTargetProvider& call_targets,
+    mlir::func::FuncOp entry_function,
     const HloFusionInstruction& fusion) const {
-  mlir_converter::PartitionedComputations computations(
-      fusion.fused_instructions_computation());
-
-  const auto& root_computation = computations.FindPartitionedComputation(
-      fusion.fused_instructions_computation());
-  const auto& root_graph = root_computation.GetRootSubgraph();
-
-  auto subgraph_to_mlir_fn = computations.DeclareFunctions(module);
-  auto call_targets =
-      computations.CreateCallTargetProvider(subgraph_to_mlir_fn);
-  for (const auto& comp : computations.partitioned_computations()) {
-    for (const auto& subgraph : comp.subgraphs()) {
-      TF_RETURN_IF_ERROR(mlir_converter::SubgraphToMlirFunction(
-          comp, subgraph, subgraph_to_mlir_fn[&subgraph], call_targets));
-    }
-  }
-
   mlir::ImplicitLocOpBuilder builder(entry_function.getLoc(), entry_function);
   builder.setInsertionPointToStart(entry_function.addEntryBlock());
 
   // We enforce that all the root shapes have identical dimensions in
   // IsHloOpSupported.
-  auto indexing = ComputeThreadIdToOutputIndexing(0, module.getContext());
+  auto indexing =
+      ComputeThreadIdToOutputIndexing(0, entry_function.getContext());
   TF_RET_CHECK(indexing) << "Indexing is never nullopt";
 
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
   auto output_tensor_args =
       entry_function.getArguments().drop_front(num_inputs);
 
-  TF_ASSIGN_OR_RETURN(
-      auto result_tensors,
-      EmitLoopNest(
-          builder, output_tensor_args, *indexing,
-          [&](mlir::ValueRange output_tensors, mlir::ValueRange dim_values,
-              mlir::ValueRange symbol_values)
-              -> absl::StatusOr<llvm::SmallVector<mlir::Value>> {
-            auto output_indices = mlir_converter::ApplyAffineMap(
-                indexing->GetAffineMap(), dim_values, symbol_values, builder);
-            auto root_fn = subgraph_to_mlir_fn[&root_graph];
+  auto body_builder = [&](ValueRange output_tensors, ValueRange dim_values,
+                          ValueRange symbol_values) -> SmallVector<Value> {
+    auto output_indices = mlir_converter::ApplyAffineMap(
+        indexing->GetAffineMap(), dim_values, symbol_values, builder);
+    auto root_fn = call_targets(
+        fusion.fused_instructions_computation()->root_instruction());
 
-            // Generate the operands for the root function: input tensors +
-            // output indices.
-            llvm::SmallVector<mlir::Value> operands(
-                entry_function.getArguments().take_front(num_inputs));
-            absl::c_copy(output_indices, std::back_inserter(operands));
+    // Generate the operands for the root function: input tensors +
+    // output indices.
+    SmallVector<Value> operands(
+        entry_function.getArguments().take_front(num_inputs));
+    absl::c_copy(output_indices, std::back_inserter(operands));
+    auto result_scalars =
+        builder.create<PureCallOp>(root_fn, operands).getResults();
 
-            auto result_scalars =
-                builder.create<PureCallOp>(root_fn, operands).getResults();
+    SmallVector<Value> result_tensors;
+    result_tensors.reserve(output_tensor_args.size());
+    for (auto [tensor, value] : llvm::zip(output_tensors, result_scalars)) {
+      result_tensors.push_back(builder.create<mlir::tensor::InsertOp>(
+          value, tensor, output_indices));
+    }
+    return result_tensors;
+  };
 
-            llvm::SmallVector<mlir::Value> result_tensors;
-            result_tensors.reserve(output_tensor_args.size());
-            for (auto [tensor, value] :
-                 llvm::zip(output_tensors, result_scalars)) {
-              result_tensors.push_back(builder
-                                           .create<mlir::tensor::InsertOp>(
-                                               value, tensor, output_indices)
-                                           .getResult());
-            }
-            return result_tensors;
-          }));
-  builder.create<mlir::func::ReturnOp>(result_tensors);
+  builder.create<mlir::func::ReturnOp>(
+      EmitThreadLoopNest(builder, output_tensor_args, *indexing, body_builder));
 
   return absl::OkStatus();
 }

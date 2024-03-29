@@ -26,6 +26,7 @@ limitations under the License.
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -38,8 +39,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
@@ -594,11 +595,11 @@ PjRtFuture<absl::Status> StreamExecutorGpuClient::CopyRawSubBufferToHost(
                         /*reference_held=*/false);
 
   auto promise = PjRtFuture<absl::Status>::CreatePromise();
+  auto stream_ptr = stream.get();
   auto callback_status = local_device->ThenExecuteCallback(
-      stream.get(), [promise, free_sub_range = sub_buffer.release(),
-                     free_stream = stream.release(), local_device]() mutable {
+      stream_ptr,
+      [promise, free_stream = stream.release(), local_device]() mutable {
         auto stream = std::unique_ptr<se::Stream>(free_stream);
-        auto sub_range = std::unique_ptr<se::DeviceMemoryBase>(free_sub_range);
         local_device->ReturnStreamToPool(std::move(stream));
         promise.Set(OkStatus());
       });
@@ -902,6 +903,8 @@ GetStreamExecutorGpuDeviceAllocator(
                                                   std::move(allocators));
 }
 
+}  // namespace
+
 Status BuildDistributedDevices(
     std::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
@@ -909,8 +912,8 @@ Status BuildDistributedDevices(
     std::vector<std::unique_ptr<PjRtStreamExecutorDevice>>* devices,
     gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
-    absl::Duration get_local_topology_timeout = absl::Minutes(2),
-    absl::Duration get_global_topology_timeout = absl::Minutes(5)) {
+    absl::Duration get_local_topology_timeout,
+    absl::Duration get_global_topology_timeout) {
   LocalTopologyProto local_topology;
   local_topology.set_node_id(node_id);
   std::string boot_id_str;
@@ -931,6 +934,9 @@ Status BuildDistributedDevices(
     device_proto->set_local_device_ordinal(ordinal_and_device.first);
     device_proto->set_name(desc->name());
     device_proto->set_vendor(desc->device_vendor());
+    device_proto->set_compute_capability(
+        MakeComputeCapabilityString(desc.get()));
+    device_proto->set_core_count(desc->core_count());
   }
 
   GlobalTopologyProto global_topology;
@@ -964,8 +970,9 @@ Status BuildDistributedDevices(
       }
       auto device = std::make_unique<StreamExecutorGpuDevice>(
           device_proto.global_device_id(), std::move(local_device),
-          device_proto.name(), device_proto.vendor(), node.node_id(),
-          device_proto.slice_index());
+          device_proto.name(), device_proto.vendor(),
+          device_proto.compute_capability(), device_proto.core_count(),
+          node.node_id(), device_proto.slice_index());
       devices->push_back(std::move(device));
     }
   }
@@ -987,11 +994,23 @@ Status BuildDistributedDevices(
   return OkStatus();
 }
 
-}  // namespace
+std::string MakeComputeCapabilityString(const se::DeviceDescription* desc) {
+  se::GpuComputeCapability cc = desc->gpu_compute_capability();
+  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
+    auto nvcc = std::get<se::CudaComputeCapability>(cc);
+    return absl::StrCat(nvcc.major, ".", nvcc.minor);
+  } else if (std::holds_alternative<se::RocmComputeCapability>(cc)) {
+    auto rocmcc = std::get<se::RocmComputeCapability>(cc);
+    return rocmcc.gfx_version();
+  } else {
+    return "unknown";
+  }
+}
 
 StreamExecutorGpuDevice::StreamExecutorGpuDevice(
     int id, std::unique_ptr<LocalDeviceState> local_device_state,
-    std::string device_kind, std::string device_vendor, int node_id,
+    std::string device_kind, std::string device_vendor,
+    std::string compute_capability, int core_count, int node_id,
     int slice_index)
     : PjRtStreamExecutorDevice(id, std::move(local_device_state),
                                std::move(device_kind), node_id),
@@ -1004,12 +1023,13 @@ StreamExecutorGpuDevice::StreamExecutorGpuDevice(
   std::vector<int64_t> v_coords(description().coords().begin(),
                                 description().coords().end());
 
-  description().SetAttributes({
-      {"coords", xla::PjRtDeviceAttribute(v_coords)},
-      {"core_on_chip", xla::PjRtDeviceAttribute(core_index)},
-      {"device_vendor", device_vendor_},
-      {"slice_index", static_cast<int64_t>(slice_index)},
-  });
+  description().SetAttributes(
+      {{"coords", xla::PjRtDeviceAttribute(v_coords)},
+       {"core_on_chip", xla::PjRtDeviceAttribute(core_index)},
+       {"device_vendor", device_vendor_},
+       {"slice_index", static_cast<int64_t>(slice_index)},
+       {"compute_capability", xla::PjRtDeviceAttribute(compute_capability)},
+       {"core_count", static_cast<int64_t>(core_count)}});
   description().SetToString(absl::StrFormat(
       "StreamExecutorGpuDevice(device_kind=%s, id=%i, process_index=%i, "
       "slice_index=%i))",
@@ -1060,6 +1080,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options) {
 #if TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::RocmName();
+#elif TENSORFLOW_USE_SYCL
+  auto pjrt_platform_name = xla::SyclName();
 #else   // TENSORFLOW_USE_ROCM
   auto pjrt_platform_name = xla::CudaName();
 #endif  // TENSORFLOW_USE_ROCM
@@ -1113,11 +1135,12 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     int node_id) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   for (auto& ordinal_and_device : local_device_states) {
-    const se::DeviceDescription& description =
+    const se::DeviceDescription& desc =
         ordinal_and_device.second->executor()->GetDeviceDescription();
     auto device = std::make_unique<StreamExecutorGpuDevice>(
         ordinal_and_device.first, std::move(ordinal_and_device.second),
-        description.name(), description.device_vendor(), node_id);
+        desc.name(), desc.device_vendor(), MakeComputeCapabilityString(&desc),
+        desc.core_count(), node_id);
     devices.push_back(std::move(device));
   }
   return devices;

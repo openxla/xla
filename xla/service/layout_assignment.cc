@@ -15,36 +15,37 @@ limitations under the License.
 
 #include "xla/service/layout_assignment.h"
 
-#include <algorithm>
+#include <cstdint>
 #include <deque>
-#include <functional>
 #include <map>
 #include <memory>
-#include <numeric>
 #include <ostream>
 #include <set>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/permutation_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/computation_layout.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_dce.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/tuple_points_to_analysis.h"
@@ -52,15 +53,15 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
+#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
-#include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
-#include "tsl/platform/protobuf.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -720,11 +721,23 @@ Status LayoutAssignment::AddMandatoryConstraints(
         if (parameter_layout.LayoutIsSet()) {
           // Parameter layouts must match the respective layout in
           // ComputationLayout, if there is one.
-          TF_RETURN_IF_ERROR(
-              SetInstructionLayout(parameter_layout.shape(), instruction));
+          Shape param_shape = parameter_layout.shape();
+          // Clear out memory space in layout. Host offloader will do the
+          // analysis later.
+          TF_RETURN_IF_ERROR(ShapeUtil::ForEachMutableSubshapeWithStatus(
+              &param_shape, [](Shape* subshape, const ShapeIndex& index) {
+                if (!subshape->has_layout() || !subshape->IsArray()) {
+                  return OkStatus();
+                }
+                subshape->mutable_layout()->set_memory_space(
+                    Layout::kDefaultMemorySpace);
+                return OkStatus();
+              }));
+
+          TF_RETURN_IF_ERROR(SetInstructionLayout(param_shape, instruction));
           if (reverse_computation_order_) {
             TF_RETURN_IF_ERROR(PropagateParameterLayoutToUsers(
-                instruction, parameter_layout.shape(), this));
+                instruction, param_shape, this));
           }
         }
       }
@@ -1113,7 +1126,7 @@ Status CheckBroadcastLayout(HloInstruction* broadcast) {
 
 }  // namespace
 
-StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
+absl::StatusOr<HloInstruction*> LayoutAssignment::CreateCopyWithNewLayout(
     const Shape& shape_with_layout, HloInstruction* instruction) {
   TF_RET_CHECK(LayoutUtil::HasLayout(shape_with_layout));
   DCHECK(ShapeUtil::Compatible(shape_with_layout, instruction->shape()))
@@ -2003,9 +2016,14 @@ Status LayoutAssignment::PropagateBufferConstraintToUses(
       VLOG(3) << "Propagating layout through backedge"
               << buffer_constraint.layout().ToString();
       int64_t index = user->operand_index(buffer.instruction());
-      TF_ASSIGN_OR_RETURN(
-          auto buffer, points_to_analysis_->GetBufferDefinedAt(
-                           user->parent()->parameter_instruction(0), {index}));
+
+      const HloInstruction* inputs = user->parent()->parameter_instruction(0);
+
+      ShapeIndex used_index = buffer.index();
+      used_index.push_front(index);
+
+      TF_ASSIGN_OR_RETURN(auto buffer, points_to_analysis_->GetBufferDefinedAt(
+                                           inputs, used_index));
 
       TF_RETURN_IF_ERROR(SetBufferLayout(buffer_constraint.layout(), *buffer,
                                          /*mandatory=*/false));
@@ -2018,19 +2036,35 @@ Status LayoutAssignment::PropagateBufferConstraintToUses(
 Status LayoutAssignment::PropagateResultConstraint(
     const ComputationLayoutConstraint& layout_constraint,
     LayoutConstraints* constraints) {
+  ShapeLayout result_layout =
+      layout_constraint.computation_layout().result_layout();
+  // Clear out memory space in layout for entry computation root. Host offloader
+  // will do the analysis later and add back the memory space for host outputs.
+  if (constraints->computation()->IsEntryComputation()) {
+    Shape result_shape = result_layout.shape();
+    TF_RETURN_IF_ERROR(ShapeUtil::ForEachMutableSubshapeWithStatus(
+        &result_shape, [](Shape* subshape, const ShapeIndex& shape_index) {
+          if (subshape->has_layout() && subshape->IsArray()) {
+            subshape->mutable_layout()->set_memory_space(
+                Layout::kDefaultMemorySpace);
+          }
+          return OkStatus();
+        }));
+    TF_RETURN_IF_ERROR(result_layout.CopyLayoutFromShape(result_shape));
+  }
+
   // Propagate the use constraint of the root instruction up to the logical
   // buffers which make up the result.
   return PropagateUseConstraintToDefs(
-      layout_constraint.computation_layout().result_layout(),
-      constraints->computation()->root_instruction(), constraints,
-      current_priority_);
+      result_layout, constraints->computation()->root_instruction(),
+      constraints, current_priority_);
 }
 
 // Infers the layout of the array at the given index in the given instruction's
 // output using points-to analysis. Precondition: The given instruction must
 // not produce this array value (that is, the array is forwarded from the
 // instruction's operands).
-StatusOr<Layout> LayoutAssignment::InferArrayLayout(
+absl::StatusOr<Layout> LayoutAssignment::InferArrayLayout(
     const HloInstruction* instruction, const ShapeIndex& index) {
   const auto& source_buffers =
       points_to_analysis_->GetPointsToSet(instruction).element(index);
@@ -2046,7 +2080,7 @@ StatusOr<Layout> LayoutAssignment::InferArrayLayout(
       // This should not happen because we've assigned layouts to all
       // instructions preceding this one.
       return Internal("LogicalBuffer %s does not have a layout",
-                           source_buffer->ToString());
+                      source_buffer->ToString());
     }
 
     if (first_buffer_layout == nullptr) {
@@ -2319,7 +2353,8 @@ Status LayoutAssignment::CalculateComputationLayout(
             SetCalleeLayout(
                 instruction, instruction->operands(),
                 mutable_computation_constraints(instruction->to_apply()),
-                current_priority_ + 1) == OkStatus()) {
+                current_priority_ + 1)
+                .ok()) {
           VLOG(2) << "Successfully propagated to callee layout\n";
         }
         break;
@@ -2514,7 +2549,8 @@ Status LayoutAssignment::PropagateComputationLayouts(
           }
           const auto& computed_subshape = ShapeUtil::GetSubshape(
               computed_computation_layout.parameter_shape(i), shape_index);
-          if (subshape.layout() != computed_subshape.layout()) {
+          if (!Layout::Equal().IgnoreMemorySpace()(
+                  subshape.layout(), computed_subshape.layout())) {
             return Internal(
                 "Assigned parameter shape %s does not match layout of "
                 "computation shape: %s",
@@ -2544,7 +2580,7 @@ Status LayoutAssignment::PropagateComputationLayouts(
   return OkStatus();
 }
 
-StatusOr<bool> LayoutAssignment::Run(
+absl::StatusOr<bool> LayoutAssignment::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "Running layout assignment on module " << module->name();
@@ -2676,6 +2712,62 @@ StatusOr<bool> LayoutAssignment::Run(
                                 ? LayoutConstraint::kGivenPriority
                                 : LayoutConstraint::kDefaultPriority));
   for (int64_t i = 0; i < kNumberOfPropagationRounds; ++i) {
+    if (i > 0) {
+      LayoutConstraints* constraints =
+          mutable_computation_constraints(module->entry_computation());
+
+      bool changed = false;
+      module->input_output_alias_config().ForEachAlias(
+          [&](const ShapeIndex& output_index,
+              const HloInputOutputAliasConfig::Alias& alias) {
+            const auto param = alias.parameter_number;
+            const auto& index = alias.parameter_index;
+            bool param_is_forced =
+                ShapeUtil::GetSubshape(
+                    saved_entry_computation_layout_.parameter_shape(param),
+                    index)
+                    .has_layout();
+            bool result_is_forced =
+                ShapeUtil::GetSubshape(
+                    saved_entry_computation_layout_.result_shape(),
+                    output_index)
+                    .has_layout();
+            Shape* param_shape =
+                ShapeUtil::GetMutableSubshape(module->entry_computation()
+                                                  ->parameter_instruction(param)
+                                                  ->mutable_shape(),
+                                              index);
+            Shape* result_shape =
+                ShapeUtil::GetMutableSubshape(module->entry_computation()
+                                                  ->root_instruction()
+                                                  ->mutable_shape(),
+                                              output_index);
+            if (param_is_forced && result_is_forced) {
+              return;
+            }
+
+            if (param_shape->layout().minor_to_major() ==
+                result_shape->layout().minor_to_major()) {
+              return;
+            }
+            changed = true;
+            if (!param_is_forced) {
+              *param_shape = *result_shape;
+              return;
+            }
+            *result_shape = *param_shape;
+          });
+      if (changed) {
+        auto computed_program_shape =
+            module->entry_computation()->ComputeProgramShape();
+        constraints->mutable_computation_constraint()->ResetComputationLayout(
+            ComputationLayout{
+                module->entry_computation()->ComputeProgramShape(), false},
+            LayoutConstraint::kGivenPriority, true, true);
+        *entry_computation_layout_ =
+            constraints->computation_constraint().computation_layout();
+      }
+    }
     VLOG(1) << "Running " << (i == 0 ? "un" : "") << "constrained pass";
     TF_RETURN_IF_ERROR(ClearPreviousPassSideEffects(module, execution_threads));
     for (auto* computation : computations_to_work) {
@@ -2854,7 +2946,6 @@ bool LayoutAssignment::IsAtMostRank1(const Shape& shape) {
 Status LayoutAssignment::Init(HloModule* module) {
   computation_layouts_.clear();
   conditional_mismatch_.clear();
-  *entry_computation_layout_ = saved_entry_computation_layout_;
   current_priority_ = LayoutConstraint::kBeginningPriority;
   // Clear all the copies which have been added, and all the related
   // instructions (like GTE and tuples).

@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -213,7 +214,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByDone) {
     CHECK: ENTRY %main (a: s32[4]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
-    CHECL:     to_apply=%command_buffer
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(
@@ -248,7 +249,7 @@ TEST_F(CommandBufferSchedulingTest, AllGatherStartFollowedByDone) {
     CHECK: ENTRY %main (a: s32[2]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[2]{0} parameter(0)
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
-    CHECL:     to_apply=%command_buffer
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(
@@ -289,7 +290,7 @@ TEST_F(CommandBufferSchedulingTest, ReduceScatterStartFollowedByDone) {
     CHECK: ENTRY %main (a: s32[4]) -> s32[2] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
     CHECK:   ROOT %[[CALL:.+]] = s32[2]{0} call(%[[A]]),
-    CHECL:     to_apply=%command_buffer
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(
@@ -330,7 +331,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedByBitcast) {
     CHECK: ENTRY %main (a: s32[4]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
-    CHECL:     to_apply=%command_buffer
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(
@@ -375,7 +376,7 @@ TEST_F(CommandBufferSchedulingTest, AllReduceStartFollowedAllReduceStart) {
     CHECK: ENTRY %main (a: s32[4]) -> s32[4] {
     CHECK:   %[[A:.+]] = s32[4]{0} parameter(0)
     CHECK:   ROOT %[[CALL:.+]] = s32[4]{0} call(%[[A]]),
-    CHECL:     to_apply=%command_buffer
+    CHECK:     to_apply=%command_buffer
     CHECK: })";
 
   RunAndFilecheckHloRewrite(

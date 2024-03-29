@@ -40,11 +40,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/shape.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 
 namespace xla {
 
@@ -140,10 +140,15 @@ HloSharding Tile(const Shape& shape, absl::Span<const int64_t> tensor_dims,
                  absl::Span<const int64_t> mesh_dims,
                  const Array<int64_t>& device_mesh);
 
-std::vector<double> ReshardingCostVector(const StrategyGroup* strategy_group,
-                                         const Shape& shape,
-                                         const HloSharding& required_sharding,
-                                         const ClusterEnvironment& cluster_env);
+std::vector<double> CommunicationReshardingCostVector(
+    const StrategyGroup* strategy_group, const Shape& shape,
+    const HloSharding& required_sharding,
+    const ClusterEnvironment& cluster_env);
+
+std::vector<double> MemoryReshardingCostVector(
+    const StrategyGroup* strategy_group, const Shape& operand_shape,
+    const HloSharding& required_sharding,
+    const ClusterEnvironment& cluster_env);
 
 std::vector<double> FollowInsCostVector(int64_t source_len, int64_t index);
 
@@ -330,7 +335,7 @@ void GenerateOutfeedStrategy(const HloInstruction* ins, const Shape& shape,
                              std::unique_ptr<StrategyGroup>& strategy_group,
                              double replicated_penalty);
 
-std::vector<std::vector<double>>
+std::pair<ReshardingCosts, ReshardingCosts>
 GenerateReshardingCostsAndMissingShardingsForAllOperands(
     const HloInstruction* ins, const HloSharding& output_sharding,
     const StrategyMap& strategy_map, const ClusterEnvironment& cluster_env,
@@ -379,6 +384,15 @@ BuildStrategyAndCost(const HloInstructionSequence& sequence,
                      AutoShardingOption& option, const CallGraph& call_graph,
                      const HloCostAnalysis& hlo_cost_analysis,
                      bool trying_multiple_mesh_shapes);
+
+// Computes an approximate lower bound on the per-device memory usage of a
+// module once it has been sharded. This quantity is multiplied with
+// memory_budget_ratio to obtain the memory budget using in our ILP formulation.
+int64_t MemoryBudgetLowerBound(
+    const HloModule& module, const LivenessSet& liveness_set,
+    const HloAliasAnalysis& alias_analysis, int64_t num_devices,
+    const absl::flat_hash_map<std::string, std::vector<HloSharding>>&
+        preserved_shardings);
 
 }  // namespace spmd
 }  // namespace xla

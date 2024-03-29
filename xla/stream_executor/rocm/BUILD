@@ -1,5 +1,6 @@
 # Description:
 #   ROCm-platform specific StreamExecutor support code.
+# buildifier: disable=out-of-order-load
 
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -59,7 +60,6 @@ cc_library(
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
         "//xla/stream_executor",
-        "//xla/stream_executor:device_options",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
@@ -83,7 +83,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "//xla/stream_executor",
-        "//xla/stream_executor:device_options",
         "//xla/stream_executor/gpu:gpu_runtime_header",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/gpu:gpu_driver_header",
@@ -155,6 +154,7 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
+        "//xla/stream_executor/integrations:device_mem_allocator",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:fingerprint",
     ]),
@@ -174,12 +174,6 @@ cc_library(
 rocm_library(
     name = "hip_conditional_kernels",
     srcs = if_rocm_is_configured(["hip_conditional_kernels.cu.cc"]),
-    deps = if_rocm_is_configured(["@local_config_rocm//rocm:rocm_headers"]),
-)
-
-rocm_library(
-    name = "hip_noop_kernel",
-    srcs = if_rocm_is_configured(["hip_noop_kernel.cu.cc"]),
     deps = if_rocm_is_configured(["@local_config_rocm//rocm:rocm_headers"]),
 )
 
@@ -235,7 +229,7 @@ cc_library(
         "//xla/stream_executor/platform",
         "//xla/stream_executor/platform:dso_loader",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/util:determinism_for_kernels",
+        "//xla/tsl/util:determinism_for_kernels",
     ]),
     alwayslink = True,
 )
@@ -354,8 +348,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/util:env_var",
-        "@tsl//tsl/util:determinism_for_kernels",
+        "//xla/tsl/util:env_var",
+        "//xla/tsl/util:determinism_for_kernels",
     ]),
     alwayslink = True,
 )

@@ -19,7 +19,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <string>
-#include <tuple>
+#include <string_view>
 #include <vector>
 
 #include "absl/base/const_init.h"
@@ -64,7 +64,7 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsm(
     int cc_major, int cc_minor, const char* ptx_contents, GpuAsmOpts options,
     bool cancel_if_reg_spill = false);
 
-absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
+absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingPtxAs(
     int cc_major, int cc_minor, const char* ptx_contents, GpuAsmOpts options,
     bool cancel_if_reg_spill = false);
 
@@ -92,7 +92,7 @@ struct HsacoImage {
 
 // Bundles the GPU machine code (HSA Code Object) and returns the resulting
 // binary (i.e. a fatbin) as a byte array.
-tsl::StatusOr<std::vector<uint8_t>> BundleGpuAsm(
+absl::StatusOr<std::vector<uint8_t>> BundleGpuAsm(
     std::vector<HsacoImage> images, const std::string rocm_root_dir);
 
 // Links multiple relocatable GPU images (e.g. results of ptxas -c) into a
@@ -104,16 +104,25 @@ absl::StatusOr<std::vector<uint8_t>> LinkUsingNvlink(
     absl::string_view preferred_cuda_dir, gpu::GpuContext* context,
     std::vector<CubinOrPTXImage> images);
 
+using ToolVersion = std::array<int64_t, 3>;
 absl::StatusOr<std::string> FindCudaExecutable(
-    const std::string& binary_name, const std::string& preferred_cuda_dir);
+    std::string_view binary_name, std::string_view preferred_cuda_dir,
+    ToolVersion minimum_version,
+    absl::Span<const ToolVersion> excluded_versions);
+
+absl::StatusOr<std::string> FindCudaExecutable(
+    std::string_view binary_name, std::string_view preferred_cuda_dir);
 
 // Runs tool --version and parses its version string.
-absl::StatusOr<std::array<int64_t, 3>> GetToolVersion(
-    absl::string_view tool_path);
+absl::StatusOr<ToolVersion> GetToolVersion(std::string_view tool_path);
 
-// On NVIDIA GPUs, returns the CUDA toolkit version supported by the driver,
-absl::StatusOr<std::array<int64_t, 3>> GetAsmCompilerVersion(
-    const std::string& preferred_cuda_dir);
+// On NVIDIA GPUs, returns the version of the ptxas command line tool.
+absl::StatusOr<ToolVersion> GetAsmCompilerVersion(
+    std::string_view preferred_cuda_dir);
+
+// On NVIDIA GPUs, returns the version of the nvlink command line tool.
+absl::StatusOr<ToolVersion> GetNvLinkVersion(
+    std::string_view preferred_cuda_dir);
 
 #if GOOGLE_CUDA
 // Maintains a cache of pointers to loaded kernels

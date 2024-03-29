@@ -1,12 +1,5 @@
-load("//xla:pytype.default.bzl", "pytype_strict_library")
-load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load(
-    "//xla:xla.bzl",
-    "xla_cc_test",
-    "xla_py_test_deps",
-)
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
     "@tsl//tsl:tsl.bzl",
@@ -19,6 +12,13 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+)
+load("//xla:pytype.default.bzl", "pytype_strict_library")
+load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+    "xla_py_test_deps",
 )
 
 package(
@@ -40,6 +40,7 @@ package_group(
 pytype_strict_library(
     name = "xla_client",
     srcs = ["xla_client.py"],
+    pytype_srcs = ["xla_client.pyi"],
     srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
@@ -152,7 +153,9 @@ tsl_pybind_extension(
     deps = [
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
-        "@pybind11",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@nanobind",
     ],
 )
 
@@ -181,11 +184,14 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = [":friends"],
     deps = [
+        ":nb_helpers",
+        ":nb_numpy",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/python/ifrt",
@@ -193,9 +199,13 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl//tsl/platform:protobuf",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@nanobind",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 
@@ -214,24 +224,8 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@nanobind",
-        "@pybind11",
-    ],
-)
-
-cc_library(
-    name = "python_utils",
-    hdrs = ["python_utils.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "//xla:status_macros",
-        "//xla:util",
         "@local_config_python//:python_headers",  # buildcleaner: keep
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
@@ -273,11 +267,12 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
-        ":traceback",
-        "//xla:statusor",
         "//xla:util",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@pybind11",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@nanobind",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profile_proto_cc",
     ],
@@ -289,9 +284,11 @@ cc_library(
         "py_array.cc",
         "py_client.cc",
         "py_compile_only_client.cc",
+        "py_device.cc",
         "py_device_list.cc",
         "py_executable.cc",
         "py_host_callback.cc",
+        "py_memory_space.cc",
         "py_values.cc",
         "sharding.cc",
     ],
@@ -299,9 +296,11 @@ cc_library(
         "py_array.h",
         "py_client.h",
         "py_compile_only_client.h",
+        "py_device.h",
         "py_device_list.h",
         "py_executable.h",
         "py_host_callback.h",
+        "py_memory_space.h",
         "py_values.h",
         "sharded_device_array.h",
         "sharding.h",
@@ -317,11 +316,14 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":callback",
+        ":nb_absl_span",
+        ":nb_class_ptr",
+        ":nb_helpers",
+        ":nb_numpy",
         ":pprof_profile_builder",
         ":py_client_gpu",
         ":py_host_callback_proto_cc",
         ":python_ref_manager",
-        ":python_utils",
         ":traceback",
         ":transfer_guard_lib",
         ":types",
@@ -330,14 +332,19 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
@@ -346,6 +353,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:host_callback",
         "//xla/pjrt:lru_cache",
@@ -353,7 +361,10 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_device_description",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:pjrt_stream_executor_client",
         "//xla/pjrt:status_casters",
         "//xla/pjrt:transpose",
@@ -361,19 +372,25 @@ cc_library(
         "//xla/python/pjrt_ifrt",
         "//xla/python/pjrt_ifrt:xla_host_callback_proto_cc",
         "//xla/python/pjrt_ifrt:xla_ifrt",
+        "//xla/service:computation_placer_hdr",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
+        "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/framework:allocator",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/python/lib/core:numpy",
         "@com_google_protobuf//:protobuf",
         "@llvm-project//llvm:Support",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@llvm-project//mlir:IR",
+        "@nanobind",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
         "//xla/stream_executor/cuda:cuda_driver",
@@ -390,21 +407,29 @@ cc_library(
     hdrs = [
         "callback.h",
     ],
+    compatible_with = [],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_numpy",
         ":python_ref_manager",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
+        "//xla/pjrt:host_callback",
         "//xla/pjrt:transpose",
         "//xla/service:custom_call_status",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@pybind11",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@nanobind",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -417,6 +442,7 @@ cc_library(
     hdrs = if_cuda_or_rocm([
         "py_client_gpu.h",
     ]),
+    compatible_with = [],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -427,12 +453,14 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":callback",
+        ":nb_numpy",
         "//xla:comparison_util",
         "//xla/pjrt:exceptions",
+        "//xla/pjrt:host_callback",
         "//xla/service:custom_call_status",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
-        "@pybind11",
+        "@nanobind",
         "@tsl//tsl/platform:errors",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
@@ -452,23 +480,32 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_class_ptr",
         ":py_client",
         ":python_ref_manager",
         ":traceback",
         ":types",
         ":util",
+        "//xla:shape_util",
+        "//xla:status_macros",
         "//xla:util",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_layout",
+        "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@dlpack",
+        "@llvm-project//llvm:Support",
         "@local_config_python//:python_headers",  # buildcleaner: keep
-        "@pybind11",
+        "@nanobind",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -484,23 +521,25 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = [":friends"],  # For the functions to access C++ flags/thread-local variables
     deps = [
+        ":nb_helpers",
         ":py_client",
         ":python_ref_manager",
         ":pytree",
         ":types",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",  # build_cleaner: keep
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
-        "//xla/python/ifrt",
-        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
         "@nanobind",
-        "@pybind11",
     ],
 )
 
@@ -518,6 +557,30 @@ cc_library(
 )
 
 cc_library(
+    name = "custom_partition_callback",
+    srcs = ["custom_partition_callback.cc"],
+    hdrs = ["custom_partition_callback.h"],
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla:util",
+        "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/pjrt:mlir_to_hlo",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_helpers",
+        "//xla/service:call_inliner",
+        "//xla/service:custom_call_sharding_helper",
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service/spmd:spmd_partitioner",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
     name = "custom_call_sharding",
     srcs = ["custom_call_sharding.cc"],
     hdrs = ["custom_call_sharding.h"],
@@ -529,19 +592,20 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = ["//visibility:private"],
     deps = [
+        ":custom_partition_callback",
         ":inspect_sharding",
         # placeholder for index annotation deps
-        "//xla/client:xla_computation",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_sharding_util",
-        "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:status_casters",
-        "//xla/service:call_inliner",
-        "//xla/service:custom_call_sharding_helper",
-        "//xla/service:hlo_pass_pipeline",
-        "//xla/service/spmd:spmd_partitioner",
         "@tsl//tsl/platform:errors",
-        "@pybind11",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@nanobind",
     ],
 )
 
@@ -556,6 +620,8 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_absl_span",
+        ":nb_helpers",
         ":types",
         # placeholder for index annotation deps
         "@com_google_absl//absl/types:span",
@@ -572,7 +638,7 @@ cc_library(
         "//xla/client/lib:sorting",
         "//xla/client/lib:svd",
         "//xla/pjrt:status_casters",
-        "@pybind11",
+        "@nanobind",
     ],
 )
 
@@ -610,21 +676,36 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":jax_jit",
+        ":nb_helpers",
+        ":nb_numpy",
         ":py_client",
-        ":python_utils",
+        ":python_ref_manager",
         ":pytree",
+        ":traceback",
         ":transfer_guard_lib",
-        ":util",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//xla:util",
+        "//xla/pjrt:exceptions",
         "//xla/pjrt:lru_cache",
-        "//xla/pjrt:status_casters",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_future",
         "//xla/python/ifrt",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@nanobind",
-        "@pybind11",
     ],
 )
 
@@ -641,29 +722,38 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":jax_jit",
+        ":nb_class_ptr",
+        ":nb_helpers",
+        ":nb_numpy",
         ":py_client",
-        ":python_utils",
+        ":python_ref_manager",
         ":pytree",
+        ":traceback",
         ":types",
-        ":util",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@com_google_absl//absl/types:variant",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "//xla:status_macros",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
+        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/python/lib/core:numpy",
         "@nanobind",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
     ],
 )
 
@@ -697,17 +787,22 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_class_ptr",
         ":outfeed_receiver",
         ":py_client",
         ":types",
         # placeholder for index annotation deps
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "//xla:literal",
         "//xla/client:executable_build_options",
         "//xla/client:xla_builder",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
-        "@pybind11",
+        "@tsl//tsl/platform:logging",
+        "@nanobind",
     ],
 )
 
@@ -755,6 +850,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform:logging",
         "@nanobind",
@@ -773,8 +869,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":refine_polymorphic_shapes",
-        ":types",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/status:statusor",
         "//xla:status",
         "//xla/client:xla_computation",
         "//xla/mlir/utils:error_util",
@@ -785,6 +881,8 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
@@ -793,7 +891,8 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SparseTensorDialect",
-        "@pybind11",
+        "@llvm-project//mlir:Support",
+        "@nanobind",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_serialization",
@@ -808,6 +907,7 @@ cc_library(
         "//xla/mlir/utils:error_util",
         "@com_google_absl//absl/status",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
@@ -848,6 +948,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/lib:profiler_session",
@@ -877,12 +978,10 @@ cc_library(
     visibility = [":friends"],
     deps = [
         # placeholder for index annotation deps
-        "@com_google_absl//absl/base:core_headers",
-        "//xla:status",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
         "//xla:util",
-        "//xla/pjrt:status_casters",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@nanobind",
     ],
 )
 
@@ -903,7 +1002,7 @@ cc_library(
         "//xla/pjrt:pjrt_future",
         "//xla/python/ifrt",
         "@com_google_absl//absl/strings:str_format",
-        "@pybind11",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -921,6 +1020,7 @@ cc_library(
     deps = [
         ":nb_helpers",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/strings",
@@ -941,6 +1041,9 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":nb_absl_span",
+        ":nb_helpers",
+        ":nb_numpy",
         ":py_client",
         ":types",
         # placeholder for index annotation deps
@@ -952,6 +1055,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "//xla:array",
         "//xla:debug_options_flags",
+        "//xla:literal",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla:util",
@@ -966,6 +1070,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/pjrt:exceptions",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:status_casters",
         "//xla/service:call_inliner",
         "//xla/service:computation_placer",
@@ -980,7 +1085,8 @@ cc_library(
         "//xla/service:name_uniquer",
         "//xla/service:tuple_simplifier",
         "@tsl//tsl/lib/strings:proto_serialization",
-        "@pybind11",
+        "@tsl//tsl/platform:logging",
+        "@nanobind",
     ],
 )
 
@@ -1035,9 +1141,27 @@ cc_library(
     ]),
 )
 
+cc_library(
+    name = "logging",
+    srcs = ["logging.cc"],
+    hdrs = ["logging.h"],
+    deps = [
+        "@com_google_absl//absl/log:initialize",
+    ],
+)
+
 tsl_pybind_extension(
     name = "xla_extension",
-    srcs = ["xla_extension.cc"],
+    srcs = ["xla.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    defines = select({
+        ":gpu_enabled": ["XLA_PYTHON_ENABLE_GPU=1"],
+        "//conditions:default": [],
+    }),
+    features = ["-use_header_modules"],
     linkopts = select({
         ":use_jax_cuda_pip_rpaths": [
             "-Wl,-rpath,$$ORIGIN/../nvidia/cuda_cupti/lib",
@@ -1056,36 +1180,14 @@ tsl_pybind_extension(
     pytype_srcs = glob(["xla_extension/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = [
-        ":xla_extension_library",
-        "@pybind11",
-    ],
-)
-
-cc_library(
-    name = "xla_extension_library",
-    srcs = [
-        "logging.cc",
-        "logging.h",
-        "xla.cc",
-    ],
-    hdrs = [
-        "xla.h",
-    ],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    defines = select({
-        ":gpu_enabled": ["XLA_PYTHON_ENABLE_GPU=1"],
-        "//conditions:default": [],
-    }),
-    features = ["-use_header_modules"],
-    deps = [
         ":custom_call_sharding",
         ":dlpack",
         ":jax_jit",
+        ":logging",
         ":mlir",
+        ":nb_absl_flat_hash_map",
+        ":nb_absl_span",
+        ":nb_class_ptr",
         ":ops",
         ":outfeed_receiver_py",
         ":pjit",
@@ -1106,6 +1208,8 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:initialize",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -1118,6 +1222,7 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/ffi:ffi_api",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/pjrt:pjrt_api",
@@ -1125,6 +1230,7 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
@@ -1134,17 +1240,18 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:service",
+        "//xla/pjrt/gpu:gpu_helpers",
         "//xla/python/ifrt",
+        "//xla/python/ifrt_proxy/client:py_module",
         "//xla/python/pjrt_ifrt",
         "//xla/service/cpu:collectives_interface",
         "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform/cloud:gcs_file_system",
         "@tsl//tsl/python/lib/core:numpy",
         "@nanobind",
-        "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:absl_casters",
     ] + select({
         # gloo transport only builds on linux
         "@tsl//tsl:macos": [],
@@ -1213,14 +1320,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "status_casters",
-    hdrs = ["status_casters.h"],
-    deps = [
-        "//xla/pjrt:status_casters",
-    ],
-)
-
-cc_library(
     name = "nb_class_ptr",
     hdrs = ["nb_class_ptr.h"],
     copts = ["-fexceptions"],
@@ -1232,10 +1331,63 @@ cc_library(
     name = "nb_helpers",
     srcs = ["nb_helpers.cc"],
     hdrs = ["nb_helpers.h"],
+    compatible_with = [],
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
+        "@com_google_absl//absl/strings:str_format",
         "@local_config_python//:python_headers",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "nb_numpy",
+    srcs = ["nb_numpy.cc"],
+    hdrs = ["nb_numpy.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/types:span",
+        "@local_config_python//:python_headers",
+        "@nanobind",
+        "@tsl//tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "nb_absl_span",
+    hdrs = ["nb_absl_span.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "nb_absl_flat_hash_map",
+    hdrs = ["nb_absl_flat_hash_map.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@nanobind",
+    ],
+)
+
+cc_library(
+    name = "nb_absl_flat_hash_set",
+    hdrs = ["nb_absl_flat_hash_set.h"],
+    compatible_with = [],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
         "@nanobind",
     ],
 )

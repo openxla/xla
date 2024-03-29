@@ -1,10 +1,10 @@
+load("@tsl//tsl:tsl.bzl", "internal_visibility")
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
 )
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -52,6 +52,7 @@ cc_library(
     visibility = internal_visibility([
         "//xla/python:__pkg__",
         # copybara:uncomment "//tensorflow/core/profiler:internal",
+        # copybara:uncomment "//tensorflow:internal",
     ]),
     deps = [
         ":python_tracer_impl",
@@ -125,7 +126,6 @@ xla_cc_test(
     srcs = ["host_tracer_test.cc"],
     deps = [
         ":host_tracer_impl",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",

@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/util/env_var.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "tsl/platform/cuda_libdevice_path.h"
@@ -70,7 +71,6 @@ limitations under the License.
 #include "tsl/platform/random.h"
 #include "tsl/platform/rocm_rocdl_path.h"
 #include "tsl/profiler/lib/traceme.h"
-#include "tsl/util/env_var.h"
 
 #if !defined(PLATFORM_GOOGLE) && TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -214,7 +214,7 @@ void FeedLLVMWithFlags(const std::vector<std::string>& cl_opts) {
   for (const std::string& cl_opt : cl_opts) {
     fake_argv.push_back(cl_opt.c_str());
   }
-  llvm::cl::ParseCommandLineOptions(fake_argv.size(), &fake_argv[0]);
+  llvm::cl::ParseCommandLineOptions(fake_argv.size(), fake_argv.data());
 }
 
 // Returns whether the module could use any device bitcode library functions.
@@ -794,7 +794,7 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
 
   std::vector<uint8_t> hsaco(hsaco_file_size);
   hsaco_file.seekg(0, std::ios::beg);
-  hsaco_file.read(reinterpret_cast<char*>(&hsaco[0]), hsaco_file_size);
+  hsaco_file.read(reinterpret_cast<char*>(hsaco.data()), hsaco_file_size);
   hsaco_file.close();
   if (!keep_tempfiles) {
     remove(ir_path.c_str());

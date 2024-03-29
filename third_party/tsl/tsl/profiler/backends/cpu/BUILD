@@ -1,8 +1,8 @@
 load("//tsl:tsl.bzl", "internal_visibility")
+load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 load("//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
-load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -13,6 +13,7 @@ cc_library(
     visibility = internal_visibility([
         "//tsl/profiler:internal",
         "//tsl/profiler:xla_profiler_backends",
+        "//tensorflow/lite:__pkg__",
     ]),
     deps = [
         "//tsl/platform:macros",

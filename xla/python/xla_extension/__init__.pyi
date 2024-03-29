@@ -37,6 +37,7 @@ from typing import (
 
 import numpy as np
 
+from . import ifrt_proxy
 from . import jax_jit
 from . import mlir
 from . import ops
@@ -302,6 +303,7 @@ class DebugOptions:
   xla_dump_hlo_pipeline_re: str
   xla_gpu_enable_async_all_reduce: bool
   xla_gpu_enable_async_all_gather: bool
+  xla_gpu_enable_async_collective_broadcast: bool
   xla_gpu_enable_async_collective_permute: bool
   xla_gpu_enable_async_all_to_all: bool
   xla_gpu_enable_async_reduce_scatter: bool
@@ -317,6 +319,11 @@ class CompiledMemoryStats:
   output_size_in_bytes: int
   alias_size_in_bytes: int
   temp_size_in_bytes: int
+  host_generated_code_size_in_bytes: int
+  host_argument_size_in_bytes: int
+  host_output_size_in_bytes: int
+  host_alias_size_in_bytes: int
+  host_temp_size_in_bytes: int
   serialized_hlo_proto: bytes
   def __str__(self) -> str: ...
 
@@ -446,6 +453,10 @@ class Memory:
 
 class PjRtLayout:
   def __str__(self) -> str: ...
+  def __eq__(self, other: PjRtLayout) -> bool: ...
+  def __hash__(self) -> int: ...
+  def __getstate__(self) -> Any: ...
+  def __setstate__(self, Any): ...
 
 class GpuAllocatorConfig:
   class Kind(enum.IntEnum):
@@ -606,6 +617,9 @@ ArrayImpl = Any
 def copy_array_to_devices_with_sharding(
     self: ArrayImpl, devices: List[Device], sharding: Any
 ) -> ArrayImpl: ...
+
+def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
+
 def batched_device_put(
     aval: Any,
     sharding: Any,
@@ -690,8 +704,15 @@ class DeviceTopology:
 def buffer_to_dlpack_managed_tensor(
     buffer: ArrayImpl, stream: int | None = None
 ) -> Any: ...
+@overload
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
+) -> ArrayImpl: ...
+@overload
+def dlpack_managed_tensor_to_buffer( # Legacy overload
+    tensor: Any,
+    cpu_backend: Optional[Client] = ...,
+    gpu_backend: Optional[Client] = ...,
 ) -> ArrayImpl: ...
 
 def cuda_array_interface_to_buffer(
@@ -704,12 +725,6 @@ def cuda_array_interface_to_buffer(
     gpu_backend: Optional[Client] = ...,
 ) -> ArrayImpl: ...
 
-# Legacy overload
-def dlpack_managed_tensor_to_buffer(
-    tensor: Any,
-    cpu_backend: Optional[Client] = ...,
-    gpu_backend: Optional[Client] = ...,
-) -> ArrayImpl: ...
 
 # === BEGIN py_traceback.cc
 
@@ -786,7 +801,6 @@ def is_optimized_build() -> bool: ...
 def json_to_pprof_profile(json: str) -> bytes: ...
 def pprof_profile_to_json(proto: bytes) -> str: ...
 
-CompiledFunction = Any
 
 class PmapFunction:
   def __call__(self, *args, **kwargs) -> Any: ...

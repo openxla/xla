@@ -605,10 +605,14 @@ LogicalResult matchAndRewriteDotLikeHybridOp(
   // For weight-only quantization:
   // result = hybridOp(lhs, dequant(rhs))
   Value lhsFloat32Tensor = adaptor.getLhs();
-  Value rhs = adaptor.getRhs();
-  quant::UniformQuantizedType rhsElementType =
-      getElementTypeOrSelf(op.getRhs().getType())
-          .template cast<quant::UniformQuantizedType>();
+  // Insert optimization_barrier to prevent constant folding of dequantize +
+  // quantized weights.
+  auto barrier = rewriter.create<mhlo::OptimizationBarrierOp>(op->getLoc(),
+                                                              adaptor.getRhs());
+  Operation::result_range resultRange = barrier.getResults();
+  Value rhs = resultRange.front();
+  auto rhsElementType = getElementTypeOrSelf(op.getRhs().getType())
+                            .template cast<quant::UniformQuantizedType>();
   auto resFloat32TensorType =
       op.getResult().getType().template cast<TensorType>();
   auto rhsFloat32TensorType =
@@ -1036,10 +1040,9 @@ FailureOr<bool> isDotLikeOpHybrid(DotLikeOp op) {
       getElementTypeOrSelf(op.getResult()));
 
   if (isLhsQuant && ((isRhsQuant && isResQuant) ||
-                     (isa<mhlo::ConvolutionOp>(op) && isRhsQuantPerChannel &&
-                      isResQuantPerChannel))) {
-    // For quantized ops, RHS and result must be both per-channel quantized.
-    // For Convolution, we also support per-channel quantized RHS/result.
+                     (isRhsQuantPerChannel && isResQuantPerChannel))) {
+    // For quantized ops, RHS and result must be both per-channel quantized or
+    // both per-tensor quantized.
     return false;
   }
   if (!isLhsQuant && !isLhsQuantPerChannel && isRhsQuant && !isResQuant &&

@@ -1,9 +1,9 @@
 # Automatic sharding annotation
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("//xla:xla.bzl", "auto_sharding_deps", "auto_sharding_solver_deps", "xla_cc_binary", "xla_cc_test")
 load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla:xla.bzl", "auto_sharding_deps", "auto_sharding_solver_deps", "xla_cc_binary", "xla_cc_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -100,6 +100,8 @@ cc_library(
     deps = [
         ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
+        "//xla:status",
+        "//xla:status_macros",
         "//xla:statusor",
         "//xla:util",
         "@com_google_absl//absl/container:btree",
@@ -128,11 +130,12 @@ cc_library(
     deps = [
         ":auto_sharding_proto_cc",
         "//xla:shape_util",
-        "//xla:statusor",
+        "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_ortools//ortools/linear_solver",
     ],
@@ -140,6 +143,7 @@ cc_library(
 
 cc_library(
     name = "auto_sharding_cost_graph",
+    srcs = ["auto_sharding_cost_graph.cc"],
     hdrs = ["auto_sharding_cost_graph.h"],
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
@@ -314,11 +318,17 @@ xla_cc_test(
     deps = [
         ":auto_sharding",
         ":auto_sharding_option",
+        ":auto_sharding_strategy",
         ":auto_sharding_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:buffer_value",
+        "//xla/service:hlo_alias_analysis",
+        "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_parser",
+        "//xla/service:hlo_value",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -344,6 +354,7 @@ xla_cc_test(
         ":auto_sharding_solver",  # build_cleaner: keep
         ":auto_sharding_strategy",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
     ],

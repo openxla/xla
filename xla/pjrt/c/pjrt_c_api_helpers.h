@@ -114,6 +114,7 @@ xla::Status PjrtErrorToStatus(const PJRT_Error* error, const PJRT_Api* api);
 absl::StatusCode PjrtErrorToStatusCode(const PJRT_Error* error,
                                        const PJRT_Api* api);
 
+absl::StatusCode PjrtErrorCodeToStatusCode(PJRT_Error_Code code);
 PJRT_Error_Code StatusCodeToPjrtErrorCode(absl::StatusCode code);
 
 // Conversion helper from xla::PrimitiveType to PJRT_Buffer_Type.
@@ -141,8 +142,7 @@ xla::PjRtFuture<xla::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
 // `cpp_value_map`, so `cpp_value_map` must outlive the returned list. It will
 // raise errors for unsupported PjRtValueType.
 absl::StatusOr<std::vector<PJRT_NamedValue>> ConvertToPjRtNamedValueList(
-    const absl::flat_hash_map<std::string, xla::PjRtValueType>& cpp_value_map,
-    int api_minor_version);
+    const absl::flat_hash_map<std::string, xla::PjRtValueType>& cpp_value_map);
 
 absl::flat_hash_map<std::string, xla::PjRtValueType>
 ConvertFromPjRtNamedValueList(const PJRT_NamedValue* c_value_list,

@@ -43,7 +43,6 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/device_options.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/fft.h"
@@ -55,12 +54,12 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_internal.h"
+#include "xla/tsl/util/env_var.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/stacktrace.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
-#include "tsl/util/env_var.h"
 
 namespace stream_executor {
 namespace {
@@ -103,20 +102,10 @@ StreamExecutor::~StreamExecutor() {
   }
 }
 
-StreamExecutor::PlatformSpecificHandle
-StreamExecutor::platform_specific_handle() const {
-  PlatformSpecificHandle handle;
-  handle.context = implementation_->platform_specific_context();
-  return handle;
-}
-
-absl::Status StreamExecutor::Init(DeviceOptions device_options) {
-  TF_RETURN_IF_ERROR(
-      implementation_->Init(device_ordinal_, std::move(device_options)));
+absl::Status StreamExecutor::Init() {
+  TF_RETURN_IF_ERROR(implementation_->Init(device_ordinal_));
   return absl::OkStatus();
 }
-
-absl::Status StreamExecutor::Init() { return Init(DeviceOptions::Default()); }
 
 absl::Status StreamExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
                                        Kernel* kernel) {

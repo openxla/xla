@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
@@ -24,7 +25,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/mlir_fusion_emitter.h"
@@ -51,34 +51,43 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   explicit MlirTransposeFusion(const HloFusionAnalysis& analysis);
   LaunchDimensions launch_dimensions() const override;
 
-  static bool IsSupported(const HloFusionAnalysis& analysis);
-
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
-      int64_t root_index, mlir::MLIRContext* ctx) const override;
+      int64_t root_index, mlir::MLIRContext* mlir_context) const override;
 
   std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
       int64_t root_index, int64_t hero_operand_index,
-      mlir::MLIRContext* ctx) const override;
+      mlir::MLIRContext* mlir_context) const override;
 
  protected:
-  absl::Status EmitMlir(mlir::ModuleOp module,
-                        mlir::func::FuncOp entry_function,
-                        const HloFusionInstruction& fusion) const override;
+  IndexingMap ComputeThreadIdToInputIndexing(
+      const HloInstruction& hero, mlir::MLIRContext* mlir_context) const;
+
+  absl::Status EmitEntryFunction(
+      const mlir_converter::PartitionedComputations& computations,
+      const mlir_converter::CallTargetProvider& call_targets,
+      mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion) const override;
+
+  std::vector<const HloInstruction*> GetInstructionsWithCustomCodegen(
+      const HloFusionInstruction& fusion) const override;
 
   absl::StatusOr<llvm::SmallVector<mlir::Value, 4>> EmitWriteToShMemMlir(
-      mlir::ImplicitLocOpBuilder& builder, mlir::ModuleOp module,
-      mlir::func::FuncOp entry_function, const HloFusionInstruction& fusion,
-      mlir_converter::CallTargetProvider& call_target_provider) const;
+      mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion,
+      const mlir_converter::PartitionedComputation& root_computation,
+      const mlir_converter::CallTargetProvider& call_target_provider) const;
   absl::Status EmitReadFromShMemMlir(
-      mlir::ImplicitLocOpBuilder& builder, mlir::ModuleOp module,
-      mlir::func::FuncOp entry_function, const HloFusionInstruction& fusion,
-      mlir_converter::CallTargetProvider& call_target_provider,
+      mlir::ImplicitLocOpBuilder& builder, mlir::func::FuncOp entry_function,
+      const HloFusionInstruction& fusion,
+      const mlir_converter::PartitionedComputations& computations,
+      const mlir_converter::CallTargetProvider& call_target_provider,
       mlir::ValueRange shmem_tensors) const;
 
  private:
   const HloFusionAnalysis& analysis_;
   Tiling tiling_;
   Vector3 permutation_;
+  std::vector<const HloInstruction*> shmem_transposes_;
 };
 
 }  // namespace gpu
