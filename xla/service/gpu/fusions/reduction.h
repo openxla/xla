@@ -105,6 +105,10 @@ namespace gpu {
 class ReductionFusion : public ReductionFusionBase<KernelFusionEmitterBase> {
  public:
   using ReductionFusionBase::ReductionFusionBase;
+  // Enable column reduction vectorization and tiling adjustment.
+  explicit ReductionFusion(const HloFusionAnalysis& analysis,
+                           bool column_vectorization = true,
+                           bool adjust_tiling = true);
 
  protected:
   absl::StatusOr<FusionEmissionResult> EmitInitializers(

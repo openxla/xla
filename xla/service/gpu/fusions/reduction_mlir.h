@@ -31,8 +31,7 @@ namespace gpu {
 // reductions.
 class MlirReductionFusion : public ReductionFusionBase<MlirFusionEmitterBase> {
  public:
-  explicit MlirReductionFusion(const HloFusionAnalysis& analysis,
-                               bool adjust_tiling);
+  explicit MlirReductionFusion(const HloFusionAnalysis& analysis);
 
   static bool IsSupported(const HloFusionAnalysis& analysis);
 

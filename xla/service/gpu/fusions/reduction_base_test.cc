@@ -49,8 +49,8 @@ class FakeReductionFusion : public ReductionFusionBase<KernelFusionInterface> {
 };
 
 std::unique_ptr<FakeReductionFusion> GetReductionFusion(
-    const HloFusionAnalysis& analysis, bool adjust_tiling) {
-  return std::make_unique<FakeReductionFusion>(analysis, adjust_tiling);
+    const HloFusionAnalysis& analysis) {
+  return std::make_unique<FakeReductionFusion>(analysis);
 }
 
 TEST_F(ReductionTest, ThreadIndexingRowReduction) {
@@ -77,7 +77,7 @@ TEST_F(ReductionTest, ThreadIndexingRowReduction) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(
@@ -146,7 +146,7 @@ TEST_F(ReductionTest, ThreadIndexingMultiRowReduction) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(
@@ -216,7 +216,7 @@ TEST_F(ReductionTest, ThreadIndexingColumnReduction) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(
@@ -272,7 +272,7 @@ TEST_F(ReductionTest, ThreadIndexingOutputLayout) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(
@@ -321,7 +321,7 @@ TEST_F(ReductionTest, ThreadIndexingSideOutput) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   constexpr char kExpectedIndexing[] = R"(
@@ -374,7 +374,7 @@ TEST_F(ReductionTest, bla) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis, /*adjust_tiling*/ false);
+  FakeReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(

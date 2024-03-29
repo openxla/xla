@@ -23,18 +23,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-
-template <>
-class MlirEmitterTestBase<MlirReductionFusion>
-    : public MlirEmitterTestBaseImpl {
- public:
-  std::unique_ptr<MlirFusionEmitterBase> GetEmitter(
-      const HloFusionAnalysis& analysis) override {
-    return std::make_unique<MlirReductionFusion>(analysis,
-                                                 /*adjust_tiling*/ false);
-  }
-};
-
 namespace {
 
 using ReductionTest = MlirEmitterTestBase<MlirReductionFusion>;

@@ -66,20 +66,51 @@ int RowReductionGetRowsPerWarp(int reduced_dimension_size) {
   return WarpSize() / reduced_dimension_size;
 }
 
+int64_t ComputeColReductionActiveCore(Vector3 reduction_dimensions,
+                                      int64_t tile_y, int64_t num_threads_y,
+                                      int64_t num_threads_x, int vector_size) {
+  constexpr int kColMajorKept = ReductionDimensions::kColMajorKeptDimension;
+  constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
+  constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
+  // Compute active core number by assuming each block occupy one sm core. It is
+  // a conservative but easy approach otherwise we should consider shared memory
+  // size. Due to column reduction always use 1024 as block size, the computed
+  // active core num has not much difference from the actual situation.
+  int64_t blocks_x = CeilOfRatio(reduction_dimensions[kColMinorKept],
+                                 num_threads_x * vector_size);
+  int64_t block_tile_y = num_threads_y * tile_y;
+  int64_t blocks_y =
+      CeilOfRatio(reduction_dimensions[kColReduced], block_tile_y);
+  int64_t blocks = reduction_dimensions[kColMajorKept] * blocks_x * blocks_y;
+  return blocks;
+}
+
 int GetVectorSize(const HloFusionAnalysis& analysis,
                   const ReductionDimensions& reduction_dimensions,
-                  int num_threads, Vector3 reduction_tiling,
-                  bool vectorize_column_reduction) {
+                  int64_t num_threads_y, int64_t num_threads_x,
+                  Vector3 reduction_tiling, bool column_vectorization,
+                  bool adjust_tiling) {
   if (MayPreventVectorization(analysis.fusion())) {
     return 1;
   }
 
+  constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   if (!reduction_dimensions.is_row_reduction) {
-    if (!vectorize_column_reduction) return 1;
-    // Check if the last dimension is divisible by (vector_size * num_threads).
+    if (!column_vectorization) return 1;
+    int vector_size = 2;
+    auto core_num_if_vectorize = ComputeColReductionActiveCore(
+        reduction_dimensions.dimensions, reduction_tiling[kColReduced],
+        num_threads_y, num_threads_x, vector_size);
     auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
-    return num_kept_minor % (2 * num_threads) == 0 ? 2 : 1;
+    // Check if the last dimension is divisible by (vector_size *
+    // num_threads_x) and active core is enough or allow to adjust tiling.
+    if (num_kept_minor % (vector_size * num_threads_x) == 0 &&
+        (core_num_if_vectorize >= analysis.device_info().core_count() ||
+         adjust_tiling)) {
+      return vector_size;
+    }
+    return 1;
   }
 
   constexpr int kRowMinorReduced =
@@ -90,7 +121,7 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
 
   // Enabling vectorization if number of threads is <= warpsize leads to half or
   // more of the threads not doing any work.
-  if (num_threads <= WarpSize()) {
+  if (num_threads_x <= WarpSize()) {
     return 1;
   }
 
@@ -101,7 +132,8 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
   if (cuda_cc->IsAtLeast(se::CudaComputeCapability::PASCAL_)) {
     return analysis.input_output_info().smallest_input_dtype_bits <= 32 &&
                    reduction_dimensions.dimensions[kRowMinorReduced] %
-                           (reduction_tiling[kRowMinorReduced] * num_threads) ==
+                           (reduction_tiling[kRowMinorReduced] *
+                            num_threads_x) ==
                        0
                ? 2
                : 1;
@@ -116,25 +148,14 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
   constexpr int kColMajorKept = ReductionDimensions::kColMajorKeptDimension;
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
-  // Compute active core number by assuming each block occupy one sm core. It is
-  // a conservative but easy approach otherwise we should consider shared memory
-  // size. Due to column reduction always use 1024 as block size, the computed
-  // active core num has not much difference from the actual situation.
-  auto active_core_num = [&](int64_t tile_size) {
-    int64_t blocks_x = CeilOfRatio(reduction_dimensions[kColMinorKept],
-                                   num_threads_x * vector_size);
-    int64_t block_tile_y = num_threads_y * tile_size;
-    int64_t blocks_y =
-        CeilOfRatio(reduction_dimensions[kColReduced], block_tile_y);
-    int64_t blocks = reduction_dimensions[kColMajorKept] * blocks_x * blocks_y;
-    return blocks;
-  };
 
   auto core_count = analysis.device_info().core_count();
   constexpr int minimum_tile_size = 8;
 
   // Early return if device occupancy is already high.
-  if (active_core_num(reduction_tiling[kColReduced]) >= core_count) {
+  if (ComputeColReductionActiveCore(
+          reduction_dimensions, reduction_tiling[kColReduced], num_threads_y,
+          num_threads_x, vector_size) >= core_count) {
     return {reduction_tiling, vector_size, false};
   }
 
@@ -157,7 +178,10 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
       CeilOfRatio(reduction_dimensions[kColReduced], num_threads_y);
   auto current_tile_size = actual_tile_size;
   while (current_tile_size >= minimum_tile_size * 2) {
-    if (active_core_num(current_tile_size) >= core_count) break;
+    if (ComputeColReductionActiveCore(reduction_dimensions, current_tile_size,
+                                      num_threads_y, num_threads_x,
+                                      vector_size) >= core_count)
+      break;
     current_tile_size = current_tile_size / 2;
   }
   bool tile_size_decreased = current_tile_size != actual_tile_size;
@@ -291,6 +315,7 @@ LaunchDimensions ReductionInfo::launch_dimensions() const {
 }
 
 ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
+                                    bool column_vectorization,
                                     bool adjust_tiling) {
   auto* hero_reduction = analysis.FindHeroReduction();
   CHECK_NE(hero_reduction, nullptr);
@@ -350,8 +375,9 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
     }
   }
 
-  int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_x,
-                                  reduction_tiling, adjust_tiling);
+  int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_y,
+                                  num_threads_x, reduction_tiling,
+                                  column_vectorization, adjust_tiling);
   bool tile_size_decreased = false;
   if (!reduction_dimensions.is_row_reduction && adjust_tiling) {
     // Adjust tile_y and vector size for column reduction if device occupancy is
@@ -377,7 +403,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
     // uses the thread ID as the coordinate.
     tile_per_thread[2] = 1;
   }
-  if ((!reduction_dimensions.is_row_reduction && adjust_tiling) ||
+  if ((!reduction_dimensions.is_row_reduction && column_vectorization) ||
       vector_size != 1) {
     num_threads.push_back(1);  // The vector dimension is a loop.
     tiled_shape.push_back(vector_size);

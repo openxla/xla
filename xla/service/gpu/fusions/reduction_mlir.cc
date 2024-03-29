@@ -95,9 +95,8 @@ struct MlirReductionFusion::EmitterState {
   mlir::ImplicitLocOpBuilder builder;
 };
 
-MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis,
-                                         bool adjust_tiling)
-    : ReductionFusionBase(analysis, adjust_tiling) {
+MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
+    : ReductionFusionBase(analysis) {
   for (auto [index, hero] : llvm::enumerate(analysis.fusion_heroes())) {
     if (reduction_info().GetGroups().is_reduction_root[index]) {
       reduction_roots_[hero].push_back(index);
@@ -110,7 +109,8 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis,
 }
 
 bool MlirReductionFusion::IsSupported(const HloFusionAnalysis& analysis) {
-  auto info = ReductionInfo::Create(analysis, /*adjust_tiling*/ false);
+  auto info = ReductionInfo::Create(analysis, /*column_vectorization*/ false,
+                                    /*adjust_tiling*/ false);
   return info.GetGroups().grouped_roots.size() == 1 &&
          !absl::c_linear_search(info.GetGroups().is_reduction_root, false) &&
          info.IsRaceFree();
