@@ -1568,6 +1568,25 @@ tf_proto_library(
 )
 
 cc_library(
+    name = "onednn_util",
+    srcs = ["onednn_util.cc"],
+    hdrs = [
+        "onednn_util.h",
+        "//xla/tsl/util:onednn_util_hdrs",
+    ],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_memory_util",
     srcs = ["onednn_memory_util.cc"],
     hdrs = ["onednn_memory_util.h"],
@@ -1602,6 +1621,7 @@ cc_library(
     srcs = ["onednn_matmul.cc"],
     hdrs = [
         "onednn_matmul.h",
+        "onednn_util.h",
         "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
@@ -1609,6 +1629,7 @@ cc_library(
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_util",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1670,11 +1691,6 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_util",
-    hdrs = ["onednn_util.h"],
-)
-
-cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
@@ -1711,6 +1727,8 @@ cc_library(
     srcs = ["onednn_ops_rewriter.cc"],
     hdrs = [
         "onednn_ops_rewriter.h",
+        "onednn_util.h",
+        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [

@@ -118,6 +118,12 @@ class MemrefInfo {
   MemrefInfoPOD* pod_;
 };
 
+StatusOr<dnnl::memory::desc> TransposeLastTwoDims(const dnnl::memory::desc& md);
+
+dnnl::memory::desc ShapeToMemDesc(const Shape& shape);
+
+Shape MemDescToXlaShapeFlattened(const dnnl::memory::desc& md);
+
 }  // namespace cpu
 }  // namespace xla
 
