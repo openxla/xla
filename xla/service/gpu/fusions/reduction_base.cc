@@ -146,10 +146,7 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
     const HloFusionAnalysis& analysis, Vector3 reduction_dimensions,
     Vector3 reduction_tiling, int64_t num_threads_y, int64_t num_threads_x,
     int vector_size) {
-  constexpr int kColMajorKept = ReductionDimensions::kColMajorKeptDimension;
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
-  constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
-
   auto core_count = analysis.device_info().core_count();
   constexpr int minimum_tile_size = 8;
 
