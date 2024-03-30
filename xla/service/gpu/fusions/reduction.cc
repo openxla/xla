@@ -897,7 +897,7 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
                                   shmem_transposed_addrs);
            });
 
-    if (tile_size[kVectorizedDimension] > 1) {
+    if (vec_dim + 1 < tile_size[kVectorizedDimension]) {
       reduction_emitter_.EmitSyncThreads();
     }
   }
