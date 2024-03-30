@@ -309,10 +309,8 @@ xla_cc_test(
     name = "se_gpu_pjrt_compiler_aot_test",
     srcs = if_gpu_is_configured(["se_gpu_pjrt_compiler_aot_test.cc"]),
     tags = [
-        "config-cuda-only",
         "gpu",
         "no_oss",
-        "requires-gpu-nvidia",
     ],
     deps = [
         ":se_gpu_pjrt_client",
@@ -327,8 +325,6 @@ xla_cc_test(
         "//xla/service:compiler",
         "//xla/service:gpu_plugin",
         "//xla/service:hlo_parser",
-        "//xla/service/gpu:nvptx_compiler_impl",
-        "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
@@ -342,5 +338,12 @@ xla_cc_test(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
-    ],
+    ]
+    + if_cuda([
+        "//xla/service/gpu:nvptx_compiler_impl",
+        "//xla/stream_executor/cuda:cublas_plugin",
+    ]) + if_rocm([
+        "//xla/service/gpu:amdgpu_compiler_impl",
+        "//xla/stream_executor/rocm:rocblas_plugin",
+    ]),
 )
