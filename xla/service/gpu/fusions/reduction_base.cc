@@ -72,10 +72,11 @@ int64_t ComputeColReductionActiveCore(Vector3 reduction_dimensions,
   constexpr int kColMajorKept = ReductionDimensions::kColMajorKeptDimension;
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
-  // Compute active core number by assuming each block occupy one sm core. It is
-  // a conservative but easy approach otherwise we should consider shared memory
-  // size. Due to column reduction always use 1024 as block size, the computed
-  // active core num has not much difference from the actual situation.
+  // The number of blocks is strongly related to the number of active cores.
+  // Make block counts larger than sm core counts can reach better memory
+  // bandwidth. We don't consider how many threads are scheduled in an sm core
+  // due to it is not as important as active core ratio for memory-bound kernels
+  // and hope to relax the vectorization restrictions of column reduction.
   int64_t blocks_x = CeilOfRatio(reduction_dimensions[kColMinorKept],
                                  num_threads_x * vector_size);
   int64_t block_tile_y = num_threads_y * tile_y;
@@ -152,7 +153,7 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
   auto core_count = analysis.device_info().core_count();
   constexpr int minimum_tile_size = 8;
 
-  // Early return if device occupancy is already high.
+  // Early return if all of the sm cores are active.
   if (ComputeColReductionActiveCore(
           reduction_dimensions, reduction_tiling[kColReduced], num_threads_y,
           num_threads_x, vector_size) >= core_count) {
@@ -167,7 +168,7 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
     if (hero->opcode() == HloOpcode::kReduce) {
       if (hero != (&root.instruction()) ||
           hero->shape().element_type() != F32) {
-        // If we can not adjust tile_y but active core number is small, reset
+        // If we can not adjust tile_y but sm core active ratio is low, reset
         // vector size as 1.
         return {reduction_tiling, 1, false};
       }
@@ -380,8 +381,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
                                   column_vectorization, adjust_tiling);
   bool tile_size_decreased = false;
   if (!reduction_dimensions.is_row_reduction && adjust_tiling) {
-    // Adjust tile_y and vector size for column reduction if device occupancy is
-    // low.
+    // Adjust tile_y and vector size for column reduction.
     std::tie(reduction_tiling, vector_size, tile_size_decreased) =
         AdjustColReductionTilingConfig(analysis, shape, reduction_tiling,
                                        num_threads_y, num_threads_x,

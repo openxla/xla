@@ -214,8 +214,8 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
         return std::make_unique<MlirReductionFusion>(analysis);
       }
       // Due to tiling adjustment will introduce more atomic operations and the
-      // influence is hard to evaluate, disable `adjust_tiling` when estimate
-      // reduction performance.
+      // influence is hard to evaluate, disable `adjust_tiling` to estimate
+      // reduction performance conservatively.
       if (dynamic_cast<const PreBufferAssignmentFusionInfo*>(&fusion_info)) {
         return std::make_unique<ReductionFusion>(analysis,
                                                  /*column_vectorization*/ true,
