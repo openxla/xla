@@ -495,7 +495,6 @@ absl::Status BlasLt::MatmulPlan::DoMatmul(
       TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                  CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER,
                                  aux.opaque()));
-      std::cout << "CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER!\n";
 
       // Set leading dim and batch stride of auxiliary output to match output.
       // TODO(cjfj): Set this once at initialization.
