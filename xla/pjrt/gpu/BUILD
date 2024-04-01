@@ -311,6 +311,7 @@ xla_cc_test(
     tags = [
         "gpu",
         "no_oss",
+        "requires-gpu-nvidia",
     ],
     deps = [
         ":se_gpu_pjrt_client",
