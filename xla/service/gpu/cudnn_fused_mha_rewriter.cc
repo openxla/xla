@@ -1212,7 +1212,7 @@ absl::StatusOr<bool> IsMHABlockSupported(
     bool is_training, bool is_causal_mask, bool& is_flash_attention,
     std::string& custom_call_name, const DebugOptions& debug_options,
     stream_executor::CudaComputeCapability cc,
-    stream_executor::dnn::VersionInfo cudnn_version) {
+    stream_executor::dnn::VersionInfo cudnn_version, QKVLayout& qkv_layout) {
   if (MHACallHasDropout(custom_call_name) &&
       !debug_options.xla_gpu_fused_attention_use_cudnn_rng()) {
     VLOG(3) << "Using CUDNN RNG for fused attention dropout is not enabled.\n";
@@ -1248,17 +1248,18 @@ absl::StatusOr<bool> IsMHABlockSupported(
 
   // get batch/num heads/sequence length/hidden dim from bmm1 and bmm2
   // also make sure they are the same between bmm1 and bmm2
-  TF_ASSIGN_OR_RETURN(std::optional<QKVLayout> qkv_layout,
+  TF_ASSIGN_OR_RETURN(std::optional<QKVLayout> qkv_layout_res,
                       GetQKVLayout(bmm_1, bmm_2, need_canonicalization));
-  if (!qkv_layout.has_value()) {
+  if (!qkv_layout_res.has_value()) {
     VLOG(2) << "bmm1 and bmm2 have different qkv layout.";
     return false;
   }
 
+  qkv_layout = qkv_layout_res.value();
   // check if matched attention block is supported by cuDNN flash attention.
   TF_ASSIGN_OR_RETURN(
       is_flash_attention,
-      IsFlashAttention(qkv_layout.value(), is_training, cc, cudnn_version));
+      IsFlashAttention(qkv_layout, is_training, cc, cudnn_version));
   if (is_flash_attention) {
     if (is_causal_mask) {
       // if bias is causal mask, needs to remove bias from name
@@ -1278,7 +1279,7 @@ absl::StatusOr<bool> IsMHABlockSupported(
   // check if matched attention block is supported by cuDNN fused attention.
   TF_ASSIGN_OR_RETURN(
       bool is_fused_attention,
-      IsFusedAttention(qkv_layout.value(), is_training, cc, cudnn_version));
+      IsFusedAttention(qkv_layout, is_training, cc, cudnn_version));
   return is_fused_attention;
 }
 
@@ -1378,13 +1379,28 @@ absl::StatusOr<HloInstruction*> ChangeCheckedDimToFastest(
   return operand_bmm;
 }
 
+int div_up(int a, int b) { return ((a + b - 1) / b) * b; }
+
+int get_fa_fwd_workspace() { return 32; }
+
+int get_fa_bwd_workspace(int b, int h, int s_q, int s_kv, int d) {
+  int workspace = 16;
+  // softmax sum in float
+  workspace += div_up(b * h * s_q * 4, 16);
+  workspace += div_up(b * h * div_up(s_q, 128) * div_up(s_kv, 128), 16);
+  // dq_accum in float
+  workspace += div_up(b * h * s_q * d * 4, 16);
+  return workspace;
+}
+
 absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
     HloComputation* comp, HloInstruction* bmm_1, HloInstruction* bmm_2,
     HloInstruction* bias, HloInstruction* mask, HloInstruction* scale,
     HloInstruction* reduce_sum, HloInstruction* softmax_input,
     double dropout_rate, std::string& custom_call_name,
     stream_executor::CudaComputeCapability cc, bool is_training, bool& changed,
-    bool& v_transposed, bool is_causal_mask, bool is_flash_attention) {
+    bool& v_transposed, bool is_causal_mask, bool is_flash_attention,
+    QKVLayout& qkv_layout) {
   double scale_value = 1.0;
   HloInstruction* lhs_bmm1;
   HloInstruction* rhs_bmm1;
@@ -1470,7 +1486,7 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       output_shape,
       ShapeUtil::MakeShape(
           U8, {is_flash_attention
-                   ? 3194896
+                   ? get_fa_fwd_workspace()
                    : 0})};  // reserved 2 int64 for dropout seed and offset
   if (is_training) {
     activation_output = bmm_2->mutable_operand(0);
@@ -1585,7 +1601,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     HloInstruction* bmm_1_grad_2, HloInstruction* bmm_2_grad_1,
     HloInstruction* bmm_2_grad_2, HloInstruction* fwd_fmha_call,
     HloInstruction* dbias, HloInstruction* mask, HloInstruction* bias,
-    std::string& bwd_custom_call_name) {
+    std::string& bwd_custom_call_name, QKVLayout& qkv_layout) {
   HloInstruction* rhs_bmm1_grad_gemm1;
   HloInstruction* lhs_bmm1_grad_gemm2;
   HloInstruction* lhs_bmm2_grad_gemm1;
@@ -1740,11 +1756,14 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   if (!fwd_config.is_flash_attention()) {
     output_shapes.push_back(lhs_bmm2_grad_gemm1->shape());
   }
+
   // Reserved placeholder for workspace
   output_shapes.push_back(ShapeUtil::MakeShape(
       U8, {is_flash_attention
-               ? 3194896
-               : 0}));  // reserved 2 int64 for dropout seed and offset
+               ? get_fa_bwd_workspace(qkv_layout.batch, qkv_layout.num_heads,
+                                      qkv_layout.seqlen_q, qkv_layout.seqlen_kv,
+                                      qkv_layout.hidden_dim)
+               : 0}));
 
   if (dbias) {
     // Cudnn kernel only outputs dbias in this shape [1, num_heads, seq, seq],
@@ -1874,6 +1893,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
       // We check the validity of bmms here before canonicalization so we don't
       // modify the graph if mha fusion is not possible
       // Relax 512 constraint if it is flash attention
+      QKVLayout qkv_layout;
       TF_ASSIGN_OR_RETURN(
           bool is_mha_module_supported,
           IsMHABlockSupported(
@@ -1881,7 +1901,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.need_canonicalization, matched_result.is_training,
               matched_result.is_causal_mask, matched_result.is_flash_attention,
               matched_result.matched_custom_call_name, debug_options,
-              compute_capability_, cudnn_version));
+              compute_capability_, cudnn_version, qkv_layout));
 
       if (!is_mha_module_supported) continue;
       // If we have an activation with more than 1 users in non-training mode,
@@ -1930,8 +1950,8 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.matched_dropout_rate,
               matched_result.matched_custom_call_name, compute_capability_,
               matched_result.is_training, changed, v_transposed,
-              matched_result.is_causal_mask,
-              matched_result.is_flash_attention));
+              matched_result.is_causal_mask, matched_result.is_flash_attention,
+              qkv_layout));
       any_changed |= changed;
       if (matched_result.is_training) {
         MatchBwdResult matched_bwd_result =
@@ -2013,7 +2033,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
                 matched_bwd_result.matched_bmm_2_grad_2, fwd_fmha_call,
                 matched_bwd_result.matched_dbias, matched_result.matched_mask,
                 matched_result.matched_bias,
-                matched_bwd_result.matched_custom_call_name));
+                matched_bwd_result.matched_custom_call_name, qkv_layout));
         any_changed |= changed;
       }
     }

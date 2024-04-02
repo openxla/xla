@@ -6356,11 +6356,11 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
         .set_uid(CudnnfMHAUid::P_ID);
   }
   CudnnGraph cudnnGraph(std::move(graph));
-  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare());
+  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support));
   if (!supported) {
     return absl::InternalError("cuDNN graph is not supported.");
   }
-  TF_RETURN_IF_ERROR(cudnnGraph.Build(/*plan_id=*/0));
+  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/0));
 
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\b flash attention operation graph: " << graph;
@@ -6369,7 +6369,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
 }
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
-    const dnn::MatmulTensorDescriptor& q_desc,
+    dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,
     const dnn::MatmulTensorDescriptor& k_desc,
     const dnn::MatmulTensorDescriptor& p_desc,
     const dnn::MatmulTensorDescriptor& v_desc,
@@ -6526,11 +6526,11 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
       .set_data_type(ioDataType);
 
   CudnnGraph cudnnGraph(std::move(graph));
-  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare());
+  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support));
   if (!supported) {
     return absl::InternalError("cuDNN graph is not supported.");
   }
-  TF_RETURN_IF_ERROR(cudnnGraph.Build(/*plan_id=*/0));
+  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, /*plan_id=*/0));
 
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\b flash attention operation backward graph: " << graph;
@@ -7425,7 +7425,12 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
           "8.8.0");
 #endif  // CUDNN_VERSION >= 8800
     }
-    std::cerr << graph_.Graph().get_workspace_size() << "\n";
+    int workspace = graph_.Graph().get_workspace_size();
+    if (workspace > scratch_memory.size()) {
+      return tsl::errors::Internal(
+          absl::StrFormat("CuDNN FMHA requires %d workspace, got %d workspace.",
+                          workspace, scratch_memory.size()));
+    }
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.Graph().execute(
         handle.handle(), variant_pack, scratch_memory.opaque()));
 
@@ -8599,11 +8604,12 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
     TF_ASSIGN_OR_RETURN(
         auto graph,
         GetCudnnFlashAttentionBackwardOperationGraph(
-            bmm1_grad_gemm1_rhs_descriptor, bmm1_grad_gemm2_rhs_descriptor,
-            bmm2_grad_gemm1_lhs_descriptor, bmm2_grad_gemm2_rhs_descriptor,
-            d_output_descriptor, d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor,
-            d_bmm2_rhs_descriptor, bias_descriptor, kind, dropout_rate, seed,
-            cudnn, scale, use_dropout,
+            *this, bmm1_grad_gemm1_rhs_descriptor,
+            bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
+            bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
+            d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
+            bias_descriptor, kind, dropout_rate, seed, cudnn, scale,
+            use_dropout,
             /*use_mask*/ mask_descriptor != std::nullopt,
             /*use_bias*/ bias_descriptor != std::nullopt, is_causal_mask));
 
