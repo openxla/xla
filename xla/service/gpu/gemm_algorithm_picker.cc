@@ -246,10 +246,12 @@ class GemmAutotuner {
 
     auto tuned_func = [&](const se::blas::AlgorithmType& algorithm)
         -> absl::StatusOr<se::blas::ProfileResult> {
-      // Do a warm-up run first, without a profile result. RunGemm swallows
-      // error codes when profile_result is passed, as it is in the measurement
-      // below, but not otherwise. It is, therefore, consistent to ignore the
-      // error code here.
+      // Do a warm-up run first, without a profile result. This avoids a timeout
+      // and error message if lazy module loading is enabled by ensuring that
+      // lazy loading happens outside the GpuTimer. RunGemm swallows error codes
+      // when profile_result is passed, as it is in the measurement below, but
+      // not otherwise. It is, therefore, consistent to ignore the error code
+      // here.
       static_cast<void>(RunGemm(gemm_config, lhs_buffer_, rhs_buffer_,
                                 output_buffer_, workspace_buffer,
                                 deterministic_ops_, stream_, algorithm));

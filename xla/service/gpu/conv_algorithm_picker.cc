@@ -625,6 +625,8 @@ absl::StatusOr<AutotuneResult> GpuConvAlgorithmPicker::AutotuneOneConvRunner(
   launch_status = RunGpuConv(config, operand_buffers, result_buffers,
                              scratch_memory, stream, options);
   // It is intentional that the warm-up run does not have a profile result.
+  // This avoids a timeout and error message if lazy module loading is enabled
+  // by ensuring that lazy loading happens outside the GpuTimer region.
   options.profile_result = &profile_result;
   constexpr int kMaxIter = 10;
   // Iterate until the new measurement is within kThreshold of the current
