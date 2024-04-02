@@ -1,6 +1,6 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
+load("@tsl//tsl:tsl.bzl", "internal_visibility", "if_google")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
@@ -312,7 +312,7 @@ xla_cc_test(
         "gpu",
         "no_oss",
         "requires-gpu-nvidia",
-    ],
+    ] + if_google(["config-cuda-only"]),
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
@@ -339,8 +339,7 @@ xla_cc_test(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
-    ]
-    + if_cuda([
+    ] + if_cuda([
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",
     ]) + if_rocm([
