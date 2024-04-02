@@ -386,7 +386,10 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
             << absl::HashOf(clique_id) << " is set to: " << comm_config.maxCTAs;
   }
 
+  std::vector<ncclComm_t> comm_handles;
   std::vector<OwnedNcclComm> comms;
+
+  comm_handles.resize(ranks.size(), nullptr);
   comms.reserve(ranks.size());
 
   TF_RETURN_IF_ERROR(GroupStart());
@@ -396,14 +399,15 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
 
     se::gpu::ScopedActivateExecutorContext activate_context(ranks[i].device);
 
-    ncclComm_t comm_handle = nullptr;
-    XLA_NCCL_RETURN_IF_ERROR(
-        ncclCommInitRankConfig(&comm_handle, nranks, AsNcclUniqueId(clique_id),
-                               ranks[i].rank, &comm_config));
-
-    comms.emplace_back(Cast(comm_handle), NcclCommDeleter{this});
+    XLA_NCCL_RETURN_IF_ERROR(ncclCommInitRankConfig(
+        &comm_handles[i], nranks, AsNcclUniqueId(clique_id), ranks[i].rank,
+        &comm_config));
   }
   TF_RETURN_IF_ERROR(GroupEnd());
+
+  for (ncclComm_t comm_handle : comm_handles) {
+    comms.emplace_back(Cast(comm_handle), NcclCommDeleter{this});
+  }
 
   return comms;
 }
