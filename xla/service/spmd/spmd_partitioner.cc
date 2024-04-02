@@ -4041,12 +4041,12 @@ Status SpmdPartitioningVisitor::HandleWhile(HloInstruction* hlo) {
                                                 next_channel_id_, logger_,
                                                 call_graph_)
                          .status());
-  SetPartitionedHlo(hlo, [&] {
-    return b_.AddInstruction(HloInstruction::CreateWhile(
-        MakePartitionedShape(hlo->shape(), sharding), hlo->while_condition(),
-        hlo->while_body(),
-        GetPartitionedHlo(hlo->operand(0)).Reshard(sharding).hlo()));
-  });
+  HloInstruction* whileOp = b_.AddInstruction(HloInstruction::CreateWhile(
+      MakePartitionedShape(hlo->shape(), sharding), hlo->while_condition(),
+      hlo->while_body(),
+      GetPartitionedHlo(hlo->operand(0)).Reshard(sharding).hlo()));
+  hlo->SetupDerivedInstruction(whileOp);
+  SetPartitionedHlo(hlo, [&] { return whileOp; });
   return OkStatus();
 }
 
@@ -5170,6 +5170,20 @@ Status SpmdPartitioner::PreprocessSharding(
   return OkStatus();
 }
 
+HloInstruction* getWhileOp(HloModule* module, HloComputation* bodyComputation) {
+  if (module == nullptr || bodyComputation == nullptr) return nullptr;
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* inst : computation->instructions()) {
+      if (inst->opcode() == HloOpcode::kWhile) {
+        if (inst->while_body() == bodyComputation) {
+          return inst;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
 Status SpmdPartitioner::PreprocessHlos(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -5262,6 +5276,13 @@ Status SpmdPartitioner::PreprocessHlos(
           TF_RETURN_IF_ERROR(hlo->ReplaceAllUsesWith(rotate));
           TF_RETURN_IF_ERROR(
               computation->RemoveInstructionAndUnusedOperands(hlo));
+          HloInstruction* whileOp =
+              getWhileOp(computation->parent(), computation);
+          if (!whileOp) continue;
+          xla::FrontendAttributes attributes;
+          (*attributes.mutable_map())["is_pipelined_while_loop"] = true;
+          VLOG(1) << "Adding is_pipelined_while_loop to " << whileOp->name();
+          whileOp->add_frontend_attributes(attributes);
         } else if (hlo->operand_count() == 3) {
           // Find the pattern for "pad with wrap": concat(slice(x), x, slice(x))
           // All involved values with same sharding.

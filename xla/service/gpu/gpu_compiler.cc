@@ -120,6 +120,7 @@ limitations under the License.
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/collective_permute_cycle_decomposer.h"
+#include "xla/service/spmd/collective_permute_valid_iteration_annotator.h"
 #include "xla/service/gpu/command_buffer_scheduling.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
@@ -897,6 +898,9 @@ absl::Status RunCollectiveOptimizationPasses(
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   HloPassPipeline collectives_pipeline("collective-optimizations");
+
+  collectives_pipeline.AddPass<WhileLoopTripCountAnnotator>();
+  collectives_pipeline.AddPass<CollectivePermuteValidIterationAnnotator>();
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<ReduceScatterCreator>();
   collectives_pipeline.AddPass<AllGatherOptimizer>();

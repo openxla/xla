@@ -2431,6 +2431,52 @@ ENTRY entry {
   EXPECT_THAT(root, AllOf(rotate, op::Shape("f32[3]")));
 }
 
+TEST_P(SpmdPartitioningTest, MergedSliceThenConcatRotateRightWhileOp) {
+  absl::string_view hlo_string = R"(
+
+    HloModule test
+
+    %Body {
+      %param = (f32[12], s32[]) parameter(0)
+      %i = s32[] get-tuple-element(%param), index=1
+      %one = s32[] constant(1)
+      %i_plus_one = s32[] add(s32[] %i, s32[] %one)
+      %param0 = f32[12] get-tuple-element(%param), index=0, sharding={devices=[4]<=[4]}
+      %slice0 = f32[2] slice(%param0), slice={[10:12]}, sharding={devices=[4]<=[4]}
+      %slice1 = f32[10] slice(%param0), slice={[0:10]}, sharding={devices=[4]<=[4]}
+      %concat = f32[12] concatenate(%slice0, %slice1), dimensions={0}, sharding={devices=[4]<=[4]}
+      ROOT %tuple = (f32[12], s32[]) tuple(%concat, %i_plus_one)
+    }
+
+    %Cond {
+      %param.1 = (f32[12], s32[]) parameter(0)
+      %i.1 = s32[] get-tuple-element(%param.1), index=1
+      %trip_count = s32[] constant(11)
+      ROOT %done = pred[] compare(%i.1, %trip_count), direction=LT
+    }
+
+    ENTRY %test {
+      %i_start = f32[12] parameter(0)
+      %p_start = s32[] constant(0)
+      %initial_tuple = (f32[12], s32[]) tuple(%i_start, %p_start)
+      ROOT %while = (f32[12], s32[]) while(%initial_tuple), condition=%Cond, body=%Body
+    }
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  const HloInstruction* whileOp =
+      module->entry_computation()->root_instruction();
+  const auto root =
+      whileOp->while_body()->GetInstructionWithName("concatenate");
+  auto rotate =
+      op::Concatenate(op::CollectivePermute(op::Slice()), op::Slice());
+  VLOG(0) << module->ToString();
+  EXPECT_THAT(root, AllOf(rotate, op::Shape("f32[3]")));
+  EXPECT_TRUE(
+      whileOp->frontend_attributes().map().contains("is_pipelined_while_loop"));
+}
+
 TEST_P(SpmdPartitioningTest,
        MergedSliceThenConcatRotateRightWithAlignedPadding) {
   absl::string_view hlo_string = R"(

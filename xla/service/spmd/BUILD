@@ -259,6 +259,28 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "collective_permute_valid_iteration_annotator",
+    srcs = ["collective_permute_valid_iteration_annotator.cc"],
+    hdrs = ["collective_permute_valid_iteration_annotator.h"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "//xla/service:hlo_pass",
+        "//xla/service:collective_ops_utils",
+        "//xla/service:while_loop_trip_count_annotator",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_permute_valid_iteration_annotator_test",
+    srcs = ["collective_permute_valid_iteration_annotator_test.cc"],
+    deps = [
+        ":collective_permute_valid_iteration_annotator",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
     name = "partition_assignment",
     srcs = [
         "partition_assignment.cc",
