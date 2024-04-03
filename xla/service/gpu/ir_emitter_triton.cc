@@ -57,42 +57,42 @@ limitations under the License.
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"  // from @llvm-project
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"  // from @llvm-project
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // from @llvm-project
-#include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-#include "mlir/ExecutionEngine/OptUtils.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/IR/PatternMatch.h"  // from @llvm-project
-#include "mlir/IR/TypeUtilities.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/IR/Verifier.h"  // from @llvm-project
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Support/TypeID.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"       // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"   // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"     // from @llvm-project
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"   // from @llvm-project
+#include "mlir/Dialect/Math/IR/Math.h"         // from @llvm-project
+#include "mlir/Dialect/SCF/IR/SCF.h"           // from @llvm-project
+#include "mlir/ExecutionEngine/OptUtils.h"     // from @llvm-project
+#include "mlir/IR/AffineExpr.h"                // from @llvm-project
+#include "mlir/IR/Attributes.h"                // from @llvm-project
+#include "mlir/IR/Builders.h"                  // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"         // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                // from @llvm-project
+#include "mlir/IR/BuiltinTypeInterfaces.h"     // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"              // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"           // from @llvm-project
+#include "mlir/IR/ImplicitLocOpBuilder.h"      // from @llvm-project
+#include "mlir/IR/Location.h"                  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"               // from @llvm-project
+#include "mlir/IR/OwningOpRef.h"               // from @llvm-project
+#include "mlir/IR/PatternMatch.h"              // from @llvm-project
+#include "mlir/IR/TypeUtilities.h"             // from @llvm-project
+#include "mlir/IR/Types.h"                     // from @llvm-project
+#include "mlir/IR/Value.h"                     // from @llvm-project
+#include "mlir/IR/ValueRange.h"                // from @llvm-project
+#include "mlir/IR/Verifier.h"                  // from @llvm-project
+#include "mlir/Pass/Pass.h"                    // from @llvm-project
+#include "mlir/Pass/PassManager.h"             // from @llvm-project
+#include "mlir/Support/LLVM.h"                 // from @llvm-project
+#include "mlir/Support/LogicalResult.h"        // from @llvm-project
+#include "mlir/Support/TypeID.h"               // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
+#include "mlir/Transforms/Passes.h"     // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
@@ -447,6 +447,10 @@ absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
         return b.create<mm::AbsIOp>(inputs[0]);
       }
       return b.create<mm::AbsFOp>(inputs[0]);
+    case HloOpcode::kCeil:
+      return b.create<mm::CeilOp>(inputs[0]);
+    case HloOpcode::kFloor:
+      return b.create<mm::FloorOp>(inputs[0]);
     case HloOpcode::kNot:
       return b.create<ma::XOrIOp>(inputs[0], OnesLike(b, inputs[0]));
     case HloOpcode::kNegate:
