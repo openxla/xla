@@ -186,18 +186,14 @@ dnnl::memory::desc ShapeToMemDesc(const Shape& shape) {
   if (dimensions.empty()) {
     return dnnl::memory::desc{};
   }
-
   auto dims = dnnl::memory::dims(dimensions.begin(), dimensions.end());
-
   dnnl::memory::dims strides(dims.size());
   dnnl::memory::dim stride = 1;
   for (auto i : shape.layout().minor_to_major()) {
     strides.at(i) = stride;
     stride *= dims.at(i);
   }
-
   auto dt = ToOneDnnDataType(static_cast<PrimitiveType>(shape.element_type()));
-
   return dnnl::memory::desc(dims, dt, strides);
 }
 

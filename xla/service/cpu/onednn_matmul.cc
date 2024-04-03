@@ -68,16 +68,8 @@ dnnl::memory::desc OneDnnMatMulOptWeightsDesc(
     const Shape& output_shape, const OneDnnMatMulConfig* matmul_config) {
   auto input_md = ShapeToMemDesc(input_shape);
   auto weights_md = ShapeToMemDesc(weights_shape);
-  if (matmul_config->transpose_a()) {
-    auto transpose_input_md = TransposeLastTwoDims(input_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_input_md.ok());
-    input_md = *transpose_input_md;
-  }
-  if (matmul_config->transpose_b()) {
-    auto transpose_weights_md = TransposeLastTwoDims(weights_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_weights_md.ok());
-    weights_md = *transpose_weights_md;
-  }
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config->transpose_a(), input_md);
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config->transpose_b(), weights_md);
   auto bias_md =
       absl::c_count(matmul_config->fused_ops(), OneDnnMatMulConfig::BIAS) > 0
           ? ShapeToMemDesc(bias_shape)
@@ -193,7 +185,7 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
   }
 
   dnnl::primitive_attr attrs;
-  if (matmul_config.user_scratch()) {
+  if (matmul_config.user_scratchpad()) {
     attrs.set_scratchpad_mode(dnnl::scratchpad_mode::user);
   }
   if (post_ops.len() > 0) {
@@ -209,16 +201,8 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
     const OneDnnMatMulConfig& matmul_config) {
   auto input_md = ShapeToMemDesc(input_shape);
   auto weights_md = ShapeToMemDesc(weights_shape);
-  if (matmul_config.transpose_a()) {
-    auto transpose_input_md = TransposeLastTwoDims(input_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_input_md.ok());
-    input_md = *transpose_input_md;
-  }
-  if (matmul_config.transpose_b()) {
-    auto transpose_weights_md = TransposeLastTwoDims(weights_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_weights_md.ok());
-    weights_md = *transpose_weights_md;
-  }
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config.transpose_a(), input_md);
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config.transpose_b(), weights_md);
   auto output_md = ShapeToMemDesc(output_shape);
   std::vector<memory::desc> fused_mds;
   std::transform(fused_shapes.begin(), fused_shapes.end(),
@@ -288,16 +272,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
   auto weights_md = weights_minfo.GetOneDnnMemDesc();
   // Input and weights memory::desc need to be in correct layout before matmul
   // primitive descriptor is created.
-  if (matmul_config.transpose_a() && input_md.get_ndims() > 1) {
-    auto transpose_input_md = TransposeLastTwoDims(input_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_input_md.ok());
-    input_md = *transpose_input_md;
-  }
-  if (matmul_config.transpose_b() && weights_md.get_ndims() > 1) {
-    auto transpose_weights_md = TransposeLastTwoDims(weights_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_weights_md.ok());
-    weights_md = *transpose_weights_md;
-  }
+  TRANSPOSE_LAST_TWO_DIMS_IF(
+      matmul_config.transpose_a() && input_md.get_ndims() > 1, input_md);
+  TRANSPOSE_LAST_TWO_DIMS_IF(
+      matmul_config.transpose_b() && weights_md.get_ndims() > 1, weights_md);
   auto output_md = output_minfo.GetOneDnnMemDesc();
   if (matmul_config.weights_prepacked()) {
     // Weight pre-packing is supported for 2D weights only.
@@ -341,7 +319,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
                                               {DNNL_ARG_WEIGHTS, rhs_mem},
                                               {DNNL_ARG_DST, result_mem}};
 
-  if (matmul_config.user_scratch()) {
+  if (matmul_config.user_scratchpad()) {
     XLA_LIGHTWEIGHT_CHECK(scratch != nullptr);
     MemrefInfo scratch_minfo(scratch);
     auto scratchpad_md = matmul_pd->scratchpad_desc();
@@ -393,18 +371,8 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMulReorder(
   XLA_LIGHTWEIGHT_CHECK(num_args >= arg_indx);
 
   // Update dims and strides for transposed inputs.
-  bool transpose_a = matmul_config.transpose_a();
-  if (transpose_a) {
-    auto transpose_input_md = TransposeLastTwoDims(input_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_input_md.ok());
-    input_md = *transpose_input_md;
-  }
-  bool transpose_b = matmul_config.transpose_b();
-  if (transpose_b) {
-    auto transpose_weight_md = TransposeLastTwoDims(weight_md);
-    XLA_LIGHTWEIGHT_CHECK(transpose_weight_md.ok());
-    weight_md = *transpose_weight_md;
-  }
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config.transpose_a(), input_md);
+  TRANSPOSE_LAST_TWO_DIMS_IF(matmul_config.transpose_b(), weight_md);
 
   // extend bias rank to match result rank
   if (!bias_md.is_zero()) {

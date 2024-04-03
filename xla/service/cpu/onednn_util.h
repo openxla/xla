@@ -58,7 +58,7 @@ dnnl::stream MakeOneDnnStream(
     const dnnl::engine& cpu_engine,
     dnnl::threadpool_interop::threadpool_iface* thread_pool);
 
-// This template function must have explicit specialization at the defintion
+// This template function must have explicit specialization at the definition
 // site.
 template <typename PrimDesc>
 std::unique_ptr<PrimDesc> CreateOneDnnPrimDesc(HloInstruction*);

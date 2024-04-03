@@ -1619,11 +1619,7 @@ cc_library(
 cc_library(
     name = "onednn_matmul",
     srcs = ["onednn_matmul.cc"],
-    hdrs = [
-        "onednn_matmul.h",
-        "onednn_util.h",
-        "//xla/tsl/util:onednn_util_hdrs",
-    ],
+    hdrs = ["onednn_matmul.h"],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
@@ -1725,11 +1721,7 @@ cc_library(
 cc_library(
     name = "onednn_ops_rewriter",
     srcs = ["onednn_ops_rewriter.cc"],
-    hdrs = [
-        "onednn_ops_rewriter.h",
-        "onednn_util.h",
-        "//xla/tsl/util:onednn_util_hdrs",
-    ],
+    hdrs = ["onednn_ops_rewriter.h"],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",

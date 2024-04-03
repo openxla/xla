@@ -734,7 +734,7 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
     }
 
 #ifndef ENABLE_ONEDNN_OPENMP
-    // set oneDNN cuncurrency settings (which is thread-local)
+    // Set oneDNN concurrency settings (which is thread-local)
     tsl::OneDnnThreadPool::set_onednn_max_threads(intra_op_parallelism_);
 #endif
   }
@@ -809,42 +809,46 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
     }
     auto weights = custom_call->operand(1);
     if (weights->user_count() > 1) {
-      return absl::FailedPreconditionError("Weights could not be prepacked.");
+      return absl::FailedPreconditionError(
+          "Cannot prepack weights. There is more than one consumer.");
     }
     auto weights_shape = weights->shape();
     Literal weights_literal;
-    if (weights_shape.rank() == 2 &&
-        evaluator_.TryEvaluate(weights, &weights_literal)) {
-      auto plain_weights_md = ShapeToMemDesc(weights_shape);
-      if constexpr (std::is_same<PrimDesc,
-                                 dnnl::matmul::primitive_desc>::value) {
-        auto backend_config = custom_call->backend_config<BackendConfig>();
-        if (!backend_config.ok()) {
-          return absl::CancelledError("Weights could not be prepacked.");
-        }
-        if (backend_config->onednn_matmul_config().transpose_b()) {
-          plain_weights_md = TransposeLastTwoDims(plain_weights_md).value();
-        }
-      }
-      TF_RETURN_IF_ERROR(SetWeightsPrepack<PrimDesc>(custom_call, true));
-      auto prim_desc = CreateOneDnnPrimDesc<PrimDesc>(custom_call);
-      auto packed_weights_md = prim_desc->weights_desc();
-      auto packed_weights_shape = MemDescToXlaShapeFlattened(packed_weights_md);
-      auto packed_weights_literal = Literal(packed_weights_shape);
-      ReorderWeight(plain_weights_md, weights_literal.untyped_data(),
-                    packed_weights_md, packed_weights_literal.untyped_data());
-      HloInstruction* reordered_weight = custom_call->AddInstruction(
-          HloInstruction::CreateConstant(std::move(packed_weights_literal)));
-      auto status =
-          custom_call->ReplaceOperandWithDifferentShape(1, reordered_weight);
-      if (!status.ok()) {
-        TF_RETURN_IF_ERROR(SetWeightsPrepack<PrimDesc>(custom_call, false));
-        return absl::CancelledError("Weights could not be prepacked.");
-      } else {
-        return custom_call;
-      }
+    if (!(weights_shape.rank() == 2 &&
+          evaluator_.TryEvaluate(weights, &weights_literal))) {
+      return absl::CancelledError(
+          "Cannot prepack weights. Not constant 2D weights.");
     }
-    return absl::CancelledError("Weights could not be prepacked.");
+    auto plain_weights_md = ShapeToMemDesc(weights_shape);
+    if constexpr (std::is_same<PrimDesc, dnnl::matmul::primitive_desc>::value) {
+      auto backend_config = custom_call->backend_config<BackendConfig>();
+      if (!backend_config.ok()) {
+        return absl::CancelledError(
+            "Cannot prepack weights. Customcall does not have a "
+            "BackendConfig.");
+      }
+      TRANSPOSE_LAST_TWO_DIMS_IF(
+          backend_config->onednn_matmul_config().transpose_b(),
+          plain_weights_md);
+    }
+    TF_RETURN_IF_ERROR(SetWeightsPrepack<PrimDesc>(custom_call, true));
+    auto prim_desc = CreateOneDnnPrimDesc<PrimDesc>(custom_call);
+    auto packed_weights_md = prim_desc->weights_desc();
+    auto packed_weights_shape = MemDescToXlaShapeFlattened(packed_weights_md);
+    auto packed_weights_literal = Literal(packed_weights_shape);
+    ReorderWeight(plain_weights_md, weights_literal.untyped_data(),
+                  packed_weights_md, packed_weights_literal.untyped_data());
+    HloInstruction* reordered_weight = custom_call->AddInstruction(
+        HloInstruction::CreateConstant(std::move(packed_weights_literal)));
+    auto status =
+        custom_call->ReplaceOperandWithDifferentShape(1, reordered_weight);
+    if (!status.ok()) {
+      TF_RETURN_IF_ERROR(SetWeightsPrepack<PrimDesc>(custom_call, false));
+      return absl::CancelledError(
+          "Cannot replace plain weights with prepacked weights.");
+    } else {
+      return custom_call;
+    }
   }
 
   void ReorderWeight(const dnnl::memory::desc& src_md, void* src_buf,
@@ -872,16 +876,12 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
   inline bool OneDnnPostRewriteVisitor::GETTER<PRIM_DESC>(HloInstruction * \
                                                           custom_call) {   \
     auto backend_config = custom_call->backend_config<BackendConfig>();    \
-    if (!backend_config.ok()) {                                            \
-      return false;                                                        \
-    } else {                                                               \
-      return backend_config->CONFIG().FIELD();                             \
-    }                                                                      \
+    return backend_config.ok() ? backend_config->CONFIG().FIELD() : false; \
   }
 
 EMIT_GET_BACKEND_CONFIG_SPECIALIZATION(GetUserScratch,
                                        dnnl::matmul::primitive_desc,
-                                       onednn_matmul_config, user_scratch);
+                                       onednn_matmul_config, user_scratchpad);
 EMIT_GET_BACKEND_CONFIG_SPECIALIZATION(GetWeightsPrepack,
                                        dnnl::matmul::primitive_desc,
                                        onednn_matmul_config, weights_prepacked);
@@ -905,7 +905,7 @@ EMIT_SET_BACKEND_CONFIG_SPECIALIZATION(SetWeightsPrepack,
 EMIT_SET_BACKEND_CONFIG_SPECIALIZATION(SetUserScratch,
                                        dnnl::matmul::primitive_desc,
                                        OneDnnMatMulConfig, onednn_matmul_config,
-                                       user_scratch);
+                                       user_scratchpad);
 
 StatusOr<bool> OneDnnMatMulRewriter::Run(
     HloModule* module,

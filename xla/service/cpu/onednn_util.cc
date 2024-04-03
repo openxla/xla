@@ -1,4 +1,3 @@
-
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,22 +27,17 @@ std::unique_ptr<tsl::OneDnnThreadPool> CreateOneDnnThreadPool(
   if (threadpool_device != nullptr) {
     return std::make_unique<tsl::OneDnnThreadPool>(threadpool_device->getPool(),
                                                    false);
-  } else {
-    return nullptr;
   }
-#else
+#endif  // !ENABLE_ONEDNN_OPENMP
   return nullptr;
-#endif  // ENABLE_ONEDNN_OPENMP
 }
 
 dnnl::stream MakeOneDnnStream(
     const dnnl::engine& cpu_engine,
     dnnl::threadpool_interop::threadpool_iface* thread_pool) {
-  if (thread_pool != nullptr) {
-    return dnnl::threadpool_interop::make_stream(cpu_engine, thread_pool);
-  } else {
-    return dnnl::stream(cpu_engine);
-  }
+  return (thread_pool != nullptr)
+             ? dnnl::threadpool_interop::make_stream(cpu_engine, thread_pool)
+             : dnnl::stream(cpu_engine);
 }
 
 }  // namespace cpu

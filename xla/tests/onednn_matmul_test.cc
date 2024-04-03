@@ -710,7 +710,7 @@ TEST_F(MatmulTest, WeightsPrepackAndScratch) {
   ; CHECK-SAME:       backend_config={
   ; CHECK-SAME:           "outer_dimension_partitions":[],
   ; CHECK-SAME:           "onednn_matmul_config":{
-  ; CHECK-SAME:               "weights_prepacked":true,"user_scratch":true
+  ; CHECK-SAME:               "weights_prepacked":true,"user_scratchpad":true
   ; CHECK-SAME:           }
   ; CHECK-SAME:       }
   )");
