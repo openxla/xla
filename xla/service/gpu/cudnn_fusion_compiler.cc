@@ -71,6 +71,8 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::ABS;
     case HloOpcode::kAdd:
       return m::ADD;
+    case HloOpcode::kCeil:
+      return m::CEIL;
     case HloOpcode::kCompare:
       switch (instruction.comparison_direction()) {
         case Comparison::Direction::kEq:
@@ -95,6 +97,8 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::DIV;
     case HloOpcode::kExp:
       return m::EXP;
+    case HloOpcode::kFloor:
+      return m::FLOOR;
     case HloOpcode::kLog:
       return m::LOG;
     case HloOpcode::kMaximum:
@@ -178,7 +182,7 @@ int FusionLevel(const HloInstruction& hlo) {
 class GemmDimensionAdapter {
   explicit GemmDimensionAdapter(const HloDotInstruction& dot,
                                 TritonFusionAnalysis analysis)
-      : analysis_(std::move(analysis)), dot_(dot) {};
+      : analysis_(std::move(analysis)), dot_(dot){};
 
  public:
   const TritonFusionAnalysis analysis_;
