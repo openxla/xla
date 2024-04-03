@@ -1384,12 +1384,10 @@ int div_up(int a, int b) { return ((a + b - 1) / b) * b; }
 int get_fa_fwd_workspace() { return 32; }
 
 int get_fa_bwd_workspace(int b, int h, int s_q, int s_kv, int d) {
-  int workspace = 16;
+  int workspace = 32;
   // softmax sum in float
   workspace += div_up(b * h * s_q * 4, 16);
-  workspace += div_up(b * h * div_up(s_q, 128) * div_up(s_kv, 128), 16);
-  // dq_accum in float
-  workspace += div_up(b * h * s_q * d * 4, 16);
+  workspace += div_up(b * h * div_up(s_q, 128) * div_up(s_kv, 128) * 2, 16);
   return workspace;
 }
 
