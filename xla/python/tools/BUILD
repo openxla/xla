@@ -61,15 +61,15 @@ tsl_pybind_extension(
     deps = [
         "//xla:literal",
         "//xla:xla_data_proto_cc",
+        "//xla/pjrt:status_casters",
         "//xla/python:logging",
         "//xla/python:nb_numpy",
         "//xla/python:types",
         "//xla/tsl/python/lib/core:numpy",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@nanobind",
         "@pybind11",
-        "@pybind11_abseil//pybind11_abseil:status_casters",
+        "@pybind11_abseil//pybind11_abseil:import_status_module",
         "@pybind11_protobuf//pybind11_protobuf:native_proto_caster",
     ],
 )
