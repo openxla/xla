@@ -347,6 +347,7 @@ cc_library(
         "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status_to_from_proto",
         "@tsl//tsl/platform:statusor",
     ],
