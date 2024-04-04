@@ -981,6 +981,7 @@ cc_library(
 xla_cc_test(
     name = "transpose_test",
     srcs = ["transpose_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":fusions",
         ":transpose",
