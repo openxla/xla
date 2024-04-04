@@ -21,6 +21,6 @@ cc_library(
     ),
     deps = [
         "@robin_map",
-        "@xla//third_party/python_runtime:headers",
+        "@tsl//third_party/python_runtime:headers",
     ],
 )
