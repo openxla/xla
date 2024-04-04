@@ -76,6 +76,10 @@ limitations under the License.
 #include "rocm/rocm_config.h"
 #endif
 
+#if GOOGLE_CUDA
+#include "third_party/gpus/cuda/include/cuda.h"
+#endif
+
 namespace xla {
 namespace gpu {
 namespace {
