@@ -6377,10 +6377,9 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
     const dnn::TensorDescriptor& dq_desc, const dnn::TensorDescriptor& dk_desc,
     const dnn::TensorDescriptor& dv_desc,
     const std::optional<dnn::TensorDescriptor> bias_descriptor,
-    dnn::FusedMHAKind kind, std::optional<double> dropout_rate,
-    std::optional<int64_t> seed, CudnnHandle& cudnn, double scale,
-    bool use_dropout = false, bool use_mask = false, bool use_bias = false,
-    bool use_causal_mask = false) {
+    std::optional<double> dropout_rate, std::optional<int64_t> seed,
+    double scale, bool use_dropout = false, bool use_mask = false,
+    bool use_bias = false, bool use_causal_mask = false) {
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\n bmm1_grad_gemm1_rhs(q): " << q_desc.ToString()
             << "\n bmm1_grad_gemm2_rhs(k): " << k_desc.ToString()
@@ -8608,8 +8607,7 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
             bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
             bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
             d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
-            bias_descriptor, kind, dropout_rate, seed, cudnn, scale,
-            use_dropout,
+            bias_descriptor, dropout_rate, seed, scale, use_dropout,
             /*use_mask*/ mask_descriptor != std::nullopt,
             /*use_bias*/ bias_descriptor != std::nullopt, is_causal_mask));
 
