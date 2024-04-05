@@ -344,12 +344,6 @@ class StreamExecutor {
   // Deallocates a region of host memory allocated by HostMemoryAllocate().
   void HostMemoryDeallocate(void* data, uint64_t size);
 
-  // Registers a host pointer to be managed by the device.
-  bool HostMemoryRegister(void* location, uint64_t size);
-
-  // Unregisters a host pointer registered using HostMemoryRegister.
-  bool HostMemoryUnregister(void* location);
-
  private:
   friend class Event;
   friend class Stream;

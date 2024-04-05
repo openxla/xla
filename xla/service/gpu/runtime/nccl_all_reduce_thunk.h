@@ -77,8 +77,7 @@ class NcclAllReduceStartThunk : public NcclAllReduceReduceScatterThunkBase {
  protected:
   absl::Status RunNcclCollective(const ExecuteParams& params,
                                  se::Stream& stream,
-                                 NcclApi::NcclCommHandle comm,
-                                 bool is_local) override;
+                                 NcclCommHandleWrapper comm_wrapper) override;
 };
 
 // -----------------------------------------------------------------------------
@@ -102,8 +101,7 @@ class NcclReduceScatterStartThunk : public NcclAllReduceReduceScatterThunkBase {
  protected:
   absl::Status RunNcclCollective(const ExecuteParams& params,
                                  se::Stream& stream,
-                                 NcclApi::NcclCommHandle comm,
-                                 bool is_local) override;
+                                 NcclCommHandleWrapper comm_wrapper) override;
 };
 
 // -----------------------------------------------------------------------------

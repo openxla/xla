@@ -244,7 +244,7 @@ static absl::StatusOr<NcclCliqueKey> GetNcclCliqueKey(
                        stream_kind);
 }
 
-absl::StatusOr<std::pair<NcclApi::NcclCommHandle, bool>> GetNcclComm(
+absl::StatusOr<NcclCommHandleWrapper> GetNcclComm(
     const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
@@ -260,7 +260,7 @@ absl::StatusOr<std::pair<NcclApi::NcclCommHandle, bool>> GetNcclComm(
   TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
                       collective_cliques.GetComm(std::move(clique_key), *rank));
 
-  return std::make_pair(comm, is_local);
+  return NcclCommHandleWrapper(comm, is_local);
 }
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
@@ -437,13 +437,11 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
                                 Thunk::KindToString(kind()));
   const int64_t stream_id = GetStreamId();
   AsyncStreamKind stream_kind = GetAsyncStreamKind();
-  std::pair<NcclApi::NcclCommHandle, bool> comm_pair;
   TF_ASSIGN_OR_RETURN(
-      comm_pair,
+      NcclCommHandleWrapper comm_handle,
       GetNcclComm(*params.collective_params, *params.collective_cliques,
                   config().replica_groups, config().group_mode, stream_id,
                   stream_kind));
-  NcclApi::NcclCommHandle comm = comm_pair.first;
   se::StreamExecutor* executor = params.stream->parent();
   int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
 
@@ -454,8 +452,7 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
     // Wait for main compute stream to make sure all buffers are ready.
     TF_RETURN_IF_ERROR(async_stream.WaitFor(params.stream));
 
-    TF_RETURN_IF_ERROR(
-        RunNcclCollective(params, async_stream, comm, comm_pair.second));
+    TF_RETURN_IF_ERROR(RunNcclCollective(params, async_stream, comm_handle));
 
     // Record collective operation completion.
     TF_ASSIGN_OR_RETURN(se::Event * event, async_events_->GetEvent(executor));
@@ -463,8 +460,7 @@ Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   } else {
     // Launch collective operation on a main stream.
-    TF_RETURN_IF_ERROR(
-        RunNcclCollective(params, *params.stream, comm, comm_pair.second));
+    TF_RETURN_IF_ERROR(RunNcclCollective(params, *params.stream, comm_handle));
   }
 
   // After a first execution of this instance of collective operation do a

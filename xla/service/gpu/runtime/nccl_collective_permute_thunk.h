@@ -26,13 +26,18 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/nccl_p2p_thunk_common.h"
 #include "xla/stream_executor/stream.h"
+#include "tsl/concurrency/async_value.h"
+#include "tsl/concurrency/async_value_ref.h"
 
 namespace xla {
 namespace gpu {
 
+using tsl::AsyncValueRef;
+
 // Thunk that performs a NCCL-based collective permute.
 class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
  public:
+  using RecvPtrMap = absl::node_hash_map<int64_t, AsyncValueRef<void*>>;
   static NcclP2PConfig GetNcclP2PConfig(
       const HloCollectivePermuteInstruction* instr, int64_t replica_count,
       int64_t partition_count);
@@ -50,22 +55,19 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
                                   bool p2p_memcpy_enabled);
   absl::Status Initialize(const InitializeParams& params) override;
 
-  absl::Status Cleanup(const CleanupParams& params) override;
-
   static const char* GetHloOpName() { return "collective-permute-start"; }
 
  protected:
   const NcclCollectiveConfig& config() const override { return config_.config; }
   absl::Status RunNcclCollective(const ExecuteParams& params,
                                  se::Stream& stream,
-                                 NcclApi::NcclCommHandle comm,
-                                 bool is_local) override;
+                                 NcclCommHandleWrapper comm_wrapper) override;
 
  private:
   const NcclP2PConfig config_;
   const Buffer buffer_;
-  std::unordered_map<int64_t, uint64_t> send_value_map_;
-  std::unordered_map<int64_t, uint64_t> recv_value_map_;
+  absl::Mutex mutex_;
+  RecvPtrMap recv_ptr_map_ ABSL_GUARDED_BY(mutex_);
   bool p2p_memcpy_enabled_ = false;
 };
 
@@ -73,7 +75,7 @@ absl::Status RunCollectivePermute(
     NcclApi* nccl_api, NcclP2PConfig::SourceTargetMapEntry source_target,
     DeviceBufferPair& buffer, se::Stream& stream, NcclApi::NcclCommHandle comm,
     absl::string_view device_string, int64_t current_id, bool use_memcpy,
-    uint64_t& send_ptr_value, uint64_t& recv_ptr_value);
+    const NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map);
 
 }  // namespace gpu
 }  // namespace xla
