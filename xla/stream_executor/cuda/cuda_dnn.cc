@@ -6228,6 +6228,113 @@ GetCudnnFusedMHABackwardOperationGraph(
   return std::make_unique<cudnn_frontend::OperationGraph>(std::move(op_graph));
 }
 
+#endif  // CUDNN_VERSION >= 8800
+
+}  // namespace
+
+static absl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
+    cudnn_frontend::OperationGraph&& opGraph, const CudnnHandle& cudnn,
+    bool include_fallback_heuristics = false) {
+#if (CUDNN_VERSION >= 8800)
+  cudnn_frontend::EngineConfigList engine_configs;
+  if (!include_fallback_heuristics) {
+    cudnn_frontend::get_heuristics_list<1>(
+        {"heuristics_instant"}, opGraph, allowAllConfig, engine_configs, true);
+  } else {
+    cudnn_frontend::get_heuristics_list<2>(
+        {"heuristics_instant", "heuristics_fallback"}, opGraph, allowAllConfig,
+        engine_configs, true);
+  }
+
+  if (VLOG_IS_ON(4)) {
+    VLOG(4) << "Heuristic has " << engine_configs.size() << " configurations ";
+  }
+  if (engine_configs.empty()) {
+    return absl::InternalError(
+        "No engine configurations found for this opGraph and heuristics.");
+  }
+
+  cudnnStatus_t status;
+  for (auto engine_config : engine_configs) {
+    cudnn_frontend::ExecutionPlan plan =
+        cudnn_frontend::ExecutionPlanBuilder()
+            .setHandle(cudnn.handle())
+            .setEngineConfig(engine_config, opGraph.getTag())
+            .build();
+    status = plan.get_status();
+    if (status == CUDNN_STATUS_SUCCESS) {
+      return plan;
+    } else {
+      VLOG(4) << "Failed to build cuDNN execution plan for opGraph "
+              << opGraph.getTag()
+              << ". Status: " << CudnnStatusToString(status);
+    }
+  }
+
+  LOG(FATAL) << "Failed to generate cuDNN execution plan for opGraph "
+             << opGraph.getTag()
+             << ". Status of final plan: " << CudnnStatusToString(status);
+#else
+  return absl::UnimplementedError("Supported only for cuDNN >= 8.8.0");
+#endif
+}
+
+static absl::StatusOr<cudnn_frontend::ExecutionPlan> RebuildExecutionPlan(
+    const CudnnHandle& cudnn, const dnn::AlgorithmDesc& desc,
+    const cudnn_frontend::OperationGraph& op_graph) {
+  if (!desc.is_cudnn_frontend()) {
+    return tsl::errors::Internal(
+        "Got legacy cuDNN algorithm enum in RebuildExecutionPlan.");
+  }
+
+  // Errors encountered when building a cuDNN operation graph are surfaced in an
+  // unprecedented and innovative way: they're written into a field of the
+  // contained engine object, but then clobbered by the object's move
+  // constructor which makes more cuDNN API calls and encounters further errors.
+  // The only way to get the actual errors is to peek at them via the returned
+  // rvalue reference before actually moving the object to finish its
+  // initialization.
+  cudnn_frontend::EngineBuilder engine_builder;
+  engine_builder.setOperationGraph(op_graph).setGlobalEngineIdx(desc.algo_id());
+  auto&& unmoved = engine_builder.build();
+  RETURN_MSG_IF_CUDNN_ERROR(unmoved);
+  cudnn_frontend::Engine engine = std::move(unmoved);
+  RETURN_MSG_IF_CUDNN_ERROR(engine);
+
+  // Miscellaneous compiler bugs and linker issues conspired to make it
+  // impossible for AlgorithmDesc to just give us a map initially.  Get the
+  // vector of tuning knobs and build the map locally.
+  auto tuning_knobs_vec = desc.TuningKnobs();
+  absl::flat_hash_map<int64_t, int64_t> tuning_knobs;
+  tuning_knobs.reserve(tuning_knobs_vec.size());
+  for (const auto& pair : tuning_knobs_vec) {
+    tuning_knobs[pair.first] = pair.second;
+  }
+
+  for (auto& knob : engine.getSupportedKnobs()) {
+    const auto it = tuning_knobs.find(static_cast<int64_t>(knob.getKnobType()));
+    if (it != tuning_knobs.end()) {
+      knob.setChoice(it->second);
+    }
+  }
+
+  auto engine_config =
+      cudnn_frontend::EngineConfigBuilder().setEngine(engine).build();
+  RETURN_MSG_IF_CUDNN_ERROR(engine_config);
+
+  auto plan = cudnn_frontend::ExecutionPlanBuilder()
+                  .setHandle(cudnn.handle())
+                  .setEngineConfig(engine_config)
+                  .build();
+  RETURN_MSG_IF_CUDNN_ERROR(plan);
+
+  return {std::move(plan)};
+}
+
+#endif  // CUDNN_VERSION >= 8100
+
+}  // namespace
+
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,
     const dnn::MatmulTensorDescriptor& q_descriptor,
@@ -6537,113 +6644,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
 
   return cudnnGraph;
 }
-
-#endif  // CUDNN_VERSION >= 8800
-
-}  // namespace
-
-static absl::StatusOr<cudnn_frontend::ExecutionPlan> GetExecPlanFromHeuristics(
-    cudnn_frontend::OperationGraph&& opGraph, const CudnnHandle& cudnn,
-    bool include_fallback_heuristics = false) {
-#if (CUDNN_VERSION >= 8800)
-  cudnn_frontend::EngineConfigList engine_configs;
-  if (!include_fallback_heuristics) {
-    cudnn_frontend::get_heuristics_list<1>(
-        {"heuristics_instant"}, opGraph, allowAllConfig, engine_configs, true);
-  } else {
-    cudnn_frontend::get_heuristics_list<2>(
-        {"heuristics_instant", "heuristics_fallback"}, opGraph, allowAllConfig,
-        engine_configs, true);
-  }
-
-  if (VLOG_IS_ON(4)) {
-    VLOG(4) << "Heuristic has " << engine_configs.size() << " configurations ";
-  }
-  if (engine_configs.empty()) {
-    return absl::InternalError(
-        "No engine configurations found for this opGraph and heuristics.");
-  }
-
-  cudnnStatus_t status;
-  for (auto engine_config : engine_configs) {
-    cudnn_frontend::ExecutionPlan plan =
-        cudnn_frontend::ExecutionPlanBuilder()
-            .setHandle(cudnn.handle())
-            .setEngineConfig(engine_config, opGraph.getTag())
-            .build();
-    status = plan.get_status();
-    if (status == CUDNN_STATUS_SUCCESS) {
-      return plan;
-    } else {
-      VLOG(4) << "Failed to build cuDNN execution plan for opGraph "
-              << opGraph.getTag()
-              << ". Status: " << CudnnStatusToString(status);
-    }
-  }
-
-  LOG(FATAL) << "Failed to generate cuDNN execution plan for opGraph "
-             << opGraph.getTag()
-             << ". Status of final plan: " << CudnnStatusToString(status);
-#else
-  return absl::UnimplementedError("Supported only for cuDNN >= 8.8.0");
-#endif
-}
-
-static absl::StatusOr<cudnn_frontend::ExecutionPlan> RebuildExecutionPlan(
-    const CudnnHandle& cudnn, const dnn::AlgorithmDesc& desc,
-    const cudnn_frontend::OperationGraph& op_graph) {
-  if (!desc.is_cudnn_frontend()) {
-    return tsl::errors::Internal(
-        "Got legacy cuDNN algorithm enum in RebuildExecutionPlan.");
-  }
-
-  // Errors encountered when building a cuDNN operation graph are surfaced in an
-  // unprecedented and innovative way: they're written into a field of the
-  // contained engine object, but then clobbered by the object's move
-  // constructor which makes more cuDNN API calls and encounters further errors.
-  // The only way to get the actual errors is to peek at them via the returned
-  // rvalue reference before actually moving the object to finish its
-  // initialization.
-  cudnn_frontend::EngineBuilder engine_builder;
-  engine_builder.setOperationGraph(op_graph).setGlobalEngineIdx(desc.algo_id());
-  auto&& unmoved = engine_builder.build();
-  RETURN_MSG_IF_CUDNN_ERROR(unmoved);
-  cudnn_frontend::Engine engine = std::move(unmoved);
-  RETURN_MSG_IF_CUDNN_ERROR(engine);
-
-  // Miscellaneous compiler bugs and linker issues conspired to make it
-  // impossible for AlgorithmDesc to just give us a map initially.  Get the
-  // vector of tuning knobs and build the map locally.
-  auto tuning_knobs_vec = desc.TuningKnobs();
-  absl::flat_hash_map<int64_t, int64_t> tuning_knobs;
-  tuning_knobs.reserve(tuning_knobs_vec.size());
-  for (const auto& pair : tuning_knobs_vec) {
-    tuning_knobs[pair.first] = pair.second;
-  }
-
-  for (auto& knob : engine.getSupportedKnobs()) {
-    const auto it = tuning_knobs.find(static_cast<int64_t>(knob.getKnobType()));
-    if (it != tuning_knobs.end()) {
-      knob.setChoice(it->second);
-    }
-  }
-
-  auto engine_config =
-      cudnn_frontend::EngineConfigBuilder().setEngine(engine).build();
-  RETURN_MSG_IF_CUDNN_ERROR(engine_config);
-
-  auto plan = cudnn_frontend::ExecutionPlanBuilder()
-                  .setHandle(cudnn.handle())
-                  .setEngineConfig(engine_config)
-                  .build();
-  RETURN_MSG_IF_CUDNN_ERROR(plan);
-
-  return {std::move(plan)};
-}
-
-#endif  // CUDNN_VERSION >= 8100
-
-}  // namespace
 
 absl::Status CudnnSupport::DoPrepareForConvolution(
     dnn::ConvolutionKind kind, dnn::DataType element_type, Stream* stream,
@@ -7406,10 +7406,6 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
         variant_pack[*uids_[i]] = vec[i];
       }
     }
-    // add scalars to the variant pack
-    for (const std::pair<int64_t, ScalingParam>& p : scalars_) {
-      variant_pack[p.first] = const_cast<void*>(p.second.ToVoidPointer());
-    }
     if (dropout_rng_offset_increment_ > 0) {
 #if CUDNN_VERSION >= 8800
       // variant_pack[CudnnfMHAUid::D_SEED_ID] = scratch_memory.opaque();
@@ -7439,16 +7435,14 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
   static absl::StatusOr<CudnnGraphRunner> Create(
       GpuExecutor* parent, CudnnAccess* cudnn, CudnnGraph graph,
       int64_t dropout_rng_seed, int64_t dropout_rng_offset,
-      std::unordered_map<int64_t, ScalingParam> scalars,
       std::vector<std::optional<int64_t>> uids) {
     return CudnnGraphRunner(parent, cudnn, std::move(graph), dropout_rng_seed,
-                            dropout_rng_offset, scalars, uids);
+                            dropout_rng_offset, uids);
   }
 
  private:
   CudnnGraphRunner(GpuExecutor* parent, CudnnAccess* cudnn, CudnnGraph graph,
                    int64_t dropout_rng_seed, int64_t dropout_rng_offset,
-                   std::unordered_map<int64_t, ScalingParam> scalars,
                    std::vector<std::optional<int64_t>> uids)
       : parent_(parent),
         cudnn_(cudnn),
@@ -7456,7 +7450,6 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
         dropout_rng_seed_(dropout_rng_seed),
         current_dropout_rng_offset_(0),
         dropout_rng_offset_increment_(dropout_rng_offset),
-        scalars_(scalars),
         uids_(uids) {}
   GpuExecutor* parent_;
   CudnnAccess* cudnn_;
@@ -7465,7 +7458,6 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
   int64_t dropout_rng_seed_;
   mutable int64_t current_dropout_rng_offset_;
   int64_t dropout_rng_offset_increment_;
-  std::unordered_map<int64_t, ScalingParam> scalars_;
   std::vector<std::optional<int64_t>> uids_;
 };
 
@@ -8506,11 +8498,10 @@ CudnnSupport::FusedMHARunnerFromDesc(
     uids.emplace_back(activation_descriptor.has_value()
                           ? std::optional<CudnnfMHAUid>(CudnnfMHAUid::P_ID)
                           : std::nullopt);
-    std::unordered_map<int64_t, ScalingParam> scalars;
-    TF_ASSIGN_OR_RETURN(
-        auto runner, CudnnGraphRunner<dnn::FusedMHASignature>::Create(
-                         parent_, cudnn_.get(), std::move(graph),
-                         dropout_rng_seed, dropout_rng_offset, scalars, uids));
+    TF_ASSIGN_OR_RETURN(auto runner,
+                        CudnnGraphRunner<dnn::FusedMHASignature>::Create(
+                            parent_, cudnn_.get(), std::move(graph),
+                            dropout_rng_seed, dropout_rng_offset, uids));
 
     return {std::make_unique<CudnnGraphRunner<dnn::FusedMHASignature>>(
         std::move(runner))};
@@ -8617,7 +8608,6 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
     int64_t dropout_rng_offset = GetDropoutRngOffset(intermediate_shape);
     int64_t dropout_rng_seed = seed.has_value() ? *seed : 0;
 
-    std::unordered_map<int64_t, ScalingParam> scalars;
     std::vector<std::optional<int64_t>> uids;
     uids = {CudnnfMHAUid::Q_ID,  CudnnfMHAUid::K_ID,  CudnnfMHAUid::P_ID,
             CudnnfMHAUid::V_ID,  CudnnfMHAUid::dO_ID, CudnnfMHAUid::dQ_ID,
@@ -8629,7 +8619,7 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
     TF_ASSIGN_OR_RETURN(
         auto runner, CudnnGraphRunner<dnn::FusedMHABackwardSignature>::Create(
                          parent_, cudnn_.get(), graph, dropout_rng_seed,
-                         dropout_rng_offset, scalars, uids));
+                         dropout_rng_offset, uids));
     return {std::make_unique<CudnnGraphRunner<dnn::FusedMHABackwardSignature>>(
         std::move(runner))};
   }
