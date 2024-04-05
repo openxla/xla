@@ -71,6 +71,7 @@ limitations under the License.
 #include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/statusor.h"
+#include "xla/tsl/util/env_var.h"
 
 #if (defined(GOOGLE_CUDA) && GOOGLE_CUDA)
 #include "third_party/gpus/cudnn/cudnn.h"  // IWYU pragma: keep
@@ -99,9 +100,16 @@ class ScratchAllocator : public se::ScratchAllocator {
       : device_ordinal_(device_ordinal), memory_allocator_(memory_allocator) {}
 
   int64_t GetMemoryLimitInBytes() override {
-    return 1LL << 32;  // 4GB.  TODO(jlebar): Tune this?
+    return ScratchAllocator::GetDefaultMemoryLimitInBytes();
   }
   int64_t TotalAllocatedBytes() { return total_allocated_bytes_; }
+
+  static int64_t GetDefaultMemoryLimitInBytes() {
+      int64_t value;
+      TF_CHECK_OK(tsl::ReadInt64FromEnvVar("TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 
+                1LL << 12, &value));
+      return value * (1LL << 20);
+  }
 
   absl::StatusOr<se::DeviceMemory<uint8_t>> AllocateBytes(
       int64_t byte_size) override;
