@@ -7408,8 +7408,6 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
     }
     if (dropout_rng_offset_increment_ > 0) {
 #if CUDNN_VERSION >= 8800
-      // variant_pack[CudnnfMHAUid::D_SEED_ID] = scratch_memory.opaque();
-      // variant_pack[CudnnfMHAUid::D_OFFSET_ID] = static_cast<void*>(static_cast<int64_t*>(scratch_memory.opaque()) + 1);
       variant_pack[CudnnfMHAUid::D_SEED_ID] = (void*)&dropout_rng_seed_;
       current_dropout_rng_offset_ += dropout_rng_offset_increment_;
       variant_pack[CudnnfMHAUid::D_OFFSET_ID] =
