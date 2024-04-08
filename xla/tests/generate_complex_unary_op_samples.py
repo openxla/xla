@@ -10,9 +10,14 @@ Prerequisites:
 
 Usage:
   Running
-    python /path/to/generate_complex_unary_op_samples.py
+    python /path/to/generate_complex_unary_op_samples.py [xla | tensorflow]
   will create
     /path/to/generate_complex_unary_op_samples.h
+
+Constraints:
+  Running
+    clang-format -i -style=Google /path/to/complex_unary_op_samples.h
+  should not change the generated complex_unary_op_samples.h
 """
 
 import os
@@ -31,6 +36,10 @@ def disable(op, real, imag):
 
 
 def main():
+  target = (sys.argv[1] if len(sys.argv) > 1 else 'xla').lower()
+  assert target in {'xla', 'tensorflow'}, target
+  header_file_define = dict(xla='XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_',
+                            tensorflow='TENSORFLOW_COMPILER_XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_')[target]
   default_size = 7
   nmp = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=1)
   blocks = []
@@ -140,7 +149,7 @@ def main():
           rows.append(
               f'{prefix}{{ {{ {re_x}, {im_x} }}, {tostr(y)}, {scale} }}'
           )
-      rows = ',\n          '.join(rows)
+      rows = ',\n        '.join(rows)
 
       constants = []
       for name, value in dict(
@@ -153,33 +162,38 @@ def main():
       ).items():
         if name in used_constants:
           constants.append(f'const T {name} = {value};')
-      constants = '\n        '.join(constants)
+      constants = '\n      '.join(constants)
 
       ifblocks.append(f"""\
 if constexpr (std::is_same_v<T, {ctype}>) {{
-        {constants}
-        const TableType table{{
-          {rows}
-        }};
-        return table;
-      }}""")
-    ifblocks.append('{ static_assert(false); /* unreachable */ }')
+      {constants}
+      const TableType table{{
+          // clang-format off
+          // Ignore max 80 character line width style requirement for
+          // (i) the readability
+          // (ii) the consistency with the local conventions
+        {rows}
+          // clang-format on
+      }};
+      return table;
+    }}""")
+    ifblocks.append('{\n      static_assert(false); /* unreachable */\n    }')
     ifblocks = ' else '.join(ifblocks)
     blocks.append(f"""
-  template <typename T, int default_dps_deficiency=0>
-  struct {opname} {{
-    typedef {input_ttype} InputType;
-    typedef {output_ttype} OutputType;
-    typedef T FloatType;
-    using TableType = std::vector<std::tuple<InputType, OutputType, FloatType>>;
-    static constexpr int dps_deficiency = default_dps_deficiency;
-    const TableType get() {{
-      const T inf = std::numeric_limits<T>::infinity();
-      const T min = std::numeric_limits<T>::min();
-      const T max = std::numeric_limits<T>::max();
-      {ifblocks}
-    }}
-  }};
+template <typename T, int default_dps_deficiency = 0>
+struct {opname} {{
+  typedef {input_ttype} InputType;
+  typedef {output_ttype} OutputType;
+  typedef T FloatType;
+  using TableType = std::vector<std::tuple<InputType, OutputType, FloatType>>;
+  static constexpr int dps_deficiency = default_dps_deficiency;
+  const TableType get() {{
+    const T inf = std::numeric_limits<T>::infinity();
+    const T min = std::numeric_limits<T>::min();
+    const T max = std::numeric_limits<T>::max();
+    {ifblocks}
+  }}
+}};
 """)
   blocks = '\n'.join(blocks)
 
@@ -205,7 +219,8 @@ limitations under the License.
 ==============================================================================*/
 
 /*
-  This file is generated using xla/tests/{os.path.basename(__file__)}. Do not edit!
+  This file is generated using xla/tests/{os.path.basename(__file__)}.
+  Do not edit!
  */
 
 #include <cmath>
@@ -214,14 +229,14 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#ifndef TENSORFLOW_COMPILER_XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_
-#define TENSORFLOW_COMPILER_XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_
+#ifndef {header_file_define}
+#define {header_file_define}
 
 namespace complex_unary_op_samples {{
 {blocks}
-}}
+}}  // namespace complex_unary_op_samples
 
-#endif  // TENSORFLOW_COMPILER_XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_
+#endif  // {header_file_define}
 """)
   output.close()
   sys.stdout.write(f'Created {output_filename}\n')
