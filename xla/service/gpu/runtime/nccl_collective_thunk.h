@@ -30,8 +30,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"         // from @llvm-project
+#include "mlir/IR/Value.h"              // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
@@ -176,6 +176,24 @@ class NcclCollectiveThunk : public Thunk {
     async_events_ = async_events;
   }
 
+  NcclStreamId nccl_stream_id() const {
+    return xla::gpu::GetStreamId(IsAsync(), GetAsyncStreamKind());
+  }
+
+  // Left shifting the steam id by 3 bits as to distinguish the async stream
+  // id that is launched from the main stream. i.e.
+  // main_stream_id << 3 :  thunk's execution stream id
+  // main_stream_id << 3 + 1 :  async collective stream id launched from
+  // execution stream
+  // main_stream_id << 3 + 2 :  async P2P0 send/recv stream id launched from
+  // execution stream
+  // main_stream_id << 3 + 3 :  async P2P1 recv/recv stream id launched from
+  // execution stream
+  ExecutionStreamId nccl_execution_stream_id() const {
+    return ExecutionStreamId(execution_stream_id().value() +
+                             nccl_stream_id().value());
+  }
+
  protected:
   virtual absl::Status RunNcclCollective(
       const ExecuteParams& params, se::Stream& stream,
@@ -197,11 +215,6 @@ class NcclCollectiveThunk : public Thunk {
 
  private:
   bool IsAsync() const { return async_events_ != nullptr; }
-  NcclStreamId GetStreamId() const {
-    return xla::gpu::GetStreamId(execution_stream_id().value(), IsAsync(),
-                                 GetAsyncStreamKind());
-  }
-
   NcclApi* nccl_api_;
   std::shared_ptr<AsyncEvents> async_events_;
 
@@ -224,12 +237,22 @@ class NcclCollectiveDoneThunk : public Thunk {
  public:
   NcclCollectiveDoneThunk(
       Thunk::Kind kind, ThunkInfo thunk_info,
-      std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events);
+      std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
+      AsyncStreamKind async_stream_kind);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
+  // return the execution stream id wheer previous async operator was launched
+  // to.
+  ExecutionStreamId nccl_execution_stream_id() const {
+    return ExecutionStreamId(
+        execution_stream_id().value() +
+        xla::gpu::GetStreamId(true, async_stream_kind_).value());
+  }
+
  private:
   std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events_;
+  AsyncStreamKind async_stream_kind_ = AsyncStreamKind::kCollective;
 };
 
 //===----------------------------------------------------------------------===//

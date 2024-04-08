@@ -137,6 +137,7 @@ cc_library(
         ":gemm_thunk",
         ":kernel_thunk",
         ":memset_thunk",
+        ":nccl_collective_thunk",
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
         ":replica_id_thunk",
@@ -1127,7 +1128,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:statusor",
     ],
 )

@@ -352,9 +352,18 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   thunk_info.profile_annotation = instr->name();
   auto gpu_backend_config = instr->backend_config<GpuBackendConfig>();
   if (gpu_backend_config.ok()) {
-    thunk_info.execution_stream_id = std::max<uint64_t>(
-        kDefaultExecutionStreamId.value(),
-        static_cast<uint64_t>(gpu_backend_config->operation_queue_id()));
+    // Left shifting the steam id by 3 bits as to distinguish the async stream
+    // id that is launched from the main stream. i.e.
+    // main_stream_id << 3 :  thunk's execution stream id
+    // main_stream_id << 3 + 1 :  async collective stream id launched from
+    // execution stream
+    // main_stream_id << 3 + 2 :  async P2P0 send/recv stream id launched from
+    // execution stream
+    // main_stream_id << 3 + 3 :  async P2P1 recv/recv stream id launched from
+    // execution stream
+    thunk_info.execution_stream_id =
+        std::max<uint64_t>(kDefaultExecutionStreamId.value(),
+                 uint64_t(gpu_backend_config->operation_queue_id())) << 3;
   }
   return thunk_info;
 }

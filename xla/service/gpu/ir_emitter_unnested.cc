@@ -55,17 +55,17 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
-#include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
+#include "mlir/AsmParser/AsmParser.h"               // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"        // from @llvm-project
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"                     // from @llvm-project
+#include "mlir/IR/Builders.h"                       // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                     // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                   // from @llvm-project
+#include "mlir/IR/MLIRContext.h"                    // from @llvm-project
+#include "mlir/Parser/Parser.h"                     // from @llvm-project
+#include "mlir/Support/LLVM.h"                      // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
@@ -129,6 +129,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_permute_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
+#include "xla/service/gpu/runtime/nccl_p2p_thunk_common.h"
 #include "xla/service/gpu/runtime/nccl_recv_thunk.h"
 #include "xla/service/gpu/runtime/nccl_send_thunk.h"
 #include "xla/service/gpu/runtime/norm_thunk.h"
@@ -2290,8 +2291,10 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
           GetSendRecvAsyncEventsKey(kind, channel_id));
       TF_RET_CHECK(it != collectives_async_events.end())
           << "couldn't find async events for channel_id " << channel_id;
-      AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
-          kind, Thunk::ThunkInfo::WithProfileAnnotation(inst), it->second));
+      AddThunkToThunkSequence(
+          std::make_unique<NcclCollectiveDoneThunk>(
+              kind, Thunk::ThunkInfo::WithProfileAnnotation(inst), it->second,
+          GetStreamKindForSendRecv(DynCast<HloSendRecvInstruction>(inst))));
       return absl::OkStatus();
     }
   }
@@ -2306,7 +2309,7 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
   if (async_events.mapped()) {
     AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
         kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),
-        std::move(async_events.mapped())));
+        std::move(async_events.mapped()), AsyncStreamKind::kCollective));
   }
   return absl::OkStatus();
 }
