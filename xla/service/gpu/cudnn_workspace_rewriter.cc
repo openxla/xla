@@ -15,17 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/cudnn_workspace_rewriter.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -64,12 +57,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     se::dnn::DnnSupport& dnn_support,
     const HloCustomCallInstruction* custom_call) {
   if (IsFwdCustomCallTofMHA(*custom_call)) {
-    const HloInstruction* q = custom_call->operand(0);
-    const HloInstruction* k = custom_call->operand(1);
-    const HloInstruction* v = custom_call->operand(2);
+    Shape q_shape = custom_call->operand(0)->shape();
+    Shape k_shape = custom_call->operand(1)->shape();
+    Shape v_shape = custom_call->operand(2)->shape();
 
-    bool has_activation =
-        xla::ShapeUtil::TupleElementCount(custom_call->shape()) == 3;
     TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnfMHAKind kind,
                         xla::gpu::GetCudnnfMHAKind(custom_call));
     std::optional<Shape> mask_shape, bias_shape;
@@ -104,6 +95,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
     absl::InlinedVector<Shape, 2> output_shapes = {
         ShapeUtil::GetSubshape(custom_call->shape(), {0})};
+
+    bool has_activation =
+        xla::ShapeUtil::TupleElementCount(custom_call->shape()) == 3;
     if (has_activation) {
       output_shapes.push_back(
           ShapeUtil::GetSubshape(custom_call->shape(), {2}));
@@ -113,9 +107,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                                     config,
                                     config.is_flash_attention(),
                                     config.is_causal_mask(),
-                                    q->shape(),
-                                    k->shape(),
-                                    v->shape(),
+                                    q_shape,
+                                    k_shape,
+                                    v_shape,
                                     intermediate_tensor_shape,
                                     output_shapes,
                                     config.bmm1_dot_dimension_numbers(),
@@ -265,8 +259,8 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
       } else {
         shape->mutable_tuple_shapes(3)->set_dimensions(0, workspace);
       }
+      MarkAsChanged();
     }
-    MarkAsChanged();
     return absl::OkStatus();
   }
 

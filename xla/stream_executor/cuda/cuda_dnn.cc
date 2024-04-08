@@ -9760,7 +9760,6 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support,
   TF_ASSIGN_OR_RETURN(auto cudnn, cudnn_support.cudnn_->GetLocalHandle());
   RETURN_IF_CUDNN_FRONTEND_ERROR(
       graph_.build_plan_at_index(cudnn->handle(), plan_id));
-  // RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_plans(cudnn->handle()));
   return absl::OkStatus();
 }
 
