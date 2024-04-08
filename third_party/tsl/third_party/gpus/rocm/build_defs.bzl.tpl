@@ -62,7 +62,7 @@ def rocm_hipblaslt():
     return %{rocm_is_configured} and %{rocm_hipblaslt}
 
 def if_rocm_hipblaslt(x):
-    if %{rocm_is_configured} and (%{rocm_hipblaslt} == "True"):
+    if %{rocm_is_configured} and (%{rocm_hipblaslt} == True):
       return select({"//conditions:default": x})
     return select({"//conditions:default": []})
 
