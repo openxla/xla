@@ -406,12 +406,34 @@ TEST_F(ElementalHloToMlirTest, Pad) {
     // CHECK-SAME:     <()[s0] -> (s0 - ((s0 - 1) floordiv 2) * 2 - 1)>
     // CHECK-SAME:     ()[%[[X]]]
     // CHECK:        %[[CONSTRAINT:.*]] = arith.cmpi eq, %[[CONSTRAINT_VAL]], %[[C0]]
+    )"
+#ifdef GOOGLE_CUDA
+    R"(
     // CHECK:        %[[X_L:.*]] = arith.cmpi sge, %[[X]], %[[C1]]
     // CHECK:        %[[X_H:.*]] = arith.cmpi sle, %[[X]], %[[C7]]
+    )"
+#elif TENSORFLOW_USE_ROCM
+    R"(
+    // CHECK:        %[[X_H:.*]] = arith.cmpi sle, %[[X]], %[[C7]]
+    // CHECK:        %[[X_L:.*]] = arith.cmpi sge, %[[X]], %[[C1]]
+    )"
+#endif //GOOGLE_CUDA
+    R"(
     // CHECK:        %[[X_BOUNDS:.*]] = arith.andi %[[X_L]], %[[X_H]]
     // CHECK:        %[[X_AND_CONSTRAINT:.*]] = arith.andi %[[CONSTRAINT]], %[[X_BOUNDS]]
+    )"
+#ifdef GOOGLE_CUDA
+    R"(
     // CHECK:        %[[Y_L:.*]] = arith.cmpi sge, %[[Y]], %[[C4]]
     // CHECK:        %[[Y_H:.*]] = arith.cmpi sle, %[[Y]], %[[C7]]
+    )"
+#elif TENSORFLOW_USE_ROCM
+    R"(
+    // CHECK:        %[[Y_H:.*]] = arith.cmpi sle, %[[Y]], %[[C7]]
+    // CHECK:        %[[Y_L:.*]] = arith.cmpi sge, %[[Y]], %[[C4]]
+    )"
+#endif //GOOGLE_CUDA
+    R"(
     // CHECK:        %[[Y_BOUNDS:.*]] = arith.andi %[[Y_L]], %[[Y_H]]
     // CHECK:        %[[FROM_INPUT:.*]] = arith.andi %[[X_AND_CONSTRAINT]], %[[Y_BOUNDS]]
     // CHECK:        %[[RET:.*]] = scf.if %[[FROM_INPUT]]
@@ -449,12 +471,34 @@ TEST_F(ElementalHloToMlirTest, PadUnsigned) {
     // CHECK-SAME:     <()[s0] -> (s0 - ((s0 - 1) floordiv 2) * 2 - 1)>
     // CHECK-SAME:     ()[%[[X]]]
     // CHECK:        %[[CONSTRAINT:.*]] = arith.cmpi eq, %[[CONSTRAINT_VAL]], %[[C0]]
+    )"
+#ifdef GOOGLE_CUDA
+    R"(
     // CHECK:        %[[X_L:.*]] = arith.cmpi sge, %[[X]], %[[C1]]
     // CHECK:        %[[X_H:.*]] = arith.cmpi sle, %[[X]], %[[C7]]
+    )"
+#elif TENSORFLOW_USE_ROCM
+    R"(
+    // CHECK:        %[[X_H:.*]] = arith.cmpi sle, %[[X]], %[[C7]]
+    // CHECK:        %[[X_L:.*]] = arith.cmpi sge, %[[X]], %[[C1]]
+    )"
+#endif //GOOGLE_CUDA
+    R"(
     // CHECK:        %[[X_BOUNDS:.*]] = arith.andi %[[X_L]], %[[X_H]]
     // CHECK:        %[[X_AND_CONSTRAINT:.*]] = arith.andi %[[CONSTRAINT]], %[[X_BOUNDS]]
+    )"
+#ifdef GOOGLE_CUDA
+    R"(
     // CHECK:        %[[Y_L:.*]] = arith.cmpi sge, %[[Y]], %[[C4]]
     // CHECK:        %[[Y_H:.*]] = arith.cmpi sle, %[[Y]], %[[C7]]
+    )"
+#elif TENSORFLOW_USE_ROCM
+    R"(
+    // CHECK:        %[[Y_H:.*]] = arith.cmpi sle, %[[Y]], %[[C7]]
+    // CHECK:        %[[Y_L:.*]] = arith.cmpi sge, %[[Y]], %[[C4]]
+    )"
+#endif //GOOGLE_CUDA
+    R"(
     // CHECK:        %[[Y_BOUNDS:.*]] = arith.andi %[[Y_L]], %[[Y_H]]
     // CHECK:        %[[FROM_INPUT:.*]] = arith.andi %[[X_AND_CONSTRAINT]], %[[Y_BOUNDS]]
     // CHECK:        %[[RET:.*]] = scf.if %[[FROM_INPUT]]

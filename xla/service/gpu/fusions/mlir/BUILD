@@ -1,5 +1,8 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
+load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -107,6 +110,9 @@ cc_library(
 xla_cc_test(
     name = "elemental_hlo_to_mlir_test",
     srcs = ["elemental_hlo_to_mlir_test.cc"],
+    tags = tf_gpu_tests_tags(),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         ":computation_partitioner",
         ":elemental_hlo_to_mlir",
