@@ -495,7 +495,7 @@ gpu_only_cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:subprocess",
     ] + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_asm_compiler",
+        "//xla/stream_executor/cuda:cuda_asm_compiler_legacy",
         "//xla/stream_executor/cuda:cuda_driver",
         "//xla/stream_executor/cuda:ptxas_wrapper",
         "//xla/stream_executor/cuda:nvlink_wrapper",
