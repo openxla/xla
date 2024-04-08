@@ -57,10 +57,6 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     se::dnn::DnnSupport& dnn_support,
     const HloCustomCallInstruction* custom_call) {
   if (IsFwdCustomCallTofMHA(*custom_call)) {
-    Shape q_shape = custom_call->operand(0)->shape();
-    Shape k_shape = custom_call->operand(1)->shape();
-    Shape v_shape = custom_call->operand(2)->shape();
-
     TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnfMHAKind kind,
                         xla::gpu::GetCudnnfMHAKind(custom_call));
     std::optional<Shape> mask_shape, bias_shape;
@@ -102,6 +98,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
       output_shapes.push_back(
           ShapeUtil::GetSubshape(custom_call->shape(), {2}));
     }
+
+    Shape q_shape = custom_call->operand(0)->shape();
+    Shape k_shape = custom_call->operand(1)->shape();
+    Shape v_shape = custom_call->operand(2)->shape();
 
     GpufMHADescriptor descriptor = {kind,
                                     config,
