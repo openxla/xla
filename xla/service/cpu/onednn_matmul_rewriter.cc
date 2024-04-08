@@ -821,14 +821,10 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
     }
     auto plain_weights_md = ShapeToMemDesc(weights_shape);
     if constexpr (std::is_same<PrimDesc, dnnl::matmul::primitive_desc>::value) {
-      auto backend_config = custom_call->backend_config<BackendConfig>();
-      if (!backend_config.ok()) {
-        return absl::CancelledError(
-            "Cannot prepack weights. Customcall does not have a "
-            "BackendConfig.");
-      }
+      TF_ASSIGN_OR_RETURN(auto backend_config,
+                          custom_call->backend_config<BackendConfig>());
       TRANSPOSE_LAST_TWO_DIMS_IF(
-          backend_config->onednn_matmul_config().transpose_b(),
+          backend_config.onednn_matmul_config().transpose_b(),
           plain_weights_md);
     }
     TF_RETURN_IF_ERROR(SetWeightsPrepack<PrimDesc>(custom_call, true));
