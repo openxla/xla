@@ -58,8 +58,13 @@ TEST(InteractiveGraphviz, CPU) {
 
   int status = proc.Communicate(&in, &out, &err);
   EXPECT_TRUE(WIFEXITED(status));
+  #if defined (_WIN32) || defined (_WIN64)
+  EXPECT_TRUE(status==0);
+  EXPECT_EQ(0, status);
+  #else
   EXPECT_EQ(0, WEXITSTATUS(status));
   ASSERT_THAT(err, testing::HasSubstr("Compiling module for Host"));
+  #endif
 }
 
 }  // namespace
