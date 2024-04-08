@@ -156,7 +156,7 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
           GpuSemaphoreState::Release));
     }
   }
-#endif
+#endif  // GOOGLE_CUDA
   // The start event goes after the delay kernel in the stream
   TF_RETURN_IF_ERROR(GpuDriver::RecordEvent(parent->gpu_context(), start_event,
                                             stream->gpu_stream()));
