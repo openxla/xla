@@ -29,9 +29,13 @@ import numpy as np
 
 
 def disable(op, real, imag):
-  del op, real, imag
   # Return True to disable samples (real, imag) that are know to be
-  # problematic for the op.
+  # problematic for the given op.
+  if op == 'Tan' and ('inf' in real or 'inf' in imag):
+    # TODO(pearu): remove this if-block when google/jax#20688 has landed
+    return True
+  else:
+    del op, real, imag
   return False
 
 
@@ -41,13 +45,19 @@ def main():
   header_file_define = dict(xla='XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_',
                             tensorflow='TENSORFLOW_COMPILER_XLA_TESTS_COMPLEX_UNARY_OP_SAMPLES_H_')[target]
   default_size = 7
-  nmp = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=1)
+  default_extra_prec_multiplier = 1
+
   blocks = []
-  for opname in ['Log1p']:
+  for opname in ['Log1p', 'Tan']:
     mpmath_op = opname.lower()
-    size_re, size_im = dict(Log1p=(7, 7)).get(
+    size_re, size_im = dict(Log1p=(7, 7), Tan=(7, 7)).get(
         opname, (default_size, default_size)
     )
+    extra_prec_multiplier = dict(Log1p=1, Tan=1).get(
+        opname, default_extra_prec_multiplier
+    )
+    nmp = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=extra_prec_multiplier)
+
     ifblocks = []
     input_ttype = 'std::complex<T>'
     output_ttype = 'TBD'
@@ -67,9 +77,6 @@ def main():
       cpi_4 = str(q_pi) + cfloat_suffix
       cpi3_4 = str(tq_pi) + cfloat_suffix
       czero = str(float_dtype(0)) + cfloat_suffix
-
-      sample = jtu.complex_plane_sample(dtype, size_re=size_re, size_im=size_im)
-      values = getattr(nmp, mpmath_op)(sample)
       finfo = np.finfo(float_dtype)
 
       # pylint: disable=cell-var-from-loop
@@ -107,9 +114,9 @@ def main():
         if v == 0.0:
           return 'zero'
         if float_dtype == np.float32:
-          s = f'{v:.6e}f'
+          s = f'{v:.7e}f'
         elif float_dtype == np.float64:
-          s = f'{v:.15e}'
+          s = f'{v:.16e}'
         else:
           assert 0  # unreachable
         return re.sub(r'0+e', 'e', s)
@@ -123,9 +130,14 @@ def main():
 
       rows = []
       counter = 0
-      for x, y in zip(sample.flatten(), values.flatten()):
+
+      sample = jtu.complex_plane_sample(dtype, size_re=size_re, size_im=size_im).flatten()
+      values = getattr(nmp, mpmath_op)(sample)
+      for x, y in zip(sample, values):
+        prev_used_constants = used_constants.copy()
         re_x, im_x = tostr(x.real), tostr(x.imag)
-        if disable(opname, re_x, im_x):
+        skip = disable(opname, re_x, im_x)
+        if skip:
           prefix = '// '
         else:
           # to ease tracking mismatching cases:
@@ -149,6 +161,10 @@ def main():
           rows.append(
               f'{prefix}{{ {{ {re_x}, {im_x} }}, {tostr(y)}, {scale} }}'
           )
+        if skip:
+          # restore used_constants
+          used_constants.difference_update(used_constants.difference(prev_used_constants))
+
       rows = ',\n        '.join(rows)
 
       constants = []
@@ -159,6 +175,9 @@ def main():
           pi_2=cpi_2,
           pi3_4=cpi3_4,
           zero=czero,
+          inf='std::numeric_limits<T>::infinity()',
+          min='std::numeric_limits<T>::min()',
+          max='std::numeric_limits<T>::max()',
       ).items():
         if name in used_constants:
           constants.append(f'const T {name} = {value};')
@@ -177,7 +196,7 @@ if constexpr (std::is_same_v<T, {ctype}>) {{
       }};
       return table;
     }}""")
-    ifblocks.append('{\n      static_assert(false); /* unreachable */\n    }')
+    ifblocks.append('{\n      static_assert(dependent_false<T>); /* unreachable */\n    }')
     ifblocks = ' else '.join(ifblocks)
     blocks.append(f"""
 template <typename T, int default_dps_deficiency = 0>
@@ -188,9 +207,6 @@ struct {opname} {{
   using TableType = std::vector<std::tuple<InputType, OutputType, FloatType>>;
   static constexpr int dps_deficiency = default_dps_deficiency;
   const TableType get() {{
-    const T inf = std::numeric_limits<T>::infinity();
-    const T min = std::numeric_limits<T>::min();
-    const T max = std::numeric_limits<T>::max();
     {ifblocks}
   }}
 }};
@@ -233,6 +249,9 @@ limitations under the License.
 #define {header_file_define}
 
 namespace complex_unary_op_samples {{
+
+template <class>
+constexpr bool dependent_false = false;
 {blocks}
 }}  // namespace complex_unary_op_samples
 
