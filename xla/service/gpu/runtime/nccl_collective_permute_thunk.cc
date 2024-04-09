@@ -55,8 +55,6 @@ absl::StatusOr<const int64_t> GetCurrentId(
 }
 }  // namespace
 
-using tsl::AsyncValueRef;
-
 NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
     ThunkInfo thunk_info, NcclApi* nccl_api,
     const HloCollectivePermuteInstruction* instr, int64_t replica_count,
@@ -138,13 +136,8 @@ absl::Status NcclCollectivePermuteStartThunk::Initialize(
   if (p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(const int64_t current_id,
                         GetCurrentId(params.collective_params, config_));
-    {
-      absl::MutexLock lock(&mutex_);
-      if (recv_ptr_map_.find(current_id) == recv_ptr_map_.end()) {
-        recv_ptr_map_[current_id] =
-            tsl::MakeUnconstructedAsyncValueRef<void*>();
-      }
-    }
+
+    TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(current_id));
   }
 
   return absl::OkStatus();
@@ -166,8 +159,9 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
       NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
 
   bool use_memcpy = comm_wrapper.is_local &&
-                    recv_ptr_map_.find(current_id) != recv_ptr_map_.end() &&
+                    recv_ptr_map_.IsInitialized(current_id) &&
                     p2p_memcpy_enabled_;
+
   return ::xla::gpu::RunCollectivePermute(
       nccl_api(), source_target, device_buffers[0], stream,
       comm_wrapper.comm_handle, device_string, current_id, use_memcpy,
@@ -178,7 +172,7 @@ absl::Status RunCollectivePermute(
     NcclApi* nccl_api, NcclP2PConfig::SourceTargetMapEntry source_target,
     DeviceBufferPair& buffer, se::Stream& stream, NcclApi::NcclCommHandle comm,
     absl::string_view device_string, int64_t current_id, bool use_memcpy,
-    const NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
+    NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
   // Determine the source and target IDs for this instance. The source ID is the
   // ID which will copy its data to this instance. The destination ID is the ID
   // to which this instance will copy its data. Either are optional.
@@ -219,29 +213,22 @@ absl::Status RunCollectivePermute(
                                 device_string, current_id,
                                 source_id.value_or(-1), target_id.value_or(-1));
 
-  // GroupStart/End API is needed only if we will issue both send & recv calls.
-  const bool is_nccl_group_needed = (target_id && source_id);
-  if (is_nccl_group_needed) {
-    TF_RETURN_IF_ERROR(nccl_api->GroupStart());
-  }
-
   // If all peers are local, only get/send device pointer values and invoke
   // memcpy.
   if (use_memcpy) {
     // If sending to another peer, get the pointer value of the src addr.
     // Only change the pointer value when it's different from stored one.
     if (source_id) {
-      if (recv_ptr_map.find(current_id) == recv_ptr_map.end()) {
-        return absl::InternalError(absl::StrCat("Current ID ", current_id,
-                                                " has not been initialized!"));
-      }
-      if (recv_ptr_map.at(current_id).IsUnavailable()) {
-        VLOG(3) << "Using memcpy, initializing pointer: " << dest_addr.opaque()
-                << " current_id " << current_id;
-        recv_ptr_map.at(current_id).emplace(dest_addr.opaque());
-      }
+      TF_RETURN_IF_ERROR(
+          recv_ptr_map.PutRecvPtr(current_id, dest_addr.opaque()));
     }
   } else {
+    // GroupStart/End API is needed only if we will issue both send & recv
+    // calls.
+    const bool is_nccl_group_needed = (target_id && source_id);
+    if (is_nccl_group_needed) {
+      TF_RETURN_IF_ERROR(nccl_api->GroupStart());
+    }
     // Send source buffer to target peer if needed.
     if (target_id) {
       TF_RETURN_IF_ERROR(nccl_api->Send(src_addr, buffer.element_type,
@@ -255,10 +242,9 @@ absl::Status RunCollectivePermute(
                                         buffer.element_count, *source_id, comm,
                                         &stream));
     }
-  }
-
-  if (is_nccl_group_needed) {
-    TF_RETURN_IF_ERROR(nccl_api->GroupEnd());
+    if (is_nccl_group_needed) {
+      TF_RETURN_IF_ERROR(nccl_api->GroupEnd());
+    }
   }
 
   if (!source_id) {
@@ -269,22 +255,17 @@ absl::Status RunCollectivePermute(
     TF_RETURN_IF_ERROR(stream.MemZero(&dest_addr, dest_addr.size()));
   }
   if (use_memcpy && target_id) {
-    if (recv_ptr_map.find(*target_id) == recv_ptr_map.end()) {
-      return absl::InternalError(
-          absl::StrCat("Target ID ", *target_id, " has not been initialized!"));
-    }
-    // Need to block until the receive pointer buffer has been updated.
-    if (recv_ptr_map.at(*target_id).IsUnavailable()) {
+    TF_ASSIGN_OR_RETURN(auto recv_ptr, recv_ptr_map.GetRecvPtr(*target_id));
+    if (recv_ptr.IsUnavailable()) {
       // TODO make BlockUntilReady support AsyncValueRef directly.
-      BlockUntilReady(recv_ptr_map.at(*target_id).GetAsyncValue());
+      BlockUntilReady(recv_ptr.GetAsyncValue());
     }
-    VLOG(3) << "Using memcpy, received target pointer: "
-            << recv_ptr_map.at(*target_id).get() << " current_id " << current_id
-            << " target_id: " << *target_id;
+
+    VLOG(3) << "Using memcpy, received target pointer: " << recv_ptr.get()
+            << " current_id " << current_id << " target_id: " << *target_id;
 
     VLOG(3) << current_id << " initiating memcpy to " << *target_id;
-    se::DeviceMemoryBase dst_addr =
-        se::DeviceMemoryBase((recv_ptr_map.at(*target_id).get()));
+    se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptr.get());
     TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, src_addr, src_addr.size()));
   }
 
