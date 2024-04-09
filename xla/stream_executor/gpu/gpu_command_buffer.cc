@@ -334,10 +334,9 @@ absl::Status GpuCommandBuffer::CheckNumCommandBuffers(
 absl::StatusOr<GpuGraphNodeHandle> GpuCommandBuffer::CreateBarrierNode(
     const Dependencies& dependencies) {
   GpuGraphNodeHandle barrier_handle = nullptr;
-#if !defined(TENSORFLOW_USE_ROCM)
-  // TODO(b/316343054): Instead of empty nodes we create no-op kernel nodes as
-  // barriers because CUDA 12.3 does not support empty nodes inside
-  // conditional command buffers. This should be fixed in CUDA 12.4.
+#if !defined(TENSORFLOW_USE_ROCM) && CUDA_VERSION < 12040
+  // Instead of empty nodes we create no-op kernel nodes as barriers because
+  // CUDA 12.3 does not support empty nodes inside conditional command buffers.
   TF_ASSIGN_OR_RETURN(NoOpKernel * noop, GetNoOpKernel());
 
   TF_RETURN_IF_ERROR(GpuDriver::GraphAddKernelNode(
@@ -1019,7 +1018,9 @@ absl::Status GpuCommandBuffer::Finalize() {
             << "; conditionals: " << num_cond_cmd_buffers
             << "; alive executable graphs: " << AliveExecs();
 
+#if !defined(TENSORFLOW_USE_ROCM) && CUDA_VERSION < 12040
     TF_RETURN_IF_ERROR(DisableBarriersExecution(exec_));
+#endif
 
   } else if (mode_ == Mode::kPrimary && state_ == State::kUpdate) {
     // If this is a finalization after update, we don't have to do anything as
