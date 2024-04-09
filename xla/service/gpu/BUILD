@@ -3104,6 +3104,7 @@ cc_library(
         ":backend_configs_cc",
         ":ir_emission_utils",
         ":gpu_fused_mha_runner",
+        ":cublas_cudnn",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
