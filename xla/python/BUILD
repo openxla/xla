@@ -1,13 +1,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-    "if_google",
-    "internal_visibility",
-)
-load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -21,6 +14,13 @@ load(
     "xla_cc_test",
     "xla_py_test_deps",
 )
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_cuda_or_rocm",
+    "if_google",
+    "internal_visibility",
+)
+load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1273,8 +1273,8 @@ tsl_pybind_extension(
         "@nanobind",
     ] + select({
         # gloo transport only builds on linux
-        "@tsl//tsl:macos": [],
-        "@tsl//tsl:windows": [],
+        "//xla/tsl:macos": [],
+        "//xla/tsl:windows": [],
         "//conditions:default": [
             "//xla/pjrt/cpu:gloo_collectives",
             "//xla/pjrt/cpu:gloo_kv_store",
@@ -1282,7 +1282,7 @@ tsl_pybind_extension(
         ],
     }) + select({
         # mpitrampoline does not build on windows
-        "@tsl//tsl:windows": [],
+        "//xla/tsl:windows": [],
         "//conditions:default": [
             "//xla/pjrt/cpu:mpi_collectives",
         ],

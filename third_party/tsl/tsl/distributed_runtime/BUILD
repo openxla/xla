@@ -2,7 +2,7 @@
 # Distributed runtime modules for machine learning, which allows coordination between multiple
 # processes for distributed operations.
 
-load("//tsl:tsl.bzl", "internal_visibility")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
@@ -11,7 +11,7 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
-        "//tsl:internal",
+        "@xla//xla/tsl:internal",
     ]),
     licenses = ["notice"],
 )

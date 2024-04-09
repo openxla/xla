@@ -33,7 +33,7 @@ cc_library(
     ],
     hdrs = ["zlib.h"],
     copts = select({
-        "@tsl//tsl:windows": [],
+        "@xla//xla/tsl:windows": [],
         "//conditions:default": [
             "-Wno-shift-negative-value",
             "-DZ_HAVE_UNISTD_H",

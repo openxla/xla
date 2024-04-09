@@ -1,12 +1,12 @@
-load("//tsl:tsl.bzl", "internal_visibility")
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_grpc_cc_dependencies")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_grpc_cc_dependencies")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
-        "//tsl:internal",
+        "@xla//xla/tsl:internal",
     ]),
     licenses = ["notice"],
 )

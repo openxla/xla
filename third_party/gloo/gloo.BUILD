@@ -57,8 +57,8 @@ cc_library(
         "gloo/rendezvous/prefix_store.cc",
         "gloo/rendezvous/store.cc",
     ] + select({
-        "@tsl//tsl:macos": [],
-        "@tsl//tsl:windows": [],
+        "@xla//xla/tsl:macos": [],
+        "@xla//xla/tsl:windows": [],
         "//conditions:default": [
             "gloo/common/linux.cc",
         ],
