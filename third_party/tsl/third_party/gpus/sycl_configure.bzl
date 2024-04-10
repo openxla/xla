@@ -1,6 +1,9 @@
 """Repository rule for SYCL autoconfiguration.
 
 `sycl_configure` depends on the following environment variables:
+
+  * `TF_NEED_SYCL`: Whether to enable building with SYCL.
+  * `GCC_HOST_COMPILER_PATH`: The GCC host compiler path
 """
 
 load(
