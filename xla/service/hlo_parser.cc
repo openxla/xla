@@ -5429,13 +5429,13 @@ bool HloParserImpl::ParseSliceRanges(SliceRanges* result) {
 //   ::= precision_val (delim precision_val)*
 bool HloParserImpl::ParsePrecisionList(
     std::vector<PrecisionConfig::Precision>* result) {
-  auto parse_and_add_item = [&]() {
+    auto parse_and_add_item = [&]() {
     PrecisionConfig::Precision item;
     if (!ParsePrecision(&item)) {
       return false;
     }
     result->push_back(item);
-    return true;
+   return true;
   };
   return ParseList(TokKind::kLbrace, TokKind::kRbrace, TokKind::kComma,
                    parse_and_add_item);

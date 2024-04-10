@@ -527,9 +527,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     HloInstruction *lhs = instr->mutable_operand(0);
     HloInstruction *rhs = instr->mutable_operand(1);
-    auto attributes = instr->frontend_attributes().map();
-    gemm_backend_config.set_grad_x(attributes["grad_x"] == "true");
-    gemm_backend_config.set_grad_y(attributes["grad_y"] == "true");
 
     int64_t lhs_batch_dims_size =
         instr->dot_dimension_numbers().lhs_batch_dimensions_size();
@@ -1747,6 +1744,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         supported_type_combinations = {{
             {ComputationType::kF16, DataType::kHalf, PrimitiveType::F16,
              PrimitiveType::F16, DataType::kHalf},
+            {ComputationType::kF32, DataType::kHalf, PrimitiveType::F16,
+             PrimitiveType::F16, DataType::kHalf},
 
             {ComputationType::kI32, DataType::kInt32, PrimitiveType::S8,
              PrimitiveType::S8, DataType::kInt32},
@@ -1975,6 +1974,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // We use ALG_UNSET and kDefaultComputePrecision because we don't care about
     // the precision, just the layout, since we're just checking if the matrix
     // is column-major.
+    PrecisionConfig::Precision input_precisions[2]={PrecisionConfig::DEFAULT, PrecisionConfig::DEFAULT};
     TF_ASSIGN_OR_RETURN(
         GemmConfig gemm_config,
         GemmConfig::For(
@@ -1986,7 +1986,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             gemm_backend_config.alpha_imag(), gemm_backend_config.beta(),
             /*precision_algorithm=*/PrecisionConfig::ALG_UNSET,
             /*algorithm*/ std::nullopt, se::blas::kDefaultComputePrecision,
-            gemm_backend_config.grad_x(), gemm_backend_config.grad_y()));
+            input_precisions));
 
     if (matrix_name == "lhs" || matrix_name == "a") {
       return gemm_config.lhs_layout.order == MatrixLayout::Order::kColumnMajor;

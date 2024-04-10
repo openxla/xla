@@ -321,6 +321,26 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   int cc_major() const { return cc_major_; }
   int cc_minor() const { return cc_minor_; }
 
+  absl::StatusOr<std::vector<ApiTrace>> ExtractApiTrace() override {
+    absl::MutexLock lock(&logger_mu_);
+    std::vector<ApiTrace> retval = argument_logs_;
+    argument_logs_.clear();
+    return retval;
+  }
+
+  bool SetArgumentLoggingMode(ArgumentLogging mode) override {
+    absl::MutexLock lock(&logger_mu_);
+    argument_logging_mode_ = mode;
+    return true;
+  }
+
+  ArgumentLogging GetArgumentLoggingMode() const {
+    return argument_logging_mode_; 
+  }
+
+  std::vector<ApiTrace>& ArgumentLogs() { return argument_logs_; }
+  absl::Mutex& LoggerMutex() { return logger_mu_; }
+
  private:
   // Host callback landing routine invoked by CUDA.
   // data: User-provided callback provided to HostCallback() above, captured
@@ -426,6 +446,12 @@ class GpuExecutor : public internal::StreamExecutorInterface {
   absl::flat_hash_map<void*, Stream*> alive_gpu_streams_
       ABSL_GUARDED_BY(alive_gpu_streams_mu_);
 
+  absl::Mutex logger_mu_;
+
+  mutable std::vector<ApiTrace> argument_logs_;
+  ArgumentLogging argument_logging_mode_ = ArgumentLogging::kNone;
+
+private:
   GpuExecutor(const GpuExecutor&) = delete;
   void operator=(const GpuExecutor&) = delete;
 };

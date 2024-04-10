@@ -1778,6 +1778,7 @@ class DnnSupport {
       const BatchDescriptor& output_descriptor, DeviceMemoryBase output_data,
       const ConvolutionDescriptor& convolution_descriptor,
       ScratchAllocator* scratch_allocator,
+      const NumericOptions& numeric_options,
       std::vector<ProfileResult>* out_algorithms);
 
   // Returns a list of supported rnn algorithms.

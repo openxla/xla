@@ -492,8 +492,7 @@ class HloModuleConfig {
   // abstract cost units, before it is considered for early termination.
   absl::flat_hash_map<std::string, int64_t> analysis_allowance_map_;
 
-  PrecisionConfig::Precision matrix_unit_operand_precision_ =
-      PrecisionConfig::DEFAULT;
+  PrecisionConfig::Precision matrix_unit_operand_precision_;
 
   // Profiling data for feedback directed optimizations. Note that this is not
   // the only way to feed FDO data into the compiler and individual backends

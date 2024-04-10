@@ -264,9 +264,7 @@ Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
           convolution->feature_group_count(), convolution->batch_group_count(),
           convolution->window(), convolution->convolution_dimension_numbers(),
           /*preferred_element_type=*/convolution->shape().element_type()));
-  if (auto nibble_count =
-          absl::c_count(convolution->precision_config().operand_precision(),
-                        PrecisionConfig::PACKED_NIBBLE)) {
+  if (auto nibble_count = count_packed_nibbles(convolution->precision_config())) {
     if (nibble_count == 1) {
       return InvalidArgument(
           "Convolution cannot have a single packed nibble argument");

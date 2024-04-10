@@ -39,19 +39,20 @@ class BlasLt : public gpu::BlasLt {
       std::unique_ptr<std::remove_pointer_t<T>, hipblasStatus_t (*)(T)>;
 
  public:
-  struct MatrixLayout {
-    static absl::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m);
+  struct MatrixLayout: gpu::MatrixLayout {
+    static absl::StatusOr<MatrixLayout> Create(const gpu::MatrixLayout& m, int prec);
 
     hipDataType type() const { return datatype_; }
     hipblasLtMatrixLayout_t get() const { return handle_.get(); }
-
+    int precision() const { return precision_; }
    private:
-    MatrixLayout(hipblasLtMatrixLayout_t handle, hipDataType datatype)
-        : handle_(handle, wrap::hipblasLtMatrixLayoutDestroy),
-          datatype_(datatype) {}
+    MatrixLayout(gpu::MatrixLayout m, hipblasLtMatrixLayout_t handle, hipDataType datatype, int prec)
+        : gpu::MatrixLayout(m), handle_(handle, wrap::hipblasLtMatrixLayoutDestroy),
+          datatype_(datatype), precision_(prec) {}
 
     Owned<hipblasLtMatrixLayout_t> handle_;
     hipDataType datatype_;
+    int precision_;
   };
 
   class MatmulDesc {
@@ -61,7 +62,8 @@ class BlasLt : public gpu::BlasLt {
         blas::Transpose trans_a = blas::Transpose::kNoTranspose,
         blas::Transpose trans_b = blas::Transpose::kNoTranspose,
         Epilogue epilogue = Epilogue::kDefault,
-        PointerMode pointer_mode = PointerMode::kHost);
+        PointerMode pointer_mode = PointerMode::kHost,
+        int grads = 0);
 
     hipblasComputeType_t compute_type() const { return compute_type_; }
     hipDataType scale_type() const { return datatype_; }
@@ -69,17 +71,21 @@ class BlasLt : public gpu::BlasLt {
       return HIPBLAS_POINTER_MODE_HOST;
     }
     hipblasLtMatmulDesc_t get() const { return handle_.get(); }
-
+    int grad_flags() const { return grad_flags_; }
+    blas::Transpose get_trans_a() const { return trans_a_; }
+    blas::Transpose get_trans_b() const { return trans_b_; }
    private:
     MatmulDesc(hipblasLtMatmulDesc_t handle, hipblasComputeType_t compute_type,
-               hipDataType datatype)
+               hipDataType datatype, int grads)
         : handle_(handle, wrap::hipblasLtMatmulDescDestroy),
           compute_type_(compute_type),
-          datatype_(datatype) {}
+          datatype_(datatype), grad_flags_(grads) {}
 
     Owned<hipblasLtMatmulDesc_t> handle_;
     hipblasComputeType_t compute_type_;
     hipDataType datatype_;
+    int grad_flags_;
+    blas::Transpose trans_a_, trans_b_;
   };
 
   struct MatmulPlan : public gpu::BlasLt::MatmulPlan {

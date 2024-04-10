@@ -131,7 +131,11 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
     // Check the assumption that this device supports unified addressing,
     // otherwise skip the delay kernel
     TF_ASSIGN_OR_RETURN(int status, GpuDriver::GetDeviceAttribute(
+#if GOOGLE_CUDA
                                         CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING,
+#else
+                                        hipDeviceAttributeUnifiedAddressing,
+#endif
                                         parent->device()));
     if (!status) {
       LOG(WARNING) << "Skipping the delay kernel because the device does not "

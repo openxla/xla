@@ -827,7 +827,10 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheCuda(
         instr->precision_config().operand_precision(),
         [](int precision) { return precision <= PrecisionConfig::HIGH; });
   }
-  const se::NumericOptions numeric_options{deterministic_ops, allow_tf32};
+  const se::NumericOptions numeric_options{deterministic_ops, allow_tf32,
+    instr->precision_config().operand_precision(0),
+    instr->precision_config().operand_precision(1)
+  };
 
   // Use the first algorithm that's supported as reference. There isn't a
   // particular reason to use it, as any algorithm suffices. It doesn't make
@@ -962,7 +965,10 @@ GpuConvAlgorithmPicker::PickBestAlgorithmNoCacheRocm(
   const bool allow_tf32 = absl::c_all_of(
       instr->precision_config().operand_precision(),
       [](int precision) { return precision <= PrecisionConfig::HIGH; });
-  const se::NumericOptions numeric_options{deterministic_ops, allow_tf32};
+  const se::NumericOptions numeric_options{deterministic_ops, allow_tf32,
+    instr->precision_config().operand_precision(0),
+    instr->precision_config().operand_precision(1)
+  };
 
   se::StreamExecutor* stream_exec = config_.GetExecutor();
   const auto device_ordinal = stream_exec->device_ordinal();

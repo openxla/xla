@@ -3212,8 +3212,8 @@ class RocmConvRunner : public dnn::ConvRunner {
     TF_ASSIGN_OR_RETURN(std::optional<GpuTimer> timer,
                         GpuTimer::CreateIfNeeded(
                             stream,
-                            output_profile_result &&
-                                output_profile_result->warmup_run_executed(),
+                            profile_result &&
+                                profile_result->warmup_run_executed(),
                             is_profiling));
 
     miopenStatus_t status = miopenStatusSuccess;
@@ -3357,7 +3357,8 @@ absl::Status MIOpenSupport::GetConvolveRunners(
   if (!GetMIOpenConvolveAlgorithms(
           kind, input_type, stream, input_descriptor, input_data,
           filter_descriptor, filter_data, output_descriptor, output_data,
-          convolution_descriptor, scratch_allocator, &profile_results)) {
+          convolution_descriptor, scratch_allocator, numeric_options,
+          &profile_results)) {
     return absl::UnknownError(
         "GetConvolveRunners: GetMIOpenConvolveAlgorithms failed");
   }
@@ -3409,6 +3410,7 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithms(
     DeviceMemoryBase output_data,
     const dnn::ConvolutionDescriptor& convolution_descriptor,
     ScratchAllocator* scratch_allocator,
+    const NumericOptions& numeric_options,
     std::vector<dnn::ProfileResult>* out_algorithms) {
   return use_immediate_mode_
              ? GetMIOpenConvolveAlgorithmsImmediateMode(
@@ -3445,8 +3447,6 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsImmediateMode(
 
   bool is_backprop = ((kind == dnn::ConvolutionKind::BACKWARD_DATA) ||
                       (kind == dnn::ConvolutionKind::BACKWARD_FILTER));
-  // bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
-  //                   (call_context == dnn::CallContext::kBackpropFilter);
 
 #if TF_ROCM_VERSION >= 50000
   if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
@@ -3665,8 +3665,6 @@ bool MIOpenSupport::GetMIOpenConvolveAlgorithmsFindMode(
 
   bool is_backprop = ((kind == dnn::ConvolutionKind::BACKWARD_DATA) ||
                       (kind == dnn::ConvolutionKind::BACKWARD_FILTER));
-  // bool is_backprop = (call_context == dnn::CallContext::kBackpropData) ||
-  //                    (call_context == dnn::CallContext::kBackpropFilter);
 
 #if TF_ROCM_VERSION >= 50000
   if (is_backprop && (ToMIOpenDataType(element_type) == miopenHalf)) {
@@ -4046,6 +4044,7 @@ class ROCmFusedMatmulRunner : public dnn::FusedMatmulRunner {
   uint64_t _m, _n, _k;
   int64_t _lda, _ldb, _ldc;
   dnn::ActivationMode _activation_mode;
+  int _precision1, _precision2;
 
  public:
   std::string ToString() const override;
@@ -4064,6 +4063,7 @@ class ROCmFusedMatmulRunner : public dnn::FusedMatmulRunner {
                         dnn::DataType bias_type, dnn::DataType output_type,
                         bool trans_a, bool trans_b, uint64_t m, uint64_t n,
                         uint64_t k, int64_t lda, int64_t ldb, int64_t ldc,
+                        NumericOptions options,
                         dnn::ActivationMode activation_mode);
 };
 
@@ -4071,6 +4071,7 @@ ROCmFusedMatmulRunner::ROCmFusedMatmulRunner(
     Stream* stream, dnn::DataType input_type, dnn::DataType bias_type,
     dnn::DataType output_type, bool trans_a, bool trans_b, uint64_t m,
     uint64_t n, uint64_t k, int64_t lda, int64_t ldb, int64_t ldc,
+    NumericOptions options,
     dnn::ActivationMode activation_mode)
     : _stream(stream),
       _input_type(input_type),
@@ -4084,6 +4085,8 @@ ROCmFusedMatmulRunner::ROCmFusedMatmulRunner(
       _lda(lda),
       _ldb(ldb),
       _ldc(ldc),
+      _precision1(options.precision1),
+      _precision2(options.precision2),
       _activation_mode(activation_mode) {}
 
 absl::StatusOr<AlgorithmDesc> ROCmFusedMatmulRunner::ToAlgorithmDesc() const {
@@ -4099,6 +4102,8 @@ absl::StatusOr<AlgorithmDesc> ROCmFusedMatmulRunner::ToAlgorithmDesc() const {
   knobs.emplace_back(8, static_cast<int64_t>(_lda));
   knobs.emplace_back(9, static_cast<int64_t>(_ldb));
   knobs.emplace_back(10, static_cast<int64_t>(_ldc));
+  knobs.emplace_back(11, static_cast<int64_t>(_precision1));
+  knobs.emplace_back(12, static_cast<int64_t>(_precision2));
   return AlgorithmDesc(0, knobs, 0);
 }
 
@@ -4124,7 +4129,7 @@ absl::Status ROCmFusedMatmulRunner::gemm(Stream* stream,
                               static_cast<DeviceMemory<T>>(b_data), _ldb,
                               static_cast<DeviceMemory<T>>(a_data), _lda,
                               static_cast<DeviceMemory<T>*>(&c_data), _ldc,
-                              NumericOptions{}, blas::CallContext::kNone);
+                              NumericOptions(false, true, _precision1, _precision2));
 }
 
 template <typename T>
@@ -4203,7 +4208,7 @@ absl::Status MIOpenSupport::GetFusedMatmulRunners(
         "ROCm fused matmul does not support input/bias type mismatch");
   auto runner_ptr = new ROCmFusedMatmulRunner(
       stream, input_type, bias_type, output_type, trans_a, trans_b, m, n, k,
-      lda, ldb, ldc, activation_mode);
+      lda, ldb, ldc, numeric_options, activation_mode);
   out_exec_plans->push_back(
       std::unique_ptr<const dnn::FusedMatmulRunner>(runner_ptr));
   return absl::OkStatus();

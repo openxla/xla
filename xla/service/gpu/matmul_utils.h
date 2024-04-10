@@ -34,6 +34,8 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/numeric_options.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 #if TENSORFLOW_USE_ROCM
@@ -115,8 +117,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
       absl::Span<const int64_t> rhs_contracting_dims, const Shape& output_shape,
       double alpha_real, double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
-      std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y);
+      std::optional<int64_t> algorithm, int64_t compute_precision,
+      const PrecisionConfig::Precision* input_precisions);
 
   // As above with additional `c_shape` and `bias_shape_ptr` parameter, both
   // which are only necessarily for F8 gemms.
@@ -128,8 +130,8 @@ struct GemmConfig : public se::gpu::GemmConfig {
       const Shape* bias_shape_ptr, const Shape& output_shape, double alpha_real,
       double alpha_imag, double beta,
       PrecisionConfig::Algorithm precision_algorithm,
-      std::optional<int64_t> algorithm, int64_t compute_precision, bool grad_x,
-      bool grad_y);
+      std::optional<int64_t> algorithm, int64_t compute_precision,
+      const PrecisionConfig::Precision* input_precisions);
 
   struct DescriptorsTuple {
     se::gpu::MatrixDescriptor lhs;
