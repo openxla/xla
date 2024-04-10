@@ -158,10 +158,16 @@ CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrCreate(
 }
 
 se::CommandBuffer::ExecutionScopeId CommandBufferCmd::GetExecutionScope(
-    const RecordParams& record_params) const {
-  int64_t base = record_params.execution_scope_id.value();
-  int64_t offset = execution_stream_id_.value();
+    const RecordParams& record_params,
+    ExecutionStreamId execution_stream_id) const {
+  uint64_t base = record_params.execution_scope_id.value();
+  uint64_t offset = execution_stream_id.value();
   return se::CommandBuffer::ExecutionScopeId(base + offset);
+}
+
+se::CommandBuffer::ExecutionScopeId CommandBufferCmd::GetExecutionScope(
+    const RecordParams& record_params) const {
+  return GetExecutionScope(record_params, execution_stream_id_);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1370,6 +1376,31 @@ CommandBufferCmd::BufferUsageVector CustomCallCmd::buffers() {
   }
   return buffer_usage;
 }
+
+//===----------------------------------------------------------------------===//
+// BarrierCmd
+//===----------------------------------------------------------------------===//
+
+BarrierCmd::BarrierCmd(ExecutionStreamId execution_stream_id,
+                       ExecutionStreamId from_stream_id)
+    : CommandBufferCmd(execution_stream_id), from_stream_id_(from_stream_id) {}
+
+absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
+                                const RecordParams& record_params,
+                                se::CommandBuffer* command_buffer) {
+  VLOG(5) << "BarrierCmd from stream " << from_stream_id_.value()
+          << " to stream " << execution_stream_id().value();
+  if (from_stream_id_ != execution_stream_id()) {
+    TF_RETURN_IF_ERROR(command_buffer->Barrier(
+        execute_params.stream->parent(),
+        CommandBufferCmd::GetExecutionScope(record_params, from_stream_id_),
+        CommandBufferCmd::GetExecutionScope(record_params,
+                                            execution_stream_id())));
+  }
+  return absl::OkStatus();
+}
+
+BarrierCmd::BufferUsageVector BarrierCmd::buffers() { return {}; }
 
 //===----------------------------------------------------------------------===//
 // CollectiveCmd
