@@ -42,7 +42,7 @@ class RunHloModuleTest : public ::testing::Test {
     int status = proc.Communicate(nullptr, &stdout_output_, &stderr_output_);
     #if defined (_WIN32) || defined (_WIN64)
     exited_normally_ = (status == 0);
-    exit_status_ = (exited_normally_) ? 0 : status;
+    exit_status_ = status;
     #else
     exited_normally_ = WIFEXITED(status);
     exit_status_ = exited_normally_ ? WEXITSTATUS(status) : -1;
