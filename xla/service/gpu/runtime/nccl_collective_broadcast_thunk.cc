@@ -52,7 +52,7 @@ NcclCollectiveBroadcastStartThunk::NcclCollectiveBroadcastStartThunk(
 /*static*/ CollectiveOpGroupMode
 NcclCollectiveBroadcastStartThunk::GetGroupMode(
     const HloCollectiveBroadcastInstruction* inst) {
-  return GetNcclCollectiveConfig(inst, std::nullopt).group_mode;
+  return GetNcclCollectiveConfig(inst, true).group_mode;
 }
 
 Status NcclCollectiveBroadcastStartThunk::RunNcclCollective(
