@@ -62,7 +62,7 @@ TEST(InteractiveGraphviz, CPU) {
   #else
   EXPECT_EQ(0, WEXITSTATUS(status));
   ASSERT_THAT(err, testing::HasSubstr("Compiling module for Host"));
-  #endif
+  #endif  // defined(_WIN32) || defined(_WIN64)
 }
 
 }  // namespace
