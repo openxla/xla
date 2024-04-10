@@ -589,14 +589,15 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_utils",
-    ] + if_cuda_is_configured([
+    ] + if_gpu_is_configured([
+        "@triton//:TritonNvidiaGPUTransforms",
+        "@triton//:TritonGPUToLLVM",
+        "@triton//:TritonToTritonGPU",
+    ]) + if_cuda_is_configured([
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
         "@triton//:TritonGPUTransforms",
-        "@triton//:TritonNvidiaGPUTransforms",
         "@triton//:TritonLLVMIR",
-        "@triton//:TritonToTritonGPU",
-        "@triton//:TritonGPUToLLVM",
     ]),
 )
 
