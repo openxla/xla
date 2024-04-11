@@ -124,7 +124,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         se::gpu::GetCudnnFlashAttentionOperationGraph(
             dnn_support, fmha_config.lhs_bmm1, fmha_config.rhs_bmm1,
             fmha_config.rhs_bmm2, fmha_config.output, fmha_config.bias,
-            fmha_config.mask, fmha_config.mask,
+            fmha_config.mask, fmha_config.activation,
             static_cast<float>(*fmha_config.fmha_scale),
             fmha_config.dropout_rate && *fmha_config.dropout_rate > 0.0,
             fmha_config.dropout_rate, fmha_config.is_causal_mask));
