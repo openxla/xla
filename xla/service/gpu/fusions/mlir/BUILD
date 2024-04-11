@@ -1,6 +1,5 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -108,7 +107,6 @@ cc_library(
 xla_cc_test(
     name = "elemental_hlo_to_mlir_test",
     srcs = ["elemental_hlo_to_mlir_test.cc"],
-    tags = tf_gpu_tests_tags(),
     deps = [
         ":computation_partitioner",
         ":elemental_hlo_to_mlir",
