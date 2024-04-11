@@ -226,8 +226,15 @@ message CudnnfMHABackendConfig {
   // Is flash attention
   bool is_flash_attention = 20;
 
-  // Is causal mask
-  bool is_causal_mask = 21;
+  // mask type
+  enum MaskType {
+    NO_MASK = 0;
+    PADDING = 1;
+    CAUSAL = 2;
+    PADDING_CAUSAL = 3;
+    ALIBI = 4;
+  }
+  MaskType mask_type = 21;
 }
 
 // Generic backend config for XLA:GPU
