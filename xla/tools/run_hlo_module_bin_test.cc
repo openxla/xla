@@ -46,7 +46,7 @@ class RunHloModuleTest : public ::testing::Test {
     #else
     exited_normally_ = WIFEXITED(status);
     exit_status_ = exited_normally_ ? WEXITSTATUS(status) : -1;
-    #endif
+    #endif // (_WIN32) || defined (_WIN64)
   }
 
   std::string stdout_output_;
