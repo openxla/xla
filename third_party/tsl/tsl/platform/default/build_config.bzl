@@ -8,6 +8,7 @@ load(
     "if_not_windows",
     "if_tsl_link_protobuf",
 )
+load("//third_party/protobuf/bazel:proto_library.bzl", "proto_library")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 
 def well_known_proto_libs():
@@ -607,8 +608,7 @@ def tf_proto_library(
         name_sans_proto = name[:-6]
     else:
         name_sans_proto = name
-
-    native.proto_library(
+    proto_library(
         name = name,
         srcs = srcs,
         deps = protodeps + well_known_proto_libs(),

@@ -2,6 +2,8 @@
 
 load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
 load("@com_github_grpc_grpc//bazel:protobuf.bzl", "well_known_proto_libs")
+load("//third_party/protobuf/bazel:cc_proto_library.bzl", "cc_proto_library")
+load("//third_party/protobuf/bazel:proto_library.bzl", "proto_library")
 
 def cc_grpc_library(
         name,
@@ -63,15 +65,13 @@ def cc_grpc_library(
         proto_deps += [dep.split(":")[0] + ":" + "_" + dep.split(":")[1] + "_only" for dep in deps if dep.find(":") != -1]
         if well_known_protos:
             proto_deps += well_known_proto_libs()
-
-        native.proto_library(
+        proto_library(
             name = proto_target,
             srcs = srcs,
             deps = proto_deps,
             **kwargs
         )
-
-        native.cc_proto_library(
+        cc_proto_library(
             name = cc_proto_target,
             deps = [":" + proto_target],
             **kwargs

@@ -11,6 +11,7 @@ load(
     "get_proto_root",
     "proto_path_to_generated_filename",
 )
+load("//third_party/protobuf/bazel/common:proto_info.bzl", "ProtoInfo")
 
 _GRPC_PROTO_HEADER_FMT = "{}.grpc.pb.h"
 _GRPC_PROTO_SRC_FMT = "{}.grpc.pb.cc"
