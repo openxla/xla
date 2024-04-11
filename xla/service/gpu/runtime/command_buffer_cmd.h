@@ -853,12 +853,12 @@ class CustomCallCmd : public CommandBufferCmd {
 };
 
 //===----------------------------------------------------------------------===//
-// BarrierCmd
 // BarrierCmd insert a barrier from the execution scope created from the
 // 'from_stream_id' to the execution scope created from the
 // 'execution_stream_id', e.g. Async operator lowered to command buffer requires
 // a barrier from the launching stream to the async operator's execution stream.
 //===----------------------------------------------------------------------===//
+
 class BarrierCmd : public CommandBufferCmd {
  public:
   BarrierCmd(ExecutionStreamId execution_stream_id,

@@ -197,7 +197,7 @@ class NcclCollectiveThunk : public Thunk {
 
  private:
   bool IsAsync() const { return async_events_ != nullptr; }
-  uint64_t GetStreamId() const {
+  NcclStreamId GetStreamId() const {
     return xla::gpu::GetStreamId(execution_stream_id().value(), IsAsync(),
                                  GetAsyncStreamKind());
   }
@@ -280,7 +280,7 @@ absl::StatusOr<NcclCommHandleWrapper> GetNcclComm(
     const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode, uint64_t stream_id,
+    CollectiveOpGroupMode group_mode, NcclStreamId stream_id,
     AsyncStreamKind stream_kind);
 
 struct DeviceBufferPair {
