@@ -60,6 +60,7 @@ TEST(InteractiveGraphviz, CPU) {
   #if defined (_WIN32) || defined (_WIN64)
   EXPECT_EQ(0, status);
   #else
+  EXPECT_TRUE(WIFEXITED(status));
   EXPECT_EQ(0, WEXITSTATUS(status));
   #endif  // defined(_WIN32) || defined(_WIN64)
   ASSERT_THAT(err, testing::HasSubstr("Compiling module for Host"));
