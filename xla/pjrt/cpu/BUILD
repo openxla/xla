@@ -288,6 +288,32 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "gloo_collectives_test",
+    srcs = ["gloo_collectives_test.cc"],
+    deps = [
+        ":gloo_collectives",
+        ":gloo_kv_store",
+        "//xla:executable_run_options",
+        "//xla:xla_data_proto_cc",
+        "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:collective_ops_utils",
+        "//xla/service:global_device_id",
+        "//xla/service/cpu:collectives_interface",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@gloo//:transport_tcp",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "mpi_collectives",
     srcs = if_oss(["mpi_collectives.cc"]),
