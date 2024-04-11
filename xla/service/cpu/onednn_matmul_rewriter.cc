@@ -63,7 +63,7 @@ inline bool CompatibleElementType(const HloInstruction* instr) {
   return element_type == BF16 || element_type == F32 || element_type == F16;
 }
 
-// Type conversion from and to any of BF16 and FP32.
+// Type conversion from and to any of F16, BF16 and FP32.
 // TODO(intel-tf): Support more types when enabled.
 template <typename Pattern>
 inline auto SupportedConvert(Pattern pattern) {
@@ -168,7 +168,7 @@ inline auto BcastConstScalarNear(double value) {
 // Associativity and commutativity properties of multiply results in various
 // patterns for an equivalent computation. This function tries to capture most
 // of the variations for a computation a * b * c. For example, patterns could be
-// any of (a * b) * c or a * (b * c), alongwith the variations resulting from
+// any of (a * b) * c or a * (b * c), along with the variations resulting from
 // commutative patterns.
 template <typename PatternA, typename PatternB, typename PatternC>
 inline auto MultiplyMultiplyAnyOrder(PatternA a, PatternB b, PatternC c) {
@@ -183,7 +183,7 @@ bool GELUActivation(HloInstruction* instr, HloInstruction** src) {
   // (https://arxiv.org/abs/1606.08415), where:
   // gelu_tanh(x) = x * cdf(x)
   // cdf(x) = 0.5 * (1 + tanh(sqrt(2 / pi) * (x + 0.044715 * x**3))
-  //                     -------------errf_approximate------------
+  //                     \--------- errf_approximate term -------/
 
   HloInstruction* errf;
 
@@ -198,14 +198,15 @@ bool GELUActivation(HloInstruction* instr, HloInstruction** src) {
     // The subexpression 0.044715 * x**3 appears in GELU approximate activation.
     // However, it is often optimized by other HLO passes into an expression of
     // 0.044715 * x * (x * x). Since there are three consecutive multiplies,
-    // there could be a large number of patterns. We try capture some of those:
+    // there could be a large number of patterns. We try to capture some of
+    // those:
     //
     //      1. (0.044715 * x) * x * x
     //      2. 0.044715 * (x * x) * x
     //
     // Note each of the above could in turn have various patterns due to
-    // associtivity and commutativity properties of mulitply.
-    auto subexpr_pattrn = m::AnyOf<HloInstruction>(
+    // associativity and commutativity properties of multiply.
+    auto subexpr_pattern = m::AnyOf<HloInstruction>(
         MultiplyMultiplyAnyOrder(
             m::MultiplyAnyOrder(BcastConstScalarNear(0.044715),
                                 m::Op().Is(*src)),
@@ -214,13 +215,13 @@ bool GELUActivation(HloInstruction* instr, HloInstruction** src) {
             BcastConstScalarNear(0.044715),
             m::Multiply(m::Op().Is(*src), m::Op().Is(*src)), m::Op().Is(*src)));
 
-    auto errf_apprx_pattrn =
-        m::Tanh(
-            m::MultiplyAnyOrder(
-                BcastConstScalarNear(sqrt(M_2_PI)),
-                m::AddAnyOrder(m::Op().Is(*src), subexpr_pattrn).WithOneUser()))
+    auto errf_apprx_pattern =
+        m::Tanh(m::MultiplyAnyOrder(
+                    BcastConstScalarNear(sqrt(M_2_PI)),
+                    m::AddAnyOrder(m::Op().Is(*src), subexpr_pattern)
+                        .WithOneUser()))
             .WithOneUser();
-    matched = Match(errf, errf_apprx_pattrn);
+    matched = Match(errf, errf_apprx_pattern);
   }
   return matched;
 }
