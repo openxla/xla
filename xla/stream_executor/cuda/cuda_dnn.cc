@@ -5144,12 +5144,14 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                          .set_name("seq_q")
                          .set_dim({b, 1, 1, 1})
                          .set_stride({1, 1, 1, 1})
+                         .set_uid(CudnnfMHAUid::Q_SEQLEN_ID)
                          .set_data_type(cudnn_frontend::DataType_t::INT32));
     auto seq_kv_tensor =
         graph.tensor(Tensor_attributes()
                          .set_name("seq_kv")
                          .set_dim({b, 1, 1, 1})
                          .set_stride({1, 1, 1, 1})
+                         .set_uid(CudnnfMHAUid::K_SEQLEN_ID)
                          .set_data_type(cudnn_frontend::DataType_t::INT32));
     sdpa_options.set_padding_mask(true);
     sdpa_options.set_seq_len_q(seq_q_tensor);
@@ -5341,12 +5343,14 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
                          .set_name("seq_q")
                          .set_dim({b, 1, 1, 1})
                          .set_stride({1, 1, 1, 1})
+                         .set_uid(CudnnfMHAUid::Q_SEQLEN_ID)
                          .set_data_type(cudnn_frontend::DataType_t::INT32));
     auto seq_kv_tensor =
         graph.tensor(Tensor_attributes()
                          .set_name("seq_kv")
                          .set_dim({b, 1, 1, 1})
                          .set_stride({1, 1, 1, 1})
+                         .set_uid(CudnnfMHAUid::K_SEQLEN_ID)
                          .set_data_type(cudnn_frontend::DataType_t::INT32));
     sdpa_backward_options.set_padding_mask(true);
     sdpa_backward_options.set_seq_len_q(seq_q_tensor);
