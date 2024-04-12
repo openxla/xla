@@ -211,18 +211,18 @@ HloModule ColumnReductionVectorizationWithAtomic
 }
 
 %fused_computation {
-  %param_0 = f32[16384] parameter(0)
-  %param_1 = f32[16384,64] parameter(1)
-  %broadcast0 = f32[16384,64] broadcast(%param_0), dimensions={0}
-  %multiply0 = f32[16384,64] multiply(%param_1, %broadcast0)
+  %param_0 = f32[4,4096] parameter(0)
+  %param_1 = f32[4,4096,64] parameter(1)
+  %broadcast0 = f32[4,4096,64] broadcast(%param_0), dimensions={0,1}
+  %multiply0 = f32[4,4096,64] multiply(%param_1, %broadcast0)
   %constant0 = f32[] constant(0)
-  ROOT %reduce = f32[64] reduce(%multiply0, %constant0), dimensions={0}, to_apply=%add_f32
+  ROOT %reduce = f32[4,64] reduce(%multiply0, %constant0), dimensions={1}, to_apply=%add_f32
 }
 
 ENTRY %cluster {
-  %param0 = f32[16384] parameter(0)
-  %param1 =  f32[16384,64] parameter(1)
-  ROOT %fusion = f32[64] fusion(%param0, %param1), kind=kInput, calls=%fused_computation
+  %param0 = f32[4,4096] parameter(0)
+  %param1 =  f32[4,4096,64] parameter(1)
+  ROOT %fusion = f32[4,64] fusion(%param0, %param1), kind=kInput, calls=%fused_computation
 }
 )";
 
@@ -234,6 +234,7 @@ CHECK: ld.global.nc.v2.f32
 CHECK: ld.global.nc.v2.f32
 CHECK: ld.global.nc.v2.f32
 CHECK: ld.global.nc.v2.f32
+CHECK: atom.global.add.f32
 CHECK: atom.global.add.f32
 )";
   CompileAndOptionallyVerifyPtx(std::move(optimized_module), expected);
