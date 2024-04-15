@@ -46,7 +46,8 @@ class CublasLtMatmulThunk : public Thunk {
                       BufferAllocation::Slice b_scale_buffer /* may be null */,
                       BufferAllocation::Slice c_scale_buffer /* may be null */,
                       BufferAllocation::Slice d_scale_buffer /* may be null */,
-                      BufferAllocation::Slice d_amax_buffer /* may be null */);
+                      BufferAllocation::Slice d_amax_buffer /* may be null */,
+                      std::optional<const BufferAllocation::Slice> workspace_buffer);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
@@ -55,7 +56,7 @@ class CublasLtMatmulThunk : public Thunk {
   absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetMatmulPlan(
       const stream_executor::Stream* stream);
   absl::StatusOr<se::gpu::BlasLt::MatmulAlgorithm> GetMatmulAlgorithm(
-      const se::gpu::BlasLt::MatmulPlan* plan);
+      const se::gpu::BlasLt::MatmulPlan* plan, int64_t max_workspace);
 
   absl::Mutex matmul_plans_cache_mutex_;
   absl::flat_hash_map<const stream_executor::Stream*,
@@ -81,6 +82,7 @@ class CublasLtMatmulThunk : public Thunk {
   BufferAllocation::Slice c_scale_buffer_;
   BufferAllocation::Slice d_scale_buffer_;
   BufferAllocation::Slice d_amax_buffer_;
+  std::optional<const BufferAllocation::Slice> workspace_buffer_;
 };
 
 }  // namespace gpu
