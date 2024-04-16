@@ -149,6 +149,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:event_interface",
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_interface",
         "//xla/stream_executor/host:host_stream",
