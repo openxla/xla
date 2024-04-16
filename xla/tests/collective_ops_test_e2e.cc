@@ -79,7 +79,6 @@ class AsyncCollectiveOps : public CollectiveOpsTestE2E,
 
     // Enable or disable all async collectives based on test parameter.
     const bool enable_async = GetParam();
-    debug_options.set_xla_gpu_enable_async_collectives(enable_async);
     debug_options.add_xla_disable_hlo_passes(
         "gpu-convert-async-collectives-to-sync");
     return debug_options;
