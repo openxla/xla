@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
+#include "xla/service/gpu/reduction_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -355,9 +356,27 @@ absl::Duration GpuPerformanceModelBase::WriteTime(
 /*static*/
 absl::Duration GpuPerformanceModelBase::ComputeTime(
     const se::DeviceDescription& gpu_device_info, int64_t flops,
-    int64_t num_threads) {
-  int64_t fpu_count =
-      gpu_device_info.core_count() * gpu_device_info.fpus_per_core();
+    int64_t num_threads, int64_t num_blocks,
+    const HloFusionAnalysis* fusion_analysis) {
+  int64_t core_count = gpu_device_info.core_count();
+  // Column reduction fusion always use local memory to handle intra-warp
+  // reduce, which means all of the threads in one block should reside in same
+  // sm core. So the correct number of active cores should be the minimum value
+  // between the number of sm cores and the number of blocks.
+  if (fusion_analysis && fusion_analysis->GetEmitterFusionKind() ==
+                             HloFusionAnalysis::EmitterFusionKind::kReduction) {
+    for (auto* instr : fusion_analysis->fusion_heroes()) {
+      if (instr->opcode() == HloOpcode::kReduce) {
+        ReductionDimensions reduction_dimensions =
+            GetReductionKindAndContiguousComponents(*instr);
+        if (!reduction_dimensions.is_row_reduction) {
+          core_count = std::min(num_blocks, core_count);
+        }
+        break;
+      }
+    }
+  }
+  int64_t fpu_count = core_count * gpu_device_info.fpus_per_core();
   int64_t n_threads_active = std::min(num_threads, fpu_count);
   int64_t flop_per_ns_per_fpu = gpu_device_info.clock_rate_ghz() * /*fma:*/ 2;
   int64_t flop_per_ns_effective = flop_per_ns_per_fpu * n_threads_active;
