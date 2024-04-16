@@ -23,11 +23,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
+
+namespace m = ::xla::match;
 
 using GpuWindowedEinsumHanlderTest = HloTestBase;
 
@@ -191,6 +195,147 @@ ENTRY main.9_spmd {
       FindInstructionByName(rs_loop_body, "collective-permute.1");
   EXPECT_TRUE(
       cp1->backend_config<GpuBackendConfig>()->force_earliest_schedule());
+}
+
+TEST_F(GpuWindowedEinsumHanlderTest, AgLoopsMultipleConsumersAreChained) {
+  constexpr absl::string_view kHloString = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0})->bf16[2,512,24576]{2,1,0}}, num_partitions=4
+
+windowed_dot_general_body_ag {
+  param.1 = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element.1 = bf16[2,512,24576]{2,1,0} get-tuple-element(param.1), index=0
+  collective-permute = bf16[2,512,24576]{2,1,0} collective-permute(get-tuple-element.1), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.1 = bf16[2,512,24576]{2,1,0} collective-permute(collective-permute), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  get-tuple-element.2 = bf16[24576,24576]{1,0} get-tuple-element(param.1), index=1
+  get-tuple-element.3 = bf16[2,2048,24576]{2,1,0} get-tuple-element(param.1), index=2
+  dot = bf16[2,512,24576]{2,1,0} dot(get-tuple-element.1, get-tuple-element.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  constant.2 = s32[] constant(0)
+  constant.3 = s32[4]{0} constant({0, 512, 1024, 1536})
+  get-tuple-element.5 = u32[] get-tuple-element(param.1), index=4
+  partition-id = u32[] partition-id()
+  add = u32[] add(get-tuple-element.5, partition-id)
+  constant.1 = u32[] constant(4)
+  remainder = u32[] remainder(add, constant.1)
+  dynamic-slice = s32[1]{0} dynamic-slice(constant.3, remainder), dynamic_slice_sizes={1}
+  reshape = s32[] reshape(dynamic-slice)
+  dynamic-update-slice = bf16[2,2048,24576]{2,1,0} dynamic-update-slice(get-tuple-element.3, dot, constant.2, reshape, constant.2)
+  dot.1 = bf16[2,512,24576]{2,1,0} dot(collective-permute, get-tuple-element.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  constant.5 = u32[] constant(1)
+  add.1 = u32[] add(get-tuple-element.5, constant.5)
+  add.2 = u32[] add(add.1, partition-id)
+  remainder.1 = u32[] remainder(add.2, constant.1)
+  dynamic-slice.1 = s32[1]{0} dynamic-slice(constant.3, remainder.1), dynamic_slice_sizes={1}
+  reshape.1 = s32[] reshape(dynamic-slice.1)
+  dynamic-update-slice.1 = bf16[2,2048,24576]{2,1,0} dynamic-update-slice(dynamic-update-slice, dot.1, constant.2, reshape.1, constant.2)
+  get-tuple-element.4 = bf16[2,2048,24576]{2,1,0} get-tuple-element(param.1), index=3
+  add.3 = u32[] add(add.1, constant.5)
+  ROOT tuple = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) tuple(collective-permute.1, get-tuple-element.2, dynamic-update-slice.1, get-tuple-element.4, add.3)
+} // windowed_dot_general_body_ag
+
+windowed_dot_general_cond_ag {
+  param = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element = u32[] get-tuple-element(param), index=4
+  constant = u32[] constant(4)
+  ROOT compare = pred[] compare(get-tuple-element, constant), direction=LT
+}
+
+windowed_dot_general_body_rs {
+  param.3 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element.7 = bf16[2,2048,24576]{2,1,0} get-tuple-element(param.3), index=0
+  get-tuple-element.8 = bf16[24576,24576]{1,0} get-tuple-element(param.3), index=1
+  get-tuple-element.9 = bf16[2,512,24576]{2,1,0} get-tuple-element(param.3), index=2
+  collective-permute.2 = bf16[2,512,24576]{2,1,0} collective-permute(get-tuple-element.9), channel_id=5, source_target_pairs={{0,2},{1,3},{2,0},{3,1}}
+  constant.13 = s32[] constant(0)
+  constant.14 = s32[4]{0} constant({0, 512, 1024, 1536})
+  get-tuple-element.12 = u32[] get-tuple-element(param.3), index=4
+  constant.16 = u32[] constant(2)
+  add.9 = u32[] add(get-tuple-element.12, constant.16)
+  constant.17 = u32[] constant(1)
+  add.10 = u32[] add(add.9, constant.17)
+  partition-id.3 = u32[] partition-id()
+  add.11 = u32[] add(add.10, partition-id.3)
+  constant.12 = u32[] constant(4)
+  remainder.3 = u32[] remainder(add.11, constant.12)
+  dynamic-slice.4 = s32[1]{0} dynamic-slice(constant.14, remainder.3), dynamic_slice_sizes={1}
+  reshape.3 = s32[] reshape(dynamic-slice.4)
+  dynamic-slice.5 = bf16[2,512,24576]{2,1,0} dynamic-slice(get-tuple-element.7, constant.13, reshape.3, constant.13), dynamic_slice_sizes={2,512,24576}
+  dot.3 = bf16[2,512,24576]{2,1,0} dot(dynamic-slice.5, get-tuple-element.8), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  add.12 = bf16[2,512,24576]{2,1,0} add(collective-permute.2, dot.3)
+  get-tuple-element.10 = bf16[2,512,24576]{2,1,0} get-tuple-element(param.3), index=3
+  add.6 = u32[] add(get-tuple-element.12, partition-id.3)
+  remainder.2 = u32[] remainder(add.6, constant.12)
+  dynamic-slice.2 = s32[1]{0} dynamic-slice(constant.14, remainder.2), dynamic_slice_sizes={1}
+  reshape.2 = s32[] reshape(dynamic-slice.2)
+  dynamic-slice.3 = bf16[2,512,24576]{2,1,0} dynamic-slice(get-tuple-element.7, constant.13, reshape.2, constant.13), dynamic_slice_sizes={2,512,24576}
+  dot.2 = bf16[2,512,24576]{2,1,0} dot(dynamic-slice.3, get-tuple-element.8), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  add.7 = bf16[2,512,24576]{2,1,0} add(get-tuple-element.10, dot.2)
+  collective-permute.3 = bf16[2,512,24576]{2,1,0} collective-permute(add.7), channel_id=6, source_target_pairs={{0,2},{1,3},{2,0},{3,1}}
+  ROOT tuple.1 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) tuple(get-tuple-element.7, get-tuple-element.8, add.12, collective-permute.3, add.9)
+} // windowed_dot_general_body_rs
+
+windowed_dot_general_cond_rs {
+  param.2 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element.6 = u32[] get-tuple-element(param.2), index=4
+  constant.11 = u32[] constant(4)
+  ROOT compare.1 = pred[] compare(get-tuple-element.6, constant.11), direction=LT
+}
+
+ENTRY main.12_spmd {
+  param.4 = bf16[2,512,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
+  param.5 = bf16[24576,24576]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
+  constant.22 = bf16[] constant(0)
+  broadcast = bf16[2,2048,24576]{2,1,0} broadcast(constant.22), dimensions={}
+  constant.24 = u32[] constant(0)
+  tuple.2 = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) tuple(param.4, param.5, broadcast, broadcast, constant.24)
+  while = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) while(tuple.2), condition=windowed_dot_general_cond_ag, body=windowed_dot_general_body_ag
+  get-tuple-element.13 = bf16[2,2048,24576]{2,1,0} get-tuple-element(while), index=2
+  copy.1 = bf16[2,2048,24576]{2,1,0} copy(get-tuple-element.13)
+  all-gather = bf16[2,2048,24576]{2,1,0} all-gather(param.4), channel_id=1, replica_groups={{0,1,2,3}}, dimensions={1}, use_global_device_ids=true
+  param.6 = bf16[24576,24576]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
+  dot.7 = bf16[2,2048,24576]{2,1,0} dot(all-gather, param.6), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  add.13 = bf16[2,2048,24576]{2,1,0} add(copy.1, dot.7)
+  param.7 = bf16[24576,24576]{1,0} parameter(3), sharding={devices=[4,1]<=[4]}
+  broadcast.2 = bf16[2,512,24576]{2,1,0} broadcast(constant.22), dimensions={}
+  tuple.3 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) tuple(add.13, param.7, broadcast.2, broadcast.2, constant.24)
+  while.1 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) while(tuple.3), condition=windowed_dot_general_cond_rs, body=windowed_dot_general_body_rs
+  get-tuple-element.14 = bf16[2,512,24576]{2,1,0} get-tuple-element(while.1), index=2
+  collective-permute.4 = bf16[2,512,24576]{2,1,0} collective-permute(get-tuple-element.14), channel_id=7, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  get-tuple-element.15 = bf16[2,512,24576]{2,1,0} get-tuple-element(while.1), index=3
+  ROOT add.14 = bf16[2,512,24576]{2,1,0} add(collective-permute.4, get-tuple-element.15)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  GpuWindowedEinsumHandler gpu_handler;
+  bool changed;
+  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  HloInstruction* ag_loop =
+      FindInstructionByName(module->entry_computation(), "while");
+  HloInstruction* inst =
+      FindInstructionByName(module->entry_computation(), "dot.7");
+  // dot.7 should now consume output of the windowed einsum while loop.
+  EXPECT_TRUE(inst->operand(0)->opcode() == HloOpcode::kGetTupleElement);
+  EXPECT_TRUE(inst->operand(0)->tuple_index() == 3);
+  EXPECT_TRUE(inst->operand(0)->operand(0) == ag_loop);
+
+  // while loop's root should now have a chain of DUS.
+  HloInstruction* ag_while_root = ag_loop->while_body()->root_instruction();
+  EXPECT_THAT(ag_while_root,
+              GmockMatch(m::Tuple(
+                  m::Op(), m::Op(), m::Op(),
+                  m::DynamicUpdateSlice(
+                      m::DynamicUpdateSlice(
+                          m::GetTupleElement(m::Parameter())
+                              .WithPredicate([](const HloInstruction* instr) {
+                                return instr->tuple_index() == 3;
+                              }),
+                          m::Op(), m::Op(), m::Op(), m::Op()),
+                      m::Op(), m::Op(), m::Op(), m::Op()),
+                  m::Op())));
 }
 
 }  // namespace
