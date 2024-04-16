@@ -359,7 +359,7 @@ absl::Duration GpuPerformanceModelBase::ComputeTime(
     int64_t num_threads, int64_t num_blocks,
     const HloFusionAnalysis* fusion_analysis) {
   int64_t core_count = gpu_device_info.core_count();
-  // Column reduction fusion always use local memory to handle intra-warp
+  // Column reduction fusion always use local memory to handle inter-warp
   // reduce, which means all of the threads in one block should reside in same
   // sm core. So the correct number of active cores should be the minimum value
   // between the number of sm cores and the number of blocks.
