@@ -557,7 +557,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
 
   // Custom parser for xla_gpu_disable_async_collectives.
   auto setter_for_xla_gpu_disable_async_collectives =
-      [debug_options](const std::string& input) {
+      [debug_options](const absl::string_view& input) {
         auto is_collective_type = [](absl::string_view value) {
           DebugOptions::CollectiveOpType op_type;
           return DebugOptions::CollectiveOpType_Parse(
@@ -1020,10 +1020,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       setter_for_xla_gpu_disable_async_collectives,
       collective_op_types_to_string(
           debug_options->xla_gpu_disable_async_collectives()),
-      "The types of the commands that are recorded into command buffers. It"
-      " can either be a list of command types or a list of command types with"
-      " + and - as prefix, which indicate adding or removing a command type"
-      " to/from the default list."));
+      "This disables a certain set of async collectives and turn them into"
+      " synchornous ones. By default, this is empty which indicates enabling"
+      " async execution for all collectives. A sample usage is: "
+      " --xla_gpu_disable_async_collectives=ALLREDUCE,REDUCESCATTER"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_all_reduce_combine_threshold_bytes",
       int64_setter_for(
