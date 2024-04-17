@@ -1,5 +1,5 @@
-load("//tsl:tsl.bzl", "internal_visibility")
-load("//tsl:tsl.default.bzl", "filegroup")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
+load("@xla//xla/tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
@@ -24,7 +24,7 @@ package(
         "//tensorflow/core/lib/monitoring:__subpackages__",
         "@xla//xla/service:__subpackages__",
         "//tsl/framework:__subpackages__",
-        "//tsl/distributed_runtime:__subpackages__",
+        "@xla//xla/tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
         "//tensorflow_serving/model_servers:__subpackages__",
     ]),

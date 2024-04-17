@@ -31,13 +31,12 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
 
 namespace xla {
 namespace gpu {
-
-class IndexingContext;
 
 // Interval represents a closed interval [lower_bound, upper_bound].
 struct Interval {
@@ -215,12 +214,10 @@ std::vector<RangeVar> RangeVarsFromTensorSizes(
 class IndexingMap {
  public:
   IndexingMap(
-      IndexingContext* indexing_context, mlir::AffineMap affine_map,
-      std::vector<DimVar> dimensions, std::vector<RangeVar> range_vars,
-      std::vector<RTVar> rt_vars,
+      mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
+      std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
       absl::Span<std::pair<mlir::AffineExpr, Interval>> constraints = {})
-      : indexing_context_(indexing_context),
-        affine_map_(affine_map),
+      : affine_map_(affine_map),
         dim_vars_(std::move(dimensions)),
         range_vars_(std::move(range_vars)),
         rt_vars_(std::move(rt_vars)) {
@@ -228,12 +225,10 @@ class IndexingMap {
       AddConstraint(expr, range);
     }
   }
-  IndexingMap(IndexingContext* indexing_context, mlir::AffineMap affine_map,
-              std::vector<DimVar> dimensions, std::vector<RangeVar> range_vars,
-              std::vector<RTVar> rt_vars,
+  IndexingMap(mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
+              std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
               const llvm::DenseMap<mlir::AffineExpr, Interval>& constraints)
-      : indexing_context_(indexing_context),
-        affine_map_(affine_map),
+      : affine_map_(affine_map),
         dim_vars_(std::move(dimensions)),
         range_vars_(std::move(range_vars)),
         rt_vars_(std::move(rt_vars)),
@@ -242,8 +237,7 @@ class IndexingMap {
   static IndexingMap GetUndefined() { return IndexingMap(); }
 
   static IndexingMap FromTensorSizes(
-      IndexingContext* indexing_context, mlir::AffineMap affine_map,
-      absl::Span<const int64_t> dim_upper_bounds,
+      mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
       absl::Span<const int64_t> symbol_upper_bounds);
 
   std::string ToString(
@@ -251,14 +245,16 @@ class IndexingMap {
 
   void Print(std::ostream& out, const AffineMapPrinter& printer) const;
 
+  // TODO(hebecker): Rearrange code structure so that we can call
+  // `ComputeInputToOutputIndexing` from `:indexing_analysis` directly.
+  using IndexingMapProvider = llvm::function_ref<IndexingMap(
+      const HloInstruction*, int64_t /*operand id*/, mlir::MLIRContext*)>;
+
   // Returns true if the map was simplified.
-  bool Simplify();
+  bool Simplify(IndexingMapProvider indexing_map_provider);
 
   // Return MLIRContext.
   mlir::MLIRContext* GetMLIRContext() const;
-
-  // Return IndexingContext.
-  IndexingContext* GetIndexingContext() const;
 
   // Returns the affine map.
   mlir::AffineMap GetAffineMap() const { return affine_map_; }
@@ -325,6 +321,10 @@ class IndexingMap {
   // Removes unused symbols from the `affine_map_` and constraints.
   void RemoveUnusedSymbols();
 
+  // Rescales all symbols that are sufficiently constrained through `s? mod x =
+  // [N, N]` constraints. Returns true if a rescale took place, otherwise false.
+  bool RescaleSymbols();
+
  private:
   IndexingMap() = default;
 
@@ -339,7 +339,10 @@ class IndexingMap {
   // Merges "mod" constraints for the same AffineExpr.
   void MergeModConstraints();
 
-  IndexingContext* indexing_context_ = nullptr;
+  // Replace RTVars that yield constants by indexing expressions.
+  // Returns true if a replacement was performed, otherwise false.
+  bool ReplaceConstantRTVars(IndexingMapProvider indexing_map_provider);
+
   mlir::AffineMap affine_map_;
   std::vector<DimVar> dim_vars_;
   std::vector<RangeVar> range_vars_;

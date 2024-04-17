@@ -42,7 +42,9 @@ limitations under the License.
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
 #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
+#include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
@@ -83,15 +85,17 @@ bool MlirScatterFusion::IsSupported(const HloFusionAnalysis& analysis) {
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToOutputIndexing(
-    int64_t root_index, IndexingContext* indexing_context) const {
+    int64_t root_index, mlir::MLIRContext* ctx) const {
   return std::nullopt;
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
-    IndexingContext* indexing_context) const {
+    mlir::MLIRContext* ctx) const {
   auto* scatter =
       DynCast<HloScatterInstruction>(analysis_.fusion_heroes().front());
+  CHECK(ScatterSimplifier::IsSimplifiedScatter(scatter))
+      << "Non-simplified HLO Scatter is not supported.";
   int64_t scatter_operand_count = scatter->scatter_operand_count();
   // Scatter operands a packed in the following way:
   // Operand IDs [0, scatter_operand_count - 1] for `scatter operands`.
@@ -105,9 +109,8 @@ std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
   }
   // Compute thread id mapping based on the first update operand.
   Shape scatter_update_shape = scatter->scatter_updates().front()->shape();
-  IndexingMap scatter_update_map = GetDefaultThreadIdToOutputIndexingMap(
-      launch_dimensions(), config_.unroll_factor, scatter_update_shape,
-      indexing_context);
+  IndexingMap scatter_update_map = GetDefaultThreadIdIndexingMap(
+      launch_dimensions(), config_.unroll_factor, scatter_update_shape, ctx);
 
   // For scatter indices we project indexing for scatter updates and take the
   // first result of the affine map only, because they coincide.
@@ -115,19 +118,16 @@ std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToInputIndexing(
     Shape scatter_indices_shape = scatter->scatter_indices()->shape();
     CHECK_EQ(scatter_indices_shape.rank(), 2) << scatter->ToString();
     // Create a map from scatter update to scatter indices.
-    auto* mlir_context = indexing_context->GetMLIRContext();
     IndexingMap updates_to_indices_map{
-        indexing_context,
         mlir::AffineMap::get(
             /*dimCount=*/scatter_update_shape.rank(), /*symbolCount=*/1,
-            {mlir::getAffineDimExpr(0, mlir_context),
-             mlir::getAffineSymbolExpr(0, mlir_context)},
-            mlir_context),
+            {mlir::getAffineDimExpr(0, ctx), mlir::getAffineSymbolExpr(0, ctx)},
+            ctx),
         DimVarsFromTensorSizes(scatter_update_shape.dimensions()),
         RangeVarsFromTensorSizes({scatter_indices_shape.dimensions(1)}),
         /*rt_vars=*/{}};
     auto scatter_indices_map = scatter_update_map * updates_to_indices_map;
-    scatter_indices_map.Simplify();
+    scatter_indices_map.Simplify(GetIndexingMapForInstruction);
     return scatter_indices_map;
   }
   return scatter_update_map;
@@ -140,10 +140,14 @@ LaunchDimensions MlirScatterFusion::launch_dimensions() const {
   return CalculateLaunchDimensions(shape, analysis_.device_info());
 }
 
-std::vector<const HloInstruction*>
-MlirScatterFusion::GetInstructionsWithCustomCodegen(
-    const HloFusionInstruction& fusion) const {
-  return analysis_.fusion_heroes();
+std::optional<mlir_converter::EpilogueSpecification>
+MlirScatterFusion::GetEpilogue(const HloFusionInstruction& fusion,
+                               mlir::MLIRContext* mlir_context) const {
+  // We don't actually support epilogues for scatter, but this is how we tell
+  // the base class that we don't want it to generate code for the scatter.
+  return mlir_converter::EpilogueSpecification::FromIdentityIndexing(
+      analysis_.fusion_heroes().front(), analysis_.fusion_roots().front(),
+      mlir_context);
 }
 
 mlir::Value EmitScatterComputation(
@@ -189,13 +193,12 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
   const HloInstruction* scatter_update = scatter->operand(kScatterUpdateIndex);
 
   mlir::MLIRContext* mlir_context = entry_function.getContext();
-  IndexingContext indexing_context{mlir_context};
   auto thread_id_to_update_map =
       ComputeThreadIdToInputIndexing(
           /*root_index=*/0, /*hero_operand_index=*/kScatterUpdateIndex,
-          &indexing_context)
+          mlir_context)
           .value();
-  thread_id_to_update_map.Simplify();
+  thread_id_to_update_map.Simplify(GetIndexingMapForInstruction);
   thread_id_to_update_map.RemoveUnusedSymbols();
 
   const auto& root_computation = computations.FindPartitionedComputation(

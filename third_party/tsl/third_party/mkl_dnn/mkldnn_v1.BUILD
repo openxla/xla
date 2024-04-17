@@ -1,7 +1,7 @@
-load("@tsl//tsl:tsl.bzl", "tf_openmp_copts")
-load("@tsl//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
-load("@xla//xla/tsl/mkl:build_defs.bzl", "if_mkl", "if_mkl_ml")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@tsl//third_party/mkl_dnn:build_defs.bzl", "if_mkldnn_openmp")
+load("@xla//xla/tsl:tsl.bzl", "tf_openmp_copts")
+load("@xla//xla/tsl/mkl:build_defs.bzl", "if_mkl", "if_mkl_ml")
 
 exports_files(["LICENSE"])
 
@@ -102,7 +102,7 @@ expand_template(
 )
 
 _COPTS_LIST = select({
-    "@tsl//tsl:windows": [],
+    "@xla//xla/tsl:windows": [],
     "//conditions:default": ["-fexceptions"],
 }) + [
     "-UUSE_MKL",
@@ -171,9 +171,9 @@ cc_library(
     includes = _INCLUDES_LIST,
     # TODO(penpornk): Use lrt_if_needed from tensorflow.bzl instead.
     linkopts = select({
-        "@tsl//tsl:linux_aarch64": ["-lrt"],
-        "@tsl//tsl:linux_x86_64": ["-lrt"],
-        "@tsl//tsl:linux_ppc64le": ["-lrt"],
+        "@xla//xla/tsl:linux_aarch64": ["-lrt"],
+        "@xla//xla/tsl:linux_x86_64": ["-lrt"],
+        "@xla//xla/tsl:linux_ppc64le": ["-lrt"],
         "//conditions:default": [],
     }),
     textual_hdrs = _TEXTUAL_HDRS_LIST,

@@ -3,23 +3,6 @@
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load(
-    "//xla:xla.bzl",
-    "ORC_JIT_MEMORY_MAPPER_TARGETS",
-    "xla_cc_binary",
-    "xla_cc_test",
-)
-load(
-    "//xla/tsl/mkl:build_defs.bzl",
-    "mkl_deps",
-)
-load(
-    "//third_party/compute_library:build_defs.bzl",
-    "acl_deps",
-    "if_enable_acl",
-)
-load("@tsl//tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
-load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -29,6 +12,23 @@ load(
     "if_llvm_x86_available",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "//third_party/compute_library:build_defs.bzl",
+    "acl_deps",
+    "if_enable_acl",
+)
+load(
+    "//xla:xla.bzl",
+    "ORC_JIT_MEMORY_MAPPER_TARGETS",
+    "xla_cc_binary",
+    "xla_cc_test",
+)
+load("//xla/tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//xla/tsl/mkl:build_defs.bzl",
+    "mkl_deps",
+)
 load(":build_defs.bzl", "runtime_copts")
 
 package(
@@ -501,6 +501,7 @@ cc_library(
         "@llvm-project//mlir:ShapeToStandard",
         "@llvm-project//mlir:ShapeTransforms",
         "@llvm-project//mlir:SparseTensorTransforms",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorToLinalg",
         "@llvm-project//mlir:TensorTransforms",
         "@llvm-project//mlir:Transforms",
@@ -558,6 +559,7 @@ cc_library(
         "//xla/service:custom_call_target_registry",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:MC",  # fixdeps: keep
@@ -1570,6 +1572,25 @@ tf_proto_library(
 )
 
 cc_library(
+    name = "onednn_util",
+    srcs = ["onednn_util.cc"],
+    hdrs = [
+        "onednn_util.h",
+        "//xla/tsl/util:onednn_util_hdrs",
+    ],
+    copts = runtime_copts() + tsl_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_memory_util",
     srcs = ["onednn_memory_util.cc"],
     hdrs = ["onednn_memory_util.h"],
@@ -1602,15 +1623,13 @@ cc_library(
 cc_library(
     name = "onednn_matmul",
     srcs = ["onednn_matmul.cc"],
-    hdrs = [
-        "onednn_matmul.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
-    ],
+    hdrs = ["onednn_matmul.h"],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_util",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1627,17 +1646,16 @@ cc_library(
 cc_library(
     name = "onednn_convolution",
     srcs = ["onednn_convolution.cc"],
-    hdrs = [
-        "onednn_convolution.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
-    ],
+    hdrs = ["onednn_convolution.h"],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_util",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
+        "//xla:shape_util",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@eigen_archive//:eigen3",
@@ -1653,7 +1671,7 @@ cc_library(
     srcs = ["onednn_layer_norm.cc"],
     hdrs = [
         "onednn_layer_norm.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
+        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
@@ -1676,7 +1694,7 @@ cc_library(
     srcs = ["onednn_softmax.cc"],
     hdrs = [
         "onednn_softmax.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
+        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
@@ -1696,17 +1714,12 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_util",
-    hdrs = ["onednn_util.h"],
-)
-
-cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
         "onednn_matmul.h",
         "onednn_matmul_rewriter.h",
-        "@tsl//tsl/util:onednn_util_hdrs",
+        "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
@@ -1735,9 +1748,7 @@ cc_library(
 cc_library(
     name = "onednn_ops_rewriter",
     srcs = ["onednn_ops_rewriter.cc"],
-    hdrs = [
-        "onednn_ops_rewriter.h",
-    ],
+    hdrs = ["onednn_ops_rewriter.h"],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
@@ -1757,10 +1768,7 @@ cc_library(
 cc_library(
     name = "onednn_convolution_rewriter",
     srcs = ["onednn_convolution_rewriter.cc"],
-    hdrs = [
-        "onednn_convolution_rewriter.h",
-        "onednn_util.h",
-    ],
+    hdrs = ["onednn_convolution_rewriter.h"],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",

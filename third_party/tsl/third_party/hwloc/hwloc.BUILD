@@ -1,5 +1,8 @@
 # hwloc: Portable Hardware Locality Library
 
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+
 package(
     default_visibility = ["//visibility:public"],
 )
@@ -7,9 +10,6 @@ package(
 licenses(["notice"])
 
 exports_files(["COPYING"])
-
-load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 COMMON_INCLUDE_COPTS = [
     "-I.",
@@ -50,7 +50,7 @@ expand_template(
     name = "include_hwloc_autogen_config_h",
     out = "include/hwloc/autogen/config.h",
     substitutions = select({
-        "@tsl//tsl:linux_x86_64": _INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_LINUX_SUBS,
+        "@xla//xla/tsl:linux_x86_64": _INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_LINUX_SUBS,
         "//conditions:default": _INCLUDE_HWLOC_AUTOIGEN_CONFIG_H_COMMON_SUBS,
     }),
     template = "include/hwloc/autogen/config.h.in",
@@ -259,21 +259,21 @@ cc_library(
         "include/private/private.h",
         "include/private/xml.h",
     ] + select({
-        "@tsl//tsl:linux_x86_64": [
+        "@xla//xla/tsl:linux_x86_64": [
             "hwloc/topology-linux.c",
             "hwloc/topology-x86.c",
             "include/hwloc/linux.h",
             "include/private/cpuid-x86.h",
         ],
-        "@tsl//tsl:linux_aarch64": [
+        "@xla//xla/tsl:linux_aarch64": [
             "hwloc/topology-linux.c",
             "include/hwloc/linux.h",
         ],
-        "@tsl//tsl:linux_ppc64le": [
+        "@xla//xla/tsl:linux_ppc64le": [
             "hwloc/topology-linux.c",
             "include/hwloc/linux.h",
         ],
-        "@tsl//tsl:freebsd": [
+        "@xla//xla/tsl:freebsd": [
             "hwloc/topology-freebsd.c",
             "hwloc/topology-x86.c",
             "include/private/cpuid-x86.h",

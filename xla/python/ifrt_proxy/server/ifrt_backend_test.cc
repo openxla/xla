@@ -37,7 +37,6 @@
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ExtensibleRTTI.h"
-#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -54,11 +53,11 @@
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/mock.h"
+#include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
-#include "xla/python/ifrt_proxy/common/types.h"
 #include "xla/python/ifrt_proxy/common/types.pb.h"
 #include "xla/python/ifrt_proxy/server/host_buffer.h"
 #include "xla/python/ifrt_proxy/server/host_callback.h"
@@ -292,14 +291,14 @@ class IfrtBackendHandlerTest : public testing::Test {
 
       auto* make_array =
           ifrt_request->mutable_make_array_from_host_buffer_request();
-      make_array->set_dtype(proto::DTYPE_S32);
-      make_array->mutable_shape()->add_dimensions(2);
+      make_array->mutable_dtype()->set_kind(DTypeProto::KIND_S32);
+      make_array->mutable_shape()->add_dims(2);
       make_array->set_host_buffer_handle(host_buffer_handle);
 
       TF_ASSIGN_OR_RETURN(auto* device, mock_client_->LookupDevice(1));
       TF_ASSIGN_OR_RETURN(
           *make_array->mutable_sharding(),
-          ToShardingProto(*SingleDeviceSharding::Create(device, MemoryKind())));
+          SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
     }
     TF_ASSIGN_OR_RETURN(auto make_array_response,
                         CallBackend(std::move(ifrt_request)));
@@ -375,7 +374,8 @@ TEST_F(IfrtBackendHandlerTest, Init) {
     EXPECT_CALL(memory, devices())
         .WillRepeatedly(Return(mock_memory_devices[i]));
     EXPECT_CALL(memory, id()).WillRepeatedly(Return(i));
-    EXPECT_CALL(memory, memory_space_kind()).WillRepeatedly(Return("mock"));
+    EXPECT_CALL(memory, kind()).WillRepeatedly(Return("mock"));
+    EXPECT_CALL(memory, kind_id()).WillRepeatedly(Return(i));
   }
 
   std::vector<std::vector<Memory*>> device_memories;
@@ -449,11 +449,13 @@ TEST_F(IfrtBackendHandlerTest, Init) {
                       memories {
                         id: 0
                         memory_space_kind: "mock"
+                        kind_id: 0
                         device_ids: [ 0 ]
                       }
                       memories {
                         id: 1
                         memory_space_kind: "mock"
+                        kind_id: 1
                         device_ids: [ 1 ]
                       }
                     }
@@ -510,8 +512,8 @@ TEST_F(IfrtBackendHandlerTest, MakeArrayFromHostBufferSuccess) {
         ifrt_request->mutable_make_array_from_host_buffer_request();
     ASSERT_TRUE(
         TextFormat::ParseFromString(R"pb(
-                                      dtype: DTYPE_F64
-                                      shape { dimensions: [ 5, 3, 4 ] }
+                                      dtype { kind: KIND_F64 }
+                                      shape { dims: [ 5, 3, 4 ] }
                                       byte_strides { strides: [ 8, 40, 120 ] }
                                     )pb",
                                     make_array));
@@ -519,7 +521,7 @@ TEST_F(IfrtBackendHandlerTest, MakeArrayFromHostBufferSuccess) {
     TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
     TF_ASSERT_OK_AND_ASSIGN(
         *make_array->mutable_sharding(),
-        ToShardingProto(*SingleDeviceSharding::Create(device, MemoryKind())));
+        SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
   }
 
   const Shape expected_shape({5, 3, 4});
@@ -544,7 +546,7 @@ TEST_F(IfrtBackendHandlerTest, AssembleArrayFromSingleDeviceArrays) {
   {
     ASSERT_TRUE(TextFormat::ParseFromString(
         R"pb(
-          shape { dimensions: [ 2, 2 ] }
+          shape { dims: [ 2, 2 ] }
           copy_semantics: ARRAY_COPY_SEMANTICS_ALWAYS_COPY
         )pb",
         ifrt_request
@@ -554,7 +556,7 @@ TEST_F(IfrtBackendHandlerTest, AssembleArrayFromSingleDeviceArrays) {
         *ifrt_request
              ->mutable_assemble_array_from_single_device_arrays_request()
              ->mutable_sharding(),
-        ToShardingProto(*SingleDeviceSharding::Create(device, MemoryKind())));
+        SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
   }
 
   std::vector<tsl::RCReference<xla::ifrt::MockArray>> single_device_arrays;
@@ -668,7 +670,7 @@ TEST_F(IfrtBackendHandlerTest, ReshardSuccess) {
   TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
   TF_ASSERT_OK_AND_ASSIGN(
       *ifrt_request->mutable_reshard_request()->mutable_sharding(),
-      ToShardingProto(*SingleDeviceSharding::Create(device, MemoryKind())));
+      SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
 
@@ -745,7 +747,7 @@ TEST_F(IfrtBackendHandlerTest, ReshardFailsWhenTheBackendFails) {
   TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
   TF_ASSERT_OK_AND_ASSIGN(
       *ifrt_request->mutable_reshard_request()->mutable_sharding(),
-      ToShardingProto(*SingleDeviceSharding::Create(device, MemoryKind())));
+      SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
 
   EXPECT_THAT(CallBackend(std::move(ifrt_request)),
               StatusIs(absl::StatusCode::kUnknown, StrEq("injected error")));
@@ -1107,18 +1109,18 @@ TEST_F(IfrtBackendHandlerTest, LoadedExecutableExecute) {
   EXPECT_THAT(response, Pointee(Partially(EquivToProto(R"pb(
                 loaded_executable_execute_response {
                   outputs {
-                    dtype: DTYPE_F32
-                    shape { dimensions: [ 2, 2 ] }
+                    dtype { kind: KIND_F32 }
+                    shape { dims: [ 2, 2 ] }
                   }
                   outputs {
-                    dtype: DTYPE_F32
-                    shape { dimensions: [ 2, 2 ] }
+                    dtype { kind: KIND_F32 }
+                    shape { dims: [ 2, 2 ] }
                   }
                 }
               )pb"))));
   TF_ASSERT_OK_AND_ASSIGN(
       auto sharding_proto,
-      ToShardingProto(*SingleDeviceSharding::Create(&device, MemoryKind())));
+      SingleDeviceSharding::Create(&device, MemoryKind())->ToProto());
   for (const auto& output :
        response->loaded_executable_execute_response().outputs()) {
     EXPECT_THAT(output.sharding(), EquivToProto(sharding_proto));

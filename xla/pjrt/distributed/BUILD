@@ -1,7 +1,7 @@
-load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 
 licenses(["notice"])
 
@@ -27,15 +27,15 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/tsl/distributed_runtime/coordination:coordination_service",
+        "//xla/tsl/distributed_runtime/coordination:coordination_service_impl",
+        "//xla/tsl/distributed_runtime/rpc:async_service_interface",
+        "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_impl",
-        "@tsl//tsl/distributed_runtime/rpc:async_service_interface",
-        "@tsl//tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:random",
@@ -73,15 +73,15 @@ cc_library(
         "//xla:statusor",
         "//xla:types",
         "//xla:util",
+        "//xla/tsl/distributed_runtime/coordination:coordination_client",
+        "//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
+        "//xla/tsl/distributed_runtime/coordination:coordination_service_error_util",
+        "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_client",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_agent",
-        "@tsl//tsl/distributed_runtime/coordination:coordination_service_error_util",
-        "@tsl//tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",

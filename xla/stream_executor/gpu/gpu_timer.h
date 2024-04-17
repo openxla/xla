@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_TIMER_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_TIMER_H_
 
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -56,19 +57,19 @@ class GpuTimer {
     DeviceMemory<GpuSemaphoreState> device();
 
    private:
-    explicit GpuSemaphore(std::unique_ptr<HostMemoryAllocation> alloc)
+    explicit GpuSemaphore(std::unique_ptr<MemoryAllocation> alloc)
         : ptr_{std::move(alloc)} {}
-    std::unique_ptr<HostMemoryAllocation> ptr_;
+    std::unique_ptr<MemoryAllocation> ptr_;
   };
-  static absl::StatusOr<GpuTimer> Create(Stream* stream);
+  static absl::StatusOr<GpuTimer> Create(Stream* stream, bool use_delay_kernel);
   [[deprecated("Pass Stream* not GpuStream*")]] static absl::StatusOr<GpuTimer>
   Create(GpuStream* stream);
 
   // An ugly but a very convenient helper: creates a timer only when we need
   // one, but always returns an object. If `is_needed` is false, returns an
   // empty optional, acts like `Create` otherwise.
-  static absl::StatusOr<std::optional<GpuTimer>> CreateIfNeeded(Stream* stream,
-                                                                bool is_needed);
+  static absl::StatusOr<std::optional<GpuTimer>> CreateIfNeeded(
+      Stream* stream, bool use_delay_kernel, bool is_needed);
   [[deprecated("Pass Stream* not GpuStream*")]] static absl::StatusOr<
       std::optional<GpuTimer>>
   CreateIfNeeded(GpuStream* stream, bool is_needed);

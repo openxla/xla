@@ -22,13 +22,16 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
-#include "absl/types/span.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusions/concatenate.h"
 #include "xla/service/gpu/fusions/concatenate_mlir.h"
 #include "xla/service/gpu/fusions/copy.h"
@@ -36,6 +39,7 @@ limitations under the License.
 #include "xla/service/gpu/fusions/custom.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/fusions/in_place_dynamic_update_slice.h"
+#include "xla/service/gpu/fusions/in_place_dynamic_update_slice_mlir.h"
 #include "xla/service/gpu/fusions/input_slices.h"
 #include "xla/service/gpu/fusions/input_slices_mlir.h"
 #include "xla/service/gpu/fusions/loop.h"
@@ -53,7 +57,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
@@ -128,7 +131,7 @@ bool HloFusionInfo::CanEmitDynamicUpdateSliceInPlace() const {
 }
 
 absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
-    const FusionInfo& fusion_info) {
+    const FusionInfo& fusion_info, bool is_emission_phase) {
   const auto& analysis = fusion_info.analysis();
   const FusionBackendConfig& backend_config = analysis.fusion_backend_config();
 
@@ -154,19 +157,22 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
     }
 
     static int num_mlir_emitters = 0;
-    // This kernel can be emitted with MLIR, but we need to check if there are
-    // limits to how many kernels can be emitted.
-    ++num_mlir_emitters;
-    if (num_mlir_emitters <= opts.xla_gpu_skip_mlir_kernels()) {
-      VLOG(5) << "Skipping MLIR emission because initial skips were requested.";
-      return false;
-    }
+    if (is_emission_phase) {
+      // This kernel can be emitted with MLIR, but we need to check if there are
+      // limits to how many kernels can be emitted.
+      ++num_mlir_emitters;
+      if (num_mlir_emitters <= opts.xla_gpu_skip_mlir_kernels()) {
+        VLOG(5)
+            << "Skipping MLIR emission because initial skips were requested.";
+        return false;
+      }
 
-    int n_emitted = num_mlir_emitters - opts.xla_gpu_skip_mlir_kernels();
-    if (opts.xla_gpu_max_mlir_kernels() > 0 &&
-        n_emitted > opts.xla_gpu_max_mlir_kernels()) {
-      VLOG(5) << "Skipping MLIR emission because max_mlir_emitters was set.";
-      return false;
+      int n_emitted = num_mlir_emitters - opts.xla_gpu_skip_mlir_kernels();
+      if (opts.xla_gpu_max_mlir_kernels() > 0 &&
+          n_emitted > opts.xla_gpu_max_mlir_kernels()) {
+        VLOG(5) << "Skipping MLIR emission because max_mlir_emitters was set.";
+        return false;
+      }
     }
     VLOG(5) << "Emitting with MLIR.";
     return true;
@@ -175,11 +181,8 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
   switch (analysis.GetEmitterFusionKind()) {
     case HloFusionAnalysis::EmitterFusionKind::kCustomFusion: {
       const auto& config = backend_config.custom_fusion_config();
-      if (config.name() == "address_computation") {
+      if (absl::StrContains(config.name(), "address_computation")) {
         return std::make_unique<AddressComputationFusion>(analysis);
-      }
-      if (config.name() == "dynamic_address_computation") {
-        return std::make_unique<DynamicAddressComputationFusion>(analysis);
       }
       return std::make_unique<CustomFusion>();
     }
@@ -191,6 +194,11 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
     case HloFusionAnalysis::EmitterFusionKind::kLoop: {
       if (IsDynamicUpdateSliceFusion(analysis) &&
           fusion_info.CanEmitDynamicUpdateSliceInPlace()) {
+        if (check_mlir_emitters(
+                MlirInPlaceDynamicUpdateSliceFusion::IsSupported)) {
+          return std::make_unique<MlirInPlaceDynamicUpdateSliceFusion>(
+              analysis);
+        }
         return std::make_unique<InPlaceDynamicUpdateSliceFusion>(analysis);
       }
 
@@ -221,7 +229,7 @@ absl::StatusOr<std::unique_ptr<FusionInterface>> GetFusionEmitter(
       return std::make_unique<TransposeFusion>(analysis);
     }
     case HloFusionAnalysis::EmitterFusionKind::kConcatenate: {
-      if (check_mlir_emitters(MlirConcatenateFusion::IsSupported)) {
+      if (check_mlir_emitters(nullptr)) {
         return std::make_unique<MlirConcatenateFusion>(analysis);
       }
       return std::make_unique<ConcatenateFusion>(analysis);

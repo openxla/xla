@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,24 +25,29 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/utils.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -186,7 +192,7 @@ MemoryKind MakeMemoryKindFromPjRtBuffer(PjRtBuffer* pjrt_buffer) {
   if (pjrt_buffer->memory_space() == nullptr) {
     return MemoryKind();
   }
-  return MemoryKind(pjrt_buffer->memory_space()->memory_space_kind());
+  return MemoryKind(pjrt_buffer->memory_space()->kind());
 }
 
 absl::StatusOr<tsl::RCReference<PjRtArray>> PjRtArray::Create(
@@ -405,7 +411,7 @@ absl::StatusOr<PjRtMemorySpace*> GetMemorySpaceFromMemoryKind(
     ifrt::Device* device, ifrt::MemoryKind memory_kind) {
   PjRtMemorySpace* memory_space = nullptr;
   for (PjRtMemorySpace* ms : device->memory_spaces()) {
-    if (ms->memory_space_kind() == memory_kind.memory_kind()) {
+    if (ms->kind() == memory_kind.memory_kind()) {
       memory_space = ms;
       break;
     }
@@ -416,7 +422,7 @@ absl::StatusOr<PjRtMemorySpace*> GetMemorySpaceFromMemoryKind(
         memory_kind.DebugString(),
         absl::StrJoin(device->memory_spaces(), ", ",
                       [](std::string* out, PjRtMemorySpace* ms) {
-                        absl::StrAppend(out, ms->memory_space_kind());
+                        absl::StrAppend(out, ms->kind());
                       }));
   }
   return memory_space;
@@ -447,7 +453,7 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtArray::Reshard(
     bool memories_supported = pjrt_buffers_[i]->memory_space() != nullptr;
     bool memory_kind_equal =
         new_sharding_has_memory_kind && memories_supported &&
-        pjrt_buffers_[i]->memory_space()->memory_space_kind() ==
+        pjrt_buffers_[i]->memory_space()->kind() ==
             canonicalized_sharding_memory_kind.memory_kind();
 
     // No need for data transfer.
@@ -518,12 +524,12 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtArray::Reshard(
 Future<Status> PjRtArray::GetReadyFuture() const {
   DCHECK(this);
   if (pjrt_buffers_.size() == 1) {
-    return pjrt_buffers_.front()->GetReadyFuture();
+    return pjrt_buffers_.front()->GetReadyFuture().ToStatusFuture();
   }
   std::vector<Future<Status>> futures;
   futures.reserve(pjrt_buffers_.size());
   for (auto& buf : pjrt_buffers_) {
-    futures.push_back(buf->GetReadyFuture());
+    futures.push_back(buf->GetReadyFuture().ToStatusFuture());
   }
   return JoinFutures(absl::MakeSpan(futures));
 }
@@ -565,7 +571,7 @@ absl::StatusOr<std::unique_ptr<PjRtLayout>> PjRtArray::layout() const {
 #ifndef NDEBUG
   for (int i = 1; i < pjrt_buffers_.size(); ++i) {
     std::unique_ptr<PjRtLayout> layout_i = pjrt_buffers_[i]->layout();
-    DCHECK_EQ(layout, layout_i)
+    DCHECK(*layout == *layout_i)
         << "PjRtArray has mismatched layouts across shards! "
         << "shard 0: " << layout->ToString() << ", shard " << i << ": "
         << layout_i->ToString();

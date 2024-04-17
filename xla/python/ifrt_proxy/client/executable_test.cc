@@ -196,13 +196,13 @@ TEST_F(LoadedExecutableTest, Execute) {
                                             loaded_executable_execute_response {
                                               status_handle: 2000
                                               outputs {
-                                                dtype: DTYPE_F32
-                                                shape { dimensions: [ 4, 4 ] }
+                                                dtype { kind: KIND_F32 }
+                                                shape { dims: [ 4, 4 ] }
                                                 array_handle: 3000
                                               }
                                               outputs {
-                                                dtype: DTYPE_F16
-                                                shape { dimensions: [ 8 ] }
+                                                dtype { kind: KIND_F16 }
+                                                shape { dims: [ 8 ] }
                                                 array_handle: 3001
                                               }
                                             }
@@ -213,10 +213,10 @@ TEST_F(LoadedExecutableTest, Execute) {
                         ->mutable_outputs();
     TF_ASSERT_OK_AND_ASSIGN(
         *(*outputs)[0].mutable_sharding(),
-        ToShardingProto(*SingleDeviceSharding::Create(&device, MemoryKind())));
+        SingleDeviceSharding::Create(&device, MemoryKind())->ToProto());
     TF_ASSERT_OK_AND_ASSIGN(
         *(*outputs)[1].mutable_sharding(),
-        ToShardingProto(*SingleDeviceSharding::Create(&device, MemoryKind())));
+        SingleDeviceSharding::Create(&device, MemoryKind())->ToProto());
   }
   EXPECT_CALL(*session_, Enqueue(Pointee(Partially(EquivToProto(
                              R"pb(loaded_executable_execute_request {

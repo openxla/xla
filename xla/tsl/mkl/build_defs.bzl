@@ -33,8 +33,8 @@ def if_mkl(if_true, if_false = []):
     """
     return select({
         "@xla//xla/tsl/mkl:build_with_mkl_aarch64": if_true,
-        "@tsl//tsl:linux_x86_64": if_true,
-        "@tsl//tsl:windows": if_true,
+        "@xla//xla/tsl:linux_x86_64": if_true,
+        "@xla//xla/tsl:windows": if_true,
         "//conditions:default": if_false,
     })
 
@@ -102,8 +102,8 @@ def mkl_deps():
     """
     return select({
         "@xla//xla/tsl/mkl:build_with_mkl_aarch64": ["@mkl_dnn_acl_compatible//:mkl_dnn_acl"],
-        "@tsl//tsl:linux_x86_64": ["@onednn//:mkl_dnn"],
-        "@tsl//tsl:windows": ["@onednn//:mkl_dnn"],
+        "@xla//xla/tsl:linux_x86_64": ["@onednn//:mkl_dnn"],
+        "@xla//xla/tsl:windows": ["@onednn//:mkl_dnn"],
         "//conditions:default": [],
     })
 
@@ -116,8 +116,8 @@ def onednn_v3_define():
     """
     return select({
         "@xla//xla/tsl/mkl:build_with_mkl_aarch64": ["-DENABLE_ONEDNN_V3"],
-        "@tsl//tsl:linux_x86_64": ["-DENABLE_ONEDNN_V3"],
-        "@tsl//tsl:windows": ["-DENABLE_ONEDNN_V3"],
+        "@xla//xla/tsl:linux_x86_64": ["-DENABLE_ONEDNN_V3"],
+        "@xla//xla/tsl:windows": ["-DENABLE_ONEDNN_V3"],
         "//conditions:default": [],
     })
 

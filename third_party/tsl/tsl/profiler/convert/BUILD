@@ -1,4 +1,4 @@
-load("//tsl:tsl.bzl", "internal_visibility")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
     "//tsl/platform:rules_cc.bzl",

@@ -1,15 +1,11 @@
 # Description:
 # profile_utils targets.
 
-load("//tsl:tsl.bzl", "internal_visibility")
-load("//tsl:tsl.default.bzl", "filegroup")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("@xla//xla/tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "//tsl:tsl.bzl",
-    "tsl_copts",
 )
 
 package(

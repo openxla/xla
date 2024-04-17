@@ -19,7 +19,6 @@ limitations under the License.
 #include <iterator>
 #include <optional>
 
-#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -31,18 +30,15 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/fusions/concatenate.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace gpu {
@@ -51,14 +47,6 @@ using llvm::SmallVector;
 using mlir::Value;
 using mlir::ValueRange;
 
-/*static*/ bool MlirConcatenateFusion::IsSupported(
-    const HloFusionAnalysis& analysis) {
-  if (analysis.fusion_roots().size() != 1) return false;
-
-  return mlir_converter::IsHloConversionSupported(
-      analysis.fusion(), analysis.device_info().gpu_compute_capability());
-}
-
 LaunchDimensions MlirConcatenateFusion::launch_dimensions() const {
   return CalculateLaunchDimensions(GetLargestConcatOperandShape(analysis_),
                                    analysis_.device_info());
@@ -66,23 +54,26 @@ LaunchDimensions MlirConcatenateFusion::launch_dimensions() const {
 
 std::optional<IndexingMap>
 MlirConcatenateFusion::ComputeThreadIdToOutputIndexing(
-    int64_t root_index, IndexingContext* indexing_context) const {
+    int64_t root_index, mlir::MLIRContext* ctx) const {
   return std::nullopt;
 }
 
 std::optional<IndexingMap>
 MlirConcatenateFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
-    IndexingContext* indexing_context) const {
-  return GetDefaultThreadIdToOutputIndexingMap(
-      launch_dimensions(), /*unroll_factor=*/1,
-      GetLargestConcatOperandShape(analysis_), indexing_context);
+    mlir::MLIRContext* ctx) const {
+  // TODO(b/331356433): Add constraints depending on the `hero_operand_index`.
+  return GetDefaultThreadIdIndexingMap(launch_dimensions(), /*unroll_factor=*/1,
+                                       GetLargestConcatOperandShape(analysis_),
+                                       ctx);
 }
 
-std::vector<const HloInstruction*>
-MlirConcatenateFusion::GetInstructionsWithCustomCodegen(
-    const HloFusionInstruction& fusion) const {
-  return analysis_.fusion_heroes();
+std::optional<mlir_converter::EpilogueSpecification>
+MlirConcatenateFusion::GetEpilogue(const HloFusionInstruction& fusion,
+                                   mlir::MLIRContext* mlir_context) const {
+  return mlir_converter::EpilogueSpecification::FromIdentityIndexing(
+      analysis_.fusion_heroes().front(), analysis_.fusion_roots().front(),
+      mlir_context);
 }
 
 absl::Status MlirConcatenateFusion::EmitEntryFunction(
@@ -90,14 +81,12 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
     const mlir_converter::CallTargetProvider& call_targets,
     mlir::func::FuncOp entry_function,
     const HloFusionInstruction& fusion) const {
-  CHECK(IsSupported(analysis_));
   const auto& root_computation = computations.FindPartitionedComputation(
       fusion.fused_instructions_computation());
   const auto* concat = analysis_.fusion_heroes()[0];
   mlir::ImplicitLocOpBuilder builder(entry_function.getLoc(), entry_function);
   builder.setInsertionPointToStart(entry_function.addEntryBlock());
-  auto* mlir_context = entry_function.getContext();
-  IndexingContext indexing_context{mlir_context};
+  auto* ctx = entry_function.getContext();
 
   int num_inputs = fusion.fused_instructions_computation()->num_parameters();
   SmallVector<Value> input_tensors(
@@ -110,15 +99,13 @@ absl::Status MlirConcatenateFusion::EmitEntryFunction(
 
   auto thread_id_to_input_map =
       ComputeThreadIdToInputIndexing(
-          /*root_index=*/0, /*hero_operand_index=*/0, &indexing_context)
+          /*root_index=*/0, /*hero_operand_index=*/0, ctx)
           .value();
-  auto epilogue_indexing =
-      ComputeEpilogueInputToOutputIndexing(concat, &indexing_context);
+  auto epilogue_indexing = ComputeEpilogueInputToOutputIndexing(concat, ctx);
 
   for (auto [operand_index, operand] : llvm::enumerate(concat->operands())) {
     auto input_to_output_map =
-        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index,
-                                      &indexing_context)
+        *ComputeInputToOutputIndexing(concat, /*input_id=*/operand_index, ctx)
              .indexing_maps.front()
              .begin();
     auto thread_id_to_output_map = ComposeIndexingMaps(

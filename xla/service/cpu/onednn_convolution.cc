@@ -29,9 +29,9 @@ limitations under the License.
 #include "absl/base/dynamic_annotations.h"
 #include "dnnl.hpp"
 #include "tsl/platform/logging.h"
-#include "tsl/util/onednn_threadpool.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/executable_run_options.h"
+#include "xla/tsl/util/onednn_threadpool.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"

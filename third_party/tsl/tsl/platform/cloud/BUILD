@@ -2,7 +2,7 @@
 # Cloud file system implementation.
 
 load(
-    "//tsl:tsl.bzl",
+    "@xla//xla/tsl:tsl.bzl",
     "if_windows",
     "internal_visibility",
     "tsl_copts",
@@ -217,8 +217,8 @@ cc_library(
         "//tsl/platform:str_util",
         "//tsl/platform:stringpiece",
         "//tsl/platform:types",
-        "//tsl/util:env_var",
         "@curl",
+        "@xla//xla/tsl/util:env_var",
     ],
 )
 

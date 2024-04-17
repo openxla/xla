@@ -462,23 +462,21 @@ Shape ComputeIntermediateShape(const HloSharding& src_sharding,
 
 // Forcibly set the sharding of the operand of inst.
 // Also fix the resharding between 1d and 2d logical mesh.
-void FixMixedMeshShapeReshardingGetTupleElement(
+absl::Status FixMixedMeshShapeReshardingGetTupleElement(
     HloInstruction* inst, const HloSharding& dst_sharding,
     const Array<int64_t>& device_mesh,
-    absl::flat_hash_map<std::string, std::vector<HloSharding>>*
+    absl::flat_hash_map<std::string, std::vector<HloSharding>>&
         preserve_shardings);
 
-void FixMixedMeshShapeReshardingGetTupleElementWithTupleOutput(
+absl::Status FixMixedMeshShapeReshardingGetTupleElementWithTupleOutput(
     HloInstruction* inst,
     const std::vector<std::optional<HloSharding>>& dst_sharding,
-    const Array<int64_t>& device_mesh,
-    absl::flat_hash_map<std::string, std::vector<HloSharding>>*
-        preserve_shardings);
+    const Array<int64_t>& device_mesh);
 
-void FixMixedMeshShapeResharding(HloInstruction* inst, int operand_num,
-                                 const HloSharding& dst_sharding,
-                                 const Array<int64_t>& device_mesh,
-                                 ReshardingCache* resharding_cache);
+absl::Status FixMixedMeshShapeResharding(HloInstruction* inst, int operand_num,
+                                         const HloSharding& dst_sharding,
+                                         const Array<int64_t>& device_mesh,
+                                         ReshardingCache* resharding_cache);
 
 /*
  * Gradient accumulation
@@ -654,6 +652,17 @@ ComputeInstructionExecutionCounts(const HloModule* module,
 std::vector<std::vector<int64_t>> InferOrEnumerateMeshShapesToTry(
     const HloModule& module, int64_t num_devices, int num_mesh_dims,
     bool symmetrical_mesh_dims);
+
+// Check if the sharding is "misaligned" wrt the shape. This is true if there is
+// at least one dimension of the tensor that is sharded over a number of devices
+// that do not complete divide the size of the tensor dimension.
+bool IsShardingMisaligned(const HloSharding& sharding, const Shape& shape);
+
+// In a given tuple sharding, replace certain leaves with
+// HloSharding::Unknown()
+HloSharding ReplaceGivenShardingsWithUnknownForTuple(
+    const HloSharding& sharding, const Shape& shape,
+    absl::Span<const bool> to_replace_sharding_ids);
 
 }  // namespace spmd
 }  // namespace xla

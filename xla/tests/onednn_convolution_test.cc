@@ -46,17 +46,17 @@ class ConvolutionTest : public HloTestBase {
 
 TEST_F(ConvolutionTest, Simple2DTestF32) {
   const char* convolution_module_str = R"(
-  HloModule convolution.test.f32, entry_computation_layout={(f32[1,22,22,1]{3,2,1,0}, f32[8,8,1,1]{3,2,1,0})->f32[1,11,11,1]{3,2,1,0}}
+  HloModule convolution.test.f32
 
   ENTRY convolution.test.f32 {
-    arg.0 = f32[1,22,22,1]{3,2,1,0} parameter(0), parameter_replication={false}
-    reshape.0 = f32[1,22,22,1]{3,2,1,0} reshape(arg.0)
-    arg.1 = f32[8,8,1,1]{3,2,1,0} parameter(1), parameter_replication={false}
-    reshape.1 = f32[8,8,1,1]{3,2,1,0} reshape(arg.1)
-    convolution.0 = f32[1,11,11,1]{3,2,1,0} convolution(reshape.0, reshape.1), window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    reshape.2 = f32[1,11,11,1]{3,2,1,0} reshape(convolution.0)
-    tuple.0 = (f32[1,11,11,1]{3,2,1,0}) tuple(reshape.2)
-    ROOT get-tuple-element.0 = f32[1,11,11,1]{3,2,1,0} get-tuple-element(tuple.0), index=0
+    arg.0 = f32[1,22,22,1] parameter(0), parameter_replication={false}
+    reshape.0 = f32[1,22,22,1] reshape(arg.0)
+    arg.1 = f32[8,8,1,1] parameter(1), parameter_replication={false}
+    reshape.1 = f32[8,8,1,1] reshape(arg.1)
+    convolution.0 = f32[1,11,11,1] convolution(reshape.0, reshape.1), window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    reshape.2 = f32[1,11,11,1] reshape(convolution.0)
+    tuple.0 = (f32[1,11,11,1]) tuple(reshape.2)
+    ROOT get-tuple-element.0 = f32[1,11,11,1] get-tuple-element(tuple.0), index=0
   })";
 
   EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{1e-4, 1e-4}));
@@ -69,12 +69,12 @@ TEST_F(ConvolutionTest, Simple3DTestBF16) {
   }
 
   const char* convolution_module_str = R"(
-  HloModule convolution.test.bf16, entry_computation_layout={(bf16[8,4,5,5,1]{4,3,2,1,0}, bf16[3,3,3,1,32]{4,3,2,1,0})->bf16[8,4,5,5,32]{4,3,2,1,0}}
+  HloModule convolution.test.bf16
 
   ENTRY convolution.test.bf16 {
-    p0 = bf16[8,4,5,5,1]{4,3,2,1,0} parameter(0)
-    p1 = bf16[3,3,3,1,32]{4,3,2,1,0} parameter(1)
-    ROOT conv = bf16[8,4,5,5,32]{4,3,2,1,0} convolution(p0, p1), window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
+    p0 = bf16[8,4,5,5,1] parameter(0)
+    p1 = bf16[3,3,3,1,32] parameter(1)
+    ROOT conv = bf16[8,4,5,5,32] convolution(p0, p1), window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
 })";
 
   EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{1e-4, 1e-4}));

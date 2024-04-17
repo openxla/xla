@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "nanobind/nanobind.h"  // from @nanobind
 #include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
 #include "xla/pjrt/lru_cache.h"
 #include "xla/python/nb_helpers.h"

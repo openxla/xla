@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/model/indexing_context.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -71,9 +70,10 @@ class MlirFusionEmitterBase : public KernelFusionInterface {
   // Returns the set of instructions that will be isolated in the partitioned,
   // i.e., they will get their own subgraph. We won't automatically emit
   // functions for these instructions.
-  virtual std::vector<const HloInstruction*> GetInstructionsWithCustomCodegen(
-      const HloFusionInstruction& fusion) const {
-    return {};
+  virtual std::optional<mlir_converter::EpilogueSpecification> GetEpilogue(
+      const HloFusionInstruction& fusion,
+      mlir::MLIRContext* mlir_context) const {
+    return std::nullopt;
   }
 
   virtual absl::Status EmitEntryFunction(
@@ -104,6 +104,8 @@ class MlirFusionEmitterBase : public KernelFusionInterface {
 
   mlir::Value EmitBlockId(mlir::ImplicitLocOpBuilder& builder, int dim) const;
   mlir::Value EmitThreadId(mlir::ImplicitLocOpBuilder& builder, int dim) const;
+  llvm::SmallVector<mlir::Value> EmitThreadAndBlockIds(
+      mlir::ImplicitLocOpBuilder& builder) const;
 
  private:
   // Emits MLIR for the given fusion. The entry function has one tensor argument

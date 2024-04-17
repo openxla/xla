@@ -5,12 +5,16 @@
 #   to other TF components outside of TSL.
 
 load(
-    "//tsl:tsl.bzl",
+    "@bazel_skylib//:bzl_library.bzl",
+    "bzl_library",
+)
+load(
+    "@xla//xla/tsl:tsl.bzl",
     "if_not_fuchsia",
     "internal_visibility",
     "tsl_copts",
 )
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tf_cuda_libdevice_path_deps",
@@ -32,10 +36,6 @@ load("//tsl/platform:build_config_root.bzl", "if_static")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",
-)
-load(
-    "@bazel_skylib//:bzl_library.bzl",
-    "bzl_library",
 )
 
 package(
@@ -578,7 +578,7 @@ filegroup(
         "threadpool_interface.h",
         "tracing.h",
     ] + select({
-        "//tsl:fuchsia": tf_google_mobile_srcs_no_runtime(),
+        "@xla//xla/tsl:fuchsia": tf_google_mobile_srcs_no_runtime(),
         "//conditions:default": [
             "file_system_helper.cc",
             "tracing.cc",
@@ -1296,7 +1296,7 @@ cc_library(
     srcs = ["test_main.cc"],
     copts = tsl_copts(),
     linkopts = select({
-        "//tsl:windows": [],
+        "@xla//xla/tsl:windows": [],
         "//conditions:default": ["-lm"],
     }),
     deps = [

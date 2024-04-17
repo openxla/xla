@@ -8,7 +8,7 @@ py_library(
         "//:ml_dtypes",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
-        "@xla//third_party/py/numpy",
+        "@tsl//third_party/py/numpy",
     ],
 )
 

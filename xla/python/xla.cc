@@ -38,6 +38,7 @@ limitations under the License.
 #include "nanobind/stl/function.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/stl/set.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
@@ -54,8 +55,9 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt_proxy/client/py_module.h"
 #include "xla/python/py_client.h"
+#include "xla/python/py_program.h"
 #include "xla/service/cpu/collectives_interface.h"
-#include "tsl/python/lib/core/numpy.h"  //NOLINT
+#include "xla/tsl/python/lib/core/numpy.h"  //NOLINT
 #ifdef XLA_PYTHON_ENABLE_GPU
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #endif  // XLA_PYTHON_ENABLE_GPU
@@ -66,6 +68,11 @@ limitations under the License.
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
 #endif  // __linux__
+
+#if !defined(_WIN32) && !defined(PLATFORM_GOOGLE)
+#include "xla/pjrt/cpu/mpi_collectives.h"
+#endif  // !_WIN32 && !PLATFORM_GOOGLE
+
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/exceptions.h"
@@ -104,7 +111,7 @@ limitations under the License.
 #include "xla/python/transfer_guard_lib.h"
 #include "xla/python/weakref_lru_cache.h"
 #include "xla/python/xla_compiler.h"
-#include "tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/status.h"
 
@@ -268,6 +275,23 @@ NB_MODULE(xla_extension, m_nb) {
       },
       nb::arg("distributed_client"), nb::arg("hostname").none() = std::nullopt,
       nb::arg("interface").none() = std::nullopt);
+
+#if !defined(_WIN32) && !defined(PLATFORM_GOOGLE)
+  nb::class_<cpu::MpiCollectives> mpi_collectives(m_nb, "MpiCollectives",
+                                                  cpu_collectives);
+  mpi_collectives.def("Init", &cpu::MpiCollectives::Init);
+  mpi_collectives.def("Finalize", &cpu::MpiCollectives::Finalize);
+  m_nb.def("make_mpi_collectives",
+           []() -> std::shared_ptr<cpu::MpiCollectives> {
+             return std::make_shared<cpu::MpiCollectives>();
+           });
+#else   // !_WIN32 && !PLATFORM_GOOGLE
+  m_nb.def("make_mpi_collectives",
+           []() -> std::shared_ptr<xla::cpu::CollectivesInterface> {
+             throw xla::XlaRuntimeError(
+                 "make_mpi_collectives is not implemented for Windows");
+           });
+#endif  // !_WIN32 && !PLATFORM_GOOGLE
 
   m_nb.def(
       "get_tfrt_cpu_client",
@@ -439,7 +463,7 @@ NB_MODULE(xla_extension, m_nb) {
               "get_topology_for_devices requires >= 1 devices.");
         }
         auto client = py_devices[0]->client();
-        std::vector<PjRtDevice*> ifrt_devices;
+        ifrt::DeviceList::Devices ifrt_devices;
         ifrt_devices.reserve(py_devices.size());
         for (const auto& py_device : py_devices) {
           if (py_device->client().get() != client.get()) {
@@ -449,8 +473,9 @@ NB_MODULE(xla_extension, m_nb) {
           }
           ifrt_devices.push_back(py_device->device());
         }
-        return xla::ValueOrThrow(client->ifrt_client()->GetTopologyForDevices(
-            absl::MakeSpan(ifrt_devices)));
+        ifrt::DeviceList device_list(std::move(ifrt_devices));
+        return xla::ValueOrThrow(
+            client->ifrt_client()->GetTopologyForDevices(device_list));
       });
 
   TF_CHECK_OK(PyArray::RegisterTypes(m_nb));
@@ -586,6 +611,7 @@ NB_MODULE(xla_extension, m_nb) {
   m_nb.def("cuda_array_interface_to_buffer",
            xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer));
 
+  BuildIfrtProgramsSubmodule(m_nb);
   BuildProfilerSubmodule(m_nb);
   BuildOpsSubmodule(m_nb);
   BuildOutfeedReceiverSubmodule(m_nb);
@@ -908,7 +934,7 @@ NB_MODULE(xla_extension, m_nb) {
       nb::arg("aval"), nb::arg("sharding"), nb::arg("xs"), nb::arg("devices"),
       nb::arg("committed") = true, nb::arg("force_copy") = false,
       nb::arg("host_buffer_semantics") =
-          PjRtClient::HostBufferSemantics::kZeroCopy);
+          PjRtClient::HostBufferSemantics::kImmutableZeroCopy);
 
   m_nb.def("batched_block_until_ready", [](std::vector<nb::object> xs) {
     ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));

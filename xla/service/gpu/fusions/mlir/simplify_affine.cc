@@ -40,7 +40,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "xla/service/gpu/fusions/mlir/passes.h"
-#include "xla/service/gpu/model/indexing_context.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
 
 namespace xla {
@@ -115,10 +115,9 @@ struct RewriteAffineApply
       }
     }
 
-    IndexingContext indexing_context(op->getContext());
-    IndexingMap map(&indexing_context, op.getAffineMap(), dim_ranges,
-                    symbol_ranges, /*rt_vars=*/{});
-    map.Simplify();
+    IndexingMap map(op.getAffineMap(), dim_ranges, symbol_ranges,
+                    /*rt_vars=*/{});
+    map.Simplify(GetIndexingMapForInstruction);
     auto expr = map.GetAffineMap().getResult(0);
 
     RangeEvaluator range_evaluator(map.GetDimensionBounds(),

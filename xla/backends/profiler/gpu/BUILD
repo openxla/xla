@@ -1,15 +1,5 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library", "if_cuda")
-load(
-    "//xla:xla.bzl",
-    "xla_cc_test",
-)
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load(
-    "@tsl//tsl:tsl.bzl",
-    "internal_visibility",
-    "tsl_copts",
-    "tsl_gpu_library",
-)
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_additional_device_tracer_srcs",
@@ -23,6 +13,16 @@ load(
     "if_cuda_is_configured",
 )
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+)
+load(
+    "//xla/tsl:tsl.bzl",
+    "internal_visibility",
+    "tsl_copts",
+    "tsl_gpu_library",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -42,6 +42,7 @@ tsl_gpu_library(
     ],
     deps = [
         ":cupti_utils",
+        "//xla/tsl/util:env_var",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -52,7 +53,6 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
         "@tsl//tsl/profiler/utils:time_utils",
-        "@tsl//tsl/util:env_var",
     ],
     alwayslink = 1,
 )
@@ -329,7 +329,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/memory",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/util:env_var",
+        "//xla/tsl/util:env_var",
     ],
     visibility = ["//visibility:public"],
     alwayslink = 1,

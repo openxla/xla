@@ -1,7 +1,7 @@
-load("//xla:xla.bzl", "xla_cc_test")
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package_group(
     name = "friends",
@@ -120,7 +120,7 @@ tf_proto_library(
     srcs = ["xla_sharding.proto"],
     protodeps = [
         "//xla:xla_data_proto",
-        "//xla/python/ifrt:types_proto",
+        "//xla/python/ifrt:device_proto",
     ],
 )
 
@@ -134,6 +134,11 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
 )
@@ -145,10 +150,14 @@ xla_cc_test(
         ":xla_ifrt",
         ":xla_sharding_serdes",
         "//xla/hlo/ir:hlo",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
         "//xla/python/ifrt:sharding_test_util",
         "@com_google_absl//absl/functional:bind_front",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -231,6 +240,7 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:utils",
         "//xla/python/ifrt",
         "//xla/service:hlo_proto_cc",

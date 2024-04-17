@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/model/indexing_map.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <numeric>
@@ -24,8 +25,10 @@ limitations under the License.
 #include <sstream>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -34,8 +37,11 @@ limitations under the License.
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
-#include "xla/service/gpu/model/indexing_context.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
@@ -565,6 +571,59 @@ bool SimplifyConstraintRange(AffineExpr* expr, Interval* range) {
   return is_simplified;
 }
 
+// Computes the symbols list replacement to go from
+// [range_vars(second)|rt_vars(second)|range_vars(first)|rt_vars(first)]
+// to
+// [range_vars(second)|range_vars(first)|rt_vars(second)|rt_vars(first)].
+SmallVector<AffineExpr, 4> GetComposedSymbolsPermutationToCorrectOrder(
+    const IndexingMap& first, const IndexingMap& second) {
+  SmallVector<AffineExpr, 4> symbol_replacements;
+  MLIRContext* mlir_context = first.GetMLIRContext();
+  for (int id = 0; id < second.GetRangeVarsCount(); ++id) {
+    symbol_replacements.push_back(getAffineSymbolExpr(id, mlir_context));
+  }
+  int64_t rt_vars_second_start =
+      first.GetRangeVarsCount() + second.GetRangeVarsCount();
+  for (int64_t id = 0; id < second.GetRTVarsCount(); ++id) {
+    symbol_replacements.push_back(
+        getAffineSymbolExpr(rt_vars_second_start++, mlir_context));
+  }
+  int64_t range_vars_first_start = second.GetRangeVarsCount();
+  for (int64_t id = 0; id < first.GetRangeVarsCount(); ++id) {
+    symbol_replacements.push_back(
+        getAffineSymbolExpr(range_vars_first_start++, mlir_context));
+  }
+  int64_t rt_vars_first_start = rt_vars_second_start + second.GetRTVarsCount();
+  for (int64_t id = 0; id < first.GetRTVarsCount(); ++id) {
+    symbol_replacements.push_back(
+        getAffineSymbolExpr(rt_vars_first_start++, mlir_context));
+  }
+  return symbol_replacements;
+}
+
+// Computes the symbols list mapping to go from
+// [range_vars(map)|rt_vars(map)]
+// to
+// [range_vars(second)|range_vars(first)|rt_vars(second)|rt_vars(first)].
+SmallVector<AffineExpr, 4> MapSymbolsToComposedSymbolsList(
+    const IndexingMap& map, const IndexingMap& composed) {
+  SmallVector<AffineExpr, 4> symbol_replacements;
+
+  MLIRContext* mlir_context = map.GetMLIRContext();
+  int64_t range_vars_start =
+      composed.GetRangeVarsCount() - map.GetRangeVarsCount();
+  for (int64_t id = 0; id < map.GetRangeVarsCount(); ++id) {
+    symbol_replacements.push_back(
+        getAffineSymbolExpr(range_vars_start++, mlir_context));
+  }
+  int64_t rt_vars_start = composed.GetSymbolCount() - map.GetRTVarsCount();
+  for (int64_t id = 0; id < map.GetRTVarsCount(); ++id) {
+    symbol_replacements.push_back(
+        getAffineSymbolExpr(rt_vars_start++, mlir_context));
+  }
+  return symbol_replacements;
+}
+
 }  // namespace
 
 std::string Interval::ToString() const {
@@ -620,20 +679,11 @@ std::vector<RangeVar> RangeVarsFromTensorSizes(
 }
 
 IndexingMap IndexingMap::FromTensorSizes(
-    IndexingContext* indexing_context, AffineMap affine_map,
-    absl::Span<const int64_t> dim_upper_bounds,
+    AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
     absl::Span<const int64_t> symbol_upper_bounds) {
-  return IndexingMap{
-      indexing_context, affine_map, DimVarsFromTensorSizes(dim_upper_bounds),
-      RangeVarsFromTensorSizes(symbol_upper_bounds), /*rt_vars=*/{}};
-}
-
-mlir::MLIRContext* IndexingMap::GetMLIRContext() const {
-  return indexing_context_->GetMLIRContext();
-}
-
-IndexingContext* IndexingMap::GetIndexingContext() const {
-  return indexing_context_;
+  return IndexingMap{affine_map, DimVarsFromTensorSizes(dim_upper_bounds),
+                     RangeVarsFromTensorSizes(symbol_upper_bounds),
+                     /*rt_vars=*/{}};
 }
 
 const Interval& IndexingMap::GetDimensionBound(int64_t dim_id) const {
@@ -868,6 +918,10 @@ void IndexingMap::Print(std::ostream& out,
   }
 }
 
+MLIRContext* IndexingMap::GetMLIRContext() const {
+  return IsUndefined() ? nullptr : affine_map_.getContext();
+}
+
 std::ostream& operator<<(std::ostream& out, const IndexingMap& indexing_map) {
   AffineMapPrinter printer;
   indexing_map.Print(out, printer);
@@ -898,8 +952,10 @@ IndexingMap operator*(const IndexingMap& lhs, const IndexingMap& rhs) {
 // RangeEvaluator for every constraint. Note that we start with "expr"
 // simplification, because the ranges of constraints were already optimized once
 // when IndexingMap was constructed.
-bool IndexingMap::Simplify() {
+bool IndexingMap::Simplify(IndexingMapProvider indexing_map_provider) {
   if (IsUndefined()) return false;
+
+  bool rtvars_were_eliminated = ReplaceConstantRTVars(indexing_map_provider);
 
   // Simplify constraints to shrink the lower/upper bounds of dims and symbols.
   bool constraints_were_simplified = false;
@@ -920,7 +976,8 @@ bool IndexingMap::Simplify() {
   if (affine_map_was_simplified) {
     affine_map_ = simplified_affine_map;
   }
-  return affine_map_was_simplified || constraints_were_simplified;
+  return affine_map_was_simplified || constraints_were_simplified ||
+         rtvars_were_eliminated;
 }
 
 bool IndexingMap::SimplifyConstraintExprs() {
@@ -1021,8 +1078,6 @@ bool IsFunctionOfUnusedDimsAndSymbolsOnly(
 
 void IndexingMap::RemoveUnusedSymbols() {
   if (IsUndefined()) return;
-  // TODO(b/329052892): Implement composition with RT vars.
-  if (GetRTVarsCount()) return;
 
   // Remove unused symbols from the affine_map.
   unsigned num_symbols_before = affine_map_.getNumSymbols();
@@ -1065,18 +1120,25 @@ void IndexingMap::RemoveUnusedSymbols() {
   if (num_symbols_after == num_symbols_before) return;
 
   std::vector<RangeVar> compressed_range_vars;
+  std::vector<RTVar> compressed_rt_vars;
   MLIRContext* mlir_context = GetMLIRContext();
   int64_t used_symbols_count = 0;
   std::vector<AffineExpr> symbol_replacements(
       num_symbols_before, getAffineConstantExpr(0, mlir_context));
+  auto range_vars_count = range_vars_.size();
   for (int i = 0; i < unused_symbols_bit_vector.size(); ++i) {
     if (!unused_symbols_bit_vector[i]) {
-      compressed_range_vars.push_back(range_vars_[i]);
+      if (i < range_vars_count) {
+        compressed_range_vars.push_back(range_vars_[i]);
+      } else {
+        compressed_rt_vars.push_back(rt_vars_[i - range_vars_count]);
+      }
       symbol_replacements[i] =
           getAffineSymbolExpr(used_symbols_count++, mlir_context);
     }
   }
   range_vars_ = std::move(compressed_range_vars);
+  rt_vars_ = std::move(compressed_rt_vars);
   std::vector<AffineExpr> to_remove;
   std::vector<std::pair<AffineExpr, Interval>> to_add;
   for (const auto& [expr, range] : constraints_) {
@@ -1159,29 +1221,33 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
   if (second.IsUndefined() || first.IsUndefined()) {
     return IndexingMap::GetUndefined();
   }
-  // TODO(b/329052892): Implement composition with RT vars.
-  if (first.GetRTVarsCount() || second.GetRTVarsCount()) {
-    return IndexingMap::GetUndefined();
-  }
   AffineMap producer_affine_map = second.GetAffineMap();
   AffineMap composed_map = producer_affine_map.compose(first.GetAffineMap());
 
   // The symbols in the composed map, i.e. combined
-  // producer_map.compose(consumer_map) are packed as [symbols(producer_map) |
-  // symbols(consumer_map)].
-  std::vector<RangeVar> combined_symbol_ranges;
-  combined_symbol_ranges.reserve(second.GetRangeVarsCount() +
-                                 first.GetRangeVarsCount());
-  for (const RangeVar& symbol_range : llvm::concat<const RangeVar>(
+  // producer_map.compose(consumer_map) are packed as
+  // [range_vars(second)|rt_vars(second)|range_vars(first)|rt_vars(first)].
+  std::vector<RangeVar> combined_range_vars;
+  combined_range_vars.reserve(second.GetRangeVarsCount() +
+                              first.GetRangeVarsCount());
+  for (const RangeVar& range_var : llvm::concat<const RangeVar>(
            second.GetRangeVars(), first.GetRangeVars())) {
-    combined_symbol_ranges.push_back(symbol_range);
+    combined_range_vars.push_back(range_var);
   }
+  std::vector<RTVar> combined_rt_vars;
+  combined_rt_vars.reserve(second.GetRTVarsCount() + first.GetRTVarsCount());
+  for (const RTVar& rt_var :
+       llvm::concat<const RTVar>(second.GetRTVars(), first.GetRTVars())) {
+    combined_rt_vars.push_back(rt_var);
+  }
+  // The symbols in the composed map have to be permuted to keep the invariant
+  // that range_vars go before rt_vars in the composed affine map symbols list.
+  SmallVector<AffineExpr, 4> symbol_replacements =
+      GetComposedSymbolsPermutationToCorrectOrder(first, second);
+  IndexingMap composed_indexing_map(composed_map, first.GetDimVars(),
+                                    std::move(combined_range_vars),
+                                    std::move(combined_rt_vars));
 
-  IndexingContext* indexing_context = first.GetIndexingContext();
-  IndexingMap composed_indexing_map(indexing_context, composed_map,
-                                    first.GetDimVars(),
-                                    std::move(combined_symbol_ranges),
-                                    /*rt_vars=*/{});
   // Add constraints that are already present in the producer_map. We have to
   // compute consumer_map(producer_constraints). To keep all symbols and
   // dimension IDs the same as in the `composed_indexing_map.affine_map`, we
@@ -1197,17 +1263,22 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
   auto constraints_map = AffineMap::get(
       producer_affine_map.getNumDims(), producer_affine_map.getNumSymbols(),
       constraints, producer_affine_map.getContext());
-  auto remapped_constraints = constraints_map.compose(first.GetAffineMap());
+  auto remapped_constraints =
+      constraints_map.compose(first.GetAffineMap())
+          .replaceDimsAndSymbols(/*dimReplacements=*/{}, symbol_replacements,
+                                 composed_indexing_map.GetDimensionCount(),
+                                 composed_indexing_map.GetSymbolCount());
   for (const auto& [expr, range] :
        llvm::zip(remapped_constraints.getResults(), constraints_ranges)) {
     composed_indexing_map.AddConstraint(expr, range);
   }
   // Remap symbol ids and add constraints that are already present in the
   // consumer_map.
+  SmallVector<AffineExpr, 4> first_map_symbols_to_composed_symbols =
+      MapSymbolsToComposedSymbolsList(first, composed_indexing_map);
   for (const auto& [expr, range] : first.GetConstraints()) {
     composed_indexing_map.AddConstraint(
-        expr.shiftSymbols(first.GetSymbolCount(), second.GetSymbolCount()),
-        range);
+        expr.replaceSymbols(first_map_symbols_to_composed_symbols), range);
   }
   // Add constraints for consumer's codomain w.r.t. producer's domain.
   for (auto [index, expr] :
@@ -1215,10 +1286,246 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
     Interval producer_dim_range =
         second.GetDimensionBound(static_cast<int64_t>(index));
     composed_indexing_map.AddConstraint(
-        expr.shiftSymbols(first.GetSymbolCount(), second.GetSymbolCount()),
+        expr.replaceSymbols(first_map_symbols_to_composed_symbols),
         producer_dim_range);
   }
   return composed_indexing_map;
+}
+
+bool IndexingMap::RescaleSymbols() {
+  MergeModConstraints();
+
+  std::vector<AffineExpr> to_delete;
+
+  for (const auto& [expr, range] : constraints_) {
+    if (range.lower != range.upper) continue;
+    auto shift_value = range.lower;
+
+    if (expr.getKind() != AffineExprKind::Mod) continue;
+    auto mod_expr = mlir::cast<AffineBinaryOpExpr>(expr);
+
+    auto constant_expr = mlir::dyn_cast<AffineConstantExpr>(mod_expr.getRHS());
+    if (!constant_expr) continue;
+
+    // We don't rescale mod expressions with non-positive divisors.
+    if (constant_expr.getValue() <= 0) continue;
+    auto scaling_factor = constant_expr.getValue();
+
+    if (mod_expr.getLHS().getKind() != AffineExprKind::SymbolId) continue;
+    auto symbol_expr = mlir::cast<AffineSymbolExpr>(mod_expr.getLHS());
+
+    affine_map_ = affine_map_.replace(
+        symbol_expr, constant_expr * symbol_expr + shift_value,
+        affine_map_.getNumDims(), affine_map_.getNumSymbols());
+
+    for (auto& [other_expr, other_range] : constraints_) {
+      if (other_expr == expr) continue;
+      if (!other_expr.isFunctionOfSymbol(symbol_expr.getPosition())) continue;
+
+      other_expr = other_expr.replace(
+          symbol_expr, constant_expr * symbol_expr + shift_value);
+    }
+
+    auto& symbol_range = range_vars_[symbol_expr.getPosition()].range;
+    symbol_range.lower = (symbol_range.lower - shift_value) / scaling_factor;
+    symbol_range.upper = (symbol_range.upper - shift_value) / scaling_factor;
+
+    to_delete.emplace_back(expr);
+  }
+
+  for (const auto& expr : to_delete) {
+    constraints_.erase(expr);
+  }
+
+  return !to_delete.empty();
+}
+
+// The return type of `OptimizeRTVar` below
+struct RTVarOptimizationResult {
+  // An affine expr which maps the old RTVar to the new, optimized RTVar:
+  // `()[sk] -> s'k` (with k being `symbol_index` in the `OptimizeRTVar` call).
+  // If `expr` doesn't depend on `sk` it means the RTVar could be optimized
+  // away completely and the value of `rt_var` can be ignored.
+  AffineExpr remapped_symbol;
+
+  // The new, optimized RTVar
+  RTVar rt_var;
+};
+
+namespace {
+// Tries to optimize the given RTVar by removing some parts (or entirety) of
+// the dependent HLO graph:
+//
+// 1. If no optimization is possible it returns `{sk, rt_var}` - the
+// identity expr and the unchanged rt_var.
+//
+// 2. If full optimization is possible, it returns
+// `{const, rt_var}` - an affine expr that does not anymore depend
+// on `sk` and an arbitrary rt_var.
+//
+// 3. if partial optimization is possible, it returns
+// `{()[sk] -> f(sk), rt_var_new }` - an affine expression that maps from the
+// old RTVar to the new RTVar, and the new RTVar itself. The new RTVar now
+// references some HLO subgraph of the old RTVar's HLO.
+RTVarOptimizationResult OptimizeRTVar(
+    RTVar rt_var, int64_t symbol_index, MLIRContext* mlir_context,
+    IndexingMap::IndexingMapProvider indexing_map_provider) {
+  const auto symbol = getAffineSymbolExpr(symbol_index, mlir_context);
+  auto result_expr = symbol;
+
+  while (true) {
+    if (auto constant_expr = DynCast<HloConstantInstruction>(rt_var.hlo)) {
+      if (rt_var.map.isConstant()) {
+        const auto idx = rt_var.map.getConstantResults();
+        result_expr = result_expr.replace(
+            symbol, getAffineConstantExpr(
+                        constant_expr->literal().GetIntegralAsS64(idx).value(),
+                        mlir_context));
+      }
+      return {result_expr, rt_var};
+    }
+
+    if (auto iota_expr = DynCast<HloIotaInstruction>(rt_var.hlo)) {
+      auto iota_dimension = iota_expr->iota_dimension();
+      CHECK(iota_dimension < rt_var.map.getNumResults());
+      return {
+          result_expr.replace(symbol, rt_var.map.getResults()[iota_dimension]),
+          rt_var};
+    }
+
+    auto is_indexing_transformation = [](const HloInstruction* instr) {
+      return instr->opcode() == HloOpcode::kBitcast ||
+             instr->opcode() == HloOpcode::kBroadcast ||
+             instr->opcode() == HloOpcode::kReshape ||
+             instr->opcode() == HloOpcode::kReverse ||
+             instr->opcode() == HloOpcode::kSlice ||
+             instr->opcode() == HloOpcode::kTranspose;
+    };
+
+    if (is_indexing_transformation(rt_var.hlo)) {
+      auto instr_indexing_map =
+          indexing_map_provider(rt_var.hlo, 0, mlir_context);
+
+      rt_var.hlo = rt_var.hlo->operand(0);
+      rt_var.map = instr_indexing_map.GetAffineMap().compose(rt_var.map);
+      continue;
+    }
+
+    if (rt_var.hlo->opcode() == HloOpcode::kNegate) {
+      rt_var.hlo = rt_var.hlo->operand(0);
+      result_expr = result_expr.replace(symbol, -symbol);
+      continue;
+    }
+
+    if (rt_var.hlo->opcode() == HloOpcode::kAdd ||
+        rt_var.hlo->opcode() == HloOpcode::kSubtract ||
+        rt_var.hlo->opcode() == HloOpcode::kMultiply ||
+        rt_var.hlo->opcode() == HloOpcode::kDivide) {
+      const auto apply_op = [&](const AffineExpr& lhs,
+                                const AffineExpr& rhs) -> AffineExpr {
+        switch (rt_var.hlo->opcode()) {
+          case HloOpcode::kAdd:
+            return lhs + rhs;
+          case HloOpcode::kSubtract:
+            return lhs - rhs;
+          case HloOpcode::kMultiply:
+            return lhs * rhs;
+          case HloOpcode::kDivide:
+            return lhs.floorDiv(rhs);
+          default:
+            ABSL_UNREACHABLE();
+        }
+      };
+
+      auto lhs = OptimizeRTVar(
+          RTVar{rt_var.feasible_values, rt_var.hlo->operand(0), rt_var.map},
+          symbol_index, mlir_context, indexing_map_provider);
+
+      if (!lhs.remapped_symbol.isFunctionOfSymbol(symbol_index)) {
+        // This means that lhs is constant-like and we can eliminate the
+        // operand.
+        result_expr =
+            result_expr.replace(symbol, apply_op(lhs.remapped_symbol, symbol));
+
+        // We continue optimizing the `rhs` operand
+        rt_var.hlo = rt_var.hlo->operand(1);
+        continue;
+      }
+
+      auto rhs = OptimizeRTVar(
+          RTVar{rt_var.feasible_values, rt_var.hlo->operand(1), rt_var.map},
+          symbol_index, mlir_context, indexing_map_provider);
+
+      if (!rhs.remapped_symbol.isFunctionOfSymbol(symbol_index)) {
+        // This means that rhs is constant-like and we can eliminate the
+        // operand.
+        result_expr =
+            result_expr.replace(symbol, apply_op(symbol, rhs.remapped_symbol));
+
+        // We can also take advantage of the optimization already done for lhs:
+        result_expr = result_expr.replace(symbol, lhs.remapped_symbol);
+        rt_var = lhs.rt_var;
+        continue;
+      }
+    }
+
+    return {result_expr, rt_var};
+  }
+}
+}  // namespace
+
+bool IndexingMap::ReplaceConstantRTVars(
+    IndexingMap::IndexingMapProvider indexing_map_provider) {
+  if (rt_vars_.empty()) return false;
+
+  std::vector<size_t> to_delete;
+
+  for (auto index = 0; index < rt_vars_.size(); ++index) {
+    auto& rt_var = rt_vars_[index];
+
+    // range_vars and rt_vars share the symbol space, with the rt_vars coming
+    // after the range_vars.
+    auto symbol_index = range_vars_.size() + index;
+    auto rt_var_symbol = getAffineSymbolExpr(symbol_index, GetMLIRContext());
+
+    RTVarOptimizationResult result = OptimizeRTVar(
+        rt_var, symbol_index, GetMLIRContext(), indexing_map_provider);
+
+    if (result.remapped_symbol != rt_var_symbol) {
+      affine_map_ =
+          affine_map_.replace({{rt_var_symbol, result.remapped_symbol}});
+
+      llvm::DenseMap<AffineExpr, AffineExpr> replacements;
+
+      for (const auto& [constraint, interval] : constraints_) {
+        auto modified_constraint =
+            constraint.replace(rt_var_symbol, result.remapped_symbol);
+
+        if (constraint == modified_constraint) continue;
+        replacements[constraint] = modified_constraint;
+      }
+
+      for (const auto& [old_expr, new_expr] : replacements) {
+        auto interval = constraints_.at(old_expr);
+        constraints_.erase(old_expr);
+        constraints_[new_expr] = interval;
+      }
+    }
+
+    if (result.remapped_symbol.isFunctionOfSymbol(symbol_index)) {
+      // If we still depend on the rt_var, then we update it.
+      rt_var = std::move(result.rt_var);
+    } else {
+      // Otherwise we schedule the rt_var for removal.
+      to_delete.emplace_back(index);
+    }
+  }
+
+  for (auto index : llvm::reverse(to_delete)) {
+    rt_vars_.erase(rt_vars_.begin() + index);
+  }
+
+  return !to_delete.empty();
 }
 
 }  // namespace gpu

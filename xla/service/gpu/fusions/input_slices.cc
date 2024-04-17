@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
@@ -30,10 +31,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/elemental_ir_emitter.h"
 #include "xla/service/gpu/elemental_ir_emitter.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -42,7 +45,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
-#include "xla/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
 
@@ -183,15 +185,14 @@ LaunchDimensions InputSlicesFusion::launch_dimensions() const {
 }
 
 std::optional<IndexingMap> InputSlicesFusion::ComputeThreadIdToOutputIndexing(
-    int64_t output_id, IndexingContext* indexing_context) const {
+    int64_t output_id, mlir::MLIRContext* ctx) const {
   // The mapping here is trivial and the same for all outputs - slice offsets
   // are applied in the indexing from slice outputs to slice inputs.
   auto launch_dims = launch_dimensions();
   // The implementation requires the shapes and layouts to be the same, but we
   // still use the requested output's shape for clarity.
   const auto& shape = analysis_.fusion_roots()[output_id]->shape();
-  return GetDefaultThreadIdToOutputIndexingMap(launch_dims, unroll_factor_,
-                                               shape, indexing_context);
+  return GetDefaultThreadIdIndexingMap(launch_dims, unroll_factor_, shape, ctx);
 }
 
 absl::Status InputSlicesFusion::EmitKernel(

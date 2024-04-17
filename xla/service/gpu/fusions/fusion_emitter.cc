@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/launch_dimensions.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/target_util.h"
@@ -58,7 +60,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
@@ -117,11 +118,10 @@ absl::Status AnnotateKernelLaunchDimensions(
   return absl::OkStatus();
 }
 
-IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
-    const LaunchDimensions& launch_dims, int unroll_factor,
-    const Shape& output_shape, IndexingContext* indexing_context) {
-  std::vector<mlir::AffineExpr> output_dims(output_shape.rank());
-  auto mlir_context = indexing_context->GetMLIRContext();
+IndexingMap KernelFusionInterface::GetDefaultThreadIdIndexingMap(
+    const LaunchDimensions& launch_dims, int unroll_factor, const Shape& shape,
+    mlir::MLIRContext* ctx) {
+  std::vector<mlir::AffineExpr> output_dims(shape.rank());
 
   std::array<uint64_t, 3> thread_counts{
       launch_dims.thread_counts_per_block().x,
@@ -144,20 +144,19 @@ IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
   // This means that this code supports some launch grids that the parallel
   // loop emitter doesn't support. This is safe, since the latter CHECK fails
   // if its assumptions are not fulfilled.
-  mlir::AffineExpr c0 = mlir::getAffineConstantExpr(0, mlir_context);
+  mlir::AffineExpr c0 = mlir::getAffineConstantExpr(0, ctx);
   mlir::AffineExpr linear_index = c0;
   uint64_t stride = 1;
   for (int i = 0; i < 3; ++i) {
-    auto coord =
-        mlir::getAffineDimExpr(kIndexingMapThreadIdxDims[i], mlir_context) +
-        mlir::getAffineDimExpr(kIndexingMapBlockIdxDims[i], mlir_context) *
-            thread_counts[i];
+    auto coord = mlir::getAffineDimExpr(kIndexingMapThreadIdxDims[i], ctx) +
+                 mlir::getAffineDimExpr(kIndexingMapBlockIdxDims[i], ctx) *
+                     thread_counts[i];
     auto linear_component = coord * stride;
     linear_index = linear_index + linear_component;
     stride *= total_sizes[i];
   }
-  mlir::AffineExpr chunk_id = mlir::getAffineSymbolExpr(0, mlir_context);
-  mlir::AffineExpr unroll_elem_id = mlir::getAffineSymbolExpr(1, mlir_context);
+  mlir::AffineExpr chunk_id = mlir::getAffineSymbolExpr(0, ctx);
+  mlir::AffineExpr unroll_elem_id = mlir::getAffineSymbolExpr(1, ctx);
 
   linear_index = linear_index * unroll_factor +
                  chunk_id * unroll_factor * launch_dims.launch_bound() +
@@ -165,11 +164,10 @@ IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
 
   // See IndexUtil::LinearIndexToMultidimensionalIndex.
   uint64_t divisor = 1;
-  for (auto dimension : LayoutUtil::MinorToMajor(output_shape)) {
-    output_dims[dimension] =
-        (linear_index.floorDiv(divisor)) %
-        static_cast<uint64_t>(output_shape.dimensions(dimension));
-    divisor *= output_shape.dimensions(dimension);
+  for (auto dimension : LayoutUtil::MinorToMajor(shape)) {
+    output_dims[dimension] = (linear_index.floorDiv(divisor)) %
+                             static_cast<uint64_t>(shape.dimensions(dimension));
+    divisor *= shape.dimensions(dimension);
   }
 
   std::vector<DimVar> dim_vars = {
@@ -181,7 +179,7 @@ IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
       {{0, static_cast<int64_t>(launch_dims.block_counts().z) - 1}},
   };
   std::vector<RangeVar> range_vars;
-  int64_t num_elements = ShapeUtil::ElementsIn(output_shape);
+  int64_t num_elements = ShapeUtil::ElementsIn(shape);
   range_vars.push_back(
       {{0, CeilOfRatio(num_elements,
                        static_cast<int64_t>(launch_dims.launch_bound()) *
@@ -189,9 +187,8 @@ IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
                1}});
   range_vars.push_back({0, unroll_factor - 1});
   IndexingMap indexing_map(
-      indexing_context,
       mlir::AffineMap::get(/*dimCount=*/6,
-                           /*symbolCount=*/2, output_dims, mlir_context),
+                           /*symbolCount=*/2, output_dims, ctx),
       dim_vars, range_vars, /*rt_vars=*/{});
   // Remove the unroll_elem_id symbol if unrolling divides num_elements.
   if (num_elements % unroll_factor == 0) {
@@ -200,7 +197,7 @@ IndexingMap KernelFusionInterface::GetDefaultThreadIdToOutputIndexingMap(
   } else {
     indexing_map.AddConstraint(linear_index, Interval{0, num_elements - 1});
   }
-  indexing_map.Simplify();
+  indexing_map.Simplify(GetIndexingMapForInstruction);
   return indexing_map;
 }
 

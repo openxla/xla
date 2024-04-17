@@ -38,6 +38,13 @@ message FilterLayoutProto {
   repeated uint64 shape = 4; 
 }
 
+message FactorLayoutProto {
+  // The dimensions of the tensor
+  repeated uint64 dimensions = 1;
+  // Shape of the tensor
+  repeated uint64 shape = 2;  
+}
+
 message OneDnnFusionConfig {
   // These enum needs to be mapped to oneDNN enum for post_op algorithm.
   // TODO(intel-tf): Add kinds supported by oneDNN.
@@ -57,20 +64,23 @@ message OneDnnFusionConfig {
   int32 alpha_typecast = 2;
 }
 
+message TensorLayoutProto {
+  uint64 dims = 1;
+  oneof layout {
+    DataLayoutProto data = 3;
+    FilterLayoutProto filter = 4;
+    FactorLayoutProto tensor = 5;
+  }
+}
+
 message OneDnnMatMulConfig {
   bool transpose_a = 1;
   bool transpose_b = 2;
   
   OneDnnFusionConfig fusions = 3;
   bool bias_broadcast = 4;
-}
-
-message TensorLayoutProto {
-  uint64 dims = 1;
-  oneof layout {
-    DataLayoutProto data = 2;
-    FilterLayoutProto filter = 3;
-  }
+  bool weights_prepacked = 6;
+  bool user_scratchpad = 7;
 }
 
 message WindowProto {

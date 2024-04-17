@@ -1,9 +1,9 @@
-load("//tsl/platform:rules_cc.bzl", "cc_library")
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
+load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -64,7 +64,7 @@ filegroup(
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
     #     "//tensorflow:__subpackages__",
-    #     "//tsl:internal",
+    #     "@xla//xla/tsl:internal",
     # ],
 )
 

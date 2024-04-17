@@ -56,12 +56,12 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/util/env_var.h"
+#include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
-#include "tsl/util/env_var.h"
-#include "tsl/util/proto/proto_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -660,7 +660,7 @@ absl::Span<AutotuneResult const> TopResultsWithinMeasurementError(
   // This value was picked by repeatedly running a few kernels that run for a
   // short time and observing the run-time variance. A more rigorous analysis
   // of the measurement error might yield a better error threshold.
-  constexpr absl::Duration kMeasurementError = absl::Microseconds(2);
+  constexpr absl::Duration kMeasurementError = absl::Microseconds(4);
 
   absl::Duration min_time = tsl::proto_utils::FromDurationProto(
       results_sorted_by_runtime.front().run_time());

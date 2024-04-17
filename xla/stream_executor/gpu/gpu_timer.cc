@@ -108,7 +108,8 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
       ptr_->opaque(), sizeof(GpuSemaphoreState));
 }
 
-/*static*/ absl::StatusOr<GpuTimer> GpuTimer::Create(Stream* real_stream) {
+/*static*/ absl::StatusOr<GpuTimer> GpuTimer::Create(Stream* real_stream,
+                                                     bool use_delay_kernel) {
   StreamExecutor* executor = real_stream->parent();
   GpuStream* stream = AsGpuStream(real_stream);
   GpuExecutor* parent = stream->parent();
@@ -121,7 +122,12 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
                                           GpuDriver::EventFlags::kDefault));
   CHECK(start_event != nullptr && stop_event != nullptr);
   GpuSemaphore semaphore{};
-  if (ShouldLaunchDelayKernel()) {
+  if (!use_delay_kernel) {
+    LOG(WARNING)
+        << "Skipping the delay kernel, measurement accuracy will be reduced";
+  }
+#ifdef GOOGLE_CUDA
+  if (use_delay_kernel && ShouldLaunchDelayKernel()) {
     // Check the assumption that this device supports unified addressing,
     // otherwise skip the delay kernel
     TF_ASSIGN_OR_RETURN(int status, GpuDriver::GetDeviceAttribute(
@@ -150,6 +156,7 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
           GpuSemaphoreState::Release));
     }
   }
+#endif  // GOOGLE_CUDA
   // The start event goes after the delay kernel in the stream
   TF_RETURN_IF_ERROR(GpuDriver::RecordEvent(parent->gpu_context(), start_event,
                                             stream->gpu_stream()));
@@ -158,9 +165,9 @@ DeviceMemory<GpuSemaphoreState> GpuTimer::GpuSemaphore::device() {
 }
 
 /*static*/ absl::StatusOr<std::optional<GpuTimer>> GpuTimer::CreateIfNeeded(
-    Stream* stream, bool is_needed) {
+    Stream* stream, bool use_delay_kernel, bool is_needed) {
   if (is_needed) {
-    TF_ASSIGN_OR_RETURN(GpuTimer t, GpuTimer::Create(stream));
+    TF_ASSIGN_OR_RETURN(GpuTimer t, GpuTimer::Create(stream, use_delay_kernel));
     return {std::make_optional(std::move(t))};
   }
   return std::nullopt;

@@ -1,17 +1,10 @@
 # Description: GPU-specific XLA tests. For example, codegen tests that
 # verify the IR emitted.
 
-load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
-load(
-    "//xla:xla.bzl",
-    "xla_cc_test",
-)
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
@@ -21,6 +14,13 @@ load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+)
+load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -442,21 +442,27 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "gpu_triton_custom_call_test",
     srcs = ["gpu_triton_custom_call_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    backends = [
+        "gpu_a100",
+        "gpu_v100",
+    ],
     deps = [
         ":gpu_codegen_test",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -889,7 +895,7 @@ xla_cc_test(
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda_is_configured([
-        "//xla/stream_executor/gpu:asm_compiler",
+        "//xla/stream_executor/cuda:cuda_asm_compiler",
         "//xla/service/gpu:gpu_asm_opts_util",
         "//xla/stream_executor",
         "//xla/service/gpu:stream_executor_util",
