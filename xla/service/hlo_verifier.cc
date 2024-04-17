@@ -214,6 +214,13 @@ Status ShapeVerifier::HandleDot(HloInstruction* dot) {
           dot->operand(0)->shape(), dot->operand(1)->shape(),
           dot->dot_dimension_numbers(),
           /*preferred_element_type=*/dot->shape().element_type(), sparsity));
+  if (!HasCompatibleElementTypes(dot->operand(0)->shape(),
+                                 dot->operand(1)->shape(), dot->shape())) {
+    return Internal(
+        "Expected compatible element types for the result and the two operands"
+        " of Dot instruction: %s",
+        dot->ToString());
+  }
   if (auto nibble_count =
           absl::c_count(dot->precision_config().operand_precision(),
                         PrecisionConfig::PACKED_NIBBLE)) {
