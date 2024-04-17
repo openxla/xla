@@ -4176,6 +4176,7 @@ xla_cc_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
