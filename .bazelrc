@@ -437,8 +437,8 @@ build:avx_win --copt=/arch:AVX
 # Use Clang-cl compiler on Windows
 build:win_clang --copt=/clang:-Weverything
 build:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
-build:win_clang --extra_execution_platforms=//tools/toolchains/win:x64_windows-clang-cl
-build:win_clang --host_platform=//tools/toolchains/win:x64_windows-clang-cl
+build:win_clang --extra_execution_platforms=//tensorflow/tools/toolchains/win:x64_windows-clang-cl
+build:win_clang --host_platform=//tensorflow/tools/toolchains/win:x64_windows-clang-cl
 build:win_clang --compiler=clang-cl
 build:win_clang --linkopt=/FORCE:MULTIPLE
 build:win_clang --host_linkopt=/FORCE:MULTIPLE
