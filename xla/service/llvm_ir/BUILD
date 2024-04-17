@@ -85,6 +85,7 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 

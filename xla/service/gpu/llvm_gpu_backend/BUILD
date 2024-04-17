@@ -75,6 +75,7 @@ cc_library(
         "@tsl//tsl/platform:rocm_rocdl_path",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
