@@ -924,7 +924,7 @@ class CollectiveCmd : public TracedCommandBufferCmd {
 class AllReduceCmd : public CollectiveCmd {
  public:
   AllReduceCmd(ExecutionStreamId execution_stream_id,
-               ExecutionStreamId collective_stream_id, NcclApi* nccl_api,
+               ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
                NcclCollectiveConfig config, ReductionKind reduction_kind,
                absl::Span<const NcclCollectiveThunk::Buffer> buffers);
 
@@ -950,7 +950,7 @@ class AllReduceCmd : public CollectiveCmd {
 class ReduceScatterCmd : public CollectiveCmd {
  public:
   ReduceScatterCmd(ExecutionStreamId execution_stream_id,
-                   ExecutionStreamId collective_stream_id, NcclApi* nccl_api,
+                   ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
                    NcclCollectiveConfig config, ReductionKind reduction_kind,
                    absl::Span<const NcclCollectiveThunk::Buffer> buffers);
 
@@ -976,7 +976,7 @@ class ReduceScatterCmd : public CollectiveCmd {
 class AllGatherCmd : public CollectiveCmd {
  public:
   AllGatherCmd(ExecutionStreamId execution_stream_id,
-               ExecutionStreamId collective_stream_id, NcclApi* nccl_api,
+               ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
                NcclCollectiveConfig config,
                absl::Span<const NcclCollectiveThunk::Buffer> buffers);
 
@@ -1001,7 +1001,7 @@ class AllGatherCmd : public CollectiveCmd {
 class CollectiveBroadcastCmd : public CollectiveCmd {
  public:
   CollectiveBroadcastCmd(ExecutionStreamId execution_stream_id,
-                         ExecutionStreamId collective_stream_id,
+                         ExecutionStreamId async_from_stream_id,
                          NcclApi* nccl_api, NcclCollectiveConfig config,
                          absl::Span<const NcclCollectiveThunk::Buffer> buffers);
 
