@@ -178,7 +178,7 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
   while (current_tile_size >= minimum_tile_size * 2) {
     if (ComputeColReductionActiveCore(reduction_dimensions, current_tile_size,
                                       num_threads_y, num_threads_x,
-                                      vector_size) >= core_count)
+                                      vector_size) > core_count)
       break;
     current_tile_size = current_tile_size / 2;
   }
