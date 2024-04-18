@@ -38,7 +38,7 @@ Status KernelSupportLibrary::ForWithStatus(
         for_body_generator) {
   if (peel_first_iteration) {
     return ForWithStatus(
-        name, start, end, step, true,
+        name, start, end, step,
         [&](llvm::Value* indvar, bool is_first_iteration) -> Status {
           return for_body_generator(indvar, b_->getInt1(is_first_iteration));
         });
