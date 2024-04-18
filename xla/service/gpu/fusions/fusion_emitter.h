@@ -65,6 +65,9 @@ class KernelFusionInterface : public FusionInterface {
   // Returns the fusion's launch dimensions.
   virtual LaunchDimensions launch_dimensions() const = 0;
 
+  // Return true if kernel has shared cache usage.
+  virtual bool use_shared_cache() const { return false; };
+
   // Computes an indexing map from thread to output element(s) of the **hero**.
   //
   // The dimensions in the resulting map are
