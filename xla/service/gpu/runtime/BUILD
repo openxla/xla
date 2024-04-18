@@ -1128,6 +1128,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:statusor",
     ],
 )
