@@ -150,135 +150,48 @@ class CudnnFusedMhaRewriterPipelineTest
   }
 };
 
-constexpr absl::string_view hlo_BF16Bmm1Bmm2Pattern = R"(
-HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
-ENTRY main.6 {
-  Arg_2.3 = bf16[16,16,256,64]{3,2,1,0} parameter(2)
-  Arg_0.1 = bf16[16,16,256,64]{3,2,1,0} parameter(0)
-  Arg_1.2 = bf16[16,16,256,64]{3,2,1,0} parameter(1)
-  dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
-})";
-
-TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1Bmm2Pattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(hlo_BF16Bmm1Bmm2Pattern, GetModuleConfig()));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
-                                         GetCudnnVersion()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest, BF16Bmm1Bmm2Pattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(hlo_BF16Bmm1Bmm2Pattern, GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(
-      optimized_module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
-}
-
-constexpr absl::string_view hlo_BF16Bmm1Bmm2UncanonicalizedPattern = R"(
-HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,64,256]{3,2,1,0}}
-
-ENTRY main.6 {
-  Arg_2.3 = bf16[16,16,256,64]{3,2,1,0} parameter(2)
-  Arg_0.1 = bf16[16,16,256,64]{3,2,1,0} parameter(0)
-  Arg_1.2 = bf16[16,16,256,64]{3,2,1,0} parameter(1)
-  dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,64,256]{3,2,1,0} dot(Arg_2.3, dot.0), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-})";
-
-TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1Bmm2UncanonicalizedPattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(
-                                      hlo_BF16Bmm1Bmm2UncanonicalizedPattern));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
-                                         GetCudnnVersion()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Transpose(
-                  m::GetTupleElement(
-                      m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                      .WithShape(BF16, {16, 16, 256, 64}))));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest, BF16Bmm1Bmm2UncanonicalizedPattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m, ParseAndReturnVerifiedModule(
-                  hlo_BF16Bmm1Bmm2UncanonicalizedPattern, GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(optimized_module->entry_computation()->root_instruction(),
-              GmockMatch(m::Transpose(
-                  m::GetTupleElement(
-                      m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                      .WithShape(BF16, {16, 16, 256, 64}))));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
-}
-
 constexpr absl::string_view
-    hlo_BF16Bmm1Bmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
+
+region_0.7 {
+  Arg_0.8 = bf16[] parameter(0)
+  Arg_1.9 = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(Arg_0.8, Arg_1.9)
+}
+
+region_1.19 {
+  Arg_0.20 = f32[] parameter(0)
+  Arg_1.21 = f32[] parameter(1)
+  ROOT add = f32[] add(Arg_0.20, Arg_1.21)
+}
 
 ENTRY main.6 {
   Arg_2.3 = bf16[16,16,256,64]{3,2,1,0} parameter(2)
   Arg_0.1 = bf16[16,16,256,64]{3,2,1,0} parameter(0)
   Arg_1.2 = bf16[16,16,256,64]{2,3,1,0} parameter(1)
   dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
+  constant = bf16[] constant(-inf)
+  reduce.11 = bf16[16,16,256]{2,1,0} reduce(dot.0, constant), dimensions={3}, to_apply=region_0.7
+  broadcast.3 = bf16[16,16,256,256]{3,2,1,0} broadcast(reduce.11), dimensions={0,1,2}
+  subtract.1 = bf16[16,16,256,256]{3,2,1,0} subtract(dot.0, broadcast.3)
+  exponential.1 = bf16[16,16,256,256]{3,2,1,0} exponential(subtract.1)
+  convert.1 = f32[16,16,256,256]{3,2,1,0} convert(exponential.1)
+  constant.1 = f32[] constant(0)
+  reduce.23 = f32[16,16,256]{2,1,0} reduce(convert.1, constant.1), dimensions={3}, to_apply=region_1.19
+  convert.2 = bf16[16,16,256]{2,1,0} convert(reduce.23)
+  broadcast.4 = bf16[16,16,256,256]{3,2,1,0} broadcast(convert.2), dimensions={0,1,2}
+  divide = bf16[16,16,256,256]{3,2,1,0} divide(exponential.1, broadcast.4)
+  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
 })";
 
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
-       BF16Bmm1Bmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
+       BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
@@ -289,32 +202,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.bmm1_dot_dimension_numbers().rhs_contracting_dimensions()[0],
-            2);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest,
-       BF16Bmm1Bmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor,
-          GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(
-      optimized_module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
+                     m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
                      .WithShape(BF16, {16, 16, 256, 64})));
   TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
                           fmha->backend_config<GpuBackendConfig>());
@@ -324,24 +212,47 @@ TEST_F(CudnnFusedMhaRewriterPipelineTest,
 }
 
 constexpr absl::string_view
-    hlo_BF16Bmm1Bmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
+
+region_0.7 {
+  Arg_0.8 = bf16[] parameter(0)
+  Arg_1.9 = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(Arg_0.8, Arg_1.9)
+}
+
+region_1.19 {
+  Arg_0.20 = f32[] parameter(0)
+  Arg_1.21 = f32[] parameter(1)
+  ROOT add = f32[] add(Arg_0.20, Arg_1.21)
+}
 
 ENTRY main.6 {
   Arg_2.3 = bf16[16,16,256,64]{3,2,1,0} parameter(2)
   Arg_0.1 = bf16[16,16,256,64]{2,3,1,0} parameter(0)
   Arg_1.2 = bf16[16,16,256,64]{2,3,1,0} parameter(1)
   dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
+  constant = bf16[] constant(-inf)
+  reduce.11 = bf16[16,16,256]{2,1,0} reduce(dot.0, constant), dimensions={3}, to_apply=region_0.7
+  broadcast.3 = bf16[16,16,256,256]{3,2,1,0} broadcast(reduce.11), dimensions={0,1,2}
+  subtract.1 = bf16[16,16,256,256]{3,2,1,0} subtract(dot.0, broadcast.3)
+  exponential.1 = bf16[16,16,256,256]{3,2,1,0} exponential(subtract.1)
+  convert.1 = f32[16,16,256,256]{3,2,1,0} convert(exponential.1)
+  constant.1 = f32[] constant(0)
+  reduce.23 = f32[16,16,256]{2,1,0} reduce(convert.1, constant.1), dimensions={3}, to_apply=region_1.19
+  convert.2 = bf16[16,16,256]{2,1,0} convert(reduce.23)
+  broadcast.4 = bf16[16,16,256,256]{3,2,1,0} broadcast(convert.2), dimensions={0,1,2}
+  divide = bf16[16,16,256,256]{3,2,1,0} divide(exponential.1, broadcast.4)
+  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
 })";
 
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
-       BF16Bmm1Bmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor) {
+       BF16Bmm1SoftmaxBmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
@@ -352,34 +263,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.bmm1_dot_dimension_numbers().lhs_contracting_dimensions()[0],
-            2);
-  EXPECT_EQ(config.bmm1_dot_dimension_numbers().rhs_contracting_dimensions()[0],
-            2);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest,
-       BF16Bmm1Bmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor,
-          GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(
-      optimized_module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
+                     m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
                      .WithShape(BF16, {16, 16, 256, 64})));
   TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
                           fmha->backend_config<GpuBackendConfig>());
@@ -391,24 +275,47 @@ TEST_F(CudnnFusedMhaRewriterPipelineTest,
 }
 
 constexpr absl::string_view
-    hlo_BF16Bmm1Bmm2Pattern_bmm2_non_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm2_non_contracting_dim_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
+
+region_0.7 {
+  Arg_0.8 = bf16[] parameter(0)
+  Arg_1.9 = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(Arg_0.8, Arg_1.9)
+}
+
+region_1.19 {
+  Arg_0.20 = f32[] parameter(0)
+  Arg_1.21 = f32[] parameter(1)
+  ROOT add = f32[] add(Arg_0.20, Arg_1.21)
+}
 
 ENTRY main.6 {
   Arg_2.3 = bf16[16,16,256,64]{2,3,1,0} parameter(2)
   Arg_0.1 = bf16[16,16,256,64]{2,3,1,0} parameter(0)
   Arg_1.2 = bf16[16,16,256,64]{2,3,1,0} parameter(1)
   dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
+  constant = bf16[] constant(-inf)
+  reduce.11 = bf16[16,16,256]{2,1,0} reduce(dot.0, constant), dimensions={3}, to_apply=region_0.7
+  broadcast.3 = bf16[16,16,256,256]{3,2,1,0} broadcast(reduce.11), dimensions={0,1,2}
+  subtract.1 = bf16[16,16,256,256]{3,2,1,0} subtract(dot.0, broadcast.3)
+  exponential.1 = bf16[16,16,256,256]{3,2,1,0} exponential(subtract.1)
+  convert.1 = f32[16,16,256,256]{3,2,1,0} convert(exponential.1)
+  constant.1 = f32[] constant(0)
+  reduce.23 = f32[16,16,256]{2,1,0} reduce(convert.1, constant.1), dimensions={3}, to_apply=region_1.19
+  convert.2 = bf16[16,16,256]{2,1,0} convert(reduce.23)
+  broadcast.4 = bf16[16,16,256,256]{3,2,1,0} broadcast(convert.2), dimensions={0,1,2}
+  divide = bf16[16,16,256,256]{3,2,1,0} divide(exponential.1, broadcast.4)
+  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
 })";
 
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
-       BF16Bmm1Bmm2Pattern_bmm2_non_contracting_dim_not_most_minor) {
+       BF16Bmm1SoftmaxBmm2Pattern_bmm2_non_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm2_non_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm2_non_contracting_dim_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
@@ -419,7 +326,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   EXPECT_THAT(
       m->entry_computation()->root_instruction(),
       GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
+                     m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
                      .WithShape(BF16, {16, 16, 256, 64})));
   TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
                           fmha->backend_config<GpuBackendConfig>());
@@ -428,88 +335,6 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
             3);
   EXPECT_EQ(config.bmm2_dot_dimension_numbers().rhs_contracting_dimensions()[0],
             3);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest,
-       BF16Bmm1Bmm2Pattern_bmm2_non_contracting_dim_not_most_minor) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1Bmm2Pattern_bmm2_non_contracting_dim_not_most_minor,
-          GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(
-      optimized_module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.bmm2_dot_dimension_numbers().lhs_contracting_dimensions()[0],
-            3);
-  EXPECT_EQ(config.bmm2_dot_dimension_numbers().rhs_contracting_dimensions()[0],
-            3);
-}
-
-absl::string_view F16Bmm1Bmm2Pattern_str = R"(
-HloModule fmha_test, entry_computation_layout={(f16[16,16,256,64]{3,2,1,0},f16[16,16,256,64]{3,2,1,0},f16[16,16,256,64]{3,2,1,0})->f16[16,16,256,64]{3,2,1,0}}
-ENTRY main.6 {
-  Arg_2.3 = f16[16,16,256,64]{3,2,1,0} parameter(2)
-  Arg_0.1 = f16[16,16,256,64]{3,2,1,0} parameter(0)
-  Arg_1.2 = f16[16,16,256,64]{3,2,1,0} parameter(1)
-  dot.0 = f16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = f16[16,16,256,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
-})";
-
-TEST_F(CudnnFusedMhaRewriterTestHloTest, F16Bmm1Bmm2Pattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(F16Bmm1Bmm2Pattern_str, GetModuleConfig()));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
-                                         GetCudnnVersion()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(F16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
-}
-
-TEST_F(CudnnFusedMhaRewriterPipelineTest, F16Bmm1Bmm2Pattern) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m,
-      ParseAndReturnVerifiedModule(F16Bmm1Bmm2Pattern_str, GetModuleConfig()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(m)));
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(optimized_module->ToString());
-  EXPECT_THAT(
-      optimized_module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(F16, {16, 16, 256, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_FLOAT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_FLOAT_EQ(config.dropout_rate(), 0.0);
 }
 
 TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1CombinedMaskBiasSoftmaxBmm2) {
@@ -3173,39 +2998,6 @@ ENTRY main.164_spmd {
               m::Op(), m::Op().WithPredicate([](const HloInstruction* instr) {
                 return instr->name() == "multiply.39.fmha_no_match_clone";
               }))))));
-}
-
-constexpr absl::string_view hlo_should_lower_to_flash_attention = R"(
-HloModule fmha_test, entry_computation_layout={(bf16[16,16,128,64]{3,2,1,0},bf16[16,16,1024,64]{3,2,1,0},bf16[16,16,1024,64]{3,2,1,0})->bf16[16,16,128,64]{3,2,1,0}}
-ENTRY main.6 {
-  Arg_0.1 = bf16[16,16,128,64]{3,2,1,0} parameter(0)
-  Arg_1.2 = bf16[16,16,1024,64]{3,2,1,0} parameter(1)
-  Arg_2.3 = bf16[16,16,1024,64]{3,2,1,0} parameter(2)
-  dot.0 = bf16[16,16,128,1024]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
-  ROOT dot.1 = bf16[16,16,128,64]{3,2,1,0} dot(dot.0, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
-})";
-
-TEST_F(CudnnFusedMhaRewriterTestHloTest, ShouldLowerToFlashAttention) {
-  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m, ParseAndReturnVerifiedModule(hlo_should_lower_to_flash_attention,
-                                           GetModuleConfig()));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
-                                         GetCudnnVersion()};
-  TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
-  const HloInstruction* fmha;
-
-  SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(
-                     m::CustomCall(&fmha, {kCudnnfMHABmmBmmCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 128, 64})));
-  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
-                          fmha->backend_config<GpuBackendConfig>());
-  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
-  EXPECT_EQ(config.fmha_scale(), 1.0);
-  EXPECT_EQ(config.dropout_rate(), 0.0);
 }
 
 constexpr absl::string_view hlo_head_dim_not_multiple_of_64 = R"(
