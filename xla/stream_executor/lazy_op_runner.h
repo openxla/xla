@@ -295,7 +295,6 @@ struct FusedMHAOp {
     std::optional<TensorDescriptor> activation_descriptor;
     std::optional<double> dropout_rate;
     std::optional<int64_t> seed;
-    bool is_flash_attention;
     FMHAMaskKind mask_type;
   };
 
@@ -309,7 +308,7 @@ struct FusedMHAOp {
         config.intermediate_bmm2_lhs_descriptor, config.output_descriptor,
         config.activation_descriptor, config.mask_descriptor,
         config.bias_descriptor, config.scale, config.dropout_rate, config.seed,
-        config.is_flash_attention, config.mask_type);
+        config.mask_type);
   }
 };
 
@@ -334,7 +333,6 @@ struct FusedMHABackwardOp {
     std::optional<TensorDescriptor> bias_descriptor;
     std::optional<double> dropout_rate;
     std::optional<int64_t> seed;
-    bool is_flash_attention;
     FMHAMaskKind mask_type;
   };
 
@@ -352,8 +350,7 @@ struct FusedMHABackwardOp {
         config.d_bmm2_rhs_descriptor, config.d_s_descriptor,
         config.mask_descriptor, config.d_bias_descriptor,
         config.fwd_output_descriptor, config.bias_descriptor, config.scale,
-        config.dropout_rate, config.seed, config.is_flash_attention,
-        config.mask_type);
+        config.dropout_rate, config.seed, config.mask_type);
   }
 };
 

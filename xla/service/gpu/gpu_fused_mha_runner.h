@@ -64,7 +64,6 @@ inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
 struct GpufMHADescriptor {
   CudnnfMHAKind kind;
   CudnnfMHABackendConfig backend_config;
-  bool is_flash_attention;
   CudnnfMHAMaskKind mask_type;
   Shape lhs_bmm1_shape;
   Shape rhs_bmm1_shape;
@@ -82,7 +81,6 @@ struct GpufMHADescriptor {
 struct GpufMHABackwardDescriptor {
   CudnnfMHAKind kind;
   CudnnfMHABackendConfig backend_config;
-  bool is_flash_attention;
   CudnnfMHAMaskKind mask_type;
   Shape bmm1_grad_gemm1_rhs_shape;
   Shape bmm1_grad_gemm2_rhs_shape;
@@ -116,7 +114,6 @@ struct GpufMHAConfig {
   std::optional<int64_t> seed;
 
   se::dnn::AlgorithmDesc algorithm;
-  bool is_flash_attention;
   CudnnfMHAMaskKind mask_type;
   // bias -> [1, num_attn_heads, q_seq_len, kv_seq_len]
   // mask -> [batch_size, 1, q_seq_len, kv_seq_len]
@@ -145,7 +142,6 @@ struct GpufMHABackwardConfig {
   std::optional<int64_t> seed;
 
   se::dnn::AlgorithmDesc algorithm;
-  bool is_flash_attention;
   CudnnfMHAMaskKind mask_type;
   // mask -> [batch_size, 1, q_seq_len, kv_seq_len]
   // d_bias -> [1, num_heads, q_seq_len, kv_seq_len]

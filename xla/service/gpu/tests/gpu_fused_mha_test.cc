@@ -1184,6 +1184,7 @@ class MultiHeadedAttentionBMMScaleBiasSoftmaxBMM
   // Training BMM1 - Scale - bias - Softmax - BMM2
   template <typename T>
   void TestImpl_FMHA_Training_BMM1_Scale_Bias_Softmax_BMM2_vanilla() {
+    skip_reason_ = "dbias not yet supported for flash attention.";
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfo(backend().default_stream_executor()) <
         se::dnn::VersionInfo(8, 9, 1)) {

@@ -83,9 +83,6 @@ struct MatchFwdResult {
   // applied to the bmm1 is a causal mask, cuDNN can generate causal mask inside
   // the attention kernel to save I/O.
   bool is_causal_mask = false;
-  // We use this to keep track of whether the attention block should be lowered
-  // to flash attention or regular fused attention in cuDNN.
-  bool is_flash_attention = false;
   bool has_match = false;
   std::string matched_custom_call_name;
 };
@@ -424,22 +421,6 @@ absl::StatusOr<std::optional<QKVLayout>> GetQKVLayout(
   return qkv_layout;
 }
 
-absl::StatusOr<bool> IsFusedAttention(
-    QKVLayout qkv_layout, bool is_training,
-    stream_executor::CudaComputeCapability cc,
-    stream_executor::dnn::VersionInfo cudnn_version) {
-  // otherwise check if it is supported by regular attention
-  int64_t s_q = qkv_layout.seqlen_q;
-  int64_t s_kv = qkv_layout.seqlen_kv;
-  int64_t hidden_dim = qkv_layout.hidden_dim;
-  bool is_seqlen_supported =
-      (s_q <= 512 && s_kv <= 512) &&
-      (!is_training || (s_q % 64 == 0 && s_kv % 64 == 0));
-  bool is_hidden_dim_supported = hidden_dim == 64;
-  bool is_fused_attention = is_seqlen_supported && is_hidden_dim_supported;
-  return is_fused_attention;
-}
-
 absl::StatusOr<bool> IsFlashAttention(
     QKVLayout qkv_layout, bool is_training,
     stream_executor::CudaComputeCapability cc,
@@ -448,8 +429,7 @@ absl::StatusOr<bool> IsFlashAttention(
   int64_t s_kv = qkv_layout.seqlen_kv;
   int64_t hidden_dim = qkv_layout.hidden_dim;
   // start with most relaxed constraint
-  bool is_seqlen_supported = (s_q > 512 || s_kv > 512) &&
-                             (!is_training || (s_q % 2 == 0 && s_kv % 2 == 0));
+  bool is_seqlen_supported = (!is_training || (s_q % 2 == 0 && s_kv % 2 == 0));
   bool is_hidden_dim_supported = hidden_dim <= 128 && hidden_dim % 8 == 0;
   bool is_flash_attention = is_seqlen_supported && is_hidden_dim_supported;
   if (!is_flash_attention) return false;
@@ -1203,8 +1183,8 @@ MatchBwdResult MatchBwdMHAPatternsForCanonicalization(
 
 absl::StatusOr<bool> IsMHABlockSupported(
     HloInstruction* bmm_1, HloInstruction* bmm_2, bool need_canonicalization,
-    bool is_training, bool is_causal_mask, bool& is_flash_attention,
-    std::string& custom_call_name, const DebugOptions& debug_options,
+    bool is_training, bool is_causal_mask, std::string& custom_call_name,
+    const DebugOptions& debug_options,
     stream_executor::CudaComputeCapability cc,
     stream_executor::dnn::VersionInfo cudnn_version) {
   if (MHACallHasDropout(custom_call_name) &&
@@ -1251,7 +1231,7 @@ absl::StatusOr<bool> IsMHABlockSupported(
 
   // check if matched attention block is supported by cuDNN flash attention.
   TF_ASSIGN_OR_RETURN(
-      is_flash_attention,
+      bool is_flash_attention,
       IsFlashAttention(qkv_layout.value(), is_training, cc, cudnn_version));
   if (is_flash_attention) {
     if (is_causal_mask) {
@@ -1267,13 +1247,8 @@ absl::StatusOr<bool> IsMHABlockSupported(
         custom_call_name = kCudnnfMHAScaleMaskSoftmaxCallTarget;
       }
     }
-    return true;
   }
-  // check if matched attention block is supported by cuDNN fused attention.
-  TF_ASSIGN_OR_RETURN(
-      bool is_fused_attention,
-      IsFusedAttention(qkv_layout.value(), is_training, cc, cudnn_version));
-  return is_fused_attention;
+  return is_flash_attention;
 }
 
 absl::StatusOr<HloInstruction*> CanonicalizeBatchedGemmForcuDNNFMHA(
@@ -1378,7 +1353,7 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
     HloInstruction* reduce_sum, HloInstruction* softmax_input,
     double dropout_rate, std::string& custom_call_name,
     stream_executor::CudaComputeCapability cc, bool is_training, bool& changed,
-    bool& v_transposed, bool is_causal_mask, bool is_flash_attention) {
+    bool& v_transposed, bool is_causal_mask) {
   double scale_value = 1.0;
   HloInstruction* lhs_bmm1;
   HloInstruction* rhs_bmm1;
@@ -1445,10 +1420,6 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
     algorithm->set_is_cudnn_frontend(true);
     algorithm->mutable_workspace_size()->set_value(0);
   }
-
-  // set is flash attention here
-  // choose to use flash attention or non-fa attention based on this flag.
-  fmha_config.set_is_flash_attention(is_flash_attention);
   // set is_causal_mask here
   // choose to generate causal mask inside cuDNN attention or not
   fmha_config.set_mask_type(is_causal_mask ? CudnnfMHABackendConfig::CAUSAL
@@ -1484,13 +1455,9 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
       }
     }
     // if it is flash attention, should output softmax stats to the bwd
-    if (is_flash_attention) {
-      TF_RET_CHECK(reduce_sum != nullptr);
-      output_shapes.push_back(
-          ShapeUtil::MakeShape(F32, reduce_sum->shape().dimensions()));
-    } else {
-      output_shapes.push_back(activation_output->shape());
-    }
+    TF_RET_CHECK(reduce_sum != nullptr);
+    output_shapes.push_back(
+        ShapeUtil::MakeShape(F32, reduce_sum->shape().dimensions()));
   }
   call_shape = ShapeUtil::MakeTupleShape(output_shapes);
 
@@ -1501,7 +1468,7 @@ absl::StatusOr<HloInstruction*> FuseFwdMultiHeadedAttentionBlock(
         HloInstruction::CreateConvert(bmm_1->shape(), mask));
     operands.push_back(converted_mask);
   }
-  if ((!is_flash_attention || !is_causal_mask) && bias != nullptr) {
+  if (!is_causal_mask && bias != nullptr) {
     HloInstruction* original_bias;
     HloInstruction* original_broadcast;
     // There will be cases where the bias is up-casted to wider float type,
@@ -1579,7 +1546,6 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     std::string& bwd_custom_call_name) {
   HloInstruction* rhs_bmm1_grad_gemm1;
   HloInstruction* lhs_bmm1_grad_gemm2;
-  HloInstruction* lhs_bmm2_grad_gemm1;
   HloInstruction* rhs_bmm2_grad_gemm2;
   HloInstruction* d_output_grad;
 
@@ -1595,7 +1561,6 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                       fwd_fmha_call->backend_config<GpuBackendConfig>());
   CudnnfMHABackendConfig fwd_config = gpu_config.cudnn_fmha_backend_config();
-  bool is_flash_attention = fwd_config.is_flash_attention();
   bool is_causal_mask =
       fwd_config.mask_type() == CudnnfMHABackendConfig::CAUSAL;
   CudnnfMHABackendConfig bwd_fmha_config;
@@ -1609,24 +1574,14 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
       lhs_bmm1_grad_gemm2,
       ChangeCheckedDimToFastest(comp, bmm_1_grad_2, false /*is_lhs*/,
                                 false /*should_contracting_be_fastest*/));
-  // P tensor
-  TF_ASSIGN_OR_RETURN(
-      lhs_bmm2_grad_gemm1,
-      ChangeCheckedDimToFastest(comp, bmm_2_grad_1, true /*is_lhs*/,
-                                false /*should_contracting_be_fastest*/));
 
   // Forward activation
-  // if it is not flash attention, fwd activation is the P tensor
-  // else it is the softmax_stats
+  // softmax_stats
   HloInstruction* fwd_act;
-  if (fwd_config.is_flash_attention()) {
-    auto fwd_act_index = 2;
-    fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(
-        fwd_fmha_call->shape().tuple_shapes(fwd_act_index), fwd_fmha_call,
-        fwd_act_index));
-  } else {
-    fwd_act = lhs_bmm2_grad_gemm1;
-  }
+  auto fwd_act_index = 2;
+  fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(
+      fwd_fmha_call->shape().tuple_shapes(fwd_act_index), fwd_fmha_call,
+      fwd_act_index));
 
   // V tensor
   TF_ASSIGN_OR_RETURN(
@@ -1660,24 +1615,22 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
     operands.push_back(converted_mask);
   }
 
-  // if is flash attention, add fwd output to input list
-  if (is_flash_attention) {
-    if (!is_causal_mask && bias) {
-      operands.push_back(bias);
-    }
-    HloInstruction* fwd_output;
-    for (auto user : fwd_fmha_call->users()) {
-      if (user->opcode() == HloOpcode::kGetTupleElement &&
-          user->tuple_index() == 0) {
-        fwd_output = user;
-      }
-    }
-    // should be able to find the instruction
-    TF_RET_CHECK(fwd_output != nullptr);
-    // check dO and O have the same layout as it is required by cuDNN
-    TF_RET_CHECK(fwd_output->shape() == d_output_grad->shape());
-    operands.push_back(fwd_output);
+  // For flash attention, add fwd output to input list
+  if (!is_causal_mask && bias) {
+    operands.push_back(bias);
   }
+  HloInstruction* fwd_output;
+  for (auto user : fwd_fmha_call->users()) {
+    if (user->opcode() == HloOpcode::kGetTupleElement &&
+        user->tuple_index() == 0) {
+      fwd_output = user;
+    }
+  }
+  // should be able to find the instruction
+  TF_RET_CHECK(fwd_output != nullptr);
+  // check dO and O have the same layout as it is required by cuDNN
+  TF_RET_CHECK(fwd_output->shape() == d_output_grad->shape());
+  operands.push_back(fwd_output);
 
   *bwd_fmha_config.mutable_bmm1_grad_gemm1_dot_dimension_numbers() =
       bmm_1_grad_1->dot_dimension_numbers();
@@ -1704,9 +1657,6 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // graph.
   // TODO Find a way to compute original seed from dropout keys.
   bwd_fmha_config.set_seed(fwd_config.seed());
-
-  // Set is flash attention
-  bwd_fmha_config.set_is_flash_attention(is_flash_attention);
   bwd_fmha_config.set_mask_type(is_causal_mask
                                     ? CudnnfMHABackendConfig::CAUSAL
                                     : CudnnfMHABackendConfig::NO_MASK);
@@ -1731,10 +1681,6 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // d_intermediate_tensor*, scratch, dbias*}
   std::vector<Shape> output_shapes = {
       bmm_1_grad_2->shape(), bmm_1_grad_1->shape(), bmm_2_grad_1->shape()};
-  if (!fwd_config.is_flash_attention()) {
-    output_shapes.push_back(lhs_bmm2_grad_gemm1->shape());
-  }
-
   // Reserved placeholder for workspace
   output_shapes.push_back(ShapeUtil::MakeShape(U8, {0}));
 
@@ -1875,7 +1821,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
           IsMHABlockSupported(
               matched_result.matched_bmm_1, matched_result.matched_bmm_2,
               matched_result.need_canonicalization, matched_result.is_training,
-              matched_result.is_causal_mask, matched_result.is_flash_attention,
+              matched_result.is_causal_mask,
               matched_result.matched_custom_call_name, debug_options,
               compute_capability_, cudnn_version));
 
@@ -1926,8 +1872,7 @@ absl::StatusOr<bool> CudnnFusedMHARewriter::Run(
               matched_result.matched_dropout_rate,
               matched_result.matched_custom_call_name, compute_capability_,
               matched_result.is_training, changed, v_transposed,
-              matched_result.is_causal_mask,
-              matched_result.is_flash_attention));
+              matched_result.is_causal_mask));
       any_changed |= changed;
       if (matched_result.is_training) {
         MatchBwdResult matched_bwd_result =

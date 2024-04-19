@@ -95,7 +95,6 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                                      params.config->activation,
                                      dropout_rate,
                                      seed,
-                                     params.config->is_flash_attention,
                                      mask_type};
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
@@ -231,7 +230,6 @@ absl::Status RunFusedMHABackward(
                                              params.config->bias,
                                              dropout_rate,
                                              seed,
-                                             params.config->is_flash_attention,
                                              mask_type};
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
@@ -425,7 +423,6 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
                                         bias_shape.layout().minor_to_major());
   }
   config.kind = desc.kind;
-  config.is_flash_attention = desc.is_flash_attention;
   config.mask_type = desc.mask_type;
   const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
@@ -568,7 +565,6 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   }
 
   config.kind = desc.kind;
-  config.is_flash_attention = desc.is_flash_attention;
   config.mask_type = desc.mask_type;
   const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());

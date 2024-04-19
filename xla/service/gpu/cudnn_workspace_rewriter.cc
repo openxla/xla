@@ -107,7 +107,6 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                         AsCudnnFmhaMaskKind(config.mask_type()));
     GpufMHADescriptor descriptor = {kind,
                                     config,
-                                    config.is_flash_attention(),
                                     cudnn_mask_type,
                                     q_shape,
                                     k_shape,
@@ -140,7 +139,6 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         custom_call->backend_config<xla::gpu::GpuBackendConfig>());
     const xla::gpu::CudnnfMHABackendConfig& config =
         gpu_config.cudnn_fmha_backend_config();
-    bool is_flash_attention = config.is_flash_attention();
 
     int input_index = 0;
     Shape bmm1_grad_gemm1_rhs_shape =
@@ -194,7 +192,6 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     GpufMHABackwardDescriptor descriptor = {
         kind,
         config,
-        is_flash_attention,
         cudnn_mask_type,
         bmm1_grad_gemm1_rhs_shape,
         bmm1_grad_gemm2_rhs_shape,
@@ -249,10 +246,6 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
                         hlo->backend_config<GpuBackendConfig>());
     const CudnnfMHABackendConfig& config =
         gpu_config.cudnn_fmha_backend_config();
-    if (!config.is_flash_attention()) {
-      // only flash attention is supported in new cudnn frontend
-      return absl::OkStatus();
-    }
 
     TF_ASSIGN_OR_RETURN(
         se::gpu::CudnnGraph graph,
