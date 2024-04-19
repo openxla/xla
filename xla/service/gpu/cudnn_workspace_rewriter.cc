@@ -244,8 +244,6 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
     }
     TF_ASSIGN_OR_RETURN(auto gpu_config,
                         hlo->backend_config<GpuBackendConfig>());
-    const CudnnfMHABackendConfig& config =
-        gpu_config.cudnn_fmha_backend_config();
 
     TF_ASSIGN_OR_RETURN(
         se::gpu::CudnnGraph graph,
