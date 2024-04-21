@@ -5622,7 +5622,9 @@ if (CudaOrRocmCheck(Switch::False, Switch::True)) {
       const.0 = f32[] constant(0)
       bcast.0 = f32[128,128] broadcast(const.0), dimensions={}
       dot = f32[128,128] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      c = f32[128,128] parameter(8)
       maximum.1 = f32[128,128] maximum(dot, bcast.0)
+      dot.1 = f32[128,128] dot(maximum.1, c), lhs_contracting_dims={1}, rhs_contracting_dims={0}
       compare.0 = pred[128,128] compare(dot, bcast.0), direction=GT
       a = <<F8E5M2>>[128,128] parameter(4)
       b = <<F8E4M3>>[128,128] parameter(5)
@@ -5636,7 +5638,7 @@ if (CudaOrRocmCheck(Switch::False, Switch::True)) {
       b_unscaled = f32[128,128] multiply(b_f32, b_scale_bcast)
       dot.2 = f32[128,128] dot(a_unscaled, b_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={1}
       select.0 = f32[128,128] select(compare.0, dot.2, bcast.0)
-      ROOT out = (f32[128,128], f32[128,128]) tuple(maximum.1, select.0)
+      ROOT out = (f32[128,128], f32[128,128], f32[128,128]) tuple(maximum.1, select.0, dot.1)
           }
 
 )";
@@ -5646,7 +5648,7 @@ if (CudaOrRocmCheck(Switch::False, Switch::True)) {
       hlo_text, GemmRewriter(CudaHopperOrRocmMI300(), /*f8_rewrite=*/true),
       R"(
 
-; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: <<F8E5M2>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[]) -> (f32[128,128], f32[128,128]) {
+; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: <<F8E5M2>>[128,128], {{.*}}: <<F8E4M3>>[128,128], {{.*}}: f32[], {{.*}}: f32[], {{.*}}: f32[128,128]) -> (f32[128,128], f32[128,128], f32[128,128]) {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[128,128]{1,0} transpose([[P1]]), dimensions={1,0}
@@ -5694,7 +5696,9 @@ if (CudaOrRocmCheck(Switch::False, Switch::True)) {
 ; CHECK-DAG:         }
 ; CHECK-DAG:         "epilogue":"D_RELU"
 ; CHECK:           }
-; CHECK:         ROOT [[OUT:%[^ ]+]] = (f32[128,128]{1,0}, f32[128,128]{1,0}) tuple([[GETT2]], [[OUT1]])
+; CHECK:         [[Z:%[^ ]+]] = f32[128,128]{1,0} parameter(8)
+; CHECK:         [[OUT2:%[^ ]+]] = f32[128,128]{1,0} dot([[GETT2]], [[Z]]), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+; CHECK:         ROOT [[OUT:%[^ ]+]] = (f32[128,128]{1,0}, f32[128,128]{1,0}, f32[128,128]{1,0}) tuple([[GETT2]], [[OUT1]], [[OUT2]])
       )");
 }
 

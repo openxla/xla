@@ -173,7 +173,7 @@ class GemmAutotuner {
     TF_ASSIGN_OR_RETURN(bool has_aux_input,
                         xla::gpu::gpublas_lt::EpilogueHasAuxiliaryInput(
                             backend_config.epilogue()));
-
+    CHECK(!(has_aux_input && has_aux_output));
     TF_ASSIGN_OR_RETURN(auto epilogue,
                         AsBlasLtEpilogue(backend_config.epilogue()));
 
