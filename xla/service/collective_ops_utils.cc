@@ -615,8 +615,10 @@ bool IsCollectiveWithChannelId(const HloInstruction* instruction) {
     case HloOpcode::kAllGather:
     case HloOpcode::kAllGatherStart:
     case HloOpcode::kAllToAll:
+    case HloOpcode::kCollectiveBroadcast:
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kReduceScatter:
       return instruction->channel_id().has_value();
     case HloOpcode::kFusion:
       for (const auto* inner_inst : instruction->fused_instructions()) {
