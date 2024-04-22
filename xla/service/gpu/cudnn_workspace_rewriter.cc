@@ -62,23 +62,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                         xla::gpu::GetCudnnfMHAKind(custom_call));
     std::optional<Shape> mask_shape, bias_shape;
     {
-      bool has_mask = kind == CudnnfMHAKind::kScaleMaskSoftmax ||
-                      kind == CudnnfMHAKind::kScaleMaskSoftmaxDropout ||
-                      kind == CudnnfMHAKind::kScaleBiasMaskSoftmax ||
-                      kind == CudnnfMHAKind::kScaleBiasMaskSoftmaxDropout;
-      bool has_bias = kind == CudnnfMHAKind::kScaleBiasMaskSoftmax ||
-                      kind == CudnnfMHAKind::kScaleBiasSoftmaxDropout ||
-                      kind == CudnnfMHAKind::kScaleBiasSoftmax ||
+      bool has_bias = kind == CudnnfMHAKind::kScaleBiasSoftmax ||
                       kind == CudnnfMHAKind::kScaleBiasSoftmaxDropout;
 
-      if (has_mask) {
-        const HloInstruction* mask = custom_call->operand(3);
-        mask_shape = mask->shape();
-        if (has_bias) {
-          const HloInstruction* bias = custom_call->operand(4);
-          bias_shape = bias->shape();
-        }
-      } else if (has_bias) {
+      if (has_bias) {
         const HloInstruction* bias = custom_call->operand(3);
         bias_shape = bias->shape();
       }
@@ -128,8 +115,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         se::gpu::GetCudnnFlashAttentionOperationGraph(
             dnn_support, fmha_config.lhs_bmm1, fmha_config.rhs_bmm1,
             fmha_config.rhs_bmm2, fmha_config.output, fmha_config.bias,
-            fmha_config.mask, fmha_config.activation,
-            static_cast<float>(*fmha_config.fmha_scale),
+            fmha_config.activation, static_cast<float>(*fmha_config.fmha_scale),
             fmha_config.dropout_rate && *fmha_config.dropout_rate > 0.0,
             fmha_config.dropout_rate, dnn_mask_type));
     return std::move(graph);
@@ -153,20 +139,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
 
     TF_ASSIGN_OR_RETURN(const CudnnfMHAKind kind,
                         GetCudnnfMHAKind(custom_call));
-    bool has_mask = kind == CudnnfMHAKind::kBackwardScaleMaskSoftmax ||
-                    kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax ||
-                    kind == CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout ||
-                    kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout;
     std::optional<Shape> mask_shape;
-    if (has_mask) {
-      mask_shape = custom_call->operand(input_index++)->shape();
-    }
 
-    bool has_bias =
-        (kind == CudnnfMHAKind::kBackwardScaleBiasSoftmax ||
-         kind == CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout ||
-         kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax ||
-         kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout);
+    bool has_bias = (kind == CudnnfMHAKind::kBackwardScaleBiasSoftmax ||
+                     kind == CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout);
     std::optional<Shape> bias_shape;
     if (has_bias) {
       bias_shape = custom_call->operand(input_index++)->shape();
@@ -226,8 +202,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             fmha_config.d_bmm2_rhs, fmha_config.bias, fmha_config.dropout_rate,
             fmha_config.seed, *fmha_config.fmha_scale,
             fmha_config.dropout_rate && *fmha_config.dropout_rate > 0.0,
-            fmha_config.mask != std::nullopt, fmha_config.bias != std::nullopt,
-            dnn_mask_type));
+            fmha_config.bias != std::nullopt, dnn_mask_type));
     return std::move(graph);
   }
 }

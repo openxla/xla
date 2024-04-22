@@ -964,30 +964,15 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
   BufferAllocation::Slice seqlen_q_slice, seqlen_k_slice;
   std::optional<Shape> mask_shape, bias_shape;
   {
-    bool has_mask = kind == CudnnfMHAKind::kScaleMaskSoftmax ||
-                    kind == CudnnfMHAKind::kScaleMaskSoftmaxDropout ||
-                    kind == CudnnfMHAKind::kScaleBiasMaskSoftmax ||
-                    kind == CudnnfMHAKind::kScaleBiasMaskSoftmaxDropout;
-    bool has_bias = kind == CudnnfMHAKind::kScaleBiasMaskSoftmax ||
-                    kind == CudnnfMHAKind::kScaleBiasSoftmaxDropout ||
-                    kind == CudnnfMHAKind::kScaleBiasSoftmax ||
+    bool has_bias = kind == CudnnfMHAKind::kScaleBiasSoftmax ||
                     kind == CudnnfMHAKind::kScaleBiasSoftmaxDropout;
 
-    if (has_mask) {
-      const HloInstruction* mask = instr->operand(3);
-      TF_ASSIGN_OR_RETURN(mask_slice, GetAllocationSliceForHlo(mask));
-      mask_shape = mask->shape();
-      if (has_bias) {
-        const HloInstruction* bias = instr->operand(4);
-        TF_ASSIGN_OR_RETURN(bias_slice, GetAllocationSliceForHlo(bias));
-        bias_shape = bias->shape();
-      }
-    } else if (has_bias) {
+    if (has_bias) {
       const HloInstruction* bias = instr->operand(3);
       TF_ASSIGN_OR_RETURN(bias_slice, GetAllocationSliceForHlo(bias));
       bias_shape = bias->shape();
     }
-    int64_t seqlen_qk_operand_index = 3 + has_mask + has_bias;
+    int64_t seqlen_qk_operand_index = 3 + has_bias;
     bool has_seqlen_qk = seqlen_qk_operand_index == instr->operand_count() - 2;
     if (has_seqlen_qk) {
       const HloInstruction* seqlen_q = instr->operand(seqlen_qk_operand_index);
@@ -1066,22 +1051,11 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunk(
   Shape d_output_shape = instr->operand(input_index++)->shape();
 
   TF_ASSIGN_OR_RETURN(const CudnnfMHAKind kind, GetCudnnfMHAKind(instr));
-  bool has_mask = kind == CudnnfMHAKind::kBackwardScaleMaskSoftmax ||
-                  kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax ||
-                  kind == CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout ||
-                  kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout;
   BufferAllocation::Slice mask_slice;
   std::optional<Shape> mask_shape;
-  if (has_mask) {
-    TF_ASSIGN_OR_RETURN(mask_slice,
-                        GetAllocationSliceForHlo(instr->operand(input_index)));
-    mask_shape = instr->operand(input_index++)->shape();
-  }
 
   bool has_bias = (kind == CudnnfMHAKind::kBackwardScaleBiasSoftmax ||
-                   kind == CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout ||
-                   kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax ||
-                   kind == CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout);
+                   kind == CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout);
   BufferAllocation::Slice bias_slice;
   std::optional<Shape> bias_shape;
   if (has_bias) {

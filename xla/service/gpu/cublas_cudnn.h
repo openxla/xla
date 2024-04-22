@@ -59,20 +59,10 @@ enum class CudnnNormKind {
 };
 
 enum class CudnnfMHAKind {
-  kBmmBmm,
-  kScaleBiasMaskSoftmax,
-  kScaleBiasMaskSoftmaxDropout,
-  kScaleMaskSoftmax,
-  kScaleMaskSoftmaxDropout,
   kSoftmaxDropout,
   kSoftmax,
   kScaleBiasSoftmax,
   kScaleBiasSoftmaxDropout,
-  kBackwardBmmBmm,
-  kBackwardScaleBiasMaskSoftmax,
-  kBackwardScaleBiasMaskSoftmaxDropout,
-  kBackwardScaleMaskSoftmax,
-  kBackwardScaleMaskSoftmaxDropout,
   kBackwardSoftmaxDropout,
   kBackwardSoftmax,
   kBackwardScaleBiasSoftmax,
@@ -181,11 +171,10 @@ bool IsCustomCallToDnnNorm(const HloInstruction& hlo);
 
 // The fused_mha_rewriter phase where each of the MHA signatures are pattern
 // matched and rewritten into a custom-call with specific custom-call target.
-// The custom-call target specifies the MHA signature. For example,  BMM1 -
-// Scale
+// The custom-call target specifies the MHA signature. For example,  BMM1 -Scale
 // - Bias - Softmax - BMM2 pattern can have the target as
-// cudnn$fmhaScaleBiasSoftmax.
-// The fMHA signatures currently supported by cudnn are:
+// cudnn$fmhaScaleBiasSoftmax. The fMHA signatures currently supported by cudnn
+// are:
 // 1. BMM1 - Softmax - BMM2
 // 2. BMM1 - Softmax - Dropout - BMM2
 // 3. BMM1 - scale - Bias - Softmax - BMM2

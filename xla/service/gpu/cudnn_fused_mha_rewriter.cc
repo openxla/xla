@@ -942,8 +942,7 @@ MatchBwdResult MatchBwdBmmSoftmaxDropoutBmm(MatchBwdResult previous_result,
     dS = dS->users()[0];
   }
   if (has_scale) {
-    // bmm1-(scale)-(bias)-softmax pattern
-    // users could be dbias or scale bwd
+    // bmm1-(scale)-(bias)-softmax pattern users could be dbias or scale bwd
     if (dS->user_count() == 1) {
       // no dbias
       match_result.has_match = true;
@@ -1008,7 +1007,6 @@ MatchBwdResult MatchBwdMHAPatternsForCanonicalization(
   if (!match_result.has_match) {
     return match_result;
   }
-  // TODO match all other patterns
   match_result = MatchBwdBmmSoftmaxDropoutBmm(match_result, fwd_fmha_call);
   return match_result;
 }
@@ -1393,7 +1391,7 @@ absl::StatusOr<bool> FuseBwdMultiHeadedAttentionBlock(
   // Forward activation
   // softmax_stats
   HloInstruction* fwd_act;
-  auto fwd_act_index = 2;
+  int64_t fwd_act_index = 2;
   fwd_act = comp->AddInstruction(HloInstruction::CreateGetTupleElement(
       fwd_fmha_call->shape().tuple_shapes(fwd_act_index), fwd_fmha_call,
       fwd_act_index));

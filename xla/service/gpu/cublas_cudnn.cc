@@ -223,39 +223,19 @@ absl::StatusOr<CudnnfMHAKind> GetCudnnfMHAKind(
 
 std::string CudnnfMHAKindToString(CudnnfMHAKind kind) {
   switch (kind) {
-    case CudnnfMHAKind::kBmmBmm:
-      return "fused_batched_matmuls";
     case CudnnfMHAKind::kSoftmax:
       return "fmha_softmax";
     case CudnnfMHAKind::kSoftmaxDropout:
       return "fmha_softmax_with_dropout";
-    case CudnnfMHAKind::kScaleMaskSoftmax:
-      return "fmha_scaled_masked_softmax";
-    case CudnnfMHAKind::kScaleMaskSoftmaxDropout:
-      return "fmha_scaled_masked_softmax_with_dropout";
-    case CudnnfMHAKind::kScaleBiasMaskSoftmax:
-      return "fmha_scaled_bias_masked_softmax";
-    case CudnnfMHAKind::kScaleBiasMaskSoftmaxDropout:
-      return "fmha_scaled_bias_masked_softmax_with_dropout";
     case CudnnfMHAKind::kScaleBiasSoftmaxDropout:
       return "fmha_bias_softmax_with_dropout";
     case CudnnfMHAKind::kScaleBiasSoftmax:
       return "fmha_bias_softmax";
     // backward
-    case CudnnfMHAKind::kBackwardBmmBmm:
-      return "fused_batched_matmuls_backward";
     case CudnnfMHAKind::kBackwardSoftmax:
       return "fmha_softmax_backward";
     case CudnnfMHAKind::kBackwardSoftmaxDropout:
       return "fmha_softmax_with_dropout_backward";
-    case CudnnfMHAKind::kBackwardScaleMaskSoftmax:
-      return "fmha_scaled_masked_softmax_backward";
-    case CudnnfMHAKind::kBackwardScaleMaskSoftmaxDropout:
-      return "fmha_scaled_masked_softmax_with_dropout_backward";
-    case CudnnfMHAKind::kBackwardScaleBiasMaskSoftmax:
-      return "fmha_scaled_bias_masked_softmax_backward";
-    case CudnnfMHAKind::kBackwardScaleBiasMaskSoftmaxDropout:
-      return "fmha_scaled_bias_masked_softmax_with_dropout_backward";
     case CudnnfMHAKind::kBackwardScaleBiasSoftmaxDropout:
       return "fmha_bias_softmax_with_dropout_backward";
     case CudnnfMHAKind::kBackwardScaleBiasSoftmax:
