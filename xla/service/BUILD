@@ -557,6 +557,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:regexp",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -1549,6 +1550,7 @@ cc_library(
         ":compiler",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:denormal",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -1909,6 +1911,7 @@ cc_library(
         "@tsl//tsl/lib/gtl:map_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
