@@ -322,6 +322,7 @@ namespace wrap {
   __macro(miopenConvolutionBackwardDataGetWorkSpaceSize)             \
   __macro(miopenCreateRNNDescriptor)                                 \
   __macro(miopenSetRNNDescriptor)                                    \
+  __macro(miopenSetRNNDescriptor_V2)                                 \
   __macro(miopenDestroyRNNDescriptor)                                \
   __macro(miopenGetRNNParamsSize)                                    \
   __macro(miopenGetRNNLayerParam)                                    \
@@ -444,6 +445,7 @@ namespace wrap {
   __macro(miopenConvolutionBackwardDataGetWorkSpaceSize)             \
   __macro(miopenCreateRNNDescriptor)                                 \
   __macro(miopenSetRNNDescriptor)                                    \
+  __macro(miopenSetRNNDescriptor_V2)                                 \
   __macro(miopenDestroyRNNDescriptor)                                \
   __macro(miopenGetRNNParamsSize)                                    \
   __macro(miopenGetRNNLayerParam)                                    \
@@ -2005,7 +2007,7 @@ class MIOpenDropoutDescriptor {
         DeviceMemory<uint8_t> state_memory;
         if (state_allocator) {
           size_t state_sizes_in_bytes = 0;
-          status = miopenDropoutGetStatesSize(miopen_handle, &state_sizes_in_bytes);
+          status = wrap::miopenDropoutGetStatesSize(miopen_handle, &state_sizes_in_bytes);
           if (status != miopenStatusSuccess) {
             LOG(FATAL) << "call to miopenDropoutGetStatesSize failed: "
                        << ToString(status);
@@ -2033,7 +2035,7 @@ class MIOpenDropoutDescriptor {
     }
 
     ~MIOpenDropoutDescriptor() {
-      status = wrap::miopenDestroyDropoutDescriptor(dropout_desc_);
+      auto status = wrap::miopenDestroyDropoutDescriptor(dropout_desc_);
       if (status != miopenStatusSuccess) {
         LOG(FATAL) << "call to miopenDestroyDropoutDescriptor failed: "
                  << ToString(status);
@@ -2046,7 +2048,7 @@ class MIOpenDropoutDescriptor {
 
     MIOpenDropoutDescriptor (const MIOpenDropoutDescriptor&) = delete;
     void operator=(const MIOpenDropoutDescriptor&) = delete;
-}
+};
 
 class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
  public:
@@ -2067,13 +2069,16 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
         rnn_mode_(rnn_mode),
         data_type_(data_type),
         algorithm_config_(algorithm_config) {
+    // Create the dropout handle
+    miopen_dropout_desc_.reset(
+      new MIOpenDropoutDescriptor(miopen_handle, dropout, seed, state_allocator));
     // Create the RNN handle
     auto status = wrap::miopenCreateRNNDescriptor(&rnn_desc_);
     RETURN_IF_MIOPEN_ERROR(status, "Unable to create RNN descriptor");
-    status = wrap::miopenSetRNNDescriptor(
+    status = wrap::miopenSetRNNDescriptor_V2(
         rnn_desc_ /*rnnDesc*/, hidden_size /*hiddenSize*/,
-        num_layers /*numLayers*/, input_mode /*inputMode*/,
-        direction_mode /*direction*/, rnn_mode /*mode*/,
+        num_layers /*numLayers*/, miopen_dropout_desc_->handle() /*dropoutDesc*/, 
+        input_mode /*inputMode*/, direction_mode /*direction*/, rnn_mode /*mode*/,
         miopenRNNwithBias /*biasMode*/, miopenRNNdefault /*algo*/,
         data_type /*dataType*/);
     RETURN_IF_MIOPEN_ERROR(status, "Unable to update RNN descriptor");
@@ -2084,9 +2089,6 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
       SetFailure(miopen_params_desc_->Status());
       return;
     }
-    // Create the dropout handle
-    miopen_dropout_desc_.reset(
-      new MIOpenDropoutDescriptor(miopen_handle, dropout, seed, state_allocator));
   }
   ~MIOpenRnnDescriptor() override {
     if (rnn_desc_) {
@@ -2135,7 +2137,7 @@ class MIOpenRnnDescriptor : public MIOpenDescriptorCommon<dnn::RnnDescriptor> {
   miopenDataType_t data_type_;
   dnn::AlgorithmConfig algorithm_config_;
   absl::Status status_;
-  std::unique_ptr<miopenDropoutDescriptor> miopen_dropout_desc_;
+  std::unique_ptr<MIOpenDropoutDescriptor> miopen_dropout_desc_;
   std::unique_ptr<MIOpenRnnParamsDescriptor> miopen_params_desc_;
   MIOpenRnnDescriptor(const MIOpenRnnDescriptor&) = delete;
   void operator=(const MIOpenRnnDescriptor&) = delete;
