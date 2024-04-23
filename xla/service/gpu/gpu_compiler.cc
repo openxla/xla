@@ -651,10 +651,8 @@ absl::Status RunSPMDPasses(
 
     spmd_simplify.AddPass<SortSimplifier>();
     spmd_simplify.AddPass<TupleSimplifier>();
-    spmd_simplify.AddPass<ScatterSimplifier>();
     spmd_simplify.AddPass<ScatterExpander>(
         ScatterExpander::kEliminateSimpleScatters);
-    spmd_simplify.AddPass<GatherSimplifier>();
     spmd_simplify.AddPass<GatherExpander>(
         GatherExpander::kEliminateSimpleGathers);
     spmd_simplify.AddPass<WhileLoopConstantSinking>();
@@ -1286,6 +1284,17 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_target_config, thread_pool.get()));
 
+  // This is a "low effort, high impact" fusion that should be run first.
+  if (hlo_module->config()
+          .debug_options()
+          .xla_gpu_enable_address_computation_fusion()) {
+    HloPassPipeline pipeline("address-computation");
+    TF_ASSIGN_OR_RETURN(se::Platform * platform,
+                        se::PlatformManager::PlatformWithId(PlatformId()));
+    pipeline.AddPass<AddressComputationFusionRewriter>(platform->Name());
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
+
   TF_RETURN_IF_ERROR(RunFusionPasses(hlo_module, gpu_target_config,
                                      thread_pool.get(),
                                      ShapeSizeBytesFunction()));
@@ -1402,7 +1411,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // and may rewrite quantized FP8 GEMMs as higher-precision GEMMs.
     pipeline.AddPass<GemmRewriter>(gpu_version, /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+        cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
       pipeline.AddPass<GemmFusion>(gpu_version);
     }
     // Rewrite non-FP8 GEMMs.
@@ -1413,6 +1422,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
     if (debug_options.xla_gpu_normalize_layouts()) {
       pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
+      // Remove any redundant operations (such as bitcasts) introduced by layout
+      // normalization.
+      pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
     }
     pipeline.AddPass<BroadcastCanonicalizer>();
 
@@ -1424,7 +1436,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // harder.
     if (debug_options.xla_gpu_enable_triton_softmax_fusion() &&
         cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::VOLTA)) {
+        cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
       pipeline.AddPass<HloPassFix<AlgebraicSimplifier>>(simplifier_options);
       pipeline.AddPass<SoftmaxRewriterTriton>(gpu_version);
     }
@@ -1602,16 +1614,21 @@ absl::StatusOr<std::unique_ptr<HloModule>> GpuCompiler::RunHloPasses(
   // out we have no way of telling how far through the process we got).
   RecordHloPassesDuration(end_usecs - start_usecs);
 
+  TF_ASSIGN_OR_RETURN(
+      AutotuneConfig autotune_config,
+      GetAutotuneConfig(stream_exec, debug_opts, options, gpu_target_config));
+  AutotuneResults autotune_results;
+  if (!is_deviceless) {
+    TF_RETURN_IF_ERROR(
+        AutotunerUtil::SerializeAutotuneResults(&autotune_results));
+    TF_RETURN_IF_ERROR(SerializeAutotuneResultsToFile(debug_opts));
+  }
   const std::optional<std::string> optimized_fingerprint =
-      MaybeUploadOptimizedGpuSymbols(module.get());
+      MaybeUploadOptimizedGpuSymbols(module.get(), autotune_results);
   if (unoptimized_fingerprint.has_value() &&
       optimized_fingerprint.has_value()) {
     MaybeUploadGpuSymbolMapping(*unoptimized_fingerprint,
                                 *optimized_fingerprint);
-  }
-  if (!is_deviceless) {
-    TF_RETURN_IF_ERROR(
-        SerializeAutotuneResultsToFile(module->config().debug_options()));
   }
 
   return std::move(module);
@@ -1662,45 +1679,15 @@ absl::Status RunPostSchedulingCopyInsertion(
 }
 }  // namespace
 
-absl::StatusOr<std::unique_ptr<BufferAssignment>> GpuCompiler::AssignBuffers(
-    HloModule* hlo_module, const se::StreamExecutor* stream_exec) {
-  const se::DeviceDescription& gpu_device_info =
-      stream_exec->GetDeviceDescription();
-  TF_RETURN_IF_ERROR(
-      ScheduleGpuModule(hlo_module, pointer_size_, gpu_device_info).status());
-
-  TF_RETURN_IF_ERROR(
-      RunPostSchedulingCopyInsertion(hlo_module, GetCanShareBuffer()));
-
-  auto buffer_size_bytes_function =
-      [this](const BufferValue& buffer_value) -> int64_t {
-    return GetSizeOfShape(buffer_value.shape(), pointer_size_);
-  };
-
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<BufferAssignment> assignment,
-      BufferAssigner::Run(
-          hlo_module,
-          std::make_unique<SequentialHloOrdering>(hlo_module->schedule()),
-          buffer_size_bytes_function,
-          /*color_alignment=*/
-          [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
-          /*allocate_buffers_for_constants=*/true,
-          /*colorer=*/BufferAssigner::DefaultColorer(),
-          /*must_not_live_out=*/{}, GetCanShareBuffer()));
-
-  return std::move(assignment);
-}
-
 using OutputInfoMap =
     absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>;
 
-static void NullDiagnosticHandler(const llvm::DiagnosticInfo& diag_info,
+static void NullDiagnosticHandler(const llvm::DiagnosticInfo* diag_info,
                                   void* context) {
   std::string error_string;
   llvm::raw_string_ostream string_printer(error_string);
   llvm::DiagnosticPrinterRawOStream diagnostic_printer(string_printer);
-  diag_info.print(diagnostic_printer);
+  diag_info->print(diagnostic_printer);
 
   VLOG(5) << error_string;
 }
@@ -1977,6 +1964,10 @@ GpuCompiler::CompileToBackendResult(
 absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     std::unique_ptr<HloModule> module, se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+  tsl::profiler::ScopedAnnotation backend_annotation{[&] {
+    return absl::StrFormat("XlaCompileBackend:#module=%s,program_id=%d#",
+                           module->name(), module->unique_id());
+  }};
   Thunk::BinaryMap dnn_compiled_graphs;
   if (stream_exec) {
     TF_RETURN_IF_ERROR(RunCudnnFusionCompilerPass(module.get(), stream_exec,
@@ -2049,6 +2040,10 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   int64_t debug_buffer_assignment_show_max =
       module->config().debug_options().xla_debug_buffer_assignment_show_max();
 
+  tsl::profiler::ScopedAnnotation annotation([&] {
+    return absl::StrFormat("XlaCreateGpuExecutable:#module=%s#",
+                           module->name());
+  });
   TF_ASSIGN_OR_RETURN(
       auto gpu_executable,
       GpuExecutable::Create(GpuExecutable::Params{
@@ -2117,6 +2112,10 @@ GpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
 
   for (std::unique_ptr<HloModule>& module : modules) {
     if (!module->has_schedule()) {
+      tsl::profiler::ScopedAnnotation annotation{[&] {
+        return absl::StrFormat("XlaCompile:#module=%s,program_id=%d#",
+                               module->name(), module->unique_id());
+      }};
       CompileOptions compile_options;
       compile_options.device_allocator = options.device_allocator();
       compile_options.target_config = options.target_config();
@@ -2216,16 +2215,6 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
       VLOG(1) << "HloRematerialization saved "
               << sizes.before_bytes - sizes.after_bytes << " bytes";
     }
-  }
-
-  if (module->config()
-          .debug_options()
-          .xla_gpu_enable_address_computation_fusion()) {
-    HloPassPipeline pipeline("address-computation");
-    TF_ASSIGN_OR_RETURN(se::Platform * platform,
-                        se::PlatformManager::PlatformWithId(PlatformId()));
-    pipeline.AddPass<AddressComputationFusionRewriter>(platform->Name());
-    TF_RETURN_IF_ERROR(pipeline.Run(module).status());
   }
 
   {

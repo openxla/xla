@@ -1,10 +1,10 @@
 # Tensorflow windows-specific implementations of tensorflow/core/platform libraries.
 load(
-    "//tsl:tsl.bzl",
+    "@xla//xla/tsl:tsl.bzl",
     "internal_visibility",
     "tsl_copts",
 )
-load("//tsl:tsl.default.bzl", "filegroup")
+load("@xla//xla/tsl:tsl.default.bzl", "filegroup")
 load(
     "//tsl/platform:rules_cc.bzl",
     "cc_library",

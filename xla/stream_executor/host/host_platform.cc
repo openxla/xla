@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/host/host_gpu_executor.h"
+#include "xla/stream_executor/host/host_executor.h"
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/initialize.h"
@@ -66,8 +66,7 @@ absl::StatusOr<StreamExecutor*> HostPlatform::GetExecutor(
 
 absl::StatusOr<std::unique_ptr<StreamExecutor>>
 HostPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
-  auto executor = std::make_unique<StreamExecutor>(
-      this, std::make_unique<HostExecutor>(), config.ordinal);
+  auto executor = std::make_unique<HostExecutor>(this, config.ordinal);
   auto init_status = executor->Init();
   if (!init_status.ok()) {
     return absl::InternalError(absl::StrFormat(

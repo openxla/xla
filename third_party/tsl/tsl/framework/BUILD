@@ -4,8 +4,8 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
-load("//tsl:tsl.bzl", "internal_visibility")
-load("//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
+load("@xla//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
@@ -273,10 +273,10 @@ cc_library(
         "//tsl/platform:status",
         "//tsl/platform:statusor",
         "//tsl/platform:str_util",
-        "//tsl/util:device_name_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@xla//xla/tsl/util:device_name_utils",
     ],
 )
 
@@ -465,7 +465,7 @@ tsl_cc_test(
         "//tsl/platform:status_matchers",
         "//tsl/platform:test_main",
         "//tsl/protobuf:error_codes_proto_impl_cc",
-        "//tsl/util:device_name_utils",
+        "@xla//xla/tsl/util:device_name_utils",
     ],
 )
 

@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/ir_emitter_triton.h"
 
-#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -41,9 +41,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/pattern_matcher.h"
@@ -72,12 +70,37 @@ namespace {
 namespace m = ::xla::match;
 
 class TritonTest : public GpuCodegenTest {
+  const auto& device_desc() {
+    return backend().default_stream_executor()->GetDeviceDescription();
+  }
+
  public:
   se::CudaComputeCapability GetCudaComputeCapability() {
     return backend()
         .default_stream_executor()
         ->GetDeviceDescription()
         .cuda_compute_capability();
+  }
+
+  const se::GpuComputeCapability& GpuComputeComp() {
+    return device_desc().gpu_compute_capability();
+  }
+
+  bool SkipBF16Tests() {
+    if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+      auto rcc = device_desc().rocm_compute_capability();
+      return !rcc.has_bf16_dtype_support();
+    }
+    return false;
+  }
+
+  se::GpuComputeCapability CudaAmpereOrRocm() {
+    if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+      return se::GpuComputeCapability{device_desc().rocm_compute_capability()};
+    } else {
+      return se::GpuComputeCapability{
+          se::CudaComputeCapability{se::CudaComputeCapability::AMPERE, 0}};
+    }
   }
 };
 
@@ -150,31 +173,6 @@ absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheck(
     return absl::InternalError("FileCheck failed.");
   }
   return absl::OkStatus();
-}
-
-TEST_F(TritonTest, ComputeProgramIdToOutputTileIndexing) {
-  mlir::MLIRContext context;
-
-  auto compute_map = [&](absl::Span<const int64_t> dimensions,
-                         absl::Span<const int64_t> tile_sizes) {
-    return ComputeProgramIdToOutputTileIndexing(dimensions, tile_sizes,
-                                                &context);
-  };
-
-  EXPECT_THAT(compute_map(/*dimensions=*/{9, 17}, /*tile_sizes=*/{5, 10}),
-              MatchIndexingMap(R"(
-    (d0) -> ((d0 floordiv 2) * 5, (d0 mod 2) * 10)
-    domain:
-    d0 in [0, 3]
-  )"));
-
-  EXPECT_THAT(
-      compute_map(/*dimensions=*/{8, 16, 32}, /*tile_sizes=*/{1, 1, 32}),
-      MatchIndexingMap(R"(
-    (d0) -> (d0 floordiv 16, d0 mod 16, 0)
-    domain:
-    d0 in [0, 127]
-  )"));
 }
 
 TEST_F(TritonFilecheckTest, TestGemm) {
@@ -867,6 +865,9 @@ TEST_F(TritonFilecheckTest, NestedReducerFusionGetsCodegenedCorrectly) {
           se::CudaComputeCapability::AMPERE)) {
     GTEST_SKIP() << "Doesn't pass on pre-Ampere GPUs.";
   }
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
 
   const std::string kHloText = R"(
 HloModule softmax
@@ -1207,6 +1208,38 @@ CHECK:     %[[BLOCK_BASE_PTR:.*]] = tt.addptr %[[ARG_PTR]], %[[OFFSET]]
 )"));
 }
 
+TEST_F(TritonFilecheckTest, SparseDot) {
+  const char* kHloText = R"(
+HloModule t
+
+triton_dot {
+  lhs = f16[128,160] parameter(0)
+  rhs = f16[320,64] parameter(1)
+  meta = u16[128,20] parameter(2)
+  ROOT dot = f16[128,64] dot(lhs, rhs, meta),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
+}
+
+ENTRY e {
+  lhs = f16[128,160] parameter(0)
+  rhs = f16[320,64] parameter(1)
+  meta = u16[128,20] parameter(2)
+  ROOT _ = f16[128,64] fusion(lhs, rhs, meta), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config:
+    {"block_m":32,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}
+}
+)";
+  TritonGemmConfig config(32, 32, 32, 1, 1, 1);
+  TF_ASSERT_OK(
+      CreateTritonIrAndFileCheck(kHloText, config, EmitMatMul, "triton_dot", R"(
+CHECK: %[[LHS:[0-9]+]] = tt.load
+CHECK: %[[RHS:[0-9]+]] = tt.load
+CHECK: %[[META:[0-9]+]] = tt.load
+CHECK: triton_gpu.sparse_dot %[[LHS]], %[[RHS]], %{{[^:]+}}, %[[META]] :
+    )"));
+}
+
 TEST_F(TritonGemmTest, DoNotUseTensorCoresWithNonDefaultPrecision) {
   const std::string kHloText = R"(
 triton_gemm_r {
@@ -1289,20 +1322,16 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
                           ParseAndReturnVerifiedModule(kHloText));
 
-  if (GetCudaComputeCapability().IsAtLeast(se::CudaComputeCapability::AMPERE)) {
-    CompileAndOptionallyVerifyPtx(std::move(verified_module),
-                                  R"(
+  CompileAndOptionallyVerifyPtx(std::move(verified_module),
+                                R"(
 CHECK: mma
 )");
-  } else {
-    CompileAndOptionallyVerifyPtx(std::move(verified_module),
-                                  R"(
-CHECK: fma
-)");
-  }
 }
 
 TEST_F(TritonGemmTest, FailIfTooMuchShmem) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
+  }
   const std::string kHloText = R"(
 HloModule module, is_scheduled=true
 
@@ -1335,9 +1364,7 @@ ENTRY entry {
   TritonGemmConfig config(16, 32, 512, 1, 4, 8);
   EXPECT_THAT(
       TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
-                    "test_fn", triton_dot_computation,
-                    se::CudaComputeCapability{se::CudaComputeCapability::AMPERE,
-                                              /*minor=*/0},
+                    "test_fn", triton_dot_computation, CudaAmpereOrRocm(),
                     dev_info, config, &llvm_module, &EmitMatMul, mlir_context),
       tsl::testing::StatusIs(
           tsl::error::RESOURCE_EXHAUSTED,
@@ -1350,9 +1377,7 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
-                    "test_fn", triton_dot_computation,
-                    se::CudaComputeCapability{se::CudaComputeCapability::AMPERE,
-                                              /*minor=*/0},
+                    "test_fn", triton_dot_computation, CudaAmpereOrRocm(),
                     dev_info, config, &llvm_module, &EmitMatMul, mlir_context));
   // Use optin shared memory which is > shared_memory_per_block.
   EXPECT_GT(result.shmem_bytes, dev_info.shared_memory_per_block());
@@ -1383,7 +1408,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
   )");
 
   // Not doing a comparison here, because the input matrices are quite big.
@@ -1409,7 +1434,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
   )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1434,7 +1459,7 @@ ENTRY e {
 ; CHECK-NEXT: ROOT
 ; CHECK-SAME: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 ; CHECK-NOT: pad
 ; CHECK-NOT: slice
 )");
@@ -1461,7 +1486,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
@@ -1488,7 +1513,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1565,7 +1590,7 @@ ENTRY e {
 ; CHECK: transpose
 ; CHECK: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1590,7 +1615,7 @@ ENTRY e {
 ; CHECK: transpose
 ; CHECK: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1615,7 +1640,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-2}));
@@ -1640,7 +1665,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -1666,7 +1691,7 @@ ENTRY e {
 ; CHECK-NEXT: parameter
 ; CHECK-NEXT: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-2}));
@@ -1691,7 +1716,7 @@ ENTRY e {
 ; CHECK: f32[5,3,4]{2,1,0} bitcast
 ; CHECK: fusion
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
@@ -1769,6 +1794,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTestWithoutTritonGemmAny, SkipU8) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
+  }
   const std::string hlo_text = R"(
 HloModule t
 
@@ -1787,6 +1815,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTestWithoutTritonGemmAny, SkipF32F32) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "GEMM padding requirements for ROCM not included yet.";
+  }
   const std::string hlo_text = R"(
 HloModule t
 
@@ -1838,9 +1869,7 @@ ENTRY entry {
   TritonGemmConfig config(512, 512, 32, 1, 1, 2);
   EXPECT_THAT(
       TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
-                    "test_fn", triton_dot_computation,
-                    se::CudaComputeCapability{se::CudaComputeCapability::AMPERE,
-                                              /*minor=*/0},
+                    "test_fn", triton_dot_computation, CudaAmpereOrRocm(),
                     dev_info, config, &llvm_module, &EmitMatMul, mlir_context),
       tsl::testing::StatusIs(
           tsl::error::RESOURCE_EXHAUSTED,
@@ -1852,9 +1881,7 @@ ENTRY entry {
   config.block_k = 32;
   TF_CHECK_OK(
       TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
-                    "test_fn", triton_dot_computation,
-                    se::CudaComputeCapability{se::CudaComputeCapability::AMPERE,
-                                              /*minor=*/0},
+                    "test_fn", triton_dot_computation, CudaAmpereOrRocm(),
                     dev_info, config, &llvm_module, &EmitMatMul, mlir_context)
           .status());
 }
@@ -1912,11 +1939,14 @@ ENTRY e {
                     // multiple times and assign block sizes on success.
                     R"(
 ; CHECK: f16[77,99,111]{2,1,0} transpose
-; CHECK: block_m
+; CHECK-PTX: block_m
 )");
 }
 
 TEST_F(TritonGemmTest, SingleElementTileIsHandled) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Not using autotuner on ROCM yet.";
+  }
   MatchOptimizedHlo(R"(
 t {
   p0 = f32[2,7,3]{2,1,0} parameter(0)
@@ -1970,13 +2000,16 @@ ENTRY e {
   MatchOptimizedHlo(hlo_text, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTestAny, DoAddConstantToScalarAndBroadcastThat) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Not using autotuner on ROCM yet.";
+  }
   const std::string hlo_text = R"(
 HloModule t
 
@@ -2013,20 +2046,42 @@ ENTRY e {
 ; CHECK: ENTRY
 ; CHECK: %[[p0:.*]] = pred[5,5]{1,0} parameter(0)
 ; CHECK: fusion(%[[p0]], %[[p0]]), kind=kCustom
-; CHECK-SAME: "block_m":
+; CHECK-PTX-SAME: "block_m":
 )");
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
+TEST_F(TritonGemmTestAny,
+       DoNotFuseConcatenationOfSplitNonContractingDimension) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
+  const std::string hlo_text = R"(
+HloModule m
+
+ENTRY e {
+  x = bf16[2,128,10] parameter(0)
+  y = bf16[2,256,10] parameter(1)
+  concat = bf16[2,384,10] concatenate(x, y), dimensions={1}
+  z = bf16[10,20] parameter(2)
+  ROOT d = bf16[2,384,20] dot(concat, z), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+})";
+
+  MatchOptimizedHlo(hlo_text, R"(
+; CHECK:      ENTRY
+; CHECK:      concatenate
+; CHECK:        ROOT
+; CHECK-SAME:     fusion
+; CHECK-SAME:       kind=kCustom
+; CHECK-SAME:       "block_m"
+)");
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 class TritonGemmLevel2Test : public TritonGemmTest {
  public:
-  void SetUp() override {
-    if (!GetCudaComputeCapability().IsAtLeast(
-            se::CudaComputeCapability::AMPERE)) {
-      GTEST_SKIP() << "Triton fusion on pre-Ampere GPUs is limited.";
-    }
-  }
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = TritonGemmTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_fusion_level(2);
@@ -2224,6 +2279,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, DoubleBroadcastOfScalarConstantIsHandled) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 ENTRY e {
   c = s32[] constant(1)
@@ -2269,6 +2327,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, AlwaysFuseScalarConstantAtBroadcastInput) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 ENTRY e {
   p0 = bf16[2,3,3]{2,1,0} parameter(0)
@@ -2322,6 +2383,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, FuseConcatenation) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 e {
   p0 = s8[153,1536] parameter(0)
@@ -2364,7 +2428,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -2387,7 +2451,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -2410,7 +2474,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -2433,7 +2497,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
@@ -2457,7 +2521,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3,
@@ -2482,7 +2546,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3,
@@ -2507,7 +2571,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3,
@@ -2532,7 +2596,7 @@ ENTRY e {
   MatchOptimizedHlo(kHloText, R"(
 ; CHECK: fusion(
 ; CHECK-SAME: kind=kCustom
-; CHECK-SAME: block_m
+; CHECK-PTX-SAME: block_m
 )");
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3,
@@ -2609,11 +2673,11 @@ TEST_F(TritonGemmLevel2Test, NestedSlicingWorks) {
   const std::string kHloText = R"(
 ENTRY e {
   p1 = f32[6,24] parameter(1)
-  s1 = f32[5,20] slice(p1), slice={[1:6], [3:23]}
-  n1 = f32[5,20] negate(s1)
-  s2 = f32[3,7] slice(n1), slice={[1:4], [13:20]}
+  slice1 = f32[5,20] slice(p1), slice={[1:6], [3:23]}
+  n1 = f32[5,20] negate(slice1)
+  slice2 = f32[3,7] slice(n1), slice={[1:4], [13:20]}
   p0 = f32[7,37] parameter(0)
-  ROOT d = f32[3,37] dot(s2, p0),
+  ROOT d = f32[3,37] dot(slice2, p0),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })";
 
@@ -2700,6 +2764,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, ParameterAfterDotIsFused) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 HloModule m
 
@@ -2729,6 +2796,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, OutputFusionExecutesCorrectly) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 HloModule m
 
@@ -2762,6 +2832,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, SplitLHSOutputTransposeAloneIsNotFused) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 HloModule m
 
@@ -2786,6 +2859,9 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmLevel2Test, SplitLHSInputOutputIsFused) {
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
+  }
   const std::string kHloText = R"(
 ENTRY e {
   p0t = (s8[5,18,20,150]) parameter(0)
@@ -3061,11 +3137,9 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, BF16TransposedLHS) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
-
   const char* hlo_text_ref = R"(
 HloModule r
 
@@ -3106,11 +3180,6 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, UsingOptinSharedMemoryOnAmpereProducesSameResult) {
-  // On pre-Ampere GPUs the test would use a different amount of shared memory.
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "This test is for Ampere+ GPUs.";
-  }
   const se::DeviceDescription dev_info =
       backend().default_stream_executor()->GetDeviceDescription();
   constexpr int kBytesOfSharedMemoryTested = 64 * 1024;
@@ -3159,9 +3228,9 @@ ENTRY e {
   TF_ASSERT_OK_AND_ASSIGN(
       const auto result,
       TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
-                    "test_fn", triton_dot_computation,
-                    GetCudaComputeCapability(), dev_info, triton_gemm_config,
-                    &llvm_module, &EmitMatMul, mlir_context));
+                    "test_fn", triton_dot_computation, GpuComputeComp(),
+                    dev_info, triton_gemm_config, &llvm_module, &EmitMatMul,
+                    mlir_context));
   // The config is chosen so that the used memory size is slightly above the
   // 48 kB boundary of standard / optin shared memory so that any GPU that
   // has the optin one should be able to execute the test.
@@ -3276,9 +3345,8 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, S8BF16) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const char* hlo_text_ref = R"(
 HloModule r
@@ -3327,9 +3395,8 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, SplitK) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string hlo_text_ref = R"(
 HloModule t, is_scheduled=true
@@ -3404,9 +3471,8 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, SplitKBatch) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloTextRef = R"(
 HloModule m, is_scheduled=true
@@ -3470,9 +3536,8 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, SplitKNontrivialBitcast) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloTextRef = R"(
 HloModule module, is_scheduled=true
@@ -4048,9 +4113,8 @@ ENTRY e {
 }
 
 TEST_F(CompareTest, PredToBF16ConversionWorks) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloTextTest = R"(
 HloModule m, is_scheduled=true
@@ -4172,9 +4236,8 @@ class TritonGemmContractionDims : public TritonGemmTest {
 };
 
 TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_0) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloText = R"(
 HloModule m
@@ -4198,9 +4261,8 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_2_1_2) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloText = R"(
 HloModule m
@@ -4224,9 +4286,8 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_2_0_1) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloText = R"(
 HloModule m
@@ -4251,9 +4312,8 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmContractionDims, TritonDotForceContractionDims_1_1) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
+  if (SkipBF16Tests()) {
+    GTEST_SKIP() << "BF16 not supported.";
   }
   const std::string kHloText = R"(
 HloModule m
@@ -4294,6 +4354,13 @@ class Triton6xBF16GemmTest : public TritonFilecheckTest {
     debug_options.set_xla_gpu_enable_split_k_autotuning(false);
     return debug_options;
   }
+
+ protected:
+  void SetUp() override {
+    if (SkipBF16Tests()) {
+      GTEST_SKIP() << "BF16 not supported.";
+    }
+  }
 };
 
 // In these tests, we depend on debug option flags for selecting the 6XBF16
@@ -4318,9 +4385,6 @@ class Triton6xBF16GemmTestWithFlag : public TritonFilecheckTest {
 };
 
 TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmWhenBothInputsAreF32) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4364,9 +4428,6 @@ CHECK:          %[[ACC:.*]] = arith.addf %[[DOT_LAST]], %[[C0]] : tensor<32x32xf
 }
 
 TEST_F(Triton6xBF16GemmTestWithFlag, Emit6xBF16GemmWhenBothInputsAreF32) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4409,9 +4470,6 @@ CHECK:          %[[ACC:.*]] = arith.addf %[[DOT_LAST]], %[[C0]] : tensor<32x32xf
 }
 
 TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForLongContractingDimension) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4442,9 +4500,6 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 }
 
 TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmCanHandleInfinity) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4489,9 +4544,6 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 }
 
 TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmCanHandleNaN) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4548,9 +4600,6 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 //   x_lo:  5.17201445e+33
 // The result of x*x would be NaN instead of positive infinity.
 TEST_F(Triton6xBF16GemmTest, Triton6xBF16GemmWorksForInputsWithLargeExponent) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4594,43 +4643,6 @@ CHECK-COUNT-6:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
                                ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
-TEST_F(Triton6xBF16GemmTestWithFlag, ShouldNotEmit6xBF16GemmForPreAmpere) {
-  if (GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "6xBF16Gemm should be emitted post-Ampere.";
-  }
-  const char* kHloText = R"(
-HloModule t
-
-triton_dot {
-  p0 = f32[5,7] parameter(0)
-  p1 = f32[7,33] parameter(1)
-  ROOT dot = f32[5,33] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-ENTRY e {
-  p0 = f32[5,7]{1,0} parameter(0)
-  p1 = f32[7,33]{1,0} parameter(1)
-  ROOT _ = f32[5,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
-    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-    triton_gemm_config:
-    {"block_m":32,"block_n":32,"block_k":32,"split_k":1,"num_stages":1,"num_warps":1,"num_ctas":1}}}
-}
-)";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
-                          ParseAndReturnVerifiedModule(kHloText));
-
-  CompileAndOptionallyVerifyPtx(std::move(verified_module),
-                                R"(
-CHECK-NOT: mma
-CHECK: selp.f32
-CHECK: st.shared{{(\.v[24])?}}.f32
-CHECK: ld.shared{{(\.v[24])?}}.f32
-CHECK: fma.rn.f32
-CHECK: st.shared{{(\.v[24])?}}.f32
-)");
-}
-
 TEST_F(Triton6xBF16GemmTest, Emit6xBF16GemmEndToEnd) {
   const char* kHloText = R"(
 HloModule t
@@ -4645,18 +4657,13 @@ ENTRY e {
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
                           ParseAndReturnVerifiedModule(kHloText));
-  if (GetCudaComputeCapability().IsAtLeastAmpere()) {
-    CompileAndOptionallyVerifyPtx(std::move(verified_module),
-                                  R"(
+  CompileAndOptionallyVerifyPtx(std::move(verified_module),
+                                R"(
 CHECK: mma.sync.aligned.{{.*}}.row.col.f32.bf16.bf16.f32
 CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 )");
-    EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-6,
-                                                  /*arel=*/1e-6}));
-  } else {
-    EXPECT_THAT(CompileToExecutable(std::move(verified_module)),
-                tsl::testing::StatusIs(absl::StatusCode::kUnimplemented));
-  }
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-6,
+                                                /*arel=*/1e-6}));
 }
 
 // In these tests, we depend on "algorithm" annotations for selecting the 3XBF16
@@ -4699,12 +4706,16 @@ class Triton3xBF16GemmTestWithFlag : public TritonFilecheckTest {
     debug_options.set_xla_gpu_enable_bf16_3way_gemm(true);
     return debug_options;
   }
+
+ protected:
+  void SetUp() override {
+    if (SkipBF16Tests()) {
+      GTEST_SKIP() << "BF16 not supported.";
+    }
+  }
 };
 
 TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmWhenBothInputsAreF32) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4748,9 +4759,6 @@ CHECK:          %[[ACC:.*]] = arith.addf %[[DOT_LAST]], %[[C0]] : tensor<32x32xf
 }
 
 TEST_F(Triton3xBF16GemmTestWithFlag, Emit3xBF16GemmWhenBothInputsAreF32) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4822,9 +4830,6 @@ CHECK-NOT:  tt.dot
 }
 
 TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForLongContractingDimension) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4855,9 +4860,6 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 }
 
 TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmCanHandleInfinity) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4902,9 +4904,6 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 }
 
 TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmCanHandleNaN) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4951,9 +4950,6 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
 }
 
 TEST_F(Triton3xBF16GemmTest, Triton3xBF16GemmWorksForInputsWithLargeExponent) {
-  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   const char* kHloText = R"(
 HloModule t
 
@@ -4997,6 +4993,45 @@ CHECK-COUNT-3:  %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false, m
                                ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
 }
 
+// This test could be modified to allow TF32 once this bug is fixed.
+// TODO(b/320659359) Allow TF32 for 8-bit or less types with F32.
+TEST_F(TritonFilecheckTest, NoTF32For8BitOrLessWithF32) {
+  const std::string hlo_text = R"(
+HloModule t
+
+triton_dot {
+  parameter_0 = s32[11,24]{1,0} parameter(0)
+  broadcast.1747 = s32[11,24,128]{2,1,0} broadcast(parameter_0),
+  dimensions={0,1} parameter_1 = s32[11,24,128]{2,1,0} parameter(1)
+  compare.49 = pred[11,24,128]{2,1,0} compare(broadcast.1747, parameter_1),
+      direction=EQ bitcast.4717 = pred[264,128]{1,0} bitcast(compare.49)
+  convert.142 = f32[264,128]{1,0} convert(bitcast.4717)
+  parameter_2 = f32[128,8]{1,0} parameter(2)
+  ROOT dot.381 = f32[264,8]{1,0} dot(convert.142, parameter_2),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = s32[11,24]{1,0} parameter(0)
+  p1 = s32[11,24,128]{2,1,0} parameter(1)
+  p2 = f32[128,8]{1,0} parameter(2)
+  ROOT _ = f32[264,8] fusion(p0, p1, p2), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+      triton_gemm_config:
+        {"block_m":32,"block_n":16,"block_k":128,
+         "split_k":1,"num_stages":1,"num_warps":4,
+         "num_ctas":1}}}
+})";
+
+  TritonGemmConfig config(32, 16, 128, 1, 1, 4);
+  ASSERT_OK(
+      CreateTritonIrAndFileCheck(hlo_text, config, EmitMatMul, "triton_dot", R"(
+CHECK: %{{.*}} = tt.dot %{{.*}}, %{{.*}}, %{{.*}} {allowTF32 = false
+  )"));
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 TEST_F(Triton3xBF16GemmTest, Emit3xBF16GemmEndToEnd) {
   const char* kHloText = R"(
 HloModule t
@@ -5011,19 +5046,57 @@ ENTRY e {
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
                           ParseAndReturnVerifiedModule(kHloText));
-  if (GetCudaComputeCapability().IsAtLeastAmpere()) {
-    CompileAndOptionallyVerifyPtx(std::move(verified_module),
-                                  R"(
+  CompileAndOptionallyVerifyPtx(std::move(verified_module),
+                                R"(
 CHECK: mma.sync.aligned.{{.*}}.row.col.f32.bf16.bf16.f32
 CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 )");
-    EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-5,
-                                                  /*arel=*/1e-5}));
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-5,
+                                                /*arel=*/1e-5}));
+}
 
-  } else {
-    EXPECT_THAT(CompileToExecutable(std::move(verified_module)),
-                tsl::testing::StatusIs(absl::StatusCode::kUnimplemented));
-  }
+using TritonEmitterTest = TritonGemmTest;
+
+TEST_F(TritonEmitterTest, EmitterFailsIfComputeCapabilityIsBelowAmpere) {
+  const std::string kHloText = R"(
+HloModule module, is_scheduled=true
+
+triton_gemm_dot {
+  p0 = f32[10,20] parameter(0)
+  p1 = f32[20,30] parameter(1)
+  ROOT dot = f32[10,30] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = f32[10,20] parameter(0)
+  p1 = f32[20,30] parameter(1)
+  ROOT r = f32[10,30] fusion(p0, p1),
+    kind=kCustom, calls=triton_gemm_dot
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  const HloComputation* triton_dot_computation =
+      hlo_module->entry_computation()
+          ->root_instruction()
+          ->fused_instructions_computation();
+  const se::DeviceDescription dev_info =
+      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  llvm::LLVMContext llvm_ctx;
+  llvm::Module llvm_module("module", llvm_ctx);
+  mlir::MLIRContext mlir_context;
+
+  EXPECT_THAT(
+      TritonWrapper(*TritonFusionAnalysis::Execute(*triton_dot_computation),
+                    "test_fn", triton_dot_computation,
+                    se::CudaComputeCapability{se::CudaComputeCapability::VOLTA,
+                                              /*minor=*/0},
+                    dev_info, TritonGemmConfig{}, &llvm_module, &EmitMatMul,
+                    mlir_context),
+      tsl::testing::StatusIs(
+          absl::StatusCode::kFailedPrecondition,
+          ::testing::StrEq(
+              "Triton support is only enabled for Ampere GPUs and up.")));
 }
 
 }  // namespace

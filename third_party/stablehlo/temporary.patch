@@ -177,7 +177,7 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,115 @@
 +# Copyright 2023 The StableHLO Authors. All Rights Reserved.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -251,7 +251,6 @@ diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/
 +        "transforms/ChloRecomposeOps.cpp",
 +        "transforms/StablehloCanonicalizeDynamism.cpp",
 +        "transforms/StablehloRefineShapes.cpp",
-+        "transforms/StablehloTrivialDce.cpp",
 +    ],
 +    hdrs = [
 +        "transforms/Passes.h",
@@ -447,7 +446,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/dialect/CMakeLists.txt b/stablehlo
 diff --ruN a/stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp b/stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp
 --- stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp
 +++ stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,506 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -752,7 +751,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp b/stableh
 +
 +  // Unpack operands and attributes of the underlying custom call into
 +  // operation-specific inputs.
-+  auto rngAlgorithmAttr = op_->getAttr("rng_algorithm");
++  auto rngAlgorithmAttr = op_->getDiscardableAttr("rng_algorithm");
 +  auto initialState = op_.getInputs()[0];
 +  auto outputShape = op_.getInputs()[1];
 +  auto outputState = op_.getResults()[0];
@@ -813,7 +812,9 @@ diff --ruN a/stablehlo/stablehlo/experimental/dialect/StablehloOps.cpp b/stableh
 +}
 +
 +RngAlgorithm DynamicRngBitGeneratorOpAdaptor::getRngAlgorithm() {
-+  return op_->getAttr("rng_algorithm").cast<RngAlgorithmAttr>().getValue();
++  return op_->getDiscardableAttr("rng_algorithm")
++      .cast<RngAlgorithmAttr>()
++      .getValue();
 +}
 +
 +TypedValue<ShapedType> DynamicRngBitGeneratorOpAdaptor::getInitialState() {
@@ -1421,17 +1422,17 @@ diff --ruN a/stablehlo/stablehlo/experimental/tests/stablehlo_canonicalize_dynam
 +// CHECK-LABEL: func @dynamic_reduce_window_success_static_result_type
 +func.func @dynamic_reduce_window_success_static_result_type(%arg0: tensor<3x2xf32>, %arg1: tensor<f32>) -> tensor<2x2xf32> {
 +  //           CHECK-NOT: stablehlo.dynamic_reduce_window
-+  //               CHECK: "stablehlo.reduce_window"(%arg0, %arg1) ({
-+  //          CHECK-NEXT:   ^[[BB:bb.*]](%[[ARG2:arg.*]]: tensor<f32>, %[[ARG3:arg.*]]: tensor<f32>):
-+  //          CHECK-NEXT:     %[[VAL1:.*]] = stablehlo.add %arg2, %arg3 : tensor<f32>
-+  //          CHECK-NEXT:     stablehlo.return %[[VAL1]] : tensor<f32>
-+  //          CHECK-NEXT: }) {
++  //               CHECK: "stablehlo.reduce_window"(%arg0, %arg1) <{
 +  //          CHECK-SAME:   base_dilations = array<i64: 2, 1>,
 +  // CHECK-SAME{LITERAL}:   padding = dense<[[2, 1], [0, 0]]> : tensor<2x2xi64>,
 +  //          CHECK-SAME:   window_dilations = array<i64: 3, 1>,
 +  //          CHECK-SAME:   window_dimensions = array<i64: 2, 1>,
 +  //          CHECK-SAME:   window_strides = array<i64: 4, 1>
-+  //          CHECK-SAME: } : (tensor<3x2xf32>, tensor<f32>) -> tensor<2x2xf32>
++  //          CHECK-SAME: }> ({
++  //          CHECK-NEXT:   ^[[BB:bb.*]](%[[ARG2:arg.*]]: tensor<f32>, %[[ARG3:arg.*]]: tensor<f32>):
++  //          CHECK-NEXT:     %[[VAL1:.*]] = stablehlo.add %arg2, %arg3 : tensor<f32>
++  //          CHECK-NEXT:     stablehlo.return %[[VAL1]] : tensor<f32>
++  //          CHECK-NEXT: }) : (tensor<3x2xf32>, tensor<f32>) -> tensor<2x2xf32>
 +  %0 = stablehlo.constant dense<[2, 1]> : tensor<2xi64>
 +  %1 = stablehlo.constant dense<[4, 1]> : tensor<2xi64>
 +  %2 = stablehlo.constant dense<[2, 1]> : tensor<2xi64>
@@ -1453,17 +1454,17 @@ diff --ruN a/stablehlo/stablehlo/experimental/tests/stablehlo_canonicalize_dynam
 +// CHECK-LABEL: func @dynamic_reduce_window_success_dynamic_result_type
 +func.func @dynamic_reduce_window_success_dynamic_result_type(%arg0: tensor<?x2xf32>, %arg1: tensor<f32>) -> tensor<?x2xf32> {
 +  //           CHECK-NOT: stablehlo.dynamic_reduce_window
-+  //               CHECK: "stablehlo.reduce_window"(%arg0, %arg1) ({
-+  //          CHECK-NEXT:   ^[[BB:bb.*]](%[[ARG2:arg.*]]: tensor<f32>, %[[ARG3:arg.*]]: tensor<f32>):
-+  //          CHECK-NEXT:     %[[VAL1:.*]] = stablehlo.add %arg2, %arg3 : tensor<f32>
-+  //          CHECK-NEXT:     stablehlo.return %[[VAL1]] : tensor<f32>
-+  //          CHECK-NEXT: }) {
++  //               CHECK: "stablehlo.reduce_window"(%arg0, %arg1) <{
 +  //          CHECK-SAME:   base_dilations = array<i64: 2, 1>,
 +  // CHECK-SAME{LITERAL}:   padding = dense<[[2, 1], [0, 0]]> : tensor<2x2xi64>,
 +  //          CHECK-SAME:   window_dilations = array<i64: 3, 1>,
 +  //          CHECK-SAME:   window_dimensions = array<i64: 2, 1>,
 +  //          CHECK-SAME:   window_strides = array<i64: 4, 1>
-+  //          CHECK-SAME: } : (tensor<?x2xf32>, tensor<f32>) -> tensor<?x2xf32>
++  //          CHECK-SAME: }> ({
++  //          CHECK-NEXT:   ^[[BB:bb.*]](%[[ARG2:arg.*]]: tensor<f32>, %[[ARG3:arg.*]]: tensor<f32>):
++  //          CHECK-NEXT:     %[[VAL1:.*]] = stablehlo.add %arg2, %arg3 : tensor<f32>
++  //          CHECK-NEXT:     stablehlo.return %[[VAL1]] : tensor<f32>
++  //          CHECK-NEXT: }) : (tensor<?x2xf32>, tensor<f32>) -> tensor<?x2xf32>
 +  %0 = stablehlo.constant dense<[2, 1]> : tensor<2xi64>
 +  %1 = stablehlo.constant dense<[4, 1]> : tensor<2xi64>
 +  %2 = stablehlo.constant dense<[2, 1]> : tensor<2xi64>
@@ -1904,7 +1905,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/tools/StablehloOptMain.cpp b/stabl
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
 --- stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
 +++ stablehlo/stablehlo/experimental/transforms/CMakeLists.txt
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,40 @@
 +# Copyright 2023 The StableHLO Authors.
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -1928,7 +1929,6 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stable
 +  ChloRecomposeOps.cpp
 +  StablehloCanonicalizeDynamism.cpp
 +  StablehloRefineShapes.cpp
-+  StablehloTrivialDce.cpp
 +
 +  DEPENDS
 +  ExperimentalPassesIncGen
@@ -1949,7 +1949,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/CMakeLists.txt b/stable
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 --- stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
 +++ stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,180 @@
 +/* Copyright 2024 The StableHLO Authors.
 +Licensed under the Apache License, Version 2.0 (the "License");
 +you may not use this file except in compliance with the License.
@@ -1968,6 +1968,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +#include <functional>
 +
 +#include "llvm/ADT/SmallVector.h"
++#include "llvm/Support/Casting.h"
 +#include "mlir/Dialect/Func/IR/FuncOps.h"
 +#include "mlir/IR/Attributes.h"
 +#include "mlir/IR/BuiltinAttributes.h"
@@ -1992,7 +1993,8 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +
 +FailureOr<DictionaryAttr> getCustomCallOpAttributes(CustomCallOp op,
 +                                                    PatternRewriter& rewriter) {
-+  auto attrs = op->getAttrOfType<DictionaryAttr>("mhlo.attributes");
++  auto attrs = llvm::dyn_cast_or_null<DictionaryAttr>(
++      op->getDiscardableAttr("mhlo.attributes"));
 +  if (!attrs)
 +    return rewriter.notifyMatchFailure(
 +        op, "Expected mhlo.attributes dictionary attribute.");
@@ -2173,7 +2175,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.h b/stablehlo/st
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.td b/stablehlo/stablehlo/experimental/transforms/Passes.td
 --- stablehlo/stablehlo/experimental/transforms/Passes.td
 +++ stablehlo/stablehlo/experimental/transforms/Passes.td
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,39 @@
 +/* Copyright 2023 The StableHLO Authors.
 +
 +Licensed under the Apache License, Version 2.0 (the "License");
@@ -2212,22 +2214,6 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/Passes.td b/stablehlo/s
 +    Experimental version of CHLO serialization support.
 +  }];
 +  let dependentDialects = ["chlo::ChloDialect"];
-+}
-+
-+def StablehloTrivialDcePass : Pass<"experimental-stablehlo-trivial-dce", "ModuleOp"> {
-+  let summary = "(Experimental) Performs a single bottom up pass to remove values that are trivially dead.";
-+  let description = [{
-+    An experimental pass to remove dead values prior to running other passes
-+    that may fail to converge otherwise. For example, running shape refinement
-+    on a program that has a lot of dead values can fail because shape refinement
-+    is top down and removing values causes a new iteration to be triggered, and
-+    removing all the dead values with a top down traversal can take a lot of
-+    iterations (10+), which is slow.
-+
-+    Performing a single pass should be fast, and doing it bottom up means that
-+    values that are transitively dead can be removed since leaf values will be
-+    processed first.
-+  }];
 +}
 diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
 --- stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDynamism.cpp
@@ -2571,73 +2557,6 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +          << config.maxIterations << " iterations.";
 +      return signalPassFailure();
 +    }
-+  }
-+};
-+
-+}  // namespace
-+}  // namespace experimental
-+}  // namespace stablehlo
-+}  // namespace mlir
-diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp b/stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
---- stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
-+++ stablehlo/stablehlo/experimental/transforms/StablehloTrivialDce.cpp
-@@ -0,0 +1,63 @@
-+/* Copyright 2022 The StableHLO Authors.
-+Licensed under the Apache License, Version 2.0 (the "License");
-+you may not use this file except in compliance with the License.
-+You may obtain a copy of the License at
-+
-+    http://www.apache.org/licenses/LICENSE-2.0
-+
-+Unless required by applicable law or agreed to in writing, software
-+distributed under the License is distributed on an "AS IS" BASIS,
-+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+See the License for the specific language governing permissions and
-+limitations under the License.
-+==============================================================================*/
-+
-+#include <cstdint>
-+
-+#include "llvm/ADT/SmallVector.h"
-+#include "mlir/Dialect/Func/IR/FuncOps.h"
-+#include "mlir/IR/PatternMatch.h"
-+#include "mlir/Support/LogicalResult.h"
-+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-+#include "stablehlo/experimental/transforms/Passes.h"
-+
-+namespace mlir {
-+namespace stablehlo {
-+namespace experimental {
-+
-+#define GEN_PASS_DEF_STABLEHLOTRIVIALDCEPASS
-+#include "stablehlo/experimental/transforms/Passes.h.inc"
-+
-+namespace {
-+
-+struct StablehloTrivialDcePass
-+    : public impl::StablehloTrivialDcePassBase<StablehloTrivialDcePass> {
-+  using StablehloTrivialDcePassBase::StablehloTrivialDcePassBase;
-+
-+  void runOnOperation() override {
-+    GreedyRewriteConfig config;
-+
-+    // Hardcode defaults for stability.
-+    config.enableRegionSimplification = true;
-+    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
-+    config.strictMode = GreedyRewriteStrictness::AnyOp;
-+
-+    // Run a single bottom up pass.
-+    config.useTopDownTraversal = false;
-+    config.maxIterations = 1;
-+
-+    // Running a greedy rewrite will cause trivially dead values to be removed.
-+    // Doing it without patterns ensures that no other changes are made to the
-+    // IR. Doing it bottom-up ensures that values that are transitively dead are
-+    // also removed. Although 1 pass should be enough,
-+    // applyPatternsAndFoldGreedily will want to run at least 1 more iteration
-+    // to confirm convergence, but we don't need to check for convergence, so we
-+    // ignore the return value.
-+    (void)applyPatternsAndFoldGreedily(getOperation(), RewritePatternSet(&getContext()), config);
 +  }
 +};
 +

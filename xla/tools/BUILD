@@ -4,12 +4,6 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-    "tsl_gpu_library",
-)
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
@@ -26,6 +20,13 @@ load(
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_cuda_or_rocm",
+    "if_google",
+    "tsl_gpu_library",
+)
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -55,6 +56,7 @@ xla_cc_binary(
     srcs = ["hex_floats_to_packed_literal.cc"],
     deps = [
         "//xla:types",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/io:buffered_inputstream",
@@ -63,7 +65,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/util:command_line_flags",
     ],
 )
 
@@ -228,11 +229,11 @@ xla_cc_binary(
         "//xla:statusor",
         "//xla:util",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/util:command_line_flags",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/util:command_line_flags",
     ],
 )
 
@@ -297,13 +298,13 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass_pipeline",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/util:command_line_flags",
     ],
 )
 
@@ -323,7 +324,7 @@ cc_library(
         "//xla/service:sharding_propagation",
         "//xla/service:triangular_solve_expander",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
-        "@tsl//tsl/util:command_line_flags",
+        "//xla/tsl/util:command_line_flags",
     ],
 )
 
@@ -397,6 +398,7 @@ xla_cc_binary(
         "//xla/service:hlo_runner",
         "//xla/service:local_service",
         "//xla/service:platform_util",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
@@ -405,7 +407,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:subprocess",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
-        "@tsl//tsl/util:command_line_flags",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]) + if_cuda([
@@ -562,13 +563,13 @@ xla_cc_binary(
         "//xla/service:hlo_runner",
         "//xla/service:interpreter_plugin",
         "//xla/service:platform_util",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/util:command_line_flags",
     ] + if_cuda_or_rocm([
         "//xla/service:gpu_plugin",
     ]) + if_cuda([
@@ -598,7 +599,12 @@ cc_library(
     srcs = ["hlo_control_flow_flattening.cc"],
     hdrs = ["hlo_control_flow_flattening.h"],
     deps = [
+        "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:status",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
         "//xla/service:collective_ops_utils",
@@ -606,7 +612,12 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:tuple_util",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -663,6 +674,7 @@ xla_cc_binary(
         "//xla:status",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -672,7 +684,6 @@ xla_cc_binary(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/util:command_line_flags",
     ],
 )
 
@@ -742,10 +753,7 @@ xla_test(
     name = "xla_compile_lib_test",
     srcs = ["xla_compile_lib_test.cc"],
     backend_tags = {
-        "gpu": [
-            "requires-gpu-nvidia",
-            "config-cuda-only",
-        ],
+        "gpu": ["requires-gpu-nvidia"] + if_google(["config-cuda-only"]),
     },
     backends = [
         "cpu",

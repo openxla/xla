@@ -230,26 +230,14 @@ class GemmFusionAutotunerTestWithMorePreciseReduction
   }
 };
 
-TEST_F(GemmFusionAutotunerTest, VoltaUsesNoMoreThanTwoStages) {
-  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
-ENTRY e {
-  p0 = f32[1024,1024] parameter(0)
-  p1 = f32[1024,1024] parameter(1)
-  ROOT r = f32[1024,1024] dot(p0, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})")
-                                                  .value();
-  const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::VOLTA, /*minor=*/0};
-  TF_ASSERT_OK_AND_ASSIGN(
-      const std::vector<TritonGemmConfig> configs,
-      GetPossibleMatmulAutotuneConfigs(
-          *Cast<HloDotInstruction>(
-              module->entry_computation()->root_instruction()),
-          compute_capability, GetDebugOptionsForTest()));
-  EXPECT_FALSE(std::any_of(
-      configs.begin(), configs.end(),
-      [](const TritonGemmConfig& config) { return config.num_stages > 2; }));
+absl::StatusOr<std::vector<TritonGemmConfig>> GetPossibleMatmulAutotuneConfigs(
+    const HloDotInstruction& dot,
+    const se::CudaComputeCapability& compute_capability,
+    const DebugOptions& debug_options) {
+  DevicelessConfig test_config{/*model_str=*/"", compute_capability};
+  AutotuneConfig autotune_config{test_config, debug_options};
+  GemmFusionAutotunerImpl autotuner(autotune_config, debug_options, nullptr);
+  return autotuner.GenerateTritonConfigs(dot);
 }
 
 TEST_F(GemmFusionAutotunerTest, AmpereUsesMoreThanTwoStages) {
@@ -293,7 +281,7 @@ ENTRY e {
           compute_capability, GetDebugOptionsForTest()));
   EXPECT_TRUE(std::any_of(
       configs.begin(), configs.end(),
-      [](const TritonGemmConfig& config) { return config.split_k >= 16; }));
+      [](const TritonGemmConfig& config) { return config.split_k >= 4; }));
 }
 
 TEST_F(GemmFusionAutotunerTest, LargeOutputDoesNotUseLargeSplitK) {
@@ -366,10 +354,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTest, SelectsSplitK) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   // Shapes with K >> M, N have to force split-K configurations.
   const std::string kHloText = R"(
 HloModule t
@@ -395,10 +379,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTestWithMorePreciseReduction, SelectsSplitK) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "No BF16 before Ampere.";
-  }
   // Shapes with K >> M, N have to force split-K configurations.
   constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -448,6 +428,7 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+// Modify block_k back to 16 once b/331362083 is fixed.
 TEST_F(GemmFusionAutotunerTest, DoNotRunAutotuningKernelSpillingRegisters) {
   const std::string kHloText = R"(
 HloModule m
@@ -465,13 +446,9 @@ ENTRY %e {
   %get-tuple-element.7020 = s8[12288,1536]{1,0} parameter(0)
   %convert = s8[4,12288]{1,0} parameter(1)
   ROOT %triton = s8[4,1536]{1,0} fusion(s8[12288,1536]{1,0} %get-tuple-element.7020, s8[4,12288]{1,0} %convert), kind=kCustom, calls=%triton_gemm_dot,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"256","block_n":"256","block_k":"16","split_k":"1","num_stages":"1","num_warps":"16","num_ctas":"1"}}}
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"256","block_n":"256","block_k":"32","split_k":"1","num_stages":"1","num_warps":"16","num_ctas":"1"}}}
 })";
 
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Not enough shared memory to run big tiles before Ampere.";
-  }
   auto module = ParseAndReturnVerifiedModule(kHloText).value();
   EXPECT_THAT(
       backend().compiler()->RunBackend(std::move(module),
@@ -486,6 +463,7 @@ ENTRY %e {
               "Compilation result discarded due to register spilling")));
 }
 
+// Modify block_k back to 16 once b/331362083 is fixed.
 TEST_F(GemmFusionAutotunerTest,
        DoNotFilterOutAutotuningKernelSpillingRegisters) {
   const std::string kHloText = R"(
@@ -504,13 +482,9 @@ ENTRY %e {
   %get-tuple-element.7020 = s8[12288,1536]{1,0} parameter(0)
   %convert = s8[4,12288]{1,0} parameter(1)
   ROOT %triton = s8[4,1536]{1,0} fusion(s8[12288,1536]{1,0} %get-tuple-element.7020, s8[4,12288]{1,0} %convert), kind=kCustom, calls=%triton_gemm_dot,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"256","block_n":"256","block_k":"16","split_k":"1","num_stages":"1","num_warps":"16","num_ctas":"1"}}}
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"256","block_n":"256","block_k":"32","split_k":"1","num_stages":"1","num_warps":"16","num_ctas":"1"}}}
 })";
 
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Not enough shared memory to run big tiles before Ampere.";
-  }
   auto module = ParseAndReturnVerifiedModule(kHloText).value();
   HloModuleConfig config = module->config();
   DebugOptions debug_options = config.debug_options();
@@ -531,6 +505,7 @@ ENTRY %e {
   EXPECT_NE(executable, nullptr);
 }
 
+// Modify block_k back to 16 once b/331362083 is fixed.
 TEST_F(GemmFusionAutotunerTest, RunAutotuningKernelNotSpillingRegisters) {
   const std::string kHloText = R"(
 HloModule m
@@ -546,7 +521,7 @@ ENTRY %e {
   %p0 = s8[12288,1536]{1,0} parameter(0)
   %p1 = f16[4,12288]{1,0} parameter(1)
   ROOT %triton_dot = f16[4,1536]{1,0} fusion(s8[12288,1536]{1,0} %p0, f16[4,12288]{1,0} %p1), kind=kCustom, calls=%triton_gemm_dot,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"32","block_k":"16","split_k":"1","num_stages":"1","num_warps":"2","num_ctas":"1"}}}
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"16","block_n":"32","block_k":"32","split_k":"1","num_stages":"1","num_warps":"2","num_ctas":"1"}}}
 })";
 
   auto module = ParseAndReturnVerifiedModule(kHloText).value();
@@ -568,7 +543,7 @@ class GemmFusionAutotunerDumpTest : public GemmFusionAutotunerTest {
     DebugOptions debug_options =
         GemmFusionAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_cublas_fallback(true);
-    debug_options.set_xla_gpu_dump_autotuned_triton_fusions(true);
+    debug_options.set_xla_gpu_dump_autotuned_gemm_fusions(true);
     return debug_options;
   }
 };
@@ -594,10 +569,6 @@ ENTRY e {
 }
 
 TEST_F(GemmFusionAutotunerTest, AutotuneCuDnnFusion) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "cuDNN fusion autotuning is not tested before Ampere.";
-  }
   const std::string kHlo = R"(
 fusion1 {
   p0 = f32[3,28,32] parameter(0)
@@ -791,14 +762,17 @@ ENTRY wais {
       lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity=L.1@2:4
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
-  auto dot =
-      Cast<HloDotInstruction>(module->entry_computation()->root_instruction());
+  const se::CudaComputeCapability compute_capability{
+      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_exhaustive_tiling_search(GetParam());
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto configs,
+      const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneConfigs(
-          *dot, se::CudaComputeCapability{8, 0}, GetDebugOptionsForTest(),
-          /*exhaustive_tiling_search=*/GetParam()));
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          compute_capability, debug_options));
   for (const auto& config : configs) {
     int metadata_size = config.block_m * config.block_k / 16;
     EXPECT_LE(config.num_warps * WarpSize(), metadata_size);

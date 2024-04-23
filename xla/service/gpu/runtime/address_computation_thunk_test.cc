@@ -71,8 +71,7 @@ static se::StreamExecutor* GpuExecutor() {
 TEST(AddressComputationThunkTest, SlicedGemm) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
   int64_t rhs_length = sizeof(float) * 3 * 1;
@@ -83,17 +82,30 @@ TEST(AddressComputationThunkTest, SlicedGemm) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
   BufferAllocation alloc_lhs(/*index=*/0, lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, lhs_length);
 
-  BufferAllocation alloc_rhs(/*index=*/1, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_rhs(&alloc_rhs, 0, rhs_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs(fake_allocations.back().get(), 0,
+                                    rhs_length);
 
-  BufferAllocation alloc_out(/*index=*/2, out_length, /*color=*/0);
-  BufferAllocation::Slice slice_out(&alloc_out, 0, out_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
+                                    out_length);
 
-  BufferAllocation alloc_workspace(/*index=*/3, 1024 * 1024, /*color=*/0);
-  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+                                          1024 * 1024);
 
   BufferAllocation alloc_lhs_offset_0(/*index=*/4, offset_length,
                                       /*color=*/0);
@@ -104,9 +116,6 @@ TEST(AddressComputationThunkTest, SlicedGemm) {
                                       /*color=*/0);
   BufferAllocation::Slice slice_lhs_offset_1(&alloc_lhs_offset_1, 0,
                                              offset_length);
-
-  BufferAllocation alloc_lhs_fake(/*index=*/0, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs_fake, 0, rhs_length);
 
   // Preparing config for GEMM thunk.
   auto config =
@@ -130,6 +139,7 @@ TEST(AddressComputationThunkTest, SlicedGemm) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
@@ -150,48 +160,51 @@ TEST(AddressComputationThunkTest, SlicedGemm) {
   //        5.0, 6.0, 7.0, 8.0]
   se::DeviceMemory<float> lhs = executor->AllocateArray<float>(2 * 4);
   std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
-  TF_ASSERT_OK(stream.Memcpy(&lhs, lhs_arr.data(), lhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
 
   // rhs = [1.0,
   //        1.0,
   //        1.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(3 * 1);
   std::vector<float> rhs_arr(3, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, rhs_arr.data(), rhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(1 * 1);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
-      {lhs, rhs, out, workspace, lhs_offset_0, lhs_offset_1}, 0,
-      executor->GetAllocator());
+      {lhs, rhs, out, workspace, lhs_offset_0, lhs_offset_1}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `out` data back to host for verification.
   std::vector<float> dst(1, 0);
-  TF_ASSERT_OK(stream.Memcpy(dst.data(), out, out_length));
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
 
   ASSERT_EQ(dst, std::vector<float>({9}));
 }
@@ -199,8 +212,7 @@ TEST(AddressComputationThunkTest, SlicedGemm) {
 TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
   int64_t rhs_length = sizeof(float) * 4 * 3;
@@ -212,17 +224,33 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/0, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/1, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
   BufferAllocation alloc_lhs(/*index=*/0, lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, lhs_length);
 
   BufferAllocation alloc_rhs(/*index=*/1, rhs_length, /*color=*/0);
   BufferAllocation::Slice slice_rhs(&alloc_rhs, 0, rhs_length);
 
-  BufferAllocation alloc_out(/*index=*/2, out_length, /*color=*/0);
-  BufferAllocation::Slice slice_out(&alloc_out, 0, out_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
+                                    out_length);
 
-  BufferAllocation alloc_workspace(/*index=*/3, 1024 * 1024, /*color=*/0);
-  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+                                          1024 * 1024);
 
   BufferAllocation alloc_lhs_offset_0(/*index=*/4, offset_length,
                                       /*color=*/0);
@@ -243,12 +271,6 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
                                       /*color=*/0);
   BufferAllocation::Slice slice_rhs_offset_1(&alloc_rhs_offset_1, 0,
                                              offset_length);
-
-  BufferAllocation alloc_lhs_fake(/*index=*/0, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs_fake, 0, slice_length);
-
-  BufferAllocation alloc_rhs_fake(/*index=*/1, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_rhs_fake(&alloc_rhs_fake, 0, slice_length);
 
   // Preparing config for GEMM thunk.
   auto config =
@@ -274,6 +296,7 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, rhs_offsets, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}),
        ShapeUtil::MakeShape(PrimitiveType::F32, {4, 3}), std::nullopt,
@@ -296,7 +319,7 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
   //        5.0, 6.0, 7.0, 8.0]
   se::DeviceMemory<float> lhs = executor->AllocateArray<float>(2 * 4);
   std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
-  TF_ASSERT_OK(stream.Memcpy(&lhs, lhs_arr.data(), lhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
 
   // Given a `rhs` tensor of shape f32[4,3]{1,0}
   // The `rhs` slice that we want to use will be equivalent to this static
@@ -308,39 +331,45 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
   //        1.0, 1.0, 1.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(4 * 3);
   std::vector<float> rhs_arr(12, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, rhs_arr.data(), rhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(2 * 2);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   se::DeviceMemory<int64_t> rhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> rhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> rhs_offset_arr{2, 1};
-  TF_ASSERT_OK(stream.Memcpy(&rhs_offset_0, &rhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&rhs_offset_1, &rhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&rhs_offset_0, &rhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&rhs_offset_1, &rhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations({lhs, rhs, out, workspace, lhs_offset_0,
                                  lhs_offset_1, rhs_offset_0, rhs_offset_1},
-                                0, executor->GetAllocator());
+                                0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Execute address computation thunk and verify that it failed because of non
   // contiguous slices on both `lhs` and `rhs`.
@@ -350,8 +379,7 @@ TEST(AddressComputationThunkTest, SlicedNonContiguousGemm) {
 TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t length = sizeof(float) * 2 * 4;
   int64_t out_length = sizeof(float) * 1;
@@ -362,17 +390,33 @@ TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/0, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/1, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
   BufferAllocation alloc_lhs(/*index=*/0, length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, length);
 
   BufferAllocation alloc_rhs(/*index=*/1, length, /*color=*/0);
   BufferAllocation::Slice slice_rhs(&alloc_rhs, 0, length);
 
-  BufferAllocation alloc_out(/*index=*/2, out_length, /*color=*/0);
-  BufferAllocation::Slice slice_out(&alloc_out, 0, out_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
+                                    out_length);
 
-  BufferAllocation alloc_workspace(/*index=*/3, 1024 * 1024, /*color=*/0);
-  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+                                          1024 * 1024);
 
   BufferAllocation alloc_lhs_offset_0(/*index=*/4, offset_length,
                                       /*color=*/0);
@@ -393,12 +437,6 @@ TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
                                       /*color=*/0);
   BufferAllocation::Slice slice_rhs_offset_1(&alloc_rhs_offset_1, 0,
                                              offset_length);
-
-  BufferAllocation alloc_lhs_fake(/*index=*/0, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs, 0, slice_length);
-
-  BufferAllocation alloc_rhs_fake(/*index=*/1, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_rhs_fake(&alloc_rhs, 0, slice_length);
 
   // Preparing config for GEMM thunk.
   auto config =
@@ -424,6 +462,7 @@ TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, rhs_offsets, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}),
        ShapeUtil::MakeShape(PrimitiveType::F32, {8, 1}), std::nullopt,
@@ -446,7 +485,7 @@ TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
   //        5.0, 6.0, 7.0, 8.0]
   std::vector<float> arr{1, 2, 3, 4, 5, 6, 7, 8};
   se::DeviceMemory<float> lhs = executor->AllocateArray<float>(2 * 4);
-  TF_ASSERT_OK(stream.Memcpy(&lhs, arr.data(), length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, arr.data(), length));
 
   // Given a `rhs` tensor of shape f32[8,1]{1,0}
   // The `rhs` slice that we want to use will be equivalent to this static
@@ -462,56 +501,62 @@ TEST(AddressComputationThunkTest, MulipleSlicedOperandsGemm) {
   //        8.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(8);
   std::vector<float> rhs_arr(8, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, arr.data(), length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, arr.data(), length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(1);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   se::DeviceMemory<int64_t> rhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> rhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> rhs_offset_arr{2, 0};
-  TF_ASSERT_OK(stream.Memcpy(&rhs_offset_0, &rhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&rhs_offset_1, &rhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&rhs_offset_0, &rhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&rhs_offset_1, &rhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations({lhs, rhs, out, workspace, lhs_offset_0,
                                  lhs_offset_1, rhs_offset_0, rhs_offset_1},
-                                0, executor->GetAllocator());
+                                0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Execute address computation thunk and verify that it executed a GEMM on the
   // right slices.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copy `out` data back to host for verification.
   std::vector<float> dst(1, 0);
-  TF_ASSERT_OK(stream.Memcpy(dst.data(), out, out_length));
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
 
   ASSERT_EQ(dst, std::vector<float>({2 * 3 + 3 * 4 + 4 * 5}));
 }
 
 static absl::Status Memcpy(se::Stream* stream, ffi::BufferBase src,
-                           ffi::BufferBase dst) {
+                           ffi::Result<ffi::BufferBase> dst) {
   return stream->MemcpyD2D(
-      &dst.data, src.data,
+      &dst->data, src.data,
       absl::c_accumulate(src.dimensions, 1.0, std::multiplies<int64_t>()) *
           sizeof(float));
 }
@@ -520,7 +565,7 @@ XLA_FFI_DEFINE_HANDLER(kMemcpy, Memcpy,
                        ffi::Ffi::Bind()
                            .Ctx<ffi::Stream>()
                            .Arg<ffi::BufferBase>()  // src
-                           .Arg<ffi::BufferBase>()  // dst
+                           .Ret<ffi::BufferBase>()  // dst
 );
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$memcpy", PLATFORM,
                          kMemcpy);
@@ -528,8 +573,7 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$memcpy", PLATFORM,
 TEST(AddressComputationThunkTest, SlicedMemcpy) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t src_count = 8 * 8 * 10 * 8;
   int64_t dst_count = 8 * 8;
@@ -542,11 +586,21 @@ TEST(AddressComputationThunkTest, SlicedMemcpy) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+
+  // Fake slices for embedded thunk creation.
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/0, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
   BufferAllocation::Slice slice_src(&alloc_src, 0, src_length);
 
-  BufferAllocation alloc_dst(/*index=*/1, dst_length, /*color=*/0);
-  BufferAllocation::Slice slice_dst(&alloc_dst, 0, dst_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, dst_length, /*color=*/0));
+  BufferAllocation::Slice slice_dst(fake_allocations.back().get(), 0,
+                                    dst_length);
 
   BufferAllocation alloc_offset_0(/*index=*/2, offset_length, /*color=*/0);
   BufferAllocation::Slice slice_offset_0(&alloc_offset_0, 0, offset_length);
@@ -559,10 +613,6 @@ TEST(AddressComputationThunkTest, SlicedMemcpy) {
 
   BufferAllocation alloc_offset_3(/*index=*/5, offset_length, /*color=*/0);
   BufferAllocation::Slice slice_offset_3(&alloc_offset_3, 0, offset_length);
-
-  // Fake slices for embedded thunk creation.
-  BufferAllocation alloc_src_fake(/*index=*/0, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_src_fake(&alloc_src_fake, 0, slice_length);
 
   // Preparing custom call thunk: setting up call target and operands + results
   // buffers.
@@ -589,7 +639,7 @@ TEST(AddressComputationThunkTest, SlicedMemcpy) {
   AddressComputationThunk thunk(
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)), {slice_src, slice_dst},
-      {slice_offsets, std::nullopt},
+      std::move(fake_allocations), {slice_offsets, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 8}), std::nullopt},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
       // original slice result and not bitcasted one)
@@ -608,41 +658,42 @@ TEST(AddressComputationThunkTest, SlicedMemcpy) {
   se::DeviceMemory<int32_t> src = executor->AllocateArray<int32_t>(src_count);
   std::vector<int32_t> src_arr(src_count, 0);
   for (unsigned i = 0; i < src_count; ++i) src_arr[i] = i;
-  TF_ASSERT_OK(stream.Memcpy(&src, src_arr.data(), src_length));
+  TF_ASSERT_OK(stream->Memcpy(&src, src_arr.data(), src_length));
 
   se::DeviceMemory<int32_t> dst = executor->AllocateArray<int32_t>(dst_count);
-  TF_ASSERT_OK(stream.MemZero(&dst, dst_length));
+  TF_ASSERT_OK(stream->MemZero(&dst, dst_length));
 
   se::DeviceMemory<int64_t> offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> offset_1 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> offset_2 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> offset_3 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> offset_arr{3, 5, 2, 0};
-  TF_ASSERT_OK(stream.Memcpy(&offset_0, &offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&offset_1, &offset_arr[1], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&offset_2, &offset_arr[2], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&offset_3, &offset_arr[3], offset_length));
+  TF_ASSERT_OK(stream->Memcpy(&offset_0, &offset_arr[0], offset_length));
+  TF_ASSERT_OK(stream->Memcpy(&offset_1, &offset_arr[1], offset_length));
+  TF_ASSERT_OK(stream->Memcpy(&offset_2, &offset_arr[2], offset_length));
+  TF_ASSERT_OK(stream->Memcpy(&offset_3, &offset_arr[3], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
-      {src, dst, offset_0, offset_1, offset_2, offset_3}, 0,
-      executor->GetAllocator());
+      {src, dst, offset_0, offset_1, offset_2, offset_3}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `dst` data back to host for verification.
   std::vector<int32_t> out(dst_count, 0);
-  TF_ASSERT_OK(stream.Memcpy(out.data(), dst, dst_length));
+  TF_ASSERT_OK(stream->Memcpy(out.data(), dst, dst_length));
 
   // Verifying that the right slice of `src` was copied to `dst`.
   std::vector<int32_t> ref(dst_count, 0);
@@ -657,8 +708,7 @@ TEST(AddressComputationThunkTest, SlicedMemcpy) {
 TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t src_count = 8 * 8 * 10 * 2;
   int64_t dst_count = 2 * 2 * 2 * 2;
@@ -672,6 +722,19 @@ TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+
+  // Fake slices for embedded thunk creation.
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/0, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/1, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_dst_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
   BufferAllocation::Slice slice_src(&alloc_src, 0, src_length);
 
@@ -710,13 +773,6 @@ TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
   BufferAllocation::Slice slice_dst_offset_3(&alloc_dst_offset_3, 0,
                                              offset_length);
 
-  // Fake slices for embedded thunk creation.
-  BufferAllocation alloc_src_fake(/*index=*/0, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_src_fake(&alloc_src_fake, 0, slice_length);
-
-  BufferAllocation alloc_dst_fake(/*index=*/1, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_dst_fake(&alloc_dst_fake, 0, slice_length);
-
   // Preparing custom call thunk: setting up call target and operands + results
   // buffers.
   auto registration = xla::ffi::FindHandler("__xla_test$$memcpy", PLATFORM);
@@ -746,7 +802,7 @@ TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
   AddressComputationThunk thunk(
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)), {slice_src, slice_dst},
-      {slice_src_offsets, slice_dst_offsets},
+      std::move(fake_allocations), {slice_src_offsets, slice_dst_offsets},
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2, 2, 2})},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
@@ -772,52 +828,62 @@ TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
   se::DeviceMemory<int32_t> src = executor->AllocateArray<int32_t>(src_count);
   std::vector<int32_t> src_arr(src_count, 0);
   for (unsigned i = 0; i < src_count; ++i) src_arr[i] = i;
-  TF_ASSERT_OK(stream.Memcpy(&src, src_arr.data(), src_length));
+  TF_ASSERT_OK(stream->Memcpy(&src, src_arr.data(), src_length));
 
   se::DeviceMemory<int32_t> dst = executor->AllocateArray<int32_t>(dst_count);
-  TF_ASSERT_OK(stream.MemZero(&dst, dst_length));
+  TF_ASSERT_OK(stream->MemZero(&dst, dst_length));
 
   se::DeviceMemory<int64_t> src_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> src_offset_1 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> src_offset_2 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> src_offset_3 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> src_offset_arr{3, 5, 2, 0};
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_0, &src_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_1, &src_offset_arr[1], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_2, &src_offset_arr[2], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_3, &src_offset_arr[3], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_0, &src_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_1, &src_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_2, &src_offset_arr[2], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_3, &src_offset_arr[3], offset_length));
 
   se::DeviceMemory<int64_t> dst_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> dst_offset_1 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> dst_offset_2 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> dst_offset_3 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> dst_offset_arr{1, 1, 0, 0};
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_0, &dst_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_1, &dst_offset_arr[1], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_2, &dst_offset_arr[2], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_3, &dst_offset_arr[3], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_0, &dst_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_1, &dst_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_2, &dst_offset_arr[2], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_3, &dst_offset_arr[3], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
       {src, dst, src_offset_0, src_offset_1, src_offset_2, src_offset_3,
        dst_offset_0, dst_offset_1, dst_offset_2, dst_offset_3},
-      0, executor->GetAllocator());
+      0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `dst` data back to host for verification.
   std::vector<int32_t> out(dst_count, 0);
-  TF_ASSERT_OK(stream.Memcpy(out.data(), dst, dst_length));
+  TF_ASSERT_OK(stream->Memcpy(out.data(), dst, dst_length));
 
   // Verifying that the right slice of `src` was copied to `dst`.
   std::vector<int32_t> ref(dst_count, 0);
@@ -837,8 +903,7 @@ TEST(AddressComputationThunkTest, SlicedOutputMemcpy) {
 TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
   int64_t rhs_length = sizeof(float) * 3 * 1;
@@ -849,6 +914,28 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+                                         out_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+                                               1024 * 1024);
+
   BufferAllocation alloc_lhs(/*index=*/1, lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, lhs_length);
 
@@ -871,9 +958,6 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
   BufferAllocation::Slice slice_lhs_offset_1(&alloc_lhs_offset_1, 0,
                                              offset_length);
 
-  BufferAllocation alloc_lhs_fake(/*index=*/1, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs_fake, 0, rhs_length);
-
   // Preparing config for GEMM thunk.
   auto config =
       GemmConfig::For(ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), {}, {1},
@@ -886,8 +970,8 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
   // Creating embedded GEMM thunk.
   ThunkSequence seq;
   seq.emplace_back(std::make_unique<GemmThunk>(
-      Thunk::ThunkInfo(nullptr), config.value(), slice_lhs_fake, slice_rhs,
-      slice_out, slice_workspace, /*deterministic=*/true));
+      Thunk::ThunkInfo(nullptr), config.value(), slice_lhs_fake, slice_rhs_fake,
+      slice_out_fake, slice_workspace_fake, /*deterministic=*/true));
 
   // Wrapping address computation thunk around the GEMM thunk.
   std::vector<BufferAllocation::Slice> lhs_offsets{slice_lhs_offset_0,
@@ -896,6 +980,7 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
@@ -916,48 +1001,51 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
   //        5.0, 6.0, 7.0, 8.0]
   se::DeviceMemory<float> lhs = executor->AllocateArray<float>(2 * 4);
   std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
-  TF_ASSERT_OK(stream.Memcpy(&lhs, lhs_arr.data(), lhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
 
   // rhs = [1.0,
   //        1.0,
   //        1.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(3 * 1);
   std::vector<float> rhs_arr(3, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, rhs_arr.data(), rhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(1 * 1);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
-      {workspace, lhs, out, rhs, lhs_offset_0, lhs_offset_1}, 0,
-      executor->GetAllocator());
+      {workspace, lhs, out, rhs, lhs_offset_0, lhs_offset_1}, 0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `out` data back to host for verification.
   std::vector<float> dst(1, 0);
-  TF_ASSERT_OK(stream.Memcpy(dst.data(), out, out_length));
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
 
   ASSERT_EQ(dst, std::vector<float>({9}));
 }
@@ -965,8 +1053,7 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryArgumentOrder) {
 TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
   int64_t rhs_length = sizeof(float) * 3 * 1;
@@ -977,6 +1064,28 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+                                         out_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+                                               1024 * 1024);
+
   BufferAllocation alloc_lhs(/*index=*/7, lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, lhs_length);
 
@@ -999,9 +1108,6 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   BufferAllocation::Slice slice_lhs_offset_1(&alloc_lhs_offset_1, 0,
                                              offset_length);
 
-  BufferAllocation alloc_lhs_fake(/*index=*/7, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs_fake, 0, rhs_length);
-
   // Preparing config for GEMM thunk.
   auto config =
       GemmConfig::For(ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), {}, {1},
@@ -1014,8 +1120,8 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   // Creating embedded GEMM thunk.
   ThunkSequence seq;
   seq.emplace_back(std::make_unique<GemmThunk>(
-      Thunk::ThunkInfo(nullptr), config.value(), slice_lhs_fake, slice_rhs,
-      slice_out, slice_workspace, /*deterministic=*/true));
+      Thunk::ThunkInfo(nullptr), config.value(), slice_lhs_fake, slice_rhs_fake,
+      slice_out_fake, slice_workspace_fake, /*deterministic=*/true));
 
   // Wrapping address computation thunk around the GEMM thunk.
   std::vector<BufferAllocation::Slice> lhs_offsets{slice_lhs_offset_0,
@@ -1024,6 +1130,7 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
@@ -1044,49 +1151,53 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   //        5.0, 6.0, 7.0, 8.0]
   se::DeviceMemory<float> lhs = executor->AllocateArray<float>(2 * 4);
   std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
-  TF_ASSERT_OK(stream.Memcpy(&lhs, lhs_arr.data(), lhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
 
   // rhs = [1.0,
   //        1.0,
   //        1.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(3 * 1);
   std::vector<float> rhs_arr(3, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, rhs_arr.data(), rhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(1 * 1);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
       {workspace, /*garbage, to be ignored*/ se::DeviceMemoryBase(), out, rhs,
        lhs_offset_0, lhs_offset_1, /*garbage, to be ignored*/ rhs, lhs},
-      0, executor->GetAllocator());
+      0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `out` data back to host for verification.
   std::vector<float> dst(1, 0);
-  TF_ASSERT_OK(stream.Memcpy(dst.data(), out, out_length));
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
 
   ASSERT_EQ(dst, std::vector<float>({9}));
 }
@@ -1094,8 +1205,7 @@ TEST(AddressComputationThunkTest, SlicedGemmArbitraryNumberOfArguments) {
 TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t lhs_length = sizeof(float) * 2 * 4;
   int64_t rhs_length = sizeof(float) * 3 * 1;
@@ -1106,17 +1216,30 @@ TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
   BufferAllocation alloc_lhs(/*index=*/0, 3 * lhs_length, /*color=*/0);
   BufferAllocation::Slice slice_lhs(&alloc_lhs, lhs_length, lhs_length);
 
-  BufferAllocation alloc_rhs(/*index=*/1, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_rhs(&alloc_rhs, 0, rhs_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs(fake_allocations.back().get(), 0,
+                                    rhs_length);
 
-  BufferAllocation alloc_out(/*index=*/2, out_length, /*color=*/0);
-  BufferAllocation::Slice slice_out(&alloc_out, 0, out_length);
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out(fake_allocations.back().get(), 0,
+                                    out_length);
 
-  BufferAllocation alloc_workspace(/*index=*/3, 1024 * 1024, /*color=*/0);
-  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace(fake_allocations.back().get(), 0,
+                                          1024 * 1024);
 
   BufferAllocation alloc_lhs_offset_0(/*index=*/4, offset_length,
                                       /*color=*/0);
@@ -1127,9 +1250,6 @@ TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
                                       /*color=*/0);
   BufferAllocation::Slice slice_lhs_offset_1(&alloc_lhs_offset_1, 0,
                                              offset_length);
-
-  BufferAllocation alloc_lhs_fake(/*index=*/0, rhs_length, /*color=*/0);
-  BufferAllocation::Slice slice_lhs_fake(&alloc_lhs_fake, 0, rhs_length);
 
   // Preparing config for GEMM thunk.
   auto config =
@@ -1153,6 +1273,7 @@ TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)),
       {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
       {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
@@ -1176,52 +1297,56 @@ TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
   // f32[1,3]{1,0} slice(lhs), slice={[0:1], [1:4]}
   se::DeviceMemory<float> lhs_whole_buffer =
       executor->AllocateArray<float>(2 * 4 * 3);
-  TF_ASSERT_OK(stream.MemZero(&lhs_whole_buffer, 2 * 4 * 3));
+  TF_ASSERT_OK(stream->MemZero(&lhs_whole_buffer, 2 * 4 * 3));
   std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
   se::DeviceMemoryBase lhs =
       lhs_whole_buffer.GetByteSlice(lhs_length, lhs_length);
-  TF_ASSERT_OK(stream.Memcpy(&lhs, lhs_arr.data(), lhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
 
   // rhs = [1.0,
   //        1.0,
   //        1.0]
   se::DeviceMemory<float> rhs = executor->AllocateArray<float>(3 * 1);
   std::vector<float> rhs_arr(3, 1);
-  TF_ASSERT_OK(stream.Memcpy(&rhs, rhs_arr.data(), rhs_length));
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
 
   se::DeviceMemory<float> out = executor->AllocateArray<float>(1 * 1);
-  TF_ASSERT_OK(stream.MemZero(&out, out_length));
+  TF_ASSERT_OK(stream->MemZero(&out, out_length));
 
   se::DeviceMemory<float> workspace =
       executor->AllocateArray<float>(1024 * 1024);
-  TF_ASSERT_OK(stream.MemZero(&workspace, 1024 * 1024));
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
 
   se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> lhs_offset_arr{0, 1};
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
       {lhs_whole_buffer, rhs, out, workspace, lhs_offset_0, lhs_offset_1}, 0,
-      executor->GetAllocator());
+      &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `out` data back to host for verification.
   std::vector<float> dst(1, 0);
-  TF_ASSERT_OK(stream.Memcpy(dst.data(), out, out_length));
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
 
   ASSERT_EQ(dst, std::vector<float>({9}));
 }
@@ -1229,8 +1354,7 @@ TEST(AddressComputationThunkTest, SlicedTupledOperandGemm) {
 TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   se::StreamExecutor* executor = GpuExecutor();
 
-  se::Stream stream(executor);
-  TF_ASSERT_OK(stream.Initialize());
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
 
   int64_t src_count = 8 * 8 * 10 * 2;
   int64_t dst_count = 2 * 2 * 2 * 2;
@@ -1244,6 +1368,19 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   // Prepare embedded and address computation thunks.
 
   // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(2);
+
+  // Fake slices for embedded thunk creation.
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/0, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_src_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/1, slice_length, /*color=*/0));
+  BufferAllocation::Slice slice_dst_fake(fake_allocations.back().get(), 0,
+                                         slice_length);
+
   BufferAllocation alloc_src(/*index=*/0, src_length, /*color=*/0);
   BufferAllocation::Slice slice_src(&alloc_src, 0, src_length);
 
@@ -1282,13 +1419,6 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   BufferAllocation::Slice slice_dst_offset_3(&alloc_dst_offset_3, 0,
                                              offset_length);
 
-  // Fake slices for embedded thunk creation.
-  BufferAllocation alloc_src_fake(/*index=*/0, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_src_fake(&alloc_src_fake, 0, slice_length);
-
-  BufferAllocation alloc_dst_fake(/*index=*/1, slice_length, /*color=*/0);
-  BufferAllocation::Slice slice_dst_fake(&alloc_dst_fake, 0, slice_length);
-
   // Preparing custom call thunk: setting up call target and operands + results
   // buffers.
   auto registration = xla::ffi::FindHandler("__xla_test$$memcpy", PLATFORM);
@@ -1318,7 +1448,7 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   AddressComputationThunk thunk(
       Thunk::ThunkInfo(nullptr),
       std::make_unique<ThunkSequence>(std::move(seq)), {slice_src, slice_dst},
-      {slice_src_offsets, slice_dst_offsets},
+      std::move(fake_allocations), {slice_src_offsets, slice_dst_offsets},
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2, 2, 2})},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
@@ -1344,10 +1474,10 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   se::DeviceMemory<int32_t> src = executor->AllocateArray<int32_t>(src_count);
   std::vector<int32_t> src_arr(src_count, 0);
   for (unsigned i = 0; i < src_count; ++i) src_arr[i] = i;
-  TF_ASSERT_OK(stream.Memcpy(&src, src_arr.data(), src_length));
+  TF_ASSERT_OK(stream->Memcpy(&src, src_arr.data(), src_length));
 
   se::DeviceMemory<int32_t> dst = executor->AllocateArray<int32_t>(dst_count);
-  TF_ASSERT_OK(stream.MemZero(&dst, dst_length));
+  TF_ASSERT_OK(stream->MemZero(&dst, dst_length));
 
   se::DeviceMemory<int64_t> src_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> src_offset_1 = executor->AllocateArray<int64_t>(1);
@@ -1355,10 +1485,14 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   se::DeviceMemory<int64_t> src_offset_3 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> src_ref_offset_arr{3, 5, 2, 0};
   std::vector<int64_t> src_offset_arr{3, 5, 2, -3};
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_0, &src_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_1, &src_offset_arr[1], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_2, &src_offset_arr[2], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&src_offset_3, &src_offset_arr[3], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_0, &src_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_1, &src_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_2, &src_offset_arr[2], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&src_offset_3, &src_offset_arr[3], offset_length));
 
   se::DeviceMemory<int64_t> dst_offset_0 = executor->AllocateArray<int64_t>(1);
   se::DeviceMemory<int64_t> dst_offset_1 = executor->AllocateArray<int64_t>(1);
@@ -1366,32 +1500,38 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
   se::DeviceMemory<int64_t> dst_offset_3 = executor->AllocateArray<int64_t>(1);
   std::vector<int64_t> dst_ref_offset_arr{1, 1, 0, 0};
   std::vector<int64_t> dst_offset_arr{3, 2, 5, -4};
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_0, &dst_offset_arr[0], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_1, &dst_offset_arr[1], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_2, &dst_offset_arr[2], offset_length));
-  TF_ASSERT_OK(stream.Memcpy(&dst_offset_3, &dst_offset_arr[3], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_0, &dst_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_1, &dst_offset_arr[1], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_2, &dst_offset_arr[2], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&dst_offset_3, &dst_offset_arr[3], offset_length));
 
   // Preparing parameters for thunk execution.
   ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
   BufferAllocations allocations(
       {src, dst, src_offset_0, src_offset_1, src_offset_2, src_offset_3,
        dst_offset_0, dst_offset_1, dst_offset_2, dst_offset_3},
-      0, executor->GetAllocator());
+      0, &allocator);
 
-  Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
-      run_options, allocations, &stream, &stream, {}, nullptr, nullptr);
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  TF_ASSERT_OK(
-      thunk.Initialize({executor, source, &allocations, &stream, &stream}));
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
 
   // Executing address computation thunk.
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
-  TF_ASSERT_OK(stream.BlockHostUntilDone());
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
 
   // Copying `dst` data back to host for verification.
   std::vector<int32_t> out(dst_count, 0);
-  TF_ASSERT_OK(stream.Memcpy(out.data(), dst, dst_length));
+  TF_ASSERT_OK(stream->Memcpy(out.data(), dst, dst_length));
 
   // Verifying that the right slice of `src` was copied to `dst`.
   std::vector<int32_t> ref(dst_count, 0);
@@ -1407,6 +1547,161 @@ TEST(AddressComputationThunkTest, SlicedMemcpyOOB) {
             src_arr.begin() + src_offset_val + slice_count,
             ref.begin() + dst_offset_val);
   ASSERT_EQ(out, ref);
+}
+
+TEST(AddressComputationThunkTest, SlicedOperandsSameBufferGemm) {
+  se::StreamExecutor* executor = GpuExecutor();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+
+  int64_t lhs_length = sizeof(float) * 2 * 4;
+  int64_t rhs_length = sizeof(float) * 3 * 1;
+  int64_t out_length = sizeof(float) * 1 * 1;
+  int64_t offset_length = sizeof(int64_t);
+
+  // Step 1:
+  // Prepare embedded and address computation thunks.
+
+  // Preparing buffer allocation slices for thunk creations.
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(4);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/0, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_lhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/1, rhs_length, /*color=*/0));
+  BufferAllocation::Slice slice_rhs_fake(fake_allocations.back().get(), 0,
+                                         rhs_length);
+
+  fake_allocations.push_back(
+      std::make_unique<BufferAllocation>(/*index=*/2, out_length, /*color=*/0));
+  BufferAllocation::Slice slice_out_fake(fake_allocations.back().get(), 0,
+                                         out_length);
+
+  fake_allocations.push_back(std::make_unique<BufferAllocation>(
+      /*index=*/3, 1024 * 1024, /*color=*/0));
+  BufferAllocation::Slice slice_workspace_fake(fake_allocations.back().get(), 0,
+                                               1024 * 1024);
+
+  BufferAllocation alloc(/*index=*/0, lhs_length + rhs_length + out_length,
+                         /*color=*/0);
+  BufferAllocation::Slice slice_lhs(&alloc, 0, lhs_length);
+  BufferAllocation::Slice slice_rhs(&alloc, lhs_length, rhs_length);
+  BufferAllocation::Slice slice_out(&alloc, lhs_length + rhs_length,
+                                    out_length);
+
+  BufferAllocation alloc_workspace(/*index=*/1, 1024 * 1024, /*color=*/0);
+  BufferAllocation::Slice slice_workspace(&alloc_workspace, 0, 1024 * 1024);
+
+  BufferAllocation alloc_lhs_offset_0(/*index=*/2, offset_length,
+                                      /*color=*/0);
+  BufferAllocation::Slice slice_lhs_offset_0(&alloc_lhs_offset_0, 0,
+                                             offset_length);
+
+  BufferAllocation alloc_lhs_offset_1(/*index=*/3, offset_length,
+                                      /*color=*/0);
+  BufferAllocation::Slice slice_lhs_offset_1(&alloc_lhs_offset_1, 0,
+                                             offset_length);
+
+  // Preparing config for GEMM thunk.
+  auto config =
+      GemmConfig::For(ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), {}, {1},
+                      ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), {}, {0},
+                      ShapeUtil::MakeShape(PrimitiveType::F32, {1, 1}), 1.0,
+                      0.0, 0.0, PrecisionConfig::ALG_UNSET, std::nullopt,
+                      se::blas::kDefaultComputePrecision, false, false);
+  ASSERT_TRUE(config.ok());
+
+  // Creating embedded GEMM thunk.
+  ThunkSequence seq;
+  seq.emplace_back(std::make_unique<GemmThunk>(
+      Thunk::ThunkInfo(nullptr), config.value(), slice_lhs_fake, slice_rhs_fake,
+      slice_out_fake, slice_workspace_fake, /*deterministic=*/true));
+
+  // Wrapping address computation thunk around the GEMM thunk.
+  std::vector<BufferAllocation::Slice> lhs_offsets{slice_lhs_offset_0,
+                                                   slice_lhs_offset_1};
+  AddressComputationThunk thunk(
+      Thunk::ThunkInfo(nullptr),
+      std::make_unique<ThunkSequence>(std::move(seq)),
+      {slice_lhs, slice_rhs, slice_out, slice_workspace},
+      std::move(fake_allocations),
+      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
+       std::nullopt, std::nullopt},
+      {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
+       std::nullopt, std::nullopt},
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+
+  // Step 2:
+  // Execute address computation thunk.
+  //
+
+  // Preparing memory for thunk arguments.
+  // lhs = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0,
+  //        5.0, 6.0, 7.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  //
+  // The real `lhs` tensor will look more like this:
+  // lhs = [1.0, 2.0, 3.0, 4.0,
+  //        5.0, 6.0, 7.0, 8.0]
+  // The `lhs` slice that we want to use will be equivalent to this static
+  // slice op:
+  // f32[1,3]{1,0} slice(lhs), slice={[0:1], [1:4]}
+  se::DeviceMemory<float> buffer =
+      executor->AllocateArray<float>(lhs_length + rhs_length + out_length);
+  TF_ASSERT_OK(stream->MemZero(&buffer, lhs_length + rhs_length + out_length));
+
+  se::DeviceMemoryBase lhs = buffer.GetByteSlice(0, lhs_length);
+  std::vector<float> lhs_arr{1, 2, 3, 4, 5, 6, 7, 8};
+  TF_ASSERT_OK(stream->Memcpy(&lhs, lhs_arr.data(), lhs_length));
+
+  // rhs = [1.0,
+  //        1.0,
+  //        1.0]
+  se::DeviceMemoryBase rhs = buffer.GetByteSlice(lhs_length, rhs_length);
+  std::vector<float> rhs_arr(3, 1);
+  TF_ASSERT_OK(stream->Memcpy(&rhs, rhs_arr.data(), rhs_length));
+
+  se::DeviceMemoryBase out =
+      buffer.GetByteSlice(lhs_length + rhs_length, out_length);
+
+  se::DeviceMemory<float> workspace =
+      executor->AllocateArray<float>(1024 * 1024);
+  TF_ASSERT_OK(stream->MemZero(&workspace, 1024 * 1024));
+
+  se::DeviceMemory<int64_t> lhs_offset_0 = executor->AllocateArray<int64_t>(1);
+  se::DeviceMemory<int64_t> lhs_offset_1 = executor->AllocateArray<int64_t>(1);
+  std::vector<int64_t> lhs_offset_arr{0, 1};
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_0, &lhs_offset_arr[0], offset_length));
+  TF_ASSERT_OK(
+      stream->Memcpy(&lhs_offset_1, &lhs_offset_arr[1], offset_length));
+
+  // Preparing parameters for thunk execution.
+  ServiceExecutableRunOptions run_options;
+  se::StreamExecutorMemoryAllocator allocator(executor);
+  BufferAllocations allocations({buffer, workspace, lhs_offset_0, lhs_offset_1},
+                                0, &allocator);
+
+  Thunk::ExecuteParams params =
+      Thunk::ExecuteParams::Create(run_options, allocations, stream.get(),
+                                   stream.get(), {}, nullptr, nullptr);
+
+  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
+  TF_ASSERT_OK(thunk.Initialize(
+      {executor, source, &allocations, stream.get(), stream.get()}));
+
+  // Executing address computation thunk.
+  TF_ASSERT_OK(thunk.ExecuteOnStream(params));
+  TF_ASSERT_OK(stream->BlockHostUntilDone());
+
+  // Copying `out` data back to host for verification.
+  std::vector<float> dst(1, 0);
+  TF_ASSERT_OK(stream->Memcpy(dst.data(), out, out_length));
+
+  ASSERT_EQ(dst, std::vector<float>({9}));
 }
 
 }  // namespace xla::gpu
