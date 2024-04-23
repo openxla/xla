@@ -186,8 +186,7 @@ ENTRY %cluster {
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> optimized_module,
                           ParseAndReturnVerifiedModule(hlo_text));
-  // Only check if inputs is loaded by vec, due to different outputs stored by
-  // different warp which can not be vectorize.
+  // Check if inputs is loaded by vec.
   std::string expected = R"(
 CHECK: ld.global.nc.v2.f32
 CHECK: ld.global.nc.v2.f32
