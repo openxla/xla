@@ -4986,7 +4986,6 @@ Status HloInstruction::GetBackendConfigInternal(
     return OkStatus();
   }
   TF_RETURN_IF_ERROR(tsl::HumanReadableJsonToProto(raw_string, proto));
-  backend_config_.SetProto(*proto);
   return OkStatus();
 }
 

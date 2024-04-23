@@ -2837,7 +2837,7 @@ class HloInstruction {
 
   // The backend-specific configuration for how a backend should compile this
   // HLO. See the documentation on backend_config().
-  mutable BackendConfigRep backend_config_;
+  BackendConfigRep backend_config_;
 
   // String identifier for instruction.
   std::string name_;
