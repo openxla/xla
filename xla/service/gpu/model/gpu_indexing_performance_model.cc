@@ -169,7 +169,8 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForFusion(
 
   int64_t bytes_written = GetShapeSizeRecursive(root_shape);
 
-  absl::Duration compute_time = ComputeTime(*device_info_, flops, num_threads);
+  absl::Duration compute_time = ComputeTime(*device_info_, flops, num_threads,
+                                            num_blocks, &fusion_analysis);
   absl::Duration write_time = WriteTime(*device_info_, bytes_written);
   absl::Duration memory_access_time = read_time + write_time;
   absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
