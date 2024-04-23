@@ -403,7 +403,8 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
   // If tile_y is decreased, reduction is not race free.
   reduction_is_race_free = reduction_is_race_free && !tile_size_decreased;
   bool use_shared_cache =
-      !reduction_dimensions.is_row_reduction || rows_per_warp == 1;
+      !reduction_dimensions.is_row_reduction ||
+      (rows_per_warp == 1 && num_threads_x / WarpSize() > 1);
   return ReductionInfo(analysis, tiling, reduction_dimensions.is_row_reduction,
                        reduction_is_race_free, use_shared_cache,
                        GroupDisjointReductions(analysis), hero_reduction);
