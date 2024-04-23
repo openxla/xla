@@ -44,8 +44,7 @@ struct ReductionGroups {
 
 class ReductionInfo {
  public:
-  static ReductionInfo Create(const HloFusionAnalysis& analysis,
-                              bool column_vectorization, bool adjust_tiling);
+  static ReductionInfo Create(const HloFusionAnalysis& analysis);
 
   const Tiling& GetTiling() const { return tiling_; }
   const ReductionGroups& GetGroups() const { return groups_; }
@@ -94,12 +93,8 @@ class ReductionInfo {
 template <typename Base>
 class ReductionFusionBase : public Base {
  public:
-  explicit ReductionFusionBase(const HloFusionAnalysis& analysis,
-                               bool column_vectorization = false,
-                               bool adjust_tiling = false)
-      : analysis_(analysis),
-        reduction_info_(ReductionInfo::Create(analysis, column_vectorization,
-                                              adjust_tiling)) {}
+  explicit ReductionFusionBase(const HloFusionAnalysis& analysis)
+      : analysis_(analysis), reduction_info_(ReductionInfo::Create(analysis)) {}
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
       int64_t root_index, mlir::MLIRContext* ctx) const override {

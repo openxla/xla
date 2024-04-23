@@ -89,8 +89,7 @@ int64_t ComputeColReductionActiveCore(Vector3 reduction_dimensions,
 int GetVectorSize(const HloFusionAnalysis& analysis,
                   const ReductionDimensions& reduction_dimensions,
                   int64_t num_threads_y, int64_t num_threads_x,
-                  Vector3 reduction_tiling, bool column_vectorization,
-                  bool adjust_tiling) {
+                  Vector3 reduction_tiling) {
   if (MayPreventVectorization(analysis.fusion())) {
     return 1;
   }
@@ -98,17 +97,11 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   if (!reduction_dimensions.is_row_reduction) {
-    if (!column_vectorization) return 1;
     int vector_size = 2;
-    auto core_num_if_vectorize = ComputeColReductionActiveCore(
-        reduction_dimensions.dimensions, reduction_tiling[kColReduced],
-        num_threads_y, num_threads_x, vector_size);
     auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
     // Check if the last dimension is divisible by (vector_size *
-    // num_threads_x) and active core is enough or allow to adjust tiling.
-    if (num_kept_minor % (vector_size * num_threads_x) == 0 &&
-        (core_num_if_vectorize >= analysis.device_info().core_count() ||
-         adjust_tiling)) {
+    // num_threads_x).
+    if (num_kept_minor % (vector_size * num_threads_x) == 0) {
       return vector_size;
     }
     return 1;
@@ -312,9 +305,7 @@ LaunchDimensions ReductionInfo::launch_dimensions() const {
                         /*y=*/1, /*z=*/1)};
 }
 
-ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
-                                    bool column_vectorization,
-                                    bool adjust_tiling) {
+ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
   auto* hero_reduction = analysis.FindHeroReduction();
   CHECK_NE(hero_reduction, nullptr);
   Shape input_shape = hero_reduction->operand(0)->shape();
@@ -374,10 +365,9 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
   }
 
   int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_y,
-                                  num_threads_x, reduction_tiling,
-                                  column_vectorization, adjust_tiling);
+                                  num_threads_x, reduction_tiling);
   bool tile_size_decreased = false;
-  if (!reduction_dimensions.is_row_reduction && adjust_tiling) {
+  if (!reduction_dimensions.is_row_reduction) {
     // Adjust tile_y and vector size for column reduction.
     std::tie(reduction_tiling, vector_size, tile_size_decreased) =
         AdjustColReductionTilingConfig(analysis, shape, reduction_tiling,
@@ -400,8 +390,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
     // uses the thread ID as the coordinate.
     tile_per_thread[2] = 1;
   }
-  if ((!reduction_dimensions.is_row_reduction && column_vectorization) ||
-      vector_size != 1) {
+  if ((!reduction_dimensions.is_row_reduction) || vector_size != 1) {
     num_threads.push_back(1);  // The vector dimension is a loop.
     tiled_shape.push_back(vector_size);
     tile_per_thread.push_back(vector_size);
@@ -453,6 +442,8 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
 
+  constexpr int kVectorized = ReductionDimensions::kVectorizedDimension;
+
   auto physical_index = [&]() {
     if (is_row_reduction_) {
       IndexingMap linear_index(
@@ -476,11 +467,14 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
 
     IndexingMap projected_index(
         mlir::AffineMap::get(
-            6, 0,
+            6, 1,
             {block_offsets.getResult(kColMajorKept),
-             block_offsets.getResult(kColMinorKept) + thread_ids[kColReduced]},
+             block_offsets.getResult(kColMinorKept) + thread_ids[kColReduced],
+             getAffineSymbolExpr(0, ctx)},
             ctx),
-        dimension_ranges, /*range_vars=*/{}, /*rt_vars=*/{});
+        dimension_ranges,
+        /*range_vars=*/{{0, tiling_.GetThreadTileSize()[kVectorized] - 1}},
+        /*rt_vars=*/{});
 
     projected_index.AddConstraint(
         mlir::getAffineDimExpr(

@@ -35,6 +35,8 @@ class MlirReductionFusion : public ReductionFusionBase<MlirFusionEmitterBase> {
 
   static bool IsSupported(const HloFusionAnalysis& analysis);
 
+  int elements_store_per_thread() const override;
+
  protected:
   absl::Status EmitEntryFunction(
       const mlir_converter::PartitionedComputations& computations,

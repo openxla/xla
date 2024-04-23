@@ -1146,10 +1146,6 @@ absl::Status ReductionEmitter::EmitKernel(
 
 }  // namespace
 
-ReductionFusion::ReductionFusion(const HloFusionAnalysis& analysis,
-                                 bool column_vectorization, bool adjust_tiling)
-    : ReductionFusionBase(analysis, column_vectorization, adjust_tiling) {}
-
 absl::StatusOr<FusionEmissionResult> ReductionFusion::EmitInitializers(
     IrEmitterContext& ir_emitter_context,
     const HloFusionInstruction& fusion) const {

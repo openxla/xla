@@ -357,6 +357,10 @@ MlirFusionEmitterBase::CreateMLIRModule(
 
   auto result_types = mlir_converter::ShapeToMlirTypes(fusion.shape(), builder);
   param_types.append(result_types.begin(), result_types.end());
+  SmallVector<mlir::Type> entry_func_result_types;
+  for (int elem = 0; elem < elements_store_per_thread(); ++elem) {
+    entry_func_result_types.append(result_types.begin(), result_types.end());
+  }
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       fusion.shape(), [&](const auto& shape, const ShapeIndex& index) {
         if (shape.IsArray()) {
@@ -369,7 +373,7 @@ MlirFusionEmitterBase::CreateMLIRModule(
   builder.setInsertionPointToStart(module->getBody());
   auto entry_func = builder.create<mlir::func::FuncOp>(
       loc, entry_function_name,
-      mlir::FunctionType::get(&context, param_types, result_types),
+      mlir::FunctionType::get(&context, param_types, entry_func_result_types),
       /*sym_visibility=*/mlir::StringAttr{},
       mlir::ArrayAttr::get(&context, arg_attrs),
       /*res_attrs=*/mlir::ArrayAttr{});
@@ -400,12 +404,13 @@ SmallVector<Value> MlirFusionEmitterBase::EmitThreadLoopNest(
     const IndexingMap& indexing_map,
     const std::function<
         SmallVector<Value>(ValueRange outputs_tensors, ValueRange dim_values,
-                           ValueRange symbol_values)>& create_body) const {
+                           ValueRange symbol_values)>& create_body,
+    int nested_level) const {
   SmallVector<Value> dim_values{EmitThreadId(b, 0), EmitThreadId(b, 1),
                                 EmitThreadId(b, 2), EmitBlockId(b, 0),
                                 EmitBlockId(b, 1),  EmitBlockId(b, 2)};
   return mlir_converter::EmitLoopNest(b, dim_values, outputs, indexing_map,
-                                      create_body);
+                                      create_body, nested_level);
 }
 
 absl::Status MlirFusionEmitterBase::EmitMlir(
