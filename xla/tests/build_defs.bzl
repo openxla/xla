@@ -202,8 +202,10 @@ def xla_test_library(
 
     for backend in backends:
         this_backend_copts = []
-        if backend in default_backends + gpu_backends:
-            backend_deps = ["//xla/tests:test_macros_%s" % backend]
+        if backend == "cpu":
+            backend_deps = ["//xla/tests:test_macros_cpu"]
+        elif backend in gpu_backends:
+            backend_deps = ["//xla/tests:test_macros_gpu"]
         elif backend in plugins:
             backend_deps = plugins[backend]["deps"]
             this_backend_copts += plugins[backend]["copts"]
