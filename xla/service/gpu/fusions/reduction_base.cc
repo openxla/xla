@@ -94,7 +94,6 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
     return 1;
   }
 
-  constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   if (!reduction_dimensions.is_row_reduction) {
     int vector_size = 2;

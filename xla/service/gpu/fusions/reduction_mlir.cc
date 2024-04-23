@@ -443,7 +443,6 @@ absl::StatusOr<SmallVector<Value>>
 MlirReductionFusion::EmitterState::EmitPerThreadReducedElements(
     const IndexingMap& input_indexing, const HloInstruction* hero,
     ValueRange inits, const ReductionInfo& reduction_info) {
-  int nested_level = reduction_info.IsRowReduction() ? 0 : 1;
   auto body_builder = [&](ValueRange outputs, ValueRange dim_values,
                           ValueRange symbol_values) -> SmallVector<Value> {
     auto indices = mlir_converter::ApplyAffineMap(
