@@ -11,8 +11,9 @@ load(
 )
 load("//xla/tests:plugin.bzl", "plugins")
 
-gpu_backends = ["gpu", "gpu_p100", "gpu_v100", "gpu_a100", "gpu_h100"]
-all_backends = gpu_backends + ["cpu"] + plugins.keys()
+default_backends = ["cpu", "gpu"]
+gpu_backends = ["gpu_p100", "gpu_v100", "gpu_a100", "gpu_h100"]
+all_backends = default_backends + gpu_backends + plugins.keys()
 
 def xla_test(
         name,
@@ -95,7 +96,7 @@ def xla_test(
 
     test_names = []
     if not backends:
-        backends = all_backends
+        backends = default_backends
 
     backends = [
         backend
@@ -196,9 +197,8 @@ def xla_test_library(
         Supported values: "cpu", "gpu". If this list is empty, the
         library will be generated for all supported backends.
     """
-
     if not backends:
-        backends = all_backends
+        backends = default_backends
 
     for backend in backends:
         this_backend_copts = []
@@ -231,7 +231,7 @@ def generate_backend_suites(backends = []):  # buildifier: disable=unnamed-macro
     """
 
     if not backends:
-        backends = all_backends
+        backends = default_backends
     for backend in backends:
         native.test_suite(
             name = "%s_tests" % backend,
@@ -245,7 +245,7 @@ def generate_backend_test_macros(backends = []):  # buildifier: disable=unnamed-
       backends: The list of backends to generate libraries for.
     """
     if not backends:
-        backends = all_backends
+        backends = default_backends
     for backend in backends:
         manifest = ""
         if backend in plugins:
