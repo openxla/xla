@@ -12,7 +12,7 @@ load(
 load("//xla/tests:plugin.bzl", "plugins")
 
 default_backends = ["cpu", "gpu"]
-gpu_backends = ["gpu_p100", "gpu_v100", "gpu_a100", "gpu_h100"]
+gpu_backends = ["gpu", "gpu_p100", "gpu_v100", "gpu_a100", "gpu_h100"]
 all_backends = default_backends + gpu_backends + plugins.keys()
 
 def xla_test(
@@ -202,7 +202,7 @@ def xla_test_library(
 
     for backend in backends:
         this_backend_copts = []
-        if backend in ["cpu"] + gpu_backends:
+        if backend in default_backends + gpu_backends:
             backend_deps = ["//xla/tests:test_macros_%s" % backend]
         elif backend in plugins:
             backend_deps = plugins[backend]["deps"]
