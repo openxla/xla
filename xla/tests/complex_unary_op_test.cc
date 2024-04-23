@@ -16,7 +16,9 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "tsl/platform/test.h"
 #include "xla/client/global_data.h"
+#include "xla/client/lib/math.h"
 #include "xla/client/local_client.h"
 #include "xla/client/xla_builder.h"
 #include "xla/tests/client_library_test_base.h"
@@ -24,7 +26,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {
@@ -103,6 +104,16 @@ XLA_TEST_F(ComplexUnaryOpTest, Log1pTest) {
 XLA_TEST_F(ComplexUnaryOpTest, TanTest) {
   UnaryTestHelper<complex_unary_op_samples::Tan<float>>(Tan);
   UnaryTestHelper<complex_unary_op_samples::Tan<double>>(Tan);
+}
+
+XLA_TEST_F(ComplexUnaryOpTest, AsinTest) {
+  UnaryTestHelper<complex_unary_op_samples::Asin<float>>(Asin);
+  UnaryTestHelper<complex_unary_op_samples::Asin<double>>(Asin);
+}
+
+XLA_TEST_F(ComplexUnaryOpTest, AsinhTest) {
+  UnaryTestHelper<complex_unary_op_samples::Asinh<float>>(Asinh);
+  UnaryTestHelper<complex_unary_op_samples::Asinh<double>>(Asinh);
 }
 
 }  // namespace
