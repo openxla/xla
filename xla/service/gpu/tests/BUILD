@@ -1082,8 +1082,8 @@ xla_cc_test(
 )
 
 xla_cc_test(
-    name = "allocate_buffer_custom_call_test",
-    srcs = ["allocate_buffer_custom_call_test.cc"],
+    name = "nop_custom_call_test",
+    srcs = ["nop_custom_call_test.cc"],
     tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:xla_proto_cc",

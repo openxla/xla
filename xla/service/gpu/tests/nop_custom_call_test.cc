@@ -19,9 +19,12 @@ namespace xla {
 namespace gpu {
 namespace {
 
-class AllocateBufferTest : public HloTestBase {};
+class NopCustomCallTest : public HloTestBase {};
 
-TEST_F(AllocateBufferTest, RunAllocateBufferAndUpdate) {
+TEST_F(NopCustomCallTest, RunAllocateBufferAndUpdate) {
+  // The test uses a custom call with the AllocateBuffer target (also known as
+  // kNopCustomCallTarget) to allocate an output buffer. Then it verifies
+  // we can successfully modify the buffer.
   const char* hlo_text = R"(
   HloModule AllocateBuffer, is_scheduled=true
 
