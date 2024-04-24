@@ -199,7 +199,7 @@ ENTRY main.9_spmd {
 
 TEST_F(GpuWindowedEinsumHanlderTest, AgLoopsMultipleConsumersAreChained) {
   constexpr absl::string_view kHloString = R"(
-HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0})->bf16[2,512,24576]{2,1,0}}, num_partitions=4
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0})->bf16[2,2048,24576]{2,1,0}}, num_partitions=4
 
 windowed_dot_general_body_ag {
   param.1 = (bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,2048,24576]{2,1,0}, bf16[2,2048,24576]{2,1,0}, u32[]) parameter(0)
@@ -239,47 +239,6 @@ windowed_dot_general_cond_ag {
   ROOT compare = pred[] compare(get-tuple-element, constant), direction=LT
 }
 
-windowed_dot_general_body_rs {
-  param.3 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) parameter(0)
-  get-tuple-element.7 = bf16[2,2048,24576]{2,1,0} get-tuple-element(param.3), index=0
-  get-tuple-element.8 = bf16[24576,24576]{1,0} get-tuple-element(param.3), index=1
-  get-tuple-element.9 = bf16[2,512,24576]{2,1,0} get-tuple-element(param.3), index=2
-  collective-permute.2 = bf16[2,512,24576]{2,1,0} collective-permute(get-tuple-element.9), channel_id=5, source_target_pairs={{0,2},{1,3},{2,0},{3,1}}
-  constant.13 = s32[] constant(0)
-  constant.14 = s32[4]{0} constant({0, 512, 1024, 1536})
-  get-tuple-element.12 = u32[] get-tuple-element(param.3), index=4
-  constant.16 = u32[] constant(2)
-  add.9 = u32[] add(get-tuple-element.12, constant.16)
-  constant.17 = u32[] constant(1)
-  add.10 = u32[] add(add.9, constant.17)
-  partition-id.3 = u32[] partition-id()
-  add.11 = u32[] add(add.10, partition-id.3)
-  constant.12 = u32[] constant(4)
-  remainder.3 = u32[] remainder(add.11, constant.12)
-  dynamic-slice.4 = s32[1]{0} dynamic-slice(constant.14, remainder.3), dynamic_slice_sizes={1}
-  reshape.3 = s32[] reshape(dynamic-slice.4)
-  dynamic-slice.5 = bf16[2,512,24576]{2,1,0} dynamic-slice(get-tuple-element.7, constant.13, reshape.3, constant.13), dynamic_slice_sizes={2,512,24576}
-  dot.3 = bf16[2,512,24576]{2,1,0} dot(dynamic-slice.5, get-tuple-element.8), lhs_contracting_dims={2}, rhs_contracting_dims={0}
-  add.12 = bf16[2,512,24576]{2,1,0} add(collective-permute.2, dot.3)
-  get-tuple-element.10 = bf16[2,512,24576]{2,1,0} get-tuple-element(param.3), index=3
-  add.6 = u32[] add(get-tuple-element.12, partition-id.3)
-  remainder.2 = u32[] remainder(add.6, constant.12)
-  dynamic-slice.2 = s32[1]{0} dynamic-slice(constant.14, remainder.2), dynamic_slice_sizes={1}
-  reshape.2 = s32[] reshape(dynamic-slice.2)
-  dynamic-slice.3 = bf16[2,512,24576]{2,1,0} dynamic-slice(get-tuple-element.7, constant.13, reshape.2, constant.13), dynamic_slice_sizes={2,512,24576}
-  dot.2 = bf16[2,512,24576]{2,1,0} dot(dynamic-slice.3, get-tuple-element.8), lhs_contracting_dims={2}, rhs_contracting_dims={0}
-  add.7 = bf16[2,512,24576]{2,1,0} add(get-tuple-element.10, dot.2)
-  collective-permute.3 = bf16[2,512,24576]{2,1,0} collective-permute(add.7), channel_id=6, source_target_pairs={{0,2},{1,3},{2,0},{3,1}}
-  ROOT tuple.1 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) tuple(get-tuple-element.7, get-tuple-element.8, add.12, collective-permute.3, add.9)
-} // windowed_dot_general_body_rs
-
-windowed_dot_general_cond_rs {
-  param.2 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) parameter(0)
-  get-tuple-element.6 = u32[] get-tuple-element(param.2), index=4
-  constant.11 = u32[] constant(4)
-  ROOT compare.1 = pred[] compare(get-tuple-element.6, constant.11), direction=LT
-}
-
 ENTRY main.12_spmd {
   param.4 = bf16[2,512,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
   param.5 = bf16[24576,24576]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
@@ -292,16 +251,7 @@ ENTRY main.12_spmd {
   copy.1 = bf16[2,2048,24576]{2,1,0} copy(get-tuple-element.13)
   all-gather = bf16[2,2048,24576]{2,1,0} all-gather(param.4), channel_id=1, replica_groups={{0,1,2,3}}, dimensions={1}, use_global_device_ids=true
   param.6 = bf16[24576,24576]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
-  dot.7 = bf16[2,2048,24576]{2,1,0} dot(all-gather, param.6), lhs_contracting_dims={2}, rhs_contracting_dims={0}
-  add.13 = bf16[2,2048,24576]{2,1,0} add(copy.1, dot.7)
-  param.7 = bf16[24576,24576]{1,0} parameter(3), sharding={devices=[4,1]<=[4]}
-  broadcast.2 = bf16[2,512,24576]{2,1,0} broadcast(constant.22), dimensions={}
-  tuple.3 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) tuple(add.13, param.7, broadcast.2, broadcast.2, constant.24)
-  while.1 = (bf16[2,2048,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[2,512,24576]{2,1,0}, bf16[2,512,24576]{2,1,0}, u32[]) while(tuple.3), condition=windowed_dot_general_cond_rs, body=windowed_dot_general_body_rs
-  get-tuple-element.14 = bf16[2,512,24576]{2,1,0} get-tuple-element(while.1), index=2
-  collective-permute.4 = bf16[2,512,24576]{2,1,0} collective-permute(get-tuple-element.14), channel_id=7, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
-  get-tuple-element.15 = bf16[2,512,24576]{2,1,0} get-tuple-element(while.1), index=3
-  ROOT add.14 = bf16[2,512,24576]{2,1,0} add(collective-permute.4, get-tuple-element.15)
+  ROOT dot.7 = bf16[2,2048,24576]{2,1,0} dot(all-gather, param.6), lhs_contracting_dims={2}, rhs_contracting_dims={0}
 }
 )";
 
