@@ -372,7 +372,7 @@ TEST_F(CoalescingTest, VariadicReduceViaLoopEmitter) {
   // Operands 1, 2: (d0)[s0] -> ((d0 floordiv 4) * 40 + d0 mod 4 + s0 * 4)
   //  for s0 in [0, 9].
   EXPECT_THAT(IsReadCoalescedPerOperand(ir),
-              ElementsAre(true, true, true, true));
+              ElementsAre(false, false, true, true));
 }
 
 TEST_F(CoalescingTest, VariadicReduceViaReductionEmitter) {
@@ -486,6 +486,28 @@ TEST_F(CoalescingTest, UnusedParameter) {
   EXPECT_THAT(IsReadCoalescedPerOperand(
                   module->entry_computation()->root_instruction()),
               ElementsAre(true, true));
+}
+
+TEST_F(CoalescingTest, Param) {
+  absl::string_view ir = R"(
+    HloModule module
+    fusion {
+      %p0 = u32[48,2,1280] parameter(0)
+      %p1 = u32[48,1,1280] parameter(1)
+      %p2 = u32[48,1,1280] parameter(2)
+      %concat = u32[48,2,1280] concatenate(u32[48,1,1280] %p1,
+                                           u32[48,1,1280] %p2), dimensions={1}
+      ROOT %shift = u32[48,2,1280] shift-right-logical(
+        u32[48,2,1280] %concat, u32[48,2,1280] %p0)
+    }
+    ENTRY entry {
+      %p0 = u32[48,2,1280] parameter(0)
+      %p1 = u32[48,1,1280] parameter(1)
+      %p2 = u32[48,1,1280] parameter(2)
+      ROOT %fusion = u32[48,2,1280] fusion(p0, p1, p2), kind=kLoop, calls=fusion
+  })";
+  // thread_x to linearized input mapping for thread_x in [0, 31]:
+  EXPECT_THAT(IsReadCoalescedPerOperand(ir), ElementsAre(true, true, true));
 }
 
 }  // namespace

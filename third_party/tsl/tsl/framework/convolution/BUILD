@@ -1,4 +1,4 @@
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//tsl/platform:build_config.bzl",
     "tsl_cc_test",
@@ -64,7 +64,7 @@ filegroup(
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
     #     "//tensorflow:__subpackages__",
-    #     "//tsl:internal",
+    #     "@xla//xla/tsl:internal",
     # ],
 )
 

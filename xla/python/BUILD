@@ -1,13 +1,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-    "if_google",
-    "internal_visibility",
-)
-load("@tsl//tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -21,6 +14,13 @@ load(
     "xla_cc_test",
     "xla_py_test_deps",
 )
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_cuda_or_rocm",
+    "if_google",
+    "internal_visibility",
+)
+load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -336,6 +336,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -659,7 +660,6 @@ cc_library(
     deps = [
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:util",
         "//xla/client:executable_build_options",
         "//xla/client:sharding_builder",
@@ -667,8 +667,21 @@ cc_library(
         "//xla/client:xla_computation",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
+        "//xla/python/pjrt_ifrt",
+        "//xla/service:computation_placer_hdr",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -804,14 +817,17 @@ cc_library(
         # placeholder for index annotation deps
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "//xla:literal",
         "//xla/client:executable_build_options",
         "//xla/client:xla_builder",
-        "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
         "@tsl//tsl/platform:logging",
+        "@llvm-project//llvm:Support",
         "@nanobind",
     ],
 )
@@ -918,6 +934,7 @@ cc_library(
     deps = [
         "//xla/mlir/utils:error_util",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:FuncDialect",
@@ -927,10 +944,12 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
+        "@stablehlo//:base",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//stablehlo/experimental:experimental_stablehlo_passes",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1261,9 +1280,9 @@ tsl_pybind_extension(
         "//xla/python/pjrt_ifrt",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/service/cpu:collectives_interface",
+        "//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/concurrency:ref_count",
-        "@tsl//tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
@@ -1273,8 +1292,8 @@ tsl_pybind_extension(
         "@nanobind",
     ] + select({
         # gloo transport only builds on linux
-        "@tsl//tsl:macos": [],
-        "@tsl//tsl:windows": [],
+        "//xla/tsl:macos": [],
+        "//xla/tsl:windows": [],
         "//conditions:default": [
             "//xla/pjrt/cpu:gloo_collectives",
             "//xla/pjrt/cpu:gloo_kv_store",
@@ -1282,7 +1301,7 @@ tsl_pybind_extension(
         ],
     }) + select({
         # mpitrampoline does not build on windows
-        "@tsl//tsl:windows": [],
+        "//xla/tsl:windows": [],
         "//conditions:default": [
             "//xla/pjrt/cpu:mpi_collectives",
         ],

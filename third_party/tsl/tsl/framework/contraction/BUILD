@@ -1,6 +1,6 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -88,15 +88,15 @@ cc_library(
     hdrs = ["eigen_contraction_kernel.h"],
     defines = select({
         ":disable_onednn_contraction_kernel_config": [],
-        "//tsl:android_x86": [],
-        "//tsl:arm_any": [
+        "@xla//xla/tsl:android_x86": [],
+        "@xla//xla/tsl:arm_any": [
             "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
         ],
-        "//tsl:fuchsia_x86_64": [],
-        "//tsl:ios": [],
-        "//tsl:linux_ppc64le": [],
-        "//tsl:linux_s390x": [],
-        "//tsl:macos_arm64": [],
+        "@xla//xla/tsl:fuchsia_x86_64": [],
+        "@xla//xla/tsl:ios": [],
+        "@xla//xla/tsl:linux_ppc64le": [],
+        "@xla//xla/tsl:linux_s390x": [],
+        "@xla//xla/tsl:macos_arm64": [],
         "//conditions:default": [
             "TENSORFLOW_USE_CUSTOM_CONTRACTION_KERNEL",
             "TENSORFLOW_USE_MKLDNN_CONTRACTION_KERNEL",
@@ -109,13 +109,13 @@ cc_library(
         "@eigen_archive//:eigen3",
     ] + select({
         ":disable_onednn_contraction_kernel_config": [],
-        "//tsl:android_x86": [],
-        "//tsl:arm_any": [],
-        "//tsl:fuchsia_x86_64": [],
-        "//tsl:ios": [],
-        "//tsl:linux_ppc64le": [],
-        "//tsl:linux_s390x": [],
-        "//tsl:macos_arm64": [],
+        "@xla//xla/tsl:android_x86": [],
+        "@xla//xla/tsl:arm_any": [],
+        "@xla//xla/tsl:fuchsia_x86_64": [],
+        "@xla//xla/tsl:ios": [],
+        "@xla//xla/tsl:linux_ppc64le": [],
+        "@xla//xla/tsl:linux_s390x": [],
+        "@xla//xla/tsl:macos_arm64": [],
         "//conditions:default": ["@onednn//:mkl_dnn"],
     }),
 )
@@ -137,7 +137,7 @@ cc_library(
     # Somehow the following code works with fixedpoint, but not here.
     # visibility = [
     #     "//tensorflow:__subpackages__",
-    #     "//tsl:internal",
+    #     "@xla//xla/tsl:internal",
     # ],
     deps = [
         "//tsl/framework/fixedpoint",

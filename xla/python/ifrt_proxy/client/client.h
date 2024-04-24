@@ -102,7 +102,8 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
   int process_index() const override { return process_index_; }
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
-  absl::StatusOr<xla::ifrt::Device*> LookupDevice(int device_id) const override;
+  absl::StatusOr<xla::ifrt::Device*> LookupDevice(
+      DeviceId device_id) const override;
   absl::StatusOr<xla::ifrt::Device*> LookupAddressableDevice(
       int local_hardware_id) const override {
     return absl::UnimplementedError(
@@ -112,8 +113,7 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
     return &default_compiler_;
   }
   absl::StatusOr<std::shared_ptr<const xla::PjRtTopologyDescription>>
-  GetTopologyForDevices(
-      absl::Span<xla::ifrt::Device* const> devices) const override {
+  GetTopologyForDevices(const xla::ifrt::DeviceList& devices) const override {
     return absl::UnimplementedError(
         "GetTopologyForDevices is not supported for the IFRT proxy client.");
   }

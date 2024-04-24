@@ -1,5 +1,3 @@
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
-load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -9,6 +7,8 @@ load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 
 # Placeholder: load py_proto_library
 load("//xla:xla.bzl", "xla_cc_test", "xla_py_proto_library")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -241,6 +241,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
     ],
@@ -317,7 +318,7 @@ cc_library(
         "statusor.h",
     ],
     linkopts = select({
-        "@tsl//tsl:freebsd": ["-lexecinfo"],
+        "//xla/tsl:freebsd": ["-lexecinfo"],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
@@ -595,6 +596,7 @@ cc_library(
         ":array4d",
         ":permutation_util",
         ":printer",
+        ":shape_tree",
         ":shape_util",
         ":status",
         ":status_macros",
@@ -633,6 +635,7 @@ xla_cc_test(
         ":array4d",
         ":literal",
         ":literal_util",
+        ":shape_tree",
         ":shape_util",
         ":status",
         ":test",

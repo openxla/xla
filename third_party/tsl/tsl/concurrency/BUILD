@@ -1,4 +1,4 @@
-load("//tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("@xla//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -52,7 +52,9 @@ tsl_cc_test(
     deps = [
         ":async_value",
         "//tsl/platform:test",
+        "//tsl/platform:test_benchmark",
         "//tsl/platform:test_main",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -67,6 +69,7 @@ tsl_cc_test(
         ":ref_count",
         "//tsl/platform:test",
         "//tsl/platform:test_main",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -78,6 +81,7 @@ cc_library(
     hdrs = ["concurrent_vector.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//tsl/platform:logging",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
     ],

@@ -465,8 +465,7 @@ IndexingMap ComputeOutputToInputPadOpIndexingImpl(
       AffineMap::get(output_rank, /*symbolCount=*/0, exprs, mlir_context),
       std::move(dim_vars),
       /*range_vars = */ {},
-      /*rt_vars = */ {},
-      absl::MakeSpan(constraints)};
+      /*rt_vars = */ {}, absl::MakeSpan(constraints)};
 }
 
 HloInstructionIndexing ComputeOutputToInputPadOpIndexing(
@@ -1321,10 +1320,10 @@ GroupedByOpIndexingMap ComputeGroupedOutputToInputIndexing(
   if (fusion_adaptor.ContainsInstruction(target_instr)) {
     if (auto parameter_instr =
             DynCast<HloParameterInstruction>(&target_instr.instruction())) {
-      const HloInstruction* user = parameter_instr->users().front();
-      auto fusion_operand = HloInstructionAdaptor(*user).GetOperand(
-          parameter_instr->parameter_number());
-      grouped_indexing_maps[&fusion_operand.instruction()] = {initial_map};
+      auto fusion_instr = parameter_instr->parent()->FusionInstruction();
+      auto fusion_operand =
+          fusion_instr->operand(parameter_instr->parameter_number());
+      grouped_indexing_maps[fusion_operand] = {initial_map};
       return grouped_indexing_maps;
     }
   }
@@ -1388,7 +1387,10 @@ bool FuseProducerConsumerOutputToInputIndexing(
 HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
                                                     int output_id,
                                                     MLIRContext* ctx) {
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
+  if (HloInstruction::IsOpElementwise(instr->opcode()) ||
+      instr->opcode() == HloOpcode::kMap) {
+    // Note: map has a `dimensions` attribute, but it does nothing. See
+    // b/65689298.
     return ComputeOutputToInputCwiseOpIndexing(instr, ctx);
   }
   if (instr->opcode() == HloOpcode::kBitcast) {
@@ -1454,7 +1456,10 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
 HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
                                                     int input_id,
                                                     MLIRContext* ctx) {
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
+  if (HloInstruction::IsOpElementwise(instr->opcode()) ||
+      instr->opcode() == HloOpcode::kMap) {
+    // Note: map has a `dimensions` attribute, but it does nothing. See
+    // b/65689298.
     return ComputeInputToOutputCwiseOpIndexing(instr, ctx);
   }
   if (instr->opcode() == HloOpcode::kBitcast) {
@@ -1501,6 +1506,7 @@ IndexingMap ComputeEpilogueInputToOutputIndexing(
         user, user->operand_index(instr), mlir_context);
     root_indexing = root_indexing * *user_indexing.indexing_maps[0].begin();
     root_indexing.Simplify(GetIndexingMapForInstruction);
+    root_indexing.RemoveUnusedSymbols();
     instr = user;
   }
   return root_indexing;

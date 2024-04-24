@@ -1013,11 +1013,9 @@ using FusedMHABackwardSignature = void(
     DeviceMemoryBase /* d_BMM1_inputA_data */,
     DeviceMemoryBase /* d_BMM1_inputB_data */,
     DeviceMemoryBase /* d_BMM2_inputB_data */, DeviceMemoryBase /* d_S_data */,
-    DeviceMemoryBase /* softmax_sum_data */,
-    DeviceMemoryBase /* d_Q_accum_data */, DeviceMemoryBase /* mask_data */,
-    DeviceMemoryBase /* d_bias_data */, DeviceMemoryBase /* fwd_output_data */,
-    DeviceMemoryBase /* bias_data */, DeviceMemoryBase /* seqlen_q_data */,
-    DeviceMemoryBase /* seqlen_k_data */);
+    DeviceMemoryBase /* mask_data */, DeviceMemoryBase /* d_bias_data */,
+    DeviceMemoryBase /* fwd_output_data */, DeviceMemoryBase /* bias_data */,
+    DeviceMemoryBase /* seqlen_q_data */, DeviceMemoryBase /* seqlen_k_data */);
 using FusedMHABackwardRunner = OpRunner<FusedMHABackwardSignature>;
 
 // Describes the configuration for the algorithms that will used.
@@ -1750,7 +1748,7 @@ class DnnSupport {
       std::optional<TensorDescriptor> mask_descriptor,
       std::optional<TensorDescriptor> bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed,
-      bool is_flash_attention, bool is_causal_mask);
+      bool is_flash_attention, dnn::FMHAMaskKind mask_type);
 
   virtual absl::StatusOr<std::unique_ptr<const FusedMHABackwardRunner>>
   FusedMHABackwardRunnerFromDesc(
@@ -1769,7 +1767,7 @@ class DnnSupport {
       std::optional<TensorDescriptor> fwd_output_descriptor,
       std::optional<TensorDescriptor> bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed,
-      bool is_flash_attention, bool is_causal_mask);
+      bool is_flash_attention, dnn::FMHAMaskKind mask_type);
 
   virtual bool GetMIOpenConvolveAlgorithms(
       ConvolutionKind kind, DataType element_type, Stream* stream,

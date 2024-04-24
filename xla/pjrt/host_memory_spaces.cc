@@ -15,25 +15,43 @@ limitations under the License.
 
 #include "xla/pjrt/host_memory_spaces.h"
 
+#include <cstdint>
+
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
-UnpinnedHostMemorySpace::UnpinnedHostMemorySpace(int id, PjRtClient* client)
-    : id_(id), client_(client) {
+UnpinnedHostMemorySpace::UnpinnedHostMemorySpace(int id, PjRtDevice* device)
+    : id_(id), device_(device) {
+  DCHECK(device_ != nullptr && device_->client() != nullptr);
+  auto* client = device_->client();
   debug_string_ = absl::StrFormat(
       "UnpinnedHostMemorySpace(id=%i, process_index=%i, client=%s)", id_,
-      client_->process_index(), client_->platform_name());
+      client->process_index(), client->platform_name());
   to_string_ = absl::StrFormat("UNPINNED_HOST_%i", id_);
 }
 
-PinnedHostMemorySpace::PinnedHostMemorySpace(int id, PjRtClient* client)
-    : id_(id), client_(client) {
+const int UnpinnedHostMemorySpace::kKindId = []() {
+  uint32_t kind_id = tsl::Fingerprint32(UnpinnedHostMemorySpace::kKind);
+  return static_cast<int>(kind_id);
+}();
+
+PinnedHostMemorySpace::PinnedHostMemorySpace(int id, PjRtDevice* device)
+    : id_(id), device_(device) {
+  DCHECK(device_ != nullptr && device_->client() != nullptr);
+  auto* client = device_->client();
   debug_string_ =
       absl::StrFormat("PinnedHostMemory(id=%i, process_index=%i, client=%s)",
-                      id_, client_->process_index(), client_->platform_name());
+                      id_, client->process_index(), client->platform_name());
   to_string_ = absl::StrFormat("PINNED_HOST_%i", id_);
 }
+
+const int PinnedHostMemorySpace::kKindId = []() {
+  uint32_t kind_id = tsl::Fingerprint32(PinnedHostMemorySpace::kKind);
+  return static_cast<int>(kind_id);
+}();
 
 }  // namespace xla

@@ -650,48 +650,11 @@ bool ConstantOp::isCompatibleReturnTypes(TypeRange l, TypeRange r) {
 }
 
 ParseResult ConstantOp::parse(OpAsmParser& parser, OperationState& result) {
-  // Parse the generic form.
-  if (succeeded(parser.parseOptionalLParen())) {
-    if (parser.parseRParen()) return failure();
-    if (parser.parseOptionalAttrDict(result.attributes)) return failure();
-    if (parser.parseColon() || parser.parseLParen() || parser.parseRParen() ||
-        parser.parseArrow())
-      return failure();
-    Type resultTy;
-    if (parser.parseType(resultTy)) {
-      return failure();
-    }
-    result.addTypes(resultTy);
-    return success();
-  }
-
-  ElementsAttr valueAttr;
-  if (parser.parseOptionalAttrDict(result.attributes)) return failure();
-
-  if (parser.parseCustomAttributeWithFallback(valueAttr, Type{}, "value",
-                                              result.attributes)) {
-    return failure();
-  }
-  result.addTypes(valueAttr.getType());
-  return success();
+  return hlo::parseConstantOp(parser, result);
 }
 
-/// Print a `constant` op.
-///
-/// op ::= attr-dict $value
-///
-/// When the `value` and `output` have different type, it just uses the default
-/// operator assembly format as a fallback.
 void ConstantOp::print(::mlir::OpAsmPrinter& p) {
-  // If not all types are the same, use generic form.
-  if (getValue().getType() != getType()) {
-    p.printGenericOp(getOperation(), /*printOpName=*/false);
-    return;
-  }
-
-  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"value"});
-  p << ' ';
-  p.printStrippedAttrOrType(getValueAttr());
+  hlo::printConstantOp(p, getOperation(), getValue());
 }
 
 //===----------------------------------------------------------------------===//
@@ -2918,11 +2881,14 @@ LogicalResult DynamicReshapeOp::verify() {
   // Check for unranked dynamism. Unranked dynamism is not supported by
   // StableHLO (hlo::verifyDynamicReshapeOp will fail) and we can't verify
   // anything statically in that case anyway.
-  auto resultType = getResult().getType().cast<ShapedType>();
-  auto outputShapeType = getOutputShape().getType().cast<ShapedType>();
-  if (!resultType.hasRank() || !outputShapeType.hasStaticShape())
+  auto operandType = cast<ShapedType>(getOperand().getType());
+  auto resultType = cast<ShapedType>(getResult().getType());
+  auto outputShapeType = cast<ShapedType>(getOutputShape().getType());
+  if (!operandType.hasRank() || !resultType.hasRank() ||
+      !outputShapeType.hasStaticShape())
     return success();
-  return hlo::verifyDynamicReshapeOp(getLoc(), getOutputShape(), getResult());
+  return hlo::verifyDynamicReshapeOp(getLoc(), getOperand(), getOutputShape(),
+                                     getResult());
 }
 
 LogicalResult DynamicReshapeOp::reifyReturnTypeShapes(

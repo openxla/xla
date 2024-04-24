@@ -47,7 +47,7 @@
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/shape.h"
-#include "xla/python/ifrt/sharding_serdes.h"
+#include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt_proxy/client/array.h"
 #include "xla/python/ifrt_proxy/client/host_buffer.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
@@ -184,7 +184,7 @@ LoadedExecutable::LoadedExecutable(
         addressable_device_logical_device_ids,
     std::vector<xla::ifrt::Device*> addressable_devices,
     absl::StatusOr<std::optional<std::string>> fingerprint,
-    Future<absl::Status> ready_future,
+    Future<> ready_future,
     std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>
         loaded_host_callbacks,
     std::vector<uint64_t> loaded_host_callback_handles)
@@ -327,9 +327,7 @@ absl::StatusOr<std::string> LoadedExecutable::Serialize() const {
       "underlying serialization format is not stable");
 }
 
-Future<absl::Status> LoadedExecutable::GetReadyFuture() const {
-  return ready_future_;
-}
+Future<> LoadedExecutable::GetReadyFuture() const { return ready_future_; }
 
 int LoadedExecutable::num_devices() const { return num_devices_; }
 
@@ -422,7 +420,7 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
   TF_ASSIGN_OR_RETURN(*req->mutable_execute_options(), options.ToProto());
   if (devices.has_value()) {
     for (const auto* device : *devices) {
-      req->add_device_ids(device->id());
+      req->add_device_ids(device->Id().value());
     }
   }
 
@@ -455,7 +453,7 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
     TF_ASSIGN_OR_RETURN(DType dtype, DType::FromProto(output.dtype()));
     TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(output.shape()));
     TF_ASSIGN_OR_RETURN(auto sharding,
-                        FromShardingProto(lookup_device, output.sharding()));
+                        Sharding::FromProto(lookup_device, output.sharding()));
     result.outputs.push_back(tsl::MakeRef<Array>(
         client(), rpc_helper_, dtype, std::move(shape), std::move(sharding),
         ArrayHandle{output.array_handle()}));
@@ -465,14 +463,14 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
   return result;
 }
 
-Future<absl::Status> LoadedExecutable::Delete() {
+Future<> LoadedExecutable::Delete() {
   auto req = std::make_unique<LoadedExecutableDeleteRequest>();
   req->set_loaded_executable_handle(handle_);
 
   absl::StatusOr<std::shared_ptr<LoadedExecutableDeleteResponse>> response =
       rpc_helper_->LoadedExecutableDelete(std::move(req)).Await();
   if (!response.ok()) {
-    return Future<absl::Status>(response.status());
+    return Future<>(response.status());
   }
   return rpc_helper_->CheckFuture((*response)->future_handle());
 }

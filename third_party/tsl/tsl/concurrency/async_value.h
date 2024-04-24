@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_TSL_CONCURRENCY_ASYNC_VALUE_H_
 #define TENSORFLOW_TSL_CONCURRENCY_ASYNC_VALUE_H_
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <cstddef>
@@ -58,6 +59,8 @@ constexpr bool kMaybeBase = std::is_class<T>::value && !std::is_final<T>::value;
 // data and the payload data in consecutive memory locations.
 class AsyncValue {
  public:
+  class Executor;
+
   ~AsyncValue();
 
   // Return true if state is kUnconstructed.
@@ -147,11 +150,15 @@ class AsyncValue {
 
   void SetError(absl::Status status);
 
-  // If the value is available or becomes available, this calls the closure
-  // immediately.  Otherwise, adds the waiter to the waiter list and calls it
+  // If the value is available or becomes available, this invokes the waiter
+  // immediately. Otherwise, adds the waiter to the waiter list and calls it
   // when the value becomes available.
-  template <typename WaiterT>
-  void AndThen(WaiterT waiter);
+  template <typename Waiter>
+  void AndThen(Waiter&& waiter);
+
+  // Same as above, but waiter will be invoked on the given executor.
+  template <typename Waiter>
+  void AndThen(Executor& executor, Waiter&& waiter);
 
   // Return the total number of async values that are currently live in the
   // process. This is intended for debugging/assertions only, and shouldn't be
@@ -248,11 +255,28 @@ class AsyncValue {
     return waiters_and_state_.load(std::memory_order_acquire).state();
   }
 
- protected:
-  // -----------------------------------------------------------
-  // Implementation details follow.  Clients should ignore them.
+  // AsyncValue executor allows to customize where the waiter callback is
+  // executed. By default the waiter callback is executed on the caller thread
+  // if async value is already available, or on a thread that sets async value
+  // available (emplacing a value or setting an error), which can accidentally
+  // lead to executing a very expensive computations on a low-latency thread.
+  //
+  // IMPORTANT: It's the caller responsibility to ensure that executor passed to
+  // all `AndThen` or `Map` function calls stay alive while async values have
+  // unresolved waiters waiting to be invoked.
+  class Executor {
+   public:
+    using Task = absl::AnyInvocable<void()>;
 
+    virtual ~Executor() = default;
+
+    virtual void Execute(Task task) = 0;
+  };
+
+ protected:
   friend class IndirectAsyncValue;
+
+  static constexpr uint16_t kUnknownTypeId = 0;
 
   // Utility template for tag dispatching.
   template <typename T>
@@ -275,7 +299,7 @@ class AsyncValue {
         kind_(kind),
         has_vtable_(false),
         is_refcounted_(is_refcounted),
-        type_id_(0),
+        type_id_(kUnknownTypeId),
         waiters_and_state_(WaitersAndState(nullptr, state)) {
     if (AsyncValueAllocationTrackingEnabled() && is_refcounted)
       total_allocated_async_values_.fetch_add(1, std::memory_order_relaxed);
@@ -384,10 +408,12 @@ class AsyncValue {
 
   std::atomic<WaitersAndState> waiters_and_state_;
 
-  // We assume (and static_assert) that this is the offset of
-  // ConcreteAsyncValue::data_, which is the same as the offset of
-  // ConcreteAsyncValue::error_.
-  static constexpr int kDataOffset = 16;
+  // We assume (and static_assert) that this is the offset of ConcreteAsyncValue
+  // data payload so that we can always get a pointer to the start of payload
+  // from an async value pointer. We use alignas attribute to guarantee that the
+  // data payload stored at exactly this offset. It means that types that have
+  // larger alignment requirement are not compatible with AsyncValues.
+  static constexpr int kDataOffset = 64;
 
  private:
   // Information about a ConcreteAsyncValue<T> subclass.
@@ -536,14 +562,18 @@ class ConcreteAsyncValue : public AsyncValue {
   explicit ConcreteAsyncValue(ConstructedPayload payload, Args&&... args)
       : AsyncValue(Kind::kConcrete, State::kConstructed, payload.is_refcounted,
                    TypeTag<T>()),
-        data_store_{TypeTag<T>(), std::forward<Args>(args)...} {}
+        data_store_{TypeTag<T>(), std::forward<Args>(args)...} {
+    VerifyOffsets();
+  }
 
   // Make a ConcreteAsyncValue with kConcrete state.
   template <typename... Args>
   explicit ConcreteAsyncValue(ConcretePayload payload, Args&&... args)
       : AsyncValue(Kind::kConcrete, State::kConcrete, payload.is_refcounted,
                    TypeTag<T>()),
-        data_store_{TypeTag<T>(), std::forward<Args>(args)...} {}
+        data_store_{TypeTag<T>(), std::forward<Args>(args)...} {
+    VerifyOffsets();
+  }
 
   ~ConcreteAsyncValue() { Destroy(); }
 
@@ -688,7 +718,7 @@ class ConcreteAsyncValue : public AsyncValue {
   using DataStoreT =
       std::conditional_t<std::is_base_of_v<KeepAsyncValuePayloadOnError, T>,
                          DataAndError, DataOrError>;
-  DataStoreT data_store_;
+  alignas(AsyncValue::kDataOffset) DataStoreT data_store_;
 
   void Destroy() { data_store_.Destroy(state()); }
   bool HasData() const { return data_store_.HasData(state()); }
@@ -696,12 +726,8 @@ class ConcreteAsyncValue : public AsyncValue {
   static void VerifyOffsets() {
     static_assert(offsetof(ConcreteAsyncValue<T>, data_store_.data_) ==
                       AsyncValue::kDataOffset,
-                  "Offset of ConcreteAsyncValue::data_ is assumed to be "
-                  "AsyncValue::kDataOffset == 16");
-    static_assert(offsetof(ConcreteAsyncValue<T>, data_store_.error_) ==
-                      AsyncValue::kDataOffset,
-                  "Offset of ConcreteAsyncValue::error_ is assumed to be "
-                  "AsyncValue::kDataOffset == 16");
+                  "Offset of ConcreteAsyncValue data payload is assumed to be "
+                  "AsyncValue::kDataOffset == 64");
   }
 
   static const uint16_t concrete_type_id_;
@@ -722,10 +748,12 @@ class ErrorAsyncValue
             std::move(status)) {}
 };
 
-// IndirectAsyncValue represents an uncomputed AsyncValue of unspecified kind
-// and type. IndirectAsyncValue is used when an AsyncValue must be returned,
-// but the value it holds is not ready and the producer of the value doesn't
-// know what type it will ultimately be, or whether it will be an error.
+// IndirectAsyncValue represents an un-computed AsyncValue of unspecified kind
+// and maybe unknown type. IndirectAsyncValue is used when an AsyncValue must be
+// returned, but the value it holds is not ready and the producer of the value
+// might not know what type it will ultimately be, or whether it will be an
+// error. The purpose of indirect async value is to be eventually forwarded to
+// a concrete async value with a constructed payload or an error.
 class IndirectAsyncValue : public AsyncValue {
   friend class AsyncValue;
 
@@ -756,9 +784,16 @@ class IndirectAsyncValue : public AsyncValue {
            value_->IsUnique();
   }
 
- private:
+ protected:
+  // Constructor for TypedIndirectAsyncValue (defined below).
+  template <typename T>
+  explicit IndirectAsyncValue(TypeTag<T>)
+      : AsyncValue(Kind::kIndirect, State::kUnconstructed,
+                   /*is_refcounted=*/true, TypeTag<T>()) {}
+
   ~IndirectAsyncValue() { Destroy(); }
 
+ private:
   void Destroy() {
     if (value_) {
       value_->DropRef();
@@ -769,9 +804,18 @@ class IndirectAsyncValue : public AsyncValue {
   AsyncValue* value_ = nullptr;
 };
 
-// -----------------------------------------------------------
-// Implementation details follow.  Clients should ignore them.
-//
+// TypedIndirectAsyncValue represents an indirect async value of a particular
+// type. Indirect async values constructed with a known type can be forwarded
+// only to async values of exactly the same type.
+template <typename T>
+class TypedIndirectAsyncValue : public IndirectAsyncValue {
+ public:
+  TypedIndirectAsyncValue() : IndirectAsyncValue(TypeTag<T>()) {
+    static_assert(sizeof(TypedIndirectAsyncValue) ==
+                  sizeof(IndirectAsyncValue));
+  }
+};
+
 inline AsyncValue::~AsyncValue() {
   assert(waiters_and_state_.load().waiter() == nullptr &&
          "An async value with waiters should never have refcount of zero");
@@ -946,11 +990,11 @@ inline const absl::Status& AsyncValue::GetError() const {
   return *result;
 }
 
-template <typename WaiterT>
-void AsyncValue::AndThen(WaiterT waiter) {
+template <typename Waiter>
+void AsyncValue::AndThen(Waiter&& waiter) {
   // Clients generally want to use AndThen without them each having to check
   // to see if the value is present. Check for them, and immediately run the
-  // lambda if it is already here.
+  // waiter if it is already here.
   auto old_value = waiters_and_state_.load(std::memory_order_acquire);
   if (old_value.state() == State::kConcrete ||
       old_value.state() == State::kError) {
@@ -958,7 +1002,26 @@ void AsyncValue::AndThen(WaiterT waiter) {
     waiter();
     return;
   }
-  EnqueueWaiter(std::forward<WaiterT>(waiter), old_value);
+  EnqueueWaiter(std::forward<Waiter>(waiter), old_value);
+}
+
+template <typename Waiter>
+void AsyncValue::AndThen(Executor& executor, Waiter&& waiter) {
+  // Clients generally want to use AndThen without them each having to check
+  // to see if the value is present. Check for them, and immediately run the
+  // waiter if it is already here.
+  auto old_value = waiters_and_state_.load(std::memory_order_acquire);
+  if (old_value.state() == State::kConcrete ||
+      old_value.state() == State::kError) {
+    assert(old_value.waiter() == nullptr);
+    executor.Execute(std::forward<Waiter>(waiter));
+    return;
+  }
+  EnqueueWaiter(
+      [&executor, waiter = std::forward<Waiter>(waiter)]() mutable {
+        executor.Execute(std::move(waiter));
+      },
+      old_value);
 }
 
 inline void AsyncValue::Destroy() {

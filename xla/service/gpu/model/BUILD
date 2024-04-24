@@ -1,6 +1,4 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "tf_cuda_tests_tags")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -8,6 +6,8 @@ load("//xla:xla.bzl", "xla_cc_test", "xla_nvml_deps")
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -211,6 +211,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
@@ -424,6 +425,7 @@ cc_library(
     deps = [
         ":affine_map_printer",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -444,7 +446,9 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
+        "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:test",
@@ -632,8 +636,8 @@ cc_library(
         ":indexing_map",
         ":symbolic_tile",
         ":symbolic_tiled_hlo_instruction",
+        ":tiled_hlo_instruction",
         "//xla:status",
-        "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/service:instruction_fusion",
         "@com_google_absl//absl/algorithm:container",
@@ -646,6 +650,8 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -655,7 +661,7 @@ xla_cc_test(
     deps = [
         ":indexing_test_utils",
         ":symbolic_tile_analysis",
-        ":symbolic_tiled_hlo_instruction",
+        ":tiled_hlo_instruction",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
@@ -681,6 +687,7 @@ cc_library(
         "//xla/service/gpu/fusions:fusion_emitter",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",

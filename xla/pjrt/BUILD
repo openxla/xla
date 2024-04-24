@@ -1,4 +1,3 @@
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -7,6 +6,7 @@ load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 # Placeholder: load py_proto_library
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -594,12 +594,30 @@ cc_library(
 
 cc_library(
     name = "pjrt_future",
+    srcs = ["pjrt_future.cc"],
     hdrs = ["pjrt_future.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/concurrency:async_value",
         "@tsl//tsl/concurrency:ref_count",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_future_test",
+    srcs = ["pjrt_future_test.cc"],
+    deps = [
+        ":pjrt_future",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -609,9 +627,11 @@ cc_library(
     hdrs = ["host_memory_spaces.h"],
     deps = [
         ":pjrt_client",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
@@ -724,6 +744,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_stream_extension_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",

@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -100,7 +101,7 @@ namespace xla {
         error, pjrt::MakeErrorDeleter(c_api));                           \
     absl::Status _status = pjrt::PjrtErrorToStatus(_error.get(), c_api); \
     if (!_status.ok()) {                                                 \
-      return PjRtFuture<Status>(_status);                                \
+      return PjRtFuture<>(_status);                                      \
     }                                                                    \
   } while (false)
 
@@ -867,6 +868,22 @@ StatusOr<tsl::AllocatorStats> PjRtCApiDevice::GetAllocatorStats() const {
   return result;
 }
 
+absl::StatusOr<std::intptr_t> PjRtCApiDevice::GetStreamForExternalReadyEvents()
+    const {
+  const PJRT_Api* c_api = client_->pjrt_c_api();
+  PJRT_Stream_Extension* extension = pjrt::FindExtension<PJRT_Stream_Extension>(
+      c_api, PJRT_Extension_Type::PJRT_Extension_Type_Stream);
+  if (extension == nullptr) {
+    return absl::UnimplementedError(
+        "Stream extension not implemented in this PJRT plugin.");
+  }
+  PJRT_Get_Stream_For_External_Ready_Events_Args args;
+  args.struct_size = PJRT_Get_Stream_For_External_Ready_Events_Args_STRUCT_SIZE;
+  args.device = device_;
+  RETURN_STATUS_IF_PJRT_ERROR(extension->get_stream(&args), c_api);
+  return args.stream;
+}
+
 // ------------------------------- Memory --------------------------------------
 
 const PJRT_Api* PjRtCApiMemorySpace::pjrt_c_api() const {
@@ -884,7 +901,7 @@ int PjRtCApiMemorySpace::id() const {
   return args.id;
 }
 
-absl::string_view PjRtCApiMemorySpace::memory_space_kind() const {
+absl::string_view PjRtCApiMemorySpace::kind() const {
   PJRT_Memory_Kind_Args args;
   args.struct_size = PJRT_Memory_Kind_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -893,7 +910,22 @@ absl::string_view PjRtCApiMemorySpace::memory_space_kind() const {
   pjrt::LogFatalIfPjrtError(pjrt_c_api()->PJRT_Memory_Kind(&args),
                             pjrt_c_api());
 
-  return absl::string_view(args.memory_kind, args.memory_kind_size);
+  return absl::string_view(args.kind, args.kind_size);
+}
+
+int PjRtCApiMemorySpace::kind_id() const {
+  PJRT_Memory_Kind_Id_Args args;
+  args.struct_size = PJRT_Memory_Kind_Id_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.memory = c_memory_;
+  if (pjrt_c_api()->pjrt_api_version.major_version > 0 ||
+      pjrt_c_api()->pjrt_api_version.minor_version >= 48) {
+    // The `kind_id` API is added in version 0.48.
+    pjrt::LogFatalIfPjrtError(pjrt_c_api()->PJRT_Memory_Kind_Id(&args),
+                              pjrt_c_api());
+    return args.kind_id;
+  }
+  return tsl::Fingerprint32(kind());
 }
 
 absl::string_view PjRtCApiMemorySpace::DebugString() const {
@@ -1307,7 +1339,7 @@ CApiCopyToDeviceStream::~CApiCopyToDeviceStream() {
       c_api_->PJRT_CopyToDeviceStream_Destroy(&destroy_args), c_api_);
 }
 
-PjRtFuture<Status> CApiCopyToDeviceStream::AddChunk(PjRtChunk chunk) {
+PjRtFuture<> CApiCopyToDeviceStream::AddChunk(PjRtChunk chunk) {
   PJRT_Chunk c_chunk = ::pjrt::ConvertFromCppChunk(std::move(chunk));
 
   PJRT_CopyToDeviceStream_AddChunk_Args add_chunk_args;
@@ -1520,7 +1552,7 @@ StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtCApiLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
     const ExecuteOptions& options,
-    std::optional<std::vector<PjRtFuture<Status>>>& returned_futures) {
+    std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
   std::vector<std::vector<PJRT_Buffer*>> c_argument_lists_storage;
   std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
   std::vector<PJRT_Buffer**> c_output_lists;
@@ -1554,14 +1586,14 @@ PjRtCApiLoadedExecutable::Execute(
       pjrt_c_api()->PJRT_LoadedExecutable_Execute(&args), pjrt_c_api());
 
   if (device_complete_events.has_value()) {
-    std::vector<PjRtFuture<Status>> device_complete_futures;
-    device_complete_futures.resize(args.num_devices);
-    for (int i = 0; i < device_complete_futures.size(); ++i) {
-      device_complete_futures[i] = pjrt::ConvertCEventToCppFuture(
-          args.device_complete_events[i], pjrt_c_api());
+    std::vector<PjRtFuture<>> device_complete_futures;
+    device_complete_futures.reserve(args.num_devices);
+    for (int i = 0; i < args.num_devices; ++i) {
+      device_complete_futures.push_back(pjrt::ConvertCEventToCppFuture(
+          args.device_complete_events[i], pjrt_c_api()));
       if (!callback_data->c_send_callbacks.empty() ||
           !callback_data->c_recv_callbacks.empty()) {
-        device_complete_futures[i].OnReady(
+        device_complete_futures.back().OnReady(
             [callback_data](absl::Status status) {
               // Keeps C callbacks alive until execution completes on all
               // devices.
@@ -1570,7 +1602,6 @@ PjRtCApiLoadedExecutable::Execute(
     }
 
     if (returned_futures.has_value()) {
-      returned_futures->resize(device_complete_futures.size());
       *returned_futures = std::move(device_complete_futures);
     }
   }
@@ -1583,8 +1614,8 @@ PjRtCApiLoadedExecutable::Execute(
 StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-    const ExecuteOptions& options,
-    std::optional<PjRtFuture<Status>>& returned_future, bool fill_future) {
+    const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
+    bool fill_future) {
   if (!options.send_callbacks.empty() || !options.recv_callbacks.empty()) {
     return Status(absl::StatusCode::kUnimplemented,
                   "Send/recv callbacks not implemented for "
@@ -1639,8 +1670,8 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
 StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecuteSharded(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-    const ExecuteOptions& options,
-    std::optional<PjRtFuture<Status>>& returned_future, bool fill_future) {
+    const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
+    bool fill_future) {
   return ExecuteWithSingleDevice(argument_handles, device, options,
                                  returned_future, fill_future);
 }
@@ -1648,8 +1679,8 @@ PjRtCApiLoadedExecutable::ExecuteSharded(
 StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
 PjRtCApiLoadedExecutable::ExecutePortable(
     absl::Span<PjRtBuffer* const> argument_handles, PjRtDevice* device,
-    const ExecuteOptions& options,
-    std::optional<PjRtFuture<Status>>& returned_future, bool fill_future) {
+    const ExecuteOptions& options, std::optional<PjRtFuture<>>& returned_future,
+    bool fill_future) {
   return ExecuteWithSingleDevice(argument_handles, device, options,
                                  returned_future, fill_future);
 }
@@ -1809,16 +1840,16 @@ StatusOr<std::vector<int64_t>> PjRtCApiBuffer::logical_dimensions() {
                               args.unpadded_dims + args.num_dims);
 }
 
-PjRtFuture<absl::Status> PjRtCApiBuffer::LazyToLiteral(
+PjRtFuture<> PjRtCApiBuffer::LazyToLiteral(
     absl::AnyInvocable<absl::StatusOr<MutableLiteralBase*>() &&> generator) {
   auto buffer = std::move(generator)();
   if (!buffer.ok()) {
-    return PjRtFuture<Status>(buffer.status());
+    return PjRtFuture<>(buffer.status());
   }
   return ToLiteral(buffer.value());
 }
 
-PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
+PjRtFuture<> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   PJRT_Buffer_ToHostBuffer_Args args;
   args.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
   args.extension_start = nullptr;
@@ -1827,7 +1858,7 @@ PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
   const xla::Shape& shape = literal->shape();
 
   if (!shape.IsArray()) {
-    return PjRtFuture<Status>(
+    return PjRtFuture<>(
         Unimplemented("PjRtCApiBuffer::ToLiteral: Shapes other than array are"
                       "not supported."));
   }
@@ -1839,7 +1870,7 @@ PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
     c_layout_data =
         pjrt::ConvertToBufferMemoryLayoutData(literal->shape().layout());
     if (!c_layout_data.ok()) {
-      return PjRtFuture<Status>(c_layout_data.status());
+      return PjRtFuture<>(c_layout_data.status());
     }
     args.host_layout = &(c_layout_data->c_layout);
   } else {
@@ -1853,8 +1884,7 @@ PjRtFuture<Status> PjRtCApiBuffer::ToLiteral(MutableLiteralBase* literal) {
       ::pjrt::MakeErrorDeleter(api)};
 
   if (error != nullptr) {
-    absl::Status s = ::pjrt::PjrtErrorToStatus(error.get(), api);
-    return PjRtFuture<Status>(s);
+    return PjRtFuture<>(::pjrt::PjrtErrorToStatus(error.get(), api));
   }
 
   return pjrt::ConvertCEventToCppFuture(args.event, api);
@@ -2014,8 +2044,7 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
   args.event = GetReadyEvent();
   args.user_arg = new std::function<void(PJRT_Error*)>(
       [promise = readiness_promise_, api](PJRT_Error* error) -> void {
-        Status status = ::pjrt::PjrtErrorToStatus(error, api);
-        promise->Set(status);
+        promise->Set(::pjrt::PjrtErrorToStatus(error, api));
         ::pjrt::MakeErrorDeleter(api)(error);
       });
   args.callback = [](PJRT_Error* error, void* callback_ptr) {
@@ -2033,13 +2062,13 @@ void PjRtCApiBuffer::MakePromiseTrackEvent() {
   }
 }
 
-PjRtFuture<Status> PjRtCApiBuffer::GetReadyFuture() {
+PjRtFuture<> PjRtCApiBuffer::GetReadyFuture() {
   if (readiness_promise_ == nullptr) {
-    readiness_promise_ = std::make_shared<PjRtFuture<Status>::Promise>(
-        PjRtFuture<Status>::CreatePromise());
+    readiness_promise_ =
+        std::make_shared<PjRtFuture<>::Promise>(PjRtFuture<>::CreatePromise());
     MakePromiseTrackEvent();
   }
-  return PjRtFuture<Status>{*readiness_promise_};
+  return PjRtFuture<>{*readiness_promise_};
 }
 
 StatusOr<std::unique_ptr<PjRtBuffer::ExternalReference>>
@@ -2080,6 +2109,23 @@ PjRtCApiExternalReference::~PjRtCApiExternalReference() {
   pjrt::LogFatalIfPjrtError(
       client_->pjrt_c_api()->PJRT_Buffer_DecreaseExternalReferenceCount(&args),
       client_->pjrt_c_api());
+}
+
+Status PjRtCApiExternalReference::WaitUntilBufferReadyOnStream(
+    std::intptr_t stream) {
+  const PJRT_Api* c_api = buffer_->pjrt_c_api();
+  PJRT_Stream_Extension* extension = pjrt::FindExtension<PJRT_Stream_Extension>(
+      c_api, PJRT_Extension_Type::PJRT_Extension_Type_Stream);
+  if (extension == nullptr) {
+    return absl::UnimplementedError(
+        "Stream extension not implemented in this PJRT plugin.");
+  }
+  PJRT_Wait_Until_Buffer_Ready_On_Stream_Args args;
+  args.struct_size = PJRT_Wait_Until_Buffer_Ready_On_Stream_Args_STRUCT_SIZE;
+  args.stream = stream;
+  args.buffer = buffer_->c_buffer();
+  RETURN_STATUS_IF_PJRT_ERROR(extension->wait_stream(&args), c_api);
+  return absl::OkStatus();
 }
 
 // ------------------------------ Device Topology ------------------------------

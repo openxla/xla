@@ -2,7 +2,7 @@
 # Cloud file system implementation.
 
 load(
-    "//tsl:tsl.bzl",
+    "@xla//xla/tsl:tsl.bzl",
     "if_windows",
     "internal_visibility",
     "tsl_copts",
