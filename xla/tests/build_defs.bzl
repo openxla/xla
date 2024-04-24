@@ -115,7 +115,7 @@ def xla_test(
             backend_deps += ["//xla/tests:test_macros_cpu"]  # buildifier: disable=list-append
         elif backend in gpu_backends:
             backend_deps = if_gpu_is_configured(["//xla/service:gpu_plugin"])
-            backend_deps += if_gpu_is_configured(["//xla/tests:test_macros_%s" % backend])  # buildifier: disable=list-append
+            backend_deps += if_gpu_is_configured(["//xla/tests:test_macros_gpu"])  # buildifier: disable=list-append
             this_backend_tags += tf_gpu_tests_tags()
         elif backend in plugins:
             backend_deps = []
