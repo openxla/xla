@@ -275,6 +275,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@jsoncpp_git//:jsoncpp",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
     ],
