@@ -274,7 +274,7 @@ void AssignValuesToOuterLoopIVs(IndexingMap* indexing_map) {
           {}, symbol_replacements, indexing_map->GetDimVarsCount(), 1);
   *indexing_map = IndexingMap{thread_x_to_input_no_dim_symbols,
                               indexing_map->GetDimVars(),
-                              indexing_map->GetRangeVars(),
+                              {indexing_map->GetRangeVars().back()},
                               {}};
   indexing_map->Simplify(GetIndexingMapForInstruction);
   indexing_map->RemoveUnusedSymbols();
