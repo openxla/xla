@@ -98,10 +98,43 @@ struct PjRtFutureHelpers {
 };
 
 namespace internal {
+
+// A base class to conditionally disable copy constructor and assignment for a
+// PjRtFuture<T> (by default we always disable copy constructor when `T` is not
+// copyable), which makes PjRtFuture<T> an `std::unique_ptr`-like container for
+// move-only types.
+template <bool unique>
+class PjRtFutureMoveControl;
+
+template <>
+class PjRtFutureMoveControl</*unique=*/true> {
+ protected:
+  PjRtFutureMoveControl() = default;
+
+  PjRtFutureMoveControl(const PjRtFutureMoveControl&) = delete;
+  PjRtFutureMoveControl& operator=(const PjRtFutureMoveControl&) = delete;
+
+  PjRtFutureMoveControl(PjRtFutureMoveControl&&) = default;
+  PjRtFutureMoveControl& operator=(PjRtFutureMoveControl&&) = default;
+};
+
+template <>
+class PjRtFutureMoveControl</*unique=*/false> {
+ protected:
+  PjRtFutureMoveControl() = default;
+
+  PjRtFutureMoveControl(const PjRtFutureMoveControl&) = default;
+  PjRtFutureMoveControl& operator=(const PjRtFutureMoveControl&) = default;
+
+  PjRtFutureMoveControl(PjRtFutureMoveControl&&) = default;
+  PjRtFutureMoveControl& operator=(PjRtFutureMoveControl&&) = default;
+};
+
 // A base class for a stateful future PjRtFuture<T> and a stateless future
-// PjRtFuture<void>.
+// PjRtFuture<>.
 template <typename T>
-class PjRtFutureBase {
+class PjRtFutureBase : public PjRtFutureMoveControl<
+                           /*unique=*/!std::is_copy_constructible_v<T>> {
  public:
   bool IsValid() const { return promise_ != nullptr; }
 
@@ -246,6 +279,9 @@ template <class T>
 class PjRtFuture : public internal::PjRtFutureBase<T> {
   using Base = internal::PjRtFutureBase<T>;
 
+  static_assert(!std::is_same_v<T, absl::Status>,
+                "Use PjRtFuture<> specialization for stateless futures");
+
  public:
   // Wrapper for AsyncValueRef<T> that can be used by clients that don't
   // natively use TSL concurrency library.
@@ -376,9 +412,6 @@ class PjRtFuture<void> : public internal::PjRtFutureBase<std::nullopt_t> {
         Base::Promise::SetError(std::move(status));
       }
     }
-
-    // TODO(b/333538339): Remove this method in favor if Set() above.
-    void SetError(absl::Status status) { Set(std::move(status)); }
   };
 
   // Returns a Promise that can be used to construct a PjRtFuture, and then Set
