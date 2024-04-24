@@ -226,7 +226,7 @@ TEST_F(ReductionTest, ThreadIndexingColumnReduction) {
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 99] d4 in [0, 0] d5 in [0, 0]
         s0 in [0, 0] s1 in [0, 127] s2 in [0, 0] s3 in [0, 0]
-        0 in [0,0] d0 floordiv 32 + s1 * 32 in [0, 63]
+        d0 floordiv 32 + s1 * 32 in [0, 63]
         d0 mod 32 in [0, 31]
       )"));
   EXPECT_THAT(
@@ -240,7 +240,6 @@ TEST_F(ReductionTest, ThreadIndexingColumnReduction) {
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 99] d4 in [0, 0] d5 in [0, 0]
         s0 in [0, 0]
-        d0 floordiv 32 + s0 in [0, 31]
         d0 mod 32 in [0, 0]
       )"));
 }
@@ -298,7 +297,6 @@ TEST_F(ReductionTest, ThreadIndexingVectorizeColumnReduction) {
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 255] d4 in [0, 0] d5 in [0, 0]
         s0 in [0, 1]
-        (d0 floordiv 32) * 2 + s0 in [0, 63]
         d0 mod 32 in [0, 0]
       )"));
 }
