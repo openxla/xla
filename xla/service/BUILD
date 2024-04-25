@@ -3221,6 +3221,7 @@ xla_cc_test(
     deps = [
         ":while_loop_unroller",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
@@ -3231,6 +3232,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )
