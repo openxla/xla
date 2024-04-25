@@ -43,8 +43,53 @@ class KernelSupportLibrary {
 
   // Generates the following control flow structure:
   //
-  //   for (i64 i = `start`; i s< `end`; i += `step`)
-  //     `for_body_generator(/*ind_var=*/,i)`;
+  //   if (`start` < `end`) {
+  //     `for_body_generator(/*ind_var=*/start, /*is_first_iteration=*/true)`;
+  //     for (i64 i = `start` + `step`; i < `end`; i += `step`)
+  //       `for_body_generator(/*ind_var=*/i, /*is_first_iteration=*/false)`;
+  //   }
+  Status ForWithStatus(
+      absl::string_view name, llvm::Value* start, llvm::Value* end,
+      llvm::Value* step,
+      const std::function<Status(llvm::Value* ind_var,
+                                 bool is_first_iteration)>& for_body_generator);
+
+  void For(
+      absl::string_view name, llvm::Value* start, llvm::Value* end,
+      llvm::Value* step,
+      const std::function<void(llvm::Value* ind_var, bool is_first_iteration)>&
+          for_body_generator) {
+    CHECK_EQ(OkStatus(),
+             ForWithStatus(
+                 name, start, end, step,
+                 [&](llvm::Value* ind_var, bool is_first_iteration) -> Status {
+                   for_body_generator(ind_var, is_first_iteration);
+                   return OkStatus();
+                 }));
+  }
+
+  Status ForWithStatus(
+      absl::string_view name, int64_t start, int64_t end, int64_t step,
+      const std::function<Status(
+          llvm::Value* ind_var, bool is_first_iteration)>& for_body_generator) {
+    return ForWithStatus(name, /*start=*/b_->getInt64(start),
+                         /*end=*/b_->getInt64(end),
+                         /*step=*/b_->getInt64(step), for_body_generator);
+  }
+
+  void For(
+      absl::string_view name, int64_t start, int64_t end, int64_t step,
+      const std::function<void(llvm::Value* ind_var, bool is_first_iteration)>&
+          for_body_generator) {
+    For(name, /*start=*/b_->getInt64(start),
+        /*end=*/b_->getInt64(end),
+        /*step=*/b_->getInt64(step), for_body_generator);
+  }
+
+  // Generates the following control flow structure:
+  //
+  //   for (i64 i = `start`; i < `end`; i += `step`)
+  //     `for_body_generator(/*ind_var=*/i)`;
   Status ForWithStatus(
       absl::string_view name, llvm::Value* start, llvm::Value* end,
       llvm::Value* step,
@@ -53,7 +98,13 @@ class KernelSupportLibrary {
   void For(
       absl::string_view name, llvm::Value* start, llvm::Value* end,
       llvm::Value* step,
-      const std::function<void(llvm::Value* ind_var)>& for_body_generator);
+      const std::function<void(llvm::Value* ind_var)>& for_body_generator) {
+    CHECK_EQ(OkStatus(), ForWithStatus(name, start, end, step,
+                                       [&](llvm::Value* ind_var) -> Status {
+                                         for_body_generator(ind_var);
+                                         return OkStatus();
+                                       }));
+  }
 
   Status ForWithStatus(
       absl::string_view name, llvm::Value* start, llvm::Value* end,

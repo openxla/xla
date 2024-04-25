@@ -19,19 +19,28 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 
 namespace xla {
+Status KernelSupportLibrary::ForWithStatus(
+    absl::string_view name, llvm::Value* start, llvm::Value* end,
+    llvm::Value* step,
+    const std::function<Status(llvm::Value*, bool)>& for_body_generator) {
+  return IfWithStatus(b_->CreateICmpSLT(start, end), [&]() -> Status {
+    TF_RETURN_IF_ERROR(for_body_generator(start, /*is_first_iteration=*/true));
+    return ForWithStatus(
+        name, b_->CreateAdd(start, step), end, step,
+        [&](llvm::Value* iv) { return for_body_generator(iv, false); });
+  });
+}
 
 Status KernelSupportLibrary::ForWithStatus(
     absl::string_view name, llvm::Value* start, llvm::Value* end,
     llvm::Value* step,
-    const std::function<Status(llvm::Value*, llvm::Value*)>&
-        for_body_generator) {
+    const std::function<Status(llvm::Value*)>& for_body_generator) {
   std::unique_ptr<llvm_ir::ForLoop> loop = llvm_ir::ForLoop::EmitForLoop(
       name, start, end, step, b_,
       /*unroll_mode=*/unroll_mode_,
       /*prevent_vectorization=*/prevent_vectorization_);
   b_->SetInsertPoint(&loop->GetBodyBasicBlock()->back());
-  TF_RETURN_IF_ERROR(
-      for_body_generator(loop->GetIndVarValue()));
+  TF_RETURN_IF_ERROR(for_body_generator(loop->GetIndVarValue()));
   llvm_ir::SetToLastInsertPoint(loop->GetExitBasicBlock(), b_);
   return OkStatus();
 }
