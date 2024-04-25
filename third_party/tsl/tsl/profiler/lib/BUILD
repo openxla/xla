@@ -1,3 +1,7 @@
+load(
+    "@local_config_cuda//cuda:build_defs.bzl",
+    "if_cuda",
+)
 load("@xla//xla/tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
 load("@xla//xla/tsl:tsl.default.bzl", "filegroup")
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
@@ -283,17 +287,17 @@ cc_library(
 cc_library(
     name = "scoped_annotation",
     hdrs = [
-        "nvtx_utils.h",
         "scoped_annotation.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":nvtx_utils",
         "//tsl/platform:macros",
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
     ] + if_not_android([
         "//tsl/profiler/backends/cpu:annotation_stack",
+    ]) + if_cuda([
+        ":nvtx_utils",
     ]),
 )
 
