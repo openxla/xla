@@ -151,7 +151,7 @@ class CudnnFusedMhaRewriterPipelineTest
 };
 
 constexpr absl::string_view
-    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_k_hidden_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
 
 region_0.7 {
@@ -191,7 +191,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_k_hidden_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
@@ -212,7 +212,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
 }
 
 constexpr absl::string_view
-    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_q_hidden_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
 
 region_0.7 {
@@ -252,7 +252,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm1_lhs_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_q_hidden_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
@@ -275,7 +275,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
 }
 
 constexpr absl::string_view
-    hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm2_non_contracting_dim_not_most_minor = R"(
+    hlo_BF16Bmm1SoftmaxBmm2Pattern_v_hidden_dim_not_most_minor = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
 
 region_0.7 {
@@ -315,7 +315,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
   TF_ASSERT_OK_AND_ASSIGN(
       auto m,
       ParseAndReturnVerifiedModule(
-          hlo_BF16Bmm1SoftmaxBmm2Pattern_bmm2_non_contracting_dim_not_most_minor));
+          hlo_BF16Bmm1SoftmaxBmm2Pattern_v_hidden_dim_not_most_minor));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
