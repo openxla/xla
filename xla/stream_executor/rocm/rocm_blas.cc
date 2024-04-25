@@ -363,6 +363,12 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
                  << ": " << ToString(ret);
     }
   }
+#if TF_ROCM_VERSION >= 60000
+  if (auto *workspace = GetWorkspace();
+      workspace && workspace->opaque() && workspace->size() > 0) {
+      (void)wrap::rocblas_set_workspace(blas_, workspace->opaque(), workspace->size());
+  }
+#endif
 
   ret = rocblas_func(blas_, std::forward<Args>(args)...);
   if (ret != rocblas_status_success) {
