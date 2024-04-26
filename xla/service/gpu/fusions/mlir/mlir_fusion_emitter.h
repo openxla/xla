@@ -66,8 +66,6 @@ class MlirFusionEmitterBase : public KernelFusionInterface {
       const std::string& entry_function_name,
       const BufferAssignment* buffer_assignment) const;
 
-  virtual int elements_store_per_thread() const { return 1; }
-
  protected:
   // Returns the set of instructions that will be isolated in the partitioned,
   // i.e., they will get their own subgraph. We won't automatically emit

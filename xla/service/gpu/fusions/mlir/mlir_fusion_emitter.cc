@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
 #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from @llvm-project
 #include "mlir/Dialect/DLTI/DLTI.h"  // from @llvm-project
@@ -328,7 +329,8 @@ MlirFusionEmitterBase::CreateMLIRModule(
                       mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                       mlir::math::MathDialect, mlir::scf::SCFDialect,
                       mlir::mhlo::MhloDialect, mlir::gpu::GPUDialect,
-                      mlir::NVVM::NVVMDialect, xla::gpu::XlaGpuDialect>();
+                      mlir::NVVM::NVVMDialect, xla::gpu::XlaGpuDialect,
+                      mlir::memref::MemRefDialect>();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
   mlir::registerBuiltinDialectTranslation(registry);
@@ -386,9 +388,6 @@ MlirFusionEmitterBase::CreateMLIRModule(
   auto result_types = mlir_converter::ShapeToMlirTypes(fusion.shape(), builder);
   param_types.append(result_types.begin(), result_types.end());
   SmallVector<mlir::Type> entry_func_result_types;
-  for (int elem = 0; elem < elements_store_per_thread(); ++elem) {
-    entry_func_result_types.append(result_types.begin(), result_types.end());
-  }
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       fusion.shape(), [&](const auto& shape, const ShapeIndex& index) {
         if (shape.IsArray()) {
@@ -401,7 +400,7 @@ MlirFusionEmitterBase::CreateMLIRModule(
   builder.setInsertionPointToStart(module->getBody());
   auto entry_func = builder.create<mlir::func::FuncOp>(
       loc, entry_function_name,
-      mlir::FunctionType::get(&context, param_types, entry_func_result_types),
+      mlir::FunctionType::get(&context, param_types, result_types),
       /*sym_visibility=*/mlir::StringAttr{},
       mlir::ArrayAttr::get(&context, arg_attrs),
       /*res_attrs=*/mlir::ArrayAttr{});
