@@ -7209,8 +7209,7 @@ CudnnSupport::FusedMHARunnerFromDesc(
   int64_t dropout_rng_seed = seed.has_value() ? *seed : 0;
   std::vector<std::optional<int64_t>> uids = {
       CudnnfMHAUid::Q_ID, CudnnfMHAUid::K_ID, CudnnfMHAUid::V_ID,
-      CudnnfMHAUid::O_ID,
-      /*mask=*/std::nullopt};
+      CudnnfMHAUid::O_ID};
   uids.emplace_back(bias_descriptor.has_value()
                         ? std::optional<CudnnfMHAUid>(CudnnfMHAUid::BIAS_ID)
                         : std::nullopt);
