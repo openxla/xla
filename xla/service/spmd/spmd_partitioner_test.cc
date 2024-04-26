@@ -5246,10 +5246,9 @@ ENTRY main {
   Arg_0.1 = bf16[2,2048,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
   Arg_1.2 = bf16[24576,98304]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
   dot.5 = bf16[2,2048,98304]{2,1,0} dot(Arg_0.1, Arg_1.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[1,1,4]<=[4]}
-  copy = bf16[2,2048,98304]{2,1,0} copy(dot.5), sharding={devices=[1,1,4]<=[4]}
   Arg_2.3 = bf16[24576,98304]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
   dot.6 = bf16[2,2048,98304]{2,1,0} dot(Arg_0.1, Arg_2.3), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[1,1,4]<=[4]}
-  ROOT add.8 = bf16[2,2048,98304]{2,1,0} add(copy, dot.6), sharding={devices=[1,1,4]<=[4]}
+  ROOT add.8 = bf16[2,2048,98304]{2,1,0} add(dot.5, dot.6), sharding={devices=[1,1,4]<=[4]}
 }
 
 )";
@@ -5265,6 +5264,10 @@ ENTRY main {
                            /*threshold_for_windowed_einsum_mib=*/0,
                            /*skip_checking_windowed_einsum_users=*/true,
                            /*disable_ag_rewrite_for_multiple_consumers=*/true));
+  // With disable_ag_rewrite_for_multiple_consumers set to true, we expect only
+  // 1 while loop to exist which is the rewritten windowed einsum loop for the
+  // first ag->dot pattern. The second dot which shares the same operand with
+  // the loop will remain as is.
   EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile),
             1);
   EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kDot),

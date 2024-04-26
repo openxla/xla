@@ -1911,19 +1911,20 @@ absl::StatusOr<HloInstruction*> PartitionBaseCase(
 
   // If we see a dot that shares the same operand with a windowed einsum ag loop
   // and disable_ag_rewrite_for_multiple_consumers is true. We skip rewriting
-  // the current dot.
+  // the current dot. We also skip any reshape operand as long as it only has
+  // the lhs or rhs of the dot as the only user since reshape ops won't change
+  // the functional meaning of the pattern.
+  auto has_reshape_operand = [](PartitionedHlo& hlo) -> bool {
+    return hlo.hlo()->opcode() == HloOpcode::kReshape ||
+           hlo.hlo()->opcode() == HloOpcode::kBitcast ||
+           hlo.hlo()->opcode() == HloOpcode::kTranspose;
+  };
   bool should_skip_windowed_einsum = false;
   if (options.disable_ag_rewrite_for_multiple_consumers) {
-    auto lhs_operand = lhs.hlo()->opcode() == HloOpcode::kReshape ||
-                               lhs.hlo()->opcode() == HloOpcode::kBitcast ||
-                               lhs.hlo()->opcode() == HloOpcode::kTranspose
-                           ? lhs.hlo()->operand(0)
-                           : lhs.hlo();
-    auto rhs_operand = rhs.hlo()->opcode() == HloOpcode::kReshape ||
-                               rhs.hlo()->opcode() == HloOpcode::kBitcast ||
-                               rhs.hlo()->opcode() == HloOpcode::kTranspose
-                           ? rhs.hlo()->operand(0)
-                           : rhs.hlo();
+    auto lhs_operand =
+        has_reshape_operand(lhs) ? lhs.hlo()->operand(0) : lhs.hlo();
+    auto rhs_operand =
+        has_reshape_operand(rhs) ? rhs.hlo()->operand(0) : rhs.hlo();
     for (auto loop : *windowed_dot_general_loops) {
       if (loop.while_loop->while_body()->name().find(
               "windowed_dot_general_body_ag") == 0) {
