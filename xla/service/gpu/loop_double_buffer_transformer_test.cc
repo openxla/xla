@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/tuple_simplifier.h"
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
@@ -524,6 +525,472 @@ ENTRY main {
   // We expect the number of while loops to be 4 in total after unrolling.
   EXPECT_EQ(num_whiles, 4);
 }
+
+TEST_F(GpuLoopDoubleBufferTransformerTest, WhileLoopWithCollectivePermute) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  collective-permute = f32[] collective-permute(param_0), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}},
+                             frontend_attributes={_xla_send_recv_validation="{{0,7},{1,8},{2,9},{3,10}}"}
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(collective-permute, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  // Get the collective permute instructions
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kCollectivePermute) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,4},{1,4},{1,5},{2,5}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,3},{0,4},{1,4},{1,5}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       WhileLoopWithCollectivePermutePeeled) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(15)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  collective-permute = f32[] collective-permute(param_0), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,4},{4,5},{5,6},{6,7},{7,0}},
+                             frontend_attributes={_xla_send_recv_validation="{{0,8},{1,9},{2,10},{3,11},{4,12},{5,13},{6,14},{7,15}}"}
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(collective-permute, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"15"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  // Get the collective permute instructions outside while body
+  for (HloInstruction* instr : module->entry_computation()->instructions()) {
+    if (instr->opcode() != HloOpcode::kCollectivePermute) continue;
+    ASSERT_TRUE(
+        instr->frontend_attributes().map().contains(kSendRecvValidationAttr));
+    EXPECT_EQ(instr->frontend_attributes().map().at(kSendRecvValidationAttr),
+              "{{0,1},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}");
+  }
+
+  // Get the collective permute instructions in while body
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kCollectivePermute) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,4},{0,4},{1,5},{1,5},{2,6},{2,6},{3,7},{3,7}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,3},{0,4},{0,4},{1,5},{1,5},{2,6},{2,6},{3,7}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       WhileLoopWithCollectivePermuteBackwardCycle) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(14)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  collective-permute = f32[] collective-permute(param_0), channel_id=1, source_target_pairs={{0,7},{1,0},{2,1},{3,2},{4,3},{5,4},{6,5},{7,6}},
+                             frontend_attributes={_xla_send_recv_validation="{{7,14},{6,13},{5,12},{4,11},{3,10},{2,9},{1,8},{0,7}}"}
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(collective-permute, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"14"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+  // Get the collective permute instructions
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kCollectivePermute) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{4,7},{3,7},{3,6},{2,6},{2,5},{1,5},{1,4},{0,4}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{3,7},{3,6},{2,6},{2,5},{1,5},{1,4},{0,4},{0,3}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       WhileLoopWithCollectivePermuteBackwardCyclePeeled) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(15)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  collective-permute = f32[] collective-permute(param_0), channel_id=1, source_target_pairs={{0,7},{1,0},{2,1},{3,2},{4,3},{5,4},{6,5},{7,6}},
+                             frontend_attributes={_xla_send_recv_validation="{{7,15},{6,14},{5,13},{4,12},{3,11},{2,10},{1,9},{0,8}}"}
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(collective-permute, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"15"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  // Get the collective permute instructions outside while body
+  for (HloInstruction* instr : module->entry_computation()->instructions()) {
+    if (instr->opcode() != HloOpcode::kCollectivePermute) continue;
+    ASSERT_TRUE(
+        instr->frontend_attributes().map().contains(kSendRecvValidationAttr));
+    EXPECT_EQ(instr->frontend_attributes().map().at(kSendRecvValidationAttr),
+              "{{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,1}}");
+  }
+
+  // Get the collective permute instructions
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kCollectivePermute) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{3,7},{3,7},{2,6},{2,6},{1,5},{1,5},{0,4},{0,4}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{3,7},{2,6},{2,6},{1,5},{1,5},{0,4},{0,4},{0,3}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest,
+       WhileLoopWithCollectivePermuteStartDone) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  collective-permute-start = (f32[], f32[], u32[], u32[]) collective-permute-start(param_0), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}},
+                             frontend_attributes={_xla_send_recv_validation="{{0,7},{1,8},{2,9},{3,10}}"}
+  collective-permute = f32[] collective-permute-done(collective-permute-start)
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(collective-permute, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kCollectivePermuteStart) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,4},{1,4},{1,5},{2,5}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,3},{0,4},{1,4},{1,5}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest, WhileLoopWithRecvDone) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  after-all.0 = token[] after-all()
+  recv.0 = (f32[], u32[], token[]) recv(after-all.0), channel_id=1,
+        frontend_attributes={
+          _xla_send_recv_source_target_pairs="{{0,1},{1,2},{2,3},{3,0}}",
+          _xla_send_recv_pipeline="0",
+          _xla_send_recv_validation="{{0,7},{1,8},{2,9},{3,10}}"
+        }
+  recv-done.0 = (f32[], token[]) recv-done(recv.0), channel_id=1,
+        frontend_attributes={
+          _xla_send_recv_pipeline="0"
+        }
+  recv-data = f32[] get-tuple-element(recv-done.0), index=0
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(recv-data, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kRecv) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,4},{1,4},{1,5},{2,5}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,3},{0,4},{1,4},{1,5}}");
+}
+
+TEST_F(GpuLoopDoubleBufferTransformerTest, WhileLoopWithSendDone) {
+  const char* kModuleString = R"(
+HloModule loop_unrolling_no_deps
+condition {
+  input_tuple = (f32[], s32[]) parameter(0)
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  trip_count = s32[] constant(10)
+  ROOT done = pred[] compare(cond, trip_count), direction=LT
+}
+
+ar_add {
+  Arg_1 = f32[] parameter(1)
+  Arg_0 = f32[] parameter(0)
+  ROOT add_ar = f32[] add(Arg_1, Arg_0)
+}
+
+body {
+  input_tuple = (f32[], s32[]) parameter(0)
+  param_0 = f32[] get-tuple-element(input_tuple), index=0
+  cond = s32[] get-tuple-element(input_tuple), index=1
+  after-all.0 = token[] after-all()
+  send.0 = (f32[], u32[], token[]) send(param_0, after-all.0), channel_id=1,
+        frontend_attributes={
+          _xla_send_recv_source_target_pairs="{{0,1},{1,2},{2,3},{3,0}}",
+          _xla_send_recv_pipeline="0",
+          _xla_send_recv_validation="{{0,7},{1,8},{2,9},{3,10}}"
+        }
+  send-done.0 = token[] send-done(send.0), channel_id=1,
+        frontend_attributes={
+          _xla_send_recv_pipeline="0"
+        }
+  one = s32[] constant(1)
+  cond_plus_1 = s32[] add(cond, one)
+  ROOT output_tuple = (f32[], s32[]) tuple(param_0, cond_plus_1)
+}
+
+ENTRY main {
+  param_0 = f32[] parameter(0)
+  param_2 = s32[] constant(0)
+  tuple = (f32[], s32[]) tuple(param_0, param_2)
+  ROOT while = (f32[], s32[]) while(tuple), condition=condition, body=body, backend_config={"known_trip_count":{"n":"10"}}
+}
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleString));
+  LoopDoubleBufferTransformer double_buffer;
+  EXPECT_THAT(double_buffer.Run(module.get()), IsOkAndHolds(true));
+
+  HloComputation* while_body =
+      module->entry_computation()->root_instruction()->while_body();
+  std::vector<HloInstruction*> collective_permutes;
+  for (HloInstruction* inst : while_body->instructions()) {
+    if (inst->opcode() != HloOpcode::kSend) continue;
+    collective_permutes.push_back(inst);
+  }
+  ASSERT_EQ(collective_permutes.size(), 2);
+  ASSERT_TRUE(collective_permutes[0]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  ASSERT_TRUE(collective_permutes[1]->frontend_attributes().map().contains(
+      kSendRecvValidationAttr));
+  EXPECT_EQ(collective_permutes[0]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,4},{1,4},{1,5},{2,5}}");
+  EXPECT_EQ(collective_permutes[1]->frontend_attributes().map().at(
+                kSendRecvValidationAttr),
+            "{{0,3},{0,4},{1,4},{1,5}}");
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

@@ -82,6 +82,183 @@ void SetChannelIdForNewCollective(HloInstruction* new_instr,
   }
 }
 
+absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> ParseVectorOfPairs(
+    std::basic_string<char>& str) {
+  TF_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
+                      ParseReplicaGroupsOnly(str));
+  std::vector<std::pair<int64_t, int64_t>> res;
+  res.reserve(replica_groups.size());
+  for (const ReplicaGroup& replica_group : replica_groups) {
+    TF_RET_CHECK(replica_group.replica_ids_size() == 2);
+    int64_t a = replica_group.replica_ids(0);
+    int64_t b = replica_group.replica_ids(1);
+    res.emplace_back(a, b);
+  }
+  return res;
+}
+
+absl::Status SetSendRecvValidationForPeeledInstr(HloInstruction* new_instr,
+                                                 HloInstruction* old_instr) {
+  auto opcode = new_instr->opcode();
+  assert(opcode == old_instr->opcode() &&
+         "cloned instruction and original instruction have different opcodes");
+  if (!HloPredicateIsOp<HloOpcode::kCollectivePermute,
+                        HloOpcode::kCollectivePermuteStart, HloOpcode::kSend,
+                        HloOpcode::kRecv>(old_instr)) {
+    return absl::OkStatus();
+  }
+
+  google::protobuf::Map<std::string, std::string> attribute_map =
+      new_instr->frontend_attributes().map();
+  if (!attribute_map.contains(kSendRecvValidationAttr)) {
+    return absl::OkStatus();
+  }
+
+  VLOG(3) << "Original send-recv iterations: "
+          << attribute_map.at(kSendRecvValidationAttr);
+
+  TF_ASSIGN_OR_RETURN(
+      auto send_recv_validation_attr,
+      ParseVectorOfPairs(attribute_map.at(kSendRecvValidationAttr)));
+
+  uint64_t n_pairs = send_recv_validation_attr.size();
+  if (n_pairs == 0) {
+    return absl::OkStatus();
+  }
+  std::vector<std::pair<int64_t, int64_t>> send_recv_validation_attr_updated(
+      n_pairs, {0, 0});
+  bool is_forward_cycle = (send_recv_validation_attr[0].first == 0);
+  if (is_forward_cycle)
+    send_recv_validation_attr_updated[0] = {0, 1};
+  else
+    send_recv_validation_attr_updated[send_recv_validation_attr.size() - 1] = {
+        0, 1};
+
+  FrontendAttributes attributes;
+  // Copy the attributes from old_instr attributes
+  for (auto& [key, val] : old_instr->frontend_attributes().map()) {
+    if (key == kSendRecvValidationAttr) continue;
+    (*attributes.mutable_map())[key] = val;
+  }
+  std::string send_recv_validation_attr_str =
+      "{" +
+      absl::StrJoin(send_recv_validation_attr_updated, ",",
+                    absl::PairFormatter(
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, "{", value);
+                        },
+                        ",",
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, value, "}");
+                        })) +
+      "}";
+  VLOG(3) << "New send-recv iterations for peeled instruction: "
+          << send_recv_validation_attr_str;
+  (*attributes.mutable_map())[kSendRecvValidationAttr] =
+      send_recv_validation_attr_str;
+  new_instr->set_frontend_attributes(attributes);
+  return absl::OkStatus();
+}
+
+absl::Status SetSendRecvValidation(HloInstruction* new_instr,
+                                   HloInstruction* old_instr, bool is_peeled) {
+  auto opcode = new_instr->opcode();
+  assert(opcode == old_instr->opcode() &&
+         "cloned instruction and original instruction have different opcodes");
+  if (!HloPredicateIsOp<HloOpcode::kCollectivePermute,
+                        HloOpcode::kCollectivePermuteStart, HloOpcode::kSend,
+                        HloOpcode::kRecv>(old_instr)) {
+    return absl::OkStatus();
+  }
+  google::protobuf::Map<std::string, std::string> attribute_map =
+      new_instr->frontend_attributes().map();
+  if (!attribute_map.contains(kSendRecvValidationAttr)) {
+    return absl::OkStatus();
+  }
+  VLOG(3) << "Original send-recv iterations: "
+          << attribute_map.at(kSendRecvValidationAttr);
+
+  TF_ASSIGN_OR_RETURN(
+      auto send_recv_validation_attr,
+      ParseVectorOfPairs(attribute_map.at(kSendRecvValidationAttr)));
+
+  if (send_recv_validation_attr.size() == 0) {
+    return absl::OkStatus();
+  }
+
+  std::vector<std::pair<int64_t, int64_t>> send_recv_iterations_old_instr,
+      send_recv_iterations_new_instr;
+  send_recv_iterations_old_instr.reserve(send_recv_validation_attr.size());
+  send_recv_iterations_new_instr.reserve(send_recv_validation_attr.size());
+  for (std::pair<int64_t, int64_t> pair : send_recv_validation_attr) {
+    int64_t a = pair.first;
+    int64_t b = pair.second;
+    if (is_peeled) {
+      send_recv_iterations_old_instr.emplace_back(std::floor(a / 2.0),
+                                                  std::floor(b / 2.0));
+      send_recv_iterations_new_instr.emplace_back(
+          std::max(0.0, std::floor((a - 1) / 2.0)), std::floor((b - 1) / 2.0));
+    } else {
+      send_recv_iterations_old_instr.emplace_back(std::ceil(a / 2.0),
+                                                  std::ceil(b / 2.0));
+      send_recv_iterations_new_instr.emplace_back(std::floor(a / 2.0),
+                                                  std::floor(b / 2.0));
+    }
+  }
+
+  std::string iteration_instances_old_instr =
+      "{" +
+      absl::StrJoin(send_recv_iterations_old_instr, ",",
+                    absl::PairFormatter(
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, "{", value);
+                        },
+                        ",",
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, value, "}");
+                        })) +
+      "}";
+
+  std::string iteration_instances_new_instr =
+      "{" +
+      absl::StrJoin(send_recv_iterations_new_instr, ",",
+                    absl::PairFormatter(
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, "{", value);
+                        },
+                        ",",
+                        [](std::string* out, int64_t value) {
+                          absl::StrAppend(out, value, "}");
+                        })) +
+      "}";
+
+  VLOG(3) << "New send-recv iterations for original instruction: "
+          << iteration_instances_old_instr;
+  VLOG(3) << "New send-recv iterations for new instruction: "
+          << iteration_instances_new_instr;
+
+  FrontendAttributes attributes;
+  // Copy the attributes from old_instr attributes
+  for (auto& [key, val] : old_instr->frontend_attributes().map()) {
+    if (key == kSendRecvValidationAttr) continue;
+    (*attributes.mutable_map())[key] = val;
+  }
+  (*attributes.mutable_map())[kSendRecvValidationAttr] =
+      iteration_instances_old_instr;
+  old_instr->set_frontend_attributes(attributes);
+
+  // Do the same for new instr
+  attributes.clear_map();
+  for (auto& [key, val] : new_instr->frontend_attributes().map()) {
+    if (key == kSendRecvValidationAttr) continue;
+    (*attributes.mutable_map())[key] = val;
+  }
+  (*attributes.mutable_map())[kSendRecvValidationAttr] =
+      iteration_instances_new_instr;
+  new_instr->set_frontend_attributes(attributes);
+  return absl::OkStatus();
+}
+
 absl::Status PeelInstructionsForOddTripCount(HloModule* module,
                                              HloInstruction* while_instr) {
   std::string suffix = "peeled_double_buffer";
@@ -108,6 +285,7 @@ absl::Status PeelInstructionsForOddTripCount(HloModule* module,
             old_instr->shape(), new_operands, suffix));
 
     SetChannelIdForNewCollective(new_instr, module);
+    TF_CHECK_OK(SetSendRecvValidationForPeeledInstr(new_instr, old_instr));
     old_to_new_map[old_instr] = new_instr;
     VLOG(2) << "Added instruction " << new_instr->ToString()
             << " to parent computation.";
@@ -180,8 +358,8 @@ absl::StatusOr<bool> LoopDoubleBufferTransformer::Run(
     VLOG(2) << "Processing input parameter " << input_parameter->ToString();
     absl::flat_hash_map<HloInstruction*, HloInstruction*> old_to_new_map;
     absl::flat_hash_set<HloInstruction*> skip_control_dep_injection;
-
-    if (exact_trip_count % 2) {
+    bool is_peeled = exact_trip_count % 2;
+    if (is_peeled) {
       VLOG(2) << "Found loops with odd trip count, 1 iteration will be peeled "
                  "outside of the main body.";
       TF_RETURN_IF_ERROR(PeelInstructionsForOddTripCount(module, while_instr));
@@ -209,6 +387,7 @@ absl::StatusOr<bool> LoopDoubleBufferTransformer::Run(
         skip_control_dep_injection.insert(old_instr);
       }
       SetChannelIdForNewCollective(new_instr, module);
+      TF_CHECK_OK(SetSendRecvValidation(new_instr, old_instr, is_peeled));
       old_to_new_map[old_instr] = new_instr;
       VLOG(2) << "Added instruction " << new_instr->ToString();
     }

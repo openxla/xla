@@ -44,7 +44,7 @@ TEST_F(CollectivePermuteValidIterationAnnotatorTest, NoChange) {
     %Cond (param.1: (s32[], s32[])) -> pred[] {
       %param.1 = (s32[], s32[]) parameter(0)
       %i.1 = s32[] get-tuple-element((s32[], s32[]) %param.1), index=1
-      %trip_count = s32[] constant(11)
+      %trip_count = s32[] constant(10)
       ROOT %done = pred[] compare(s32[] %i.1, s32[] %trip_count), direction=LT
     }
 
@@ -94,7 +94,7 @@ TEST_F(CollectivePermuteValidIterationAnnotatorTest, ForwardCycle) {
     %Cond (param.1: (s32[], s32[])) -> pred[] {
       %param.1 = (s32[], s32[]) parameter(0)
       %i.1 = s32[] get-tuple-element((s32[], s32[]) %param.1), index=1
-      %trip_count = s32[] constant(11)
+      %trip_count = s32[] constant(10)
       ROOT %done = pred[] compare(s32[] %i.1, s32[] %trip_count), direction=LT
     }
 
@@ -146,7 +146,7 @@ TEST_F(CollectivePermuteValidIterationAnnotatorTest, BackwardCycle) {
     %Cond (param.1: (s32[], s32[])) -> pred[] {
       %param.1 = (s32[], s32[]) parameter(0)
       %i.1 = s32[] get-tuple-element((s32[], s32[]) %param.1), index=1
-      %trip_count = s32[] constant(11)
+      %trip_count = s32[] constant(10)
       ROOT %done = pred[] compare(s32[] %i.1, s32[] %trip_count), direction=LT
     }
 
