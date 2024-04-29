@@ -1209,6 +1209,20 @@ Status ShapeVerifier::HandleDynamicReshape(HloInstruction* dynamic_reshape) {
   TF_RET_CHECK(dynamic_reshape->shape().rank() + 1 ==
                dynamic_reshape->operand_count());
   for (int64_t i = 1; i < dynamic_reshape->operand_count(); ++i) {
+    // if (dynamic_reshape->operand(i)->shape().element_type() != S32) {
+    //   VLOG(0) << "DO NOT SUBMIT dynamic_reshape: "
+    //           << dynamic_reshape->ToString();
+    //   VLOG(0) <<
+    //  "DO NOT SUBMIT dynamic_reshape->operand(i)->shape().element_type() "
+    //           << dynamic_reshape->operand(i)->shape().element_type();
+    //   VLOG(0) <<
+    //  "DO NOT SUBMIT dynamic_reshape->operand(i)->shape().ToString() "
+    //           << dynamic_reshape->operand(i)->ToString();
+    // }
+    // TF_RET_CHECK(
+    //             dynamic_reshape->operand(i)->shape().element_type() == S32 ||
+    //             dynamic_reshape->operand(i)->shape().element_type() == F32 ||
+    //             dynamic_reshape->operand(i)->shape().element_type() == S64);
     TF_RET_CHECK(dynamic_reshape->operand(i)->shape().element_type() == S32);
   }
   return OkStatus();
