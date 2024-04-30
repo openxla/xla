@@ -5339,7 +5339,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
 
     // shapes [1, 1, s, s], [b, 1, s, s], [b, h, s, s] are not supported for
     // dbias calculation but they are supported for forward bias calculation
-    if ((b == 1) && (n == q_n)) {
+    if (b == 1 && n == q_n) {
       auto d_bias_tensor =
           graph.tensor(Tensor_attributes()
                            .set_name("dBias")
