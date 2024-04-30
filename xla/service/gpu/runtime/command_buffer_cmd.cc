@@ -312,7 +312,6 @@ absl::Status CommandBufferCmdSequence::Record(
       TF_RETURN_IF_ERROR(command_buffer->Barrier(device, execution_scope_id));
       num_recorded_commands.erase(execution_scope_id);
     }
-
     VLOG(5) << " Record command buffer with scope id "
             << execution_scope_id.value();
 
@@ -1711,11 +1710,11 @@ absl::Status CollectiveBroadcastCmd::Record(
         "CollectiveBroadcastCmd requires collective parameters and cliques");
   }
 
-  TF_ASSIGN_OR_RETURN(NcclCommHandleWrapper comm_handle,
-                      GetNcclComm(*execute_params.collective_params,
-                                  *execute_params.collective_cliques,
-                                  config().replica_groups, config().group_mode,
-                                  nccl_stream_id(), GetAsyncStreamKind()));
+  TF_ASSIGN_OR_RETURN(
+      NcclCommHandleWrapper comm_handle,
+      GetNcclComm(*execute_params.collective_params,
+                  *execute_params.collective_cliques, config().replica_groups,
+                  config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
   NcclApi::NcclCommHandle comm = comm_handle.comm_handle;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(

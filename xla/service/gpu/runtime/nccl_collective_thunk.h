@@ -180,15 +180,6 @@ class NcclCollectiveThunk : public Thunk {
     return xla::gpu::GetStreamId(IsAsync(), GetAsyncStreamKind());
   }
 
-  // Left shifting the steam id by 3 bits as to distinguish the async stream
-  // id that is launched from the main stream. i.e.
-  // main_stream_id << 3 :  thunk's execution stream id
-  // main_stream_id << 3 + 1 :  async collective stream id launched from
-  // execution stream
-  // main_stream_id << 3 + 2 :  async P2P0 send/recv stream id launched from
-  // execution stream
-  // main_stream_id << 3 + 3 :  async P2P1 recv/recv stream id launched from
-  // execution stream
   ExecutionStreamId nccl_execution_stream_id() const {
     return ExecutionStreamId(execution_stream_id().value() +
                              nccl_stream_id().value());
