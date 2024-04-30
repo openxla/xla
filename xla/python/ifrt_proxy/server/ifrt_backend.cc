@@ -64,8 +64,8 @@
 #include "xla/python/ifrt_proxy/server/version.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status_to_from_proto.h"
@@ -117,6 +117,12 @@ absl::StatusOr<std::unique_ptr<IfrtBackend>> IfrtBackend::Create(
 
 IfrtBackend::~IfrtBackend() {
   // Cancel all in-flight host callback executions.
+  {
+    absl::MutexLock lock(&host_callback_queues_mutex_);
+    for (const auto& [key, queue] : host_callback_queues_) {
+      queue->Close();
+    }
+  }
   absl::flat_hash_map<uint64_t, RemoteLoadedHostCallbackQueue::ExecutionRequest>
       host_callback_executions;
   {
@@ -300,7 +306,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCheckFutureRequest(
     std::unique_ptr<IfrtRequest> request) {
   const CheckFutureRequest& check_request = request->check_future_request();
 
-  Future<absl::Status> future;
+  Future<> future;
   {
     absl::MutexLock lock(&futures_mutex_);
     const auto it = futures_.find(check_request.future_handle());
@@ -628,8 +634,7 @@ BackendInterface::Response IfrtBackend::HandleDeleteArrayRequest(
   uint64_t future_handle = handle_generator_.New();
   {
     absl::MutexLock lock(&futures_mutex_);
-    futures_.insert(
-        {future_handle, std::move(deletion_future).ToStatusFuture()});
+    futures_.insert({future_handle, std::move(deletion_future)});
   }
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
@@ -914,8 +919,8 @@ BackendInterface::Response IfrtBackend::HandleLoadedExecutableExecuteRequest(
   {
     absl::MutexLock lock(&futures_mutex_);
     execute_response->set_status_handle(handle_generator_.New());
-    futures_.insert({execute_response->status_handle(),
-                     std::move(result.status).ToStatusFuture()});
+    futures_.insert(
+        {execute_response->status_handle(), std::move(result.status)});
   }
 
   // Register output arrays. At this point, we should never early return because
@@ -948,7 +953,7 @@ BackendInterface::Response IfrtBackend::HandleLoadedExecutableDeleteRequest(
   TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
                       GetLoadedExecutable(del.loaded_executable_handle()));
 
-  Future<absl::Status> future = executable->Delete();
+  Future<> future = executable->Delete();
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
   auto* del_response = ifrt_resp->mutable_loaded_executable_delete_response();

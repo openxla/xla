@@ -20,6 +20,7 @@ load(
     "xla_cc_test",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -183,6 +184,7 @@ xla_test(
         "//xla/service/gpu:gpu_executable",
         "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_memory_allocator",
         "//xla/tests:filecheck",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:any_invocable",
@@ -526,14 +528,9 @@ xla_cc_test(
 xla_test(
     name = "gpu_kernel_tiling_test",
     srcs = ["gpu_kernel_tiling_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-nvidia",
-        "requires-gpu-sm60-only",
-    ]},
     backends = [
-        "gpu",
         "gpu_p100",
-    ],
+    ] + if_oss(["gpu"]),
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
@@ -768,7 +765,7 @@ xla_cc_test(
 )
 
 lit_test_suite(
-    name = "all_tests",
+    name = "hlo_lit_tests",
     srcs = enforce_glob(
         [
             "add_preds.hlo",
@@ -814,7 +811,12 @@ lit_test_suite(
     ]),
     cfg = "//xla:lit.cfg.py",
     data = [
-        ":test_utilities",
+        "//xla/tools/hlo_opt:gpu_specs/a100_80.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/h100.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
     ],
     default_tags = tf_cuda_tests_tags(),
     tags_override = {
@@ -829,20 +831,17 @@ lit_test_suite(
     ],
 )
 
-filegroup(
-    name = "test_utilities",
-    testonly = True,
-    data = [
-        "//xla/tools:hlo-opt",
-        "//xla/tools/hlo_opt:gpu_specs/a100_80.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
-        "@llvm-project//llvm:FileCheck",
-    ],
-)
+# copybara:uncomment_begin(triton-opt tool doesn't build in OSS)
+# lit_test_suite(
+#     name = "mlir_lit_tests",
+#     srcs = glob(["*.mlir"]),
+#     cfg = "//xla:lit.cfg.py",
+#     tools = [
+#         "@llvm-project//llvm:FileCheck",
+#         "@triton//:triton-opt",
+#     ],
+# )
+# copybara:uncomment_end
 
 xla_cc_test(
     name = "kernel_launch_test",
@@ -906,13 +905,9 @@ xla_cc_test(
 xla_test(
     name = "tensor_float_32_global_var_test",
     srcs = ["tensor_float_32_global_var_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-nvidia",
-        "requires-gpu-sm80-only",
-    ]},
     backends = [
-        "gpu",
-    ],
+        "gpu_a100",
+    ] + if_oss(["gpu"]),
     deps = [
         "//xla:error_spec",
         "//xla/tests:hlo_test_base",
@@ -922,10 +917,29 @@ xla_test(
 )
 
 xla_test(
+    name = "gpu_sparse_dot_test",
+    srcs = ["gpu_sparse_dot_test.cc"],
+    backends = [
+        "gpu_a100",
+        "gpu_h100",
+    ],
+    deps = [
+        ":gpu_codegen_test",
+        "//third_party/half:includes",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
     backend_tags = {"gpu": [
-        "requires-gpu-sm80",
+        "requires-gpu-sm90",
     ]},
     backends = [
         "gpu",
@@ -1050,6 +1064,18 @@ xla_cc_test(
 xla_cc_test(
     name = "simplify_fp_conversions_test",
     srcs = ["simplify_fp_conversions_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service:gpu_plugin",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "nop_custom_call_test",
+    srcs = ["nop_custom_call_test.cc"],
     tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:xla_proto_cc",

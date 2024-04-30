@@ -641,10 +641,23 @@ class PjRtClient {
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtDevice* device) = 0;
 
-  // Creates buffer that carries an error future without allocating memory.
+  // Creates buffer in the given memory space that carries an error future
+  // without allocating memory.
+  virtual StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
+      Status error, const Shape& shape, PjRtMemorySpace* memory) {
+    return Unimplemented("CreateErrorBuffer not supported.");
+  }
+
+  // Creates buffer in the given device that carries an error future without
+  // allocating memory.
+  ABSL_DEPRECATED("Use CreateErrorBuffer(Status, Shape, PjRtMemorySpace*)")
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
       Status error, const Shape& shape, PjRtDevice* device) {
-    return Unimplemented("CreateErrorBuffer not supported.");
+    auto default_memory_space = device->default_memory_space();
+    if (!default_memory_space.ok()) {
+      return default_memory_space.status();
+    }
+    return CreateErrorBuffer(std::move(error), shape, *default_memory_space);
   }
 
   // Gets the pointer to the topology description held by the client.
@@ -1323,15 +1336,6 @@ class PjRtBuffer {
   virtual StatusOr<std::unique_ptr<PjRtBuffer>> DonateWithControlDependency(
       PjRtFuture<> dependency) {
     return Unimplemented("DonateWithControlDependency is not supported.");
-  }
-
-  // TODO(b/333538339): Delete this adaptor once all users migrate from
-  // PjRtFuture<Status> to PjRtFuture<>.
-  StatusOr<std::unique_ptr<PjRtBuffer>> DonateWithControlDependency(
-      PjRtFuture<Status> dependency) {
-    PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
-    dependency.OnReady([promise](Status s) mutable { promise.Set(s); });
-    return DonateWithControlDependency(PjRtFuture<>(std::move(promise)));
   }
 
   // Helper to allow a caller to indicate that it is going to do some "sends"

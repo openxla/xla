@@ -370,7 +370,7 @@ class FlattenTuplesAndBufferizeTypeConverter : public mlir::TypeConverter {
         [](mlir::Type type, mlir::SmallVectorImpl<mlir::Type>& converted)
             -> mlir::LogicalResult {
           mlir::bufferization::BufferizeTypeConverter bufferize;
-          auto tuple_type = type.dyn_cast<mlir::TupleType>();
+          auto tuple_type = mlir::dyn_cast<mlir::TupleType>(type);
           if (!tuple_type) {
             converted.push_back(bufferize.convertType(type));
             return mlir::success();
@@ -642,13 +642,13 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
 
   {
-    // Int4Packer must be run before the rest of the pipeline since it
+    // SubbytePacker must be run before the rest of the pipeline since it
     // modifies the layout of the entry computation inputs/outputs, which is
     // passed to LayoutAssignment.
-    HloPassPipeline int4_packer_pipeline("Int4Packer pipeline");
-    int4_packer_pipeline.AddPass<SubByteNormalization>(
+    HloPassPipeline subbyte_packer_pipeline("SubbytePacker pipeline");
+    subbyte_packer_pipeline.AddPass<SubByteNormalization>(
         SubByteNormalization::SET_ELEMENT_SIZE);
-    TF_RETURN_IF_ERROR(int4_packer_pipeline.Run(module).status());
+    TF_RETURN_IF_ERROR(subbyte_packer_pipeline.Run(module).status());
   }
 
   HloPassPipeline pipeline("HLO passes through layout assignment");
@@ -1235,7 +1235,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> createMLIRModule(
       for (const auto& p : llvm::enumerate(operand_mapping)) {
         f.setArgAttr(p.index(), "xla_framework.input_mapping", p.value().first);
         if (export_mapping != nullptr) {
-          auto index_attr = p.value().first.dyn_cast<mlir::IntegerAttr>();
+          auto index_attr = mlir::dyn_cast<mlir::IntegerAttr>(p.value().first);
           if (index_attr) {
             export_mapping->inputs.push_back(index_attr.getInt());
           }

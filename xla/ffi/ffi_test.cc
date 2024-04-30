@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/ffi/ffi.h"
 
+#include <complex>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -430,6 +431,7 @@ TEST(FfiTest, TypedAndRankedBufferArgument) {
 
   auto fn = [&](BufferR2<PrimitiveType::F32> buffer) {
     EXPECT_EQ(buffer.data.opaque(), storage.data());
+    EXPECT_EQ(buffer.data.ElementCount(), storage.size());
     EXPECT_EQ(buffer.dimensions.size(), 2);
     return absl::OkStatus();
   };
@@ -445,6 +447,25 @@ TEST(FfiTest, TypedAndRankedBufferArgument) {
     auto status = Call(*handler, call_frame);
     TF_ASSERT_OK(status);
   }
+}
+
+TEST(FfiTest, ComplexBufferArgument) {
+  std::vector<std::complex<float>> storage(4, 0.0f);
+  se::DeviceMemoryBase memory(storage.data(), 4 * sizeof(std::complex<float>));
+
+  CallFrameBuilder builder;
+  builder.AddBufferArg(memory, PrimitiveType::C64, /*dims=*/{2, 2});
+  auto call_frame = builder.Build();
+
+  auto fn = [&](BufferR2<PrimitiveType::C64> buffer) {
+    EXPECT_EQ(buffer.data.opaque(), storage.data());
+    EXPECT_EQ(buffer.dimensions.size(), 2);
+    return absl::OkStatus();
+  };
+
+  auto handler = Ffi::Bind().Arg<BufferR2<PrimitiveType::C64>>().To(fn);
+  auto status = Call(*handler, call_frame);
+  TF_ASSERT_OK(status);
 }
 
 TEST(FfiTest, WrongRankBufferArgument) {
@@ -498,6 +519,28 @@ TEST(FfiTest, RemainingArgs) {
   };
 
   auto handler = Ffi::Bind().RemainingArgs().To(fn);
+  auto status = Call(*handler, call_frame);
+
+  TF_ASSERT_OK(status);
+}
+
+TEST(FfiTest, RemainingRets) {
+  std::vector<float> storage(4, 0.0f);
+  se::DeviceMemoryBase memory(storage.data(), 4 * sizeof(float));
+
+  CallFrameBuilder builder;
+  builder.AddBufferRet(memory, PrimitiveType::F32, /*dims=*/{2, 2});
+  builder.AddBufferRet(memory, PrimitiveType::F32, /*dims=*/{2, 2});
+  auto call_frame = builder.Build();
+
+  auto fn = [&](Result<BufferBase> ret, RemainingResults rets) {
+    EXPECT_EQ(rets.size(), 1);
+    EXPECT_TRUE(rets.get<BufferBase>(0).has_value());
+    EXPECT_FALSE(rets.get<BufferBase>(1).has_value());
+    return absl::OkStatus();
+  };
+
+  auto handler = Ffi::Bind().Ret<BufferBase>().RemainingResults().To(fn);
   auto status = Call(*handler, call_frame);
 
   TF_ASSERT_OK(status);

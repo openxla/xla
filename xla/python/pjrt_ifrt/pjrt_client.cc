@@ -49,8 +49,8 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
 #include "xla/python/pjrt_ifrt/pjrt_tuple.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -111,7 +111,7 @@ PjRtClient::PjRtClient(std::shared_ptr<xla::PjRtClient> pjrt_client)
 
 PjRtClient::~PjRtClient() = default;
 
-absl::StatusOr<PjRtDevice*> PjRtClient::LookupPjRtDevice(
+absl::StatusOr<PjRtCompatibleDevice*> PjRtClient::LookupPjRtDevice(
     xla::PjRtDevice* pjrt_device) const {
   auto it = device_map_.find(pjrt_device);
   if (it == device_map_.end()) {
@@ -121,7 +121,7 @@ absl::StatusOr<PjRtDevice*> PjRtClient::LookupPjRtDevice(
   return it->second.get();
 }
 
-absl::StatusOr<PjRtMemory*> PjRtClient::LookupPjRtMemory(
+absl::StatusOr<PjRtCompatibleMemory*> PjRtClient::LookupPjRtMemory(
     xla::PjRtMemorySpace* pjrt_memory) const {
   auto it = memory_map_.find(pjrt_memory);
   if (it == memory_map_.end()) {

@@ -850,11 +850,12 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     TF_ASSIGN_OR_RETURN(transpose, transpose_cache_.GetOrCreate(options));
   }
 
-  bool should_pack =
-      primitive_util::Is4BitType(type) && transfer_manager->PackSubbyteTypes();
+  bool should_pack = primitive_util::IsSubByteNonPredType(type) &&
+                     transfer_manager->PackSubbyteTypes();
   int64_t packed_size;
   if (should_pack) {
-    packed_size = CeilOfRatio<int64_t>(size, 2);
+    packed_size =
+        CeilOfRatio<int64_t>(size, 8 / primitive_util::BitWidth(type));
   } else {
     packed_size = size;
   }
@@ -886,16 +887,19 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     if (transpose) {
       transpose->Execute(data, staging_buffer.get());
       if (should_pack) {
-        PackInt4(absl::MakeConstSpan(
-                     static_cast<const char*>(staging_buffer.get()), size),
-                 absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
-                                packed_size));
+        primitive_util::PackIntN(
+            type,
+            absl::MakeConstSpan(static_cast<const char*>(staging_buffer.get()),
+                                size),
+            absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
+                           packed_size));
       }
     } else {
       if (should_pack) {
-        PackInt4(absl::MakeConstSpan(static_cast<const char*>(data), size),
-                 absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
-                                packed_size));
+        primitive_util::PackIntN(
+            type, absl::MakeConstSpan(static_cast<const char*>(data), size),
+            absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
+                           packed_size));
       } else {
         std::memcpy(staging_buffer.get(), data, size);
       }
@@ -945,7 +949,8 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
             if (transpose) {
               transpose->Execute(data, staging_buffer.get());
               if (should_pack) {
-                PackInt4(
+                primitive_util::PackIntN(
+                    type,
                     absl::MakeConstSpan(
                         static_cast<const char*>(staging_buffer.get()), size),
                     absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
@@ -953,7 +958,8 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
               }
             } else {
               if (should_pack) {
-                PackInt4(
+                primitive_util::PackIntN(
+                    type,
                     absl::MakeConstSpan(static_cast<const char*>(data), size),
                     absl::MakeSpan(static_cast<char*>(staging_buffer.get()),
                                    packed_size));
@@ -1034,7 +1040,12 @@ PjRtStreamExecutorClient::CreateUninitializedBuffer(
 
 StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorClient::CreateErrorBuffer(Status error, const Shape& shape,
-                                            PjRtDevice* device) {
+                                            PjRtMemorySpace* memory) {
+  if (memory->client() != this) {
+    return absl::InvalidArgumentError(
+        "Memory space is not attached to this client");
+  }
+  auto* device = memory->devices()[0];
   VLOG(1) << "PjRtStreamExecutorClient::CreateErrorBuffer: shape: "
           << shape.ToString() << " device: " << device->DebugString()
           << " error: " << error;
@@ -1378,7 +1389,8 @@ PjRtStreamExecutorBuffer::Release(bool wait_for_operations_to_complete) {
         // occur when a buffer was copied to a device and then never used there.
         // In that case we get a new stream and use it to hold onto a reference
         // to the buffer until the events are complete.
-        if (!stream_and_event.reference_held &&
+        if (!stream_and_event.event->IsPredeterminedError() &&
+            !stream_and_event.reference_held &&
             !stream_and_event.event->DefinedOn(
                 local_device_state->compute_stream()) &&
             !stream_and_event.event->IsComplete()) {
@@ -1987,6 +1999,14 @@ Status CheckCompatibleShapes(bool strict_shape_checking,
                              const Shape& execution_shape,
                              const TransferManager& transfer_manager,
                              int parameter_index) {
+  // Handle the special case: the underlying pjrt buffer of a JAX token may have
+  // shape `pred[0]`.
+  if (execution_shape.IsToken() &&
+      buffer_on_device_shape.element_type() == PrimitiveType::PRED &&
+      buffer_on_device_shape.dimensions_size() == 1 &&
+      buffer_on_device_shape.dimensions(0) == 0) {
+    return OkStatus();
+  }
   // TODO(misard) Support casting of tuple parameters.
   if (strict_shape_checking || buffer_on_device_shape.IsTuple()) {
     if (!ShapeUtil::Compatible(buffer_on_device_shape, execution_shape)) {
