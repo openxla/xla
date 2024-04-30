@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -400,7 +401,8 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallUntyped) {
 
   CHECK_EQ(error, nullptr);
   void* custom_call =
-      xla::CustomCallTargetRegistry::Global()->Lookup(function_name, "CUDA");
+      xla::CustomCallTargetRegistry::Global()->Lookup(function_name, 
+                                          stream_executor::GpuPlatformName());
   EXPECT_EQ(custom_call, reinterpret_cast<void*>(&TestCustomCallV2));
 }
 
@@ -430,7 +432,8 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallTyped) {
       reinterpret_cast<const PJRT_Gpu_Custom_Call*>(next)->custom_call(&args);
 
   CHECK_EQ(error, nullptr);
-  auto registration = xla::ffi::FindHandler(function_name, "CUDA").value();
+  auto registration = xla::ffi::FindHandler(function_name, 
+                                   stream_executor::GpuPlatformName()).value();
   EXPECT_EQ(reinterpret_cast<void*>(registration.handler), kNoop);
 }
 
