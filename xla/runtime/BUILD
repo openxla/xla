@@ -1,5 +1,3 @@
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
-load("@tsl//tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("@tsl//tsl/platform:build_config.bzl", "tf_platform_deps")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
@@ -11,6 +9,8 @@ load(
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -50,9 +50,9 @@ cc_library(
     hdrs = ["async_runtime.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@tsl//tsl/concurrency:async_value",
-        "@tsl//tsl/concurrency:ref_count",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
     ],
@@ -63,7 +63,7 @@ xla_cc_test(
     srcs = ["async_runtime_test.cc"],
     deps = [
         ":async_runtime",
-        "@tsl//tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:async_value",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -140,13 +140,13 @@ cc_library(
         ":type_id",
         "//xla:shape_util",
         "//xla/runtime/ffi:ffi_abi",
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/concurrency:async_value",
     ],
 )
 
@@ -271,12 +271,12 @@ cc_library(
         ":errors",
         "//xla/mlir/runtime/transforms:jit_compiler",
         "//xla/mlir/runtime/utils:constraints",
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/concurrency:async_value",
     ],
 )
 

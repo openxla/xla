@@ -164,6 +164,8 @@ typedef enum {
   XLA_FFI_DataType_F32 = 11,
   XLA_FFI_DataType_F64 = 12,
   XLA_FFI_DataType_BF16 = 16,
+  XLA_FFI_DataType_C64 = 15,
+  XLA_FFI_DataType_C128 = 18,
 } XLA_FFI_DataType;
 // LINT.ThenChange(ffi_test.cc)
 
@@ -186,6 +188,14 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Buffer, dims);
 typedef enum {
   XLA_FFI_ArgType_BUFFER = 1,
 } XLA_FFI_ArgType;
+
+//===----------------------------------------------------------------------===//
+// Builtin result types
+//===----------------------------------------------------------------------===//
+
+typedef enum {
+  XLA_FFI_RetType_BUFFER = 1,
+} XLA_FFI_RetType;
 
 //===----------------------------------------------------------------------===//
 // Builtin attribute types
@@ -249,12 +259,23 @@ struct XLA_FFI_Args {
   size_t struct_size;
   void* priv;
 
-  int64_t num_args;
-  XLA_FFI_ArgType* types;  // length == num_args
-  void** args;             // length == num_args
+  int64_t size;
+  XLA_FFI_ArgType* types;  // length == size
+  void** args;             // length == size
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Args, args);
+
+struct XLA_FFI_Rets {
+  size_t struct_size;
+  void* priv;
+
+  int64_t size;
+  XLA_FFI_RetType* types;  // length == size
+  void** rets;             // length == size
+};
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Rets, rets);
 
 // FFI handler attributes are always sorted by name, so that the handler can
 // rely on binary search to look up attributes by name.
@@ -262,10 +283,10 @@ struct XLA_FFI_Attrs {
   size_t struct_size;
   void* priv;
 
-  int64_t num_attrs;
-  XLA_FFI_AttrType* types;   // length == num_attrs
-  XLA_FFI_ByteSpan** names;  // length == num_attrs
-  void** attrs;              // length == num_attrs
+  int64_t size;
+  XLA_FFI_AttrType* types;   // length == size
+  XLA_FFI_ByteSpan** names;  // length == size
+  void** attrs;              // length == size
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Attrs, attrs);
@@ -274,9 +295,10 @@ struct XLA_FFI_CallFrame {
   size_t struct_size;
   void* priv;
 
-  XLA_FFI_Api* api;
+  const XLA_FFI_Api* api;
   XLA_FFI_ExecutionContext* ctx;
   XLA_FFI_Args args;
+  XLA_FFI_Rets rets;
   XLA_FFI_Attrs attrs;
 };
 
@@ -353,6 +375,8 @@ struct XLA_FFI_Api {
 #undef _XLA_FFI_API_STRUCT_FIELD
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Api, XLA_FFI_Stream_Get);
+
+const XLA_FFI_Api* XLA_FFI_GetApi();
 
 #ifdef __cplusplus
 }

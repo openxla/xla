@@ -99,7 +99,7 @@ Shape GetShapeFromTensorType(mlir::Value value) {
 
   mlir::Operation* op = value.getDefiningOp();
   CHECK(op);
-  CHECK(value.getType().isa<mlir::TensorType>());
+  CHECK(mlir::isa<mlir::TensorType>(value.getType()));
   Shape shape;
   if (auto attr = op->getAttrOfType<mlir::StringAttr>(kDefaultLayoutAttrName)) {
     shape = *xla::ParseShape(
@@ -346,7 +346,7 @@ static int64_t GetMemRefSizeInBytes(mlir::MemRefType type) {
   if (type.getElementType().isInteger(/*width=*/1)) {
     return type.getNumElements();
   } else if (auto complexType =
-                 type.getElementType().dyn_cast<mlir::ComplexType>()) {
+                 mlir::dyn_cast<mlir::ComplexType>(type.getElementType())) {
     auto elementType = complexType.getElementType();
     return elementType.getIntOrFloatBitWidth() * type.getNumElements() * 2 /
            CHAR_BIT;
@@ -537,18 +537,19 @@ absl::StatusOr<bool> CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
 
 Shape GetShape(mlir::Value value) {
   Shape shape;
-  if (value.getType().isa<mlir::MemRefType>()) {
+  if (mlir::isa<mlir::MemRefType>(value.getType())) {
     shape = TypeToShape(value.getType());
-  } else if (value.getType().isa<mlir::TensorType>()) {
+  } else if (mlir::isa<mlir::TensorType>(value.getType())) {
     shape = GetShapeFromTensorType(value);
-  } else if (value.getType().isa<mlir::TupleType>()) {
+  } else if (mlir::isa<mlir::TupleType>(value.getType())) {
     shape = TypeToShape(value.getType());
   } else {
     LOG(FATAL) << "Unexpected value type to get shape for";
   }
-  if (primitive_util::Is4BitType(shape.element_type())) {
+  if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
     // 4-bit types are always packed on the GPU
-    shape.mutable_layout()->set_element_size_in_bits(4);
+    shape.mutable_layout()->set_element_size_in_bits(
+        primitive_util::BitWidth(shape.element_type()));
   }
   return shape;
 }
@@ -858,11 +859,13 @@ absl::StatusOr<DenseDataIntermediate> LiteralToXlaFormat(
   }
 
   int64_t byte_size = literal.size_bytes();
-  if (primitive_util::Is4BitType(element_type)) {
-    std::vector<uint8_t> output(CeilOfRatio(byte_size, int64_t{2}));
+  if (primitive_util::IsSubByteNonPredType(element_type)) {
+    auto bit_width = primitive_util::BitWidth(element_type);
+    std::vector<uint8_t> output(CeilOfRatio<int64_t>(byte_size, 8 / bit_width));
     absl::Span<char> output_span =
         absl::MakeSpan(reinterpret_cast<char*>(output.data()), output.size());
-    PackInt4(
+    PackIntN(
+        bit_width,
         absl::MakeSpan(reinterpret_cast<const char*>(literal.untyped_data()),
                        byte_size),
         output_span);

@@ -5,8 +5,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl:tsl.bzl", "internal_visibility", "tsl_copts")
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
@@ -22,6 +20,8 @@ load(
     "if_gpu_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
+load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -547,9 +547,10 @@ xla_test(
 xla_test(
     name = "xla_hlo_profile_test",
     srcs = ["xla_hlo_profile_test.cc"],
-    disabled_backends = [
-        # Hlo profiles are not supported on the interpreter backend.
-        "interpreter",
+    backends = [
+        # Hlo profiles are only supported on CPU/GPU.
+        "cpu",
+        "gpu",
     ],
     tags = ["no_aarch64"],
     deps = [
@@ -687,6 +688,29 @@ xla_test(
 xla_test(
     name = "unary_op_test",
     srcs = ["unary_op_test.cc"],
+    deps = [
+        ":client_library_test_base",
+        ":literal_test_util",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:xla_data_proto_cc",
+        "//xla/client:global_data",
+        "//xla/client:local_client",
+        "//xla/client:xla_builder",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
+    name = "complex_unary_op_test",
+    srcs = [
+        "complex_unary_op_samples.h",
+        "complex_unary_op_test.cc",
+    ],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -991,10 +1015,6 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
-    backend_tags = {
-        # TODO(b/305008247)
-        "ghostfish_grm": ["broken"],
-    },
     tags = ["test_hlo_pjrt_runner"],
     deps = [
         ":client_library_test_base",
@@ -1385,10 +1405,6 @@ xla_test(
 xla_test(
     name = "float8_test",
     srcs = ["float8_test.cc"],
-    backend_tags = {
-        # TODO(b/305009586)
-        "ghostfish_grm": ["broken"],
-    },
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -1751,12 +1767,16 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
+        "//xla/ffi",
+        "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
-        "//xla/runtime/ffi:ffi_api",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -2093,6 +2113,7 @@ xla_test(
         ":hlo_test_base",
         ":literal_test_util",
         ":test_macros_header",
+        ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla/hlo/ir:hlo",
@@ -2149,10 +2170,6 @@ xla_test(
 xla_test(
     name = "bitcast_convert_test",
     srcs = ["bitcast_convert_test.cc"],
-    backend_tags = {
-        # TODO(b/305008729)
-        "ghostfish_grm": ["broken"],
-    },
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2395,6 +2412,11 @@ xla_test(
 xla_test(
     name = "cpu_gpu_fusion_test",
     srcs = ["cpu_gpu_fusion_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+        "interpreter",
+    ],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2693,10 +2715,6 @@ xla_test(
 xla_test(
     name = "iota_test",
     srcs = ["iota_test.cc"],
-    backend_tags = {
-        # TODO(b/305011394)
-        "ghostfish_grm": ["broken"],
-    },
     shard_count = 30,
     tags = [
         # Require optimized builds, iota_test_cpu is very slow in fastbuild.

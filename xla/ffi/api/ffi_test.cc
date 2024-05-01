@@ -61,6 +61,9 @@ TEST(FfiTest, DataTypeEnumValue) {
   EXPECT_EQ(encoded(PrimitiveType::F64), encoded(DataType::F64));
 
   EXPECT_EQ(encoded(PrimitiveType::BF16), encoded(DataType::BF16));
+
+  EXPECT_EQ(encoded(PrimitiveType::C64), encoded(DataType::C64));
+  EXPECT_EQ(encoded(PrimitiveType::C128), encoded(DataType::C128));
 }
 
 TEST(FfiTest, BufferBaseArgument) {
@@ -93,6 +96,25 @@ TEST(FfiTest, BufferArgument) {
       Ffi::Bind().Arg<BufferR2<DataType::F32>>().To([&](auto buffer) {
         EXPECT_EQ(buffer.data, storage.data());
         EXPECT_EQ(buffer.dimensions.size(), 2);
+        return Error::Success();
+      });
+  auto status = Call(*handler, call_frame);
+
+  TF_ASSERT_OK(status);
+}
+
+TEST(FfiTest, BufferBaseResult) {
+  std::vector<float> storage(4, 0.0f);
+  se::DeviceMemoryBase memory(storage.data(), 4 * sizeof(float));
+
+  CallFrameBuilder builder;
+  builder.AddBufferRet(memory, PrimitiveType::F32, /*dims=*/{2, 2});
+  auto call_frame = builder.Build();
+
+  auto handler =
+      Ffi::Bind().Ret<BufferBase>().To([&](Result<BufferBase> buffer) {
+        EXPECT_EQ(buffer->data, storage.data());
+        EXPECT_EQ(buffer->dimensions.size(), 2);
         return Error::Success();
       });
   auto status = Call(*handler, call_frame);
@@ -164,6 +186,18 @@ TEST(FfiTest, AutoBinding) {
   CallFrameBuilder builder;
   builder.AddBufferArg(memory, PrimitiveType::F32, /*dims=*/{2, 2});
   builder.AddAttributes(attrs.Build());
+  auto call_frame = builder.Build();
+
+  auto status = Call(*handler, call_frame);
+  TF_ASSERT_OK(status);
+}
+
+TEST(FfiTest, AutoBindingResult) {
+  auto handler =
+      Ffi::BindTo(+[](Result<BufferBase> buffer) { return Error::Success(); });
+
+  CallFrameBuilder builder;
+  builder.AddBufferRet(se::DeviceMemoryBase(), PrimitiveType::F32, /*dims=*/{});
   auto call_frame = builder.Build();
 
   auto status = Call(*handler, call_frame);

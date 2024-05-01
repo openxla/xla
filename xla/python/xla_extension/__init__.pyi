@@ -303,12 +303,6 @@ class DebugOptions:
   xla_dump_hlo_as_long_text: bool
   xla_dump_disable_metadata: bool
   xla_dump_hlo_pipeline_re: str
-  xla_gpu_enable_async_all_reduce: bool
-  xla_gpu_enable_async_all_gather: bool
-  xla_gpu_enable_async_collective_broadcast: bool
-  xla_gpu_enable_async_collective_permute: bool
-  xla_gpu_enable_async_all_to_all: bool
-  xla_gpu_enable_async_reduce_scatter: bool
   xla_gpu_cuda_data_dir: str
   xla_detailed_logging: bool
   xla_enable_dumping: bool
@@ -501,9 +495,6 @@ class Client:
       force_copy: bool = ...,
       host_buffer_semantics: HostBufferSemantics = ...,
   ) -> ArrayImpl: ...
-  def make_cross_host_receive_buffers(
-      self, shapes: Sequence[Shape], device: Device
-  ) -> List[Tuple[ArrayImpl, bytes]]: ...
   def compile(
       self,
       computation: Union[str, bytes],
@@ -539,6 +530,9 @@ class Client:
       recv_channel_ids: Sequence[int],
       serializer: Optional[Callable] = ...,
   ) -> Any: ...
+  def get_default_layout(
+      self, dtype: np.dtype, shard_shape: Sequence[int], device: Device
+  ) -> PjRtLayout: ...
   def __getattr__(self, name: str) -> Any: ...
 
 class CpuCollectives: ...
@@ -548,6 +542,12 @@ def make_gloo_tcp_collectives(
     hostname: Optional[str] = ...,
     interface: Optional[str] = ...,
 ) -> CpuCollectives: ...
+
+class MpiCollectives(CpuCollectives):
+  def Init(self): ...
+  def Finalize(self): ...
+
+def make_mpi_collectives() -> MpiCollectives: ...
 
 def get_tfrt_cpu_client(
     asynchronous: bool = ...,
@@ -603,8 +603,6 @@ ArrayImpl = Any
 #                _skip_checks: bool = ...): ...
 #   def block_until_ready(self) -> ArrayImpl: ...
 #   def is_deleted(self) -> bool: ...
-#   # TODO(yashkatariya): remove this once the transition completes.
-#   def _init_with_fastpath_disabled(self) -> None: ...
 #   def is_ready(self) -> bool: ...
 #   def delete(self): ...
 #   def unsafe_buffer_pointer(self) -> Any: ...
@@ -730,6 +728,7 @@ def cuda_array_interface_to_buffer(
       List[Tuple[str, str, Tuple[int, ...]]]]
     ],
     gpu_backend: Optional[Client] = ...,
+    device_id: int | None = None,
 ) -> ArrayImpl: ...
 
 

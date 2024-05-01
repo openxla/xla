@@ -1,7 +1,7 @@
-load("@tsl//tsl:tsl.bzl", "internal_visibility")
 load("@tsl//tsl/platform:build_config.bzl", "tf_stream_executor_deps")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

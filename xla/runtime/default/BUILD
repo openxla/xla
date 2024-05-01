@@ -1,5 +1,5 @@
-load("@tsl//tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -12,9 +12,9 @@ cc_library(
     hdrs = ["async_values_cache.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/concurrency:async_value",
     ],
 )
 

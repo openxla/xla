@@ -49,10 +49,11 @@
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/host_callback.h"
 #include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/program_serdes.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/ifrt/sharding_serdes.h"
 #include "xla/python/ifrt_proxy/common/array_util.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/proto_util.h"
@@ -63,8 +64,8 @@
 #include "xla/python/ifrt_proxy/server/version.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status_to_from_proto.h"
@@ -74,24 +75,6 @@
 namespace xla {
 namespace ifrt {
 namespace proxy {
-
-namespace {
-
-// Convenient wrapper for `xla::ifrt::Deserialize()`.
-template <typename T>
-absl::StatusOr<std::unique_ptr<T>> Deserialize(
-    const Serialized& serialized,
-    std::unique_ptr<DeserializeOptions> options = nullptr) {
-  TF_ASSIGN_OR_RETURN(auto deserialized,
-                      Deserialize(serialized, std::move(options)));
-  auto obj = absl::WrapUnique(llvm::dyn_cast<T>(deserialized.release()));
-  if (obj == nullptr) {
-    return absl::InvalidArgumentError("Deserialization type mismatch");
-  }
-  return obj;
-}
-
-}  // namespace
 
 IfrtBackend::IfrtBackend(IfrtProxyVersion version, uint64_t session_id,
                          std::unique_ptr<xla::ifrt::Client> ifrt_client,
@@ -134,6 +117,12 @@ absl::StatusOr<std::unique_ptr<IfrtBackend>> IfrtBackend::Create(
 
 IfrtBackend::~IfrtBackend() {
   // Cancel all in-flight host callback executions.
+  {
+    absl::MutexLock lock(&host_callback_queues_mutex_);
+    for (const auto& [key, queue] : host_callback_queues_) {
+      queue->Close();
+    }
+  }
   absl::flat_hash_map<uint64_t, RemoteLoadedHostCallbackQueue::ExecutionRequest>
       host_callback_executions;
   {
@@ -268,16 +257,13 @@ BackendInterface::Response IfrtBackend::HandleInit(
 
   for (auto* device : client_->devices()) {
     InitResponse::Device* d = init_resp->add_devices();
-    d->set_id(device->id());
-    d->set_local_device_id(device->local_device_id().value());
-    d->set_local_hardware_id(device->local_hardware_id_typed().value());
-    d->set_device_kind(AsProtoStringData(device->device_kind()));
-    if (auto default_memory_space = device->default_memory_space();
-        default_memory_space.ok()) {
-      d->set_default_memory_id((*default_memory_space)->id());
+    d->set_id(device->Id().value());
+    d->set_device_kind(AsProtoStringData(device->Kind()));
+    if (auto default_memory = device->DefaultMemory(); default_memory.ok()) {
+      d->set_default_memory_id((*default_memory)->Id().value());
     }
-    for (const auto* memory : device->memory_spaces()) {
-      d->add_memory_ids(memory->id());
+    for (const auto* memory : device->Memories()) {
+      d->add_memory_ids(memory->Id().value());
     }
     d->set_debug_string(AsProtoStringData(device->DebugString()));
     d->set_to_string(AsProtoStringData(device->ToString()));
@@ -287,13 +273,14 @@ BackendInterface::Response IfrtBackend::HandleInit(
     }
   }
   for (auto* addressable_device : client_->addressable_devices()) {
-    init_resp->add_addressable_device_ids(addressable_device->id());
+    init_resp->add_addressable_device_ids(addressable_device->Id().value());
   }
 
   absl::flat_hash_map<int, xla::ifrt::Memory*> memories;
   for (auto* device : client_->devices()) {
-    for (xla::ifrt::Memory* memory : device->memory_spaces()) {
-      const auto [it, inserted] = memories.insert({memory->id(), memory});
+    for (xla::ifrt::Memory* memory : device->Memories()) {
+      const auto [it, inserted] =
+          memories.insert({memory->Id().value(), memory});
       if (!inserted && it->second != memory) {
         return absl::FailedPreconditionError(absl::StrCat(
             "Two memories cannot have the same id: ", memory->ToString(),
@@ -304,9 +291,9 @@ BackendInterface::Response IfrtBackend::HandleInit(
   for (const auto& [id, memory] : memories) {
     auto* m = init_resp->add_memories();
     m->set_id(id);
-    m->set_memory_space_kind(AsProtoStringData(memory->memory_space_kind()));
-    for (const auto* device : memory->devices()) {
-      m->add_device_ids(device->id());
+    m->set_memory_space_kind(AsProtoStringData(*memory->Kind().memory_kind()));
+    for (const auto* device : memory->Devices()) {
+      m->add_device_ids(device->Id().value());
     }
     m->set_debug_string(AsProtoStringData(memory->DebugString()));
     m->set_to_string(AsProtoStringData(memory->ToString()));
@@ -319,7 +306,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCheckFutureRequest(
     std::unique_ptr<IfrtRequest> request) {
   const CheckFutureRequest& check_request = request->check_future_request();
 
-  Future<absl::Status> future;
+  Future<> future;
   {
     absl::MutexLock lock(&futures_mutex_);
     const auto it = futures_.find(check_request.future_handle());
@@ -360,9 +347,9 @@ BackendInterface::Response IfrtBackend::HandleMakeArrayFromHostBufferRequest(
       request->mutable_make_array_from_host_buffer_request();
 
   TF_ASSIGN_OR_RETURN(
-      auto sharding,
-      FromShardingProto(absl::bind_front(&Client::LookupDevice, client_.get()),
-                        make_array_request->sharding()));
+      auto sharding, Sharding::FromProto(
+                         absl::bind_front(&Client::LookupDevice, client_.get()),
+                         make_array_request->sharding()));
 
   const auto byte_strides = [&]() -> std::optional<std::vector<int64_t>> {
     if (!make_array_request->has_byte_strides()) return std::nullopt;
@@ -428,9 +415,9 @@ IfrtBackend::HandleAssembleArrayFromSingleDeviceArraysRequest(
 
   TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(assemble_request.shape()));
   TF_ASSIGN_OR_RETURN(
-      auto sharding,
-      FromShardingProto(absl::bind_front(&Client::LookupDevice, client_.get()),
-                        assemble_request.sharding()));
+      auto sharding, Sharding::FromProto(
+                         absl::bind_front(&Client::LookupDevice, client_.get()),
+                         assemble_request.sharding()));
   TF_ASSIGN_OR_RETURN(auto semantics, FromArrayCopySemanticsProto(
                                           assemble_request.copy_semantics()));
 
@@ -489,7 +476,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCopyToHostBufferRequest(
   }
 
   // TODO(b/282757875): Consider other ArrayCopySemantics.
-  Future<absl::Status> copy_status =
+  Future<> copy_status =
       (*array)->CopyToHostBuffer(mem_region->zeroth_element(), byte_strides,
                                  ArrayCopySemantics::kAlwaysCopy);
 
@@ -587,8 +574,9 @@ BackendInterface::Response IfrtBackend::HandleReshardRequest(
   TF_ASSIGN_OR_RETURN(auto array, GetArray(reshard_request.array_handle()));
   TF_ASSIGN_OR_RETURN(
       std::shared_ptr<const Sharding> sharding,
-      FromShardingProto(absl::bind_front(&Client::LookupDevice, client_.get()),
-                        reshard_request.sharding()));
+      Sharding::FromProto(
+          absl::bind_front(&Client::LookupDevice, client_.get()),
+          reshard_request.sharding()));
   TF_ASSIGN_OR_RETURN(auto semantics, FromArrayCopySemanticsProto(
                                           reshard_request.copy_semantics()));
 
@@ -695,10 +683,16 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
                       std::move(request))]() -> Response {
     const CompileRequest& compile_request = request->compile_request();
 
-    TF_ASSIGN_OR_RETURN(auto program, Deserialize<xla::ifrt::Program>(
-                                          compile_request.program()));
+    auto deserialize_program_options =
+        std::make_unique<DeserializeProgramOptions>(
+            absl::bind_front(&Client::LookupDevice, client_.get()));
+    TF_ASSIGN_OR_RETURN(
+        auto program,
+        Deserialize<xla::ifrt::Program>(
+            compile_request.program(), std::move(deserialize_program_options)));
     TF_ASSIGN_OR_RETURN(auto options, Deserialize<xla::ifrt::CompileOptions>(
-                                          compile_request.compile_options()));
+                                          compile_request.compile_options(),
+                                          /*options=*/nullptr));
 
     // Deserialize host callbacks. IFRT proxy currently allows only one type of
     // host callbacks from the client (`RemoteLoadedHostCallback`) and this is
@@ -756,7 +750,7 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
       proto->set_partition(logical_device_id.partition);
     }
     for (const auto* device : executable->addressable_devices()) {
-      compile_resp->add_addressable_device_ids(device->id());
+      compile_resp->add_addressable_device_ids(device->Id().value());
     }
     // TODO(b/282757875): Consider making fingerprint calculation asynchronous
     // if it is expected to take long.
@@ -904,7 +898,8 @@ BackendInterface::Response IfrtBackend::HandleLoadedExecutableExecuteRequest(
     DeviceList::Devices d;
     d.reserve(execute.device_ids_size());
     for (const int32_t device_id : execute.device_ids()) {
-      TF_ASSIGN_OR_RETURN(d.emplace_back(), client_->LookupDevice(device_id));
+      TF_ASSIGN_OR_RETURN(d.emplace_back(),
+                          client_->LookupDevice(DeviceId(device_id)));
     }
     devices = DeviceList(std::move(d));
   }
@@ -942,7 +937,7 @@ BackendInterface::Response IfrtBackend::HandleLoadedExecutableExecuteRequest(
       *output->mutable_dtype() = array->dtype().ToProto();
       *output->mutable_shape() = array->shape().ToProto();
       TF_ASSIGN_OR_RETURN(*output->mutable_sharding(),
-                          ToShardingProto(array->sharding()));
+                          array->sharding().ToProto());
       output->set_array_handle(output_handles[i]);
 
       arrays_.insert({output_handles[i], std::move(array)});
@@ -958,7 +953,7 @@ BackendInterface::Response IfrtBackend::HandleLoadedExecutableDeleteRequest(
   TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
                       GetLoadedExecutable(del.loaded_executable_handle()));
 
-  Future<absl::Status> future = executable->Delete();
+  Future<> future = executable->Delete();
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
   auto* del_response = ifrt_resp->mutable_loaded_executable_delete_response();

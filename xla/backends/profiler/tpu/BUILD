@@ -1,6 +1,6 @@
-load("@tsl//tsl:tsl.bzl", "if_with_tpu_support")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("//xla/tsl:tsl.bzl", "if_with_tpu_support")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

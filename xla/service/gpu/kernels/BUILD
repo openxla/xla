@@ -105,6 +105,8 @@ xla_test(
     name = "cutlass_gemm_fusion_test",
     srcs = ["cutlass_gemm_fusion_test.cc"],
     backends = ["gpu"],
+    # TODO(b/332820384): Enable when it passes on H100.
+    disabled_backends = ["gpu_h100"],
     tags = ["no_rocm"],
     deps = [
         ":custom_kernel_fusion_pattern",
@@ -177,6 +179,7 @@ xla_cc_test(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",  # build_cleaner: keep
+        "//xla/stream_executor:device_memory_handle",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/stream_executor/gpu:gpu_stream_header",

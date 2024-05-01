@@ -212,21 +212,6 @@ void StridedCopy(D* dest, int64_t dest_stride, const S* src, int64_t src_stride,
 Status AddStatus(Status prior, absl::string_view context);
 Status AppendStatus(Status prior, absl::string_view context);
 
-// This macro defines the arguments to be used as an error
-// message to be passed to absl::StrFormat, and returns a status in the
-// canonical error space.
-#define DEFINE_XLA_ERROR_WITH_STRFORMAT_WITH_BACKTRACE(error_type)  \
-  template <typename... Args>                                       \
-  Status error_type(const absl::FormatSpec<Args...>& format,        \
-                    const Args&... args) {                          \
-    return WithLogBacktrace(                                        \
-        absl::error_type##Error(absl::StrFormat(format, args...))); \
-  }
-
-DEFINE_XLA_ERROR_WITH_STRFORMAT_WITH_BACKTRACE(InvalidArgument);
-DEFINE_XLA_ERROR_WITH_STRFORMAT_WITH_BACKTRACE(Unimplemented);
-
-#undef DEFINE_XLA_ERROR_WITH_STRFORMAT_WITH_BACKTRACE
 // The following three macros define a common set of code for creating
 // absl::Status errors with the given error_type, with the addition of adding
 // absl::SourceLocation if it's available (PLATFORM_GOOGLE).  They're a
@@ -294,9 +279,11 @@ DEFINE_XLA_ERROR_WITH_STRFORMAT_WITH_BACKTRACE(Unimplemented);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Cancelled);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(FailedPrecondition);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Internal);
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(InvalidArgument);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(NotFound);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(ResourceExhausted);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unavailable);
+XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unimplemented);
 XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE(Unknown);
 
 #undef XLA_ERROR_WITH_STRFORMAT_AND_BACKTRACE
@@ -437,7 +424,7 @@ std::string RoundTripFpToString(tsl::float8_e5m2 value);
 std::string RoundTripFpToString(tsl::float8_e4m3fn value);
 
 // Returns a string which can losslessly round trip to a float8 E4M3B11.
-std::string RoundTripFpToString(tsl::float8_e4m3b11 value);
+std::string RoundTripFpToString(tsl::float8_e4m3b11fnuz value);
 
 // Returns a string which can losslessly round trip to a float8 E5M2FNUZ.
 std::string RoundTripFpToString(tsl::float8_e5m2fnuz value);
@@ -810,19 +797,82 @@ Status EraseElementFromVector(std::vector<T>* container, const T& value) {
   return OkStatus();
 }
 
-// Takes a sequence of unpacked int4 values, such that every byte stores one
-// int4 value in the low-order four bits, and packs them so every byte stores
-// two int4 values. 'input' should have num_elements bytes; 'output' should have
-// (num_elements+1)/2 bytes. The high-order four bits of each byte in 'input'
-// are ignored.
-void PackInt4(absl::Span<const char> input, absl::Span<char> output);
+// Takes a sequence of unpacked n-bit values, such that every byte stores one
+// value in the low-order bits, and packs them so every byte stores as many
+// which will fit. `output` should have ceil((input.size()*kBitsPerElement)/8)
+// bytes. The high-order bits of each byte in `input` are ignored.
+template <size_t kBitsPerElement>
+void PackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  const size_t aligned_inputs = input.size() / kElementsPerByte;
+  for (size_t i = 0; i < aligned_inputs; ++i) {
+    char byte = 0;
+    for (size_t j = 0; j < kElementsPerByte; ++j) {
+      byte |=
+          (input[i * kElementsPerByte + j] & LsbMask<uint8_t>(kBitsPerElement))
+          << (kBitsPerElement * (kElementsPerByte - j - 1));
+    }
+    output[i] = byte;
+  }
+  if (size_t remainder = input.size() % kElementsPerByte; remainder != 0) {
+    char byte = 0;
+    for (size_t j = 0; j < remainder; ++j) {
+      byte |= (input[aligned_inputs * kElementsPerByte + j] &
+               LsbMask<uint8_t>(kBitsPerElement))
+              << (kBitsPerElement * (kElementsPerByte - j - 1));
+    }
+    output[aligned_inputs] = byte;
+  }
+}
 
-// Takes a sequence of packed int4 values, such that every byte stores two
-// int4 values, and unpacks them so every byte stores one int4 value in the
-// low-order four bits. 'input' should have (num_elements+1)/2 bytes; 'output'
-// should have num_elements bytes. The high-order 4-bits in each output are
-// zero.
-void UnpackInt4(absl::Span<const char> input, absl::Span<char> output);
+inline void PackIntN(int bits_per_element, absl::Span<const char> input,
+                     absl::Span<char> output) {
+  if (bits_per_element == 2) {
+    PackIntN<2>(input, output);
+  } else if (bits_per_element == 4) {
+    PackIntN<4>(input, output);
+  } else {
+    LOG(FATAL) << "Invalid bits_per_element: " << bits_per_element;
+  }
+}
+
+// Takes a sequence of packed values, such that every byte stores multiple
+// values, and unpacks them so every byte stores one value in the low-order
+// bits. `input` should have
+// ceil(output.size()*8/kBitsPerElement) bytes. The high-order bits in each
+// output are zero.
+template <size_t kBitsPerElement>
+void UnpackIntN(absl::Span<const char> input, absl::Span<char> output) {
+  constexpr auto kElementsPerByte = 8 / kBitsPerElement;
+  const size_t aligned_outputs = output.size() / kElementsPerByte;
+  for (size_t i = 0; i < aligned_outputs; ++i) {
+    const char byte = input[i];
+    for (int j = 0; j < kElementsPerByte; ++j) {
+      output[i * kElementsPerByte + j] =
+          (byte >> (kBitsPerElement * (kElementsPerByte - j - 1))) &
+          LsbMask<uint8_t>(kBitsPerElement);
+    }
+  }
+  if (size_t remainder = output.size() % kElementsPerByte; remainder != 0) {
+    const char byte = input[aligned_outputs];
+    for (size_t j = 0; j < remainder; ++j) {
+      output[aligned_outputs * kElementsPerByte + j] =
+          (byte >> (kBitsPerElement * (kElementsPerByte - j - 1))) &
+          LsbMask<uint8_t>(kBitsPerElement);
+    }
+  }
+}
+
+inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
+                       absl::Span<char> output) {
+  if (bits_per_element == 2) {
+    UnpackIntN<2>(input, output);
+  } else if (bits_per_element == 4) {
+    UnpackIntN<4>(input, output);
+  } else {
+    LOG(FATAL) << "Invalid bits_per_element: " << bits_per_element;
+  }
+}
 
 class HloInstruction;
 class HloModule;

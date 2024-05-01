@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/fusions/concatenate_mlir.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/error_spec.h"
-#include "xla/service/gpu/fusions/concatenate.h"
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -160,13 +162,13 @@ TEST_F(MlirConcatenateFusionTest, PrologueEpilogue) {
     // CHECK: %[[IN_BOUND_1:.*]] = arith.cmpi sle, %[[THREAD_ID:.*]], %[[C_63]]
     // CHECK: %[[IF_1:.*]] = scf.if %[[IN_BOUND_1]]
     // CHECK:   %[[VAL_1_1:.*]] = xla_gpu.pure_call @fused_computation_log({{.*}}, %[[THREAD_ID]])
-    // CHECK:   %[[VAL_1_2:.*]] = xla_gpu.pure_call @fused_computation__epilogue__({{.*}}, %[[THREAD_ID]], %[[VAL_1_1]])
+    // CHECK:   %[[VAL_1_2:.*]] = xla_gpu.pure_call @fused_computation__epilogue__neg({{.*}}, %[[THREAD_ID]], %[[VAL_1_1]])
     // CHECK:   %[[INSERTED_1:.*]] = tensor.insert %[[VAL_1_2:.*]] into {{.*}}[%[[THREAD_ID]]]
     // CHECK:   scf.yield %[[INSERTED_1]]
 
     // CHECK: %[[VAL_2_1:.*]] = xla_gpu.pure_call @fused_computation_exp({{.*}}, %[[THREAD_ID]])
     // CHECK: %[[INDEX_2:.*]] = affine.apply #[[MAP]]()[%[[THREAD_ID]]]
-    // CHECK: %[[VAL_2_2:.*]] = xla_gpu.pure_call @fused_computation__epilogue__({{.*}}, %[[INDEX_2]], %[[VAL_2_1]])
+    // CHECK: %[[VAL_2_2:.*]] = xla_gpu.pure_call @fused_computation__epilogue__neg({{.*}}, %[[INDEX_2]], %[[VAL_2_1]])
     // CHECK: %[[INSERTED_2:.*]] = tensor.insert %[[VAL_2_2:.*]] into {{.*}}[%[[INDEX_2]]]
 
     // CHECK: return %[[INSERTED_2]]

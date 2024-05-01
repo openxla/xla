@@ -4,13 +4,6 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load(
-    "@tsl//tsl:tsl.bzl",
-    "if_cuda_or_rocm",
-    "if_google",
-    "tsl_gpu_library",
-)
-load("@tsl//tsl:tsl.default.bzl", "filegroup")
-load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
@@ -27,6 +20,13 @@ load(
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_cuda_or_rocm",
+    "if_google",
+    "tsl_gpu_library",
+)
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -771,6 +771,7 @@ xla_test(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
+        "//xla/service:symbol_repository",
         "//xla/service:xla_compile_result_proto_cc_impl",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/tests:hlo_test_base",

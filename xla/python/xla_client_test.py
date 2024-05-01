@@ -37,6 +37,17 @@ try:
 except ImportError:
   custom_call_for_test = None
 
+try:
+  from xla.python import xla_extension
+  from xla.python import xla_gpu_extension
+
+  if not hasattr(xla_extension, "GpuAllocatorConfig"):
+    xla_extension.GpuAllocatorConfig = xla_gpu_extension.GpuAllocatorConfig
+  if not hasattr(xla_extension, "get_gpu_client"):
+    xla_extension.get_gpu_client = xla_gpu_extension.get_gpu_client
+except ImportError:
+  pass
+
 xla_client._xla.jax_jit.set_thread_local_state_initialization_callback(
     lambda: None
 )
@@ -2566,6 +2577,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           self.assertEqual(lookup_device, device)
 
     @unittest.skipIf(pathways, "not implemented")
+    @unittest.skipIf(pathways_ifrt, "not implemented")
     def testMemoryStats(self):
       for device in self.backend.local_devices():
         stats = device.memory_stats()

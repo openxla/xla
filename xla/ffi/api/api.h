@@ -210,8 +210,18 @@ namespace internal {
 // A type tag to forward all remaining args as `RemainingArgs`.
 struct RemainingArgsTag {};
 
-// A type tag to distinguish arguments tied to the attributes in the
-// `Binding` variadic template argument.
+// A type tag to forward all remaining results as `RemainingRets`.
+struct RemainingRetsTag {};
+
+// A type tag to distinguish parameters tied to results in the `Binding`
+// variadic template. In XLA FFI we use destination passing style APIs and don't
+// return anything from the handler, but instead pass a destination where the
+// handler should write the result.
+template <typename T>
+struct RetTag {};
+
+// A type tag to distinguish parameters tied to the attributes in the
+// `Binding` variadic template.
 template <typename T>
 struct AttrTag {};
 
@@ -220,7 +230,7 @@ struct AttrTag {};
 template <typename T = Dictionary>
 struct AttrsTag {};
 
-// A type tag to distinguish arguments extracted from an execution context.
+// A type tag to distinguish parameter extracted from an execution context.
 template <typename T>
 struct CtxTag {};
 
@@ -253,6 +263,11 @@ template <typename... Ts>
 using HasRemainingArgsTag =
     std::disjunction<std::is_same<RemainingArgsTag, Ts>...>;
 
+// Checks if remaining results are in the parameter pack.
+template <typename... Ts>
+using HasRemainingRetsTag =
+    std::disjunction<std::is_same<RemainingRetsTag, Ts>...>;
+
 }  // namespace internal
 
 //===----------------------------------------------------------------------===//
@@ -267,9 +282,20 @@ class Binding {
     return {std::move(*this)};
   }
 
+  template <typename T>
+  Binding<Ts..., internal::RetTag<T>> Ret() && {
+    return {std::move(*this)};
+  }
+
   Binding<Ts..., internal::RemainingArgsTag> RemainingArgs() && {
     static_assert(!internal::HasRemainingArgsTag<Ts...>::value,
                   "remaining arguments can be passed just once");
+    return {std::move(*this)};
+  }
+
+  Binding<Ts..., internal::RemainingRetsTag> RemainingResults() && {
+    static_assert(!internal::HasRemainingRetsTag<Ts...>::value,
+                  "remaining results can be passed just once");
     return {std::move(*this)};
   }
 
@@ -340,6 +366,20 @@ struct ArgBinding {
   using Arg = void;
 };
 
+// XLA FFI binding for a returned result.
+//
+// Example: binding for the `MyType` result
+//
+//   template <>
+//   struct RetBinding<MyType> {
+//     using Ret = MyType;
+//   };
+//
+template <typename T>
+struct RetBinding {
+  using Ret = void;
+};
+
 // XLA FFI binding for a named attribute.
 //
 // Example: binding for the `MyType` attribute
@@ -383,6 +423,10 @@ inline constexpr bool is_arg_binding_v =
     !std::is_void_v<typename ArgBinding<Param>::Arg>;
 
 template <typename Param>
+inline constexpr bool is_ret_binding_v =
+    !std::is_void_v<typename RetBinding<Param>::Ret>;
+
+template <typename Param>
 inline constexpr bool is_attr_binding_v =
     !std::is_void_v<typename AttrBinding<Param>::Attr>;
 
@@ -410,6 +454,11 @@ struct BindOne<Fn, Param, Params...> {
       return BindOne<Fn, Params...>::To(
           std::move(fn),
           std::move(binding).template Arg<typename ArgBinding<Param>::Arg>());
+    } else if constexpr (is_ret_binding_v<Param>) {
+      // Bind parameter as an FFI handler result.
+      return BindOne<Fn, Params...>::To(
+          std::move(fn),
+          std::move(binding).template Ret<typename RetBinding<Param>::Ret>());
 
     } else if constexpr (is_attr_binding_v<Param>) {
       // Bind parameter as a named FFI handler attribute.
@@ -482,12 +531,26 @@ auto Ffi::BindTo(Fn fn) {
   }
 }
 
-// A container for defining attribute type and name as compile time parameters.
+// A container for defining parameters corresponding to results.
+template <typename T>
+class Result {
+ public:
+  Result(T value) : value_(value) {}  // NOLINT
+  T& operator*() { return value_; }
+  T* operator->() { return &value_; }
+
+ private:
+  T value_;
+};
+
+// A container for defining parameters corresponding to attributes with an
+// attribute name available as compile time value.
 template <typename T, char const* attr_name>
 class Attr {
  public:
   Attr(T value) : value_(value) {}  // NOLINT
   T& operator*() { return value_; }
+  T* operator->() { return &value_; }
 
  private:
   T value_;
@@ -526,6 +589,23 @@ struct AttrsBinding<Dictionary> {
 // If argument can't be decoded it should return the empty optional.
 template <typename T>
 struct ArgDecoding;
+
+//===----------------------------------------------------------------------===//
+// Results decoding implementation
+//===----------------------------------------------------------------------===//
+
+// XLA FFI results decoding must be defined by specializing this template.
+//
+// Example: decoding for the `MyType` results
+//
+//   template <>
+//   struct RetDecoding<MyType> {
+//     static std::optional<MyType> Decode(XLA_FFI_RetType type, void* ret);
+//   };
+//
+// If argument can't be decoded it should return the empty optional.
+template <typename T>
+struct RetDecoding;
 
 //===----------------------------------------------------------------------===//
 // Attributes decoding implementation
@@ -654,6 +734,7 @@ namespace internal {
 // attributes we decoded so far to compute call frame offsets.
 struct DecodingOffsets {
   int64_t args = 0;
+  int64_t rets = 0;
   int64_t attrs = 0;
 };
 
@@ -676,6 +757,17 @@ struct Decode {
 };
 
 }  // namespace internal
+
+template <typename T>
+struct internal::Decode<internal::RetTag<T>> {
+  static std::optional<Result<T>> call(DecodingOffsets& offsets,
+                                       DecodingContext& ctx,
+                                       DiagnosticEngine& diagnostic) {
+    int64_t idx = offsets.rets++;
+    return RetDecoding<T>::Decode(ctx.call_frame->rets.types[idx],
+                                  ctx.call_frame->rets.rets[idx], diagnostic);
+  }
+};
 
 template <typename T>
 struct internal::Decode<internal::AttrTag<T>> {
@@ -774,16 +866,16 @@ class RemainingArgs {
  public:
   RemainingArgs(const XLA_FFI_Args* args, size_t offset)
       : args_(args), offset_(offset) {
-    assert(offset <= args_->num_args && "illegal remaining args offset");
+    assert(offset <= args_->size && "illegal remaining args offset");
   }
 
-  size_t size() const { return args_->num_args - offset_; }
+  size_t size() const { return args_->size - offset_; }
   bool empty() const { return size() == 0; }
 
   template <typename T>
   Expected<T, std::string> get(size_t index) const {
     size_t idx = offset_ + index;
-    if (idx >= args_->num_args) {
+    if (idx >= args_->size) {
       return Unexpected("Index out of range.");
     }
 
@@ -811,6 +903,50 @@ struct internal::Decode<internal::RemainingArgsTag> {
 };
 
 //===----------------------------------------------------------------------===//
+// Type-safe wrapper for accessing a variable number of results.
+//===----------------------------------------------------------------------===//
+
+class RemainingResults {
+ public:
+  RemainingResults(const XLA_FFI_Rets* rets, size_t offset)
+      : rets_(rets), offset_(offset) {
+    assert(offset <= rets_->size && "illegal remaining rets offset");
+  }
+
+  size_t size() const { return rets_->size - offset_; }
+  bool empty() const { return size() == 0; }
+
+  template <typename T>
+  Expected<T, std::string> get(size_t index) const {
+    size_t idx = offset_ + index;
+    if (idx >= rets_->size) {
+      return Unexpected("Index out of range.");
+    }
+
+    DiagnosticEngine diagnostic;
+    auto value_opt =
+        RetDecoding<T>::Decode(rets_->types[idx], rets_->rets[idx], diagnostic);
+    if (!value_opt.has_value()) {
+      return Unexpected(diagnostic.Result());
+    }
+    return **value_opt;
+  }
+
+ private:
+  const XLA_FFI_Rets* rets_;  // not owned
+  size_t offset_;
+};
+
+template <>
+struct internal::Decode<internal::RemainingRetsTag> {
+  static std::optional<RemainingResults> call(DecodingOffsets& offsets,
+                                              DecodingContext& ctx,
+                                              DiagnosticEngine& diagnostic) {
+    return RemainingResults(&ctx.call_frame->rets, offsets.rets);
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // Type-safe wrapper for accessing dictionary attributes.
 //===----------------------------------------------------------------------===//
 
@@ -818,10 +954,10 @@ class Dictionary {
  public:
   explicit Dictionary(const XLA_FFI_Attrs* attrs) : attrs_(attrs) {}
 
-  size_t size() const { return attrs_->num_attrs; }
+  size_t size() const { return attrs_->size; }
 
   bool contains(std::string_view name) const {
-    return Find(name) < attrs_->num_attrs;
+    return Find(name) < attrs_->size;
   }
 
   template <typename T>
@@ -838,7 +974,7 @@ class Dictionary {
   std::optional<T> get(std::string_view name,
                        DiagnosticEngine& diagnostic) const {
     size_t idx = Find(name);
-    if (idx >= attrs_->num_attrs) {
+    if (idx >= attrs_->size) {
       return diagnostic.Emit("Unexpected attribute: ") << name;
     }
 
@@ -850,7 +986,7 @@ class Dictionary {
  private:
   size_t Find(std::string_view name) const {
     XLA_FFI_ByteSpan** begin = attrs_->names;
-    XLA_FFI_ByteSpan** end = begin + attrs_->num_attrs;
+    XLA_FFI_ByteSpan** end = begin + attrs_->size;
 
     auto name_eq = [&](XLA_FFI_ByteSpan* attr) {
       std::string_view name_view = {attr->ptr, attr->len};
@@ -897,10 +1033,31 @@ struct FnArgType {
   using Type = T;
 };
 
+template <>
+struct FnArgType<internal::RemainingArgsTag> {
+  using Type = RemainingArgs;
+};
+
+template <>
+struct FnArgType<internal::RemainingRetsTag> {
+  using Type = RemainingResults;
+};
+
+// Extracts the underlying type from the returned result type tag.
+template <typename T>
+struct FnArgType<internal::RetTag<T>> {
+  using Type = Result<T>;
+};
+
 // Extracts the underlying type from the attribute type tag.
 template <typename T>
 struct FnArgType<internal::AttrTag<T>> {
   using Type = typename AttrDecoding<T>::Type;
+};
+
+template <typename T>
+struct FnArgType<internal::AttrsTag<T>> {
+  using Type = T;
 };
 
 // Extracts the underlying type from the context type tag.
@@ -909,20 +1066,12 @@ struct FnArgType<internal::CtxTag<T>> {
   using Type = typename CtxDecoding<T>::Type;
 };
 
-template <>
-struct FnArgType<internal::RemainingArgsTag> {
-  using Type = RemainingArgs;
-};
-
-template <typename T>
-struct FnArgType<internal::AttrsTag<T>> {
-  using Type = T;
-};
-
 // A template for checking if type in a parameter pack is a tagged one and has
 // a special decoding rule defined by template specialization.
 template <typename>
 struct IsTagged : std::false_type {};
+template <typename T>
+struct IsTagged<RetTag<T>> : std::true_type {};
 template <typename T>
 struct IsTagged<AttrTag<T>> : std::true_type {};
 template <typename T>
@@ -931,6 +1080,8 @@ template <typename T>
 struct IsTagged<CtxTag<T>> : std::true_type {};
 template <>
 struct IsTagged<RemainingArgsTag> : std::true_type {};
+template <>
+struct IsTagged<RemainingRetsTag> : std::true_type {};
 
 // A template for counting regular arguments in the Ts pack.
 template <typename... Ts>
@@ -957,6 +1108,9 @@ class Handler : public Ffi {
   static constexpr int64_t kSize = sizeof...(Ts);
 
   static constexpr int64_t kNumArgs = internal::NumArgs<Ts...>::value;
+
+  static constexpr int64_t kNumRets =
+      internal::NumTagged<internal::RetTag, Ts...>::value;
 
   static constexpr int64_t kNumAttrs =
       internal::NumTagged<internal::AttrTag, Ts...>::value;
@@ -986,18 +1140,36 @@ class Handler : public Ffi {
     // Check that the number of passed arguments matches the signature. Each
     // individual argument decoding will check the actual type.
     if (internal::HasRemainingArgsTag<Ts...>::value) {
-      if (XLA_FFI_PREDICT_FALSE(call_frame->args.num_args < kNumArgs)) {
+      if (XLA_FFI_PREDICT_FALSE(call_frame->args.size < kNumArgs)) {
         return InvalidArgument(
             call_frame->api,
             StrCat("Wrong number of arguments: expected at least ",
-                   kNumArgs - 1, " but got ", call_frame->args.num_args));
+                   kNumArgs - 1, " but got ", call_frame->args.size));
       }
     } else {
-      if (XLA_FFI_PREDICT_FALSE(call_frame->args.num_args != kNumArgs)) {
+      if (XLA_FFI_PREDICT_FALSE(call_frame->args.size != kNumArgs)) {
         return InvalidArgument(
             call_frame->api,
             StrCat("Wrong number of arguments: expected ", kNumArgs,
-                   " but got ", call_frame->args.num_args));
+                   " but got ", call_frame->args.size));
+      }
+    }
+
+    // Check that the number of results matches the signature. Each individual
+    // result decoding will check the actual type.
+    if (internal::HasRemainingRetsTag<Ts...>::value) {
+      if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size < kNumRets)) {
+        return InvalidArgument(
+            call_frame->api,
+            StrCat("Wrong number of results: expected at least ", kNumRets - 1,
+                   " but got ", call_frame->rets.size));
+      }
+    } else {
+      if (XLA_FFI_PREDICT_FALSE(call_frame->rets.size != kNumRets)) {
+        return InvalidArgument(
+            call_frame->api,
+            StrCat("Wrong number of results: expected ", kNumRets, " but got ",
+                   call_frame->rets.size));
       }
     }
 
@@ -1007,11 +1179,11 @@ class Handler : public Ffi {
     // dictionary), then there is no need to check attributes, as the FFI
     // handler (or a struct decoding) should be responsible for it.
     if (XLA_FFI_PREDICT_FALSE(kNumDictAttrs == 0 &&
-                              call_frame->attrs.num_attrs != kNumAttrs)) {
+                              call_frame->attrs.size != kNumAttrs)) {
       return InvalidArgument(
           call_frame->api,
           StrCat("Wrong number of attributes: expected ", kNumAttrs,
-                 " but got ", call_frame->attrs.num_attrs));
+                 " but got ", call_frame->attrs.size));
     }
 
     // Define index sequences to access custom call operands.
@@ -1137,9 +1309,17 @@ inline std::ostream& operator<<(std::ostream& os, const XLA_FFI_AttrType type) {
     }                                                                 \
   }
 
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(bool, XLA_FFI_DataType_PRED);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(int8_t, XLA_FFI_DataType_S8);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(int16_t, XLA_FFI_DataType_S16);
 XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(int32_t, XLA_FFI_DataType_S32);
 XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(int64_t, XLA_FFI_DataType_S64);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(uint8_t, XLA_FFI_DataType_U8);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(uint16_t, XLA_FFI_DataType_U16);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(uint32_t, XLA_FFI_DataType_U32);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(uint64_t, XLA_FFI_DataType_U64);
 XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(float, XLA_FFI_DataType_F32);
+XLA_FFI_REGISTER_SCALAR_ATTR_DECODING(double, XLA_FFI_DataType_F64);
 
 #undef XLA_FFI_REGISTER_SCALAR_ATTR_DECODING
 
@@ -1205,9 +1385,9 @@ struct DecodeDictionaryAttr {
   XLA_FFI_ATTRIBUTE_ALWAYS_INLINE static std::optional<T> Decode(
       const XLA_FFI_Attrs* attrs, std::array<std::string_view, kSize> names,
       std::index_sequence<Is...>, DiagnosticEngine& diagnostic) {
-    if (XLA_FFI_PREDICT_FALSE(kSize != attrs->num_attrs)) {
+    if (XLA_FFI_PREDICT_FALSE(kSize != attrs->size)) {
       return diagnostic.Emit("Wrong number of attributes: expected ")
-             << kSize << " attributes but got " << attrs->num_attrs;
+             << kSize << " attributes but got " << attrs->size;
     }
 
     // TODO(ezhulenev): We rely on dictionary to lookup struct members by name

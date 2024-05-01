@@ -30,12 +30,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/Operation.h"  // from @llvm-project
-#include "xla/ffi/api/c_api.h"
+#include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -60,6 +58,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/gemm_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
@@ -111,9 +110,10 @@ absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
                               /*index*/ {});
   }
 
-  auto slice_adaptor =
-      HloFindIf({HloInstructionAdaptor(*start)}, adaptor, [](auto node) {
-        return IsOpcodeAnyOf<HloOpcode::kDynamicSlice, HloOpcode::kSlice>(node);
+  auto slice_adaptor = HloFindIf(
+      {HloInstructionAdaptor(*start)}, adaptor, [](HloInstructionAdaptor node) {
+        return IsOpcodeAnyOf<HloOpcode::kDynamicSlice, HloOpcode::kSlice>(
+            &node.instruction());
       });
   if (slice_adaptor.has_value()) {
     auto* slice_instr =
@@ -561,7 +561,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
       if (!backend_config_str.empty()) {
         mlir::Attribute attr = mlir::parseAttribute(
             backend_config_str, ir_emitter_context.mlir_context());
-        if (auto dict = attr.dyn_cast_or_null<mlir::DictionaryAttr>()) {
+        if (auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr)) {
           TF_ASSIGN_OR_RETURN(attributes, BuildAttributesMap(dict));
           break;
         }

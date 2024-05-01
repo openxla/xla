@@ -27,9 +27,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
@@ -40,8 +41,11 @@ limitations under the License.
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
+#include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/status.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -49,9 +53,85 @@ namespace gpu {
 namespace {
 
 using ::mlir::AffineExpr;
-using ::mlir::AffineMap;
 using ::mlir::MLIRContext;
-using ::mlir::SmallVector;
+
+// Computes indexing map from program id into the tile offset for the given
+// shape and tile sizes.
+IndexingMap ComputeBlockIdToOutputTileIndexing(
+    absl::Span<const int64_t> dimensions, absl::Span<const int64_t> tile_sizes,
+    mlir::MLIRContext* mlir_context) {
+  CHECK_EQ(dimensions.size(), tile_sizes.size());  // Crash OK
+
+  int num_tiles = 1;
+  std::vector<int64_t> outer_loop_bounds;
+  outer_loop_bounds.reserve(dimensions.size());
+  for (auto [dim_size, tile_size] : llvm::zip(dimensions, tile_sizes)) {
+    int num_tiles_per_dim = (dim_size + tile_size - 1) / tile_size;
+
+    num_tiles *= num_tiles_per_dim;
+    outer_loop_bounds.push_back(num_tiles_per_dim);
+  }
+
+  mlir::AffineExpr program_id = mlir::getAffineDimExpr(0, mlir_context);
+
+  // Delinearize the block id.
+  auto tile_exprs =
+      DelinearizeIndex(outer_loop_bounds, program_id, mlir_context);
+
+  // Scale each index by the tile size to produce tile offset.
+  for (auto [tile_expr, tile_size] : llvm::zip(tile_exprs, tile_sizes)) {
+    tile_expr = tile_expr * tile_size;
+  }
+
+  return IndexingMap::FromTensorSizes(
+      mlir::AffineMap::get(
+          /*dimCount=*/1, /*symbolCount=*/0, tile_exprs, mlir_context),
+      /*dim_upper_bounds=*/{num_tiles}, /*symbol_upper_bounds=*/{});
+}
+
+absl::StatusOr<IndexingMap> ComputeBlockIdToTileOffsetIndexing(
+    const SymbolicTiledHloInstruction& tiled_hlo,
+    const IndexingMap& block_id_to_root_tile_offset,
+    mlir::MLIRContext* mlir_context) {
+  IndexingMap block_id_to_tile_offset_indexing = ComposeIndexingMaps(
+      block_id_to_root_tile_offset, tiled_hlo.indexing_map());
+
+  // A symbol in an indexing map means that to produce on element of output, we
+  // need to read all elements of input in the symbol range. Since this function
+  // computes start of the tile, we need to substitute each symbol with its
+  // lower bound value. We assume here the iteration order is normalized.
+  // TODO(b/330906085): Support cases when tile offsets are not 0.
+  if (absl::c_any_of(block_id_to_tile_offset_indexing.GetSymbolBounds(),
+                     [](const Interval& symbol_bound) {
+                       return symbol_bound.lower != 0;
+                     })) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Symbol lower bound is not zero. ",
+                     block_id_to_tile_offset_indexing.ToString()));
+  }
+
+  std::vector<AffineExpr> symbol_lower_bounds(
+      block_id_to_tile_offset_indexing.GetSymbolCount(),
+      mlir::getAffineConstantExpr(0, mlir_context));
+
+  mlir::AffineMap simplified_affine_map =
+      block_id_to_tile_offset_indexing.GetAffineMap().replaceDimsAndSymbols(
+          /*dimReplacements=*/{}, symbol_lower_bounds,
+          block_id_to_tile_offset_indexing.GetDimVarsCount(),
+          /*numResultSyms=*/
+          block_id_to_tile_offset_indexing.GetRangeVarsCount());
+
+  IndexingMap simplified_indexing_map = IndexingMap{
+      simplified_affine_map, block_id_to_tile_offset_indexing.GetDimVars(),
+      block_id_to_tile_offset_indexing.GetRangeVars(),
+      block_id_to_tile_offset_indexing.GetRTVars()};
+
+  simplified_indexing_map.Simplify(GetIndexingMapForInstruction);
+  simplified_indexing_map.RescaleSymbols();
+  simplified_indexing_map.RemoveUnusedSymbols();
+
+  return simplified_indexing_map;
+}
 
 }  // namespace
 
@@ -122,7 +202,7 @@ using ::mlir::SmallVector;
     for (auto [operand, operand_indexing_map_set] :
          llvm::zip(tiled_hlo_instruction->hlo()->operands(),
                    operands_indexing->indexing_maps)) {
-      CHECK_EQ(operand_indexing_map_set.size(), 1);
+      CHECK_EQ(operand_indexing_map_set.size(), 1);  // Crash OK
 
       IndexingMap operand_indexing_map =
           ComposeIndexingMaps(tiled_hlo_instruction->indexing_map(),
@@ -160,28 +240,78 @@ using ::mlir::SmallVector;
   return SymbolicTileAnalysis(std::move(tiled_hlo_instructions), ctx);
 }
 
-std::vector<int64_t> SymbolicTileAnalysis::TileOffsets(
-    const SymbolicTiledHloInstruction& tiled_hlo) const {
-  CHECK(tile_parameters_.has_value());
-  return tiled_hlo.TileOffsets(*tile_parameters_);
-}
+absl::StatusOr<std::vector<std::unique_ptr<TiledHloInstruction>>>
+SymbolicTileAnalysis::ComputeTiledHloInstructions(
+    const std::vector<int64_t>& tile_parameters) const {
+  IndexingMap block_id_to_root_tile_offset = ComputeBlockIdToOutputTileIndexing(
+      GetRoot()->hlo()->shape().dimensions(), tile_parameters, context_);
 
-// TODO(bchetioui): remove dependency on stride and offset parameters.
-std::vector<int64_t> SymbolicTileAnalysis::TileSizes(
-    const SymbolicTiledHloInstruction& tiled_hlo) const {
-  CHECK(tile_parameters_.has_value());
-  return tiled_hlo.TileSizes(*tile_parameters_);
-}
+  std::vector<std::unique_ptr<TiledHloInstruction>> tiled_hlo_instructions;
+  absl::flat_hash_map<const SymbolicTiledHloInstruction*, TiledHloInstruction*>
+      symbolic_to_tiled_hlo_map;
+  absl::flat_hash_set<TiledHloInstruction*, TiledHloInstruction::PtrHash,
+                      TiledHloInstruction::PtrEqual>
+      tiled_hlo_instructions_set;
 
-std::vector<int64_t> SymbolicTileAnalysis::TileStrides(
-    const SymbolicTiledHloInstruction& tiled_hlo) const {
-  CHECK(tile_parameters_.has_value());
-  return tiled_hlo.TileStrides(*tile_parameters_);
-}
+  absl::flat_hash_map<TiledHloInstruction*, int64_t> topological_order;
 
-void SymbolicTileAnalysis::SetTileSizes(std::vector<int64_t> sizes) {
-  // TODO(bchetioui): CHECK num parameters somehow?
-  tile_parameters_ = std::vector(std::move(sizes));
+  std::function<absl::StatusOr<TiledHloInstruction*>(
+      const SymbolicTiledHloInstruction*)>
+      get_tiled_hlo_instruction;
+
+  get_tiled_hlo_instruction =
+      [&](const SymbolicTiledHloInstruction* symbolic_tiled_hlo)
+      -> absl::StatusOr<TiledHloInstruction*> {
+    auto it1 = symbolic_to_tiled_hlo_map.find(symbolic_tiled_hlo);
+    if (it1 != symbolic_to_tiled_hlo_map.end()) {
+      return it1->second;
+    }
+
+    std::vector<int64_t> tile_sizes =
+        symbolic_tiled_hlo->TileSizes(tile_parameters);
+    std::vector<int64_t> tile_strides =
+        symbolic_tiled_hlo->TileStrides(tile_parameters);
+
+    TF_ASSIGN_OR_RETURN(
+        IndexingMap block_id_to_block_offset_indexing,
+        ComputeBlockIdToTileOffsetIndexing(
+            *symbolic_tiled_hlo, block_id_to_root_tile_offset, context_));
+
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<TiledHloInstruction> tiled_hlo_holder,
+                        TiledHloInstruction::Create(
+                            symbolic_tiled_hlo->hlo(), std::move(tile_sizes),
+                            std::move(tile_strides),
+                            std::move(block_id_to_block_offset_indexing)));
+
+    auto it2 = tiled_hlo_instructions_set.find(tiled_hlo_holder.get());
+    if (it2 != tiled_hlo_instructions_set.end()) {
+      return *it2;
+    }
+
+    tiled_hlo_instructions.push_back(std::move(tiled_hlo_holder));
+    TiledHloInstruction* tiled_hlo = tiled_hlo_instructions.back().get();
+    tiled_hlo_instructions_set.insert(tiled_hlo);
+    symbolic_to_tiled_hlo_map[symbolic_tiled_hlo] = tiled_hlo;
+
+    for (SymbolicTiledHloInstruction* operand :
+         symbolic_tiled_hlo->operands()) {
+      TF_ASSIGN_OR_RETURN(TiledHloInstruction * tiled_operand,
+                          get_tiled_hlo_instruction(operand));
+      tiled_hlo->AppendOperand(tiled_operand);
+    }
+
+    topological_order[tiled_hlo] = topological_order.size();
+    return tiled_hlo;
+  };
+
+  TF_CHECK_OK(get_tiled_hlo_instruction(GetRoot()).status());
+
+  // Order instructions in def-before-use order.
+  absl::c_sort(tiled_hlo_instructions, [&](const auto& i1, const auto& i2) {
+    return topological_order.at(i1.get()) < topological_order.at(i2.get());
+  });
+
+  return tiled_hlo_instructions;
 }
 
 }  // namespace gpu

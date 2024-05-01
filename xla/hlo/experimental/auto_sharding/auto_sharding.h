@@ -210,7 +210,7 @@ Status CheckAliasSetCompatibility(const AliasSet& alias_set,
                                   const HloInstructionSequence& sequence,
                                   bool crash_on_error);
 
-void GenerateReduceScatter(
+absl::Status GenerateReduceScatter(
     const HloInstructionSequence& sequence, const AliasMap& alias_map,
     const InstructionDepthMap& depth_map, const StrategyMap& strategy_map,
     const CostGraph& cost_graph, absl::Span<const int64_t> s_val,
@@ -228,11 +228,9 @@ HloSharding GetReduceScatterOutput(const HloInstruction* ins,
 // The high-level "recipe" for solving an Auto Sharding problem.
 AutoShardingSolverResult Solve(
     const HloModule& hlo_module, const HloLiveRange& hlo_live_range,
-    const LivenessNodeSet& liveness_node_set,
-    const LivenessEdgeSet& liveness_edge_set, const StrategyMap& strategy_map,
-    const StrategyGroups& strategy_groups, const CostGraph& cost_graph,
-    const AliasSet& alias_set, const AutoShardingOption& option,
-    absl::string_view request_prefix,
+    const StrategyMap& strategy_map, const StrategyGroups& strategy_groups,
+    const CostGraph& cost_graph, const AliasSet& alias_set,
+    const AutoShardingOption& option, absl::string_view request_prefix,
     const absl::flat_hash_map<std::string, const HloInstruction*>&
         sharding_propagation_solution = {});
 

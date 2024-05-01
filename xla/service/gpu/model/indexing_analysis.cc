@@ -465,8 +465,7 @@ IndexingMap ComputeOutputToInputPadOpIndexingImpl(
       AffineMap::get(output_rank, /*symbolCount=*/0, exprs, mlir_context),
       std::move(dim_vars),
       /*range_vars = */ {},
-      /*rt_vars = */ {},
-      absl::MakeSpan(constraints)};
+      /*rt_vars = */ {}, absl::MakeSpan(constraints)};
 }
 
 HloInstructionIndexing ComputeOutputToInputPadOpIndexing(
@@ -714,8 +713,9 @@ HloInstructionIndexing ComputeOutputToInputConvolutionOpIndexing(
     kernel_exprs[dnums.kernel_spatial_dimensions(i)] =
         getAffineSymbolExpr(i, mlir_context);
   }
-  kernel_exprs[dnums.kernel_output_feature_dimension()] =
+  AffineExpr dim_expr =
       getAffineDimExpr(dnums.output_feature_dimension(), mlir_context);
+  kernel_exprs[dnums.kernel_output_feature_dimension()] = dim_expr;
 
   // Build initial symbol ranges.
   std::vector<RangeVar> input_symbols = input_spatial_indexing.GetRangeVars();
@@ -737,10 +737,12 @@ HloInstructionIndexing ComputeOutputToInputConvolutionOpIndexing(
   // With multiple feature groups, the input feature dimension is equally split.
   if (convolution->feature_group_count() > 1) {
     AffineExpr& input_feature = input_exprs[dnums.input_feature_dimension()];
-    AffineExpr dim_expr =
-        getAffineDimExpr(dnums.output_feature_dimension(), mlir_context);
-    input_feature =
-        dim_expr.floorDiv(input_group_size) * input_group_size + input_feature;
+    int64_t output_group_size =
+        output_shape.dimensions(dnums.output_feature_dimension());
+    int64_t feature_group_size =
+        output_group_size / convolution->feature_group_count();
+    input_feature = dim_expr.floorDiv(feature_group_size) * input_group_size +
+                    input_feature;
   }
 
   // With multiple batch groups, the input batch dimension is equally split.
@@ -994,6 +996,35 @@ HloInstructionIndexing ComputeOutputToInputSliceOpIndexing(
       AffineMap::get(output_rank, /*symbolCount=*/0, exprs, mlir_context),
       slice->shape().dimensions(), {});
   return HloInstructionIndexing::FromIndexingMaps({indexing_map});
+}
+
+HloInstructionIndexing ComputeInputToOutputSliceOpIndexing(
+    const HloSliceInstruction* slice, MLIRContext* mlir_context) {
+  auto output_rank = slice->shape().rank();
+
+  std::vector<AffineExpr> exprs;
+  exprs.reserve(output_rank);
+  for (int64_t dim = 0; dim < output_rank; ++dim) {
+    AffineExpr dim_expr = getAffineDimExpr(dim, mlir_context);
+    exprs.push_back((dim_expr - slice->slice_starts()[dim])
+                        .floorDiv(slice->slice_strides()[dim]));
+  }
+  IndexingMap indexing_map = IndexingMap::FromTensorSizes(
+      AffineMap::get(output_rank, /*symbolCount=*/0, exprs, mlir_context),
+      slice->operand(0)->shape().dimensions(), {});
+
+  for (int64_t dim = 0; dim < output_rank; ++dim) {
+    AffineExpr dim_expr = getAffineDimExpr(dim, mlir_context);
+    int64_t lb = slice->slice_starts()[dim];
+    int64_t ub =
+        (slice->shape().dimensions(dim) - 1) * slice->slice_strides()[dim] +
+        slice->slice_starts()[dim];
+    indexing_map.AddConstraint(dim_expr, {lb, ub});
+    indexing_map.AddConstraint((dim_expr - lb) % slice->slice_strides()[dim],
+                               {0, 0});
+  }
+
+  return HloInstructionIndexing::FromIndexingMaps({std::move(indexing_map)});
 }
 
 AffineMap ComputeTransposeIndexingMap(absl::Span<const int64_t> permutation,
@@ -1318,10 +1349,10 @@ GroupedByOpIndexingMap ComputeGroupedOutputToInputIndexing(
   if (fusion_adaptor.ContainsInstruction(target_instr)) {
     if (auto parameter_instr =
             DynCast<HloParameterInstruction>(&target_instr.instruction())) {
-      const HloInstruction* user = parameter_instr->users().front();
-      auto fusion_operand = HloInstructionAdaptor(*user).GetOperand(
-          parameter_instr->parameter_number());
-      grouped_indexing_maps[&fusion_operand.instruction()] = {initial_map};
+      auto fusion_instr = parameter_instr->parent()->FusionInstruction();
+      auto fusion_operand =
+          fusion_instr->operand(parameter_instr->parameter_number());
+      grouped_indexing_maps[fusion_operand] = {initial_map};
       return grouped_indexing_maps;
     }
   }
@@ -1385,7 +1416,10 @@ bool FuseProducerConsumerOutputToInputIndexing(
 HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
                                                     int output_id,
                                                     MLIRContext* ctx) {
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
+  if (HloInstruction::IsOpElementwise(instr->opcode()) ||
+      instr->opcode() == HloOpcode::kMap) {
+    // Note: map has a `dimensions` attribute, but it does nothing. See
+    // b/65689298.
     return ComputeOutputToInputCwiseOpIndexing(instr, ctx);
   }
   if (instr->opcode() == HloOpcode::kBitcast) {
@@ -1451,7 +1485,10 @@ HloInstructionIndexing ComputeOutputToInputIndexing(const HloInstruction* instr,
 HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
                                                     int input_id,
                                                     MLIRContext* ctx) {
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
+  if (HloInstruction::IsOpElementwise(instr->opcode()) ||
+      instr->opcode() == HloOpcode::kMap) {
+    // Note: map has a `dimensions` attribute, but it does nothing. See
+    // b/65689298.
     return ComputeInputToOutputCwiseOpIndexing(instr, ctx);
   }
   if (instr->opcode() == HloOpcode::kBitcast) {
@@ -1474,6 +1511,9 @@ HloInstructionIndexing ComputeInputToOutputIndexing(const HloInstruction* instr,
   }
   if (auto transpose = DynCast<HloTransposeInstruction>(instr)) {
     return ComputeInputToOutputTransposeOpIndexing(transpose, ctx);
+  }
+  if (auto slice = DynCast<HloSliceInstruction>(instr)) {
+    return ComputeInputToOutputSliceOpIndexing(slice, ctx);
   }
   if (instr->opcode() == HloOpcode::kTuple) {
     return HloInstructionIndexing::FromIndexingMaps(
@@ -1498,6 +1538,7 @@ IndexingMap ComputeEpilogueInputToOutputIndexing(
         user, user->operand_index(instr), mlir_context);
     root_indexing = root_indexing * *user_indexing.indexing_maps[0].begin();
     root_indexing.Simplify(GetIndexingMapForInstruction);
+    root_indexing.RemoveUnusedSymbols();
     instr = user;
   }
   return root_indexing;

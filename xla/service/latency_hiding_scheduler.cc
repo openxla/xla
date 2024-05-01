@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <limits>
-#include <list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,10 +30,14 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -594,7 +597,8 @@ void MemoryPressureTracker::UpdateBuffers(const HloInstruction* instruction) {
   for (auto* op : instruction->operands()) {
     auto& output_values = output_buffers_[op];
     for (auto& info : output_values) {
-      if (ShouldSkipBufferAllocations(instruction, info.second) ||
+      if (ShouldSkipBufferAllocations(instruction, info.second,
+                                      info.first.first_definition) ||
           (info.first.value->values()[0]->shape().has_layout() &&
            info.first.value->values()[0]->shape().layout().memory_space() !=
                kDefaultMemorySpace)) {
@@ -653,7 +657,8 @@ std::pair<int64_t, int64_t> MemoryPressureTracker::MemoryPressureDifference(
     auto it = output_buffers_.find(op);
     CHECK(it != output_buffers_.end());
     for (auto& b : it->second) {
-      if (ShouldSkipBufferAllocations(instruction, b.second) ||
+      if (ShouldSkipBufferAllocations(instruction, b.second,
+                                      b.first.first_definition) ||
           (b.first.value->values()[0]->shape().has_layout() &&
            b.first.value->values()[0]->shape().layout().memory_space() !=
                kDefaultMemorySpace)) {
@@ -715,6 +720,12 @@ class ReadySetLt {
   DefaultSchedulerCore::CandidateResult operator()(
       DefaultSchedulerCore::ScheduleCandidate& a,
       DefaultSchedulerCore::ScheduleCandidate& b) const {
+    // Schedule according to ForceEarly.
+    if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+            a.node->GetForceEarly(), a, b.node->GetForceEarly(), b,
+            "kForceEarly")) {
+      return *value;
+    }
     // Schedule according to ForceDelay first.
     if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
             !a.node->GetForceDelay(), a, !b.node->GetForceDelay(), b,
@@ -1091,13 +1102,30 @@ class ReadySetLt {
   }
 };
 
+enum SkipNodeReason {
+  kShouldSkipNodeFunction,
+  kExceedsOverlapLimit,
+};
+
+absl::string_view SkipNodeReasonString(SkipNodeReason reason) {
+  switch (reason) {
+    case SkipNodeReason::kShouldSkipNodeFunction:
+      return "Skipped due to kShouldSkipNodeFunction.";
+    case SkipNodeReason::kExceedsOverlapLimit:
+      return "Skipped due to kExceedsOverlapLimit.";
+  }
+}
+
 }  // namespace
 
 // Helper function to find the best node from the queues of scheduling state for
 // scheduling.
-HloGraphNode* DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
+absl::StatusOr<HloGraphNode*>
+DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
     DefaultSchedulerCore::SchedulingState& sched_state,
     DefaultSchedulerCore::ShouldSkipNodeFunction should_skip_node) {
+  absl::InlinedVector<std::pair<HloGraphNode*, SkipNodeReason>, 2>
+      skipped_nodes_and_reasons;
   auto scheduling_instruction_crosses_overlap_limit =
       [&sched_state](const HloInstruction& instr) {
         for (const auto& [resource, limit] :
@@ -1130,12 +1158,20 @@ HloGraphNode* DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
             e = sched_state.ready_set.end();
        ready_node_it != e; ++ready_node_it) {
     if (should_skip_node && should_skip_node(*ready_node_it)) {
+      if (ready_chosen.node == nullptr) {
+        skipped_nodes_and_reasons.push_back(
+            {*ready_node_it, SkipNodeReason::kShouldSkipNodeFunction});
+      }
       continue;
     }
     // If this node would cause the max_concurrent_resource count to go beyond
     // the limit do not schedule it and pass to the next node.
     if (scheduling_instruction_crosses_overlap_limit(
             (*ready_node_it)->GetInstr())) {
+      if (ready_chosen.node == nullptr) {
+        skipped_nodes_and_reasons.push_back(
+            {*ready_node_it, SkipNodeReason::kExceedsOverlapLimit});
+      }
       continue;
     }
     ScheduleCandidate ready_candidate =
@@ -1179,7 +1215,15 @@ HloGraphNode* DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
     }
   }
   if (ready_chosen.node == nullptr) {
-    return nullptr;
+    return absl::InternalError(absl::StrCat(
+        "FindAndExtractBestNodeAvailable failed to find a node to "
+        "schedule, skipped nodes: ",
+        absl::StrJoin(skipped_nodes_and_reasons, "; ",
+                      [](std::string* out, const auto& pair) {
+                        absl::StrAppend(out, pair.first->GetInstr().name(),
+                                        ": ",
+                                        SkipNodeReasonString(pair.second));
+                      })));
   }
   CHECK(chosen_it != sched_state.ready_set.end());
   std::swap(*chosen_it, sched_state.ready_set.back());
@@ -1725,8 +1769,9 @@ Status DefaultSchedulerCore::InitializeScheduler(const HloModule* module) {
 Status DefaultSchedulerCore::SchedulingStep(SchedulingState* sched_state) {
   // Get the first available node for scheduling that is the node that
   // satisfies our ready heuristic the best.
-  HloGraphNode* node = FindAndExtractBestNodeAvailable(
-      *sched_state, /*should_skip_node=*/nullptr);
+  TF_ASSIGN_OR_RETURN(HloGraphNode * node,
+                      FindAndExtractBestNodeAvailable(
+                          *sched_state, /*should_skip_node=*/nullptr));
   CHECK(node != nullptr);
   TF_ASSIGN_OR_RETURN(sched_state->current_time,
                       ScheduleNode(node, sched_state));

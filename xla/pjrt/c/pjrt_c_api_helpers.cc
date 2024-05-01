@@ -244,6 +244,8 @@ PJRT_Buffer_Type ConvertToPjRtBufferType(xla::PrimitiveType type) {
       return PJRT_Buffer_Type::PJRT_Buffer_Type_INVALID;
     case xla::PrimitiveType::PRED:
       return PJRT_Buffer_Type::PJRT_Buffer_Type_PRED;
+    case xla::PrimitiveType::TOKEN:
+      return PJRT_Buffer_Type::PJRT_Buffer_Type_TOKEN;
     case xla::PrimitiveType::S4:
       return PJRT_Buffer_Type::PJRT_Buffer_Type_S4;
     case xla::PrimitiveType::S8:
@@ -297,6 +299,8 @@ xla::PrimitiveType ConvertFromPjRtBufferType(PJRT_Buffer_Type type) {
   switch (type) {
     case PJRT_Buffer_Type::PJRT_Buffer_Type_PRED:
       return xla::PrimitiveType::PRED;
+    case PJRT_Buffer_Type::PJRT_Buffer_Type_TOKEN:
+      return xla::PrimitiveType::TOKEN;
     case PJRT_Buffer_Type::PJRT_Buffer_Type_S4:
       return xla::PrimitiveType::S4;
     case PJRT_Buffer_Type::PJRT_Buffer_Type_S8:
@@ -349,8 +353,10 @@ const char* HostBufferSemanticsToString(
   switch (h) {
     case xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall:
       return "xla::PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall";
-    case xla::PjRtClient::HostBufferSemantics::kZeroCopy:
-      return "xla::PjRtClient::HostBufferSemantics::kZeroCopy";
+    case xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy:
+      return "xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy";
+    case xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy:
+      return "xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy";
     case xla::PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes:
       return "xla::PjRtClient::HostBufferSemantics::"
              "kImmutableUntilTransferCompletes";
@@ -366,8 +372,12 @@ PJRT_HostBufferSemantics ConvertToPjRtHostBufferSemantics(
     case xla::PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes:
       return PJRT_HostBufferSemantics::
           PJRT_HostBufferSemantics_kImmutableUntilTransferCompletes;
-    case xla::PjRtClient::HostBufferSemantics::kZeroCopy:
-      return PJRT_HostBufferSemantics::PJRT_HostBufferSemantics_kZeroCopy;
+    case xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy:
+      return PJRT_HostBufferSemantics::
+          PJRT_HostBufferSemantics_kImmutableZeroCopy;
+    case xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy:
+      return PJRT_HostBufferSemantics::
+          PJRT_HostBufferSemantics_kMutableZeroCopy;
     default:
       CHECK(false)
           << "Input host buffer semantics is not supported in C API layer: "
@@ -385,28 +395,29 @@ xla::PjRtClient::HostBufferSemantics ConvertFromPjRtHostBufferSemantics(
         PJRT_HostBufferSemantics_kImmutableUntilTransferCompletes:
       return xla::PjRtClient::HostBufferSemantics::
           kImmutableUntilTransferCompletes;
-    case PJRT_HostBufferSemantics::PJRT_HostBufferSemantics_kZeroCopy:
-      return xla::PjRtClient::HostBufferSemantics::kZeroCopy;
+    case PJRT_HostBufferSemantics::PJRT_HostBufferSemantics_kImmutableZeroCopy:
+      return xla::PjRtClient::HostBufferSemantics::kImmutableZeroCopy;
+    case PJRT_HostBufferSemantics::PJRT_HostBufferSemantics_kMutableZeroCopy:
+      return xla::PjRtClient::HostBufferSemantics::kMutableZeroCopy;
   }
 }
 
-xla::PjRtFuture<absl::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
-                                                       const PJRT_Api* c_api) {
+xla::PjRtFuture<> ConvertCEventToCppFuture(PJRT_Event* c_event,
+                                           const PJRT_Api* c_api) {
   using absl::Status, xla::PjRtFuture;
   PJRT_Event_OnReady_Args event_onready_args;
   event_onready_args.struct_size = PJRT_Event_OnReady_Args_STRUCT_SIZE;
   event_onready_args.extension_start = nullptr;
   event_onready_args.event = c_event;
 
-  PjRtFuture<Status>::Promise promise = PjRtFuture<Status>::CreatePromise();
+  PjRtFuture<>::Promise promise = PjRtFuture<>::CreatePromise();
   event_onready_args.user_arg = new std::function<void(PJRT_Error*)>(
       [promise, c_event, c_api](PJRT_Error* error) mutable {
         if (error != nullptr) {
-          absl::Status s = ::pjrt::PjrtErrorToStatus(error, c_api);
-          promise.Set(s);
+          promise.Set(::pjrt::PjrtErrorToStatus(error, c_api));
           ::pjrt::MakeErrorDeleter(c_api)(error);
         } else {
-          promise.Set(absl::OkStatus());
+          promise.Set();
         }
         ::pjrt::MakeEventDeleter(c_api)(c_event);
       });
@@ -419,10 +430,9 @@ xla::PjRtFuture<absl::Status> ConvertCEventToCppFuture(PJRT_Event* c_event,
 
   PJRT_Error* error = c_api->PJRT_Event_OnReady(&event_onready_args);
   if (error != nullptr) {
-    absl::Status s = ::pjrt::PjrtErrorToStatus(error, c_api);
-    return PjRtFuture<Status>(s);
+    return PjRtFuture<>(::pjrt::PjrtErrorToStatus(error, c_api));
   }
-  return PjRtFuture<Status>(std::move(promise));
+  return PjRtFuture<>(std::move(promise));
 }
 
 static absl::StatusOr<PJRT_NamedValue> ConvertToPjRtNamedValue(

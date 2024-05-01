@@ -203,6 +203,10 @@ class HloComputation {
   HloInstruction* AddInstruction(std::unique_ptr<HloInstruction> instruction,
                                  const OpMetadata* metadata);
 
+  HloInstruction* AddInstruction(std::unique_ptr<HloInstruction> instruction,
+                                 const OpMetadata* metadata,
+                                 const FrontendAttributes* frontend_attributes);
+
   // Replace the old parameter at index param_no with
   // `instruction`. Updates uses and root instruction. Removes old
   // instruction from computation. No check is done on the shape.
@@ -439,7 +443,7 @@ class HloComputation {
   void ForEachInstructionPostOrder(
       absl::FunctionRef<void(HloInstruction*)> func) const;
 
-  int64_t instruction_count() const { return instruction_indices_.size(); }
+  int64_t instruction_count() const { return instruction_count_; }
 
   // Creates and returns a list of the embedded computations called by this
   // computation. This includes all embedded computations called directly or
@@ -577,9 +581,11 @@ class HloComputation {
   // return false. Otherwise, when the replacement happens, if |new_instruction|
   // doesn't have any sharding information it will receive the sharding
   // information of |old_instruction|, and function will return true.
-  absl::StatusOr<bool> ReplaceInstruction(
-      HloInstruction* old_instruction, HloInstruction* new_instruction,
-      bool preserve_sharding, bool relay_control_dependency = false);
+  absl::StatusOr<bool> ReplaceInstruction(HloInstruction* old_instruction,
+                                          HloInstruction* new_instruction,
+                                          bool preserve_sharding,
+                                          bool relay_control_dependency = false,
+                                          bool remove_unused_operands = true);
 
   // Same as above, with preserve_sharding=false. Since this replacement always
   // happens, it returns just a Status as opposed to StatusOr<bool>
@@ -841,16 +847,14 @@ class HloComputation {
     return execution_thread_ == HloInstruction::kMainExecutionThread;
   }
 
-  // Deallocate instructions that are marked by "RemoveInstruction". The two
-  // stage clean up process is designed such that HloPass can have stable
-  // internal pointers to HloInstructions while we create and remove
+  // Deallocates instructions that are marked by "RemoveInstruction" and
+  // compacts the instructions_ vector by removing the deleted instructions'
+  // entries (a.k.a. tombstones).
+  // This two-stage clean up process is designed such that HloPass can have
+  // stable internal pointers to HloInstructions while we create and remove
   // HloInstructions in a pass.
-  void Cleanup() {
-    for (HloInstruction* it : to_be_deleted_) {
-      delete it;
-    }
-    to_be_deleted_.clear();
-  }
+  // Note: the removal operation is stable because some users depend on it.
+  void Cleanup();
 
   // Returns true if a given instruction is marked dead in this computation.
   bool IsMarkedAsDead(const HloInstruction* inst);
@@ -961,17 +965,22 @@ class HloComputation {
   HloInstruction::InstructionVector param_instructions_;
 
   // Store instructions in std::vector as they can be added and removed
-  // arbitrarily and we want a stable iteration order. Keep a map from
-  // instruction pointer to index in the vector for fast lookup.
+  // arbitrarily and we want a stable iteration order.
+  // For the reverse mapping we use HloInstruction::index_in_parent_.
+  //
+  // Note: removals from this vector must be stable because some users depend on
+  // it. See the Cleanup() method for details on the two-stage removal process.
   HloInstructionList instructions_;
-  absl::flat_hash_map<const HloInstruction*, int> instruction_indices_;
 
-  // Execution thread of this computation. By default, it's main thread.
-  std::string execution_thread_ = HloInstruction::kMainExecutionThread;
+  // Number of not-marked-for-deletion entries in instructions_.
+  int64_t instruction_count_;
 
   // Removed instructions are moved into to_be_deleted_ first and then
   // deallocated when Cleanup is called.
   PtrVec<HloInstruction*> to_be_deleted_;
+
+  // Execution thread of this computation. By default, it's main thread.
+  std::string execution_thread_ = HloInstruction::kMainExecutionThread;
 
   std::string name_;
 
@@ -1010,9 +1019,6 @@ Status HloComputation::AcceptOrdered(
   absl::flat_hash_set<const HloInstruction*> visited;
   for (const HloInstruction* instruction : order) {
     VLOG(3) << "Visiting ordered: " << instruction->ToString();
-    TF_RET_CHECK(instruction_indices_.contains(instruction))
-        << "Instruction " << instruction->name() << " is not in computation "
-        << name();
     TF_RET_CHECK(!visited.contains(instruction))
         << "Instruction " << instruction->name()
         << " appears more than once in order";

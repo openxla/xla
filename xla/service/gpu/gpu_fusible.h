@@ -67,7 +67,7 @@ struct FusionInfoCache {
 int64_t SharedMemoryUsage(const HloInstruction& instr,
                           FusionInfoCache* cache = nullptr);
 
-inline constexpr int64_t MaxOperandsAndOutputsPerFusion() { return 64; }
+inline constexpr int64_t MaxOperandsAndOutputsPerFusion() { return 96; }
 
 // Whether the op transposes the physical data layout. Fusing such ops may lead
 // to uncoalesced data access and may thus not be beneficial.
@@ -187,19 +187,19 @@ absl::InlinedVector<const HloInstruction*, 2> GetOutputsOfFusible(
 size_t GetOutputSizeOfFusible(const HloInstruction& instr);
 
 // Returns instructions which are roots of the fusion, following the operands of
-// GTE instructions in the root tuple. Groups multiple subsequent instructions
-// with the same root. CHECKs that the fusion never outputs the same instruction
-// twice, as well as that there are no explicitly created tuples or nested gtes
-// in fusion output.
+// GTE instructions in the root tuple that extract from a tuple.
 //
-// For input: (tuple (gte R1) (gte R1) O2)
-// Expected output: [R1, O2]
+// For input: (tuple (gte tuple(R1)) (gte tuple(R1)) O2)
+// Expected output: [R1, R1, O2]
 //
 // For input: (tuple R1 R2 O2)
 // Expected output: [R1, R2, O2]
 //
-// For input: (tuple (gte R1) (gte R1) R2 O3)
-// Expected output: [R1, R2, O3]
+// For input: (tuple (gte tuple(R1)) R2 (gte tuple(R1)) O3)
+// Expected output: [R1, R2, R1, O3]
+//
+// For input: (tuple (gte R1) R2 (gte R1) O3)
+// Expected output: [R1, R2, R1, O3]
 //
 // For input: R1
 // Expected output: [R1]

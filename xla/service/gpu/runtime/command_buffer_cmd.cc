@@ -49,11 +49,11 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/annotation.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
+#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
@@ -66,9 +66,9 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -158,10 +158,16 @@ CommandBufferCmd::State* CommandBufferCmd::StateManager::GetOrCreate(
 }
 
 se::CommandBuffer::ExecutionScopeId CommandBufferCmd::GetExecutionScope(
-    const RecordParams& record_params) const {
-  int64_t base = record_params.execution_scope_id.value();
-  int64_t offset = execution_stream_id_.value();
+    const RecordParams& record_params,
+    ExecutionStreamId execution_stream_id) const {
+  uint64_t base = record_params.execution_scope_id.value();
+  uint64_t offset = execution_stream_id.value();
   return se::CommandBuffer::ExecutionScopeId(base + offset);
+}
+
+se::CommandBuffer::ExecutionScopeId CommandBufferCmd::GetExecutionScope(
+    const RecordParams& record_params) const {
+  return GetExecutionScope(record_params, execution_stream_id_);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1040,60 +1046,6 @@ CommandBufferCmd::BufferUsageVector WhileCmd::buffers() {
 }
 
 //===----------------------------------------------------------------------===//
-// AllocateCmd
-//===----------------------------------------------------------------------===//
-
-AllocateCmd::AllocateCmd(ExecutionStreamId execution_stream_id,
-                         BufferAllocation allocation)
-    : CommandBufferCmd(execution_stream_id), allocation_(allocation) {}
-
-absl::Status AllocateCmd::Record(const Thunk::ExecuteParams& execute_params,
-                                 const RecordParams& record_params,
-                                 se::CommandBuffer* command_buffer) {
-  // Memory allocation address is returned on graph creation, and there is no
-  // update operation
-  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
-  VLOG(2) << "AllocationCmd: index=" << allocation_.index()
-          << "; execution_scope_id=" << execution_scope_id.value();
-
-  TF_ASSIGN_OR_RETURN(
-      se::DeviceMemoryBase buffer,
-      command_buffer->Allocate(execution_scope_id, allocation_.size()));
-  return execute_params.buffer_allocations->AddExternalAllocation(
-      allocation_.index(), buffer);
-}
-
-CommandBufferCmd::BufferUsageVector AllocateCmd::buffers() { return {}; }
-
-//===----------------------------------------------------------------------===//
-// FreeCmd
-//===----------------------------------------------------------------------===//
-
-FreeCmd::FreeCmd(ExecutionStreamId execution_stream_id,
-                 BufferAllocation allocation)
-    : CommandBufferCmd(execution_stream_id), allocation_(allocation) {}
-
-absl::Status FreeCmd::Record(const Thunk::ExecuteParams& execute_params,
-                             const RecordParams& record_params,
-                             se::CommandBuffer* command_buffer) {
-  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
-  VLOG(2) << "FreeCmd: index=" << allocation_.index()
-          << "; execution_scope_id=" << execution_scope_id.value();
-
-  se::DeviceMemoryBase address =
-      execute_params.buffer_allocations->GetDeviceAddress(allocation_.index());
-
-  // Free is in the same command buffer
-  TF_RETURN_IF_ERROR(command_buffer->Free(execution_scope_id, address));
-
-  // Remove the buffer from external allocations.
-  return execute_params.buffer_allocations->EraseExternalAllocation(
-      allocation_.index());
-}
-
-CommandBufferCmd::BufferUsageVector FreeCmd::buffers() { return {}; }
-
-//===----------------------------------------------------------------------===//
 // GemmCmd
 //===----------------------------------------------------------------------===//
 
@@ -1372,6 +1324,31 @@ CommandBufferCmd::BufferUsageVector CustomCallCmd::buffers() {
 }
 
 //===----------------------------------------------------------------------===//
+// BarrierCmd
+//===----------------------------------------------------------------------===//
+
+BarrierCmd::BarrierCmd(ExecutionStreamId execution_stream_id,
+                       ExecutionStreamId from_stream_id)
+    : CommandBufferCmd(execution_stream_id), from_stream_id_(from_stream_id) {}
+
+absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
+                                const RecordParams& record_params,
+                                se::CommandBuffer* command_buffer) {
+  VLOG(5) << "BarrierCmd from stream " << from_stream_id_.value()
+          << " to stream " << execution_stream_id().value();
+  if (from_stream_id_ != execution_stream_id()) {
+    TF_RETURN_IF_ERROR(command_buffer->Barrier(
+        execute_params.stream->parent(),
+        CommandBufferCmd::GetExecutionScope(record_params, from_stream_id_),
+        CommandBufferCmd::GetExecutionScope(record_params,
+                                            execution_stream_id())));
+  }
+  return absl::OkStatus();
+}
+
+BarrierCmd::BufferUsageVector BarrierCmd::buffers() { return {}; }
+
+//===----------------------------------------------------------------------===//
 // CollectiveCmd
 //===----------------------------------------------------------------------===//
 
@@ -1405,7 +1382,7 @@ absl::Status CollectiveCmd::Prepare(
       collectives->global_device_id_map ? &local_devices : nullptr);
 
   return resource_requests.AddClique(
-      NcclCliqueKey(std::move(participants), /*stream_id=*/0,
+      NcclCliqueKey(std::move(participants), /*stream_id=*/NcclStreamId(0),
                     GetAsyncStreamKind()),
       num_local_participants);
 }
@@ -1448,12 +1425,12 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
-                      GetNcclComm(*execute_params.collective_params,
-                                  *execute_params.collective_cliques,
-                                  config().replica_groups, config().group_mode,
-                                  /*stream_id=*/0, GetAsyncStreamKind()));
-
+  TF_ASSIGN_OR_RETURN(
+      NcclCommHandleWrapper comm_handle,
+      GetNcclComm(*execute_params.collective_params,
+                  *execute_params.collective_cliques, config().replica_groups,
+                  config().group_mode, NcclStreamId(0), GetAsyncStreamKind()));
+  NcclApi::NcclCommHandle comm = comm_handle.comm_handle;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1516,12 +1493,12 @@ absl::Status ReduceScatterCmd::Record(
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
-                      GetNcclComm(*execute_params.collective_params,
-                                  *execute_params.collective_cliques,
-                                  config().replica_groups, config().group_mode,
-                                  /*stream_id=*/0, GetAsyncStreamKind()));
-
+  TF_ASSIGN_OR_RETURN(
+      NcclCommHandleWrapper comm_handle,
+      GetNcclComm(*execute_params.collective_params,
+                  *execute_params.collective_cliques, config().replica_groups,
+                  config().group_mode, NcclStreamId(0), GetAsyncStreamKind()));
+  NcclApi::NcclCommHandle comm = comm_handle.comm_handle;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1581,12 +1558,12 @@ absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
-                      GetNcclComm(*execute_params.collective_params,
-                                  *execute_params.collective_cliques,
-                                  config().replica_groups, config().group_mode,
-                                  /*stream_id=*/0, GetAsyncStreamKind()));
-
+  TF_ASSIGN_OR_RETURN(
+      NcclCommHandleWrapper comm_handle,
+      GetNcclComm(*execute_params.collective_params,
+                  *execute_params.collective_cliques, config().replica_groups,
+                  config().group_mode, NcclStreamId(0), GetAsyncStreamKind()));
+  NcclApi::NcclCommHandle comm = comm_handle.comm_handle;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
@@ -1646,12 +1623,12 @@ absl::Status CollectiveBroadcastCmd::Record(
 
   // Today when recording collective operations into command buffers we always
   // use a sync mode and a stream id `0`.
-  TF_ASSIGN_OR_RETURN(NcclApi::NcclCommHandle comm,
-                      GetNcclComm(*execute_params.collective_params,
-                                  *execute_params.collective_cliques,
-                                  config().replica_groups, config().group_mode,
-                                  /*stream_id=*/0, GetAsyncStreamKind()));
-
+  TF_ASSIGN_OR_RETURN(
+      NcclCommHandleWrapper comm_handle,
+      GetNcclComm(*execute_params.collective_params,
+                  *execute_params.collective_cliques, config().replica_groups,
+                  config().group_mode, NcclStreamId(0), GetAsyncStreamKind()));
+  NcclApi::NcclCommHandle comm = comm_handle.comm_handle;
   // Use custom allocator for persistent execution plans.
   NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
       comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
