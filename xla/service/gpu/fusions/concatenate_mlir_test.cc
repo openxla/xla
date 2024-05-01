@@ -118,7 +118,7 @@ TEST_F(MlirConcatenateFusionTest, StandAloneConcatenate) {
 
     // CHECK: %[[IF_2:.*]] = scf.if
     // CHECK:   %[[VAL_2:.*]] = xla_gpu.pure_call @fused_computation_param1
-    // CHECK:   %[[OUTPUT_INDEX_2:.*]] = arith.index_castui %[[AFFINE_APPLY_2:.*]] {xla.range = [200 : index, 599 : index]} : i32 to index
+    // CHECK:   %[[OUTPUT_INDEX_2:.*]] = arith.index_castui %[[AFFINE_APPLY_1:.*]] {xla.range = [200 : index, 599 : index]} : i32 to index
     // CHECK:   %[[INSERTED_2:.*]] = tensor.insert %[[VAL_2:.*]] into {{.*}}[%[[OUTPUT_INDEX_2]]]
 
     // CHECK: %[[IF_3:.*]] = scf.if
