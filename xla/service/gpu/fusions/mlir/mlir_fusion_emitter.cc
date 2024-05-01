@@ -407,6 +407,7 @@ MlirFusionEmitterBase::CreateMLIRModule(
 
   // Run a minimal simplification pipeline.
   mlir::PassManager pm(&context);
+  pm.addPass(CreateSimplifyAffinePass());
   pm.addPass(CreateSimplifyArithPass());
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
