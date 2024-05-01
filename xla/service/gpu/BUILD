@@ -761,6 +761,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "//xla/tsl/util/proto:proto_utils",
+        "//xla/service/gpu:hlo_traversal",
     ]),
 )
 
