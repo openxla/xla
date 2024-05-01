@@ -455,8 +455,6 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   constexpr int kColReduced = ReductionDimensions::kColReducedDimension;
 
-  constexpr int kVectorized = ReductionDimensions::kVectorizedDimension;
-
   auto map = [&]() {
     if (is_row_reduction_) {
       IndexingMap linear_index(

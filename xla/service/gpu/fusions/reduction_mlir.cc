@@ -67,7 +67,6 @@ using HloValueMap =
 struct MlirReductionFusion::EmitterState {
   // Uses the given indexing map to reduce a subset of the inputs in a single
   // thread. The subset may be a single element.
-
   HloValueMap EmitPerThreadReducedElements(const HloValueMap& inits);
 
   mlir::func::FuncOp GetReducer(const HloInstruction* hero) const {

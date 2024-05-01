@@ -288,7 +288,6 @@ ReductionGroupEmitter::ReductionGroupEmitter(
            << reduction_emitter_.fusion_.ToString();
 
   auto* builder = reduction_emitter_.builder_;
-  const Tiling& tiling = reduction_info.GetTiling();
   for (const HloReduceInstruction* reduce_hlo : reduce_instr_index_group) {
     for (int op_result_idx = 0;
          op_result_idx < GetNumOutputs(reduce_hlo->shape()); op_result_idx++) {
