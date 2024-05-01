@@ -73,17 +73,15 @@ ENTRY kernel_entry {
 // CHECK:         %[[VAL_40:.*]] = udiv i32 %block.id.x, 1152
 // CHECK:         %[[VAL_41:.*]] = urem i32 %[[VAL_40]], 1
 // CHECK:         %[[VAL_42:.*]] = udiv i32 %block.id.x, 1152
-// CHECK:         %[[VAL_43:.*]] = icmp eq i32 %[[VAL_41]], 0
-// CHECK:         %tile_bound.1 = select i1 %[[VAL_43]], i32 1152, i32 4096
 // CHECK:         %tile_origin.0 = mul i32 %[[VAL_42]], 1
-// CHECK:         %tile_origin.1 = mul i32 %[[VAL_41]], 4096
+// CHECK:         %tile_origin.1 = mul i32 %[[VAL_41]], 1152
 // CHECK:         %tile_origin.2 = mul i32 %[[VAL_39]], 32
 // CHECK:         %tile_origin.3 = mul i32 %[[VAL_37]], 2
 // CHECK:         store i32 %thread.id.1, ptr %[[VAL_23]], align 4
 // CHECK:         br label %[[VAL_44:.*]]
 // CHECK:       loop1.loop_header:                                ; preds = %[[VAL_45:.*]], %[[VAL_28]]
 // CHECK:         %[[VAL_46:.*]] = load i32, ptr %[[VAL_23]], align 4
-// CHECK:         %[[VAL_47:.*]] = icmp uge i32 %[[VAL_46]], %tile_bound.1
+// CHECK:         %[[VAL_47:.*]] = icmp uge i32 %[[VAL_46]], 1152
 // CHECK:         br i1 %[[VAL_47]], label %[[VAL_48:.*]], label %[[VAL_49:.*]]
 // CHECK:       loop1.loop_body:                                  ; preds = %[[VAL_44]]
 // CHECK:         %[[VAL_50:.*]] = add nuw nsw i32 %[[VAL_46]], 32
@@ -108,7 +106,7 @@ ENTRY kernel_entry {
 // CHECK:         br label %[[VAL_44]], !llvm.loop !8
 // CHECK:       loop1.loop_exit:                                  ; preds = %[[VAL_44]]
 // CHECK:         %[[VAL_63:.*]] = icmp ult i32 %thread.id.1, 32
-// CHECK:         %[[VAL_64:.*]] = icmp ult i32 %thread.id.2, %tile_bound.1
+// CHECK:         %[[VAL_64:.*]] = icmp ult i32 %thread.id.2, 1152
 // CHECK:         %[[VAL_65:.*]] = and i1 %[[VAL_63]], %[[VAL_64]]
 // CHECK:         %[[VAL_66:.*]] = mul i32 %tile_origin.2, 2
 // CHECK:         %[[VAL_67:.*]] = getelementptr inbounds float, ptr %[[VAL_24]], i32 0

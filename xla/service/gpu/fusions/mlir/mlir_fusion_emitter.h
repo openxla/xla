@@ -102,8 +102,7 @@ class MlirFusionEmitterBase : public KernelFusionInterface {
       const IndexingMap& indexing_map,
       const std::function<llvm::SmallVector<mlir::Value>(
           mlir::ValueRange outputs, mlir::ValueRange dim_values,
-          mlir::ValueRange symbol_values)>& create_body,
-      int nested_level = 0) const;
+          mlir::ValueRange symbol_values)>& create_body) const;
 
   mlir::Value EmitBlockId(mlir::ImplicitLocOpBuilder& builder, int dim) const;
   mlir::Value EmitThreadId(mlir::ImplicitLocOpBuilder& builder, int dim) const;

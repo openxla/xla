@@ -55,6 +55,7 @@ class ReductionInfo {
   bool IsRowReduction() const { return is_row_reduction_; }
   bool IsRaceFree() const { return is_race_free_; }
   int GetRowsPerWarp() const;
+  int ElemsWritePerThread() const;
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
       int64_t root_index, mlir::MLIRContext* ctx) const;

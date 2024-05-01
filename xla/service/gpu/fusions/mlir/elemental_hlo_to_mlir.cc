@@ -1295,13 +1295,9 @@ SmallVector<Value> EmitLoopNest(
     mlir::function_ref<SmallVector<Value>(ValueRange /*iter_args*/,
                                           ValueRange /*dim_values*/,
                                           ValueRange /*symbol_values*/)>
-        create_body,
-    int nested_level) {
+        create_body) {
   SmallVector<Value, 4> lbs, ubs, steps;
   GetLoopBoundsFromIndexingMap(b, indexing_map, &lbs, &ubs, &steps);
-  lbs.pop_back_n(nested_level);
-  ubs.pop_back_n(nested_level);
-  steps.pop_back_n(nested_level);
 
   scf::LoopNest loop_nest = scf::buildLoopNest(
       b, b.getLoc(), lbs, ubs, steps, iter_args_inits,

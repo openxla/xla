@@ -306,25 +306,25 @@ ReductionGroupEmitter::ReductionGroupEmitter(
           result_shape.element_type(), builder->GetInsertBlock()->getModule());
 
       llvm::AllocaInst *reduction_input_address, *result_address;
-      if (reduction_info.IsRowReduction()) {
+      int elems_write_per_thread = reduction_info.ElemsWritePerThread();
+      if (elems_write_per_thread == 1) {
         reduction_input_address = llvm_ir::EmitAllocaAtFunctionEntry(
             element_type, "reduction_input_address", builder);
         result_address = llvm_ir::EmitAllocaAtFunctionEntry(
             element_type, "partial_reduction_result", builder);
         builder->CreateStore(init_ir_value, result_address);
       } else {
-        auto vectorize_size =
-            tiling
-                .GetThreadTileSize()[ReductionDimensions::kVectorizedDimension];
         reduction_input_address = llvm_ir::EmitAllocaAtFunctionEntryWithCount(
             element_type,
-            llvm::ConstantInt::get(builder->getInt32Ty(), vectorize_size),
+            llvm::ConstantInt::get(builder->getInt32Ty(),
+                                   elems_write_per_thread),
             "reduction_input_address", builder);
         result_address = llvm_ir::EmitAllocaAtFunctionEntryWithCount(
             element_type,
-            llvm::ConstantInt::get(builder->getInt32Ty(), vectorize_size),
+            llvm::ConstantInt::get(builder->getInt32Ty(),
+                                   elems_write_per_thread),
             "partial_reduction_result", builder);
-        for (int id = 0; id < vectorize_size; id++) {
+        for (int id = 0; id < elems_write_per_thread; id++) {
           auto slot = builder->CreateInBoundsGEP(element_type, result_address,
                                                  {builder->getInt32(id)});
           builder->CreateStore(init_ir_value, slot);
@@ -626,7 +626,7 @@ llvm_ir::IrArray::Index ReductionGroupEmitter::GetOutputIndexForReduction(
     return {{major_idx, minor_idx},
             {shape.dimensions(ReductionDimensions::kColMajorKeptDimension),
              shape.dimensions(ReductionDimensions::kColMinorKeptDimension) *
-                 shape.dimensions(ReductionDimensions::kVectorizedDimension)},
+                 reduction_info.ElemsWritePerThread()},
             index_ty};
   }();
 
@@ -827,7 +827,7 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
   };
   const auto& reduction_info = reduction_emitter_.reduction_codegen_info_;
   const Tiling& tiling = reduction_info.GetTiling();
-  const auto& tile_size = tiling.GetThreadTileSize();
+  int elems_write_per_thread = reduction_info.ElemsWritePerThread();
   int num_outputs = reducer->num_parameters() / 2;
 
   auto* kept_index = thread_ids[ReductionDimensions::kColMinorKeptDimension];
@@ -845,7 +845,7 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
 
   constexpr int kVectorizedDimension =
       ReductionDimensions::kVectorizedDimension;
-  if (tile_size[kVectorizedDimension] > 1) {
+  if (elems_write_per_thread > 1) {
     std::vector<llvm::Value*> tile_index = tile_origin.multidim();
     tile_index[ReductionDimensions::kColMinorKeptDimension] =
         builder->CreateMul(
@@ -855,13 +855,13 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
                                           reduction_emitter_.index_ty_);
   }
 
-  for (int vec_dim = 0; vec_dim < tile_size[kVectorizedDimension]; vec_dim++) {
+  for (int dim = 0; dim < elems_write_per_thread; dim++) {
     // Store the transpose in shared memory.
     for (int output_idx = 0; output_idx < num_outputs; output_idx++) {
       const auto& state = GetCalculationStateFor(reduction, output_idx);
       auto* partial_result_address = builder->CreateInBoundsGEP(
           state.partial_result_address->getAllocatedType(),
-          state.partial_result_address, {builder->getInt32(vec_dim)});
+          state.partial_result_address, {builder->getInt32(dim)});
       auto* current_output_value =
           builder->CreateLoad(state.partial_result_address->getAllocatedType(),
                               partial_result_address);
@@ -884,11 +884,13 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
                                          absl::MakeSpan(shmem_transposed_addrs),
                                          tiling.GetNumThreadsPerBlock(),
                                          /*num_results_per_warp=*/1);
-
-    thread_ids[ReductionDimensions::kColReducedDimension] = builder->CreateAdd(
-        builder->CreateMul(reduced_index,
-                           output_tile_bounds[kVectorizedDimension]),
-        llvm::ConstantInt::get(reduction_emitter_.index_ty_, vec_dim));
+    if (elems_write_per_thread > 1) {
+      thread_ids[ReductionDimensions::kColReducedDimension] =
+          builder->CreateAdd(
+              builder->CreateMul(reduced_index,
+                                 output_tile_bounds[kVectorizedDimension]),
+              llvm::ConstantInt::get(reduction_emitter_.index_ty_, dim));
+    }
 
     ksl.If("reduction_write_output",
            builder->CreateAnd(has_output, is_zero(thread_id_info.lane_id)),
@@ -897,7 +899,7 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
                                   shmem_transposed_addrs);
            });
 
-    if (vec_dim + 1 < tile_size[kVectorizedDimension]) {
+    if (dim + 1 < elems_write_per_thread) {
       reduction_emitter_.EmitSyncThreads();
     }
   }
@@ -921,7 +923,7 @@ void ReductionGroupEmitter::GenerateElementForReducer(
 
     llvm::Value* input_address = state.input_address;
     llvm::Value* partial_result_address = state.partial_result_address;
-    if (!reduction_info.IsRowReduction()) {
+    if (reduction_info.ElemsWritePerThread() > 1) {
       constexpr int kVectorizedDimension =
           ReductionDimensions::kVectorizedDimension;
       input_address = builder->CreateInBoundsGEP(

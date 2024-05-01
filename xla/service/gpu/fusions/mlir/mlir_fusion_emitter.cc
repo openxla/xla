@@ -38,21 +38,22 @@ limitations under the License.
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from @llvm-project
-#include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"  // from @llvm-project
-#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
-#include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/MemRef/IR/MemRef.h"  // from @llvm-project
-#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
-#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from @llvm-project
-#include "mlir/Dialect/DLTI/DLTI.h"  // from @llvm-project
-#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // from @llvm-project
-#include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from
+@llvm-project #include
+"mlir/Conversion/ComplexToStandard/ComplexToStandard.h"  // from
+@llvm-project #include
+"mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  //
+from @llvm-project #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from
+@llvm-project #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from
+@llvm-project #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from
+@llvm-project #include "mlir/Dialect/DLTI/DLTI.h"  // from @llvm-project
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"  // from
+@llvm-project #include "mlir/Dialect/Func/IR/FuncOps.h"  // from
+@llvm-project #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from
+@llvm-project #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from
+@llvm-project #include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // from
+@llvm-project #include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
 #include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
@@ -68,10 +69,12 @@ limitations under the License.
 #include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
-#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
-#include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
-#include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h" //
+from @llvm-project #include
+"mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from
+@llvm-project #include
+"mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from
+@llvm-project #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -329,8 +332,7 @@ MlirFusionEmitterBase::CreateMLIRModule(
                       mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                       mlir::math::MathDialect, mlir::scf::SCFDialect,
                       mlir::mhlo::MhloDialect, mlir::gpu::GPUDialect,
-                      mlir::NVVM::NVVMDialect, xla::gpu::XlaGpuDialect,
-                      mlir::memref::MemRefDialect>();
+                      mlir::NVVM::NVVMDialect, xla::gpu::XlaGpuDialect>();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
   mlir::registerBuiltinDialectTranslation(registry);
@@ -431,10 +433,9 @@ SmallVector<Value> MlirFusionEmitterBase::EmitThreadLoopNest(
     const IndexingMap& indexing_map,
     const std::function<
         SmallVector<Value>(ValueRange outputs_tensors, ValueRange dim_values,
-                           ValueRange symbol_values)>& create_body,
-    int nested_level) const {
+                           ValueRange symbol_values)>& create_body) const {
   return mlir_converter::EmitLoopNest(b, EmitThreadAndBlockIds(b), outputs,
-                                      indexing_map, create_body, nested_level);
+                                      indexing_map, create_body);
 }
 
 absl::Status MlirFusionEmitterBase::EmitMlir(

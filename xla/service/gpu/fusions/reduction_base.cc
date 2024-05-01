@@ -142,6 +142,9 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
   auto core_count = analysis.device_info().core_count();
   constexpr int minimum_tile_size = 8;
 
+  auto actual_tile_size =
+      CeilOfRatio(reduction_dimensions[kColReduced], num_threads_y);
+  reduction_tiling[kColReduced] = actual_tile_size;
   // Early return if all of the sm cores are active.
   if (ComputeColReductionActiveCore(
           reduction_dimensions, reduction_tiling[kColReduced], num_threads_y,
@@ -164,8 +167,6 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
     }
   }
 
-  auto actual_tile_size =
-      CeilOfRatio(reduction_dimensions[kColReduced], num_threads_y);
   auto current_tile_size = actual_tile_size;
   while (current_tile_size >= minimum_tile_size * 2) {
     if (ComputeColReductionActiveCore(reduction_dimensions, current_tile_size,
@@ -296,6 +297,15 @@ int ReductionInfo::GetRowsPerWarp() const {
       tiling_.GetShape()[ReductionDimensions::kRowMinorReducedDimension]);
 }
 
+int ReductionInfo::ElemsWritePerThread() const {
+  const auto& shape = tiling_.GetShape();
+  if (!IsRowReduction() &&
+      ReductionDimensions::kVectorizedDimension < shape.size()) {
+    return shape[ReductionDimensions::kVectorizedDimension];
+  }
+  return 1;
+}
+
 LaunchDimensions ReductionInfo::launch_dimensions() const {
   size_t blocks_y = groups_.grouped_roots.size();
   return {se::BlockDim(/*x=*/tiling_.GetNumBlocks(),
@@ -389,7 +399,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
     // uses the thread ID as the coordinate.
     tile_per_thread[2] = 1;
   }
-  if ((!reduction_dimensions.is_row_reduction) || vector_size != 1) {
+  if (vector_size != 1) {
     num_threads.push_back(1);  // The vector dimension is a loop.
     tiled_shape.push_back(vector_size);
     tile_per_thread.push_back(vector_size);
@@ -464,15 +474,20 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
                                       physical_shape, ctx));
     }
 
+    llvm::SmallVector<mlir::AffineExpr> exprs(
+        {block_offsets.getResult(kColMajorKept),
+         block_offsets.getResult(kColMinorKept) + thread_ids[kColReduced]});
+    std::vector<RangeVar> symbol_ranges;
+    int symbols_count = 0;
+    int elems_write_per_thread = ElemsWritePerThread();
+    if (elems_write_per_thread > 1) {
+      exprs.push_back(getAffineSymbolExpr(0, ctx));
+      symbol_ranges.push_back({0, elems_write_per_thread});
+      symbols_count = 1;
+    }
     IndexingMap projected_index(
-        mlir::AffineMap::get(
-            6, 1,
-            {block_offsets.getResult(kColMajorKept),
-             block_offsets.getResult(kColMinorKept) + thread_ids[kColReduced],
-             getAffineSymbolExpr(0, ctx)},
-            ctx),
-        dimension_ranges,
-        /*range_vars=*/{{0, tiling_.GetThreadTileSize()[kVectorized] - 1}},
+        mlir::AffineMap::get(6, symbols_count, exprs, ctx), dimension_ranges,
+        /*range_vars=*/symbol_ranges,
         /*rt_vars=*/{});
 
     projected_index.AddConstraint(

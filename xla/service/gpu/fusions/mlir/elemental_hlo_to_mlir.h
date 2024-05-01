@@ -106,8 +106,7 @@ llvm::SmallVector<mlir::Value> EmitLoopNest(
     mlir::function_ref<llvm::SmallVector<mlir::Value>(
         mlir::ValueRange iter_args, mlir::ValueRange dim_values,
         mlir::ValueRange symbol_values)>
-        create_body,
-    int nested_level = 0);
+        create_body);
 
 // Same as EmitLoopNest, but the body building function can return an error
 // which gets returned from EmitLoopNestWithStatus.

@@ -50,8 +50,7 @@ ENTRY e {
 // CHECK:         ret void
 // CHECK:       reduce-group-0-true:                              ; preds = %[[VAL_20]]
 // CHECK:         %[[VAL_21:.*]] = load double, ptr @0, align 8
-// CHECK:         %[[VAL_22:.*]] = getelementptr inbounds double, ptr %[[VAL_13]], i32 0
-// CHECK:         store double %[[VAL_21]], ptr{{.*}}%[[VAL_22]], align 8
+// CHECK:         store double %[[VAL_21]], ptr{{.*}}%[[VAL_13]], align 8
 // CHECK-PTX:     %thread.id.x = call i32 @llvm.nvvm.read.ptx.sreg.tid.x(), !range !3
 // CHECK-GCN:     %thread.id.x = call i32 @llvm.amdgcn.workitem.id.x
 // CHECK-PTX:     %block.id.x = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x(), !range !4
@@ -60,24 +59,19 @@ ENTRY e {
 // CHECK:         %thread.id.1 = urem i32 %[[VAL_23]], 32
 // CHECK:         %thread.id.2 = urem i32 %thread.id.x, 32
 // CHECK:         %lane_id = urem i32 %thread.id.x, 32
-// CHECK:         %[[VAL_24:.*]] = udiv i32 %block.id.x, 1
-// CHECK:         %[[VAL_25:.*]] = urem i32 %[[VAL_24]], 1
 // CHECK:         %[[VAL_26:.*]] = udiv i32 %block.id.x, 1
 // CHECK:         %[[VAL_27:.*]] = urem i32 %[[VAL_26]], 32
 // CHECK:         %[[VAL_28:.*]] = udiv i32 %block.id.x, 32
 // CHECK:         %[[VAL_29:.*]] = urem i32 %[[VAL_28]], 1
 // CHECK:         %[[VAL_30:.*]] = udiv i32 %block.id.x, 32
-// CHECK:         %[[VAL_31:.*]] = icmp eq i32 %[[VAL_29]], 0
-// CHECK:         %tile_bound.1 = select i1 %[[VAL_31]], i32 1024, i32 4096
 // CHECK:         %tile_origin.0 = mul i32 %[[VAL_30]], 1
-// CHECK:         %tile_origin.1 = mul i32 %[[VAL_29]], 4096
+// CHECK:         %tile_origin.1 = mul i32 %[[VAL_29]], 1024
 // CHECK:         %tile_origin.2 = mul i32 %[[VAL_27]], 32
-// CHECK:         %tile_origin.3 = mul i32 %[[VAL_25]], 1
 // CHECK:         store i32 %thread.id.1, ptr{{.*}}%[[VAL_12]], align 4
 // CHECK:         br label %[[VAL_32:.*]]
 // CHECK:       loop1.loop_header:                                ; preds = %[[VAL_33:.*]], %[[VAL_17]]
 // CHECK:         %[[VAL_34:.*]] = load i32, ptr{{.*}}%[[VAL_12]], align 4
-// CHECK:         %[[VAL_35:.*]] = icmp uge i32 %[[VAL_34]], %tile_bound.1
+// CHECK:         %[[VAL_35:.*]] = icmp uge i32 %[[VAL_34]], 1024
 // CHECK:         br i1 %[[VAL_35]], label %[[VAL_36:.*]], label %[[VAL_37:.*]]
 // CHECK:       loop1.loop_body:                                  ; preds = %[[VAL_32]]
 // CHECK:         %[[VAL_38:.*]] = add nuw nsw i32 %[[VAL_34]], 32
@@ -102,7 +96,7 @@ ENTRY e {
 // CHECK:         br label %[[VAL_32]], !llvm.loop !{{[0-9]}}
 // CHECK:       loop1.loop_exit:                                  ; preds = %[[VAL_32]]
 // CHECK:         %[[VAL_50:.*]] = icmp ult i32 %thread.id.1, 32
-// CHECK:         %[[VAL_51:.*]] = icmp ult i32 %thread.id.2, %tile_bound.1
+// CHECK:         %[[VAL_51:.*]] = icmp ult i32 %thread.id.2, 1024
 // CHECK:         %[[VAL_52:.*]] = and i1 %[[VAL_50]], %[[VAL_51]]
 // CHECK:         %[[VAL_53:.*]] = getelementptr inbounds double, ptr %[[VAL_13]], i32 0
 // CHECK:         %[[VAL_54:.*]] = load double, ptr{{.*}}%[[VAL_53]], align 8
@@ -213,8 +207,6 @@ ENTRY e {
 // CHECK-GCN:     call void @[[ADD]](ptr %[[VAL_58]], ptr %[[VAL_1_1]], ptr %[[VAL_0_1]])
 // CHECK:         %[[VAL_118:.*]] = load double, ptr{{.*}}%[[VAL_0]], align 8
 // CHECK:         store double %[[VAL_118]], ptr{{.*}}%[[VAL_58]], align 8
-// CHECK:         %[[VAL_119:.*]] = mul i32 %thread.id.1, 1
-// CHECK:         %[[VAL_120:.*]] = add i32 %[[VAL_119]], 0
 // CHECK:         %[[VAL_121:.*]] = icmp eq i32 %lane_id, 0
 // CHECK:         %[[VAL_122:.*]] = and i1 %[[VAL_52]], %[[VAL_121]]
 // CHECK:         br i1 %[[VAL_122]], label %[[VAL_123:.*]], label %[[VAL_19]]
@@ -224,9 +216,6 @@ ENTRY e {
 // CHECK:         %[[VAL_124:.*]] = add i32 %tile_origin.0, 0
 // CHECK:         %[[VAL_125:.*]] = add i32 %tile_origin.1, %[[VAL_34]]
 // CHECK:         %[[VAL_126:.*]] = add i32 %tile_origin.2, %[[VAL_47]]
-// CHECK:         %[[VAL_127:.*]] = add i32 %tile_origin.3, 0
-// CHECK:         %[[VAL_128:.*]] = getelementptr inbounds double, ptr %[[VAL_14]], i32 %[[VAL_127]]
-// CHECK:         %[[VAL_129:.*]] = getelementptr inbounds double, ptr %[[VAL_13]], i32 %[[VAL_127]]
 // CHECK:         %[[VAL_130:.*]] = getelementptr inbounds [1024 x [1024 x i8]], ptr{{.*}}%[[VAL_131:.*]], i32 0, i32 %[[VAL_125]], i32 %[[VAL_126]]
 // CHECK:         %[[VAL_131:.*]] = load i8, ptr{{.*}}%[[VAL_130]], align 1, !invariant.load !{{[0-9]}}
 // CHECK:         %[[VAL_132:.*]] = getelementptr inbounds [1024 x [1024 x double]], ptr{{.*}}%[[VAL_133:.*]], i32 0, i32 %[[VAL_125]], i32 %[[VAL_126]]
@@ -235,17 +224,17 @@ ENTRY e {
 // CHECK:         %[[VAL_137:.*]] = load double, ptr{{.*}}%[[VAL_135]], align 8, !invariant.load !{{[0-9]}}
 // CHECK:         %[[VAL_138:.*]] = trunc i8 %[[VAL_131]] to i1
 // CHECK:         %[[VAL_139:.*]] = select i1 %[[VAL_138]], double %[[VAL_133]], double %[[VAL_137]]
-// CHECK:         store double %[[VAL_139]], ptr{{.*}}%[[VAL_128]], align 8
-// CHECK-PTX:     call void @[[ADD]](ptr %[[VAL_129]], ptr %[[VAL_128]], ptr %[[VAL_10]])
-// CHECK-GCN:     %[[VAL_129_1:.*]] = addrspacecast ptr{{.*}}%[[VAL_129]] to ptr
-// CHECK-GCN:     %[[VAL_128_1:.*]] = addrspacecast ptr{{.*}}%[[VAL_128]] to ptr
+// CHECK:         store double %[[VAL_139]], ptr{{.*}}%[[VAL_14]], align 8
+// CHECK-PTX:     call void @[[ADD]](ptr %[[VAL_13]], ptr %[[VAL_14]], ptr %[[VAL_10]])
+// CHECK-GCN:     %[[VAL_14_1:.*]] = addrspacecast ptr{{.*}}%[[VAL_14]] to ptr
+// CHECK-GCN:     %[[VAL_13_1:.*]] = addrspacecast ptr{{.*}}%[[VAL_13]] to ptr
 // CHECK-GCN:     %[[VAL_10_1:.*]] = addrspacecast ptr{{.*}}%[[VAL_10]] to ptr
-// CHECK-GCN:     call void @[[ADD]](ptr %[[VAL_129_1]], ptr %[[VAL_128_1]], ptr %[[VAL_10_1]])
+// CHECK-GCN:     call void @[[ADD]](ptr %[[VAL_13_1]], ptr %[[VAL_14_1]], ptr %[[VAL_10_1]])
 // CHECK:         %[[VAL_140:.*]] = load double, ptr{{.*}}%[[VAL_10]], align 8
-// CHECK:         store double %[[VAL_140]], ptr{{.*}}%[[VAL_129]], align 8
+// CHECK:         store double %[[VAL_140]], ptr{{.*}}%[[VAL_13]], align 8
 // CHECK:         br label %[[VAL_41]]
 // CHECK:       reduction_write_output-true:                      ; preds = %[[VAL_36]]
-// CHECK:         %[[VAL_141:.*]] = add i32 %tile_origin.2, %[[VAL_120]]
+// CHECK:         %[[VAL_141:.*]] = add i32 %tile_origin.2, %thread.id.1
 // CHECK:         %[[VAL_142:.*]] = getelementptr inbounds [1024 x double], ptr{{.*}}%[[VAL_143:.*]], i32 0, i32 %[[VAL_141]]
 // CHECK:         %[[VAL_144:.*]] = load double, ptr{{.*}}%[[VAL_58]], align 8
 // CHECK:         store double %[[VAL_144]], ptr{{.*}}%[[VAL_142]], align 8

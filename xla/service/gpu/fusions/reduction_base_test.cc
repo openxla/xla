@@ -217,7 +217,7 @@ TEST_F(ReductionTest, ThreadIndexingColumnReduction) {
   EXPECT_THAT(
       fusion.ComputeThreadIdToInputIndexing(0, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
-        (d0, d1, d2, d3, d4, d5)[s0, s1, s2, s3] -> (
+        (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3,
           d0 floordiv 32 + s1 * 32,
           d0 mod 32
@@ -225,21 +225,20 @@ TEST_F(ReductionTest, ThreadIndexingColumnReduction) {
         domain:
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 99] d4 in [0, 0] d5 in [0, 0]
-        s0 in [0, 0] s1 in [0, 127] s2 in [0, 0] s3 in [0, 0]
+        s0 in [0, 0] s1 in [0, 1] s2 in [0, 0]
         d0 floordiv 32 + s1 * 32 in [0, 63]
         d0 mod 32 in [0, 31]
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
-        (d0, d1, d2, d3, d4, d5)[s0] -> (
+        (d0, d1, d2, d3, d4, d5) -> (
           d3,
-          d0 floordiv 32 + s0
+          d0 floordiv 32
         )
         domain:
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 99] d4 in [0, 0] d5 in [0, 0]
-        s0 in [0, 0]
         d0 mod 32 in [0, 0]
       )"));
 }
@@ -282,7 +281,7 @@ TEST_F(ReductionTest, ThreadIndexingVectorizeColumnReduction) {
         domain:
         d0 in [0, 1023] d1 in [0, 0] d2 in [0, 0]
         d3 in [0, 255] d4 in [0, 0] d5 in [0, 0]
-        s0 in [0, 0] s1 in [0, 127] s2 in [0, 0] s3 in [0, 1]
+        s0 in [0, 0] s1 in [0, 1] s2 in [0, 0] s3 in [0, 1]
         d0 floordiv 32 + s1 * 32 in [0, 63]
         d0 mod 32 in [0, 31]
       )"));
