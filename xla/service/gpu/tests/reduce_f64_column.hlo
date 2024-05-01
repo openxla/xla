@@ -76,7 +76,6 @@ ENTRY e {
 // CHECK:       loop1.loop_body:                                  ; preds = %[[VAL_32]]
 // CHECK:         %[[VAL_38:.*]] = add nuw nsw i32 %[[VAL_34]], 32
 // CHECK:         store i32 %[[VAL_38]], ptr{{.*}}%[[VAL_12]], align 4
-// CHECK:         %[[VAL_39:.*]] = icmp eq i32 %[[VAL_34]], %thread.id.1
 // CHECK:         store i32 0, ptr{{.*}}%[[VAL_11]], align 4
 // CHECK:         br label %[[VAL_40:.*]]
 // CHECK:       loop2.loop_header:                                ; preds = %[[VAL_41:.*]], %[[VAL_37]]
@@ -86,7 +85,6 @@ ENTRY e {
 // CHECK:       loop2.loop_body:                                  ; preds = %[[VAL_40]]
 // CHECK:         %[[VAL_45:.*]] = add nuw nsw i32 %[[VAL_42]], 32
 // CHECK:         store i32 %[[VAL_45]], ptr{{.*}}%[[VAL_11]], align 4
-// CHECK:         %[[VAL_46:.*]] = icmp eq i32 %[[VAL_42]], 0
 // CHECK:         %[[VAL_47:.*]] = add i32 %[[VAL_42]], %thread.id.2
 // CHECK:         %[[VAL_48:.*]] = icmp ult i32 %[[VAL_47]], 32
 // CHECK:         br i1 %[[VAL_48]], label %[[VAL_49:.*]], label %[[VAL_41]]
