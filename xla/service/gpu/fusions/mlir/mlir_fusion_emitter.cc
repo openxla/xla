@@ -38,22 +38,20 @@ limitations under the License.
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from
-@llvm-project #include
-"mlir/Conversion/ComplexToStandard/ComplexToStandard.h"  // from
-@llvm-project #include
-"mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  //
-from @llvm-project #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from
-@llvm-project #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from
-@llvm-project #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from
-@llvm-project #include "mlir/Dialect/DLTI/DLTI.h"  // from @llvm-project
-#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"  // from
-@llvm-project #include "mlir/Dialect/Func/IR/FuncOps.h"  // from
-@llvm-project #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from
-@llvm-project #include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from
-@llvm-project #include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // from
-@llvm-project #include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"  // from @llvm-project
+#include "mlir/Conversion/ComplexToStandard/ComplexToStandard.h"  // from @llvm-project
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
+#include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"  // from @llvm-project
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"  // from @llvm-project
+#include "mlir/Dialect/DLTI/DLTI.h"  // from @llvm-project
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"  // from @llvm-project
+#include "mlir/Dialect/Math/IR/Math.h"  // from @llvm-project
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"  // from @llvm-project
 #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
 #include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
@@ -69,12 +67,10 @@ from @llvm-project #include "mlir/Dialect/Affine/IR/AffineOps.h"  // from
 #include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h" //
-from @llvm-project #include
-"mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from
-@llvm-project #include
-"mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from
-@llvm-project #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h" //from @llvm-project
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
+#include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
+#include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
