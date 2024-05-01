@@ -250,14 +250,14 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
     HloValueMap root_output_indices;
     for (auto [index, root] : llvm::enumerate(epilogue.roots)) {
       root_output_indices[root] = mlir_converter::ApplyAffineMap(
-          epilogue.root_indexing[index], epilogue_input_indices, symbols,
+          epilogue.root_indexing[index], indices, symbols,
           builder);
     }
 
     auto values = EmitEpilogue(/*epilogue_index=*/0, state.computations,
                                state.entry_function, results,
                                epilogue_input_indices, builder);
-    const auto& epilogue = state.computations.epilogues().front();
+
     for (auto root : epilogue.roots) {
       for (auto [result_index, result] : llvm::enumerate(values.at(root))) {
         auto& output = outputs[state.OutputIndex(root, result_index)];
@@ -372,7 +372,6 @@ HloValueMap MlirReductionFusion::EmitterState::EmitPerThreadReducedElements(
   const auto& reduction_info = owner.reduction_info();
   const auto& tiling = owner.reduction_info().GetTiling();
   auto tile_indexing = GetIndexingMapForTiling(tiling, builder.getContext());
-  auto zero = builder.create<mlir::arith::ConstantIndexOp>(0);
 
   int elems_write_per_thread = reduction_info.ElemsWritePerThread();
 
