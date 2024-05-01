@@ -287,7 +287,7 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
 
   if (!use_shared) {
     builder.create<mlir::func::ReturnOp>(
-        evaluate_epilogue(accumulated, std::move(outputs), /*symbols=*/{}));
+        evaluate_epilogue(accumulated, std::move(outputs)));
     return absl::OkStatus();
   }
 
