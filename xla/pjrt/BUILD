@@ -845,7 +845,15 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         ":pjrt_client",
+        ":pjrt_executable",
         ":pjrt_future",
+        "//xla:shape_util",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
