@@ -385,7 +385,6 @@ MlirFusionEmitterBase::CreateMLIRModule(
 
   auto result_types = mlir_converter::ShapeToMlirTypes(fusion.shape(), builder);
   param_types.append(result_types.begin(), result_types.end());
-  SmallVector<mlir::Type> entry_func_result_types;
   TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       fusion.shape(), [&](const auto& shape, const ShapeIndex& index) {
         if (shape.IsArray()) {
