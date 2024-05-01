@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -49,12 +50,28 @@ class MemoryTermReducer {
       int64_t num_lives, int64_t num_primitives,
       const std::function<
           tsl::protobuf::RepeatedField<int64_t>(int64_t)>&  // NOLINT
-          live);
+          live,
+      int64_t max_iterations = std::numeric_limits<int64_t>::max());
+
+  // An alternate interface that consumes primitive intervals instead of a
+  // liveness matrix.
+  std::pair<int64_t, int64_t> Reduce(
+      int64_t num_lives, int64_t num_primitives,
+      const std::function<std::pair<int64_t, int64_t>(int64_t)>& intervals,
+      int64_t max_iterations = std::numeric_limits<int64_t>::max());
+
   const std::vector<std::vector<int64_t>>& GetReducedLive() const;
+  const std::vector<std::pair<int64_t, int64_t>>& GetReducedIntervals() const;
   const std::vector<absl::btree_set<int64_t>>& GetReducedGroups() const;
 
  private:
+  // The internal implementation, agnostic to whether the client uses a liveness
+  // matrix or primitive intervals.
+  void Reduce(int64_t num_lives, int64_t num_primitives,
+              int64_t max_iterations);
+
   std::vector<std::vector<int64_t>> reduced_live_;
+  std::vector<std::pair<int64_t, int64_t>> reduced_intervals_;
   std::vector<absl::btree_set<int64_t>> reduced_groups_;
 };
 

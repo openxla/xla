@@ -86,7 +86,6 @@ ENTRY kernel_entry {
 // CHECK:       loop1.loop_body:                                  ; preds = %[[VAL_44]]
 // CHECK:         %[[VAL_50:.*]] = add nuw nsw i32 %[[VAL_46]], 32
 // CHECK:         store i32 %[[VAL_50]], ptr %[[VAL_23]], align 4
-// CHECK:         %[[VAL_51:.*]] = icmp eq i32 %[[VAL_46]], %thread.id.1
 // CHECK:         store i32 0, ptr %[[VAL_22]], align 4
 // CHECK:         br label %[[VAL_52:.*]]
 // CHECK:       loop2.loop_header:                                ; preds = %[[VAL_53:.*]], %[[VAL_49]]
@@ -96,7 +95,6 @@ ENTRY kernel_entry {
 // CHECK:       loop2.loop_body:                                  ; preds = %[[VAL_52]]
 // CHECK:         %[[VAL_57:.*]] = add nuw nsw i32 %[[VAL_54]], 32
 // CHECK:         store i32 %[[VAL_57]], ptr %[[VAL_22]], align 4
-// CHECK:         %[[VAL_58:.*]] = icmp eq i32 %[[VAL_54]], 0
 // CHECK:         %[[VAL_59:.*]] = add i32 %[[VAL_54]], %thread.id.2
 // CHECK:         %[[VAL_60:.*]] = icmp ult i32 %[[VAL_59]], 32
 // CHECK:         br i1 %[[VAL_60]], label %[[VAL_61:.*]], label %[[VAL_53]]
@@ -209,7 +207,6 @@ ENTRY kernel_entry {
 // CHECK:       loop3.loop_body:                                ; preds = %[[VAL_120]]
 // CHECK:         %[[VAL_125:.*]] = add nuw nsw i32 %[[VAL_122]], 1
 // CHECK:         store i32 %[[VAL_125]], ptr %[[VAL_21]], align 4
-// CHECK:         %[[VAL_126:.*]] = icmp eq i32 %[[VAL_122]], 0
 // CHECK:         %[[VAL_127:.*]] = add i32 %tile_origin.0, 0
 // CHECK:         %[[VAL_128:.*]] = add i32 %tile_origin.1, %[[VAL_46]]
 // CHECK:         %[[VAL_129:.*]] = add i32 %tile_origin.2, %[[VAL_59]]

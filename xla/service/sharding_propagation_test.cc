@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -1504,6 +1505,51 @@ ENTRY %reshape {
                 ShardingMetadata({CreateMetadata("a")}));
   } else {
     EXPECT_THAT(instruction->sharding(), ShardingMetadata({}));
+  }
+}
+
+TEST_P(ParameterizedMetadataTest, ReshapeForwardPassTranspose) {
+  const char* const hlo_string = R"(
+HloModule module
+ENTRY %reshape {
+  %param0 = f32[6,4,5] parameter(0), sharding={devices=[6,2,1]<=[12] metadata={op_name="a"}}
+  %reshape.1 = f32[2,3,20] reshape(%param0)
+  %reshape.2 = f32[2,4,3,5] reshape(%param0)
+  %reshape.3 = f32[20,6] reshape(%param0)
+  %reshape.4 = f32[3,5,8] reshape(%param0)
+  %reshape.5 = f32[10,4,3] reshape(%param0)
+  %reshape.6 = f32[5,8,3] reshape(%param0)
+  ROOT %tuple = tuple(%reshape.1, %reshape.2, %reshape.3, %reshape.4, %reshape.5, %reshape.6)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  if (GetParam().clear_metadata) {
+    ClearMetadata(module.get());
+  }
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(/*is_spmd=*/false, GetParam().propagate_metadata)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+
+  std::vector<std::pair<std::string, std::string>> instruction_and_sharding = {
+      {"reshape.1", "{devices=[2,3,2]<=[12]}"},
+      {"reshape.2", "{devices=[2,1,1,1,6]<=[12] last_tile_dim_replicate}"},
+      {"reshape.3", "{devices=[2,1,6]<=[12] last_tile_dim_replicate}"},
+      {"reshape.4", "{devices=[3,1,1,4]<=[12] last_tile_dim_replicate}"},
+      {"reshape.5", "{devices=[2,1,1,6]<=[12] last_tile_dim_replicate}"},
+      {"reshape.6", "{replicated}"}};
+  for (const auto& [name, sharding] : instruction_and_sharding) {
+    auto* instruction = FindInstruction(module.get(), name);
+    ASSERT_NE(instruction, nullptr);
+    EXPECT_THAT(instruction, op::Sharding(sharding));
+    if (GetParam().propagate_metadata && !GetParam().clear_metadata) {
+      EXPECT_THAT(instruction->sharding(),
+                  ShardingMetadata({CreateMetadata("a")}));
+    } else {
+      EXPECT_THAT(instruction->sharding(), ShardingMetadata({}));
+    }
   }
 }
 
@@ -10730,7 +10776,7 @@ TEST_F(ShardingPropagationTest, PropagateShardAsBetweenInputOutput2) {
 HloModule jit_f, entry_computation_layout={(f32[8]{0:T(256)})->(f32[8]{0:T(256)}, f32[8]{0:T(256)})}, allow_spmd_sharding_propagation_to_output={true,true}, num_partitions=4
 
 ENTRY main.9 {
-  Arg_0.1 = f32[8]{0} parameter(0), sharding={replicated}
+  Arg_0.1 = f32[8]{0} parameter(0)
   custom-call.6 = f32[8]{0} custom-call(Arg_0.1), custom_call_target="Sharding", custom_call_has_side_effect=true, sharding={unknown shard_as 0}, metadata={op_name="jit(f)/jit(main)/shard_alike" source_file="third_party/py/jax/tests/shard_alike_test.py" source_line=206}
   custom-call.4 = f32[8]{0} custom-call(Arg_0.1), custom_call_target="Sharding", sharding={devices=[4]<=[4]}, metadata={op_name="jit(f)/jit(main)/sharding_constraint[sharding=GSPMDSharding({devices=[4]<=[4]}) resource_env=ResourceEnv(mesh=Mesh(), ()) unconstrained_dims=set()]" source_file="third_party/py/jax/tests/shard_alike_test.py" source_line=204}
   constant.0 = f32[] constant(2)

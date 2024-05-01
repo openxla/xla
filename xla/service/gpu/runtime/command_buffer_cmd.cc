@@ -49,11 +49,11 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/annotation.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
+#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
@@ -66,9 +66,9 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -1044,60 +1044,6 @@ CommandBufferCmd::BufferUsageVector WhileCmd::buffers() {
                  body_commands_.buffers().end());
   return {buffers.begin(), buffers.end()};
 }
-
-//===----------------------------------------------------------------------===//
-// AllocateCmd
-//===----------------------------------------------------------------------===//
-
-AllocateCmd::AllocateCmd(ExecutionStreamId execution_stream_id,
-                         BufferAllocation allocation)
-    : CommandBufferCmd(execution_stream_id), allocation_(allocation) {}
-
-absl::Status AllocateCmd::Record(const Thunk::ExecuteParams& execute_params,
-                                 const RecordParams& record_params,
-                                 se::CommandBuffer* command_buffer) {
-  // Memory allocation address is returned on graph creation, and there is no
-  // update operation
-  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
-  VLOG(2) << "AllocationCmd: index=" << allocation_.index()
-          << "; execution_scope_id=" << execution_scope_id.value();
-
-  TF_ASSIGN_OR_RETURN(
-      se::DeviceMemoryBase buffer,
-      command_buffer->Allocate(execution_scope_id, allocation_.size()));
-  return execute_params.buffer_allocations->AddExternalAllocation(
-      allocation_.index(), buffer);
-}
-
-CommandBufferCmd::BufferUsageVector AllocateCmd::buffers() { return {}; }
-
-//===----------------------------------------------------------------------===//
-// FreeCmd
-//===----------------------------------------------------------------------===//
-
-FreeCmd::FreeCmd(ExecutionStreamId execution_stream_id,
-                 BufferAllocation allocation)
-    : CommandBufferCmd(execution_stream_id), allocation_(allocation) {}
-
-absl::Status FreeCmd::Record(const Thunk::ExecuteParams& execute_params,
-                             const RecordParams& record_params,
-                             se::CommandBuffer* command_buffer) {
-  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
-  VLOG(2) << "FreeCmd: index=" << allocation_.index()
-          << "; execution_scope_id=" << execution_scope_id.value();
-
-  se::DeviceMemoryBase address =
-      execute_params.buffer_allocations->GetDeviceAddress(allocation_.index());
-
-  // Free is in the same command buffer
-  TF_RETURN_IF_ERROR(command_buffer->Free(execution_scope_id, address));
-
-  // Remove the buffer from external allocations.
-  return execute_params.buffer_allocations->EraseExternalAllocation(
-      allocation_.index());
-}
-
-CommandBufferCmd::BufferUsageVector FreeCmd::buffers() { return {}; }
 
 //===----------------------------------------------------------------------===//
 // GemmCmd

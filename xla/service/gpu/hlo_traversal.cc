@@ -37,13 +37,8 @@ namespace {
 
 template <typename F>
 void ResolveUsers(const HloInstruction* value, const HloInstruction* user,
-                  F&& fn) {
-  if (user->opcode() == HloOpcode::kFusion) {
-    auto* param = user->fused_parameter(user->operand_index(value));
-    for (const auto* param_user : param->users()) {
-      fn(param_user);
-    }
-  } else if (user->opcode() == HloOpcode::kTuple && user->IsRoot()) {
+                  const HloFusionAdaptor& fusion_adaptor, F&& fn) {
+  if (user->opcode() == HloOpcode::kTuple && user->IsRoot()) {
     if (auto* fusion = user->parent()->FusionInstruction()) {
       // Skip through the tuple -> get-tuple-element ops and directly go to the
       // "real" users.
@@ -53,31 +48,46 @@ void ResolveUsers(const HloInstruction* value, const HloInstruction* user,
           continue;
         }
         for (const auto* gte_user : gte->users()) {
-          ResolveUsers(gte, gte_user, fn);
+          ResolveUsers(gte, gte_user, fusion_adaptor, fn);
         }
       }
+    }
+  } else if (fusion_adaptor.ContainsInstruction(user) &&
+             user->opcode() == HloOpcode::kFusion) {
+    auto* param = user->fused_parameter(user->operand_index(value));
+    for (const auto* param_user : param->users()) {
+      fn(param_user);
     }
   } else {
     fn(user);
   }
 }
 
-const HloInstruction* ResolveOperand(const HloInstruction* operand) {
-  if (operand->opcode() == HloOpcode::kFusion) {
-    return operand->fused_expression_root();
-  }
+const HloInstruction* ResolveOperand(const HloInstruction* operand,
+                                     const HloFusionAdaptor& fusion_adaptor) {
   // Deal with multi-output fusion operands, which are reached via a
   // get-tuple-element op.
   if (operand->opcode() == HloOpcode::kGetTupleElement &&
       operand->operand(0)->opcode() == HloOpcode::kFusion &&
       operand->operand(0)->fused_expression_root()->opcode() ==
-          HloOpcode::kTuple) {
+          HloOpcode::kTuple &&
+      fusion_adaptor.ContainsInstruction(operand->operand(0))) {
     return operand->operand(0)->fused_expression_root()->operand(
         operand->tuple_index());
   }
+
+  if (!fusion_adaptor.ContainsInstruction(operand)) {
+    return operand;
+  }
+
+  if (operand->opcode() == HloOpcode::kFusion) {
+    return operand->fused_expression_root();
+  }
+
   if (operand->opcode() == HloOpcode::kParameter) {
     if (auto* fusion = operand->parent()->FusionInstruction()) {
-      return ResolveOperand(fusion->operand(operand->parameter_number()));
+      return ResolveOperand(fusion->operand(operand->parameter_number()),
+                            fusion_adaptor);
     }
   }
   return operand;
@@ -93,8 +103,8 @@ class SingleInstructionFusion : public internal::HloFusionInstructionAdaptor {
         << "Use HloFusionFusion";
   }
 
-  bool ContainsInstruction(HloInstructionAdaptor instruction) const override {
-    return &instruction.instruction() == instruction_;
+  bool ContainsInstruction(const HloInstruction* instruction) const override {
+    return instruction == instruction_;
   }
 
   absl::InlinedVector<HloInstructionAdaptor, 2> GetRoots() const override {
@@ -118,21 +128,12 @@ class HloComputationFusion : public internal::HloFusionInstructionAdaptor {
   explicit HloComputationFusion(const HloComputation* computation,
                                 const HloFusionAdaptor* parent)
       : computation_(computation), parent_(parent) {
-    // HloFusionAdaptor should only be created for fusion computations, that
-    // usually have only a few roots, but there is a case when we can it for
-    // non-fusion computations with thousands of roots. It happens inside
-    // `FindNonTrivialHero` and it gets very expensive. Calling
-    // `FindNonTrivialHero` also doesn't make sense on non-fusion computation,
-    // but `InstructionFusion` and `FusionMerger` depend on this behavoiur in
-    // `IsProducerConsumerFusible`.
-    //
     // `FindNonTrivialHero` only call `ContainsInstruction` and doesn't use
     // information about roots, so we can skip looking for roots as performance
     // optimization.
     // TODO(shyshkov): Clean this up once priority fusion is fully launched.
-    if (computation->IsFusionComputation()) {
-      roots_ = FindRoots(computation);
-    }
+    CHECK(computation->IsFusionComputation());
+    roots_ = FindRoots(computation);
   }
 
   absl::InlinedVector<HloInstructionAdaptor, 2> FindRoots(
@@ -158,8 +159,13 @@ class HloComputationFusion : public internal::HloFusionInstructionAdaptor {
     return roots;
   }
 
-  bool ContainsInstruction(HloInstructionAdaptor instruction) const override {
-    return instruction.instruction().parent() == computation_;
+  bool ContainsInstruction(const HloInstruction* instruction) const override {
+    return instruction->parent() == computation_ ||
+           // For convenience, we consider that the adaptor also contains the
+           // parent fusion instruction. This is useful in
+           // ResolveUsers/ResolveOperand to check if the given fusion
+           // instruction is part of the fusion adaptor.
+           instruction == computation_->FusionInstruction();
   }
 
   absl::InlinedVector<HloInstructionAdaptor, 2> GetRoots() const override {
@@ -232,6 +238,11 @@ std::unique_ptr<HloFusionAdaptor> HloFusionAdaptor::ForComputation(
 
 bool HloFusionAdaptor::ContainsInstruction(
     HloInstructionAdaptor instruction) const {
+  return ContainsInstruction(&instruction.instruction());
+}
+
+bool HloFusionAdaptor::ContainsInstruction(
+    const HloInstruction* instruction) const {
   for (const auto& fusion_instruction : fusion_instructions_) {
     if (fusion_instruction->ContainsInstruction(instruction)) return true;
   }
@@ -285,39 +296,40 @@ HloInstructionAdaptor::GetOperands() const {
     // that is also a root. This probably never makes sense, but it technically
     // is valid HLO, so we support it by treating the parameter as an identity
     // function in this context.
-    auto operand = ResolveOperand(instruction_);
+    auto operand = ResolveOperand(instruction_, *parent_);
     if (operand != instruction_) {
-      operands.emplace_back(*operand);
+      operands.emplace_back(*operand, parent_);
     }
   } else {
     for (const auto* operand : instruction_->operands()) {
-      operands.emplace_back(*ResolveOperand(operand));
+      operands.emplace_back(*ResolveOperand(operand, *parent_), parent_);
     }
   }
   return operands;
 }
 
 HloInstructionAdaptor HloInstructionAdaptor::GetOperand(int index) const {
-  return HloInstructionAdaptor{*ResolveOperand(instruction_->operand(index))};
+  return HloInstructionAdaptor{
+      *ResolveOperand(instruction_->operand(index), *parent_), parent_};
 }
 
 absl::InlinedVector<HloInstructionAdaptor, 2> HloInstructionAdaptor::GetUsers()
     const {
   absl::InlinedVector<HloInstructionAdaptor, 2> users;
   auto add_user = [&](const HloInstruction* instr) {
-    users.emplace_back(*instr);
+    users.emplace_back(*instr, parent_);
   };
 
   if (instruction_->IsRoot()) {
     if (auto* fusion = instruction_->parent()->FusionInstruction()) {
       for (auto* user : fusion->users()) {
-        ResolveUsers(fusion, user, add_user);
+        ResolveUsers(fusion, user, *parent_, add_user);
       }
     }
   }
 
   for (auto* user : instruction_->users()) {
-    ResolveUsers(instruction_, user, add_user);
+    ResolveUsers(instruction_, user, *parent_, add_user);
   }
 
   return users;
@@ -408,6 +420,12 @@ bool HloAnyOf(absl::Span<const HloInstructionAdaptor> roots,
   return HloFindIf(roots, fusion, visit, visit_operands).has_value();
 }
 
+bool HloAnyOf(absl::Span<const HloInstruction* const> roots,
+              const std::function<bool(const HloInstruction* node)>& visit,
+              bool visit_operands) {
+  return HloFindIf(roots, visit, visit_operands).has_value();
+}
+
 std::optional<HloInstructionAdaptor> HloFindIf(
     absl::Span<const HloInstructionAdaptor> roots,
     const HloFusionAdaptor& fusion,
@@ -425,6 +443,43 @@ std::optional<HloInstructionAdaptor> HloFindIf(
       },
       [](HloInstructionAdaptor) {}, visit_operands);
   return result;
+}
+
+std::optional<const HloInstruction*> HloFindIf(
+    absl::Span<const HloInstruction* const> roots,
+    const std::function<bool(const HloInstruction* node)>& visit,
+    bool visit_operands) {
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::queue<const HloInstruction*> q;
+  auto enqueue = [&](const HloInstruction* node) {
+    if (visit_operands) {
+      for (const HloInstruction* operand : node->operands()) {
+        if (visited.insert(operand).second) {
+          q.push(operand);
+        }
+      }
+    } else {
+      for (const HloInstruction* operand : node->users()) {
+        if (visited.insert(operand).second) {
+          q.push(operand);
+        }
+      }
+    }
+  };
+  for (auto root : roots) {
+    if (visited.insert(root).second) {
+      q.push(root);
+    }
+  }
+  while (!q.empty()) {
+    const HloInstruction* node = q.front();
+    q.pop();
+    if (visit(node)) {
+      return node;
+    }
+    enqueue(node);
+  }
+  return std::nullopt;
 }
 
 }  // namespace gpu

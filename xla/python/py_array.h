@@ -46,8 +46,8 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/status.h"
 #include "xla/statusor.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
-#include "tsl/concurrency/ref_count.h"
 
 namespace xla {
 
@@ -324,7 +324,8 @@ class PyArrayResultHandler {
 };
 
 absl::StatusOr<nanobind::object> CudaArrayInterfaceToBuffer(
-    const nanobind::dict& cai, nb_class_ptr<PyClient> cuda_client);
+    const nanobind::dict& cai, nb_class_ptr<PyClient> cuda_client,
+    std::optional<int> device_id);
 
 }  // namespace xla
 

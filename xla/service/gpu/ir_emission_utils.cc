@@ -99,7 +99,7 @@ Shape GetShapeFromTensorType(mlir::Value value) {
 
   mlir::Operation* op = value.getDefiningOp();
   CHECK(op);
-  CHECK(value.getType().isa<mlir::TensorType>());
+  CHECK(mlir::isa<mlir::TensorType>(value.getType()));
   Shape shape;
   if (auto attr = op->getAttrOfType<mlir::StringAttr>(kDefaultLayoutAttrName)) {
     shape = *xla::ParseShape(
@@ -346,7 +346,7 @@ static int64_t GetMemRefSizeInBytes(mlir::MemRefType type) {
   if (type.getElementType().isInteger(/*width=*/1)) {
     return type.getNumElements();
   } else if (auto complexType =
-                 type.getElementType().dyn_cast<mlir::ComplexType>()) {
+                 mlir::dyn_cast<mlir::ComplexType>(type.getElementType())) {
     auto elementType = complexType.getElementType();
     return elementType.getIntOrFloatBitWidth() * type.getNumElements() * 2 /
            CHAR_BIT;
@@ -537,11 +537,11 @@ absl::StatusOr<bool> CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
 
 Shape GetShape(mlir::Value value) {
   Shape shape;
-  if (value.getType().isa<mlir::MemRefType>()) {
+  if (mlir::isa<mlir::MemRefType>(value.getType())) {
     shape = TypeToShape(value.getType());
-  } else if (value.getType().isa<mlir::TensorType>()) {
+  } else if (mlir::isa<mlir::TensorType>(value.getType())) {
     shape = GetShapeFromTensorType(value);
-  } else if (value.getType().isa<mlir::TupleType>()) {
+  } else if (mlir::isa<mlir::TupleType>(value.getType())) {
     shape = TypeToShape(value.getType());
   } else {
     LOG(FATAL) << "Unexpected value type to get shape for";
@@ -652,11 +652,11 @@ bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count,
     // TODO(akuegel): Figure out why we still need this check for transpose
     // fusions.
     int64_t num_users =
-        fusion ? absl::c_count_if(HloInstructionAdaptor{*instr}.GetUsers(),
-                                  [&](auto user) {
-                                    return fusion->ContainsInstruction(user);
-                                  })
-               : instr->user_count();
+        fusion
+            ? absl::c_count_if(
+                  HloInstructionAdaptor{*instr, fusion}.GetUsers(),
+                  [&](auto user) { return fusion->ContainsInstruction(user); })
+            : instr->user_count();
     if (num_users > 1) {
       return false;
     }
@@ -736,7 +736,7 @@ static std::optional<HloInstructionAdaptor> FindNonTrivialHero(
 
 const HloInstruction& FindNonTrivialHero(const HloInstruction& instr,
                                          const HloFusionAdaptor& fusion) {
-  HloInstructionAdaptor hero{instr};
+  HloInstructionAdaptor hero{instr, &fusion};
 
   // Go up the chain of trivial element-wise(+bitcast, -copy) operations. Note
   // that no memoization is needed due to number of operands constraints: we

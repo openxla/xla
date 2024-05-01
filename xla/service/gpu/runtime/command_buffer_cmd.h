@@ -41,9 +41,9 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/custom_call_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
+#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/status.h"
@@ -677,47 +677,6 @@ class WhileCmd : public CommandBufferCmd {
   BufferAllocation::Slice pred_;
   CommandBufferCmdSequence cond_commands_;
   CommandBufferCmdSequence body_commands_;
-};
-
-//===----------------------------------------------------------------------===//
-// AllocateCmd
-//===----------------------------------------------------------------------===//
-
-class AllocateCmd : public CommandBufferCmd {
- public:
-  AllocateCmd(ExecutionStreamId execution_stream_id,
-              BufferAllocation allocation);
-
-  // After calling this function, the allocated memory is tracked in
-  // CommandBuffer object.
-  absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const RecordParams& record_params,
-                      se::CommandBuffer* command_buffer) override;
-
-  BufferUsageVector buffers() override;
-
- private:
-  BufferAllocation allocation_;
-};
-
-//===----------------------------------------------------------------------===//
-// FreeCmd
-//===----------------------------------------------------------------------===//
-
-class FreeCmd : public CommandBufferCmd {
- public:
-  FreeCmd(ExecutionStreamId execution_stream_id, BufferAllocation allocation);
-
-  // After calling this function, the allocated memory address for dst
-  // BufferAllocation is freed, no update is required.
-  absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const RecordParams& record_params,
-                      se::CommandBuffer* command_buffer) override;
-
-  BufferUsageVector buffers() override;
-
- private:
-  BufferAllocation allocation_;
 };
 
 //===----------------------------------------------------------------------===//

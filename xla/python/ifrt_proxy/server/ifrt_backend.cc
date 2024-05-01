@@ -64,8 +64,8 @@
 #include "xla/python/ifrt_proxy/server/version.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status_to_from_proto.h"
@@ -117,6 +117,12 @@ absl::StatusOr<std::unique_ptr<IfrtBackend>> IfrtBackend::Create(
 
 IfrtBackend::~IfrtBackend() {
   // Cancel all in-flight host callback executions.
+  {
+    absl::MutexLock lock(&host_callback_queues_mutex_);
+    for (const auto& [key, queue] : host_callback_queues_) {
+      queue->Close();
+    }
+  }
   absl::flat_hash_map<uint64_t, RemoteLoadedHostCallbackQueue::ExecutionRequest>
       host_callback_executions;
   {

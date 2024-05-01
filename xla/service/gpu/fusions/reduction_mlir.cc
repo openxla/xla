@@ -62,7 +62,7 @@ using mlir::ValueRange;
 using mlir_converter::PartitionedComputations;
 
 using HloValueMap =
-    llvm::DenseMap<const HloInstruction*, llvm::SmallVector<Value>>;
+    absl::flat_hash_map<const HloInstruction*, llvm::SmallVector<Value>>;
 
 struct MlirReductionFusion::EmitterState {
   // Uses the given indexing map to reduce a subset of the inputs in a single
@@ -117,14 +117,15 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
 
 bool MlirReductionFusion::IsSupported(const HloFusionAnalysis& analysis) {
   auto info = ReductionInfo::Create(analysis);
-  return info.GetGroups().grouped_roots.size() == 1 && info.IsRaceFree();
+  return info.GetGroups().grouped_roots.size() == 1 && info.IsRaceFree() &&
+         !absl::c_linear_search(info.GetGroups().is_reduction_root, false);
 }
 
-std::optional<mlir_converter::EpilogueSpecification>
-MlirReductionFusion::GetEpilogue(const HloFusionInstruction& fusion,
-                                 mlir::MLIRContext* mlir_context) const {
-  return mlir_converter::EpilogueSpecification::FromOutputIndexing(
-      analysis(), reduction_heroes_, reduction_roots_, *this, mlir_context);
+std::vector<mlir_converter::EpilogueSpecification>
+MlirReductionFusion::GetEpilogues(const HloFusionInstruction& fusion,
+                                  mlir::MLIRContext* mlir_context) const {
+  return {mlir_converter::EpilogueSpecification::FromOutputIndexing(
+      analysis(), reduction_heroes_, reduction_roots_, *this, mlir_context)};
 }
 
 absl::Status MlirReductionFusion::EmitEntryFunction(
@@ -144,8 +145,6 @@ absl::Status MlirReductionFusion::EmitEntryFunction(
 }
 
 absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
-  CHECK(IsSupported(analysis()))
-      << "Attempting to output code for an unsupported reduction";
   auto& builder = state.builder;
   const auto& tiling = reduction_info().GetTiling();
 
@@ -217,81 +216,61 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
         {zero}, builder);
   }
 
-  llvm::DenseMap<const HloInstruction*, SmallVector<Value>> inits;
-  llvm::DenseMap<const HloInstruction*, SmallVector<Value>> inits_alloca;
+  HloValueMap inits;
+  llvm::SmallVector<Value> outputs =
+      mlir::ValueRange(state.entry_function.getArguments().drop_front(
+          state.fusion.fused_parameters().size()));
+
   for (auto [index, hero] : llvm::enumerate(reduction_heroes_)) {
-    int num_inputs = hero->operand_count() / 2;
+    int arity = hero->operand_count() / 2;
     const auto& computation =
         state.computations.FindPartitionedComputation(hero->parent());
     inits[hero] =
-        ProvideParameterRange(computation, hero, num_inputs, num_inputs, {},
+        ProvideParameterRange(computation, hero, arity, arity, {},
                               state.call_target, state.entry_function, builder);
   }
 
-  auto evaluate_epilogue =
-      [&](const HloValueMap& results, llvm::SmallVector<Value> outputs,
-          SmallVector<Value> symbols = {}) -> llvm::SmallVector<Value> {
+  auto evaluate_epilogue = [&](const HloValueMap& results,
+                               llvm::SmallVector<Value> outputs,
+                               SmallVector<Value> symbols = {}) {
+    const auto& epilogue = state.computations.epilogues().front();
     llvm::SmallVector<Value> indices = EmitThreadAndBlockIds(builder);
-    if (state.computations.epilogue()) {
-      llvm::SmallVector<Value> hero_values(reduction_heroes_.size());
-      const auto& epilogue = *state.computations.epilogue();
-      for (auto hero : reduction_heroes_) {
-        const auto& result = results.at(hero);
-        CHECK(result.size() == 1)
-            << "Epilogue fusions are not supported with variadic reduce.";
-        hero_values[epilogue.injected_values.at(hero)] = result.front();
-      }
-
-      int num_symbols =
-          state.computations.epilogue()->root_indexing.front().getNumSymbols();
-      CHECK(symbols.empty() || symbols.size() == num_symbols)
-          << "symbols should be empty or match epilogue symbos number.";
-      auto epilogue_indices = indices;
-      if (symbols.empty()) {
-        for (int i = 0; i < num_symbols; ++i) {
-          epilogue_indices.push_back(zero);
-        }
-      } else {
-        epilogue_indices.append(symbols.begin(), symbols.end());
-      }
-      llvm::SmallVector<Value> epilogue_values =
-          EmitEpilogue(state.computations, state.entry_function, hero_values,
-                       epilogue_indices, builder);
-      for (auto [index, root] : llvm::enumerate(epilogue.roots)) {
-        auto& output = outputs[state.OutputIndex(root, 0)];
-        auto output_indices = mlir_converter::ApplyAffineMap(
-            epilogue.root_indexing[index], indices, symbols, builder);
-        output = builder.create<PredicatedInsertOp>(
-            thread_has_output, epilogue_values[index], output, output_indices);
+    llvm::SmallVector<Value> epilogue_input_indices = indices;
+    int num_symbols = epilogue.root_indexing.front().getNumSymbols();
+    CHECK(symbols.empty() || symbols.size() == num_symbols)
+        << "symbols should be empty or match epilogue symbos number.";
+    if (symbols.empty()) {
+      for (int i = 0; i < num_symbols; ++i) {
+        epilogue_input_indices.push_back(zero);
       }
     } else {
-      CHECK_EQ(reduction_roots_.size(), 1);
-      auto* reduction = reduction_roots_.front();
-      int root_index = absl::c_find(analysis().fusion_roots(), reduction) -
-                       analysis().fusion_roots().begin();
-      auto output_indices = mlir_converter::ApplyAffineMap(
-          ComputeThreadIdToOutputIndexing(root_index, builder.getContext())
-              ->GetAffineMap(),
-          indices, symbols, builder);
+      epilogue_input_indices.append(symbols.begin(), symbols.end());
+    }
 
-      for (auto [result_index, result] :
-           llvm::enumerate(results.at(reduction))) {
-        auto& output = outputs[state.OutputIndex(reduction, result_index)];
-        output = builder.create<PredicatedInsertOp>(thread_has_output, result,
-                                                    output, output_indices);
+    HloValueMap root_output_indices;
+    for (auto [index, root] : llvm::enumerate(epilogue.roots)) {
+      root_output_indices[root] = mlir_converter::ApplyAffineMap(
+          epilogue.root_indexing[index], epilogue_input_indices, symbols,
+          builder);
+    }
+
+    auto values = EmitEpilogue(/*epilogue_index=*/0, state.computations,
+                               state.entry_function, results,
+                               epilogue_input_indices, builder);
+    const auto& epilogue = state.computations.epilogues().front();
+    for (auto root : epilogue.roots) {
+      for (auto [result_index, result] : llvm::enumerate(values.at(root))) {
+        auto& output = outputs[state.OutputIndex(root, result_index)];
+        output = builder.create<PredicatedInsertOp>(
+            thread_has_output, result, output, root_output_indices[root]);
       }
     }
     return outputs;
   };
 
   auto accumulated = state.EmitPerThreadReducedElements(inits);
-  llvm::SmallVector<Value> outputs =
-      mlir::ValueRange(state.entry_function.getArguments().drop_front(
-          state.fusion.fused_parameters().size()));
   for (auto root : side_output_roots_) {
-    for (auto out : accumulated[root]) {
-      outputs[state.OutputIndex(root, 0)] = out;
-    }
+    outputs[state.OutputIndex(root, 0)] = accumulated[root].front();
   }
 
   // In row reductions, we can do a warp shuffle before writing to shared
@@ -309,7 +288,7 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
 
   if (!use_shared) {
     builder.create<mlir::func::ReturnOp>(
-        evaluate_epilogue(accumulated, outputs, /*symbols=*/{}));
+        evaluate_epilogue(accumulated, std::move(outputs), /*symbols=*/{}));
     return absl::OkStatus();
   }
 
