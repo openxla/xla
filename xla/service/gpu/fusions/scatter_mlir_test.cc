@@ -184,9 +184,6 @@ TEST_F(MlirScatterFusionTest, Scatter_UniqueIndices) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK: #[[$MAP0:.*]] = affine_map<()[s0] -> (s0 floordiv 2)>
-    // CHECK: #[[$MAP1:.*]] = affine_map<()[s0] -> (s0 mod 2)>
-
     // CHECK-LABEL: func.func @fused_computation(
     // CHECK-SAME:    %[[OPERAND:[a-zA-Z0-9]*]]: tensor<10x5xf32>
     // CHECK-SAME:    %[[INDICES:[a-zA-Z0-9]*]]: tensor<8x1xi32>
@@ -197,8 +194,8 @@ TEST_F(MlirScatterFusionTest, Scatter_UniqueIndices) {
     // CHECK-DAG:       %[[C9:.*]] = arith.constant 9 : index
 
     // CHECK:      %[[TH_X:.*]] = gpu.thread_id  x
-    // CHECK:      %[[SLICE_ID:.*]] = affine.apply #[[$MAP0]]()[%[[TH_X]]]
-    // CHECK:      %[[SLICE_X:.*]] = affine.apply #[[$MAP1]]()[%[[TH_X]]]
+    // CHECK:      %[[SLICE_ID:.*]] = arith.index_castui %[[AFFINE_APPLY_0:.*]] {xla.range = [0 : index, 7 : index]} : i32 to index
+    // CHECK:      %[[SLICE_X:.*]] = arith.index_castui %[[AFFINE_APPLY_1:.*]] {xla.range = [0 : index, 1 : index]} : i32 to index
 
     // CHECK:      %[[UPD_ELEM:.*]] = xla_gpu.pure_call @scatter_update(
     // CHECK-SAME:  %[[OPERAND]], %[[INDICES]], %[[UPDATES]],

@@ -102,11 +102,6 @@ TEST_F(MlirConcatenateFusionTest, StandAloneConcatenate) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK-DAG: #[[MAP_1:.*]] = affine_map<()[s0, s1] -> (s0 + s1 * 128)>
-    // CHECK-DAG: #[[MAP_2:.*]] = affine_map<()[s0, s1] -> ((s0 + s1 * 128) mod 400)>
-    // CHECK-DAG: #[[MAP_3:.*]] = affine_map<()[s0, s1] -> ((s0 + s1 * 128) mod 400 + 200)>
-    // CHECK-DAG: #[[MAP_4:.*]] = affine_map<()[s0, s1] -> ((s0 + s1 * 128) mod 400 + 600)>
-
     // CHECK-LABEL: fused_computation
     // CHECK-SAME:    %[[ARG_0:[a-zA-Z0-9]*]]: {{[^,]*}},
     // CHECK-SAME:    %[[ARG_1:[a-zA-Z0-9]*]]: {{[^,]*}},
@@ -116,19 +111,19 @@ TEST_F(MlirConcatenateFusionTest, StandAloneConcatenate) {
     // CHECK: %[[THREAD_ID:.*]] = gpu.thread_id x
     // CHECK: %[[BLOCK_ID:.*]] = gpu.block_id x
 
-    // CHECK: %[[INPUT_INDEX_1:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
+    // CHECK: %[[INPUT_INDEX_1:.*]] = arith.index_castui %[[AFFINE_APPLY_0:.*]] {xla.range = [0 : index, 399 : index]} : i32 to index
     // CHECK: %[[IF_1:.*]] = scf.if
     // CHECK:   %[[VAL_1:.*]] = xla_gpu.pure_call @fused_computation_param0
     // CHECK:   %[[INSERTED_1:.*]] = tensor.insert %[[VAL_1:.*]] into %[[OUTPUT]][%[[INPUT_INDEX_1]]]
 
     // CHECK: %[[IF_2:.*]] = scf.if
     // CHECK:   %[[VAL_2:.*]] = xla_gpu.pure_call @fused_computation_param1
-    // CHECK:   %[[OUTPUT_INDEX_2:.*]] = affine.apply #[[MAP_3]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
+    // CHECK:   %[[OUTPUT_INDEX_2:.*]] = arith.index_castui %[[AFFINE_APPLY_2:.*]] {xla.range = [200 : index, 599 : index]} : i32 to index
     // CHECK:   %[[INSERTED_2:.*]] = tensor.insert %[[VAL_2:.*]] into {{.*}}[%[[OUTPUT_INDEX_2]]]
 
     // CHECK: %[[IF_3:.*]] = scf.if
     // CHECK:   %[[VAL_3:.*]] = xla_gpu.pure_call @fused_computation_param2
-    // CHECK:   %[[OUTPUT_INDEX_3:.*]] = affine.apply #[[MAP_4]]()[%[[THREAD_ID]], %[[BLOCK_ID]]]
+    // CHECK:   %[[OUTPUT_INDEX_3:.*]] = arith.index_castui %[[AFFINE_APPLY_2:.*]] {xla.range = [600 : index, 999 : index]} : i32 to index
     // CHECK:   %[[INSERTED_3:.*]] = tensor.insert %[[VAL_3:.*]] into {{.*}}[%[[OUTPUT_INDEX_3]]]
   )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
@@ -153,8 +148,6 @@ TEST_F(MlirConcatenateFusionTest, PrologueEpilogue) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK: #[[MAP:.*]] = affine_map<()[s0] -> (s0 + 64)>
-
     // CHECK-LABEL: fused_computation
     // CHECK-DAG: %[[C_63:.*]] = arith.constant 63
     // CHECK: %[[THREAD_ID:.*]] = gpu.thread_id x
@@ -167,7 +160,7 @@ TEST_F(MlirConcatenateFusionTest, PrologueEpilogue) {
     // CHECK:   scf.yield %[[INSERTED_1]]
 
     // CHECK: %[[VAL_2_1:.*]] = xla_gpu.pure_call @fused_computation_exp({{.*}}, %[[THREAD_ID]])
-    // CHECK: %[[INDEX_2:.*]] = affine.apply #[[MAP]]()[%[[THREAD_ID]]]
+    // CHECK: %[[INDEX_2:.*]] = arith.index_castui %[[AFFINE_APPLY_0:.*]] {xla.range = [64 : index, 191 : index]} : i32 to index
     // CHECK: %[[VAL_2_2:.*]] = xla_gpu.pure_call @fused_computation__epilogue__neg({{.*}}, %[[INDEX_2]], %[[VAL_2_1]])
     // CHECK: %[[INSERTED_2:.*]] = tensor.insert %[[VAL_2_2:.*]] into {{.*}}[%[[INDEX_2]]]
 

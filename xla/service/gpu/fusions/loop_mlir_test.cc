@@ -210,8 +210,8 @@ TEST_F(MlirLoopFusionTest, NoCodeDuplication) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK-COUNT-4: arith.add
-    // CHECK-NOT: arith.add
+    // CHECK-COUNT-4: arith.addf
+    // CHECK-NOT: arith.addf
   )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }

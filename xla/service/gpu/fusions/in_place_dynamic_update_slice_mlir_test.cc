@@ -100,8 +100,6 @@ TEST_F(MlirInPlaceDynamicUpdateSliceFusionTest, SimpleDUS) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK-DAG: #[[MAP_1:.*]] = affine_map<()[s0] -> (s0 floordiv 6)>
-    // CHECK-DAG: #[[MAP_2:.*]] = affine_map<()[s0] -> (s0 mod 6)>
     // CHECK:     func.func @fused_computation
     // CHECK-SAME:  %arg0: tensor<20x30xf32>
     // CHECK-SAME:  %arg1: tensor<5x6xf32>
@@ -112,8 +110,8 @@ TEST_F(MlirInPlaceDynamicUpdateSliceFusionTest, SimpleDUS) {
     // CHECK-DAG:   %[[C_15:.*]] = arith.constant 15
     // CHECK-DAG:   %[[C_0:.*]] = arith.constant 0
     // CHECK:       %[[THREAD_ID:.*]] = gpu.thread_id  x
-    // CHECK:       %[[INPUT_INDEX_0:.*]] = affine.apply #[[MAP_1]]()[%[[THREAD_ID]]]
-    // CHECK:       %[[INPUT_INDEX_1:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]]]
+    // CHECK:       %[[INPUT_INDEX_0:.*]] = arith.index_castui %[[AFFINE_APPLY_0:.*]] {xla.range = [0 : index, 4 : index]} : i32 to index
+    // CHECK:       %[[INPUT_INDEX_1:.*]] = arith.index_castui %[[AFFINE_APPLY_1:.*]] {xla.range = [0 : index, 5 : index]} : i32 to index
     // CHECK:       %[[I0:.*]] = xla_gpu.pure_call @fused_computation_i0
     // CHECK:       %[[I1:.*]] = xla_gpu.pure_call @fused_computation_i1
     // CHECK:       %[[IDX0:.*]] = arith.index_cast %[[I0]]
@@ -151,8 +149,6 @@ TEST_F(MlirInPlaceDynamicUpdateSliceFusionTest, OutOfBoundDUS) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK-DAG: #[[MAP_1:.*]] = affine_map<()[s0] -> (s0 floordiv 3)>
-    // CHECK-DAG: #[[MAP_2:.*]] = affine_map<()[s0] -> (s0 mod 3)>
     // CHECK:     func.func @fused_computation
     // CHECK-SAME:  %arg0: tensor<7x8xf32>
     // CHECK-SAME:  %arg1: tensor<2x3xf32>
@@ -162,8 +158,8 @@ TEST_F(MlirInPlaceDynamicUpdateSliceFusionTest, OutOfBoundDUS) {
     // CHECK-DAG:   %[[C_5:.*]] = arith.constant 5
     // CHECK-DAG:   %[[C_0:.*]] = arith.constant 0
     // CHECK:       %[[THREAD_ID:.*]] = gpu.thread_id  x
-    // CHECK:       %[[INPUT_INDEX_0:.*]] = affine.apply #[[MAP_1]]()[%[[THREAD_ID]]]
-    // CHECK:       %[[INPUT_INDEX_1:.*]] = affine.apply #[[MAP_2]]()[%[[THREAD_ID]]]
+    // CHECK:       %[[INPUT_INDEX_0:.*]] = arith.index_castui %[[AFFINE_APPLY_0:.*]] {xla.range = [0 : index, 1 : index]} : i32 to index
+    // CHECK:       %[[INPUT_INDEX_1:.*]] = arith.index_castui %[[AFFINE_APPLY_1:.*]] {xla.range = [0 : index, 2 : index]} : i32 to index
     // CHECK:       %[[I0:.*]] = xla_gpu.pure_call @fused_computation_i0
     // CHECK:       %[[I1:.*]] = xla_gpu.pure_call @fused_computation_i1
     // CHECK:       %[[IDX0:.*]] = arith.index_cast %[[I0]]
