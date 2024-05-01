@@ -98,8 +98,7 @@ mlir::Value CheckConstraints(const IndexingMap& map, mlir::ValueRange dims,
                              mlir::ImplicitLocOpBuilder& b);
 
 // Emits a loop nest over the entire domain of the indexing_map at a point
-// `dim_values` if not set `nested_level`. Otherwise, the innermost
-// `nested_level` loop are removed.
+// `dim_values`.
 llvm::SmallVector<mlir::Value> EmitLoopNest(
     mlir::ImplicitLocOpBuilder& b, mlir::ValueRange dim_values,
     mlir::ValueRange iter_args_inits, const IndexingMap& indexing_map,

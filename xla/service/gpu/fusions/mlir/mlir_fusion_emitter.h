@@ -96,9 +96,7 @@ class MlirFusionEmitterBase : public KernelFusionInterface {
   // Emit a loop nest for the symbols in the output map. The map should have
   // the dimensions specified in KernelFusionInterface. Loops are nested with
   // the symbol 0 as the outermost loop. The indices of the map's dimensions and
-  // symbols are passed to the lambda separately. If only need partial nested
-  // loop, set `nested_level` to control how many symbols should not loop (from
-  // the innermost loop to the outermost loop). The return values of the
+  // symbols are passed to the lambda separately. The return values of the
   // function are the updated outputs.
   llvm::SmallVector<mlir::Value> EmitThreadLoopNest(
       mlir::ImplicitLocOpBuilder& b, mlir::ValueRange outputs,
