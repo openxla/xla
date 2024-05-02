@@ -3155,13 +3155,6 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1BiasSoftmaxBmm2PatternDbias) {
                                          GetCudnnVersion()};
   TF_ASSERT_OK(RunHloPass(&fusedMhaRewriter, m.get()).status());
 
-  AlgebraicSimplifierOptions alg_sim_options;
-  alg_sim_options.set_supports_non_canonical_dots(false);
-  alg_sim_options.set_is_layout_sensitive(true);
-  alg_sim_options.set_enable_conv_operand_swap(false);
-  AlgebraicSimplifier alge_simp{alg_sim_options};
-  TF_ASSERT_OK(RunHloPass(&alge_simp, m.get()).status());
-
   ComputationLayout computation_layout(
       m->entry_computation()->ComputeProgramShape());
 
@@ -3172,9 +3165,10 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1BiasSoftmaxBmm2PatternDbias) {
       m->entry_computation()->root_instruction(),
       GmockMatch(m::Tuple(
           m::Transpose(
-              m::GetTupleElement(
+              m::Transpose(
+                m::GetTupleElement(
                   m::CustomCall(&fmha, {kCudnnfMHAScaleBiasSoftmaxCallTarget}),
-                  0))
+                  0)))
               .WithShape(BF16, {2, 1024, 4, 64}),
           m::Transpose(
               m::GetTupleElement(
@@ -3187,11 +3181,12 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest, BF16Bmm1BiasSoftmaxBmm2PatternDbias) {
                   1))
               .WithShape(BF16, {2, 1024, 4, 64}),
           m::Transpose(
-              m::GetTupleElement(
+              m::Transpose(
+                m::GetTupleElement(
                   m::CustomCall({kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget}),
-                  2))
+                  2)))
               .WithShape(BF16, {2, 1024, 4, 64}),
-          m::Bitcast(
+          m::Reshape(
               m::GetTupleElement(
                   m::CustomCall({kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget}),
                   4))
