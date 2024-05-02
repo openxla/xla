@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "nanobind/nanobind.h"  // from @nanobind
@@ -31,7 +32,6 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/nb_class_ptr.h"
-#include "xla/python/python_ref_manager.h"
 #include "tsl/platform/platform.h"
 
 #ifdef PLATFORM_GOOGLE
