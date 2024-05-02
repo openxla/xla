@@ -223,11 +223,11 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
 
   // The expression 0.5 * x * (1 + errf) as common pattern for GELU exact and
   // approximate activations.
-  auto common_pattrn = MultiplyMultiplyAnyOrder(
+  auto common_pattern = MultiplyMultiplyAnyOrder(
       BcastConstScalar(0.5), m::Op(src),
       m::AddAnyOrder(BcastConstScalar(1.0), m::Op(&errf).WithOneUser()));
 
-  bool matched = Match(instr, common_pattrn);
+  bool matched = Match(instr, common_pattern);
   if (matched) {
     // The subexpression 0.044715 * x**3 appears in GELU approximate activation.
     // However, it is often optimized by other HLO passes into an expression of
@@ -249,7 +249,7 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
             BcastConstScalarNear(0.044715),
             m::Multiply(m::Op().Is(*src), m::Op().Is(*src)), m::Op().Is(*src)));
 
-    auto errf_apprx_pattrn =
+    auto errf_apprx_pattern =
         m::Tanh(m::MultiplyAnyOrder(
                     BcastConstScalarNear(sqrt(M_2_PI)),
                     m::AddAnyOrder(m::Op().Is(*src), subexpr_pattern)
@@ -257,7 +257,7 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
             .WithOneUser();
 
     HloInstruction* erf;
-    auto errf_exact_pattrn =
+    auto errf_exact_pattern =
         m::Op(&erf)
             .WithOpcode(HloOpcode::kErf)
             .WithOperand(
@@ -269,10 +269,10 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
                        .WithOneUser())
             .WithOneUser();
 
-    if (Match(errf, errf_apprx_pattrn)) {
+    if (Match(errf, errf_apprx_pattern)) {
       // Matched Gelu-approximate pattern
       return OneDnnMatMulConfig::GELU_TANH;
-    } else if (Match(errf, errf_exact_pattrn)) {
+    } else if (Match(errf, errf_exact_pattern)) {
       // Matched Gelu-exact pattern
       return OneDnnMatMulConfig::GELU_ERF;
     }
