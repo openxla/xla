@@ -61,12 +61,18 @@ class CudnnGraph : public dnn::DnnGraph {
       : graph_(std::move(graph)) {}
   // Prepares a graph and checks whether it is generally supported.
   absl::StatusOr<bool> Prepare(dnn::DnnSupport&) override;
+  absl::StatusOr<bool> Prepare(dnn::DnnSupport&, Stream*);
   // Builds single plan of the graph with given ID.
   absl::Status Build(dnn::DnnSupport&, std::optional<int64_t> plan_id) override;
+  absl::Status Build(dnn::DnnSupport&, Stream*, std::optional<int64_t> plan_id);
   // Builds all the plans
   absl::Status Execute(Stream& stream,
                        absl::Span<DeviceMemoryBase> operands) const override;
   const cudnn_frontend::graph::Graph& Graph() const { return graph_; }
+  // Returns a mutable reference to the internal graph.
+  cudnn_frontend::graph::Graph& MutableGraph() { return graph_; }
+
+  //   absl::Status Validate() {return graph_.validate();}
 
  private:
   cudnn_frontend::graph::Graph graph_;
@@ -717,7 +723,7 @@ class CudnnSupport : public dnn::DnnSupport {
 };
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
-    dnn::DnnSupport& dnn_support,
+    dnn::DnnSupport& dnn_support, Stream* stream,
     const dnn::MatmulTensorDescriptor& q_descriptor,
     const dnn::MatmulTensorDescriptor& k_descriptor,
     const dnn::MatmulTensorDescriptor& v_descriptor,
@@ -729,7 +735,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     const dnn::FMHAMaskKind mask_type);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
-    dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,
+    dnn::DnnSupport& dnn_support, Stream* stream,
+    const dnn::MatmulTensorDescriptor& q_desc,
     const dnn::MatmulTensorDescriptor& k_desc,
     const dnn::MatmulTensorDescriptor& p_desc,
     const dnn::MatmulTensorDescriptor& v_desc,

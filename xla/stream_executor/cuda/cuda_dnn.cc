@@ -26,11 +26,13 @@ limitations under the License.
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "Eigen/Core"  // from @eigen_archive
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
@@ -45,10 +47,15 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"  // from @eigen_archive
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/tensor_float_32_utils.h"
+#include "tsl/protobuf/dnn.pb.h"
 #include "xla/stream_executor/cuda/cuda_activation.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -70,12 +77,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_interface.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/tensor_float_32_utils.h"
-#include "tsl/protobuf/dnn.pb.h"
 
 // clang-format off
 #include "third_party/gpus/cuda/include/library_types.h"
@@ -5053,7 +5054,7 @@ static absl::StatusOr<cudnn_frontend::ExecutionPlan> RebuildExecutionPlan(
 }  // namespace
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
-    dnn::DnnSupport& dnn_support,
+    dnn::DnnSupport& dnn_support, Stream* stream,
     const dnn::MatmulTensorDescriptor& q_descriptor,
     const dnn::MatmulTensorDescriptor& k_descriptor,
     const dnn::MatmulTensorDescriptor& v_descriptor,
@@ -5204,14 +5205,14 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
         .set_uid(CudnnfMHAUid::P_ID);
   }
   CudnnGraph cudnnGraph(std::move(graph));
-  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support));
+  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support, stream));
   if (!supported) {
     return absl::InternalError("cuDNN graph is not supported.");
   }
-  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, std::nullopt));
+  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, stream, std::nullopt));
 
   if (VLOG_IS_ON(4)) {
-    VLOG(4) << "\b flash attention operation graph: " << graph;
+    VLOG(4) << "\b flash attention operation graph: " << cudnnGraph.Graph();
   }
   return cudnnGraph;
 #else
@@ -5221,7 +5222,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
 }
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
-    dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,
+    dnn::DnnSupport& dnn_support, Stream* stream,
+    const dnn::MatmulTensorDescriptor& q_desc,
     const dnn::MatmulTensorDescriptor& k_desc,
     const dnn::MatmulTensorDescriptor& p_desc,
     const dnn::MatmulTensorDescriptor& v_desc,
@@ -5402,14 +5404,16 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
       .set_data_type(ioDataType);
 
   CudnnGraph cudnnGraph(std::move(graph));
-  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support));
+  TF_ASSIGN_OR_RETURN(bool supported, cudnnGraph.Prepare(dnn_support, stream));
+
   if (!supported) {
     return absl::InternalError("cuDNN graph is not supported.");
   }
-  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, std::nullopt));
+  TF_RETURN_IF_ERROR(cudnnGraph.Build(dnn_support, stream, std::nullopt));
 
   if (VLOG_IS_ON(4)) {
-    VLOG(4) << "\b flash attention operation backward graph: " << graph;
+    VLOG(4) << "\b flash attention operation backward graph: "
+            << cudnnGraph.Graph();
   }
 
   return cudnnGraph;
@@ -7188,13 +7192,13 @@ CudnnSupport::FusedMHARunnerFromDesc(
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     dnn::FMHAMaskKind mask_type) {
 #if CUDNN_VERSION >= 8904
-  auto cudnn = cudnn_->GetHandle(parent_, stream);
+  // auto cudnn = cudnn_->GetHandle(parent_, stream);
   bool use_dropout = dropout_rate && *dropout_rate > 0.0;
   std::vector<int64_t> intermediate_shape;
 
   TF_ASSIGN_OR_RETURN(auto graph,
                       GetCudnnFlashAttentionOperationGraph(
-                          *this, /*q_descriptor=*/bmm1_lhs_descriptor,
+                          *this, stream, /*q_descriptor=*/bmm1_lhs_descriptor,
                           /*k_descriptor=*/bmm1_rhs_descriptor,
                           /*v_descriptor=*/bmm2_rhs_descriptor,
                           /*o_descriptor=*/output_descriptor, bias_descriptor,
@@ -7255,7 +7259,7 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     dnn::FMHAMaskKind mask_type) {
 #if CUDNN_VERSION >= 8904
-  auto cudnn = cudnn_->GetHandle(parent_, stream);
+  // auto cudnn = cudnn_->GetHandle(parent_, stream);
 
   bool use_dropout = dropout_rate && *dropout_rate > 0.0;
   std::vector<int64_t> intermediate_shape;
@@ -7263,11 +7267,11 @@ CudnnSupport::FusedMHABackwardRunnerFromDesc(
   TF_ASSIGN_OR_RETURN(
       auto graph,
       GetCudnnFlashAttentionBackwardOperationGraph(
-          *this, bmm1_grad_gemm1_rhs_descriptor, bmm1_grad_gemm2_rhs_descriptor,
-          bmm2_grad_gemm1_lhs_descriptor, bmm2_grad_gemm2_rhs_descriptor,
-          d_output_descriptor, d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor,
-          d_bmm2_rhs_descriptor, bias_descriptor, dropout_rate, seed, scale,
-          use_dropout,
+          *this, stream, bmm1_grad_gemm1_rhs_descriptor,
+          bmm1_grad_gemm2_rhs_descriptor, bmm2_grad_gemm1_lhs_descriptor,
+          bmm2_grad_gemm2_rhs_descriptor, d_output_descriptor,
+          d_bmm1_lhs_descriptor, d_bmm1_rhs_descriptor, d_bmm2_rhs_descriptor,
+          bias_descriptor, dropout_rate, seed, scale, use_dropout,
           /*use_bias*/ bias_descriptor != std::nullopt, mask_type));
 
   std::vector<int64_t> p_dims =
@@ -8361,15 +8365,51 @@ absl::StatusOr<bool> CudnnGraph::Prepare(dnn::DnnSupport& dnn_support) {
   return true;
 }
 
+absl::StatusOr<bool> CudnnGraph::Prepare(dnn::DnnSupport& dnn_support,
+                                         Stream* stream) {
+  if (stream == nullptr) {
+    return Prepare(dnn_support);
+  }
+  const CudnnSupport& cudnn_support = static_cast<CudnnSupport&>(dnn_support);
+  auto cudnn = cudnn_support.cudnn_->GetHandle(cudnn_support.parent_, stream);
+  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
+  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph(cudnn.handle()));
+  RETURN_IF_CUDNN_FRONTEND_ERROR(
+      graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
+  if (auto result = graph_.check_support(cudnn.handle()); result.is_bad()) {
+    VLOG(3) << result.get_message();
+    return false;
+  }
+  return true;
+}
+
 absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support,
                                const std::optional<int64_t> plan_id) {
   const CudnnSupport& cudnn_support = static_cast<CudnnSupport&>(dnn_support);
-  TF_ASSIGN_OR_RETURN(auto cudnn, cudnn_support.cudnn_->GetLocalHandle());
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<LocalCuDnnHandle> cudnn,
+                      cudnn_support.cudnn_->GetLocalHandle());
   if (plan_id.has_value()) {
     RETURN_IF_CUDNN_FRONTEND_ERROR(
         graph_.build_plan_at_index(cudnn->handle(), *plan_id));
   } else {
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_plans(cudnn->handle()));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support, Stream* stream,
+                               const std::optional<int64_t> plan_id) {
+  if (stream == nullptr) {
+    return Build(dnn_support, plan_id);
+  }
+  const CudnnSupport& cudnn_support = static_cast<CudnnSupport&>(dnn_support);
+  CudnnHandle cudnn =
+      cudnn_support.cudnn_->GetHandle(cudnn_support.parent_, stream);
+  if (plan_id.has_value()) {
+    RETURN_IF_CUDNN_FRONTEND_ERROR(
+        graph_.build_plan_at_index(cudnn.handle(), *plan_id));
+  } else {
+    RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_plans(cudnn.handle()));
   }
   return absl::OkStatus();
 }
