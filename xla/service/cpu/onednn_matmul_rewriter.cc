@@ -690,7 +690,7 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* src;
     if (SigmoidActivation(instr, &src)) {
-      if (Match(src, ElementwiseSafeIntermediate(
+      if (Match(src, ElementwiseSafeIntermediates(
                          &intermediate_instr, OneDnnMatmulInstr(&matmul_call))
                          .WithOneUser())) {
         return FuseActivation(OneDnnMatMulConfig::SIGMOID, instr, matmul_call,
