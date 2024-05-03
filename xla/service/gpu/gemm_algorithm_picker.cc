@@ -144,7 +144,8 @@ class GemmAutotuner {
 
   absl::StatusOr<AutotuneResult> TuneGpuBlasLt(const HloInstruction* gemm,
                                                const GemmConfig& gemm_config) {
-    auto workspace_buffer = rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
+    auto workspace_buffer =
+        rz_buffers_.output_buffers().at(gemm->shape().tuple_shapes_size() - 1);
 
     GpuBackendConfig gpu_config =
         gemm->backend_config<GpuBackendConfig>().value();
@@ -176,7 +177,10 @@ class GemmAutotuner {
     TF_ASSIGN_OR_RETURN(auto plan,
                         BlasLt::GetMatmulPlan(stream_, gemm_config, epilogue));
 
-    TF_ASSIGN_OR_RETURN(auto algorithms, plan->GetAlgorithms());
+    TF_ASSIGN_OR_RETURN(
+        auto algorithms,
+        plan->GetAlgorithms(/*max_algorithm_count*/ 128,
+                            /*max_workspace_size*/ workspace_buffer.size()));
 
     auto tuned_func = [&](const BlasLt::MatmulAlgorithm& algorithm)
         -> absl::StatusOr<se::blas::ProfileResult> {
