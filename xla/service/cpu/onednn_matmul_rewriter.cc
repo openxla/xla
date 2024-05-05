@@ -688,13 +688,15 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
   Status HandleDivide(HloInstruction* instr) override {
     HloInstruction* matmul_call;
     HloInstruction* intermediate_instr = nullptr;
+    HloInstruction* optional_bitcast = nullptr;
     HloInstruction* src;
     if (SigmoidActivation(instr, &src)) {
       if (Match(src, ElementwiseSafeIntermediates(
-                         &intermediate_instr, OneDnnMatmulInstr(&matmul_call))
+                         &intermediate_instr, &optional_bitcast,
+                         OneDnnMatmulInstr(&matmul_call))
                          .WithOneUser())) {
         return FuseActivation(OneDnnMatMulConfig::SIGMOID, instr, matmul_call,
-                              intermediate_instr);
+                              intermediate_instr, optional_bitcast);
       }
     }
     return OkStatus();
