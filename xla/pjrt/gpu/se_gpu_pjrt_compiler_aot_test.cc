@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/MLIRContext.h"           // from @llvm-project
+#include "mlir/Parser/Parser.h"            // from @llvm-project
 #include "xla/client/xla_computation.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -177,6 +177,43 @@ TEST(StreamExecutorGpuCompilerTest, SuccessLoadFromSerializedExecutable) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto result, loaded_executable->Execute(/*argument_handles=*/{{}}, {}));
   ValidateResult(result);
+}
+
+constexpr absl::string_view kProgramIdentity = R"(HloModule Identity
+
+ENTRY main {
+  ROOT Arg_0.1 = s32[1]{0} parameter(0)
+})";
+
+TEST(StreamExecutorGpuCompilerTest, SuccessSerializeDeserialize) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  auto se_client = absl::WrapUnique(
+      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+  StreamExecutorGpuCompiler compiler;
+  xla::CompileOptions opts;
+  opts.target_config = Compiler::TargetConfig(
+      se_client->client()->backend().default_stream_executor());
+
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                          GetXlaComputation(kProgramIdentity));
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          se_client->GetTopologyDescription());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtLoadedExecutable> loaded_executable,
+      se_client->Load(std::move(executable)));
+
+  // Serialize the executable and deserialize it without failure.
+  TF_ASSERT_OK_AND_ASSIGN(std::string serialized_executable,
+                          se_client->SerializeExecutable(*loaded_executable));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto deserialized_executable,
+      se_client->DeserializeExecutable(serialized_executable, std::nullopt));
+
+  EXPECT_EQ(deserialized_executable->name(), "Identity");
 }
 
 }  // namespace
