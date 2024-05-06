@@ -12,46 +12,60 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-// #include "xla/service/gpu/fusions/reduction_mlir.h"
+/* Copyright 2024 The OpenXLA Authors.
 
-// #include <cstdint>
-// #include <iterator>
-// #include <vector>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-// #include "absl/algorithm/container.h"
-// #include "absl/container/flat_hash_map.h"
-// #include "absl/status/status.h"
-// #include "absl/types/span.h"
-// #include "llvm/ADT/DenseMap.h"
-// #include "llvm/ADT/STLExtras.h"
-// #include "llvm/ADT/SmallVector.h"
-// #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-// #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-// #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
-// #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-// #include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-// #include "mlir/IR/AffineExpr.h"  // from @llvm-project
-// #include "mlir/IR/AffineMap.h"  // from @llvm-project
-// #include "mlir/IR/Builders.h"  // from @llvm-project
-// #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-// #include "mlir/IR/Location.h"  // from @llvm-project
-// #include "mlir/IR/TypeRange.h"  // from @llvm-project
-// #include "mlir/IR/Value.h"  // from @llvm-project
-// #include "mlir/IR/ValueRange.h"  // from @llvm-project
-// #include "xla/hlo/ir/hlo_instruction.h"
-// #include "xla/hlo/ir/hlo_instructions.h"
-// #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
-// #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-// #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
-// #include "xla/service/gpu/fusions/mlir/type_util.h"
-// #include "xla/service/gpu/fusions/reduction_base.h"
-// #include "xla/service/gpu/hlo_fusion_analysis.h"
-// #include "xla/service/gpu/ir_emission_utils.h"
-// #include "xla/service/gpu/model/indexing_analysis.h"
-// #include "xla/service/gpu/model/indexing_map.h"
-// #include "xla/service/gpu/reduction_utils.h"
-// #include "xla/shape_util.h"
-// #include "xla/status_macros.h"
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+#include "xla/service/gpu/fusions/reduction_mlir.h"
+
+#include <cstdint>
+#include <iterator>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
+#include "absl/types/span.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
+#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"  // from @llvm-project
+#include "mlir/IR/AffineMap.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
+#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
+#include "mlir/IR/Location.h"  // from @llvm-project
+#include "mlir/IR/TypeRange.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
+#include "mlir/IR/ValueRange.h"  // from @llvm-project
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
+#include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
+#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
+#include "xla/service/gpu/fusions/mlir/type_util.h"
+#include "xla/service/gpu/fusions/reduction_base.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
+#include "xla/service/gpu/model/indexing_map.h"
+#include "xla/service/gpu/reduction_utils.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -222,6 +236,11 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
   llvm::SmallVector<Value> outputs =
       mlir::ValueRange(state.entry_function.getArguments().drop_front(
           state.fusion.fused_parameters().size()));
+  llvm::SmallVector<Value> epilogue_input_dims;
+  const auto& epilogue = state.computations.epilogues().front();
+  epilogue_input_dims = EmitThreadAndBlockIds(builder);
+  llvm::SmallVector<Value> epilogue_input_symbols(
+      epilogue.root_indexing.front().getNumSymbols(), zero);
 
   for (auto [index, hero] : llvm::enumerate(reduction_heroes_)) {
     int arity = hero->operand_count() / 2;
@@ -235,16 +254,11 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
   auto evaluate_epilogue = [&](const HloValueMap& results,
                                llvm::SmallVector<Value> outputs,
                                SmallVector<Value> symbols = {}) {
-    const auto& epilogue = state.computations.epilogues().front();
-    llvm::SmallVector<Value> epilogue_input_dims =
-        EmitThreadAndBlockIds(builder);
     llvm::SmallVector<Value> epilogue_indices = epilogue_input_dims;
     int num_symbols = epilogue.root_indexing.front().getNumSymbols();
-    CHECK(symbols.empty() || symbols.size() == num_symbols)
-        << "symbols should be empty or match epilogue symbos number.";
-    llvm::SmallVector<Value> epilogue_input_symbols(
-        epilogue.root_indexing.front().getNumSymbols(), zero);
     if (!symbols.empty()) {
+      CHECK(symbols.size() == num_symbols)
+          << "symbols should match epilogue symbos number.";
       epilogue_input_symbols = symbols;
     }
     epilogue_indices.append(epilogue_input_symbols);
@@ -256,9 +270,9 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
           epilogue_input_symbols, builder);
     }
 
-    auto values = EmitEpilogue(/*epilogue_index=*/0, state.computations,
-                               state.entry_function, results,
-                               epilogue_input_indices, builder);
+    auto values =
+        EmitEpilogue(/*epilogue_index=*/0, state.computations,
+                     state.entry_function, results, epilogue_indices, builder);
 
     for (auto root : epilogue.roots) {
       for (auto [result_index, result] : llvm::enumerate(values.at(root))) {
