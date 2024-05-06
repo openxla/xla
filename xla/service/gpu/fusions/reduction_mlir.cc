@@ -12,46 +12,46 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/service/gpu/fusions/reduction_mlir.h"
+// #include "xla/service/gpu/fusions/reduction_mlir.h"
 
-#include <cstdint>
-#include <iterator>
-#include <vector>
+// #include <cstdint>
+// #include <iterator>
+// #include <vector>
 
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
-#include "absl/types/span.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/Location.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
-#include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
-#include "xla/service/gpu/fusions/mlir/type_util.h"
-#include "xla/service/gpu/fusions/reduction_base.h"
-#include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
-#include "xla/service/gpu/model/indexing_map.h"
-#include "xla/service/gpu/reduction_utils.h"
-#include "xla/shape_util.h"
-#include "xla/status_macros.h"
+// #include "absl/algorithm/container.h"
+// #include "absl/container/flat_hash_map.h"
+// #include "absl/status/status.h"
+// #include "absl/types/span.h"
+// #include "llvm/ADT/DenseMap.h"
+// #include "llvm/ADT/STLExtras.h"
+// #include "llvm/ADT/SmallVector.h"
+// #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+// #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+// #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
+// #include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
+// #include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
+// #include "mlir/IR/AffineExpr.h"  // from @llvm-project
+// #include "mlir/IR/AffineMap.h"  // from @llvm-project
+// #include "mlir/IR/Builders.h"  // from @llvm-project
+// #include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
+// #include "mlir/IR/Location.h"  // from @llvm-project
+// #include "mlir/IR/TypeRange.h"  // from @llvm-project
+// #include "mlir/IR/Value.h"  // from @llvm-project
+// #include "mlir/IR/ValueRange.h"  // from @llvm-project
+// #include "xla/hlo/ir/hlo_instruction.h"
+// #include "xla/hlo/ir/hlo_instructions.h"
+// #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
+// #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
+// #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
+// #include "xla/service/gpu/fusions/mlir/type_util.h"
+// #include "xla/service/gpu/fusions/reduction_base.h"
+// #include "xla/service/gpu/hlo_fusion_analysis.h"
+// #include "xla/service/gpu/ir_emission_utils.h"
+// #include "xla/service/gpu/model/indexing_analysis.h"
+// #include "xla/service/gpu/model/indexing_map.h"
+// #include "xla/service/gpu/reduction_utils.h"
+// #include "xla/shape_util.h"
+// #include "xla/status_macros.h"
 
 namespace xla {
 namespace gpu {
@@ -104,6 +104,10 @@ struct MlirReductionFusion::EmitterState {
 MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
     : ReductionFusionBase(analysis) {
   absl::flat_hash_set<const HloInstruction*> seen_heroes;
+  const auto& is_reduction_root =
+      reduction_info().GetGroups().is_reduction_root;
+  first_reduction_root_index_ = std::distance(
+      is_reduction_root.begin(), absl::c_find(is_reduction_root, true));
   for (auto [root, hero, is_reduction] :
        llvm::zip(analysis.fusion_roots(), analysis.fusion_heroes(),
                  reduction_info().GetGroups().is_reduction_root)) {
@@ -116,8 +120,7 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
 
 bool MlirReductionFusion::IsSupported(const HloFusionAnalysis& analysis) {
   auto info = ReductionInfo::Create(analysis);
-  return info.GetGroups().grouped_roots.size() == 1 && info.IsRaceFree() &&
-         !absl::c_linear_search(info.GetGroups().is_reduction_root, false);
+  return info.GetGroups().grouped_roots.size() == 1 && info.IsRaceFree();
 }
 
 std::vector<mlir_converter::EpilogueSpecification>
@@ -206,13 +209,13 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
   Value thread_has_output;
   if (elems_write_per_thread == 1) {
     thread_has_output = mlir_converter::CheckConstraints(
-        *ComputeThreadIdToOutputIndexing(0, ctx), thread_and_block_indices, {},
-        builder);
+        *ComputeThreadIdToOutputIndexing(first_reduction_root_index_, ctx),
+        thread_and_block_indices, {}, builder);
   } else {
     // Has checked (dim % (elems * num_threads_x)) == 0.
     thread_has_output = mlir_converter::CheckConstraints(
-        *ComputeThreadIdToOutputIndexing(0, ctx), thread_and_block_indices,
-        {zero}, builder);
+        *ComputeThreadIdToOutputIndexing(first_reduction_root_index_, ctx),
+        thread_and_block_indices, {zero}, builder);
   }
 
   HloValueMap inits;
@@ -233,24 +236,24 @@ absl::Status MlirReductionFusion::EmitReduction(EmitterState& state) const {
                                llvm::SmallVector<Value> outputs,
                                SmallVector<Value> symbols = {}) {
     const auto& epilogue = state.computations.epilogues().front();
-    llvm::SmallVector<Value> indices = EmitThreadAndBlockIds(builder);
-    llvm::SmallVector<Value> epilogue_input_indices = indices;
+    llvm::SmallVector<Value> epilogue_input_dims =
+        EmitThreadAndBlockIds(builder);
+    llvm::SmallVector<Value> epilogue_indices = epilogue_input_dims;
     int num_symbols = epilogue.root_indexing.front().getNumSymbols();
     CHECK(symbols.empty() || symbols.size() == num_symbols)
         << "symbols should be empty or match epilogue symbos number.";
-    if (symbols.empty()) {
-      for (int i = 0; i < num_symbols; ++i) {
-        epilogue_input_indices.push_back(zero);
-      }
-    } else {
-      epilogue_input_indices.append(symbols.begin(), symbols.end());
+    llvm::SmallVector<Value> epilogue_input_symbols(
+        epilogue.root_indexing.front().getNumSymbols(), zero);
+    if (!symbols.empty()) {
+      epilogue_input_symbols = symbols;
     }
+    epilogue_indices.append(epilogue_input_symbols);
 
     HloValueMap root_output_indices;
     for (auto [index, root] : llvm::enumerate(epilogue.roots)) {
       root_output_indices[root] = mlir_converter::ApplyAffineMap(
-          epilogue.root_indexing[index], indices, symbols,
-          builder);
+          epilogue.root_indexing[index], epilogue_input_dims,
+          epilogue_input_symbols, builder);
     }
 
     auto values = EmitEpilogue(/*epilogue_index=*/0, state.computations,
@@ -398,6 +401,13 @@ HloValueMap MlirReductionFusion::EmitterState::EmitPerThreadReducedElements(
         tile_indexing.GetAffineMap(), dim_values, symbol_values, builder);
 
     llvm::SmallVector<Value> results;
+    struct SideOutput {
+      Value tensor;
+      llvm::SmallVector<Value> indices;
+      Value scalar;
+      int result_index;
+    };
+    llvm::SmallVector<SideOutput> side_outputs;
     int start = 0;
     for (auto [is_reduction, hero] :
          llvm::zip(owner.reduction_info().GetGroups().is_reduction_root,
@@ -429,10 +439,19 @@ HloValueMap MlirReductionFusion::EmitterState::EmitPerThreadReducedElements(
         Value value = mlir_converter::ProvideParameter(
             computation, root_tuple, root_tuple->operand_index(hero),
             input_indices, call_target, entry_function, builder);
-        results.push_back(builder.create<mlir::tensor::InsertOp>(
-            value, iter_args[start], input_indices));
+        // Tensor insertions turn into writes, so they have to happen in the
+        // end. This could be considered a bug in the lowering, but since we
+        // don't have bufferization, we need to handle it here.
+        side_outputs.push_back(
+            {iter_args[start], std::move(input_indices), value, start});
+        results.push_back(nullptr);
         ++start;
       }
+    }
+    for (auto& side_output : side_outputs) {
+      results[side_output.result_index] =
+          builder.create<mlir::tensor::InsertOp>(
+              side_output.scalar, side_output.tensor, side_output.indices);
     }
     return results;
   };

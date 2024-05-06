@@ -122,6 +122,7 @@ cc_library(
         ":memset_thunk",
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
+        ":nccl_collective_thunk",
         ":replica_id_thunk",
         ":sequential_thunk",
         ":wait_for_streams_thunk",
@@ -289,6 +290,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/lib/gtl:int_type",
     ],
 )
 
@@ -923,13 +925,13 @@ cc_library(
     deps = [
         ":nccl_clique_key",
         ":nccl_collective_thunk",
+        "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_ops_utils",
         "//xla/service:hlo_parser",
-        "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_headers",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",

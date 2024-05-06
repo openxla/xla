@@ -1,7 +1,7 @@
 diff --ruN a/stablehlo/CMakeLists.txt b/stablehlo/CMakeLists.txt
 --- stablehlo/CMakeLists.txt
 +++ stablehlo/CMakeLists.txt
-@@ -13,153 +13,20 @@
+@@ -13,154 +13,20 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
  #
@@ -43,6 +43,7 @@ diff --ruN a/stablehlo/CMakeLists.txt b/stablehlo/CMakeLists.txt
  #-------------------------------------------------------------------------------
 -option(STABLEHLO_BUILD_EMBEDDED "Build StableHLO as part of another project" OFF)
 -option(STABLEHLO_ENABLE_BINDINGS_PYTHON "Enables StableHLO Python bindings" OFF)
+-option(STABLEHLO_ENABLE_PYTHON_TF_TESTS "Enables StableHLO to SavedModel tests requiring TF" OFF)
 -option(STABLEHLO_ENABLE_STRICT_BUILD "Build StableHLO with strict warnings and warnings as errors" OFF)
 -option(STABLEHLO_ENABLE_SANITIZER "Enable a sanitizer [OFF, address]" OFF)
 -option(STABLEHLO_ENABLE_SPLIT_DWARF "Enable split DWARF if the platform supports it" OFF)
@@ -174,6 +175,174 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
  add_subdirectory(integrations)
  add_subdirectory(reference)
  add_subdirectory(tests)
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/convolution.mlir b/stablehlo/stablehlo/conversions/linalg/tests/convolution.mlir
+--- stablehlo/stablehlo/conversions/linalg/tests/convolution.mlir
++++ stablehlo/stablehlo/conversions/linalg/tests/convolution.mlir
+@@ -356,7 +356,7 @@
+ }
+ // CHECK-DAG:       %[[CST:.+]] = arith.constant 0.000000e+00 : f32
+ // CHECK:       %[[COLLAPSE:.+]] = tensor.collapse_shape %[[FILTER]] {{\[}}[0, 1, 2, 3]] : tensor<2x2x1x6xf32> into tensor<24xf32>
+-// CHECK:       %[[EXPAND:.+]] = tensor.expand_shape %[[COLLAPSE]] {{\[}}[0, 1, 2, 3]] : tensor<24xf32> into tensor<2x2x2x3xf32>
++// CHECK:       %[[EXPAND:.+]] = tensor.expand_shape %[[COLLAPSE]] {{\[}}[0, 1, 2, 3]] output_shape [2, 2, 2, 3] : tensor<24xf32> into tensor<2x2x2x3xf32>
+ // CHECK:       %[[INIT:.+]] = tensor.empty() : tensor<2x3x4x2x3xf32>
+ // CHECK:       %[[FILL:.+]] = linalg.fill ins(%[[CST]] : f32) outs(%[[INIT]] : tensor<2x3x4x2x3xf32>) -> tensor<2x3x4x2x3xf32>
+ // CHECK:       %[[OUT:.+]] = linalg.depthwise_conv_2d_nhwc_hwcm
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir b/stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
+--- stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
++++ stablehlo/stablehlo/conversions/linalg/tests/miscellaneous.mlir
+@@ -865,7 +865,7 @@
+   %0 = "stablehlo.reshape"(%arg0) : (tensor<i32>) -> tensor<1xi32>
+   func.return %0 : tensor<1xi32>
+ }
+-// CHECK: tensor.expand_shape %{{.*}} [] : tensor<i32> into tensor<1xi32>
++// CHECK: tensor.expand_shape %{{.*}} [] output_shape [1] : tensor<i32> into tensor<1xi32>
+ 
+ // -----
+ 
+@@ -876,7 +876,7 @@
+   func.return %0 : tensor<1xui32>
+ }
+ // CHECK:         %[[ARG_SIGNLESS:.*]] = builtin.unrealized_conversion_cast %[[ARG_UNSIGNED]] : tensor<ui32> to tensor<i32>
+-// CHECK:         %[[RET_SIGNLESS:.*]] = tensor.expand_shape %[[ARG_SIGNLESS]] [] : tensor<i32> into tensor<1xi32>
++// CHECK:         %[[RET_SIGNLESS:.*]] = tensor.expand_shape %[[ARG_SIGNLESS]] [] output_shape [1] : tensor<i32> into tensor<1xi32>
+ // CHECK:         %[[RET_UNSIGNED:.*]] = builtin.unrealized_conversion_cast %[[RET_SIGNLESS]] : tensor<1xi32> to tensor<1xui32>
+ // CHECK:         return %[[RET_UNSIGNED]] : tensor<1xui32>
+ 
+@@ -978,7 +978,7 @@
+ }
+ // CHECK: %[[FLATTEN:.*]] = tensor.collapse_shape %{{.*}} {{\[}}[0, 1]] : tensor<?x?xf32> into tensor<?xf32>
+ // CHECK: %[[CAST:.*]] = tensor.cast %[[FLATTEN]] : tensor<?xf32> to tensor<40xf32>
+-// CHECK: tensor.expand_shape %[[CAST]] {{\[}}[0, 1, 2]] : tensor<40xf32> into tensor<2x4x5xf32>
++// CHECK: tensor.expand_shape %[[CAST]] {{\[}}[0, 1, 2]] output_shape [2, 4, 5] : tensor<40xf32> into tensor<2x4x5xf32>
+ 
+ // -----
+ 
+@@ -988,7 +988,7 @@
+   func.return %0 : tensor<1x3xi32>
+ }
+ // CHECK: %[[CAST:.*]] = tensor.cast %{{.*}} : tensor<?xi32> to tensor<3xi32>
+-// CHECK: tensor.expand_shape %[[CAST]] {{\[}}[0, 1]] : tensor<3xi32> into tensor<1x3xi32>
++// CHECK: tensor.expand_shape %[[CAST]] {{\[}}[0, 1]] output_shape [1, 3] : tensor<3xi32> into tensor<1x3xi32>
+ 
+ // -----
+ 
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/tests/random.mlir b/stablehlo/stablehlo/conversions/linalg/tests/random.mlir
+--- stablehlo/stablehlo/conversions/linalg/tests/random.mlir
++++ stablehlo/stablehlo/conversions/linalg/tests/random.mlir
+@@ -480,8 +480,8 @@
+ // CHECK-DAG:   %[[VAL_101:.*]] = arith.xori %[[VAL_100]], %[[VAL_87]] : i32
+ 
+ // CHECK: linalg.yield %[[YIELDED_1:.*]], %[[YIELDED_2:.*]] : i64, i64
+-// CHECK-DAG: %[[VAL_206:.*]] = tensor.expand_shape %[[VAL_207:.*]]#0 {{\[\[}}0, 1]] : tensor<4xi64> into tensor<4x1xi64>
+-// CHECK-DAG: %[[VAL_208:.*]] = tensor.expand_shape %[[VAL_207]]#1 {{\[\[}}0, 1]] : tensor<4xi64> into tensor<4x1xi64>
++// CHECK-DAG: %[[VAL_206:.*]] = tensor.expand_shape %[[VAL_207:.*]]#0 {{\[\[}}0, 1]]
++// CHECK-DAG: %[[VAL_208:.*]] = tensor.expand_shape %[[VAL_207]]#1 {{\[\[}}0, 1]]
+ // CHECK-DAG: %[[VAL_209:.*]] = tensor.empty() : tensor<4x2xi64>
+ // CHECK-DAG: %[[VAL_213:.*]] = tensor.insert %[[VAL_30]] into %[[VAL_0]]{{\[}}%[[VAL_19]]] : tensor<2xi64>
+ 
+@@ -575,10 +575,10 @@
+ // CHECK: %[[COLLAPSE:.+]] = tensor.collapse_shape %[[CONCAT]]
+ 
+ 
+-// CHECK: %[[VAL_213:.*]] = tensor.expand_shape %[[COLLAPSE]] {{\[\[}}0, 1]] : tensor<80xi32> into tensor<80x1xi32>
++// CHECK: %[[VAL_213:.*]] = tensor.expand_shape %[[COLLAPSE]] {{\[\[}}0, 1]]
+ // CHECK: %[[VAL_214:.*]] = tensor.extract_slice %[[VAL_213]][0, 0] [77, 1] [1, 1] : tensor<80x1xi32> to tensor<77x1xi32>
+ // CHECK: %[[VAL_215:.*]] = tensor.collapse_shape %[[VAL_214]] {{\[\[}}0, 1]] : tensor<77x1xi32> into tensor<77xi32>
+-// CHECK: %[[VAL_216:.*]] = tensor.expand_shape %[[VAL_215]] {{\[\[}}0, 1]] : tensor<77xi32> into tensor<7x11xi32>
++// CHECK: %[[VAL_216:.*]] = tensor.expand_shape %[[VAL_215]] {{\[\[}}0, 1]]
+ // CHECK: %[[VAL_217:.*]] = tensor.insert %[[NEWSTATE]] into %[[ARG0]]{{\[}}%[[C1]]] : tensor<2xi64>
+ // CHECK: return %[[VAL_217]], %[[VAL_216]] : tensor<2xi64>, tensor<7x11xi32>
+ 
+@@ -616,10 +616,10 @@
+ // CHECK-DAG: %[[COLLAPSE:.+]] = tensor.collapse_shape %[[CONCAT]] {{\[\[}}0, 1]] : tensor<8x2xi64> into tensor<16xi64>
+ 
+ 
+-// CHECK-DAG: %[[EXPANDED:.*]] = tensor.expand_shape %[[COLLAPSE]] {{\[\[}}0, 1]] : tensor<16xi64> into tensor<16x1xi64>
++// CHECK-DAG: %[[EXPANDED:.*]] = tensor.expand_shape %[[COLLAPSE]] {{\[\[}}0, 1]]
+ // CHECK-DAG: %[[SLICE:.*]] = tensor.extract_slice %[[EXPANDED]][0, 0] [15, 1] [1, 1] : tensor<16x1xi64> to tensor<15x1xi64>
+ // CHECK-DAG: %[[EXPAND_2:.*]] = tensor.collapse_shape %[[SLICE]] {{\[\[}}0, 1]] : tensor<15x1xi64> into tensor<15xi64>
+-// CHECK-DAG: %[[RESHAPE:.*]] = tensor.expand_shape %[[EXPAND_2]] {{\[\[}}0, 1]] : tensor<15xi64> into tensor<3x5xi64>
++// CHECK-DAG: %[[RESHAPE:.*]] = tensor.expand_shape %[[EXPAND_2]] {{\[\[}}0, 1]]
+ // CHECK-DAG: %[[INSERTED:.+]] = tensor.insert %[[NEWSTATE]] into %[[ARG0]][%[[C1]]] : tensor<2xi64>
+ // CHECK: return %[[INSERTED]], %[[RESHAPE]]
+ 
+diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp b/stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
+--- stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
++++ stablehlo/stablehlo/conversions/linalg/transforms/StablehloLegalizeToLinalg.cpp
+@@ -829,7 +829,7 @@
+     // TODO(#2216) Cleanup Attribute -> DenseArrayAttr
+     rewriter.replaceOpWithNewOp<linalg::TransposeOp>(
+         op, adaptor.getOperand(), emptyTensor,
+-        op.getPermutationAttr().dyn_cast_or_null<DenseI64ArrayAttr>(),
++        llvm::dyn_cast_or_null<DenseI64ArrayAttr>(op.getPermutationAttr()),
+         linalg::getPrunedAttributeList(op));
+     return success();
+   }
+diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/binary.mlir b/stablehlo/stablehlo/conversions/tosa/tests/binary.mlir
+--- stablehlo/stablehlo/conversions/tosa/tests/binary.mlir
++++ stablehlo/stablehlo/conversions/tosa/tests/binary.mlir
+@@ -45,14 +45,14 @@
+ 
+ // CHECK-LABEL: @divide
+ func.func @divide(%arg0 : tensor<10xi32>, %arg1 : tensor<10xi32>) -> tensor<10xi32> {
+-  // CHECK: tosa.div
++  // CHECK: tosa.int_div
+   %0 = "stablehlo.divide"(%arg0, %arg1) : (tensor<10xi32>, tensor<10xi32>) -> tensor<10xi32>
+   return %0 : tensor<10xi32>
+ }
+ 
+ // CHECK-LABEL: @divide_f32
+ func.func @divide_f32(%arg0 : tensor<10xf32>, %arg1 : tensor<10xf32>) -> tensor<10xf32> {
+-  // tosa.div only supports i32, so this should not legalize.
++  // tosa.int_div only supports i32, so this should not legalize.
+   // CHECK: stablehlo.divide
+   %0 = "stablehlo.divide"(%arg0, %arg1) : (tensor<10xf32>, tensor<10xf32>) -> tensor<10xf32>
+   return %0 : tensor<10xf32>
+diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.pdll b/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.pdll
+--- stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.pdll
++++ stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.pdll
+@@ -125,7 +125,7 @@
+ Pattern =>
+   replace op<stablehlo.divide>(input0 : Value<_: Tosa_Int32Tensor>,
+                           input1 : Value<_: Tosa_Int32Tensor>)
+-     with op<tosa.div>(input0, input1);
++     with op<tosa.int_div>(input0, input1);
+ Pattern =>
+   replace op<stablehlo.maximum>(input0 : Value<_: Tosa_Tensor>,
+                            input1 : Value<_: Tosa_Tensor>)
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloAttrs.td b/stablehlo/stablehlo/dialect/StablehloAttrs.td
+--- stablehlo/stablehlo/dialect/StablehloAttrs.td
++++ stablehlo/stablehlo/dialect/StablehloAttrs.td
+@@ -30,7 +30,7 @@
+   let valueType = DenseI64ArrayAttr.valueType;
+   let returnType = "::llvm::ArrayRef<int64_t>";
+   let baseAttr = DenseI64ArrayAttr;
+-  let convertFromStorage = "$_self.cast<DenseI64ArrayAttr>().asArrayRef()";
++  let convertFromStorage = "cast<DenseI64ArrayAttr>($_self).asArrayRef()";
+   let constBuilderCall = "$_builder.getDenseI64ArrayAttr($0)";
+ }
+ 
+@@ -38,7 +38,7 @@
+   let storageType = "Attribute";
+   let valueType = DenseBoolArrayAttr.valueType;
+   let returnType = "::llvm::ArrayRef<bool>";
+-  let convertFromStorage = "$_self.cast<DenseBoolArrayAttr>().asArrayRef()";
++  let convertFromStorage = "cast<DenseBoolArrayAttr>($_self).asArrayRef()";
+   let constBuilderCall = "$_builder.getDenseBoolArrayAttr($0)";
+ }
+ 
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -257,7 +257,7 @@
+ void ConstantOp::getAsmResultNames(
+     function_ref<void(Value, StringRef)> setNameFn) {
+   mlir::TensorType type = getType();
+-  if (type.getElementType().isa<IntegerType>()) {
++  if (isa<IntegerType>(type.getElementType())) {
+     setNameFn(getResult(), "c");
+   } else {
+     setNameFn(getResult(), "cst");
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
@@ -2056,7 +2225,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +    auto res = verifyCustomCallOpAttributes(
 +        op, rewriter, [&](NamedAttribute attr) -> LogicalResult {
 +          if (attr.getName() != "largest") return success();
-+          if (attr.getValue().cast<BoolAttr>().getValue() == false)
++          if (cast<BoolAttr>(attr.getValue()).getValue() == false)
 +            return rewriter.notifyMatchFailure(
 +                op, "largest = false is not supported.");
 +          return success();
@@ -2318,7 +2487,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDy
 +    // the verifier to make sure that its value is consistent with result type.
 +    if (!succeeded(hlo::matchInts(op.getOutputShape())))
 +      return rewriter.notifyMatchFailure(op, "expected static output_shape");
-+    if (!op.getOutput().getType().cast<ShapedType>().hasStaticShape())
++    if (!cast<ShapedType>(op.getOutput().getType()).hasStaticShape())
 +      return rewriter.notifyMatchFailure(op, "expected static output type");
 +    rewriter.replaceOpWithNewOp<RngBitGeneratorOp>(
 +        op, op->getResultTypes(), op.getRngAlgorithm(), op.getInitialState());
@@ -2340,7 +2509,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDy
 +      return rewriter.notifyMatchFailure(impl, "expected constant k");
 +
 +    // We rely on many of the properties checked by verification.
-+    auto valuesType = op.getValues().getType().cast<ShapedType>();
++    auto valuesType = cast<ShapedType>(op.getValues().getType());
 +    auto valuesLastDimSize = valuesType.getShape()[valuesType.getRank() - 1];
 +    if (hlo::isDynamicDimSize(valuesLastDimSize) ||
 +        valuesLastDimSize != k[0])
@@ -2492,7 +2661,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +    // At the moment, we only support refining return types using fully static
 +    // shape values which serves the current use cases well.
 +    // Support for partially static shape values is left for future work.
-+    auto initialStateType = op.getInitialState().getType().cast<ShapedType>();
++    auto initialStateType = cast<ShapedType>(op.getInitialState().getType());
 +    SmallVector<int64_t> outputShape;
 +    if (failed(hlo::matchInts(op.getOutputShape(), outputShape)))
 +      return rewriter.notifyMatchFailure(op, "expected constant output_shape");
@@ -2512,7 +2681,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +    if (!maybeOp || failed(maybeOp->verify())) return failure();
 +    DynamicTopKOpAdaptor op = *maybeOp;
 +
-+    auto operandType = op.getOperand().getType().cast<ShapedType>();
++    auto operandType = cast<ShapedType>(op.getOperand().getType());
 +    SmallVector<int64_t> outputShape(operandType.getShape());
 +    SmallVector<int64_t> k;
 +    if (failed(hlo::matchInts(op.getK(), k)))
@@ -2563,16 +2732,55 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
+--- stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
++++ stablehlo/stablehlo/tests/stablehlo_refine_shapes.mlir
+@@ -356,6 +356,18 @@
+   %0 = stablehlo.constant dense<[true, false]> : tensor<2xi1>
+   %1 = stablehlo.convert %0 : (tensor<2xi1>) -> tensor<2xi64>
+   return %1 : tensor<2xi64>
++}
++
++// -----
++
++// CHECK-LABEL: func @eval_convert_dynamic_shape
++func.func @eval_convert_dynamic_shape() -> tensor<?xi32> {
++  // CHECK-NOT: stablehlo.convert
++  // CHECK: [[RESULT:%.*]] = stablehlo.constant dense<[3, 4]> : tensor<2xi32>
++  // CHECK: return [[RESULT]]
++  %0 = stablehlo.constant dense<[3, 4]> : tensor<2xi32>
++  %1 = stablehlo.convert %0 : (tensor<2xi32>) -> tensor<?xi32>
++  return %1 : tensor<?xi32>
+ }
+ 
+ // -----
 diff --ruN a/stablehlo/stablehlo/transforms/StablehloAggressiveSimplification.cpp b/stablehlo/stablehlo/transforms/StablehloAggressiveSimplification.cpp
 --- stablehlo/stablehlo/transforms/StablehloAggressiveSimplification.cpp
 +++ stablehlo/stablehlo/transforms/StablehloAggressiveSimplification.cpp
-@@ -735,7 +735,7 @@
-       addToWorkList(retOp.getOperand(resultNo));
-       while (!workList.empty()) {
-         auto definition = workList.pop_back_val();
--        if (auto blockArg = definition.dyn_cast<BlockArgument>()) {
-+        if (auto blockArg = dyn_cast<BlockArgument>(definition)) {
-           // using one argument implies using the whole argument pair
-           const auto pairNo = blockArg.getArgNumber() % numOperandPairs;
-           usedArgs.set(pairNo);
+@@ -822,7 +822,7 @@
+ 
+     auto newOp = rewriter.create<ReduceOp>(
+         op.getLoc(), newInputs, newInitVals,
+-        op.getDimensionsAttr().cast<DenseI64ArrayAttr>(), newElementTypes);
++        cast<DenseI64ArrayAttr>(op.getDimensionsAttr()), newElementTypes);
+     Block *newReducerBlock = rewriter.createBlock(&newOp.getBody());
+ 
+     IRMapping mapper;
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+--- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
++++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
+@@ -482,9 +482,10 @@
+   LogicalResult matchAndRewrite(ConvertOp op,
+                                 PatternRewriter& rewriter) const override {
+     auto resultType = op.getType();
+-    if (!isa<IntegerType>(resultType.getElementType()))
+-      return rewriter.notifyMatchFailure(op,
+-                                         "expected integer result tensor type");
++    if (!isa<IntegerType>(resultType.getElementType()) ||
++        !resultType.hasStaticShape())
++      return rewriter.notifyMatchFailure(
++          op, "expected integer result tensor type with static shapes");
+     auto resultBitWidth = resultType.getElementType().getIntOrFloatBitWidth();
+     return evalElementwise(rewriter, op, [&](APSInt operand) {
+       return operand.extOrTrunc(resultBitWidth);
 
