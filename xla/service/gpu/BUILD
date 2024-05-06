@@ -763,7 +763,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "//xla/tsl/util/proto:proto_utils",
         "//xla/service/gpu:hlo_traversal",
-    ]),
+    ]) + ["@tsl//tsl/platform:path"],
 )
 
 xla_test(
