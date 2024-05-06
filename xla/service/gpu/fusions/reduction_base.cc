@@ -89,19 +89,21 @@ int64_t ComputeColReductionActiveCore(Vector3 reduction_dimensions,
 int GetVectorSize(const HloFusionAnalysis& analysis,
                   const ReductionDimensions& reduction_dimensions,
                   int64_t num_threads_y, int64_t num_threads_x,
-                  Vector3 reduction_tiling) {
+                  Vector3 reduction_tiling, bool for_mlir) {
   if (MayPreventVectorization(analysis.fusion())) {
     return 1;
   }
 
   constexpr int kColMinorKept = ReductionDimensions::kColMinorKeptDimension;
   if (!reduction_dimensions.is_row_reduction) {
-    int vector_size = 2;
-    auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
-    // Check if the last dimension is divisible by (vector_size *
-    // num_threads_x).
-    if (num_kept_minor % (vector_size * num_threads_x) == 0) {
-      return vector_size;
+    if (for_mlir) {
+      int vector_size = 2;
+      auto num_kept_minor = reduction_dimensions.dimensions[kColMinorKept];
+      // Check if the last dimension is divisible by (vector_size *
+      // num_threads_x).
+      if (num_kept_minor % (vector_size * num_threads_x) == 0) {
+        return vector_size;
+      }
     }
     return 1;
   }
@@ -181,7 +183,8 @@ std::tuple<Vector3, int, bool> AdjustColReductionTilingConfig(
           tile_size_decreased};
 }
 
-ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis) {
+ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis,
+                                        bool for_mlir) {
   const int num_fusion_outputs = analysis.fusion_root_count();
 
   CHECK_NE(0, num_fusion_outputs);
@@ -223,21 +226,33 @@ ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis) {
     }
   }
 
-  std::vector<HloInstructionAdaptor> instructions;
-  HloBfsConsumersFirstTraversal(
-      roots, analysis.fusion(),
-      [&](HloInstructionAdaptor consumer) {
-        auto& consumer_reachable = reachable_outputs[consumer];
-        for (auto producer : consumer.GetOperands()) {
-          reachable_outputs[producer].insert(consumer_reachable.begin(),
-                                             consumer_reachable.end());
-        }
-        instructions.push_back(consumer);
-        return TraversalResult::kAdvance;
-      },
-      [&](HloInstructionAdaptor argument) {
-        instructions.push_back(argument);
-      });
+  absl::flat_hash_set<HloInstructionAdaptor> instructions;
+
+  auto visit = [&](absl::Span<const HloInstructionAdaptor> roots) {
+    HloBfsConsumersFirstTraversal(
+        roots, analysis.fusion(),
+        [&](HloInstructionAdaptor consumer) {
+          auto& consumer_reachable = reachable_outputs[consumer];
+          for (auto producer : consumer.GetOperands()) {
+            reachable_outputs[producer].insert(consumer_reachable.begin(),
+                                               consumer_reachable.end());
+          }
+          instructions.insert(consumer);
+          return TraversalResult::kAdvance;
+        },
+        [&](HloInstructionAdaptor argument) { instructions.insert(argument); });
+  };
+
+  // The legacy emitter grouping is buggy: it does not visit instructions in the
+  // right order. We fix this only for the MLIR emitters, since we are migrating
+  // to them, and we can't rule out that some models rely on the buggy behavior.
+  if (for_mlir) {
+    for (auto root : roots) {
+      visit({root});
+    }
+  } else {
+    visit(roots);
+  }
 
   for (auto instr : instructions) {
     const auto& reachable = reachable_outputs[instr];
@@ -314,7 +329,8 @@ LaunchDimensions ReductionInfo::launch_dimensions() const {
                         /*y=*/1, /*z=*/1)};
 }
 
-ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
+ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
+                                    bool for_mlir) {
   auto* hero_reduction = analysis.FindHeroReduction();
   CHECK_NE(hero_reduction, nullptr);
   Shape input_shape = hero_reduction->operand(0)->shape();
@@ -374,7 +390,7 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
   }
 
   int vector_size = GetVectorSize(analysis, reduction_dimensions, num_threads_y,
-                                  num_threads_x, reduction_tiling);
+                                  num_threads_x, reduction_tiling, for_mlir);
   bool tile_size_decreased = false;
   if (!reduction_dimensions.is_row_reduction) {
     // Adjust tile_y and vector size for column reduction.
@@ -416,7 +432,8 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis) {
       (rows_per_warp == 1 && num_threads_x / WarpSize() > 1);
   return ReductionInfo(analysis, tiling, reduction_dimensions.is_row_reduction,
                        reduction_is_race_free, use_shared_cache,
-                       GroupDisjointReductions(analysis), hero_reduction);
+                       GroupDisjointReductions(analysis, for_mlir),
+                       hero_reduction);
 }
 
 std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(

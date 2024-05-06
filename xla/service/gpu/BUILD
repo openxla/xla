@@ -763,7 +763,7 @@ cc_library(
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "//xla/tsl/util/proto:proto_utils",
         "//xla/service/gpu:hlo_traversal",
-    ]),
+    ]) + ["@tsl//tsl/platform:path"],
 )
 
 xla_test(
@@ -4574,6 +4574,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
