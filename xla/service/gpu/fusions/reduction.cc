@@ -293,6 +293,15 @@ ReductionGroupEmitter::ReductionGroupEmitter(
          op_result_idx < GetNumOutputs(reduce_hlo->shape()); op_result_idx++) {
       Shape result_shape = OutputShape(reduce_hlo->shape(), op_result_idx);
 
+      llvm::Type* element_type = llvm_ir::PrimitiveTypeToIrType(
+          result_shape.element_type(), builder->GetInsertBlock()->getModule());
+      llvm::AllocaInst* reduction_input_address =
+          llvm_ir::EmitAllocaAtFunctionEntry(
+              element_type, "reduction_input_address", builder);
+
+      llvm::AllocaInst* result_address = llvm_ir::EmitAllocaAtFunctionEntry(
+          element_type, "partial_reduction_result", builder);
+
       const HloInstruction* init_value =
           reduce_hlo->init_values()[op_result_idx];
 
@@ -301,35 +310,7 @@ ReductionGroupEmitter::ReductionGroupEmitter(
           *init_value))(llvm_ir::IrArray::Index(builder->getInt32Ty()))
                                        .value();
 
-      llvm::Type* element_type = llvm_ir::PrimitiveTypeToIrType(
-          result_shape.element_type(), builder->GetInsertBlock()->getModule());
-
-      llvm::AllocaInst *reduction_input_address, *result_address;
-      int elems_write_per_thread = reduction_info.ElemsWritePerThread();
-      if (elems_write_per_thread == 1) {
-        reduction_input_address = llvm_ir::EmitAllocaAtFunctionEntry(
-            element_type, "reduction_input_address", builder);
-        result_address = llvm_ir::EmitAllocaAtFunctionEntry(
-            element_type, "partial_reduction_result", builder);
-        builder->CreateStore(init_ir_value, result_address);
-      } else {
-        reduction_input_address = llvm_ir::EmitAllocaAtFunctionEntryWithCount(
-            element_type,
-            llvm::ConstantInt::get(builder->getInt32Ty(),
-                                   elems_write_per_thread),
-            "reduction_input_address", builder);
-        result_address = llvm_ir::EmitAllocaAtFunctionEntryWithCount(
-            element_type,
-            llvm::ConstantInt::get(builder->getInt32Ty(),
-                                   elems_write_per_thread),
-            "partial_reduction_result", builder);
-        for (int id = 0; id < elems_write_per_thread; id++) {
-          auto slot = builder->CreateInBoundsGEP(element_type, result_address,
-                                                 {builder->getInt32(id)});
-          builder->CreateStore(init_ir_value, slot);
-        }
-      }
-
+      builder->CreateStore(init_ir_value, result_address);
       const Tiling& tiling = reduction_info.GetTiling();
       auto shared_cache = [&]() -> std::optional<llvm_ir::SharedMemoryTile> {
         auto* module = reduction_emitter.ir_emitter_context_.llvm_module();
@@ -623,9 +604,8 @@ llvm_ir::IrArray::Index ReductionGroupEmitter::GetOutputIndexForReduction(
         offset[ReductionDimensions::kColMinorKeptDimension],
         thread_ids[ReductionDimensions::kColReducedDimension]);
     return {{major_idx, minor_idx},
-            {shape.dimensions(ReductionDimensions::kColMajorKeptDimension),
-             shape.dimensions(ReductionDimensions::kColMinorKeptDimension) *
-                 reduction_info.ElemsWritePerThread()},
+            ShapeUtil::DeleteDimension(
+                ReductionDimensions::kColReducedDimension, shape),
             index_ty};
   }();
 
@@ -812,11 +792,8 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
   auto* builder = reduction_emitter_.builder_;
   KernelSupportLibrary ksl(builder);
   const HloComputation* reducer = reduction->to_apply();
-  TilingKernelInfo reduction_tiling_info = tiling_kernel_info;
-  auto& tile_origin = reduction_tiling_info.tile_origin;
-  auto& output_tile_bounds = reduction_tiling_info.output_tile_bounds;
-  auto& thread_id_info = reduction_tiling_info.thread_id_info;
-  auto& thread_ids = thread_id_info.thread_ids;
+  const auto& thread_id_info = tiling_kernel_info.thread_id_info;
+  const auto& thread_ids = thread_id_info.thread_ids;
 
   auto constant = [&](uint64_t c) -> llvm::Constant* {
     return llvm::ConstantInt::get(reduction_emitter_.index_ty_, c);
@@ -826,82 +803,55 @@ void ReductionGroupEmitter::EmitReductionOutputForColumnReduction(
   };
   const auto& reduction_info = reduction_emitter_.reduction_codegen_info_;
   const Tiling& tiling = reduction_info.GetTiling();
-  int elems_write_per_thread = reduction_info.ElemsWritePerThread();
   int num_outputs = reducer->num_parameters() / 2;
 
   auto* kept_index = thread_ids[ReductionDimensions::kColMinorKeptDimension];
   auto* reduced_index = thread_ids[ReductionDimensions::kColReducedDimension];
+
+  // Store the transpose in shared memory.
+  for (int output_idx = 0; output_idx < num_outputs; output_idx++) {
+    const auto& state = GetCalculationStateFor(reduction, output_idx);
+    auto* current_output_value =
+        builder->CreateLoad(state.partial_result_address->getAllocatedType(),
+                            state.partial_result_address);
+    state.shared_cache->Store(current_output_value, {kept_index, reduced_index},
+                              builder);
+  }
+
+  reduction_emitter_.EmitSyncThreads();
+
+  // Get transposed element from shared memory.
+  absl::InlinedVector<TypedPointer, 2> shmem_transposed_addrs;
+  for (int output_idx = 0; output_idx < num_outputs; output_idx++) {
+    const auto& state = GetCalculationStateFor(reduction, output_idx);
+    auto* shmem_transposed_addr =
+        state.shared_cache->Address({reduced_index, kept_index}, builder);
+    shmem_transposed_addrs.push_back(
+        {shmem_transposed_addr, state.shared_cache->GetElementType()});
+  }
+
+  EmitFullWarpShuffleDownLoopForReduce(reducer,
+                                       absl::MakeSpan(shmem_transposed_addrs),
+                                       tiling.GetNumThreadsPerBlock(),
+                                       /*num_results_per_warp=*/1);
 
   // Some warps in the block are completely outside of the bound of the
   // tensor, so they should not write any output at all.
   llvm::Value* has_output = builder->CreateAnd(
       builder->CreateICmpULT(
           reduced_index,
-          output_tile_bounds[ReductionDimensions::kColMinorKeptDimension]),
+          tiling_kernel_info
+              .output_tile_bounds[ReductionDimensions::kColMinorKeptDimension]),
       builder->CreateICmpULT(
           kept_index,
-          output_tile_bounds[ReductionDimensions::kColReducedDimension]));
+          tiling_kernel_info
+              .output_tile_bounds[ReductionDimensions::kColReducedDimension]));
 
-  constexpr int kVectorizedDimension =
-      ReductionDimensions::kVectorizedDimension;
-  if (elems_write_per_thread > 1) {
-    std::vector<llvm::Value*> tile_index = tile_origin.multidim();
-    tile_index[ReductionDimensions::kColMinorKeptDimension] =
-        builder->CreateMul(
-            tile_index[ReductionDimensions::kColMinorKeptDimension],
-            output_tile_bounds[kVectorizedDimension]);
-    tile_origin = llvm_ir::IrArray::Index(tile_index, tiling.GetShape(),
-                                          reduction_emitter_.index_ty_);
-  }
-
-  for (int dim = 0; dim < elems_write_per_thread; dim++) {
-    // Store the transpose in shared memory.
-    for (int output_idx = 0; output_idx < num_outputs; output_idx++) {
-      const auto& state = GetCalculationStateFor(reduction, output_idx);
-      auto* partial_result_address = builder->CreateInBoundsGEP(
-          state.partial_result_address->getAllocatedType(),
-          state.partial_result_address, {builder->getInt32(dim)});
-      auto* current_output_value =
-          builder->CreateLoad(state.partial_result_address->getAllocatedType(),
-                              partial_result_address);
-      state.shared_cache->Store(current_output_value,
-                                {kept_index, reduced_index}, builder);
-    }
-
-    reduction_emitter_.EmitSyncThreads();
-
-    // Get transposed element from shared memory.
-    absl::InlinedVector<TypedPointer, 2> shmem_transposed_addrs;
-    for (int output_idx = 0; output_idx < num_outputs; output_idx++) {
-      const auto& state = GetCalculationStateFor(reduction, output_idx);
-      auto* shmem_transposed_addr =
-          state.shared_cache->Address({reduced_index, kept_index}, builder);
-      shmem_transposed_addrs.push_back(
-          {shmem_transposed_addr, state.shared_cache->GetElementType()});
-    }
-    EmitFullWarpShuffleDownLoopForReduce(reducer,
-                                         absl::MakeSpan(shmem_transposed_addrs),
-                                         tiling.GetNumThreadsPerBlock(),
-                                         /*num_results_per_warp=*/1);
-    if (elems_write_per_thread > 1) {
-      thread_ids[ReductionDimensions::kColReducedDimension] =
-          builder->CreateAdd(
-              builder->CreateMul(reduced_index,
-                                 output_tile_bounds[kVectorizedDimension]),
-              llvm::ConstantInt::get(reduction_emitter_.index_ty_, dim));
-    }
-
-    ksl.If("reduction_write_output",
-           builder->CreateAnd(has_output, is_zero(thread_id_info.lane_id)),
-           [&] {
-             WriteReductionOutput(reduction_tiling_info, reduction, roots,
-                                  shmem_transposed_addrs);
-           });
-
-    if (dim + 1 < elems_write_per_thread) {
-      reduction_emitter_.EmitSyncThreads();
-    }
-  }
+  ksl.If("reduction_write_output",
+         builder->CreateAnd(has_output, is_zero(thread_id_info.lane_id)), [&] {
+           WriteReductionOutput(tiling_kernel_info, reduction, roots,
+                                shmem_transposed_addrs);
+         });
 }
 
 // Generate a single element of the tile (update the accumulator state) for a
@@ -911,8 +861,6 @@ void ReductionGroupEmitter::GenerateElementForReducer(
     const llvm_ir::IrArray::Index& index) const {
   HloComputation* reducer = reduction->to_apply();
   auto* builder = reduction_emitter_.builder_;
-  const ReductionInfo& reduction_info =
-      reduction_emitter_.reduction_codegen_info_;
   CHECK_EQ(reducer->num_parameters() % 2, 0);
 
   absl::InlinedVector<llvm::Value*, 2> reduction_accumulators;
@@ -920,23 +868,12 @@ void ReductionGroupEmitter::GenerateElementForReducer(
   for (int red_idx = 0; red_idx < reducer->num_parameters() / 2; red_idx++) {
     const auto& state = GetCalculationStateFor(reduction, red_idx);
 
-    llvm::Value* input_address = state.input_address;
-    llvm::Value* partial_result_address = state.partial_result_address;
-    if (reduction_info.ElemsWritePerThread() > 1) {
-      constexpr int kVectorizedDimension =
-          ReductionDimensions::kVectorizedDimension;
-      input_address = builder->CreateInBoundsGEP(
-          state.input_address->getAllocatedType(), input_address,
-          {index[kVectorizedDimension]});
-      partial_result_address = builder->CreateInBoundsGEP(
-          state.partial_result_address->getAllocatedType(),
-          partial_result_address, {index[kVectorizedDimension]});
-    }
+    llvm::AllocaInst* input_address = state.input_address;
     auto input_index =
         index.SourceIndexOfBitcast(reduction->operand(0)->shape(), builder);
     llvm::Value* const input_ir_value = *state.input_gen(input_index);
     builder->CreateStore(input_ir_value, input_address);
-    reduction_accumulators.push_back(partial_result_address);
+    reduction_accumulators.push_back(state.partial_result_address);
     reduction_input_value.push_back(input_address);
   }
 
