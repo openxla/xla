@@ -40,7 +40,7 @@ NcclCollectiveBroadcastStartThunk::NcclCollectiveBroadcastStartThunk(
     const HloCollectiveBroadcastInstruction* instr, std::vector<Buffer> buffers)
     : NcclCollectiveThunk(Thunk::kNcclCollectiveBroadcastStart, thunk_info,
                           nccl_api, IsSyncCollective(instr)),
-      config_(GetNcclCollectiveConfig(instr, std::nullopt)),
+      config_(GetNcclCollectiveConfig(instr, instr->use_global_device_ids())),
       buffers_(std::move(buffers)) {}
 
 /*static*/ Status NcclCollectiveBroadcastStartThunk::CheckImplementable(

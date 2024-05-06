@@ -1217,18 +1217,19 @@ HloCollectiveBroadcastInstruction::HloCollectiveBroadcastInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
     const CollectiveDeviceList& device_list, bool constrain_layout,
-    const std::optional<int64_t>& channel_id)
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids)
     : HloCollectiveInstruction(opcode, shape, operands, device_list,
-                               constrain_layout, channel_id) {}
+                               constrain_layout, channel_id),
+      use_global_device_ids_(use_global_device_ids) {}
 
 HloCollectiveBroadcastInstruction::HloCollectiveBroadcastInstruction(
     HloOpcode opcode, const Shape& shape,
     absl::Span<HloInstruction* const> operands,
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-    const std::optional<int64_t>& channel_id)
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids)
     : HloCollectiveBroadcastInstruction(opcode, shape, operands,
                                         CollectiveDeviceList(replica_groups),
-                                        constrain_layout, channel_id) {}
+                                        constrain_layout, channel_id, use_global_device_ids) {}
 
 HloInstructionProto HloCollectiveBroadcastInstruction::ToProto() const {
   return HloCollectiveInstruction::ToProto();
@@ -1240,7 +1241,7 @@ HloCollectiveBroadcastInstruction::CloneWithNewOperandsImpl(
     HloCloneContext* /*context*/) const {
   return std::make_unique<HloCollectiveBroadcastInstruction>(
       opcode(), shape, new_operands, device_list(), constrain_layout(),
-      channel_id());
+      channel_id(), use_global_device_ids());
 }
 
 HloCollectivePermuteInstruction::HloCollectivePermuteInstruction(

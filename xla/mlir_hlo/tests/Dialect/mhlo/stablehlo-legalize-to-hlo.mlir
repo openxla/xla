@@ -550,10 +550,12 @@ func.func @op_collective_broadcast(%arg0: tensor<1x2xi64>) -> tensor<1x2xi64> {
   //               CHECK: "mhlo.collective_broadcast"(%arg0) <{
   //          CHECK-SAME:   channel_handle = #mhlo.channel_handle<handle = 0, type = 0>,
   // CHECK-SAME{LITERAL}:   replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>
-  //          CHECK-SAME: }> : (tensor<1x2xi64>) -> tensor<1x2xi64>
+  //          CHECK-SAME:   use_global_device_ids
+  //          CHECK-SAME: } : (tensor<1x2xi64>) -> tensor<1x2xi64>
   %0 = "stablehlo.collective_broadcast"(%arg0) {
+    channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>,
     replica_groups = dense<[[0, 1]]> : tensor<1x2xi64>,
-    channel_handle = #stablehlo.channel_handle<handle = 0, type = 0>
+    use_global_device_ids
   } : (tensor<1x2xi64>) -> tensor<1x2xi64>
   func.return %0 : tensor<1x2xi64>
 }

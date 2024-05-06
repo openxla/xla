@@ -910,14 +910,14 @@ class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
       HloOpcode opcode, const Shape& shape,
       absl::Span<HloInstruction* const> operands,
       const CollectiveDeviceList& device_list, bool constrain_layout,
-      const std::optional<int64_t>& channel_id);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
 
   ABSL_DEPRECATED("Use CollectiveDeviceList instead of list of ReplicaGroup.")
   explicit HloCollectiveBroadcastInstruction(
       HloOpcode opcode, const Shape& shape,
       absl::Span<HloInstruction* const> operands,
       absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-      const std::optional<int64_t>& channel_id);
+      const std::optional<int64_t>& channel_id, bool use_global_device_ids);
 
   // Returns a serialized representation of this instruction.
   HloInstructionProto ToProto() const override;
@@ -926,11 +926,16 @@ class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
     return hlo->opcode() == HloOpcode::kCollectiveBroadcast;
   }
 
+    bool use_global_device_ids() const { return use_global_device_ids_; }
+
+
  private:
   // Implementation for non-common logic of CloneWithNewOperands.
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
       const Shape& shape, absl::Span<HloInstruction* const> new_operands,
       HloCloneContext* context) const override;
+      bool use_global_device_ids_;
+
 };
 
 class HloCollectivePermuteInstruction : public HloChannelInstruction {

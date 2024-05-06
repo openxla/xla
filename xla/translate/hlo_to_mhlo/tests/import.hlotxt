@@ -324,8 +324,9 @@ add {
   // CHECK-NEXT:  "mhlo.collective_broadcast"([[ARG]]) <{
   // CHECK-SAME:    channel_handle = #mhlo.channel_handle<handle = 1, type = 0>,
   // CHECK-SAME{LITERAL}    replica_groups = {{0,1}{2,3}}
-  // CHECK-SAME:  }> : (tensor<128x32xf32>) -> tensor<128x32xf32>
-  ROOT root = f32[128,32]{1,0} collective-broadcast(%input), replica_groups={{0,1},{2,3}}, channel_id=1
+  // CHECK-SAME: use_global_device_ids
+  // CHECK-SAME:  } : (tensor<128x32xf32>) -> tensor<128x32xf32>
+  ROOT root = f32[128,32]{1,0} collective-broadcast(%input), replica_groups={{0,1},{2,3}}, channel_id=1, use_global_device_ids=true
 }
 
 // CHECK-LABEL:  func private @test_collective_permute

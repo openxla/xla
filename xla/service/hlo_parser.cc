@@ -1777,6 +1777,9 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
                                  AttrTy::kBracedInt64ListList, &tmp_groups};
       optional<int64_t> channel_id;
       attrs["channel_id"] = {/*required=*/false, AttrTy::kInt64, &channel_id};
+      optional<bool> use_global_device_ids;
+      attrs["use_global_device_ids"] = {/*required=*/false, AttrTy::kBool,
+                                  &use_global_device_ids};
       if ((!preset_operands && !ParseOperands(&operands, builder)) ||
           !ParseAttributes(attrs, allow_attributes)) {
         return nullptr;
@@ -1787,7 +1790,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       return builder->AddInstruction(HloInstruction::CreateCollectiveBroadcast(
           *shape, operands, CollectiveDeviceList(replica_groups), false,
-          channel_id));
+          channel_id, use_global_device_ids ? *use_global_device_ids : false));
     }
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteStart: {

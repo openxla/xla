@@ -763,7 +763,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           proto.replica_groups().begin(), proto.replica_groups().end());
       instruction = CreateCollectiveBroadcast(
           shape, all_operands(), CollectiveDeviceList(replica_groups), false,
-          channel_id);
+          channel_id, proto.use_global_device_ids());
       break;
     }
     case HloOpcode::kCollectivePermute:
@@ -1624,20 +1624,20 @@ HloInstruction::CreateAllReduceStart(
 HloInstruction::CreateCollectiveBroadcast(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     const CollectiveDeviceList& device_list, bool constrain_layout,
-    const std::optional<int64_t>& channel_id) {
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids) {
   return std::make_unique<HloCollectiveBroadcastInstruction>(
       HloOpcode::kCollectiveBroadcast, shape, operands, device_list,
-      constrain_layout, channel_id);
+      constrain_layout, channel_id, use_global_device_ids);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
 HloInstruction::CreateCollectiveBroadcast(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     absl::Span<const ReplicaGroup> replica_groups, bool constrain_layout,
-    const std::optional<int64_t>& channel_id) {
+    const std::optional<int64_t>& channel_id, bool use_global_device_ids) {
   return CreateCollectiveBroadcast(shape, operands,
                                    CollectiveDeviceList(replica_groups),
-                                   constrain_layout, channel_id);
+                                   constrain_layout, channel_id, use_global_device_ids);
 }
 
 /* static */ std::unique_ptr<HloInstruction>

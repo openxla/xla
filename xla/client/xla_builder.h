@@ -865,7 +865,8 @@ class XlaBuilder {
 
   XlaOp CollectiveBroadcast(
       XlaOp operand, absl::Span<const ReplicaGroup> replica_groups,
-      const std::optional<ChannelHandle>& channel_id = std::nullopt);
+      const std::optional<ChannelHandle>& channel_id = std::nullopt, 
+      const std::optional<bool> use_global_device_ids=std::nullopt);
 
   XlaOp CollectivePermute(
       XlaOp operand,
@@ -1681,7 +1682,7 @@ class XlaBuilder {
 
   XlaOp CollectiveBroadcastImpl(XlaOp operand,
                                 absl::Span<const ReplicaGroup> replica_groups,
-                                const std::optional<ChannelHandle>& channel_id);
+                                const std::optional<ChannelHandle>& channel_id,std::optional<bool> use_global_device_ids);
 
   XlaOp CollectivePermuteImpl(
       XlaOp operand,

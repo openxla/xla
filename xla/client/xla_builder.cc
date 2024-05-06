@@ -3916,13 +3916,13 @@ XlaOp XlaBuilder::AllToAllTuple(
 
 XlaOp XlaBuilder::CollectiveBroadcast(
     XlaOp operand, absl::Span<const ReplicaGroup> replica_groups,
-    const std::optional<ChannelHandle>& channel_id) {
-  return CollectiveBroadcastImpl(operand, replica_groups, channel_id);
+    const std::optional<ChannelHandle>& channel_id, const std::optional<bool> use_global_device_ids) {
+  return CollectiveBroadcastImpl(operand, replica_groups, channel_id, use_global_device_ids);
 }
 
 XlaOp XlaBuilder::CollectiveBroadcastImpl(
     XlaOp operand, absl::Span<const ReplicaGroup> replica_groups,
-    const std::optional<ChannelHandle>& channel_id) {
+    const std::optional<ChannelHandle>& channel_id, const std::optional<bool> use_global_device_ids) {
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     HloInstructionProto instr;
@@ -3935,6 +3935,9 @@ XlaOp XlaBuilder::CollectiveBroadcastImpl(
     }
     if (channel_id.has_value()) {
       instr.set_channel_id(channel_id->handle());
+    }
+    if (use_global_device_ids.has_value()) {
+      instr.set_use_global_device_ids(*use_global_device_ids);
     }
 
     return AddInstruction(std::move(instr), HloOpcode::kCollectiveBroadcast,

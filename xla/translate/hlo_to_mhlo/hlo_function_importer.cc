@@ -998,12 +998,14 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       return new_operation;
     }
     case HloOpcode::kCollectiveBroadcast: {
-      auto collective_broadcast = Cast<HloChannelInstruction>(instruction);
+      auto collective_broadcast = Cast<HloCollectiveBroadcastInstruction>(instruction);
       attributes.push_back(ConvertReplicaGroups(
           collective_broadcast->replica_groups(), builder_));
       if (collective_broadcast->channel_id().has_value())
         attributes.push_back(
             ConvertChannelHandle(collective_broadcast->channel_id().value()));
+      if (collective_broadcast->use_global_device_ids())
+        attributes.push_back(ConvertUseGlobalDeviceIds());
       return func_builder
           ->create<mlir::mhlo::CollectiveBroadcastOp>(loc, result_type,
                                                       operands, attributes)
