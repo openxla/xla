@@ -149,6 +149,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
     ],
@@ -415,11 +416,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":status",
-        ":status_macros",
-        ":types",
         ":util",
         "@com_google_absl//absl/hash",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -537,12 +537,10 @@ xla_cc_test(
     srcs = ["primitive_util_test.cc"],
     deps = [
         ":shape_util",
-        ":status_macros",
         ":test",
         ":test_helpers",
-        ":types",
-        ":util",
         ":xla_data_proto_cc",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1222,6 +1220,7 @@ cc_library(
     hdrs = ["printer.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@tsl//tsl/platform:logging",
