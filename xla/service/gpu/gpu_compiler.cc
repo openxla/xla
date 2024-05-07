@@ -56,12 +56,12 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"            // from @llvm-project
+#include "mlir/IR/Diagnostics.h"           // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"       // from @llvm-project
+#include "mlir/IR/OwningOpRef.h"           // from @llvm-project
+#include "mlir/Support/LLVM.h"             // from @llvm-project
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -1369,15 +1369,18 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   const FloatSupport f8e4m3b11fnuz_support(F8E4M3B11FNUZ, F16);
   const GpuFloatSupport f8e5m2fnuz_support(gpu_version, F8E5M2FNUZ, F16);
   const GpuFloatSupport f8e4m3fnuz_support(gpu_version, F8E4M3FNUZ, F16);
-  auto add_float_normalization = [&](HloPassPipeline& pipeline) {
+  auto add_float_normalization = [&](HloPassPipeline& pipeline,
+                                     bool fp8_support = false) {
     auto& sub_pipeline =
         pipeline.AddPass<HloPassPipeline>("float_normalization");
     sub_pipeline.AddPass<FloatNormalization>(&bf16_support);
-    sub_pipeline.AddPass<FloatNormalization>(&f8e5m2_support);
-    sub_pipeline.AddPass<FloatNormalization>(&f8e4m3fn_support);
-    sub_pipeline.AddPass<FloatNormalization>(&f8e4m3b11fnuz_support);
-    sub_pipeline.AddPass<FloatNormalization>(&f8e5m2fnuz_support);
-    sub_pipeline.AddPass<FloatNormalization>(&f8e4m3fnuz_support);
+    if (fp8_support) {
+      sub_pipeline.AddPass<FloatNormalization>(&f8e5m2_support);
+      sub_pipeline.AddPass<FloatNormalization>(&f8e4m3fn_support);
+      sub_pipeline.AddPass<FloatNormalization>(&f8e4m3b11fnuz_support);
+      sub_pipeline.AddPass<FloatNormalization>(&f8e5m2fnuz_support);
+      sub_pipeline.AddPass<FloatNormalization>(&f8e4m3fnuz_support);
+    }
     // Remove `f32 -> bf16 -> f32` casts inserted by bf16 normalization.
     if (debug_options.xla_allow_excess_precision() &&
         debug_options.xla_gpu_simplify_all_fp_conversions()) {
@@ -1507,7 +1510,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
   // The GEMM fusion autotuner can insert new bf16 reductions that need to be
   // normalized again.
-  add_float_normalization(pipeline);
+  add_float_normalization(pipeline, /*fp8_support=*/true);
 
   // Clean up new_tuple described above.
   pipeline.AddPass<TupleSimplifier>();
