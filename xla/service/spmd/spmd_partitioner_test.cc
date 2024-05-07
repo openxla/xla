@@ -53,9 +53,7 @@ class SpmdPartitioningTest
       bool choose_faster_windowed_einsum = false,
       bool unroll_windowed_einsum = false,
       bool bidirectional_windowed_einsum = false,
-      int64_t threshold_for_windowed_einsum_mib = -1,
-      bool skip_checking_windowed_einsum_users = false,
-      bool disable_ag_rewrite_for_multiple_consumers = false) {
+      int64_t threshold_for_windowed_einsum_mib = -1) {
     // Some tests (BackpropFilter convs) set this flag false to test two
     // different paths of the implementation.
     SpmdPartitionerOptions options;
@@ -65,10 +63,6 @@ class SpmdPartitioningTest
         choose_faster_windowed_einsum;
     options.unroll_windowed_einsum = unroll_windowed_einsum;
     options.bidirectional_windowed_einsum = bidirectional_windowed_einsum;
-    options.skip_checking_windowed_einsum_users =
-        skip_checking_windowed_einsum_users;
-    options.disable_ag_rewrite_for_multiple_consumers =
-        disable_ag_rewrite_for_multiple_consumers;
     if (threshold_for_windowed_einsum_mib >= 0) {
       options.threshold_for_windowed_einsum_mib =
           threshold_for_windowed_einsum_mib;
@@ -133,16 +127,6 @@ std::string TestParamToString(
     case ShardingFormatPicker::ShardingType::kBestEffortV2:
       return "BestEffortV2";
   }
-}
-
-int64_t CountInstructions(const HloComputation& computation, HloOpcode opcode) {
-  int64_t count = 0;
-  for (const auto& instruction : computation.instructions()) {
-    if (instruction->opcode() == opcode) {
-      count++;
-    }
-  }
-  return count;
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -5236,42 +5220,6 @@ ENTRY entry {
               op::CollectivePermute(op::Parameter(0)));
   EXPECT_THAT(cp_conditional->false_computation()->root_instruction(),
               op::Parameter(0));
-}
-
-TEST_P(SpmdPartitioningTest, EinsumDisableRewriteForAgWithMultipleConsumers) {
-  absl::string_view hlo_string = R"(
-HloModule test, entry_computation_layout={(bf16[2,2048,24576]{2,1,0}, bf16[24576,98304]{1,0}, bf16[24576,98304]{1,0})->bf16[2,2048,98304]{2,1,0}}, num_partitions=4
-
-ENTRY main {
-  Arg_0.1 = bf16[2,2048,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
-  Arg_1.2 = bf16[24576,98304]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
-  dot.5 = bf16[2,2048,98304]{2,1,0} dot(Arg_0.1, Arg_1.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[1,1,4]<=[4]}
-  Arg_2.3 = bf16[24576,98304]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
-  dot.6 = bf16[2,2048,98304]{2,1,0} dot(Arg_0.1, Arg_2.3), lhs_contracting_dims={2}, rhs_contracting_dims={0}, sharding={devices=[1,1,4]<=[4]}
-  ROOT add.8 = bf16[2,2048,98304]{2,1,0} add(dot.5, dot.6), sharding={devices=[1,1,4]<=[4]}
-}
-
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto module,
-      PartitionComputation(hlo_string,
-                           /*num_devices=*/4,
-                           /*conv_halo_exchange_always_on_lhs =*/true,
-                           /*choose_faster_windowed_einsum =*/false,
-                           /*unroll_windowed_einsum =*/false,
-                           /*bidirectional_windowed_einsum=*/false,
-                           /*threshold_for_windowed_einsum_mib=*/0,
-                           /*skip_checking_windowed_einsum_users=*/true,
-                           /*disable_ag_rewrite_for_multiple_consumers=*/true));
-  // With disable_ag_rewrite_for_multiple_consumers set to true, we expect only
-  // 1 while loop to exist which is the rewritten windowed einsum loop for the
-  // first ag->dot pattern. The second dot which shares the same operand with
-  // the loop will remain as is.
-  EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kWhile),
-            1);
-  EXPECT_EQ(CountInstructions(*module->entry_computation(), HloOpcode::kDot),
-            1);
 }
 
 TEST_P(SpmdPartitioningTest,
