@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
 
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/executable_run_options.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/util/onednn_threadpool.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace cpu {
@@ -384,11 +384,10 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
   // scenarios in last two dimensions.
   // Col-major layouts are corrected to row-majow for BatchDot operation as
   // part of the layout-pass.
-  if (!IsBatchDot(*dot_instr)) {
-    if (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
-        !IsRowMajor(output_shape)) {
-      return false;
-    }
+  if (!IsBatchDot(*dot_instr) &&
+      (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
+       !IsRowMajor(output_shape))) {
+    return false;
   }
 
   auto dot_dim_numbers = dot_instr->dot_dimension_numbers();

@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "tsl/platform/cpu_info.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_matmul_rewriter.h"
@@ -27,7 +28,6 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace op = xla::testing::opcode_matchers;
 
@@ -846,6 +846,8 @@ TEST_F(MatmulTest, SimpleTestBF16WithMulAndAddFusion) {
     ; CHECK-DAG:   }
     ; CHECK:     }
     )");
+}
+
 TEST_F(MatmulTest, WeightsPrepackAndScratch) {
   const char* matmul_module_str = R"(
   HloModule matmul.test.f32
