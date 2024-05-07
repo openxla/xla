@@ -282,11 +282,13 @@ cc_library(
     deps = [
         ":status",
         ":statusor",
-        ":types",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:stacktrace",
+        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -295,11 +297,13 @@ xla_cc_test(
     size = "small",
     srcs = ["status_macros_test.cc"],
     deps = [
+        ":status",
         ":status_macros",
-        ":statusor",
         ":test",
         ":test_helpers",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -469,6 +473,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -493,6 +498,7 @@ cc_library(
     deps = [
         ":status",
         ":status_macros",
+        ":util",
         "//xla/service:hlo_lexer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -518,10 +524,7 @@ xla_cc_test(
     deps = [
         ":shape_util",
         ":status",
-        ":statusor",
         ":test",
-        ":test_helpers",
-        ":types",
         ":util",
         ":xla_data_proto_cc",
         "@com_google_absl//absl/strings",
@@ -995,6 +998,7 @@ cc_library(
         ":status",
         ":util",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:status",
     ],
 )
 
