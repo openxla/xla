@@ -176,6 +176,56 @@ cc_library(
 )
 
 cc_library(
+    name = "device_memory_handle",
+    srcs = ["device_memory_handle.cc"],
+    hdrs = ["device_memory_handle.h"],
+    deps = [
+        ":device_memory",
+        ":stream_executor_interface",
+    ],
+)
+
+cc_library(
+    name = "module_spec",
+    hdrs = ["module_spec.h"],
+    deps = [
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "scoped_module_handle",
+    hdrs = ["scoped_module_handle.h"],
+    deps = [
+        ":module_spec",
+        ":stream_executor_interface",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
+    name = "mock_stream_executor",
+    testonly = True,
+    hdrs = ["mock_stream_executor.h"],
+    deps = [
+        ":device_description",
+        ":device_memory",
+        ":event_interface",
+        ":kernel_spec",
+        ":module_spec",
+        ":stream_executor_headers",
+        ":stream_executor_interface",
+        ":stream_interface",
+        "//xla:test",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ] + if_static(["@com_google_protobuf//:protobuf"]),
+)
+
+cc_library(
     name = "data_type",
     hdrs = ["data_type.h"],
     visibility = [":internal"],
@@ -187,18 +237,24 @@ cc_library(
 
 cc_library(
     name = "device_memory_allocator",
+    srcs = ["device_memory_allocator.cc"],
     hdrs = ["device_memory_allocator.h"],
     deps = [
         ":device_memory",
         ":platform",
+        ":stream_executor_headers",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -376,7 +432,7 @@ cc_library(
 
 #===--------------------------------------------------------------------------------------------===#
 # StreamExecutor internal implementation (visible to StreamExecutor platform implementations)
-#===--------------------------------------------------------------------------------------------===#'
+#===--------------------------------------------------------------------------------------------===#
 
 # This header-only library is an internal implementation detail of StreamExecutor (to break
 # dependency cycles between internal libraries). All StreamExecutor clients should depend on a
@@ -679,6 +735,32 @@ xla_cc_test(
     srcs = ["dnn_test.cc"],
     deps = [
         ":dnn",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "scoped_module_handle_test",
+    srcs = ["scoped_module_handle_test.cc"],
+    deps = [
+        ":device_description",
+        ":mock_stream_executor",
+        ":module_spec",
+        ":scoped_module_handle",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "device_memory_handle_test",
+    srcs = ["device_memory_handle_test.cc"],
+    deps = [
+        ":device_memory",
+        ":device_memory_handle",
+        ":mock_stream_executor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

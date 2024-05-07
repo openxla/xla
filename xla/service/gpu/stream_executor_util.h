@@ -127,8 +127,8 @@ absl::StatusOr<se::dnn::ConvolutionKind> GetDNNConvKindFromCudnnConvKind(
 absl::StatusOr<se::dnn::NormKind> GetDNNNormKindFromCudnnNormKind(
     CudnnNormKind kind);
 
-absl::StatusOr<se::dnn::FusedMHAKind> GetDNNFusedMHAKindFromCudnnfMHAKind(
-    CudnnfMHAKind kind);
+absl::StatusOr<se::dnn::FMHAMaskKind> GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(
+    CudnnfMHAMaskKind kind);
 
 absl::StatusOr<se::dnn::DataType> GetDNNDataTypeFromPrimitiveType(
     PrimitiveType type);

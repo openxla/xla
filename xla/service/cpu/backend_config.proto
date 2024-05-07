@@ -45,6 +45,12 @@ message FactorLayoutProto {
   repeated uint64 shape = 2;  
 }
 
+message OneDnnOptimizationConfig {
+  bool weights_prepacked = 1;
+  bool user_scratchpad = 2;
+  bool bias_broadcast = 3;
+}
+
 message OneDnnFusionConfig {
   // These enum needs to be mapped to oneDNN enum for post_op algorithm.
   // TODO(intel-tf): Add kinds supported by oneDNN.
@@ -78,9 +84,8 @@ message OneDnnMatMulConfig {
   bool transpose_b = 2;
   
   OneDnnFusionConfig fusions = 3;
-  bool bias_broadcast = 4;
-  bool weights_prepacked = 6;
-  bool user_scratchpad = 7;
+  OneDnnOptimizationConfig optimization_config = 8;
+  // Next: 9
 }
 
 message WindowProto {

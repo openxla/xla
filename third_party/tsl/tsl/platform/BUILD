@@ -94,6 +94,7 @@ cc_library(
     deps = [
         ":byte_order",
         ":stringpiece",
+        ":tstring",
         ":types",
     ],
 )
@@ -1024,7 +1025,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@ml_dtypes//:float8",
-        "@ml_dtypes//:int4",
+        "@ml_dtypes//:intn",
     ],
 )
 

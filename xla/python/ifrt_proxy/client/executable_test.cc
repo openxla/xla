@@ -44,7 +44,7 @@
 #include "xla/python/ifrt_proxy/client/version.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/types.h"
-#include "tsl/concurrency/ref_count.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "tsl/platform/status_matchers.h"
@@ -138,7 +138,7 @@ TEST_F(LoadedExecutableTest, Metadata) {
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
       /*num_devices=*/2, /*addressable_device_logical_device_ids=*/{},
       /*addressable_devices=*/{}, /*fingerprint=*/"fingerprint",
-      /*ready_future=*/Future<absl::Status>(absl::OkStatus()),
+      /*ready_future=*/Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   EXPECT_THAT(
@@ -178,17 +178,16 @@ TEST_F(LoadedExecutableTest, Metadata) {
 #if defined(PLATFORM_GOOGLE)
 TEST_F(LoadedExecutableTest, Execute) {
   MockDevice device;
-  ON_CALL(device, global_device_id())
-      .WillByDefault(Return(xla::PjRtGlobalDeviceId(1)));
+  ON_CALL(device, Id()).WillByDefault(Return(DeviceId(1)));
 
   MockClient client;
-  ON_CALL(client, LookupDevice(1)).WillByDefault(Return(&device));
+  ON_CALL(client, LookupDevice(DeviceId(1))).WillByDefault(Return(&device));
 
   LoadedExecutable executable(
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
       /*num_devices=*/2, /*addressable_device_logical_device_ids=*/{},
       /*addressable_devices=*/{}, /*fingerprint=*/"fingerprint",
-      /*ready_future=*/Future<absl::Status>(absl::OkStatus()),
+      /*ready_future=*/Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   IfrtResponse response;
@@ -280,7 +279,7 @@ TEST_F(LoadedExecutableTest, Delete) {
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
       /*num_devices=*/2, /*addressable_device_logical_device_ids=*/{},
       /*addressable_devices=*/{}, /*fingerprint=*/"fingerprint",
-      /*ready_future=*/Future<absl::Status>(absl::OkStatus()),
+      /*ready_future=*/Future<>(absl::OkStatus()),
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
   {
@@ -313,7 +312,7 @@ TEST_F(LoadedExecutableTest, Delete) {
                                                     })pb")))))
         .WillOnce(MockClientSessionReturnResponse(response));
 
-    Future<absl::Status> result = executable.Delete();
+    Future<> result = executable.Delete();
     EXPECT_THAT(result.Await(),
                 StatusIs(absl::StatusCode::kUnknown, StrEq("injected error")));
   }

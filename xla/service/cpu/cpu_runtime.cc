@@ -168,6 +168,8 @@ extern const char* const kOneDnnConvolutionSymbolName =
     "__xla_cpu_runtime_OneDnnConvolution";
 extern const char* const kOneDnnMatMulReorderSymbolName =
     "__xla_cpu_runtime_OneDnnMatMulReorder";
+extern const char* const kHandleFfiCallSymbolName =
+    "__xla_cpu_runtime_HandleFfiCall";
 
 namespace {
 

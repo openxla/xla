@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "json/json.h"
 #include "xla/array.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1272,10 +1273,9 @@ std::vector<int64_t> GetTensorDimToMeshDim(
   }
 }
 
-Shape ComputeIntermediateShape(const HloSharding& src_sharding,
-                               const HloSharding& dst_sharding,
-                               const Shape& shape,
-                               const Array<int64_t>& device_mesh) {
+absl::StatusOr<Shape> ComputeIntermediateShape(
+    const HloSharding& src_sharding, const HloSharding& dst_sharding,
+    const Shape& shape, const Array<int64_t>& device_mesh) {
   int64_t src_n_dim = NumTileDimensions(src_sharding);
 
   const HloSharding* sharding_1d;
@@ -1293,8 +1293,10 @@ Shape ComputeIntermediateShape(const HloSharding& src_sharding,
     if (sharding_1d->tile_assignment().dim(i) == 1) {
       inter_shape_dims.push_back(shape.dimensions(i));
     } else {
-      CHECK(shape.dimensions(i) % device_mesh.dim(0) == 0)
-          << "Only support even partition";
+      // TODO(b/333750146): Support this case instead of bailing here
+      if (shape.dimensions(i) % device_mesh.dim(0) != 0) {
+        return absl::InternalError("Indivisible tensor dims");
+      }
       inter_shape_dims.push_back(device_mesh.dim(0));
       inter_shape_dims.push_back(shape.dimensions(i) / device_mesh.dim(0));
     }
@@ -1318,29 +1320,33 @@ HloInstruction* ReshardTensor(HloInstruction* tensor,
 
   HloInstruction* replace_with = nullptr;
   if (src_n_dim != dst_n_dim && src_n_dim != -1 && dst_n_dim != -1) {
-    Shape inter_shape = ComputeIntermediateShape(src_sharding, dst_sharding,
-                                                 shape, device_mesh);
+    absl::StatusOr<Shape> inter_shape = ComputeIntermediateShape(
+        src_sharding, dst_sharding, shape, device_mesh);
+    if (inter_shape.ok()) {
+      std::optional<HloSharding> src_inter_sharding =
+          hlo_sharding_util::ReshapeSharding(shape, *inter_shape, src_sharding);
+      std::optional<HloSharding> dst_inter_sharding =
+          hlo_sharding_util::ReshapeSharding(shape, *inter_shape, dst_sharding);
+      if (!src_inter_sharding.has_value() || !dst_inter_sharding.has_value()) {
+        src_inter_sharding = HloSharding::Replicate();
+        dst_inter_sharding = HloSharding::Replicate();
+        LOG(WARNING) << "Invalid mixed mesh shape resharding.";
+      }
 
-    std::optional<HloSharding> src_inter_sharding =
-        hlo_sharding_util::ReshapeSharding(shape, inter_shape, src_sharding);
-    std::optional<HloSharding> dst_inter_sharding =
-        hlo_sharding_util::ReshapeSharding(shape, inter_shape, dst_sharding);
-    if (!src_inter_sharding.has_value() || !dst_inter_sharding.has_value()) {
-      src_inter_sharding = HloSharding::Replicate();
-      dst_inter_sharding = HloSharding::Replicate();
-      LOG(WARNING) << "Invalid mixed mesh shape resharding.";
+      HloInstruction* src_inter = computation->AddInstruction(
+          HloInstruction::CreateReshape(*inter_shape, tensor));
+      src_inter->set_sharding(*src_inter_sharding);
+
+      HloInstruction* dst_inter = computation->AddInstruction(
+          HloInstruction::CreateReshape(*inter_shape, src_inter));
+      dst_inter->set_sharding(*dst_inter_sharding);
+
+      replace_with = computation->AddInstruction(
+          HloInstruction::CreateReshape(shape, dst_inter));
+    } else {
+      replace_with = computation->AddInstruction(
+          HloInstruction::CreateReshape(shape, tensor));
     }
-
-    HloInstruction* src_inter = computation->AddInstruction(
-        HloInstruction::CreateReshape(inter_shape, tensor));
-    src_inter->set_sharding(*src_inter_sharding);
-
-    HloInstruction* dst_inter = computation->AddInstruction(
-        HloInstruction::CreateReshape(inter_shape, src_inter));
-    dst_inter->set_sharding(*dst_inter_sharding);
-
-    replace_with = computation->AddInstruction(
-        HloInstruction::CreateReshape(shape, dst_inter));
   } else {
     replace_with = computation->AddInstruction(
         HloInstruction::CreateReshape(shape, tensor));
@@ -2023,6 +2029,7 @@ AdjustShardingWithPartialMeshShapePerElement(
 
 absl::StatusOr<bool> AdjustShardingsWithPartialMeshShape(
     const std::vector<HloInstruction*>& instructions,
+    const absl::flat_hash_set<const HloInstruction*>& instructions_to_shard,
     const std::vector<int64_t>& mesh_shape, int64_t total_num_devices,
     bool crash_on_error) {
   bool changed = false;
@@ -2033,7 +2040,7 @@ absl::StatusOr<bool> AdjustShardingsWithPartialMeshShape(
     }
   }
   for (HloInstruction* inst : instructions) {
-    if (!inst->has_sharding()) {
+    if (!inst->has_sharding() || !instructions_to_shard.contains(inst)) {
       continue;
     }
     if (inst->shape().IsTuple()) {
@@ -2220,7 +2227,8 @@ std::vector<std::vector<int64_t>> InferMeshShapesToTry(
       for (const HloSharding& child : sharding.tuple_elements()) {
         process_sharding(child);
       }
-    } else if (!sharding.IsReplicated() && !sharding.IsTileMaximal()) {
+    } else if (!sharding.IsReplicated() && !sharding.IsTileMaximal() &&
+               !sharding.IsManual()) {
       absl::Span<const int64_t> dims = sharding.tile_assignment().dimensions();
       std::vector<int64_t> dims_greater_than_one;
       for (const int64_t dim : dims) {
@@ -2334,6 +2342,36 @@ HloSharding ReplaceGivenShardingsWithUnknownForTuple(
   }
 
   return HloSharding::Tuple(shape, new_tuple_shardings);
+}
+
+absl::StatusOr<int64_t> GetPartialReduceReductionDim(
+    const HloInstruction* ins) {
+  constexpr char kReductionDimKey[] = "reduction_dim";
+  if (ins->raw_backend_config_string().empty()) {
+    return absl::InternalError(
+        "No backend config for a PartialReduce custom call.");
+  }
+  Json::Value parsed_json;
+  Json::Reader json_reader;
+  json_reader.parse(ins->raw_backend_config_string(), parsed_json,
+                    /* collectComments */ false);
+  if (!parsed_json.isObject()) {
+    return absl::InternalError(
+        "Error when parsing json backend config for a PartialReduce custom "
+        "call.");
+  }
+  if (!parsed_json.isMember(kReductionDimKey)) {
+    return absl::InternalError(
+        "No backend config found for a PartialReduce custom call.");
+  }
+
+  if (!parsed_json[kReductionDimKey].isInt64()) {
+    return absl::InternalError(
+        "Error when extracting the reduction key from the json backend config "
+        "of a PartialReduce custom call.");
+  }
+
+  return parsed_json[kReductionDimKey].asInt64();
 }
 
 }  // namespace spmd

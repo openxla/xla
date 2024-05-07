@@ -46,7 +46,7 @@
 #include "xla/python/ifrt_proxy/client/memory.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
-#include "tsl/concurrency/ref_count.h"
+#include "xla/tsl/concurrency/ref_count.h"
 
 namespace xla {
 namespace ifrt {
@@ -102,7 +102,8 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
   int process_index() const override { return process_index_; }
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override;
-  absl::StatusOr<xla::ifrt::Device*> LookupDevice(int device_id) const override;
+  absl::StatusOr<xla::ifrt::Device*> LookupDevice(
+      DeviceId device_id) const override;
   absl::StatusOr<xla::ifrt::Device*> LookupAddressableDevice(
       int local_hardware_id) const override {
     return absl::UnimplementedError(

@@ -60,7 +60,7 @@ def clean_dep(target):
     # Label() call appears, e.g. @local_tsl or tsl.
     # TODO(ddunleavy): update this during and after go/moving-tsl-into-xla-lsc
     label = Label(target)
-    not_yet_moved = ["concurrency", "distributed_runtime", "framework", "lib", "platform", "profiler", "protobuf"]
+    not_yet_moved = ["concurrency", "framework", "lib", "platform", "profiler", "protobuf"]
 
     if any([label.package.startswith("tsl/" + dirname) for dirname in not_yet_moved]):
         return "@tsl//" + label.package + ":" + label.name
@@ -463,7 +463,7 @@ def internal_hlo_deps():
 
 # Config setting selector used when building for products
 # which requires restricted licenses to be avoided.
-def if_not_mobile_or_arm_or_lgpl_restricted(a):
+def if_not_mobile_or_arm_or_macos_or_lgpl_restricted(a):
     _ = (a,)  # buildifier: disable=unused-variable
     return select({
         "//conditions:default": [],

@@ -39,7 +39,7 @@
 #include "xla/python/ifrt_proxy/server/host_callback.h"
 #include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "tsl/concurrency/ref_count.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "tsl/platform/status_to_from_proto.h"
 #include "tsl/platform/statusor.h"
 
@@ -110,7 +110,7 @@ absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>> Compiler::Compile(
   addressable_devices.reserve(response->addressable_device_ids_size());
   for (const int32_t device_id : response->addressable_device_ids()) {
     TF_ASSIGN_OR_RETURN(xla::ifrt::Device* const device,
-                        client_->LookupDevice(device_id));
+                        client_->LookupDevice(DeviceId(device_id)));
     addressable_devices.push_back(device);
   }
 
@@ -127,7 +127,7 @@ absl::StatusOr<std::unique_ptr<xla::ifrt::LoadedExecutable>> Compiler::Compile(
       break;
   }
 
-  Future<absl::Status> ready_future =
+  Future<> ready_future =
       rpc_helper_->CheckFuture(response->ready_future_handle());
 
   std::vector<uint64_t> loaded_host_callback_handles(

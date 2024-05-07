@@ -85,8 +85,7 @@ static hipDeviceptr_t AsROCmDevicePtr(DeviceMemoryBase* gpu_mem) {
 }
 
 static GpuContext* GetGpuContext(Stream* stream) {
-  return static_cast<GpuExecutor*>(stream->parent()->implementation())
-      ->gpu_context();
+  return static_cast<GpuExecutor*>(stream->parent())->gpu_context();
 }
 
 GpuContext* ExtractGpuContext(GpuExecutor* rocm_exec) {
@@ -707,9 +706,11 @@ bool GpuExecutor::AllocateStream(Stream* stream) {
 }
 
 void GpuExecutor::DeallocateStream(Stream* stream) {
-  dnn::DnnSupport* dnn = AsDnn();
-  if (dnn) {
-    dnn->NotifyStreamDestroyed(stream);
+  {
+    absl::MutexLock lock(&mu_);
+    if (dnn_ != nullptr) {
+      dnn_->NotifyStreamDestroyed(stream);
+    }
   }
   GpuStream* rocm_stream = AsGpuStream(stream);
   absl::MutexLock l(&alive_gpu_streams_mu_);

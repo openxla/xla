@@ -23,6 +23,7 @@ package_group(
         # copybara:uncomment "//learning/...",
         "//third_party/australis/...",
         "//third_party/iree/...",
+        "//third_party/libxc/...",
         "//third_party/mira/...",
         "//third_party/mlcompass/...",
         "//third_party/mlir_edge/model_curriculum/...",
@@ -241,6 +242,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
     ],
@@ -595,6 +597,7 @@ cc_library(
         ":array4d",
         ":permutation_util",
         ":printer",
+        ":shape_tree",
         ":shape_util",
         ":status",
         ":status_macros",
@@ -633,6 +636,7 @@ xla_cc_test(
         ":array4d",
         ":literal",
         ":literal_util",
+        ":shape_tree",
         ":shape_util",
         ":status",
         ":test",
@@ -640,6 +644,7 @@ xla_cc_test(
         ":util",
         ":xla_data_proto_cc",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -732,7 +737,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":types",
-        "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_interface",
         "@com_google_absl//absl/strings",
     ],
 )

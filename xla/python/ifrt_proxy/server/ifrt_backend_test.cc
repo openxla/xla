@@ -67,8 +67,8 @@
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/test.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/protobuf.h"  // IWYU pragma: keep
@@ -230,8 +230,7 @@ class IfrtBackendHandlerTest : public testing::Test {
     std::vector<xla::ifrt::Device*> raw_device_ptrs;
     for (int i = 0; i < 2; ++i) {
       auto mock_device = std::make_unique<xla::ifrt::MockDevice>();
-      ON_CALL(*mock_device, global_device_id())
-          .WillByDefault(Return(xla::PjRtGlobalDeviceId(i)));
+      ON_CALL(*mock_device, Id()).WillByDefault(Return(DeviceId(i)));
       raw_device_ptrs.push_back(mock_device.get());
       mock_devices_.push_back(std::move(mock_device));
     }
@@ -239,12 +238,12 @@ class IfrtBackendHandlerTest : public testing::Test {
     ON_CALL(*mock_client, devices()).WillByDefault(Return(raw_device_ptrs));
     ON_CALL(*mock_client, LookupDevice(_))
         .WillByDefault(
-            Invoke([this](int id) -> absl::StatusOr<xla::ifrt::Device*> {
-              if (id < 0 || id >= mock_devices_.size()) {
+            Invoke([this](DeviceId id) -> absl::StatusOr<xla::ifrt::Device*> {
+              if (id.value() < 0 || id.value() >= mock_devices_.size()) {
                 return absl::NotFoundError(
-                    absl::StrCat("Unknown device id: ", id));
+                    absl::StrCat("Unknown device id: ", id.value()));
               }
-              return mock_devices_[id].get();
+              return mock_devices_[id.value()].get();
             }));
 
     // Remembering a raw pointer to the mock client here is OK, since most tests
@@ -295,7 +294,8 @@ class IfrtBackendHandlerTest : public testing::Test {
       make_array->mutable_shape()->add_dims(2);
       make_array->set_host_buffer_handle(host_buffer_handle);
 
-      TF_ASSIGN_OR_RETURN(auto* device, mock_client_->LookupDevice(1));
+      TF_ASSIGN_OR_RETURN(auto* device,
+                          mock_client_->LookupDevice(DeviceId(1)));
       TF_ASSIGN_OR_RETURN(
           *make_array->mutable_sharding(),
           SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
@@ -369,13 +369,13 @@ TEST_F(IfrtBackendHandlerTest, Init) {
   }
 
   std::vector<MockMemory> mock_memories(mock_devices_.size());
+  MemoryKind kind("mock");
   for (int i = 0; i < mock_memories.size(); ++i) {
     MockMemory& memory = mock_memories[i];
-    EXPECT_CALL(memory, devices())
+    EXPECT_CALL(memory, Devices())
         .WillRepeatedly(Return(mock_memory_devices[i]));
-    EXPECT_CALL(memory, id()).WillRepeatedly(Return(i));
-    EXPECT_CALL(memory, kind()).WillRepeatedly(Return("mock"));
-    EXPECT_CALL(memory, kind_id()).WillRepeatedly(Return(i));
+    EXPECT_CALL(memory, Id()).WillRepeatedly(Return(MemoryId(i)));
+    EXPECT_CALL(memory, Kind()).WillRepeatedly(ReturnRef(kind));
   }
 
   std::vector<std::vector<Memory*>> device_memories;
@@ -388,22 +388,15 @@ TEST_F(IfrtBackendHandlerTest, Init) {
       absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>;
   std::vector<AttributeMap> device_attributes(mock_devices_.size());
 
-  const uint32_t kLocalHardwareId = 1234;
   for (int i = 0; i < mock_devices_.size(); ++i) {
     device_attributes[i].insert({"name", absl::StrCat("device", i)});
 
     MockDevice& mock_device = *mock_devices_[i];
     // TODO(b/314368788): Clean up PJRT device ID APIs.
-    EXPECT_CALL(mock_device, local_hardware_id_typed())
-        .WillRepeatedly(Return(xla::PjRtLocalHardwareId(kLocalHardwareId)));
-    EXPECT_CALL(mock_device, local_hardware_id())
-        .WillRepeatedly(Return(kLocalHardwareId));
-    EXPECT_CALL(mock_device, local_device_id())
-        .WillRepeatedly(Return(xla::PjRtLocalDeviceId(kLocalHardwareId)));
-    EXPECT_CALL(mock_device, device_kind()).WillRepeatedly(Return("mock"));
-    EXPECT_CALL(mock_device, memory_spaces())
+    EXPECT_CALL(mock_device, Kind()).WillRepeatedly(Return("mock"));
+    EXPECT_CALL(mock_device, Memories())
         .WillRepeatedly(Return(device_memories[i]));
-    EXPECT_CALL(mock_device, default_memory_space())
+    EXPECT_CALL(mock_device, DefaultMemory())
         .WillRepeatedly(Return(&mock_memories[i]));
     EXPECT_CALL(mock_device, Attributes())
         .WillRepeatedly(ReturnRef(device_attributes[i]));
@@ -424,8 +417,6 @@ TEST_F(IfrtBackendHandlerTest, Init) {
                       runtime_type: "ifrt-service"
                       devices {
                         id: 0
-                        local_device_id: 1234
-                        local_hardware_id: 1234
                         device_kind: "mock"
                         default_memory_id: 0
                         memory_ids: [ 0 ]
@@ -436,8 +427,6 @@ TEST_F(IfrtBackendHandlerTest, Init) {
                       }
                       devices {
                         id: 1
-                        local_device_id: 1234
-                        local_hardware_id: 1234
                         device_kind: "mock"
                         default_memory_id: 1
                         memory_ids: [ 1 ]
@@ -449,13 +438,11 @@ TEST_F(IfrtBackendHandlerTest, Init) {
                       memories {
                         id: 0
                         memory_space_kind: "mock"
-                        kind_id: 0
                         device_ids: [ 0 ]
                       }
                       memories {
                         id: 1
                         memory_space_kind: "mock"
-                        kind_id: 1
                         device_ids: [ 1 ]
                       }
                     }
@@ -518,7 +505,8 @@ TEST_F(IfrtBackendHandlerTest, MakeArrayFromHostBufferSuccess) {
                                     )pb",
                                     make_array));
     make_array->set_host_buffer_handle(kHostBufferHandle);
-    TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
+    TF_ASSERT_OK_AND_ASSIGN(auto* device,
+                            mock_client_->LookupDevice(DeviceId(1)));
     TF_ASSERT_OK_AND_ASSIGN(
         *make_array->mutable_sharding(),
         SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
@@ -551,7 +539,8 @@ TEST_F(IfrtBackendHandlerTest, AssembleArrayFromSingleDeviceArrays) {
         )pb",
         ifrt_request
             ->mutable_assemble_array_from_single_device_arrays_request()));
-    TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
+    TF_ASSERT_OK_AND_ASSIGN(auto* device,
+                            mock_client_->LookupDevice(DeviceId(1)));
     TF_ASSERT_OK_AND_ASSIGN(
         *ifrt_request
              ->mutable_assemble_array_from_single_device_arrays_request()
@@ -608,7 +597,7 @@ TEST_F(IfrtBackendHandlerTest, CopyToHostSuccess) {
   const std::optional<absl::Span<const int64_t>> expected_byte_strides =
       absl::Span<const int64_t>(expected_byte_strides_vec);
   EXPECT_CALL(*array, CopyToHostBuffer(_, expected_byte_strides, _))
-      .WillOnce(Return(Future<absl::Status>(absl::OkStatus())));
+      .WillOnce(Return(Future<>(absl::OkStatus())));
 
   TF_ASSERT_OK_AND_ASSIGN(auto response, CallBackend(std::move(ifrt_request)));
   // Given the above shape, dtype, and compact byte_strides, the size of the
@@ -667,7 +656,8 @@ TEST_F(IfrtBackendHandlerTest, ReshardSuccess) {
   auto* reshard_request = ifrt_request->mutable_reshard_request();
   reshard_request->set_array_handle(src_array_handle);
   reshard_request->set_copy_semantics(proto::ARRAY_COPY_SEMANTICS_ALWAYS_COPY);
-  TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
+  TF_ASSERT_OK_AND_ASSIGN(auto* device,
+                          mock_client_->LookupDevice(DeviceId(1)));
   TF_ASSERT_OK_AND_ASSIGN(
       *ifrt_request->mutable_reshard_request()->mutable_sharding(),
       SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
@@ -744,7 +734,8 @@ TEST_F(IfrtBackendHandlerTest, ReshardFailsWhenTheBackendFails) {
   auto* reshard_request = ifrt_request->mutable_reshard_request();
   reshard_request->set_array_handle(array_handle);
   reshard_request->set_copy_semantics(proto::ARRAY_COPY_SEMANTICS_ALWAYS_COPY);
-  TF_ASSERT_OK_AND_ASSIGN(auto* device, mock_client_->LookupDevice(1));
+  TF_ASSERT_OK_AND_ASSIGN(auto* device,
+                          mock_client_->LookupDevice(DeviceId(1)));
   TF_ASSERT_OK_AND_ASSIGN(
       *ifrt_request->mutable_reshard_request()->mutable_sharding(),
       SingleDeviceSharding::Create(device, MemoryKind())->ToProto());
@@ -768,9 +759,8 @@ TEST_F(IfrtBackendHandlerTest,
        CheckArrayReadyRequestRelaysTheResultFromBackend) {
   auto mock_array = tsl::MakeRef<xla::ifrt::MockArray>();
   EXPECT_CALL(*mock_array, GetReadyFuture())
-      .WillOnce(Return(Future<absl::Status>(absl::OkStatus())))
-      .WillOnce(
-          Return(Future<absl::Status>(absl::UnknownError("injected error"))));
+      .WillOnce(Return(Future<>(absl::OkStatus())))
+      .WillOnce(Return(Future<>(absl::UnknownError("injected error"))));
   TF_ASSERT_OK_AND_ASSIGN(auto array_handle,
                           MakeTestArray(std::move(mock_array)));
 
@@ -807,7 +797,7 @@ TEST_F(IfrtBackendHandlerTest, DeleteArraySuccess) {
   tsl::RCReference<xla::ifrt::MockArray> mock_array =
       tsl::MakeRef<xla::ifrt::MockArray>();
   EXPECT_CALL(*mock_array, Delete())
-      .WillOnce(Return(Future<absl::Status>(absl::OkStatus())));
+      .WillOnce(Return(Future<>(absl::OkStatus())));
   TF_ASSERT_OK_AND_ASSIGN(auto array_handle,
                           MakeTestArray(std::move(mock_array)));
 
@@ -885,8 +875,7 @@ TEST_F(IfrtBackendHandlerTest, DestructArrayTest) {
 TEST_F(IfrtBackendHandlerTest, CompileSuccess) {
   std::vector<MockDevice> devices(4);
   for (int i = 0; i < 4; ++i) {
-    EXPECT_CALL(devices[i], global_device_id())
-        .WillOnce(Return(xla::PjRtGlobalDeviceId(i)));
+    EXPECT_CALL(devices[i], Id()).WillOnce(Return(DeviceId(i)));
   }
 
   std::vector<xla::ifrt::LoadedExecutable::LogicalDeviceIds>
@@ -907,7 +896,7 @@ TEST_F(IfrtBackendHandlerTest, CompileSuccess) {
       .WillOnce(Return(absl::MakeSpan(addressable_devices)));
   EXPECT_CALL(*executable, Fingerprint()).WillOnce(Return("fingerprint"));
   EXPECT_CALL(*executable, GetReadyFuture())
-      .WillOnce(Return(Future<absl::Status>(absl::OkStatus())));
+      .WillOnce(Return(Future<>(absl::OkStatus())));
 
   ASSERT_OK_AND_ASSIGN(CompileResponse response,
                        CompileTestLoadedExecutable(std::move(executable)));
@@ -1046,8 +1035,7 @@ TEST_F(IfrtBackendHandlerTest, LoadedExecutableMetadata) {
 #if defined(PLATFORM_GOOGLE)
 TEST_F(IfrtBackendHandlerTest, LoadedExecutableExecute) {
   MockDevice device;
-  ON_CALL(device, global_device_id())
-      .WillByDefault(Return(xla::PjRtGlobalDeviceId(0)));
+  ON_CALL(device, Id()).WillByDefault(Return(DeviceId(0)));
 
   MockLoadedExecutable* executable;
   uint64_t handle;
@@ -1086,8 +1074,7 @@ TEST_F(IfrtBackendHandlerTest, LoadedExecutableExecute) {
                      std::optional<DeviceList> devices)
                      -> absl::StatusOr<LoadedExecutable::ExecuteResult> {
             return LoadedExecutable::ExecuteResult{
-                .status =
-                    Future<absl::Status>(absl::InternalError("injected error")),
+                .status = Future<>(absl::InternalError("injected error")),
                 .outputs = outputs,
             };
           }));
@@ -1157,7 +1144,7 @@ TEST_F(IfrtBackendHandlerTest, LoadedExecutableDelete) {
 
   {
     EXPECT_CALL(*executable, Delete())
-        .WillOnce(Return(Future<absl::Status>(absl::OkStatus())));
+        .WillOnce(Return(Future<>(absl::OkStatus())));
 
     auto request = NewIfrtRequest(NewOpId());
     LoadedExecutableDeleteRequest* delete_request =

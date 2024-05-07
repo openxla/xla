@@ -72,13 +72,12 @@ limitations under the License.
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/pjrt/utils.h"
-#include "xla/runtime/cpu_event.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/buffer_desc.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/cpu/cpu_compiler.h"
+#include "xla/service/cpu/cpu_event.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
 #include "xla/service/cpu/cpu_xfeed.h"
@@ -94,12 +93,12 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status.h"
+#include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/concurrency/async_value.h"
-#include "tsl/concurrency/async_value_ref.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/denormal.h"
@@ -114,8 +113,6 @@ limitations under the License.
 
 namespace xla {
 namespace {
-
-using ::xla::runtime::CpuEvent;
 
 absl::StatusOr<std::unique_ptr<TfrtCpuBuffer>> AllocateDestinationBuffer(
     const Shape& on_device_shape,
@@ -427,10 +424,6 @@ TfrtCpuClient::TfrtCpuClient(
 
 TfrtCpuClient::~TfrtCpuClient() { LOG(INFO) << "TfrtCpuClient destroyed."; }
 
-absl::StatusOr<PjRtDevice*> TfrtCpuClient::LookupDevice(int device_id) const {
-  return LookupDevice(PjRtGlobalDeviceId(device_id));
-}
-
 absl::StatusOr<PjRtDevice*> TfrtCpuClient::LookupDevice(
     xla::PjRtGlobalDeviceId global_device_id) const {
   auto it = id_to_device_.find(global_device_id.value());
@@ -624,8 +617,10 @@ TfrtCpuClient::DeserializeExecutable(absl::string_view serialized,
     addressable_devices.reserve(num_replicas * num_partitions);
     for (int replica = 0; replica < num_replicas; ++replica) {
       for (int partition = 0; partition < num_partitions; ++partition) {
-        int device_id = (*device_assignment)(replica, partition);
-        TF_ASSIGN_OR_RETURN(PjRtDevice * device, LookupDevice(device_id));
+        int64_t device_id = (*device_assignment)(replica, partition);
+        PjRtGlobalDeviceId global_device_id(device_id);
+        TF_ASSIGN_OR_RETURN(PjRtDevice * device,
+                            LookupDevice(global_device_id));
         if (device->process_index() != process_index()) {
           VLOG(3) << "Non-local device: " << device_id;
           continue;
@@ -721,8 +716,9 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
       for (int computation = 0;
            computation < device_assignment->computation_count();
            ++computation) {
-        int id = (*device_assignment)(replica, computation);
-        TF_ASSIGN_OR_RETURN(auto* device, LookupDevice(id));
+        int64_t id = (*device_assignment)(replica, computation);
+        PjRtGlobalDeviceId global_device_id(id);
+        TF_ASSIGN_OR_RETURN(auto* device, LookupDevice(global_device_id));
         if (device->process_index() != process_index()) {
           // TODO(phawkins): improve this error message when we're ready to
           // publicize that multiprocess collectives exist.
@@ -747,8 +743,10 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
     addressable_devices.reserve(num_replicas * num_partitions);
     for (int replica = 0; replica < num_replicas; ++replica) {
       for (int partition = 0; partition < num_partitions; ++partition) {
-        int device_id = (*device_assignment)(replica, partition);
-        TF_ASSIGN_OR_RETURN(PjRtDevice * device, LookupDevice(device_id));
+        int64_t device_id = (*device_assignment)(replica, partition);
+        PjRtGlobalDeviceId global_device_id(device_id);
+        TF_ASSIGN_OR_RETURN(PjRtDevice * device,
+                            LookupDevice(global_device_id));
         if (device->process_index() != process_index()) {
           VLOG(3) << "Non-local device: " << device_id;
           continue;
@@ -850,6 +848,9 @@ TfrtCpuClient::CreateViewOfDeviceBuffer(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
     Status error, const Shape& shape, PjRtDevice* device) {
+  if (device->client() != this) {
+    return absl::InvalidArgumentError("Device is not attached to this client");
+  }
   return std::make_unique<TfrtCpuBuffer>(
       shape,
       std::make_unique<TrackedTfrtCpuDeviceBuffer>(
@@ -859,6 +860,11 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
               tsl::AsyncValueRef<CpuEvent>(
                   tsl::MakeErrorAsyncValueRef(std::move(error)))}),
       this, tensorflow::down_cast<TfrtCpuDevice*>(device));
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
+    Status error, const Shape& shape, PjRtMemorySpace* memory) {
+  return CreateErrorBuffer(std::move(error), shape, memory->devices()[0]);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
@@ -1151,17 +1157,6 @@ Status TfrtCpuExecutable::CheckBufferCompatibilities(
   return OkStatus();
 }
 
-// Create a descriptor table for XLA Runtime from a buffer table.
-static std::vector<xla::cpu::BufferDesc> MakeXLARuntimeDescriptorTable(
-    absl::Span<const std::shared_ptr<MaybeOwningCpuMemory>> buffer_table) {
-  std::vector<xla::cpu::BufferDesc> descriptor_table;
-  descriptor_table.reserve(buffer_table.size());
-  for (const auto& buf : buffer_table) {
-    descriptor_table.emplace_back(buf->data(), buf->size());
-  }
-  return descriptor_table;
-}
-
 absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options,
@@ -1172,9 +1167,10 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
     CHECK(device_assignment_ != nullptr);
-    const int device_id = (*device_assignment_)(replica, partition);
+    const int64_t device_id = (*device_assignment_)(replica, partition);
+    PjRtGlobalDeviceId global_device_id(device_id);
     TF_ASSIGN_OR_RETURN(PjRtDevice * pjrt_device,
-                        client_->LookupDevice(device_id));
+                        client_->LookupDevice(global_device_id));
     device = tensorflow::down_cast<TfrtCpuDevice*>(pjrt_device);
     device_assignment = device_assignment_;
   } else {
@@ -1367,15 +1363,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     XlaCustomCallStatus status;
 
     // Call generated function.
-    if (cpu_executable->IsXlaRuntime()) {
-      Status status = cpu_executable->ExecuteXlaRuntime(
-          MakeXLARuntimeDescriptorTable(buffer_table), &run_options);
-      if (!status.ok()) return status;
-    } else {
-      cpu_executable->compute_function()(result_buffer, &run_options, nullptr,
-                                         buffer_pointers.data(), &status,
-                                         nullptr);
-    }
+    cpu_executable->compute_function()(result_buffer, &run_options, nullptr,
+                                       buffer_pointers.data(), &status,
+                                       nullptr);
 
     for (auto& donation_transaction : donation_transactions) {
       std::move(donation_transaction).Commit();
@@ -1439,20 +1429,11 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
 
           // Call generated function.
           std::optional<absl::string_view> error_message;
-          if (cpu_executable->IsXlaRuntime()) {
-            Status s = cpu_executable->ExecuteXlaRuntime(
-                MakeXLARuntimeDescriptorTable(buffer_table), &run_options);
-            if (!s.ok()) {
-              // TODO(kramerb): Propagate custom call error messages.
-              error_message = "XLA Runtime execution failed";
-            }
-          } else {
-            XlaCustomCallStatus status;
-            cpu_executable->compute_function()(result_buffer, &run_options,
-                                               nullptr, buffer_pointers.data(),
-                                               &status, nullptr);
-            error_message = xla::CustomCallStatusGetMessage(&status);
-          }
+          XlaCustomCallStatus status;
+          cpu_executable->compute_function()(result_buffer, &run_options,
+                                             nullptr, buffer_pointers.data(),
+                                             &status, nullptr);
+          error_message = xla::CustomCallStatusGetMessage(&status);
 
           if (error_message) {
             // CPU computation fails with an error.

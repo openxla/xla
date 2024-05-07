@@ -47,7 +47,6 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
-#include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/memory.h"
@@ -63,8 +62,8 @@ limitations under the License.
 #include "xla/python/sharding.h"
 #include "xla/python/traceback.h"
 #include "xla/python/transfer_guard_lib.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
-#include "tsl/concurrency/ref_count.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -333,7 +332,7 @@ PjitFunction::PjitFunction(
       shard_arg_fallback_(std::move(shard_arg_fallback)),
       cache_(std::move(cache)) {
   std::sort(static_argnums_.begin(), static_argnums_.end());
-  static_argnames.reserve(static_argnames.size());
+  static_argnames_.reserve(static_argnames.size());
   for (nb::str& name : static_argnames) {
     PyObject* s = name.inc_ref().ptr();
     PyUnicode_InternInPlace(&s);
@@ -380,7 +379,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
   xla::DevicePutOptions options;
   options.squash_64bit_types = !enable_x64;
   options.allow_zero_copy = true;
-  xla::PjRtDevice* data_device = nullptr;
+  xla::ifrt::Device* data_device = nullptr;
   if (executable.ifrt_loaded_executable()->num_devices() == 1) {
     data_device = executable.ifrt_loaded_executable()->addressable_devices()[0];
   }

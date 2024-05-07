@@ -20,6 +20,7 @@ package_group(
 cc_library(
     name = "hlo",
     srcs = [
+        "collective_device_list.cc",
         "dfs_hlo_visitor.cc",
         "dynamic_parameter_binding.cc",
         "hlo_computation.cc",
@@ -36,6 +37,7 @@ cc_library(
         "hlo_sharding_metadata.cc",
     ],
     hdrs = [
+        "collective_device_list.h",
         "dfs_hlo_visitor.h",
         "dfs_hlo_visitor_with_default.h",
         "dynamic_parameter_binding.h",
@@ -56,6 +58,7 @@ cc_library(
         "hlo_sharding_metadata.h",
     ],
     deps = [
+        ":backend_config",
         ":ptrvec",
         ":tile_assignment",
         "//xla:array",
@@ -91,10 +94,11 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/gtl:iterator_range",
         "@tsl//tsl/lib/gtl:map_util",
@@ -106,6 +110,20 @@ cc_library(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "backend_config",
+    srcs = ["backend_config.cc"],
+    hdrs = ["backend_config.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:human_readable_json",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
