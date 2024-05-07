@@ -65,14 +65,17 @@ class ReductionInfo {
 
   LaunchDimensions launch_dimensions() const;
 
+  bool use_shared_cache() const { return use_shared_cache_; }
+
  private:
   ReductionInfo(const HloFusionAnalysis& analysis, Tiling tiling,
-                bool is_row_reduction, bool is_race_free,
+                bool is_row_reduction, bool is_race_free, bool use_shared_cache,
                 ReductionGroups groups, const HloInstruction* first_reduce)
       : analysis_(analysis),
         tiling_(tiling),
         is_row_reduction_(is_row_reduction),
         is_race_free_(is_race_free),
+        use_shared_cache_(use_shared_cache),
         groups_(std::move(groups)),
         first_reduce_(first_reduce) {}
 
@@ -83,6 +86,7 @@ class ReductionInfo {
   Tiling tiling_;
   bool is_row_reduction_;
   bool is_race_free_;
+  bool use_shared_cache_;
   ReductionGroups groups_;
   const HloInstruction* first_reduce_;
 };
@@ -110,6 +114,10 @@ class ReductionFusionBase : public Base {
 
   LaunchDimensions launch_dimensions() const override {
     return reduction_info().launch_dimensions();
+  }
+
+  bool use_shared_cache() const override {
+    return reduction_info().use_shared_cache();
   }
 
   const ReductionInfo& reduction_info() const { return reduction_info_; }

@@ -325,8 +325,11 @@ ReductionInfo ReductionInfo::Create(const HloFusionAnalysis& analysis,
                 /*loops_to_unroll=*/{false, false, true, false});
   bool reduction_is_race_free = ReductionIsRaceFree(
       hero_reduction->GetModule()->config(), reduction_dimensions);
+  bool use_shared_cache =
+      !reduction_dimensions.is_row_reduction ||
+      (rows_per_warp == 1 && num_threads_x / WarpSize() > 1);
   return ReductionInfo(analysis, tiling, reduction_dimensions.is_row_reduction,
-                       reduction_is_race_free,
+                       reduction_is_race_free, use_shared_cache,
                        GroupDisjointReductions(analysis, for_mlir),
                        hero_reduction);
 }

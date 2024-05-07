@@ -51,6 +51,8 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   explicit MlirTransposeFusion(const HloFusionAnalysis& analysis);
   LaunchDimensions launch_dimensions() const override;
 
+  bool use_shared_cache() const override { return true; };
+
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
       int64_t root_index, mlir::MLIRContext* mlir_context) const override;
 

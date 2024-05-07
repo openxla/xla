@@ -90,7 +90,8 @@ GpuPerformanceModel::EstimateRunTimeForInstruction(
   int64_t num_threads = launch_dimensions.launch_bound();
   int64_t num_blocks = launch_dimensions.num_blocks();
 
-  absl::Duration compute_time = ComputeTime(*device_info, flops, num_threads);
+  absl::Duration compute_time = ComputeTime(*device_info, flops, num_threads,
+                                            num_blocks, &fusion_analysis);
 
   CoalescingAnalysis coalescing_analysis(instr, instr->operands(),
                                          fusion_analysis);
@@ -227,7 +228,9 @@ absl::Duration GpuPerformanceModel::EstimateUnfusedExecTime(
                   consumer_runtime.flops;
 
   int64_t num_threads = launch_dimensions.launch_bound();
-  absl::Duration compute_time = ComputeTime(*device_info, flops, num_threads);
+  absl::Duration compute_time =
+      ComputeTime(*device_info, flops, num_threads,
+                  launch_dimensions.num_blocks(), &fusion_analysis);
 
   std::vector<const HloInstruction*> fusion_operands =
       GetUniqueFusionOperands(producer, consumer);
@@ -320,7 +323,8 @@ absl::Duration GpuPerformanceModel::EstimateFusedExecTime(
 
     absl::Duration compute_time_by_this_consumer = ComputeTime(
         *device_info, producer_runtime.flops * utilization_by_this_consumer,
-        launch_dimensions_fused.launch_bound());
+        launch_dimensions_fused.launch_bound(),
+        launch_dimensions_fused.num_blocks(), &analysis_fused);
 
     // Here, we assume that the read is distributed over all the threads in the
     // launch grid. Usually this is the case, but not always: for example, a
