@@ -64,16 +64,14 @@ ENTRY e {
 // CHECK:         %[[VAL_25:.*]] = udiv i32 %block.id.x, 32
 // CHECK:         %[[VAL_26:.*]] = urem i32 %[[VAL_25]], 1
 // CHECK:         %[[VAL_27:.*]] = udiv i32 %block.id.x, 32
-// CHECK:         %[[VAL_28:.*]] = icmp eq i32 %[[VAL_26]], 0
-// CHECK:         %tile_bound.1 = select i1 %[[VAL_28]], i32 1024, i32 4096
 // CHECK:         %tile_origin.0 = mul i32 %[[VAL_27]], 1
-// CHECK:         %tile_origin.1 = mul i32 %[[VAL_26]], 4096
+// CHECK:         %tile_origin.1 = mul i32 %[[VAL_26]], 1024
 // CHECK:         %tile_origin.2 = mul i32 %[[VAL_24]], 32
 // CHECK:         store i32 %thread.id.1, ptr{{.*}}%[[VAL_12]], align 4
 // CHECK:         br label %[[VAL_29:.*]]
 // CHECK:       loop1.loop_header:                                ; preds = %[[VAL_30:.*]], %[[VAL_17]]
 // CHECK:         %[[VAL_31:.*]] = load i32, ptr{{.*}}%[[VAL_12]], align 4
-// CHECK:         %[[VAL_32:.*]] = icmp uge i32 %[[VAL_31]], %tile_bound.1
+// CHECK:         %[[VAL_32:.*]] = icmp uge i32 %[[VAL_31]], 1024
 // CHECK:         br i1 %[[VAL_32]], label %[[VAL_33:.*]], label %[[VAL_34:.*]]
 // CHECK:       loop1.loop_body:                                  ; preds = %[[VAL_29]]
 // CHECK:         %[[VAL_35:.*]] = add nuw nsw i32 %[[VAL_31]], 32
@@ -204,8 +202,8 @@ ENTRY e {
 // CHECK:         %[[VAL_111:.*]] = load double, ptr{{.*}}%[[VAL_0]], align 8
 // CHECK:         store double %[[VAL_111]], ptr{{.*}}%[[VAL_51]], align 8
 // CHECK-PTX:     %[[VAL_112:.*]] = icmp ult i32 %thread.id.1, 32
-// CHECK-PTX:     %[[VAL_113:.*]] = icmp ult i32 %thread.id.2, %tile_bound.1
-// CHECK-GCN:     %[[VAL_113:.*]] = icmp ult i32 %thread.id.2, %tile_bound.1
+// CHECK-PTX:     %[[VAL_113:.*]] = icmp ult i32 %thread.id.2, 1024
+// CHECK-GCN:     %[[VAL_113:.*]] = icmp ult i32 %thread.id.2, 1024
 // CHECK-GCN:     %[[VAL_112:.*]] = icmp ult i32 %thread.id.1, 32
 // CHECK:         %[[VAL_114:.*]] = and i1 %[[VAL_112]], %[[VAL_113]]
 // CHECK:         %[[VAL_115:.*]] = icmp eq i32 %lane_id, 0
