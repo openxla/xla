@@ -167,6 +167,27 @@ HloInstruction *PadOperandToMultipleOf16(absl::Span<const int64_t> batch_dims,
   return PadOperandToTargetShape(padded_shape, x);
 }
 
+// Calculates the reciprocal of scalar when invert is true and converts to FP32.
+absl::StatusOr<HloInstruction*> InvertAndConvertScalar(HloInstruction* scalar,
+                                                       bool invert) {
+  if (!ShapeUtil::IsScalar(scalar->shape())) {
+    return absl::OkStatus();
+  }
+
+  if (invert) {
+    Literal one_literal = LiteralUtil::One(scalar->shape().element_type());
+    HloInstruction* one = scalar->parent()->AddInstruction(
+        HloInstruction::CreateConstant(one_literal.Clone()));
+    TF_ASSIGN_OR_RETURN(scalar, MakeBinaryHlo(HloOpcode::kDivide, one, scalar,
+                                              &scalar->metadata()));
+  }
+  if (scalar->shape().element_type() != F32) {
+    scalar = MakeConvertToHlo(scalar, F32, &scalar->metadata());
+  }
+
+  return scalar;
+}
+
 // Recursively collects unary, divide, dynamic-slice, pad, multiply or select
 // operands of instr and the index of the operand identifying the next op in the
 // sequence until an instruction with FP8 element type is reached. Returns an
@@ -1185,44 +1206,39 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   absl::Status F8ScaleD(HloInstruction* instr, HloInstruction* existing_gemm,
                         HloInstruction* d_scale) {
     if (!ShapeUtil::IsScalar(d_scale->shape())) {
-      return OkStatus();
+      return absl::OkStatus();
     }
 
+    // When the output of an FP8 GEMM is scaled but not type converted to FP8,
+    // cublasLT requires the scaling factor to be forwarded to the Custom Call
+    // as a_scale (chosen here) or b_scale. The scaling factor is fused here
+    // when no input scaling factors were fused during the creation of the
+    // Custom Call. When the maximum of the absolute value of the output of an
+    // FP8 GEMM is calculated and the output is scaled and type converted to
+    // FP8, the scaling of the output is fused in F8ConvertD.
+    if (!existing_gemm->operand(2)->IsConstant() ||
+        existing_gemm->operand(2)->literal().GetAsDouble({}) != 1.) {
+      return absl::OkStatus();
+    }
+
+    // The application of the scaling of the output to the input (see previous
+    // comment) is not valid for epilogues other than ReLU or when a matrix bias
+    // has been fused.
     TF_ASSIGN_OR_RETURN(auto gpu_backend_config,
                         existing_gemm->backend_config<GpuBackendConfig>());
-    const GemmBackendConfig& gemm_backend_config =
-        gpu_backend_config.gemm_backend_config();
-
-    // When the result of an FP8 GEMM is scaled but not type converted to FP8,
-    // the scaling factor must be forwarded to the Custom Call as a_scale
-    // (chosen here) or b_scale. The scaling factor is fused here when no input
-    // scaling factors were fused during the creation of the Custom Call. When
-    // the maximum of the absolute value of the result of an FP8 GEMM is
-    // calculated and the result is scaled and type converted to FP8, the
-    // scaling of the result is fused in F8ConvertD.
-    const int a_scale_operand_idx = gemm_backend_config.beta() == 0.0 ? 2 : 3;
-    if (!existing_gemm->operand(a_scale_operand_idx)->IsConstant() ||
-        existing_gemm->operand(a_scale_operand_idx)
-                ->literal()
-                .GetAsDouble({}) != 1.) {
-      return OkStatus();
+    const GemmBackendConfig& config = gpu_backend_config.gemm_backend_config();
+    if ((config.epilogue() != GemmBackendConfig::DEFAULT &&
+         config.epilogue() != GemmBackendConfig::RELU) ||
+        config.beta() != 0.) {
+      return absl::OkStatus();
     }
 
     // If necessary, invert the scaling factor of D and convert to F32.
-    if (instr->opcode() == HloOpcode::kDivide) {
-      Literal one_literal = LiteralUtil::One(d_scale->shape().element_type());
-      HloInstruction* one = existing_gemm->parent()->AddInstruction(
-          HloInstruction::CreateConstant(one_literal.Clone()));
-      d_scale = existing_gemm->AddInstruction(HloInstruction::CreateBinary(
-          d_scale->shape(), HloOpcode::kDivide, one, d_scale));
-    }
-    if (d_scale->shape().element_type() != F32) {
-      d_scale = existing_gemm->AddInstruction(HloInstruction::CreateConvert(
-          ShapeUtil::MakeScalarShape(F32), d_scale));
-    }
+    TF_ASSIGN_OR_RETURN(
+        d_scale,
+        InvertAndConvertScalar(d_scale, instr->opcode() == HloOpcode::kDivide));
 
-    TF_RETURN_IF_ERROR(
-        existing_gemm->ReplaceOperandWith(a_scale_operand_idx, d_scale));
+    TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(2, d_scale));
     TF_RETURN_IF_ERROR(ReplaceInstruction(instr, existing_gemm));
 
     VLOG(1) << "Scaling of FP8 GEMM fused into Custom Call.";
@@ -1322,17 +1338,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // If necessary, invert the scaling factor of D and convert to F32.
     if (d_scale) {
-      if (!mult_scale) {
-        Literal one_literal = LiteralUtil::One(d_scale->shape().element_type());
-        HloInstruction* one = instr->AddInstruction(
-            HloInstruction::CreateConstant(one_literal.Clone()));
-        d_scale = instr->AddInstruction(HloInstruction::CreateBinary(
-            d_scale->shape(), HloOpcode::kDivide, one, d_scale));
-      }
-      if (d_scale->shape().element_type() != F32) {
-        d_scale = instr->AddInstruction(HloInstruction::CreateConvert(
-            ShapeUtil::MakeScalarShape(F32), d_scale));
-      }
+      TF_ASSIGN_OR_RETURN(d_scale,
+                          InvertAndConvertScalar(d_scale, !mult_scale));
       TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(
           gemm_backend_config.beta() == 0.0 ? 5 : 6, d_scale));
     }
