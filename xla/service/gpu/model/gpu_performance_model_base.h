@@ -222,9 +222,7 @@ class GpuPerformanceModelBase {
 
   static absl::Duration ComputeTime(
       const se::DeviceDescription& gpu_device_info, int64_t flops,
-      int64_t num_threads,
-      int64_t num_blocks = std::numeric_limits<int64_t>::max(),
-      const HloFusionAnalysis* fusion_analysis = nullptr);
+      int64_t num_threads);
 
   static absl::Duration CombineComputeAndMemoryAccessTime(
       absl::Duration compute_time, absl::Duration memory_access_time,

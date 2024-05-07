@@ -353,26 +353,9 @@ absl::Duration GpuPerformanceModelBase::WriteTime(
 /*static*/
 absl::Duration GpuPerformanceModelBase::ComputeTime(
     const se::DeviceDescription& gpu_device_info, int64_t flops,
-    int64_t num_threads, int64_t num_blocks,
-    const HloFusionAnalysis* fusion_analysis) {
-  int64_t core_count = gpu_device_info.core_count();
-  // If kernel use shared cache, which means all of the threads in one block
-  // should reside in same sm core. So the correct number of active cores should
-  // be the minimum value between the number of sm cores and the number of
-  // blocks.
-  if (fusion_analysis) {
-    auto emitter =
-        GetFusionEmitter(PreBufferAssignmentFusionInfo{*fusion_analysis});
-    if (emitter.ok()) {
-      if (const auto* kernel_emitter =
-              dynamic_cast<const KernelFusionInterface*>(emitter->get())) {
-        if (kernel_emitter->use_shared_cache()) {
-          core_count = std::min(num_blocks, core_count);
-        }
-      }
-    }
-  }
-  int64_t fpu_count = core_count * gpu_device_info.fpus_per_core();
+    int64_t num_threads) {
+  int64_t fpu_count =
+      gpu_device_info.core_count() * gpu_device_info.fpus_per_core();
   int64_t n_threads_active = std::min(num_threads, fpu_count);
   int64_t flop_per_ns_per_fpu = gpu_device_info.clock_rate_ghz() * /*fma:*/ 2;
   int64_t flop_per_ns_effective = flop_per_ns_per_fpu * n_threads_active;
