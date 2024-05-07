@@ -5532,7 +5532,7 @@ func.func @quantized_dot_i4(%arg0: tensor<2x2x!quant.uniform<i4:f32, 2.0:15>>, %
 // -----
 
 // CHECK-LABEL: func @quantized_dot_general
-func.func @quantized_dot_general(%arg0: tensor<2x16x32x!quant.uniform<i8:f32, 2.0:15>>, %arg1: tensor<2x32x32x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<2x16x32x!quant.uniform<i8:f32, 10.0:50>> {
+func.func @quantized_dot_general(%arg0: tensor<2x16x32x!quant.uniform<i8:f32, 2.0:15>>, %arg1: tensor<2x32x32x!quant.uniform<i8:f32, 5.0:0>>) -> tensor<2x16x32x!quant.uniform<i8:f32, 10.0:50>> {
   %0 = "mhlo.dot_general"(%arg0, %arg1) {
     dot_dimension_numbers = #mhlo.dot<
       lhs_batching_dimensions = [0],
@@ -5541,7 +5541,7 @@ func.func @quantized_dot_general(%arg0: tensor<2x16x32x!quant.uniform<i8:f32, 2.
       rhs_contracting_dimensions = [1]
     >,
     precision_config = [#mhlo<precision DEFAULT>, #mhlo<precision DEFAULT>]}
-    : (tensor<2x16x32x!quant.uniform<i8:f32, 2.0:15>>, tensor<2x32x32x!quant.uniform<i8:f32, 5.0:20>>) -> tensor<2x16x32x!quant.uniform<i8:f32, 10.0:50>>
+    : (tensor<2x16x32x!quant.uniform<i8:f32, 2.0:15>>, tensor<2x32x32x!quant.uniform<i8:f32, 5.0:0>>) -> tensor<2x16x32x!quant.uniform<i8:f32, 10.0:50>>
   func.return %0 : tensor<2x16x32x!quant.uniform<i8:f32, 10.0:50>>
 }
 
