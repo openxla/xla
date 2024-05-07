@@ -278,7 +278,7 @@ TEST_F(ReductionTest, ThreadIndexingVectorizeColumnReduction) {
 
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
-  FakeReductionFusion fusion(analysis);
+  FakeMlirReductionFusion fusion(analysis);
   mlir::MLIRContext mlir_context;
 
   EXPECT_THAT(
