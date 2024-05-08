@@ -372,6 +372,7 @@ PJRT_Error* PJRT_Plugin_Initialize_NoOp(PJRT_Plugin_Initialize_Args* args) {
 // ---------------------------------- Client -----------------------------------
 
 PJRT_Error* PJRT_Client_Destroy(PJRT_Client_Destroy_Args* args) {
+  VLOG(1) << "PJRT_Client_Destroy";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_Destroy_Args", PJRT_Client_Destroy_Args_STRUCT_SIZE,
       args->struct_size));
@@ -388,6 +389,7 @@ PJRT_Error* PJRT_Client_ProcessIndex(PJRT_Client_ProcessIndex_Args* args) {
 }
 
 PJRT_Error* PJRT_Client_PlatformName(PJRT_Client_PlatformName_Args* args) {
+  VLOG(1) << "PJRT_Client_PlatformName";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_PlatformName_Args",
       PJRT_Client_PlatformName_Args_STRUCT_SIZE, args->struct_size));
@@ -399,6 +401,7 @@ PJRT_Error* PJRT_Client_PlatformName(PJRT_Client_PlatformName_Args* args) {
 
 PJRT_Error* PJRT_Client_PlatformVersion(
     PJRT_Client_PlatformVersion_Args* args) {
+  VLOG(1) << "PJRT_Client_PlatformVersion";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_CLient_PlatformVersion_Args",
       PJRT_Client_PlatformVersion_Args_STRUCT_SIZE, args->struct_size));
@@ -410,6 +413,7 @@ PJRT_Error* PJRT_Client_PlatformVersion(
 
 PJRT_Error* PJRT_Client_TopologyDescription(
     PJRT_Client_TopologyDescription_Args* args) {
+  VLOG(1) << "PJRT_Client_TopologyDescription";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_TopologyDescription_Args",
       PJRT_Client_TopologyDescription_Args_STRUCT_SIZE, args->struct_size));
@@ -420,6 +424,7 @@ PJRT_Error* PJRT_Client_TopologyDescription(
 }
 
 PJRT_Error* PJRT_Client_Devices(PJRT_Client_Devices_Args* args) {
+  VLOG(1) << "PJRT_Client_Devices";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_Devices_Args", PJRT_Client_Devices_Args_STRUCT_SIZE,
       args->struct_size));
@@ -430,6 +435,7 @@ PJRT_Error* PJRT_Client_Devices(PJRT_Client_Devices_Args* args) {
 
 PJRT_Error* PJRT_Client_AddressableDevices(
     PJRT_Client_AddressableDevices_Args* args) {
+  VLOG(1) << "PJRT_Client_AddressableDevices";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_AddressableDevices_Args",
       PJRT_Client_AddressableDevices_Args_STRUCT_SIZE, args->struct_size));
@@ -439,6 +445,7 @@ PJRT_Error* PJRT_Client_AddressableDevices(
 }
 
 PJRT_Error* PJRT_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
+  VLOG(1) << "PJRT_Client_LookupDevice";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_LookupDevice_Args",
       PJRT_Client_LookupDevice_Args_STRUCT_SIZE, args->struct_size));
@@ -451,6 +458,7 @@ PJRT_Error* PJRT_Client_LookupDevice(PJRT_Client_LookupDevice_Args* args) {
 
 PJRT_Error* PJRT_Client_LookupAddressableDevice(
     PJRT_Client_LookupAddressableDevice_Args* args) {
+  VLOG(1) << "PJRT_Client_LookupAddressableDevice";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_LookupAddressableDevice_Args",
       PJRT_Client_LookupAddressableDevice_Args_STRUCT_SIZE, args->struct_size));
@@ -586,6 +594,7 @@ const xla::XlaComputation& UnpackPjrtProgram(
 }  // namespace
 
 PJRT_Error* PJRT_Client_Compile(PJRT_Client_Compile_Args* args) {
+  VLOG(1) << "PJRT_Client_Compile";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_Compile_Args", PJRT_Client_Compile_Args_STRUCT_SIZE,
       args->struct_size));
@@ -630,6 +639,7 @@ static void PopulateDeviceAssignment(int* const device_assignment_buffer,
 
 PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
     PJRT_Client_DefaultDeviceAssignment_Args* args) {
+  VLOG(1) << "PJRT_Client_DefaultDeviceAssignment";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_DefaultAssignment_Args",
       PJRT_Client_DefaultDeviceAssignment_Args_STRUCT_SIZE, args->struct_size));
@@ -656,6 +666,7 @@ PJRT_Error* PJRT_Client_DefaultDeviceAssignment(
 
 PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args) {
+  VLOG(1) << "PJRT_Client_BufferFromHostBuffer";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_BufferFromHostBuffer_Args",
       PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE, args->struct_size));
@@ -750,6 +761,7 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
 
 PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     PJRT_Client_CreateViewOfDeviceBuffer_Args* args) {
+  VLOG(1) << "PJRT_Client_CreateViewOfDeviceBuffer";
   PJRT_ASSIGN_OR_RETURN(xla::Shape shape,
                         pjrt::BuildXlaShapeFromC(args->element_type, args->dims,
                                                  args->num_dims, args->layout));
@@ -777,6 +789,7 @@ PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
 // --------------------------------- Devices -----------------------------------
 
 PJRT_Error* PJRT_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args) {
+  VLOG(1) << "PJRT_DeviceDescription_Id";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_DeviceDescription_Id_Args",
       PJRT_DeviceDescription_Id_Args_STRUCT_SIZE, args->struct_size));
@@ -810,6 +823,7 @@ PJRT_Error* PJRT_DeviceDescription_Attributes(
 
 PJRT_Error* PJRT_DeviceDescription_Kind(
     PJRT_DeviceDescription_Kind_Args* args) {
+  VLOG(1) << "PJRT_DeviceDescription_Kind";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_DeviceDescription_Kind_Args",
       PJRT_DeviceDescription_Kind_Args_STRUCT_SIZE, args->struct_size));
@@ -823,6 +837,7 @@ PJRT_Error* PJRT_DeviceDescription_Kind(
 
 PJRT_Error* PJRT_DeviceDescription_DebugString(
     PJRT_DeviceDescription_DebugString_Args* args) {
+  VLOG(1) << "PJRT_DeviceDescription_DebugString";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_DeviceDescription_DebugString_Args",
       PJRT_DeviceDescription_DebugString_Args_STRUCT_SIZE, args->struct_size));
@@ -836,6 +851,7 @@ PJRT_Error* PJRT_DeviceDescription_DebugString(
 
 PJRT_Error* PJRT_DeviceDescription_ToString(
     PJRT_DeviceDescription_ToString_Args* args) {
+  VLOG(1) << "PJRT_DeviceDescription_ToString";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_DeviceDescription_ToString_Args",
       PJRT_DeviceDescription_ToString_Args_STRUCT_SIZE, args->struct_size));
@@ -855,6 +871,7 @@ PJRT_Error* PJRT_Device_GetDescription(PJRT_Device_GetDescription_Args* args) {
 }
 
 PJRT_Error* PJRT_Device_IsAddressable(PJRT_Device_IsAddressable_Args* args) {
+  VLOG(1) << "PJRT_Device_IsAddressable";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Device_IsAddressable_Args",
       PJRT_Device_IsAddressable_Args_STRUCT_SIZE, args->struct_size));
@@ -864,6 +881,7 @@ PJRT_Error* PJRT_Device_IsAddressable(PJRT_Device_IsAddressable_Args* args) {
 
 PJRT_Error* PJRT_Device_LocalHardwareId(
     PJRT_Device_LocalHardwareId_Args* args) {
+  VLOG(1) << "PJRT_Device_LocalHardwareId";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Device_LocalHardwareId_Args",
       PJRT_Device_LocalHardwareId_Args_STRUCT_SIZE, args->struct_size));
@@ -892,6 +910,7 @@ PJRT_Error* PJRT_Device_DefaultMemory(PJRT_Device_DefaultMemory_Args* args) {
 }
 
 PJRT_Error* PJRT_Device_MemoryStats(PJRT_Device_MemoryStats_Args* args) {
+  VLOG(1) << "PJRT_Device_MemoryStats";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Device_MemoryStats_Args", PJRT_Device_MemoryStats_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1000,6 +1019,7 @@ PJRT_Error* PJRT_Memory_AddressableByDevices(
 // ------------------------------- Executables ---------------------------------
 
 PJRT_Error* PJRT_Executable_Destroy(PJRT_Executable_Destroy_Args* args) {
+  VLOG(1) << "PJRT_Executable_Destroy";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Destroy_Args", PJRT_Executable_Destroy_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1009,6 +1029,7 @@ PJRT_Error* PJRT_Executable_Destroy(PJRT_Executable_Destroy_Args* args) {
 
 PJRT_Error* PJRT_LoadedExecutable_Destroy(
     PJRT_LoadedExecutable_Destroy_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_Destroy";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_Destroy_Args",
       PJRT_LoadedExecutable_Destroy_Args_STRUCT_SIZE, args->struct_size));
@@ -1017,6 +1038,7 @@ PJRT_Error* PJRT_LoadedExecutable_Destroy(
 }
 
 PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args) {
+  VLOG(1) << "PJRT_Executable_Name";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Name_Args", PJRT_Executable_Name_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1028,6 +1050,7 @@ PJRT_Error* PJRT_Executable_Name(PJRT_Executable_Name_Args* args) {
 
 PJRT_Error* PJRT_Executable_NumReplicas(
     PJRT_Executable_NumReplicas_Args* args) {
+  VLOG(1) << "PJRT_Executable_NumReplicas";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_NumReplicas_Args",
       PJRT_Executable_NumReplicas_Args_STRUCT_SIZE, args->struct_size));
@@ -1037,6 +1060,7 @@ PJRT_Error* PJRT_Executable_NumReplicas(
 
 PJRT_Error* PJRT_Executable_NumPartitions(
     PJRT_Executable_NumPartitions_Args* args) {
+  VLOG(1) << "PJRT_Executable_NumPartitions";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_NumPartitions_Args",
       PJRT_Executable_NumPartitions_Args_STRUCT_SIZE, args->struct_size));
@@ -1046,6 +1070,7 @@ PJRT_Error* PJRT_Executable_NumPartitions(
 
 PJRT_Error* PJRT_LoadedExecutable_AddressableDevices(
     PJRT_LoadedExecutable_AddressableDevices_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_AddressableDevices";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_AddressableDevices_Args",
       PJRT_LoadedExecutable_AddressableDevices_Args_STRUCT_SIZE,
@@ -1057,6 +1082,7 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDevices(
 }
 
 PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
+  VLOG(1) << "PJRT_Executable_NumOutputs";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_NumOutputs_Args",
       PJRT_Executable_NumOutputs_Args_STRUCT_SIZE, args->struct_size));
@@ -1085,6 +1111,7 @@ PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
 
 PJRT_Error* PJRT_Executable_SizeOfGeneratedCodeInBytes(
     PJRT_Executable_SizeOfGeneratedCodeInBytes_Args* args) {
+  VLOG(1) << "PJRT_Executable_SizeOfGeneratedCodeInBytes";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_SizeOfGeneratedCodeInBytes_Args",
       PJRT_Executable_SizeOfGeneratedCodeInBytes_Args_STRUCT_SIZE,
@@ -1125,6 +1152,7 @@ GetOptimizedProgramModule(const PJRT_Executable_OptimizedProgram_Args* args) {
 
 PJRT_Error* PJRT_Executable_OptimizedProgram(
     PJRT_Executable_OptimizedProgram_Args* args) {
+  VLOG(1) << "PJRT_Executable_OptimizedProgram";
   PJRT_RETURN_IF_ERROR(VerifyOptimizedProgramArgs(args));
   PJRT_Program* program = args->program;
   program->format = kHloWithConfigFormat.data();
@@ -1162,6 +1190,7 @@ PJRT_Error* PJRT_Executable_OptimizedProgram(
 
 PJRT_Error* PJRT_Executable_Fingerprint(
     PJRT_Executable_Fingerprint_Args* args) {
+  VLOG(1) << "PJRT_Executable_Fingerprint";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Fingerprint_Args",
       PJRT_Executable_Fingerprint_Args_STRUCT_SIZE, args->struct_size));
@@ -1174,6 +1203,7 @@ PJRT_Error* PJRT_Executable_Fingerprint(
 
 PJRT_Error* PJRT_Executable_GetCostAnalysis(
     PJRT_Executable_GetCostAnalysis_Args* args) {
+  VLOG(1) << "PJRT_Executable_GetCostAnalysis";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_GetCostAnalysis_Args",
       PJRT_Executable_GetCostAnalysis_Args_STRUCT_SIZE, args->struct_size));
@@ -1198,6 +1228,7 @@ PJRT_Error* PJRT_Executable_GetCostAnalysis(
 
 PJRT_Error* PJRT_Executable_OutputElementTypes(
     PJRT_Executable_OutputElementTypes_Args* args) {
+  VLOG(1) << "PJRT_Executable_OutputElementTypes";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_OutputElementTypes_Args",
       PJRT_Executable_OutputElementTypes_Args_STRUCT_SIZE, args->struct_size));
@@ -1218,6 +1249,7 @@ PJRT_Error* PJRT_Executable_OutputElementTypes(
 
 PJRT_Error* PJRT_Executable_OutputDimensions(
     PJRT_Executable_OutputDimensions_Args* args) {
+  VLOG(1) << "PJRT_Executable_OutputDimensions";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_OutputDimensions_Args",
       PJRT_Executable_OutputDimensions_Args_STRUCT_SIZE, args->struct_size));
@@ -1260,6 +1292,7 @@ PJRT_Error* PJRT_Executable_OutputMemoryKinds(
 
 PJRT_Error* PJRT_LoadedExecutable_Delete(
     PJRT_LoadedExecutable_Delete_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_Delete";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_Delete_Args",
       PJRT_LoadedExecutable_Delete_Args_STRUCT_SIZE, args->struct_size));
@@ -1269,6 +1302,7 @@ PJRT_Error* PJRT_LoadedExecutable_Delete(
 
 PJRT_Error* PJRT_LoadedExecutable_IsDeleted(
     PJRT_LoadedExecutable_IsDeleted_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_IsDeleted";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_IsDeleted_Args",
       PJRT_LoadedExecutable_IsDeleted_Args_STRUCT_SIZE, args->struct_size));
@@ -1368,6 +1402,7 @@ static std::vector<std::vector<xla::PjRtBuffer*>> Convert2DCBuffersToCppBuffers(
 
 PJRT_Error* PJRT_LoadedExecutable_Execute(
     PJRT_LoadedExecutable_Execute_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_Execute";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_Execute_Args",
       PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE, args->struct_size));
@@ -1508,6 +1543,7 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
 }
 
 PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
+  VLOG(1) << "PJRT_Executable_Serialize";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Serialize_Args",
       PJRT_Executable_Serialize_Args_STRUCT_SIZE, args->struct_size));
@@ -1533,6 +1569,7 @@ PJRT_Error* PJRT_Executable_Serialize(PJRT_Executable_Serialize_Args* args) {
 
 PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
     PJRT_Executable_GetCompiledMemoryStats_Args* args) {
+  VLOG(1) << "PJRT_Executable_GetCompiledMemoryStats";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_Serialize_Args",
       PJRT_Executable_Serialize_Args_STRUCT_SIZE, args->struct_size));
@@ -1555,6 +1592,7 @@ PJRT_Error* PJRT_Executable_GetCompiledMemoryStats(
 
 PJRT_Error* PJRT_Executable_DeserializeAndLoad(
     PJRT_Executable_DeserializeAndLoad_Args* args) {
+  VLOG(1) << "PJRT_Executable_DeserializeAndLoad";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Executable_DeserializeAndLoad_Args",
       PJRT_Executable_DeserializeAndLoad_Args_STRUCT_SIZE, args->struct_size));
@@ -1572,6 +1610,7 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
 
 PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
     PJRT_LoadedExecutable_GetExecutable_Args* args) {
+  VLOG(1) << "PJRT_LoadedExecutable_GetExecutable";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_LoadedExecutable_GetExecutable_Args",
       PJRT_LoadedExecutable_GetExecutable_Args_STRUCT_SIZE, args->struct_size));
@@ -1582,6 +1621,7 @@ PJRT_Error* PJRT_LoadedExecutable_GetExecutable(
 // ---------------------------------- Buffers ----------------------------------
 
 PJRT_Error* PJRT_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args) {
+  VLOG(1) << "PJRT_Buffer_Destroy";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_Destroy_Args", PJRT_Buffer_Destroy_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1590,6 +1630,7 @@ PJRT_Error* PJRT_Buffer_Destroy(PJRT_Buffer_Destroy_Args* args) {
 }
 
 PJRT_Error* PJRT_Buffer_ElementType(PJRT_Buffer_ElementType_Args* args) {
+  VLOG(1) << "PJRT_Buffer_ElementType";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_ElementType_Args", PJRT_Buffer_ElementType_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1598,6 +1639,7 @@ PJRT_Error* PJRT_Buffer_ElementType(PJRT_Buffer_ElementType_Args* args) {
 }
 
 PJRT_Error* PJRT_Buffer_Dimensions(PJRT_Buffer_Dimensions_Args* args) {
+  VLOG(1) << "PJRT_Buffer_Dimensions";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_Dimensions_Args", PJRT_Buffer_Dimensions_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1608,6 +1650,7 @@ PJRT_Error* PJRT_Buffer_Dimensions(PJRT_Buffer_Dimensions_Args* args) {
 
 PJRT_Error* PJRT_Buffer_UnpaddedDimensions(
     PJRT_Buffer_UnpaddedDimensions_Args* args) {
+  VLOG(1) << "PJRT_Buffer_UnpaddedDimensions";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_UnpaddedDimensions_Args",
       PJRT_Buffer_UnpaddedDimensions_Args_STRUCT_SIZE, args->struct_size));
@@ -1629,6 +1672,7 @@ PJRT_Error* PJRT_Buffer_UnpaddedDimensions(
 
 PJRT_Error* PJRT_Buffer_DynamicDimensionIndices(
     PJRT_Buffer_DynamicDimensionIndices_Args* args) {
+  VLOG(1) << "PJRT_Buffer_DynamicDimensionIndices";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_DynamicDimensionIndices_Args",
       PJRT_Buffer_DynamicDimensionIndices_Args_STRUCT_SIZE, args->struct_size));
@@ -1691,6 +1735,7 @@ PJRT_Error* PJRT_Buffer_OnDeviceSizeInBytes(
 }
 
 PJRT_Error* PJRT_Buffer_Device(PJRT_Buffer_Device_Args* args) {
+  VLOG(1) << "PJRT_Buffer_Device";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_Device_Args", PJRT_Buffer_Device_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1718,6 +1763,7 @@ PJRT_Error* PJRT_Buffer_Memory(PJRT_Buffer_Memory_Args* args) {
 }
 
 PJRT_Error* PJRT_Buffer_Delete(PJRT_Buffer_Delete_Args* args) {
+  VLOG(1) << "PJRT_Buffer_Delete";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_Delete_Args", PJRT_Buffer_Delete_Args_STRUCT_SIZE,
       args->struct_size));
@@ -1734,6 +1780,7 @@ PJRT_Error* PJRT_Buffer_IsDeleted(PJRT_Buffer_IsDeleted_Args* args) {
 }
 
 PJRT_Error* PJRT_Buffer_CopyToDevice(PJRT_Buffer_CopyToDevice_Args* args) {
+  VLOG(1) << "PJRT_Buffer_CopyToDevice";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_CopyToDevice_Args",
       PJRT_Buffer_CopyToDevice_Args_STRUCT_SIZE, args->struct_size));
@@ -1758,6 +1805,7 @@ PJRT_Error* PJRT_Buffer_CopyToMemory(PJRT_Buffer_CopyToMemory_Args* args) {
 }
 
 PJRT_Error* PJRT_Buffer_ToHostBuffer(PJRT_Buffer_ToHostBuffer_Args* args) {
+  VLOG(1) << "PJRT_Buffer_ToHostBuffer";
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Buffer_ToHostBuffer_Args",
       PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE, args->struct_size));
