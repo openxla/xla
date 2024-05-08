@@ -374,6 +374,7 @@ HloValueMap MlirReductionFusion::EmitterState::EmitPerThreadReducedElements(
   const auto& reduction_info = owner.reduction_info();
   const auto& tiling = owner.reduction_info().GetTiling();
   auto tile_indexing = GetIndexingMapForTiling(tiling, builder.getContext());
+  tile_indexing.Simplify(GetIndexingMapForInstruction);
 
   int elems_write_per_thread = reduction_info.ElemsWritePerThread();
 
