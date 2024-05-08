@@ -170,9 +170,7 @@ HloInstruction *PadOperandToMultipleOf16(absl::Span<const int64_t> batch_dims,
 // Calculates the reciprocal of scalar when invert is true and converts to FP32.
 absl::StatusOr<HloInstruction*> InvertAndConvertScalar(HloInstruction* scalar,
                                                        bool invert) {
-  if (!ShapeUtil::IsScalar(scalar->shape())) {
-    return absl::OkStatus();
-  }
+  DCHECK(ShapeUtil::IsScalar(scalar->shape()));
 
   if (invert) {
     Literal one_literal = LiteralUtil::One(scalar->shape().element_type());
