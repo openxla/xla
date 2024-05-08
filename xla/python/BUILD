@@ -424,9 +424,9 @@ cc_library(
     deps = [
         ":nb_numpy",
         ":python_ref_manager",
+        "//third_party/py/numpy:headers",
         "//xla:comparison_util",
         "//xla:xla_data_proto_cc",
-        "//xla/pjrt:host_callback",
         "//xla/pjrt:transpose",
         "//xla/service:custom_call_status",
         "@com_google_absl//absl/base",
@@ -498,6 +498,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
@@ -571,7 +572,9 @@ cc_library(
     hdrs = ["custom_partition_callback.h"],
     deps = [
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:mlir_to_hlo",
@@ -587,6 +590,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
