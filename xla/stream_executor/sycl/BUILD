@@ -1,3 +1,6 @@
+# Description:
+#   SYCL-platform specific StreamExecutor support code.
+
 load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
