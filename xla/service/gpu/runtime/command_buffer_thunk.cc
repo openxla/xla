@@ -172,7 +172,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
             << ", previous_num_executions=" << cmd_buffer->num_executions;
 
     TraceMe trace([&] {
-      return TraceMeEncode("command_buffer::initialize",
+      return TraceMeEncode("command_buffer::record",
                            {{"device", params.executor->device_ordinal()},
                             {"num_commands", commands_.size()}});
     });
