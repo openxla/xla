@@ -320,17 +320,6 @@ std::optional<IndexingMap> TransposeFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
     mlir::MLIRContext* ctx) const {
   const auto& hero = analysis_.fusion_hero(root_index).instruction();
-  const auto& root = analysis_.fusion_root(root_index).instruction();
-  if (!GetDescriptionForTiledTransposeEmitter(root, hero)) {
-    auto map =
-        ComposeIndexingMaps(*ComputeThreadIdToOutputIndexing(root_index, ctx),
-                            *ComputeOutputToInputIndexing(
-                                 analysis_.fusion_roots()[root_index], 0, ctx)
-                                 .indexing_maps[hero_operand_index]
-                                 .begin());
-    map.Simplify(GetIndexingMapForInstruction);
-    return map;
-  }
 
   auto map = ComposeIndexingMaps(
       GetIndexingMapForTiling(tiling_, ctx),
