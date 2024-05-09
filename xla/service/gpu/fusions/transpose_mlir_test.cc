@@ -460,7 +460,7 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSidedOutput) {
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3 floordiv 2,
-          (d0 floordiv 32) * 64 + d0 mod 32 + s1 * 256 + (d3 mod 2) * 32
+          ### (d0 floordiv 32) * 64 + d0 mod 32 + s1 * 256 + (d3 mod 2) * 32 ###
         )
         domain:
         d0 in [0, 127]
