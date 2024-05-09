@@ -128,6 +128,18 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
 std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     int64_t root_index, MLIRContext* mlir_context) const {
   const auto& hero = analysis_.fusion_hero(root_index).instruction();
+  const auto& root = analysis_.fusion_root(root_index).instruction();
+  if (!GetDescriptionForTiledTransposeEmitter(root, hero)) {
+    // The shape of non-transpose roots are bitcast compatible with the input
+    // shape of transpose heros.
+    auto map = ComposeIndexingMaps(
+        GetIndexingMapForTiling(tiling_, mlir_context),
+        GetBitcastMap(tiling_.GetXlaShape(),
+                      analysis_.fusion_roots()[root_index]->shape(),
+                      mlir_context));
+    map.Simplify(GetIndexingMapForInstruction);
+    return map;
+  }
   // The block offsets are permuted, but the thread offsets remain the same.
   auto block_offset = GetBlockOffsetsForTiling(tiling_, mlir_context)
                           .getSubMap(std::vector<unsigned>{permutation_.begin(),
@@ -162,8 +174,14 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToInputIndexing(
   const auto& hero = analysis_.fusion_hero(root_index).instruction();
   const auto& root = analysis_.fusion_root(root_index).instruction();
   if (!GetDescriptionForTiledTransposeEmitter(root, hero)) {
-    // Non-transpose roots are elementwise by definition.
-    return ComputeThreadIdToOutputIndexing(root_index, mlir_context);
+    auto map = ComposeIndexingMaps(
+        *ComputeThreadIdToOutputIndexing(root_index, mlir_context),
+        *ComputeOutputToInputIndexing(analysis_.fusion_roots()[root_index], 0,
+                                      mlir_context)
+             .indexing_maps[hero_operand_index]
+             .begin());
+    map.Simplify(GetIndexingMapForInstruction);
+    return map;
   }
   return ComputeThreadIdToInputIndexing(hero, mlir_context);
 }

@@ -411,6 +411,71 @@ TEST_F(MlirTransposeFusionTest, SideOutputs) {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
+TEST_F(MlirTransposeFusionTest, ThreadIndexingSidedOutput) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    fusion {
+      %input = f32[100,32,64] parameter(0)
+      %bitcast0 = f32[100,64,32] bitcast(%input)
+      %transpose = f32[100,64,32] transpose(%input), dimensions={0,2,1}
+      %bitcast1 = f32[100,2048] bitcast(%bitcast0)
+      ROOT %tuple = (f32[100,64,32], f32[100,2048]) tuple(%transpose, %bitcast1)
+    }
+
+    ENTRY entry {
+      %input = f32[100,32,64] parameter(0)
+      ROOT %fusion = (f32[100,64,32], f32[100,2048]) fusion(%input), kind=kInput, calls=fusion
+    })")
+                    .value();
+
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+
+  MlirTransposeFusion fusion(analysis);
+  mlir::MLIRContext mlir_context;
+
+  EXPECT_THAT(
+      fusion.ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
+      MatchIndexingString(R"(
+        (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
+          d3 floordiv 2,
+          (d0 floordiv 32) * 2 + d3 mod 2 + s1 * 8,
+          d0 mod 32
+        )
+        domain:
+        d0 in [0, 127]
+        d1 in [0, 0]
+        d2 in [0, 0]
+        d3 in [0, 199]
+        d4 in [0, 0]
+        d5 in [0, 0]
+
+        s0 in [0, 0]
+        s1 in [0, 7]
+        s2 in [0, 0]
+      )"));
+  EXPECT_THAT(
+      fusion.ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
+      MatchIndexingString(R"(
+        (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
+          d3 floordiv 2,
+          (d0 floordiv 32) * 64 + d0 mod 32 + s1 * 256 + (d3 mod 2) * 32
+        )
+        domain:
+        d0 in [0, 127]
+        d1 in [0, 0]
+        d2 in [0, 0]
+        d3 in [0, 199]
+        d4 in [0, 0]
+        d5 in [0, 0]
+
+        s0 in [0, 0]
+        s1 in [0, 7]
+        s2 in [0, 0]
+      )"));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
