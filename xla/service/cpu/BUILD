@@ -1531,9 +1531,18 @@ cc_library(
 )
 
 tf_proto_library(
+    name = "onednn_config_proto",
+    srcs = ["onednn_config.proto"],
+    cc_api_version = 2,
+)
+
+tf_proto_library(
     name = "backend_config_proto",
     srcs = ["backend_config.proto"],
     cc_api_version = 2,
+    protodeps = [
+        ":onednn_config_proto"
+    ],
 )
 
 cc_library(
