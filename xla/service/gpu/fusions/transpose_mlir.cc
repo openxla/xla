@@ -178,17 +178,15 @@ IndexingMap GetSharedMemoryWriteIndexingMap(
     const IndexingMap& thread_id_indexing, int loop_dim) {
   auto* mlir_context = thread_id_indexing.GetMLIRContext();
 
-  AffineExpr c0 = mlir::getAffineConstantExpr(0, mlir_context);
   AffineExpr th_x = mlir::getAffineDimExpr(0, mlir_context);
   SmallVector<AffineExpr, 3> tile_sizes(3);
   mlir::bindSymbolsList(mlir_context, llvm::MutableArrayRef(tile_sizes));
 
   IndexingMap shmem_write_indexing{
-      AffineMap::get(
-          thread_id_indexing.GetDimensionCount(),
-          thread_id_indexing.GetSymbolCount(),
-          {c0, th_x.floorDiv(32) + 4 * tile_sizes[loop_dim], th_x % 32},
-          mlir_context),
+      AffineMap::get(thread_id_indexing.GetDimensionCount(),
+                     thread_id_indexing.GetSymbolCount(),
+                     {th_x.floorDiv(32) + 4 * tile_sizes[loop_dim], th_x % 32},
+                     mlir_context),
       thread_id_indexing.GetDimVars(), thread_id_indexing.GetRangeVars(),
       thread_id_indexing.GetRTVars(), thread_id_indexing.GetConstraints()};
   return shmem_write_indexing;
@@ -200,7 +198,7 @@ IndexingMap GetSharedMemoryReadIndexingMap(
     const IndexingMap& thread_id_indexing, int loop_dim) {
   IndexingMap write_indexing =
       GetSharedMemoryWriteIndexingMap(thread_id_indexing, loop_dim);
-  return IndexingMap{write_indexing.GetAffineMap().getSubMap({0, 2, 1}),
+  return IndexingMap{write_indexing.GetAffineMap().getSubMap({1, 0}),
                      write_indexing.GetDimVars(), write_indexing.GetRangeVars(),
                      write_indexing.GetRTVars(),
                      write_indexing.GetConstraints()};
@@ -214,6 +212,9 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
     ValueRange output_args) const {
   std::vector<int64_t> shmem_tensor_size(tiling_.GetBlockTileSize().begin(),
                                          tiling_.GetBlockTileSize().end());
+  shmem_tensor_size.erase(shmem_tensor_size.begin() +
+                          (permutation_ == Vector3({0, 2, 1}) ? 0 : 1));
+
   MLIRContext* ctx = builder.getContext();
 
   WriteResult write_result;
