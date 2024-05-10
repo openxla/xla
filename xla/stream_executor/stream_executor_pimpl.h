@@ -69,40 +69,10 @@ class StreamExecutor : public StreamExecutorInterface {
   ~StreamExecutor() = default;
 
   const Platform* GetPlatform() const override { return platform_; }
-
-  // Convenience wrapper that allocates space for a single element of type T in
-  // device memory.
-  template <typename T>
-  DeviceMemory<T> AllocateScalar() {
-    return AllocateArray<T>(1);
-  }
-
-  absl::Status SynchronousMemcpyH2D(const void* host_src, int64_t size,
-                                    DeviceMemoryBase* device_dst);
-
-  // Alternative interface for memcpying from host to device that takes an
-  // array slice. Checks that the destination size can accommodate the host
-  // slice size.
-  template <class T>
-  absl::Status SynchronousMemcpyH2D(absl::Span<const T> host_src,
-                                    DeviceMemoryBase* device_dst) {
-    auto host_size = host_src.size() * sizeof(T);
-    CHECK(device_dst->size() == 0 || device_dst->size() >= host_size);
-    return SynchronousMemcpyH2D(host_src.begin(), host_size, device_dst);
-  }
-
-  // Same as SynchronousMemcpy(void*, ...) above.
-  absl::Status SynchronousMemcpyD2H(const DeviceMemoryBase& device_src,
-                                    int64_t size, void* host_dst);
-
-  // Obtains metadata about the underlying device.
-  // The value is cached on first use.
-  const DeviceDescription& GetDeviceDescription() const;
-
+  const DeviceDescription& GetDeviceDescription() const override;
   absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
       std::optional<std::variant<StreamPriority, int>> priority =
           std::nullopt) override;
-
   int64_t GetMemoryLimitBytes() const override { return memory_limit_bytes_; }
 
  private:

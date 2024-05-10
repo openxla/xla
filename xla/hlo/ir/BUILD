@@ -2,6 +2,7 @@
 #   XLA’s HLO Intermediate Representation implementation.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 package(
@@ -118,12 +119,28 @@ cc_library(
     srcs = ["backend_config.cc"],
     hdrs = ["backend_config.h"],
     deps = [
+        "//xla:util",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:human_readable_json",
         "@tsl//tsl/platform:protobuf",
+    ],
+)
+
+xla_cc_test(
+    name = "backend_config_test",
+    srcs = ["backend_config_test.cc"],
+    deps = [
+        ":backend_config",
+        "//xla/service/gpu:backend_configs_cc",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 

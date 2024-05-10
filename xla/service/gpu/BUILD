@@ -4186,7 +4186,6 @@ cc_library(
     hdrs = ["gpu_schedule_postprocessing.h"],
     deps = [
         ":backend_configs_cc",
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
@@ -4437,6 +4436,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -5716,7 +5716,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],

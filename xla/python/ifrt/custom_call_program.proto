@@ -13,27 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_GPU_MODEL_INDEXING_CONTEXT_H_
-#define XLA_SERVICE_GPU_MODEL_INDEXING_CONTEXT_H_
+syntax = "proto3";
 
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "xla/service/gpu/model/indexing_map.h"
+package xla.ifrt;
 
-namespace xla {
-namespace gpu {
+import "xla/python/ifrt/array_spec.proto";
+import "xla/python/ifrt/device.proto";
 
-class IndexingContext {
- public:
-  explicit IndexingContext(mlir::MLIRContext* mlir_context)
-      : mlir_context_(mlir_context) {}
-
-  mlir::MLIRContext* GetMLIRContext() const { return mlir_context_; }
-
- private:
-  mlir::MLIRContext* mlir_context_;
-};
-
-}  // namespace gpu
-}  // namespace xla
-
-#endif  // XLA_SERVICE_GPU_MODEL_INDEXING_CONTEXT_H_
+// Proto equivalent of C++ `CustomCallProgram`.
+message CustomCallProgramProto {
+  string type = 1;
+  string name = 2;
+  bytes serialized_program_text = 3;
+  DeviceListProto devices = 4;
+  repeated ArraySpecProto input_specs = 5;
+  repeated ArraySpecProto output_specs = 6;
+}
