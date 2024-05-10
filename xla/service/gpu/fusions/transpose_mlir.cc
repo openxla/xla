@@ -223,8 +223,8 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
     ValueRange output_args) const {
   std::vector<int64_t> shmem_tensor_size(tiling_.GetBlockTileSize().begin(),
                                          tiling_.GetBlockTileSize().end());
-  // // Avoid bank conflict.
-  // ++shmem_tensor_size.back();
+  // Avoid bank conflict.
+  ++shmem_tensor_size.back();
 
   MLIRContext* ctx = builder.getContext();
 
