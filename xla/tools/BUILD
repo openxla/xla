@@ -138,6 +138,29 @@ xla_cc_binary(
 )
 
 build_test(
+    name = "hlo_module_metadata_processor_build_test",
+    targets = [
+        ":hlo_module_metadata_processor",
+    ],
+)
+
+xla_cc_binary(
+    name = "hlo_module_metadata_processor",
+    srcs = ["hlo_module_metadata_processor.cc"],
+    deps = [
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status",
+    ],
+)
+
+build_test(
     name = "show_text_literal_build_test",
     targets = [
         ":show_text_literal",
