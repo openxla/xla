@@ -171,7 +171,7 @@ TEST_F(MlirTransposeFusionTest, FusedTranspose021) {
     // CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : index
     // CHECK-DAG:  %[[C8:.*]] = arith.constant 8 : index
 
-    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<32x32xf32>
+    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<1x32x33xf32>
     // CHECK:      %[[SHMEM_WITH_VALS:.*]] = scf.for
     // CHECK-SAME:     %[[C0]] to %[[C8]] step %[[C1]]
     // CHECK-SAME:     iter_args(%[[SHMEM_:.*]] = %[[SHMEM]])
@@ -213,7 +213,7 @@ TEST_F(MlirTransposeFusionTest, FusedTranspose210) {
     // CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : index
     // CHECK-DAG:  %[[C8:.*]] = arith.constant 8 : index
 
-    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<32x32xf32>
+    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<32x1x33xf32>
     // CHECK:      %[[SHMEM_WITH_VALS:.*]] = scf.for
     // CHECK-SAME:     %[[C0]] to %[[C8]] step %[[C1]]
     // CHECK-SAME:     iter_args(%[[SHMEM_:.*]] = %[[SHMEM]])
@@ -254,7 +254,7 @@ TEST_F(MlirTransposeFusionTest, Transpose021_Parameter) {
     // CHECK-DAG:  %[[C1:.*]] = arith.constant 1 : index
     // CHECK-DAG:  %[[C8:.*]] = arith.constant 8 : index
 
-    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<32x32xf32>
+    // CHECK:      %[[SHMEM:.*]] = xla_gpu.allocate_shared : tensor<1x32x33xf32>
     // CHECK:      %[[SHMEM_WITH_VALS:.*]] = scf.for
     // CHECK-SAME:     %[[C0]] to %[[C8]] step %[[C1]]
     // CHECK-SAME:     iter_args(%[[SHMEM_:.*]] = %[[SHMEM]])
