@@ -89,7 +89,12 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_fast_math_honor_division(true);
 
   // TODO(AyanmoI): Remove this flag when cuDNN FMHA is fully supported.
-  opts.set_xla_gpu_enable_cudnn_fmha(true);
+  //
+  // cuDNN FMHA currently rewrites attention layers to use FlashAttention by
+  // default. This reassociation is not semantics-preserving, and the user
+  // should explicitly opt in if they wish to use this feature. cuDNN FMHA can
+  // not be turned on by default.
+  opts.set_xla_gpu_enable_cudnn_fmha(false);
 
   opts.set_xla_gpu_fused_attention_use_cudnn_rng(false);
 
@@ -1681,6 +1686,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_use_memcpy_local_p2p),
       debug_options->xla_gpu_use_memcpy_local_p2p(),
       "Whether to use memcpy for local p2p communication."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_dump_autotune_logs_to",
+      string_setter_for(&DebugOptions::set_xla_gpu_dump_autotune_logs_to),
+      debug_options->xla_gpu_dump_autotune_logs_to(),
+      "File to write autotune logs to. It will be a binary file unless the "
+      "name ends with .txt or .textproto."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

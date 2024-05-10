@@ -196,7 +196,7 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   CreateBuffersForAsyncHostToDevice(absl::Span<const Shape> shapes,
                                     PjRtDevice* device) override;
 
-  PjRtFuture<> CopyRawSubBufferToHost(PjRtBuffer* buffer, void* dst,
+  PjRtFuture<> CopyRawSubBufferToHost(PjRtBuffer* buffer, PjRtFuture<void*> dst,
                                       int64_t offset,
                                       int64_t transfer_size) override;
 
@@ -223,10 +223,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadSerialized(
       absl::string_view serialized, std::optional<CompileOptions> options,
       const LoadOptions& load_options);
-
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> DeserializeExecutable(
-      absl::string_view serialized,
-      std::optional<CompileOptions> options) override;
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
       const XlaComputation& computation, CompileOptions options) override;

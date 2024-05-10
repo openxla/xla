@@ -663,12 +663,6 @@ class PjRtClient {
                          platform_name());
   }
 
-  // Returns topology object for compilation based on this client's topology.
-  virtual StatusOr<const PjRtTopologyDescription*>
-  GetFullTopologyForCompilation() const {
-    return GetTopologyDescription();
-  }
-
   // A client may want to create a buffer, and hand the buffer to other PjRt
   // methods, before the data to store in the buffer is available to the client.
   // This is supported using CreateBuffersForAsyncHostToDevice, which returns an
@@ -1195,12 +1189,15 @@ class PjRtBuffer {
 
   // As above, but the transfer will not happen until `dst` is fulfilled with a
   // valid pointer. If `dst` is fulfilled with a non-Ok status, then the
-  // transfer will be cancelled.
+  // transfer will be cancelled. The implementation must ensure that the
+  // underlying buffer is kept alive even if the `PjRtBuffer` is deleted before
+  // the `dst` future is fulfilled.
   //
   // In error cases it is possible for the returned Future to become ready
   // before `dst` is fulfilled.
   //
-  // Note that the default implementation will block until `dst` is fulfilled.
+  // The default implementation always returns a future that is fulfilled with
+  // an UNIMPLEMENTED error.
   virtual PjRtFuture<> CopyRawToHostFuture(PjRtFuture<void*> dst,
                                            int64_t offset,
                                            int64_t transfer_size);

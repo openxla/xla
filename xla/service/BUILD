@@ -23,9 +23,9 @@ load(
     "//xla:xla.bzl",
     "xla_cc_binary",
     "xla_cc_test",
+    "xla_internal",
     "xla_py_proto_library",
     "xla_py_test_deps",
-    "xla_symbol_repository_deps",
 )
 load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
@@ -492,6 +492,7 @@ cc_library(
         ":hlo_pass",
         ":value_range",
         "//xla:comparison_util",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status",
@@ -507,9 +508,11 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:int128",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -655,6 +658,8 @@ cc_library(
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service/spmd:shard_barrier_partitioner",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
@@ -1098,6 +1103,7 @@ cc_library(
         "//xla:util",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_interface",
         "//xla/stream_executor/host:host_platform_id",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
@@ -1445,8 +1451,8 @@ xla_cc_test(
         ":shaped_buffer",
         "//xla:shape_util",
         "//xla:test",
-        "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_interface",
         "//xla/tests:xla_internal_test_main",
         "@tsl//tsl/platform:test_benchmark",
     ],
@@ -6058,6 +6064,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -6076,10 +6083,45 @@ xla_cc_test(
         "//xla:statusor",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_verifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "host_offloading_prepare",
+    srcs = ["host_offloading_prepare.cc"],
+    hdrs = ["host_offloading_prepare.h"],
+    deps = [
+        ":call_graph",
+        ":hlo_pass",
+        ":host_memory_offload_annotations_hdr",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "host_offloading_prepare_test",
+    srcs = ["host_offloading_prepare_test.cc"],
+    deps = [
+        ":host_memory_offload_annotations_hdr",
+        ":host_offloading_prepare",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
@@ -6566,6 +6608,7 @@ cc_library(
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
@@ -7606,7 +7649,7 @@ xla_cc_binary(
         "//xla/stream_executor/cuda:cublas_plugin",
     ]) + if_rocm([
         "//xla/stream_executor/rocm:rocblas_plugin",
-    ]) + xla_symbol_repository_deps(),
+    ]) + xla_internal(["tools:xsymbol_repository"]),
 )
 
 # A simple test of xla_aot_compile which generates an output file from an mhlo file.

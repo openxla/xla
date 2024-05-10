@@ -1,8 +1,9 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends", "stream_executor_internal")
+load("//xla/stream_executor:build_defs.bzl", "stream_executor_build_defs_bzl_deps", "stream_executor_friends", "stream_executor_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "transitive_hdrs")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
@@ -23,6 +24,16 @@ package_group(
 package_group(
     name = "internal",
     packages = stream_executor_internal(),
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    deps = [
+        "@local_config_cuda//cuda:build_defs_bzl",
+        "@tsl//tsl/platform:rules_cc_bzl",
+        "@tsl//tsl/platform/default:cuda_build_defs_bzl",
+    ] + stream_executor_build_defs_bzl_deps(),
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -128,6 +139,7 @@ cc_library(
         ":stream_executor_plugin_headers",
     ],
     deps = STREAM_EXECUTOR_DEPENDENCIES + [
+        ":stream_executor_interface",
         ":stream_executor_pimpl",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
@@ -513,6 +525,9 @@ cc_library(
     hdrs = ["command_buffer.h"],
     visibility = ["//visibility:private"],
     deps = [
+        ":device_memory",
+        ":launch_dim",
+        ":platform",
         ":stream_executor_headers",
         ":stream_executor_interface",
         "@com_google_absl//absl/functional:any_invocable",
@@ -579,9 +594,7 @@ cc_library(
         ":kernel_spec",
         ":platform",
         ":stream_executor_headers",
-        ":stream_executor_interface",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

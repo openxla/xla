@@ -414,6 +414,15 @@ INFER_RETURN_TYPE_COMPONENTS_FROM_OPERANDS(XorOp)
 // Async ops
 //===----------------------------------------------------------------------===//
 
+// Follow async operation use-def chain to find the start of the async chain.
+AsyncStartOp findAsyncChainStart(Operation* op) {
+  Operation* start = op;
+  while (start != nullptr && !isa<AsyncStartOp>(start)) {
+    start = start->getOperand(0).getDefiningOp();
+  }
+  return dyn_cast_or_null<AsyncStartOp>(start);
+}
+
 Type maybeTupleFromTypes(MLIRContext* ctx, ArrayRef<Type> types,
                          bool expectsTuple = false) {
   if (!expectsTuple && types.size() == 1 && !isa<TupleType>(types[0]))
@@ -492,26 +501,22 @@ LogicalResult AsyncStartOp::verify() {
 }
 
 LogicalResult AsyncUpdateOp::verify() {
+  if (!isa<AsyncStartOp, AsyncUpdateOp>(getOperand().getDefiningOp())) {
+    return emitOpError()
+           << "operand must be defined by async-start or async-update op";
+  }
+
+  AsyncStartOp startOp = findAsyncChainStart(*this);
+  if (!startOp) {
+    return emitOpError() << "can't find a start of async chain";
+  }
+
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   func::FuncOp callee =
-      module.lookupSymbol<func::FuncOp>(getCalledComputation());
-  if (!callee) {
-    return emitOpError() << "can't find function: " << getCalledComputation();
-  }
-  FunctionType calleeType = callee.getFunctionType();
-
-  auto calleeThreadName = callee->getAttrOfType<StringAttr>("execution_thread");
-  if (!calleeThreadName)
-    return emitOpError() << "callee must have execution_thread attribute.";
-  if (calleeThreadName != getExecutionThread()) {
-    return emitOpError() << "execution_thread does not match name of "
-                         << getCalledComputation() << ". Got: \""
-                         << getExecutionThread() << "\", but expected "
-                         << calleeThreadName << ".";
-  }
+      module.lookupSymbol<func::FuncOp>(startOp.getCalledComputation());
 
   auto bundleType = cast<AsyncBundleType>(getResult().getType());
-  return verifyAsyncBundleType(this, bundleType, calleeType);
+  return verifyAsyncBundleType(this, bundleType, callee.getFunctionType());
 }
 
 LogicalResult AsyncUpdateOp::inferReturnTypes(
@@ -525,26 +530,22 @@ LogicalResult AsyncUpdateOp::inferReturnTypes(
 }
 
 LogicalResult AsyncDoneOp::verify() {
+  if (!isa<AsyncStartOp, AsyncUpdateOp>(getOperand().getDefiningOp())) {
+    return emitOpError()
+           << "operand must be defined by async-start or async-update op";
+  }
+
+  AsyncStartOp startOp = findAsyncChainStart(*this);
+  if (!startOp) {
+    return emitOpError() << "can't find a start of async chain";
+  }
+
   ModuleOp module = getOperation()->getParentOfType<ModuleOp>();
   func::FuncOp callee =
-      module.lookupSymbol<func::FuncOp>(getCalledComputation());
-  if (!callee) {
-    return emitOpError() << "can't find function: " << getCalledComputation();
-  }
-  FunctionType calleeType = callee.getFunctionType();
-
-  auto calleeThreadName = callee->getAttrOfType<StringAttr>("execution_thread");
-  if (!calleeThreadName)
-    return emitOpError() << "callee must have execution_thread attribute.";
-  if (calleeThreadName != getExecutionThread()) {
-    return emitOpError() << "execution_thread does not match name of "
-                         << getCalledComputation() << ". Got: \""
-                         << getExecutionThread() << "\", but expected "
-                         << calleeThreadName << ".";
-  }
+      module.lookupSymbol<func::FuncOp>(startOp.getCalledComputation());
 
   auto bundleType = cast<AsyncBundleType>(getBundle().getType());
-  return verifyAsyncBundleType(this, bundleType, calleeType);
+  return verifyAsyncBundleType(this, bundleType, callee.getFunctionType());
 }
 
 LogicalResult AsyncDoneOp::inferReturnTypes(
@@ -552,9 +553,16 @@ LogicalResult AsyncDoneOp::inferReturnTypes(
     DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
     SmallVectorImpl<Type>& inferredReturnTypes) {
   AsyncDoneOp::Adaptor adaptor(operands, attributes, properties, regions);
+
+  AsyncStartOp startOp = findAsyncChainStart(operands[0].getDefiningOp());
+  if (!startOp) {
+    return adaptor.getBundle().getDefiningOp()->emitOpError()
+           << "can't find a start of async chain";
+  }
+
   ModuleOp module =
       adaptor.getBundle().getDefiningOp()->getParentOfType<ModuleOp>();
-  auto calledComputation = adaptor.getCalledComputationAttr();
+  auto calledComputation = startOp.getCalledComputation();
   func::FuncOp callee = module.lookupSymbol<func::FuncOp>(calledComputation);
   if (!callee) {
     return adaptor.getBundle().getDefiningOp()->emitOpError()
@@ -6064,6 +6072,24 @@ LogicalResult UniformDequantizeOp::inferReturnTypeComponents(
                                        regions);
   return hlo::inferUniformDequantizeOp(location, adaptor.getOperand(),
                                        inferredReturnShapes);
+}
+
+//===----------------------------------------------------------------------===//
+// MinimumBroadcastShapesOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult MinimumBroadcastShapesOp::verify() {
+  // Check that the number of operands matches the number of outputs.
+  unsigned resultShapesCount = getResults().size();
+  unsigned operandShapesCount = getShapes().size();
+  if (operandShapesCount != resultShapesCount)
+    return emitOpError() << "number of operand shapes (" << operandShapesCount
+                         << ") does not match number of result shapes ("
+                         << resultShapesCount << ")";
+  if (operandShapesCount < 2)
+    return emitOpError() << "number of operand shapes (" << operandShapesCount
+                         << ") should be >= 2";
+  return success();
 }
 
 using mlir::hlo::parseWindowAttributes;

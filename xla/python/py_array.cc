@@ -21,8 +21,10 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,6 +32,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
@@ -66,6 +69,7 @@ limitations under the License.
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
+#include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/python/py_client.h"
@@ -253,8 +257,10 @@ extern "C" void PyArray_tp_dealloc(PyObject* self) {
 #if PY_VERSION_HEX < 0x030C0000
   PyObject*& dict = *_PyObject_GetDictPtr(self);
   Py_CLEAR(dict);
-#else
+#elif PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
+#else
+  PyObject_ClearManagedDict(self);
 #endif  // PY_VERSION_HEX < 0x030C0000
 
   tp->tp_free(self);
@@ -267,8 +273,10 @@ extern "C" int PyArray_tp_traverse(PyObject* self, visitproc visit, void* arg) {
 #if PY_VERSION_HEX < 0x030C0000
   PyObject*& dict = *_PyObject_GetDictPtr(self);
   Py_VISIT(dict);
-#else
+#elif PY_VERSION_HEX < 0x030D0000
   _PyObject_VisitManagedDict(self, visit, arg);
+#else
+  PyObject_VisitManagedDict(self, visit, arg);
 #endif  // PY_VERSION_HEX < 0x030C0000
   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
   Py_VISIT(Py_TYPE(self));
@@ -280,8 +288,10 @@ extern "C" int PyArray_tp_clear(PyObject* self) {
 #if PY_VERSION_HEX < 0x030C0000
   PyObject*& dict = *_PyObject_GetDictPtr(self);
   Py_CLEAR(dict);
-#else
+#elif PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
+#else
+  PyObject_ClearManagedDict(self);
 #endif  // PY_VERSION_HEX < 0x030C0000
   return 0;
 }
@@ -1414,21 +1424,22 @@ StatusOr<nb::object> PyHostValue::AsNumPyArray(
         std::unique_ptr<PjRtBuffer::ExternalReference> external_reference_hold;
       };
       auto hold = std::make_unique<Hold>();
-      TF_ASSIGN_OR_RETURN(hold->external_reference_hold,
-                          pjrt_buffer->AcquireExternalReference());
       hold->buffer = tsl::FormRef(ifrt_array);
+      auto* hold_ptr = hold.release();
+      nb::capsule hold_capsule(
+          hold_ptr, [](void* h) noexcept { delete static_cast<Hold*>(h); });
+      {
+        // Release the GIL as `AcquireExternalReference` may block.
+        nb::gil_scoped_release gil;
+        TF_ASSIGN_OR_RETURN(hold_ptr->external_reference_hold,
+                            pjrt_buffer->AcquireExternalReference());
+        TF_RETURN_IF_ERROR(ifrt_array->GetReadyFuture().Await());
+      }
       void* data =
-          hold->external_reference_hold->OpaqueDeviceMemoryDataPointer();
-      nb::capsule hold_capsule(hold.release(), [](void* h) noexcept {
-        delete static_cast<Hold*>(h);
-      });
+          hold_ptr->external_reference_hold->OpaqueDeviceMemoryDataPointer();
       nb_numpy_ndarray array(dtype, shape->dimensions(),
                              ByteStridesForShape(*shape), data, hold_capsule);
       array.attr("flags").attr("writeable") = nb::bool_(false);
-      {
-        nb::gil_scoped_release gil;
-        TF_RETURN_IF_ERROR(ifrt_array->GetReadyFuture().Await());
-      }
       return array;
     }
   }
@@ -1541,7 +1552,14 @@ Status PyArray::RegisterTypes(nb::module_& m) {
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".ArrayImpl");
 
   PyType_Spec PyArray_spec = {
+#if PY_VERSION_HEX < 0x030B0000
+      // Work around for https://github.com/python/cpython/issues/89478
+      // CPython 3.10 and earlier assume that the .name value remains alive
+      // forever.
+      /*.name=*/strdup(name.c_str()),
+#else
       /*.name=*/name.c_str(),
+#endif  // PY_VERSION_HEX < 0x030B0000
       /*.basicsize=*/static_cast<int>(sizeof(PyArrayObject)),
       /*.itemsize=*/0,
 #if PY_VERSION_HEX < 0x030C0000

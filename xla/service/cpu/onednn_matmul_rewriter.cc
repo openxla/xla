@@ -140,6 +140,13 @@ inline auto BcastConstScalar(double value) {
   return BcastConstScalar(nullptr, value);
 }
 
+inline bool IsBatchDot(const HloInstruction& instr) {
+  if (auto* dot_instr = DynCast<HloDotInstruction>(&instr)) {
+    return dot_instr->dot_dimension_numbers().lhs_batch_dimensions_size() > 0;
+  }
+  return false;
+}
+
 auto ConstScalarNear(double value) {
   return m::ConstantScalar().WithPredicate(
       [expected = value](const HloInstruction* instr) {
@@ -403,8 +410,11 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
 
   // Layout should be row-major, contraction dimensions captures transpose
   // scenarios in last two dimensions.
-  if (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
-      !IsRowMajor(output_shape)) {
+  // Col-major layouts are corrected to row-majow for BatchDot operation as
+  // part of the layout-pass.
+  if (!IsBatchDot(*dot_instr) &&
+      (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
+       !IsRowMajor(output_shape))) {
     return false;
   }
 
@@ -563,11 +573,21 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       auto matmul_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
           dot->CloneWithNewOperands(dot->shape(), new_operands)));
 
+      OneDnnFusionConfig_FusionKind kind;
       auto backend_config = matmul_call->backend_config<BackendConfig>();
+      if (backend_config->mutable_onednn_matmul_config()
+              ->fusions()
+              .ops()
+              .empty() &&
+          addend->shape().rank() == 1) {
+        kind = OneDnnFusionConfig::BIAS;
+      } else {
+        kind = OneDnnFusionConfig::BINARY_ADD;
+      }
       backend_config->mutable_onednn_matmul_config()
           ->mutable_fusions()
-          ->add_ops(addend->shape().rank() != 1 ? OneDnnFusionConfig::BINARY_ADD
-                                                : OneDnnFusionConfig::BIAS);
+          ->add_ops(kind);
+
       if (optional_addend_broadcast) {
         backend_config->mutable_onednn_matmul_config()
             ->mutable_optimization_config()
@@ -651,14 +671,17 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     }
 
     HloInstruction *dot, *constant;
-    auto pattern = m::Op(&instr)
-                       .WithOpcode(HloOpcode::kMultiply)
-                       .WithBinaryOperandsAnyOrder(
-                           m::Op(&dot)
-                               .WithOneUser()
-                               .WithOpcode(HloOpcode::kCustomCall)
-                               .WithCustomCallTarget({"__onednn$matmul"}),
-                           m::Broadcast(m::Constant(&constant)));
+    HloInstruction* optional_convert = nullptr;
+    auto pattern =
+        m::Op(&instr)
+            .WithOpcode(HloOpcode::kMultiply)
+            .WithBinaryOperandsAnyOrder(
+                m::AnyOf<HloInstruction>(
+                    SupportedConvert(&optional_convert, OneDnnMatmulInstr(&dot))
+                        .WithElementType(PrimitiveType::F32),
+                    OneDnnMatmulInstr(&dot))
+                    .WithOneUser(),
+                m::Broadcast(m::Constant(&constant)));
 
     if (Match(instr, pattern)) {
       std::vector<HloInstruction*> new_operands;
@@ -679,7 +702,18 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
           ->mutable_fusions()
           ->set_alpha_typecast(*(reinterpret_cast<int32_t*>(&constant_value)));
       TF_RETURN_IF_ERROR(matmul_call->set_backend_config(*backend_config));
-      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, matmul_call));
+      HloInstruction* new_instr;
+      if (optional_convert != nullptr &&
+          optional_convert->opcode() == HloOpcode::kConvert) {
+        new_instr = matmul_call->AddInstruction(HloInstruction::CreateConvert(
+            ShapeUtil::ChangeElementType(
+                matmul_call->shape(), optional_convert->shape().element_type()),
+            matmul_call));
+      } else {
+        new_instr = matmul_call;
+      }
+
+      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, new_instr));
     }
     return OkStatus();
   }

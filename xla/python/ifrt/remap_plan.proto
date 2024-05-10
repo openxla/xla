@@ -18,14 +18,23 @@ syntax = "proto3";
 package xla.ifrt;
 
 import "xla/python/ifrt/array_spec.proto";
-import "xla/python/ifrt/device.proto";
 
-// Proto equivalent of C++ `IoCallableProgram`.
-message IoCallableProgramProto {
-  string type = 1;
-  string name = 2;
-  bytes serialized_program_text = 3;
-  DeviceListProto devices = 4;
-  repeated ArraySpecProto input_specs = 5;
-  repeated ArraySpecProto output_specs = 6;
+// Wire format for `RemapPlan`. See `RemapPlan` for the semantics of the proto
+// fields.
+message RemapPlanProto {
+  message MappingProto {
+    int32 in_array = 1;
+    int32 out_array = 2;
+    // Transposed lists for `from` and `to`. This transposition makes a
+    // serialized proto smaller when `from` or `to` has many elements.
+    repeated int64 from_start = 3;
+    repeated int64 from_end = 4;
+    repeated int64 from_step = 5;
+    repeated int64 to_start = 6;
+    repeated int64 to_end = 7;
+    repeated int64 to_step = 8;
+  }
+  repeated ArraySpecProto input_specs = 1;
+  repeated ArraySpecProto output_specs = 2;
+  repeated MappingProto mappings = 3;
 }
