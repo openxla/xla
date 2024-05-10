@@ -136,7 +136,7 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     auto map = ComposeIndexingMaps(
         GetIndexingMapForTiling(tiling_, mlir_context),
         GetBitcastMap(tiling_.GetXlaShape(),
-                      analysis_.fusion_roots()[root_index]->shape(),
+                      analysis_.fusion_roots()[root_index].shape(),
                       mlir_context));
     map.Simplify(GetIndexingMapForInstruction);
     return map;
