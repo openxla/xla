@@ -411,7 +411,7 @@ TEST_F(MlirTransposeFusionTest, SideOutputs) {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
-TEST_F(MlirTransposeFusionTest, ThreadIndexingSidedOutput) {
+TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module
 

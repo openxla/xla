@@ -246,7 +246,7 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
       )"));
 }
 
-TEST_F(TransposeTest, ThreadIndexingSidedOutput) {
+TEST_F(TransposeTest, ThreadIndexingSideOutput) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module
 
