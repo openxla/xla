@@ -121,7 +121,6 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:human_readable_json",
         "@tsl//tsl/platform:protobuf",
     ],
