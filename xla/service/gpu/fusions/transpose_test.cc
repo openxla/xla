@@ -246,7 +246,7 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
       )"));
 }
 
-TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
+TEST_F(TransposeFusionTest, ThreadIndexingSideOutput) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module
 
@@ -268,11 +268,10 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
   auto* root = module->entry_computation()->root_instruction();
   auto analysis = AnalyzeFusion(*root, device_info_);
 
-  MlirTransposeFusion fusion(analysis);
+  TF_ASSERT_OK_AND_ASSIGN(auto fusion, GetTransposeFusion(analysis));
   mlir::MLIRContext mlir_context;
-
   EXPECT_THAT(
-      fusion.ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
+      fusion->ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3 floordiv 2,
@@ -291,7 +290,7 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
         s2 in [0, 0]
       )"));
   EXPECT_THAT(
-      fusion.ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
+      fusion->ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3 floordiv 2,
