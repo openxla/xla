@@ -158,7 +158,8 @@ absl::StatusOr<std::vector<HloInstruction*>> GetBufferUsersOfType(
 // And the buffer is passed through the first operand.
 // This is used to trace the graph between an annotation and its relevant slice.
 bool CanTraverseOpBetweenAnnotation(HloInstruction* hlo) {
-  if (hlo->opcode() == HloOpcode::kBitcast) {
+  if (hlo->opcode() == HloOpcode::kBitcast ||
+      hlo->opcode() == HloOpcode::kCopy) {
     return true;
   } else if (hlo->opcode() == HloOpcode::kReshape) {
     return ShapeUtil::ReshapeIsBitcast(hlo->operand(0)->shape(), hlo->shape());
@@ -243,13 +244,6 @@ Status HostOffloader::HandleMoveToHostCustomCall(HloInstruction* custom_call) {
           << custom_call->ToString();
   // Save a pointer to this custom call for when we want to remove it later.
   custom_calls_to_remove_.emplace(custom_call);
-
-  // Skip this custom call if we've already handled it in output streaming.
-  if (annotations_for_copy_to_host_to_insert_.contains(custom_call)) {
-    VLOG(4) << "Skipping MoveToHost custom call that was already handled: "
-            << custom_call->name();
-    return OkStatus();
-  }
 
   // We expect that either the custom call is the root or the DUS is the only
   // user of this custom call.
@@ -382,7 +376,8 @@ Status HostOffloader::MemoryOnlyOffloadStartingWithDus(
                              out->append(inst->name());
                            })
           << ']';
-  if (consuming_slices.empty()) {
+  if (!dus_for_streamed_buffer_.contains(dynamic_update_slice) &&
+      consuming_slices.empty()) {
     return Internal(
         "The dynamic-update-slice (%s) never feeds into a slice nor "
         "dynamic-slice.",
@@ -651,7 +646,7 @@ Status HostOffloader::HandleStreamedBuffer(const HloBuffer& unique_buffer) {
       std::optional<HloInstruction*> dus =
           FindAnnotationFromDUS(value->defining_instruction());
       if (dus.has_value()) {
-        annotations_for_copy_to_host_to_insert_.emplace(dus.value());
+        dus_for_streamed_buffer_.emplace(value->defining_instruction());
         AddAllPositionsToBeMovedToHostMemory(unique_buffer);
       }
     }
@@ -698,38 +693,18 @@ Status HostOffloader::HandleInputStreaming(HloComputation* computation) {
       LOG(WARNING) << "Token parameters are not supported for streaming.";
       continue;
     }
-    if (entry_computation_layout.parameter_shape(i).IsTuple()) {
-      // Handle tuple parameters, which may contain streamed elements. Nested
-      // tuples are not supported.
-      const Shape& tuple_shape = entry_computation_layout.parameter_shape(i);
-      for (int j = 0; j < tuple_shape.tuple_shapes_size(); ++j) {
-        const Shape& tuple_element_shape = tuple_shape.tuple_shapes(j);
-        // TODO(b/335498881): Support nested tuples.
-        if (tuple_element_shape.IsTuple()) {
-          LOG(WARNING)
-              << "Nested tuple parameters are not supported for streaming.";
-          continue;
-        }
-        TF_RET_CHECK(tuple_element_shape.has_layout());
-        if (tuple_element_shape.layout().memory_space() ==
-            kHostMemorySpaceColor) {
-          VLOG(4) << "Handling streamed element in tuple parameter: "
-                  << tuple_element_shape.ToString(/*print_layout=*/true);
-          const HloBuffer& unique_buffer = alias_analysis_->GetUniqueBufferAt(
-              computation->parameter_instruction(i), {j});
-          TF_RETURN_IF_ERROR(HandleStreamedBuffer(unique_buffer));
-        }
-      }
-    } else if (entry_computation_layout.parameter_layout(i)
-                   .layout()
-                   .memory_space() == kHostMemorySpaceColor) {
-      HloInstruction* streamed_input = computation->parameter_instruction(i);
-      VLOG(4) << "Handling streamed input: " << streamed_input->ToString();
-      const HloBuffer& unique_buffer =
-          alias_analysis_->GetUniqueBufferAt(streamed_input);
-
-      TF_RETURN_IF_ERROR(HandleStreamedBuffer(unique_buffer));
-    }
+    ShapeUtil::ForEachSubshape(
+        entry_computation_layout.parameter_shape(i),
+        [&](const Shape& subshape, const ShapeIndex& index) {
+          if (subshape.has_layout() &&
+              subshape.layout().memory_space() == kHostMemorySpaceColor) {
+            VLOG(4) << "Handling streamed element in input with shape: "
+                    << subshape.ToString(true);
+            const HloBuffer& unique_buffer = alias_analysis_->GetUniqueBufferAt(
+                computation->parameter_instruction(i), {index});
+            TF_CHECK_OK(HandleStreamedBuffer(unique_buffer));
+          }
+        });
   }
   return OkStatus();
 }
