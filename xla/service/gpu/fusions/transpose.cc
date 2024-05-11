@@ -293,7 +293,7 @@ std::optional<IndexingMap> TransposeFusion::ComputeThreadIdToOutputIndexing(
     auto map = ComposeIndexingMaps(
         GetIndexingMapForTiling(tiling_, ctx),
         GetBitcastMap(tiling_.GetXlaShape(),
-                      analysis_.fusion_roots()[root_index].shape(), ctx));
+                      analysis_.fusion_roots()[root_index]->shape(), ctx));
     map.Simplify(GetIndexingMapForInstruction);
     return map;
   }
