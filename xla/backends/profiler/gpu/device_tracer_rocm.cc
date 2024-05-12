@@ -113,6 +113,7 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
       HIP_API_ID_hipModuleLaunchKernel,
       HIP_API_ID_hipHccModuleLaunchKernel,
       HIP_API_ID_hipLaunchKernel,
+      HIP_API_ID_hipExtLaunchKernel,
       // MEMCPY
       HIP_API_ID_hipMemcpy,
       HIP_API_ID_hipMemcpyAsync,
@@ -145,8 +146,7 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   };
   // clang-format on
 
-  options.api_tracking_set =
-      std::set<uint32_t>(hip_api_domain_ops.begin(), hip_api_domain_ops.end());
+  options.api_tracking_set =  std::set<uint32_t>(hip_api_domain_ops.begin(), hip_api_domain_ops.end());
 
   // These are the list of APIs we track since roctracer activity
   // does not provide all the information necessary to fully populate the
@@ -163,13 +163,15 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
     HIP_API_ID_hipHostMalloc,
     HIP_API_ID_hipSetDevice  //  added to track default device
   };
+
   // clang-format on
 
-  hip_api_domain_ops.insert(hip_api_domain_ops.end(), hip_api_aux_ops.begin(),
-                            hip_api_aux_ops.end());
+  hip_api_domain_ops.insert(hip_api_domain_ops.end(), hip_api_aux_ops.begin(), hip_api_aux_ops.end());
 
-  options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, hip_api_domain_ops);
-  options.activity_tracing.emplace(ACTIVITY_DOMAIN_HCC_OPS, empty_vec);
+  //options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, hip_api_domain_ops);
+  options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, empty_vec);
+
+  options.activity_tracing.emplace(ACTIVITY_DOMAIN_HIP_OPS, empty_vec);
 
   return options;
 }
@@ -197,10 +199,6 @@ Status GpuTracer::DoStart() {
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
-  // rocm_trace_collector_ =
-  // std::make_unique<RocmTraceCollectorImpl>(trace_collector_options,
-  // start_walltime_ns,
-  //                                                  start_gputime_ns);
 
   RocmTracerOptions tracer_options = GetRocmTracerOptions();
   rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
