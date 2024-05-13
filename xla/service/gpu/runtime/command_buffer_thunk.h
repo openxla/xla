@@ -36,6 +36,8 @@ namespace xla::gpu {
 
 struct AllocationCmdMap {
   absl::Status InsertBufferUse(int64_t idx, CommandBufferCmd* cmd);
+  absl::Status InsertBufferUse(CommandBufferCmd::BufferUsageVector buffers,
+                               CommandBufferCmd* cmd);
   absl::Status SetBufferCmdRequireUpdate(int64_t idx);
   absl::flat_hash_map<int64_t, absl::flat_hash_set<CommandBufferCmd*>>
       alloc_to_cmd_;

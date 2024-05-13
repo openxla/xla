@@ -56,6 +56,14 @@ absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
   return absl::OkStatus();
 }
 
+absl::Status AllocationCmdMap::InsertBufferUse(
+    CommandBufferCmd::BufferUsageVector buffers, CommandBufferCmd* cmd) {
+  for (auto buffer_usage : buffers) {
+    TF_RETURN_IF_ERROR(InsertBufferUse(buffer_usage.slice.index(), cmd));
+  }
+  return absl::OkStatus();
+}
+
 absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
   TF_RET_CHECK(alloc_to_cmd_.find(idx) != alloc_to_cmd_.end());
   for (auto cmd : alloc_to_cmd_[idx]) {

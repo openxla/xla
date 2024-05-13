@@ -72,57 +72,33 @@ static auto ArgsAccess(const std::vector<bool>& written) {
   return args_access;
 }
 
-static absl::StatusOr<Command> Convert(const KernelThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<LaunchCmd>(
+static absl::StatusOr<Command> Convert(const KernelThunk& thunk) {
+  return std::make_unique<LaunchCmd>(
       thunk.execution_stream_id(), thunk.kernel_name(), thunk.arguments(),
       ArgsAccess(thunk.written()), thunk.launch_dimensions(),
       thunk.shmem_bytes());
-  for (auto slice : thunk.arguments()) {
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(slice.index(), cmd.get()));
-  }
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const CustomKernelThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<CustomKernelLaunchCmd>(
+static absl::StatusOr<Command> Convert(const CustomKernelThunk& thunk) {
+  return std::make_unique<CustomKernelLaunchCmd>(
       thunk.execution_stream_id(), thunk.arguments(),
       ArgsAccess(thunk.written()), thunk.custom_kernel());
-  for (auto slice : thunk.arguments()) {
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(slice.index(), cmd.get()));
-  }
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const DeviceToDeviceCopyThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<MemcpyDeviceToDeviceCmd>(
+static absl::StatusOr<Command> Convert(const DeviceToDeviceCopyThunk& thunk) {
+  return std::make_unique<MemcpyDeviceToDeviceCmd>(
       thunk.execution_stream_id(), thunk.destination(), thunk.source(),
       thunk.size_bytes());
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.source().index(), cmd.get()));
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.destination().index(), cmd.get()));
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const MemzeroThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<MemzeroCmd>(thunk.execution_stream_id(),
-                                          thunk.destination());
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.destination().index(), cmd.get()));
-  return cmd;
+static absl::StatusOr<Command> Convert(const MemzeroThunk& thunk) {
+  return std::make_unique<MemzeroCmd>(thunk.execution_stream_id(),
+                                      thunk.destination());
 }
 
-static absl::StatusOr<Command> Convert(const Memset32BitValueThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<Memset32Cmd>(thunk.execution_stream_id(),
-                                           thunk.destination(), thunk.value());
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.destination().index(), cmd.get()));
-  return cmd;
+static absl::StatusOr<Command> Convert(const Memset32BitValueThunk& thunk) {
+  return std::make_unique<Memset32Cmd>(thunk.execution_stream_id(),
+                                       thunk.destination(), thunk.value());
 }
 
 static absl::StatusOr<Command> Convert(
@@ -140,25 +116,15 @@ static absl::StatusOr<Command> Convert(
                                     std::move(cond_cmds), std::move(body_cmds));
 }
 
-static absl::StatusOr<Command> Convert(const GemmThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
+static absl::StatusOr<Command> Convert(const GemmThunk& thunk) {
   if (!thunk.workspace().has_value()) {
     return absl::InternalError(
         "Gemm thunk does not contain a workspace buffer");
   }
-  auto cmd = std::make_unique<GemmCmd>(
+  return std::make_unique<GemmCmd>(
       thunk.execution_stream_id(), thunk.config(), thunk.lhs_buffer(),
       thunk.rhs_buffer(), thunk.output_buffer(), thunk.workspace().value(),
       thunk.deterministic());
-  TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(
-      thunk.workspace().value().index(), cmd.get()));
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.lhs_buffer().index(), cmd.get()));
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.rhs_buffer().index(), cmd.get()));
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.output_buffer().index(), cmd.get()));
-  return cmd;
 }
 
 static absl::StatusOr<Command> Convert(
@@ -172,113 +138,58 @@ static absl::StatusOr<Command> Convert(
                                           synchronization_mode));
     branch_cmds.emplace_back(std::move(cmds));
   }
-  auto cmd = std::make_unique<CaseCmd>(thunk.execution_stream_id(),
-                                       thunk.branch_index_buffer(),
-                                       std::move(branch_cmds));
-
-  TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(
-      thunk.branch_index_buffer().index(), cmd.get()));
-  return cmd;
+  return std::make_unique<CaseCmd>(thunk.execution_stream_id(),
+                                   thunk.branch_index_buffer(),
+                                   std::move(branch_cmds));
 }
 
-static absl::StatusOr<Command> Convert(const NcclAllReduceStartThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<AllReduceCmd>(
+static absl::StatusOr<Command> Convert(const NcclAllReduceStartThunk& thunk) {
+  return std::make_unique<AllReduceCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
       thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
       thunk.buffers());
-  for (auto buffer : thunk.buffers()) {
-    TF_RETURN_IF_ERROR(
-        alloc_to_cmd.InsertBufferUse(buffer.source_buffer.index(), cmd.get()));
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(
-        buffer.destination_buffer.index(), cmd.get()));
-  }
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const NcclReduceScatterStartThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<ReduceScatterCmd>(
+static absl::StatusOr<Command> Convert(
+    const NcclReduceScatterStartThunk& thunk) {
+  return std::make_unique<ReduceScatterCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
       thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
       thunk.buffers());
-  for (auto buffer : thunk.buffers()) {
-    TF_RETURN_IF_ERROR(
-        alloc_to_cmd.InsertBufferUse(buffer.source_buffer.index(), cmd.get()));
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(
-        buffer.destination_buffer.index(), cmd.get()));
-  }
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const NcclAllGatherStartThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<AllGatherCmd>(
+static absl::StatusOr<Command> Convert(const NcclAllGatherStartThunk& thunk) {
+  return std::make_unique<AllGatherCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
       thunk.nccl_api(), thunk.config(), thunk.buffers());
-  for (auto buffer : thunk.buffers()) {
-    TF_RETURN_IF_ERROR(
-        alloc_to_cmd.InsertBufferUse(buffer.source_buffer.index(), cmd.get()));
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(
-        buffer.destination_buffer.index(), cmd.get()));
-  }
-  return cmd;
 }
 
-static absl::StatusOr<Command> Convert(const NcclCollectiveDoneThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
+static absl::StatusOr<Command> Convert(const NcclCollectiveDoneThunk& thunk) {
   return std::make_unique<BarrierCmd>(thunk.execution_stream_id(),
                                       thunk.nccl_execution_stream_id());
 }
 
-static absl::StatusOr<Command> Convert(const PartitionIdThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<ComputationIdCmd>(
-      thunk.execution_stream_id(), thunk.dest(),
-      ComputationIdCmd::Kind::kPartition);
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.dest().index(), cmd.get()));
-  return cmd;
+static absl::StatusOr<Command> Convert(const PartitionIdThunk& thunk) {
+  return std::make_unique<ComputationIdCmd>(thunk.execution_stream_id(),
+                                            thunk.dest(),
+                                            ComputationIdCmd::Kind::kPartition);
 }
 
-static absl::StatusOr<Command> Convert(const ReplicaIdThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<ComputationIdCmd>(
-      thunk.execution_stream_id(), thunk.dest(),
-      ComputationIdCmd::Kind::kReplica);
-  TF_RETURN_IF_ERROR(
-      alloc_to_cmd.InsertBufferUse(thunk.dest().index(), cmd.get()));
-  return cmd;
+static absl::StatusOr<Command> Convert(const ReplicaIdThunk& thunk) {
+  return std::make_unique<ComputationIdCmd>(thunk.execution_stream_id(),
+                                            thunk.dest(),
+                                            ComputationIdCmd::Kind::kReplica);
 }
 
-static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  auto cmd = std::make_unique<CustomCallCmd>(
-      thunk.execution_stream_id(), thunk.call_target(), thunk.operands(),
-      thunk.results(), thunk.opaque());
-  for (auto slice : thunk.operands()) {
-    if (slice.has_value()) {
-      TF_RETURN_IF_ERROR(
-          alloc_to_cmd.InsertBufferUse(slice.value().slice.index(), cmd.get()));
-    }
-  }
-  for (auto slice : thunk.results()) {
-    if (slice.has_value()) {
-      TF_RETURN_IF_ERROR(
-          alloc_to_cmd.InsertBufferUse(slice.value().slice.index(), cmd.get()));
-    }
-  }
-  return cmd;
+static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
+  return std::make_unique<CustomCallCmd>(thunk.execution_stream_id(),
+                                         thunk.call_target(), thunk.operands(),
+                                         thunk.results(), thunk.opaque());
 }
 
-static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
+static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk) {
   auto cmd = std::make_unique<CuDnnCmd>(thunk.execution_stream_id(),
                                         thunk.arguments(), thunk.graph());
-  for (auto slice : thunk.arguments()) {
-    TF_RETURN_IF_ERROR(alloc_to_cmd.InsertBufferUse(slice.index(), cmd.get()));
-  }
-  return cmd;
 }
 
 //===----------------------------------------------------------------------===//
@@ -292,10 +203,8 @@ static absl::StatusOr<Command> CopyMetadata(absl::StatusOr<Command> cmd,
 }
 
 template <typename ThunkType>
-static absl::StatusOr<Command> Convert(const Thunk& thunk,
-                                       AllocationCmdMap& alloc_to_cmd) {
-  return CopyMetadata(
-      Convert(static_cast<const ThunkType&>(thunk), alloc_to_cmd), thunk);
+static absl::StatusOr<Command> Convert(const Thunk& thunk) {
+  return CopyMetadata(Convert(static_cast<const ThunkType&>(thunk)), thunk);
 }
 
 template <typename ThunkType>
@@ -312,6 +221,8 @@ static absl::Status AppendCommands(
     CommandBufferCmdSequence::SynchronizationMode synchronization_mode) {
   auto append = [&](absl::StatusOr<Command> command) -> absl::Status {
     if (command.ok()) {
+      TF_RETURN_IF_ERROR(
+          alloc_to_cmd.InsertBufferUse((*command)->buffers(), command->get()));
       cmd_sequence.Append(std::move(*command));
       return absl::OkStatus();
     }
@@ -323,34 +234,34 @@ static absl::Status AppendCommands(
       return append(
           Convert<ConditionalThunk>(thunk, alloc_to_cmd, synchronization_mode));
     case Thunk::Kind::kCopy:
-      return append(Convert<DeviceToDeviceCopyThunk>(thunk, alloc_to_cmd));
+      return append(Convert<DeviceToDeviceCopyThunk>(thunk));
     case Thunk::Kind::kCustomCall:
-      return append(Convert<CustomCallThunk>(thunk, alloc_to_cmd));
+      return append(Convert<CustomCallThunk>(thunk));
     case Thunk::Kind::kCustomKernel:
-      return append(Convert<CustomKernelThunk>(thunk, alloc_to_cmd));
+      return append(Convert<CustomKernelThunk>(thunk));
     case Thunk::Kind::kKernel:
-      return append(Convert<KernelThunk>(thunk, alloc_to_cmd));
+      return append(Convert<KernelThunk>(thunk));
     case Thunk::Kind::kGemm:
-      return append(Convert<GemmThunk>(thunk, alloc_to_cmd));
+      return append(Convert<GemmThunk>(thunk));
     case Thunk::Kind::kMemset32BitValue:
-      return append(Convert<Memset32BitValueThunk>(thunk, alloc_to_cmd));
+      return append(Convert<Memset32BitValueThunk>(thunk));
     case Thunk::Kind::kMemzero:
-      return append(Convert<MemzeroThunk>(thunk, alloc_to_cmd));
+      return append(Convert<MemzeroThunk>(thunk));
     case Thunk::Kind::kNcclAllGatherStart:
-      return append(Convert<NcclAllGatherStartThunk>(thunk, alloc_to_cmd));
+      return append(Convert<NcclAllGatherStartThunk>(thunk));
     case Thunk::Kind::kNcclAllReduceStart:
-      return append(Convert<NcclAllReduceStartThunk>(thunk, alloc_to_cmd));
+      return append(Convert<NcclAllReduceStartThunk>(thunk));
     case Thunk::Kind::kNcclReduceScatterStart:
-      return append(Convert<NcclReduceScatterStartThunk>(thunk, alloc_to_cmd));
+      return append(Convert<NcclReduceScatterStartThunk>(thunk));
     case Thunk::Kind::kPartitionId:
-      return append(Convert<PartitionIdThunk>(thunk, alloc_to_cmd));
+      return append(Convert<PartitionIdThunk>(thunk));
     case Thunk::Kind::kReplicaId:
-      return append(Convert<ReplicaIdThunk>(thunk, alloc_to_cmd));
+      return append(Convert<ReplicaIdThunk>(thunk));
     case Thunk::Kind::kWhile:
       return append(
           Convert<WhileThunk>(thunk, alloc_to_cmd, synchronization_mode));
     case Thunk::Kind::kCuDnn:
-      return append(Convert<CuDnnThunk>(thunk, alloc_to_cmd));
+      return append(Convert<CuDnnThunk>(thunk));
 
     // Sequential thunk does not have any special semantics and we simply inline
     // all nested thunks into command buffer.
@@ -362,7 +273,7 @@ static absl::Status AppendCommands(
     case Thunk::Kind::kNcclAllGatherDone:
     case Thunk::Kind::kNcclAllReduceDone:
     case Thunk::Kind::kNcclReduceScatterDone:
-      return append(Convert<NcclCollectiveDoneThunk>(thunk, alloc_to_cmd));
+      return append(Convert<NcclCollectiveDoneThunk>(thunk));
 
     // Currently all collective operations recorded on the tracing stream and do
     // not need to have a separate done command.
