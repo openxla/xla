@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/runtime/command_buffer_thunk.h"
 
 namespace xla::gpu {
 
@@ -27,7 +28,7 @@ namespace xla::gpu {
 // Otherwise we use buffer usage aliasing to allow commands to run concurrently
 // and insert barriers only when needed for correctness.
 absl::StatusOr<CommandBufferCmdSequence> ConvertToCommands(
-    const ThunkSequence& sequence,
+    const ThunkSequence& sequence, AllocationCmdMap& alloc_to_cmd,
     CommandBufferCmdSequence::SynchronizationMode synchronization_mode);
 
 }  // namespace xla::gpu

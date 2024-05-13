@@ -1052,6 +1052,12 @@ absl::Status GpuCommandBuffer::Update() {
   return absl::OkStatus();
 }
 
+absl::Status GpuCommandBuffer::Skip(ExecutionScopeId execution_scope_id, int64_t num_cmds) {
+  ExecutionScope& execution_scope = execution_scopes_[execution_scope_id];
+  execution_scope.update_state.node_idx += num_cmds;
+  return absl::OkStatus();
+}
+
 absl::Span<const GpuCommandBuffer::GpuGraphNodeInfo> GpuCommandBuffer::nodes(
     ExecutionScopeId id) const {
   if (auto it = execution_scopes_.find(id); it != execution_scopes_.end())

@@ -124,6 +124,7 @@ cc_library(
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
         ":nccl_collective_thunk",
+        ":command_buffer_thunk",
         ":replica_id_thunk",
         ":sequential_thunk",
         ":wait_for_streams_thunk",

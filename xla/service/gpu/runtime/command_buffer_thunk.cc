@@ -46,6 +46,24 @@ namespace xla::gpu {
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
+absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
+                                               CommandBufferCmd* cmd) {
+  if (alloc_to_cmd_.find(idx) != alloc_to_cmd_.end()) {
+    alloc_to_cmd_.insert({idx, {cmd}});
+  } else {
+    alloc_to_cmd_[idx].insert(cmd);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
+  TF_RET_CHECK(alloc_to_cmd_.find(idx) != alloc_to_cmd_.end());
+  for (auto cmd : alloc_to_cmd_[idx]) {
+    cmd->set_require_update(true);
+  }
+  return absl::OkStatus();
+}
+
 //===----------------------------------------------------------------------===//
 // CommandBufferThunk
 //===----------------------------------------------------------------------===//
@@ -55,10 +73,12 @@ CommandBufferThunk::ExecutorCommandBuffer::ExecutorCommandBuffer(
     : command_buffer(std::move(command_buffer)) {}
 
 CommandBufferThunk::CommandBufferThunk(CommandBufferCmdSequence commands,
+                                       AllocationCmdMap alloc_to_cmd_map,
                                        ThunkInfo thunk_info,
                                        std::optional<ThunkSequence> thunks)
     : Thunk(Thunk::kCommandBuffer, std::move(thunk_info)),
       commands_(std::move(commands)),
+      alloc_to_cmd_map_((std::move(alloc_to_cmd_map))),
       thunks_(std::move(thunks)),
       state_(std::make_shared<State>()) {
   // When we create a new command buffer thunk (which happens when we
@@ -77,14 +97,16 @@ CommandBufferThunk::CommandBufferThunk(CommandBufferCmdSequence commands,
   TrackCommandBuffers(state_);
 }
 
-bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
-    const CommandBufferCmdSequence& commands,
-    const Thunk::ExecuteParams& params) {
+absl::StatusOr<bool>
+CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
+    CommandBufferCmdSequence& commands, const Thunk::ExecuteParams& params,
+    AllocationCmdMap& alloc_to_cmd_map) {
+  commands.reset_cmd_update_flag();
+  bool should_update = false;
   if (commands.force_update()) {
-    return true;
+    should_update = true;
   }
 
-  bool should_update = false;
   const BufferAllocations* allocs = params.buffer_allocations;
 
   // We check only allocations referenced by commands in a cmd sequence, and
@@ -99,10 +121,10 @@ bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
 
     if (!recorded_allocs[index].IsSameAs(alloc)) {
       recorded_allocs[index] = alloc;
+      TF_RETURN_IF_ERROR(alloc_to_cmd_map.SetBufferCmdRequireUpdate(index));
       should_update = true;
     }
   }
-
   return should_update;
 }
 
@@ -160,13 +182,12 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // before execution, because command buffers when instantiated will allocate
   // memory on device and this might lead to deadlocks when we have concurrent
   // NCCL operations in flight.
-  //
-  // If command buffer in any other state we check it is has to be updated, i.e.
-  // if captured pointers changed or command buffer has commands that require
-  // update on each call.
-  if (cmd_buffer->command_buffer->state() ==
-          se::CommandBuffer::State::kCreate &&
-      cmd_buffer->ShouldUpdateCommandBuffer(commands_, execute_params)) {
+  TF_ASSIGN_OR_RETURN(bool should_update,
+                      cmd_buffer->ShouldUpdateCommandBuffer(
+                          commands_, execute_params, alloc_to_cmd_map_));
+  if ((cmd_buffer->command_buffer->state() ==
+       se::CommandBuffer::State::kCreate) &&
+      should_update) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -220,11 +241,14 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
                       GetOrCreateCommandBuffer(executor));
 
   absl::MutexLock lock(&cmd_buffer->mutex);
-
-  if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
+  TF_ASSIGN_OR_RETURN(bool should_update,
+                      cmd_buffer->ShouldUpdateCommandBuffer(commands_, params,
+                                                            alloc_to_cmd_map_));
+  if (should_update) {
     VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence" << " after "
-            << cmd_buffer->num_executions << " executions since last update"
+            << " by recoding command buffer cmd sequence"
+            << " after " << cmd_buffer->num_executions
+            << " executions since last update"
             << "; num_commands=" << commands_.size();
 
     TraceMe trace([&] {

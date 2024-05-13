@@ -34,9 +34,17 @@ limitations under the License.
 
 namespace xla::gpu {
 
+struct AllocationCmdMap {
+  absl::Status InsertBufferUse(int64_t idx, CommandBufferCmd* cmd);
+  absl::Status SetBufferCmdRequireUpdate(int64_t idx);
+  absl::flat_hash_map<int64_t, absl::flat_hash_set<CommandBufferCmd*>>
+      alloc_to_cmd_;
+};
+
 class CommandBufferThunk : public Thunk {
  public:
-  CommandBufferThunk(CommandBufferCmdSequence commands, ThunkInfo thunk_info,
+  CommandBufferThunk(CommandBufferCmdSequence commands,
+                     AllocationCmdMap alloc_to_cmd_map, ThunkInfo thunk_info,
                      std::optional<ThunkSequence> thunks = std::nullopt);
 
   absl::Status Prepare(const PrepareParams& params,
@@ -59,8 +67,9 @@ class CommandBufferThunk : public Thunk {
 
     // Returns true if `commands` cmd sequence has to be recorded into
     // `command_buffer` to update it (see `recorded_allocs` below).
-    bool ShouldUpdateCommandBuffer(const CommandBufferCmdSequence& commands,
-                                   const Thunk::ExecuteParams& params)
+    absl::StatusOr<bool> ShouldUpdateCommandBuffer(
+        CommandBufferCmdSequence& commands, const Thunk::ExecuteParams& params,
+        AllocationCmdMap& alloc_to_cmd_map)
         ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
     // se::CommandBuffer is not thread safe, and we guard it with a mutex to
@@ -119,6 +128,10 @@ class CommandBufferThunk : public Thunk {
 
   // Command sequence that initializes command buffers on each executor.
   CommandBufferCmdSequence commands_;
+
+  // track the set of commands that consumes a certain buffer allocation, key by
+  // allocation index.
+  AllocationCmdMap alloc_to_cmd_map_;
 
   // Thunk sequence that executes the same commands as in `commands_` but using
   // thunk mechanism. We use it as a fallback mechanism to work around CUPTI

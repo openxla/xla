@@ -315,9 +315,13 @@ absl::Status CommandBufferCmdSequence::Record(
     VLOG(5) << " Record command buffer with scope id "
             << execution_scope_id.value();
 
-    TF_RETURN_IF_ERROR(
-        command.cmd->Record(execute_params, record_params, command_buffer));
-    ++num_recorded_commands[execution_scope_id];
+    if (command.cmd->require_update()) {
+      TF_RETURN_IF_ERROR(
+          command.cmd->Record(execute_params, record_params, command_buffer));
+      ++num_recorded_commands[execution_scope_id];
+    } else {
+      TF_RETURN_IF_ERROR(command.cmd->Skip(record_params, command_buffer));
+    }
   }
 
   if (mode == RecordMode::kExclusive) {
@@ -899,6 +903,12 @@ absl::Status IfElseCmd::Record(const Thunk::ExecuteParams& execute_params,
       CreateBuilder(&else_commands_, &execute_params, &record_params));
 }
 
+absl::Status IfElseCmd::Skip(const RecordParams& record_params,
+                             se::CommandBuffer* command_buffer) {
+  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
+  return command_buffer->Skip(execution_scope_id, 2);
+}
+
 CommandBufferCmd::BufferUsageVector IfElseCmd::buffers() {
   absl::flat_hash_set<CommandBufferCmd::BufferUsage> buffers;
   buffers.emplace(pred_, MemoryAccess::kRead);
@@ -951,6 +961,12 @@ CommandBufferCmd::BufferUsageVector CaseCmd::buffers() {
     buffers.insert(branch.buffers().begin(), branch.buffers().end());
   }
   return {buffers.begin(), buffers.end()};
+}
+
+absl::Status CaseCmd::Skip(const RecordParams& record_params,
+                           se::CommandBuffer* command_buffer) {
+  ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
+  return command_buffer->Skip(execution_scope_id, branches_commands_.size());
 }
 
 //===----------------------------------------------------------------------===//

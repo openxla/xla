@@ -55,17 +55,17 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
-#include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"  // from @llvm-project
+#include "mlir/AsmParser/AsmParser.h"               // from @llvm-project
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"        // from @llvm-project
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"                     // from @llvm-project
+#include "mlir/IR/Builders.h"                       // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"              // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"                     // from @llvm-project
+#include "mlir/IR/BuiltinTypes.h"                   // from @llvm-project
+#include "mlir/IR/MLIRContext.h"                    // from @llvm-project
+#include "mlir/Parser/Parser.h"                     // from @llvm-project
+#include "mlir/Support/LLVM.h"                      // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"  // from @llvm-project
@@ -578,12 +578,14 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
               .xla_gpu_graph_enable_concurrent_region()
           ? CommandBufferCmdSequence::SynchronizationMode::kAutomatic
           : CommandBufferCmdSequence::SynchronizationMode::kSerialize;
-
+  AllocationCmdMap alloc_to_cmd_map;
   TF_ASSIGN_OR_RETURN(CommandBufferCmdSequence cmd_sequence,
-                      ConvertToCommands(*thunk_sequence, synchronization_mode));
+                      ConvertToCommands(*thunk_sequence, alloc_to_cmd_map,
+                                        synchronization_mode));
 
   AddThunkToThunkSequence(std::make_unique<CommandBufferThunk>(
-      std::move(cmd_sequence), Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      std::move(cmd_sequence), std::move(alloc_to_cmd_map),
+      Thunk::ThunkInfo::WithProfileAnnotation(instr),
       std::move(*thunk_sequence)));
 
   return absl::OkStatus();

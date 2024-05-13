@@ -194,6 +194,15 @@ class CommandBufferCmd {
                               const RecordParams& record_params,
                               se::CommandBuffer* command_buffer) = 0;
 
+  // During update, if the command does not have memory pointer changes, then
+  // skip updating command.
+  virtual absl::Status Skip(const RecordParams& record_params,
+                            se::CommandBuffer* command_buffer) {
+    se::CommandBuffer::ExecutionScopeId execution_scope_id =
+        GetExecutionScope(record_params);
+    return command_buffer->Skip(execution_scope_id, 1);
+  }
+
   // For some commands need to force update on Record even the input device
   // pointers do not change, e.g. command that has state that can be changed by
   // CPU code.
@@ -224,9 +233,13 @@ class CommandBufferCmd {
 
   ExecutionStreamId execution_stream_id() const { return execution_stream_id_; }
 
+  void set_require_update(bool flag) { require_update_ = flag; }
+  bool require_update() { return require_update_; }
+
  private:
   std::string profile_annotation_;
   ExecutionStreamId execution_stream_id_;
+  bool require_update_ = false;
 };
 
 //===----------------------------------------------------------------------===//
@@ -316,6 +329,16 @@ class CommandBufferCmdSequence {
 
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
+
+  bool reset_cmd_update_flag() {
+    absl::c_for_each(commands_, [](CommandInfo& cmd_info) {
+      if (cmd_info.cmd->force_update()) {
+        cmd_info.cmd->set_require_update(true);
+      } else {
+        cmd_info.cmd->set_require_update(false);
+      }
+    });
+  }
 
   bool force_update() const {
     return absl::c_any_of(commands_, [](const CommandInfo& cmd_info) {
@@ -609,6 +632,8 @@ class IfElseCmd : public CommandBufferCmd {
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
                       se::CommandBuffer* command_buffer) override;
+  absl::Status Skip(const RecordParams& record_params,
+                    se::CommandBuffer* command_buffer) override;
 
   BufferUsageVector buffers() override;
 
@@ -633,6 +658,9 @@ class CaseCmd : public CommandBufferCmd {
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
                       se::CommandBuffer* command_buffer) override;
+
+  absl::Status Skip(const RecordParams& record_params,
+                    se::CommandBuffer* command_buffer) override;
 
   BufferUsageVector buffers() override;
 

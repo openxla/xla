@@ -339,6 +339,11 @@ class CommandBuffer {
   // before it can be executed.
   virtual absl::Status Update() = 0;
 
+  // during update, skip updating the following `num_cmds` commands, as the
+  // input pointers for these commands do not change.
+  virtual absl::Status Skip(ExecutionScopeId execution_scope_id,
+                            int64_t num_cmds) = 0;
+
   // Returns command buffer execution mode.
   virtual Mode mode() const = 0;
 

@@ -123,6 +123,8 @@ class GpuCommandBuffer : public CommandBuffer {
 
   absl::Status Finalize() override;
   absl::Status Update() override;
+  absl::Status Skip(ExecutionScopeId execution_scope_id,
+                    int64_t num_cmds) override;
 
   GpuGraphExecHandle executable() const { return exec_; }
   GpuGraphHandle graph() const { return graph_; }
