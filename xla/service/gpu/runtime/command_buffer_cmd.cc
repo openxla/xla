@@ -297,6 +297,7 @@ absl::Status CommandBufferCmdSequence::Record(
 
   // Track the number of commands recorded between barriers.
   absl::flat_hash_map<ExecutionScopeId, int64_t> num_recorded_commands;
+  int64_t num_skiped_commands = 0;
 
   for (auto& command : commands_) {
     ExecutionScopeId execution_scope_id =
@@ -321,6 +322,7 @@ absl::Status CommandBufferCmdSequence::Record(
       ++num_recorded_commands[execution_scope_id];
     } else {
       TF_RETURN_IF_ERROR(command.cmd->Skip(record_params, command_buffer));
+      ++num_skiped_commands;
     }
   }
 
@@ -331,7 +333,8 @@ absl::Status CommandBufferCmdSequence::Record(
   uint64_t end_micros = tsl::Env::Default()->NowMicros();
   VLOG(3) << "Recorded " << commands_.size()
           << " commands into command buffer in " << (end_micros - start_micros)
-          << " μs; mode=" << RecordModeString(mode);
+          << " μs; skiped command " << num_skiped_commands
+          << "; mode=" << RecordModeString(mode);
 
   return absl::OkStatus();
 }

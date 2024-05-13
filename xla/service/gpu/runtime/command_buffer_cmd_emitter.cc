@@ -188,7 +188,7 @@ static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
 }
 
 static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk) {
-  auto cmd = std::make_unique<CuDnnCmd>(thunk.execution_stream_id(),
+  return std::make_unique<CuDnnCmd>(thunk.execution_stream_id(),
                                         thunk.arguments(), thunk.graph());
 }
 
