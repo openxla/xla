@@ -330,7 +330,7 @@ class CommandBufferCmdSequence {
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
 
-  bool reset_cmd_update_flag() {
+  void reset_cmd_update_flag() {
     absl::c_for_each(commands_, [](CommandInfo& cmd_info) {
       if (cmd_info.cmd->force_update()) {
         cmd_info.cmd->set_require_update(true);
