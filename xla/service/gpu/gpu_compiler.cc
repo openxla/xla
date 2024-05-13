@@ -53,6 +53,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
 #include "mlir/IR/Diagnostics.h"  // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
@@ -1787,6 +1788,29 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
                                /*shard_number=*/std::nullopt);
   }
 
+  int split_module_level =
+      module_config.debug_options().xla_llvm_split_module_level();
+  bool preserve_locals = split_module_level != 2;
+  if (split_module_level == 1) {
+    for (llvm::Function& func : llvm_module->functions()) {
+      if (func.getNumUses() > 0 && !func.isDeclaration()) {
+        VLOG(4) << absl::StrFormat("Inlining function %s with %d users.\n",
+                                   func.getName().str(), func.getNumUses());
+        std::vector<llvm::CallInst*> calls_to_inline;
+        for (auto* user : func.users()) {
+          if (auto* call = llvm::dyn_cast<llvm::CallInst>(user)) {
+            calls_to_inline.push_back(call);
+          }
+        }
+        for (auto* call_to_inline : calls_to_inline) {
+          llvm::InlineFunctionInfo inline_function_info;
+          CHECK(llvm::InlineFunction(*call_to_inline, inline_function_info)
+                    .isSuccess());
+        }
+      }
+    }
+  }
+
   std::vector<std::unique_ptr<llvm::Module>> llvm_modules;
   int num_functions = 0;
   for (llvm::Function& func : llvm_module->functions()) {
@@ -1833,7 +1857,7 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
         }
         llvm_modules.push_back(std::move(module));
       },
-      /*PreserveLocals=*/true);
+      /*PreserveLocals=*/preserve_locals);
 
   std::vector<absl::StatusOr<BackendCompileResult>> compile_results(
       llvm_modules.size());

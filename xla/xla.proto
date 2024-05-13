@@ -430,6 +430,10 @@ message DebugOptions {
   // Inflate collective cost by running each collective multiple times.
   int32 xla_gpu_collective_inflation_factor = 205;
 
+  // Whether to force inline or preserve locals
+  // 0 = no inline, 1 = inline, 2 = no preserve locals, default is 0
+  int32 xla_llvm_split_module_level = 300;
+
   // Whether to use the cuDNN frontend API for convolutions when possible.
   bool xla_gpu_enable_cudnn_frontend = 160;
 
