@@ -402,8 +402,8 @@ class AllOfPattern {
   void DescribeToImpl(std::ostream* os, std::integral_constant<size_t, index>,
                       int64_t indent) const {
     constexpr bool first_is_trivial =
-        IsTrivialMatcher<typename std::remove_reference<decltype(std::get<0>(
-            patterns_))>::type>::value;
+        IsTrivialMatcher<typename std::remove_reference<decltype(
+            std::get<0>(patterns_))>::type>::value;
     constexpr bool is_last = index == sizeof...(Patterns) - 1;
     const auto& submatcher = std::get<index>(patterns_);
 
@@ -2687,6 +2687,7 @@ XLA_UNOP_PATTERN(CollectivePermuteStart)
 XLA_UNOP_PATTERN(CollectivePermuteDone)
 XLA_UNOP_PATTERN(Domain)
 XLA_UNOP_PATTERN(Exp)
+XLA_UNOP_PATTERN(Expm1)
 XLA_UNOP_PATTERN(Fft)
 XLA_UNOP_PATTERN(Floor)
 XLA_UNOP_PATTERN(GetTupleElement)

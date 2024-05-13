@@ -19,6 +19,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_pattern_utils.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
@@ -28,11 +29,6 @@ namespace cpu {
 
 namespace {
 namespace m = match;
-
-template <typename Pattern>
-auto OptionalConvert(Pattern pattern) {
-  return m::AnyOf<HloInstruction>(m::Convert(pattern), std::move(pattern));
-}
 
 inline auto OneDnnConvertibleInstr(HloInstruction** instr) {
   return m::AnyOf<HloInstruction>(m::CustomCall(instr, {"__onednn$layernorm"}),

@@ -23,8 +23,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "dnnl.hpp"
 #include "absl/base/dynamic_annotations.h"
+#include "dnnl.hpp"
+#include "tsl/platform/logging.h"
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -36,7 +37,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/util/onednn_threadpool.h"
-#include "tsl/platform/logging.h"
 
 #define EIGEN_USE_THREADS
 
@@ -138,6 +138,9 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
       case OneDnnMatMulConfig::GELU_ERF:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_erf, 0.f, 0.f);
         break;
+      case OneDnnMatMulConfig::RELU6:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_clip_v2, 0.f, 6.0f);
+        break;
       case OneDnnMatMulConfig::BIAS: {
         bias_md = fused_mds.at(fused_operand_idx);
         // Extend bias rank to match result rank.
@@ -156,6 +159,9 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
         }
         fused_operand_idx++;
       } break;
+      case OneDnnMatMulConfig::ELU:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_elu, 1.0f, 0.0f);
+        break;
       case OneDnnMatMulConfig::BINARY_ADD: {
         auto binary_md = fused_mds.at(fused_operand_idx);
         if (fused_operands_ref) {
