@@ -64,6 +64,8 @@ std::string_view to_string(State state) {
       return "create";
     case State::kUpdate:
       return "update";
+    case State::kSkip:
+      return "skip";
     case State::kFinalized:
       return "finalized";
   }
@@ -400,9 +402,9 @@ absl::Status GpuCommandBuffer::Barrier(ExecutionScopeId execution_scope_id) {
     return absl::OkStatus();
   }
 
-  if (state_ == State::kUpdate) {
-    // Command buffer updates can't change the structure of the underlying gpu
-    // graph (add or delete barriers). We simply do a sanity check that at
+  if (state_ == State::kUpdate || state_ == State::kSkip) {
+    // Command buffer updates/skip can't change the structure of the underlying
+    // gpu graph (add or delete barriers). We simply do a sanity check that at
     // update time we didn't try to add more barriers than we had originally.
     if (execution_scope.update_state.barrier_idx++ >=
         execution_scope.barriers.size()) {
@@ -452,7 +454,7 @@ absl::Status GpuCommandBuffer::Barrier(
     return absl::OkStatus();
   }
 
-  if (state_ == State::kUpdate) {
+  if (state_ == State::kUpdate || state_ == State::kSkip) {
     // Command buffer updates can't change the structure of the underlying gpu
     // graph (add or delete barriers). We simply do a sanity check that at
     // update time we didn't try to add more barriers than we had originally.
@@ -499,7 +501,7 @@ absl::Status GpuCommandBuffer::Barrier(ExecutionScopeId from_execution_scope_id,
     return absl::OkStatus();
   }
 
-  if (state_ == State::kUpdate) {
+  if (state_ == State::kUpdate || state_ == State::kSkip) {
     // Command buffer updates can't change the structure of the underlying gpu
     // graph (add or delete barriers). We simply do a sanity check that at
     // update time we didn't try to add more barriers than we had originally.
@@ -549,6 +551,10 @@ absl::Status GpuCommandBuffer::LaunchWithPackedArgs(
         exec_, node, kernel.name(), gpu_func, blocks.x, blocks.y, blocks.z,
         threads.x, threads.y, threads.z, packed_args.number_of_shared_bytes(),
         kernel_params, /*extra=*/nullptr);
+  }
+
+  if (state_ == State::kUpdate) {
+    execution_scope.update_state.node_idx++;
   }
 
   return UnsupportedStateError(state_);
@@ -607,6 +613,10 @@ absl::Status GpuCommandBuffer::AddNestedCommandBuffer(
     return GpuDriver::GraphExecChildNodeSetParams(exec_, node, child_graph);
   }
 
+  if (state_ == State::kUpdate) {
+    execution_scope.update_state.node_idx++;
+  }
+
   return UnsupportedStateError(state_);
 }
 
@@ -631,6 +641,10 @@ absl::Status GpuCommandBuffer::MemcpyDeviceToDevice(
     return GpuDriver::GraphExecMemcpyD2DNodeSetParams(
         parent_->gpu_context(), exec_, node, AsDevicePtr(*dst),
         AsDevicePtr(src), size);
+  }
+
+  if (state_ == State::kSkip) {
+    execution_scope.update_state.node_idx++;
   }
 
   return UnsupportedStateError(state_);
@@ -658,6 +672,10 @@ absl::Status GpuCommandBuffer::Memset(ExecutionScopeId execution_scope_id,
     return GpuDriver::GraphExecMemsetNodeSetParams(
         parent_->gpu_context(), exec_, node, AsDevicePtr(*dst), bit_pattern,
         num_elements);
+  }
+
+  if (state_ == State::kSkip) {
+    execution_scope.update_state.node_idx++;
   }
 
   return UnsupportedStateError(state_);
@@ -810,6 +828,10 @@ absl::Status GpuCommandBuffer::CreateConditionalCommand(
     return UpdateConditionalCommandBuffers(
         cond_cmd_buffers.handles,
         absl::MakeSpan(cond_cmd_buffers.command_buffers), builders);
+  }
+
+  if (state_ == State::kSkip) {
+    execution_scope.update_state.node_idx += num_handles;
   }
 
   return UnsupportedStateError(state_);
@@ -1021,7 +1043,8 @@ absl::Status GpuCommandBuffer::Finalize() {
 
     TF_RETURN_IF_ERROR(DisableBarriersExecution(exec_));
 
-  } else if (mode_ == Mode::kPrimary && state_ == State::kUpdate) {
+  } else if (mode_ == Mode::kPrimary &&
+             (state_ == State::kUpdate || state_ == State::kSkip)) {
     // If this is a finalization after update, we don't have to do anything as
     // each individual command already updated executable graph.
     VLOG(5) << "Finalize executable graph " << exec_ << " update #"
@@ -1071,6 +1094,22 @@ GpuCommandBuffer::barriers(ExecutionScopeId id) const {
   if (auto it = execution_scopes_.find(id); it != execution_scopes_.end())
     return it->second.barriers;
   return {};
+}
+
+absl::Status GpuCommandBuffer::SwitchToSkipState() {
+  if (state_ == CommandBuffer::State::kFinalized) {
+    return absl::InternalError(
+        "switch from kFinalized state to kSkip state is not allowed");
+  }
+  state_ = CommandBuffer::State::kSkip;
+  return absl::OkStatus();
+}
+
+absl::Status GpuCommandBuffer::SwitchToUpdateState() {
+  if (state_ != CommandBuffer::State::kCreate) {
+    state_ = CommandBuffer::State::kUpdate;
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace stream_executor::gpu

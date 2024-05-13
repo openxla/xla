@@ -183,6 +183,7 @@ CommandBufferCmdSequence::CommandBufferCmdSequence(
 void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
   for (const CommandBufferCmd::BufferUsage& buffer : cmd->buffers()) {
     buffers_.insert(buffer);
+    alloc_cmd_map_.InsertBufferUse(buffer.slice.index(), cmd.get());
     allocs_indices_.insert(buffer.slice.index());
   }
 
@@ -298,6 +299,7 @@ absl::Status CommandBufferCmdSequence::Record(
 
   // Track the number of commands recorded between barriers.
   absl::flat_hash_map<ExecutionScopeId, int64_t> num_recorded_commands;
+  int64_t num_skiped_commands = 0;
 
   for (auto& command : commands_) {
     ExecutionScopeId execution_scope_id =
@@ -316,6 +318,12 @@ absl::Status CommandBufferCmdSequence::Record(
     VLOG(5) << " Record command buffer with scope id "
             << execution_scope_id.value();
 
+    if (command.cmd->require_update()) {
+      TF_RETURN_IF_ERROR(command_buffer->SwitchToUpdateState());
+    } else {
+      num_skiped_commands++;
+      TF_RETURN_IF_ERROR(command_buffer->SwitchToUpdateState());
+    }
     TF_RETURN_IF_ERROR(
         command.cmd->Record(execute_params, record_params, command_buffer));
     ++num_recorded_commands[execution_scope_id];
@@ -328,7 +336,8 @@ absl::Status CommandBufferCmdSequence::Record(
   uint64_t end_micros = tsl::Env::Default()->NowMicros();
   VLOG(3) << "Recorded " << commands_.size()
           << " commands into command buffer in " << (end_micros - start_micros)
-          << " μs; mode=" << RecordModeString(mode);
+          << " μs; skiped command " << num_skiped_commands
+          << "; mode=" << RecordModeString(mode);
 
   return absl::OkStatus();
 }
@@ -348,6 +357,51 @@ std::vector<bool> CommandBufferCmdSequence::barriers() const {
   absl::c_transform(commands_, std::back_inserter(barriers),
                     [](auto& command) { return command.requires_barrier; });
   return barriers;
+}
+
+void CommandBufferCmdSequence::SetBufferCmdRequireUpdate(int64_t idx) {
+  alloc_cmd_map_.SetBufferCmdRequireUpdate(idx);
+  for (auto& cmd_info : commands_) {
+    std::vector<CommandBufferCmdSequence*> sub_sequences =
+        cmd_info.cmd->get_sub_sequences();
+    for (auto cmds : sub_sequences) {
+      cmds->SetBufferCmdRequireUpdate(idx);
+    }
+  }
+}
+
+void CommandBufferCmdSequence::ResetRequireUpdate() {
+  absl::c_for_each(commands_, [](CommandInfo& cmd_info) {
+    if (cmd_info.cmd->force_update() || cmd_info.cmd->buffers().size() == 0) {
+      cmd_info.cmd->set_require_update(true);
+    } else {
+      cmd_info.cmd->set_require_update(false);
+    }
+    std::vector<CommandBufferCmdSequence*> sub_sequences =
+        cmd_info.cmd->get_sub_sequences();
+    for (auto cmds : sub_sequences) {
+      cmds->ResetRequireUpdate();
+    }
+  });
+}
+
+void CommandBufferCmdSequence::AllocationCmdMap::InsertBufferUse(
+    int64_t idx, CommandBufferCmd* cmd) {
+  if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
+    alloc_to_cmd_.insert({idx, {cmd}});
+  } else {
+    alloc_to_cmd_[idx].insert(cmd);
+  }
+}
+
+void CommandBufferCmdSequence::AllocationCmdMap::SetBufferCmdRequireUpdate(
+    int64_t idx) {
+  if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
+    return;
+  }
+  for (auto cmd : alloc_to_cmd_[idx]) {
+    cmd->set_require_update(true);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -407,9 +461,9 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
     }
   }
 
-  // Create a new entry by calling a user-provided tracing function, replace the
-  // last entry with it, move it to front and return a pointer to cached command
-  // buffer.
+  // Create a new entry by calling a user-provided tracing function, replace
+  // the last entry with it, move it to front and return a pointer to cached
+  // command buffer.
   TF_ASSIGN_OR_RETURN(
       entries_[capacity_ - 1].command_buffer,
       se::TraceCommandBufferFactory::Create(executor, stream, trace));
@@ -866,6 +920,10 @@ CommandBufferCmd::BufferUsageVector IfCmd::buffers() {
   return {buffers.begin(), buffers.end()};
 }
 
+std::vector<CommandBufferCmdSequence*> IfCmd::get_sub_sequences() {
+  return std::vector<CommandBufferCmdSequence*>{&then_commands_};
+}
+
 //===----------------------------------------------------------------------===//
 // IfElseCmd
 //===----------------------------------------------------------------------===//
@@ -914,6 +972,11 @@ CommandBufferCmd::BufferUsageVector IfElseCmd::buffers() {
   buffers.insert(else_commands_.buffers().begin(),
                  else_commands_.buffers().end());
   return {buffers.begin(), buffers.end()};
+}
+
+std::vector<CommandBufferCmdSequence*> IfElseCmd::get_sub_sequences() {
+  return std::vector<CommandBufferCmdSequence*>{&then_commands_,
+                                                &else_commands_};
 }
 
 //===----------------------------------------------------------------------===//
@@ -965,6 +1028,15 @@ CommandBufferCmd::BufferUsageVector CaseCmd::buffers() {
   return {buffers.begin(), buffers.end()};
 }
 
+std::vector<CommandBufferCmdSequence*> CaseCmd::get_sub_sequences() {
+  std::vector<CommandBufferCmdSequence*> sub_cmds;
+  sub_cmds.reserve(branches_commands_.size());
+  for (int i = 0; i < branches_commands_.size(); i++) {
+    sub_cmds.push_back(&branches_commands_[i]);
+  }
+  return sub_cmds;
+}
+
 //===----------------------------------------------------------------------===//
 // ForCmd
 //===----------------------------------------------------------------------===//
@@ -1009,6 +1081,10 @@ CommandBufferCmd::BufferUsageVector ForCmd::buffers() {
   buffers.insert(body_commands_.buffers().begin(),
                  body_commands_.buffers().end());
   return {buffers.begin(), buffers.end()};
+}
+
+std::vector<CommandBufferCmdSequence*> ForCmd::get_sub_sequences() {
+  return std::vector<CommandBufferCmdSequence*>{&body_commands_};
 }
 
 //===----------------------------------------------------------------------===//
@@ -1061,6 +1137,11 @@ CommandBufferCmd::BufferUsageVector WhileCmd::buffers() {
   buffers.insert(body_commands_.buffers().begin(),
                  body_commands_.buffers().end());
   return {buffers.begin(), buffers.end()};
+}
+
+std::vector<CommandBufferCmdSequence*> WhileCmd::get_sub_sequences() {
+  return std::vector<CommandBufferCmdSequence*>{&cond_commands_,
+                                                &body_commands_};
 }
 
 //===----------------------------------------------------------------------===//
@@ -1260,7 +1341,8 @@ absl::Status CustomCallCmd::RecordXlaFfiCall(
     const RecordParams& record_params, se::CommandBuffer* command_buffer) {
   // TODO(ezhulenev): This is not the most optimal approach, as we'll be doing
   // a lot of extra allocation on every call. We have to keep attributes
-  // separate from arguments, as they do not change after thunk is constructed.
+  // separate from arguments, as they do not change after thunk is
+  // constructed.
   ffi::CallFrameBuilder builder;
 
   ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
