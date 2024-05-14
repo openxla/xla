@@ -753,6 +753,7 @@ xla_cc_test(
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda([
