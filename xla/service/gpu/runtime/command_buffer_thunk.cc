@@ -74,18 +74,6 @@ absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
   return absl::OkStatus();
 }
 
-std::string AllocationCmdMap::ToString() const {
-  std::string s;
-  StrAppendFormat(&s, "Allocation to cmd mapping =========\n");
-  for (auto pair : alloc_to_cmd_) {
-    StrAppendFormat(&s, "allocation idx %d \n", pair.first);
-    for (auto cmd : pair.second) {
-      StrAppendFormat(&s, "  allocation idx %h \n", pair.first);
-    }
-  }
-  return s;
-}
-
 //===----------------------------------------------------------------------===//
 // CommandBufferThunk
 //===----------------------------------------------------------------------===//
