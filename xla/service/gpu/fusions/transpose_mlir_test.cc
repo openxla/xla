@@ -418,7 +418,7 @@ TEST_F(MlirTransposeFusionTest, SameInputIndexingForRealHeroAndSideOutput) {
     fusion {
       %input = f32[100,32,64] parameter(0)
       %transpose = f32[100,64,32] transpose(%input), dimensions={0,2,1}
-      %bitcast = f32[100,32,64] bitcast(%input)
+      %bitcast = f32[100,2048] bitcast(%input)
       ROOT %tuple = (f32[100,64,32], f32[100,2048]) tuple(%transpose, %bitcast)
     }
 
