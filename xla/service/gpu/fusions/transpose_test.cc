@@ -270,6 +270,8 @@ TEST_F(TransposeTest, ThreadIndexingSideOutput) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto fusion, GetTransposeFusion(analysis));
   mlir::MLIRContext mlir_context;
+  // Check if side output `%broadcast` get the correct input indexing, which should
+  // corresponds to shape [100,32].
   EXPECT_THAT(
       fusion->ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
