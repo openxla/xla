@@ -758,6 +758,7 @@ cc_library(
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
