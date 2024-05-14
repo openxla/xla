@@ -43,12 +43,14 @@ limitations under the License.
 
 namespace xla::gpu {
 
+using absl::StrAppend;
+using absl::StrAppendFormat;
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
 absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
                                                CommandBufferCmd* cmd) {
-  if (alloc_to_cmd_.find(idx) != alloc_to_cmd_.end()) {
+  if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
     alloc_to_cmd_.insert({idx, {cmd}});
   } else {
     alloc_to_cmd_[idx].insert(cmd);
@@ -70,6 +72,18 @@ absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
     cmd->set_require_update(true);
   }
   return absl::OkStatus();
+}
+
+std::string AllocationCmdMap::ToString() const {
+  std::string s;
+  StrAppendFormat(&s, "Allocation to cmd mapping =========\n");
+  for (auto pair : alloc_to_cmd_) {
+    StrAppendFormat(&s, "allocation idx %d \n", pair.first);
+    for (auto cmd : pair.second) {
+      StrAppendFormat(&s, "  allocation idx %h \n", pair.first);
+    }
+  }
+  return s;
 }
 
 //===----------------------------------------------------------------------===//
@@ -130,6 +144,7 @@ CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
     if (!recorded_allocs[index].IsSameAs(alloc)) {
       recorded_allocs[index] = alloc;
       TF_RETURN_IF_ERROR(alloc_to_cmd_map.SetBufferCmdRequireUpdate(index));
+      VLOG(2) << "Set buffer allocation require update " << index;
       should_update = true;
     }
   }

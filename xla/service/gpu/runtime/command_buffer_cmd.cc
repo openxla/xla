@@ -1364,6 +1364,11 @@ absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
   return absl::OkStatus();
 }
 
+absl::Status BarrierCmd::Skip(const RecordParams& record_params,
+                              se::CommandBuffer* command_buffer) {
+  return absl::OkStatus();
+}
+
 BarrierCmd::BufferUsageVector BarrierCmd::buffers() { return {}; }
 
 //===----------------------------------------------------------------------===//

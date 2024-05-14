@@ -332,7 +332,7 @@ class CommandBufferCmdSequence {
 
   void reset_cmd_update_flag() {
     absl::c_for_each(commands_, [](CommandInfo& cmd_info) {
-      if (cmd_info.cmd->force_update()) {
+      if (cmd_info.cmd->force_update() || cmd_info.cmd->buffers().size() == 0) {
         cmd_info.cmd->set_require_update(true);
       } else {
         cmd_info.cmd->set_require_update(false);
@@ -866,6 +866,9 @@ class BarrierCmd : public CommandBufferCmd {
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
                       se::CommandBuffer* command_buffer) override;
+
+  absl::Status Skip(const RecordParams& record_params,
+                    se::CommandBuffer* command_buffer) override;
 
   BufferUsageVector buffers() override;
 
