@@ -319,9 +319,11 @@ absl::Status CommandBufferCmdSequence::Record(
     if (command.cmd->require_update()) {
       TF_RETURN_IF_ERROR(
           command.cmd->Record(execute_params, record_params, command_buffer));
+      VLOG(2) << "calling record for cmd " << command.cmd.get();
       ++num_recorded_commands[execution_scope_id];
     } else {
       TF_RETURN_IF_ERROR(command.cmd->Skip(record_params, command_buffer));
+      VLOG(2) << "calling skip for cmd " << command.cmd.get();
       ++num_skiped_commands;
     }
   }

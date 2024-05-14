@@ -50,7 +50,6 @@ using tsl::profiler::TraceMeEncode;
 
 absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
                                                CommandBufferCmd* cmd) {
-
   VLOG(2) << "InsertBufferUse buffer " << idx << " command " << cmd;
   if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
     alloc_to_cmd_.insert({idx, {cmd}});
@@ -72,6 +71,7 @@ absl::Status AllocationCmdMap::InsertBufferUse(
 absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
   TF_RET_CHECK(alloc_to_cmd_.find(idx) != alloc_to_cmd_.end());
   for (auto cmd : alloc_to_cmd_[idx]) {
+    VLOG(2) << "set cmd require update for cmd: " << cmd;
     cmd->set_require_update(true);
   }
   return absl::OkStatus();
@@ -114,6 +114,7 @@ absl::StatusOr<bool>
 CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
     CommandBufferCmdSequence& commands, const Thunk::ExecuteParams& params,
     AllocationCmdMap& alloc_to_cmd_map) {
+  VLOG(2) << "Calling shouldUpdate";
   commands.reset_cmd_update_flag();
   bool should_update = false;
   if (commands.force_update()) {
@@ -139,6 +140,7 @@ CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
       should_update = true;
     }
   }
+  VLOG(2) << "ShouldUpdate result: " << should_update;
   return should_update;
 }
 
@@ -196,37 +198,37 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // before execution, because command buffers when instantiated will allocate
   // memory on device and this might lead to deadlocks when we have concurrent
   // NCCL operations in flight.
-  TF_ASSIGN_OR_RETURN(bool should_update,
-                      cmd_buffer->ShouldUpdateCommandBuffer(
-                          commands_, execute_params, alloc_to_cmd_map_));
   if ((cmd_buffer->command_buffer->state() ==
-       se::CommandBuffer::State::kCreate) &&
-      should_update) {
-    VLOG(3) << "Initialize command buffer on device #"
-            << params.executor->device_ordinal()
-            << " by recoding command buffer cmd sequence"
-            << "; num_commands=" << commands_.size();
+       se::CommandBuffer::State::kCreate)) {
+    TF_ASSIGN_OR_RETURN(bool should_update,
+                        cmd_buffer->ShouldUpdateCommandBuffer(
+                            commands_, execute_params, alloc_to_cmd_map_));
+    if (should_update) {
+      VLOG(3) << "Initialize command buffer on device #"
+              << params.executor->device_ordinal()
+              << " by recoding command buffer cmd sequence"
+              << "; num_commands=" << commands_.size();
 
-    TraceMe trace([&] {
-      return TraceMeEncode("command_buffer::initialize",
-                           {{"device", params.executor->device_ordinal()},
-                            {"num_commands", commands_.size()}});
-    });
+      TraceMe trace([&] {
+        return TraceMeEncode("command_buffer::initialize",
+                             {{"device", params.executor->device_ordinal()},
+                              {"num_commands", commands_.size()}});
+      });
 
-    uint64_t start_micros = tsl::Env::Default()->NowMicros();
+      uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
-    TF_RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
-                                        cmd_buffer->command_buffer.get()));
+      CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
+      TF_RETURN_IF_ERROR(commands_.Record(execute_params, record_params,
+                                          cmd_buffer->command_buffer.get()));
 
-    uint64_t end_micros = tsl::Env::Default()->NowMicros();
-    VLOG(3) << "Initialized command buffer on device #"
-            << params.executor->device_ordinal() << " in "
-            << (end_micros - start_micros)
-            << " μs; num_commands=" << commands_.size();
-    cmd_buffer->num_executions = 0;
+      uint64_t end_micros = tsl::Env::Default()->NowMicros();
+      VLOG(3) << "Initialized command buffer on device #"
+              << params.executor->device_ordinal() << " in "
+              << (end_micros - start_micros)
+              << " μs; num_commands=" << commands_.size();
+      cmd_buffer->num_executions = 0;
+    }
   }
-
   return absl::OkStatus();
 }
 
