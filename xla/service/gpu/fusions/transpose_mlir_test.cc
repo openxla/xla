@@ -411,6 +411,34 @@ TEST_F(MlirTransposeFusionTest, SideOutputs) {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
+TEST_F(MlirTransposeFusionTest, SameInputIndexingForRealHeroAndSideOutput) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    fusion {
+      %input = f32[100,32,64] parameter(0)
+      %transpose = f32[100,64,32] transpose(%input), dimensions={0,2,1}
+      %bitcast = f32[100,32,64] bitcast(%input)
+      ROOT %tuple = (f32[100,64,32], f32[100,2048]) tuple(%transpose, %bitcast)
+    }
+
+    ENTRY entry {
+      %input = f32[100,32,64] parameter(0)
+      ROOT %fusion = (f32[100,64,32], f32[100,2048]) fusion(%input), kind=kInput, calls=fusion
+    })")
+                    .value();
+
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+
+  MlirTransposeFusion fusion(analysis);
+  mlir::MLIRContext mlir_context;
+
+  EXPECT_THAT(
+      fusion.ComputeThreadIdToInputIndexing(0, 0, &mlir_context)->ToString(),
+      fusion.ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString());
+}
+
 TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module

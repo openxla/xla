@@ -246,6 +246,34 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
       )"));
 }
 
+TEST_F(TransposeTest, SameInputIndexingForRealHeroAndSideOutput) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+    HloModule module
+
+    fusion {
+      %input = f32[100,32,64] parameter(0)
+      %transpose = f32[100,64,32] transpose(%input), dimensions={0,2,1}
+      %bitcast = f32[100,32,64] bitcast(%input)
+      ROOT %tuple = (f32[100,64,32], f32[100,2048]) tuple(%transpose, %bitcast)
+    }
+
+    ENTRY entry {
+      %input = f32[100,32,64] parameter(0)
+      ROOT %fusion = (f32[100,64,32], f32[100,2048]) fusion(%input), kind=kInput, calls=fusion
+    })")
+                    .value();
+
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto fusion, GetTransposeFusion(analysis));
+  mlir::MLIRContext mlir_context;
+
+  EXPECT_THAT(
+      fusion->ComputeThreadIdToInputIndexing(0, 0, &mlir_context)->ToString(),
+      fusion->ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString());
+}
+
 TEST_F(TransposeTest, ThreadIndexingSideOutput) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module
@@ -270,8 +298,8 @@ TEST_F(TransposeTest, ThreadIndexingSideOutput) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto fusion, GetTransposeFusion(analysis));
   mlir::MLIRContext mlir_context;
-  // Check if side output `%broadcast` get the correct input indexing, which should
-  // corresponds to shape [100,32].
+  // Check if side output `%broadcast` get the correct input indexing, which
+  // should corresponds to `%input1` with shape [100,32].
   EXPECT_THAT(
       fusion->ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
