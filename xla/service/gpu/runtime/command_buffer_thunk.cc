@@ -43,14 +43,11 @@ limitations under the License.
 
 namespace xla::gpu {
 
-using absl::StrAppend;
-using absl::StrAppendFormat;
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
 absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
                                                CommandBufferCmd* cmd) {
-  VLOG(2) << "InsertBufferUse buffer " << idx << " command " << cmd;
   if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
     alloc_to_cmd_.insert({idx, {cmd}});
   } else {
@@ -71,7 +68,6 @@ absl::Status AllocationCmdMap::InsertBufferUse(
 absl::Status AllocationCmdMap::SetBufferCmdRequireUpdate(int64_t idx) {
   TF_RET_CHECK(alloc_to_cmd_.find(idx) != alloc_to_cmd_.end());
   for (auto cmd : alloc_to_cmd_[idx]) {
-    VLOG(2) << "set cmd require update for cmd: " << cmd;
     cmd->set_require_update(true);
   }
   return absl::OkStatus();
@@ -114,7 +110,6 @@ absl::StatusOr<bool>
 CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
     CommandBufferCmdSequence& commands, const Thunk::ExecuteParams& params,
     AllocationCmdMap& alloc_to_cmd_map) {
-  VLOG(2) << "Calling shouldUpdate";
   commands.reset_cmd_update_flag();
   bool should_update = false;
   if (commands.force_update()) {
@@ -140,7 +135,6 @@ CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
       should_update = true;
     }
   }
-  VLOG(2) << "ShouldUpdate result: " << should_update;
   return should_update;
 }
 
