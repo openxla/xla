@@ -239,7 +239,7 @@ class CommandBufferCmd {
  private:
   std::string profile_annotation_;
   ExecutionStreamId execution_stream_id_;
-  bool require_update_ = false;
+  bool require_update_ = true;
 };
 
 //===----------------------------------------------------------------------===//

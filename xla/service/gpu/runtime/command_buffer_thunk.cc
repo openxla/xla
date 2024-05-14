@@ -50,6 +50,8 @@ using tsl::profiler::TraceMeEncode;
 
 absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
                                                CommandBufferCmd* cmd) {
+
+  VLOG(2) << "InsertBufferUse buffer " << idx << " command " << cmd;
   if (alloc_to_cmd_.find(idx) == alloc_to_cmd_.end()) {
     alloc_to_cmd_.insert({idx, {cmd}});
   } else {
@@ -60,6 +62,7 @@ absl::Status AllocationCmdMap::InsertBufferUse(int64_t idx,
 
 absl::Status AllocationCmdMap::InsertBufferUse(
     CommandBufferCmd::BufferUsageVector buffers, CommandBufferCmd* cmd) {
+  VLOG(2) << "InsertBufferUse set " << buffers.size();
   for (auto buffer_usage : buffers) {
     TF_RETURN_IF_ERROR(InsertBufferUse(buffer_usage.slice.index(), cmd));
   }
