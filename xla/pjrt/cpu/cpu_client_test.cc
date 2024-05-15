@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_client.h"
 
+#include "xla/pjrt/host_memory_spaces.h"
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -26,11 +28,12 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
 #include "absl/synchronization/notification.h"
+#include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_api.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/custom_call_status.h"
-#include "xla/service/custom_call_target_registry.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -49,22 +52,49 @@ namespace xla {
 namespace {
 
 using ::testing::Each;
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::IsFalse;
+using ::tsl::testing::IsOkAndHolds;
 
-void TestError(void* out, const void** in, XlaCustomCallStatus* status) {
-  static constexpr char kError[] = "test error.";
-  XlaCustomCallStatusSetFailure(status, kError, sizeof(kError));
+static absl::Status TestError(ffi::BufferBase, ffi::Result<ffi::BufferBase>,
+                              ffi::Result<ffi::BufferBase>) {
+  return absl::InternalError("test error.");
 }
-XLA_CPU_REGISTER_CUSTOM_CALL_TARGET(TestError);
+
+XLA_FFI_DEFINE_HANDLER(kTestError, TestError,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::BufferBase>()  // in
+                           .Ret<ffi::BufferBase>()  // out0
+                           .Ret<ffi::BufferBase>()  // out1
+);
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test$$TestError", "Host",
+                         kTestError);
+
+TEST(TfrtCpuClientTest, MemorySpace) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
+  ASSERT_GE(client->devices().size(), 1);
+
+  ASSERT_EQ(client->memory_spaces().size(),
+            client->addressable_devices().size());
+  for (auto* device : client->devices()) {
+    TF_ASSERT_OK_AND_ASSIGN(auto* memory_space, device->default_memory_space());
+    EXPECT_THAT(device->memory_spaces(), ElementsAre(memory_space));
+    EXPECT_EQ(memory_space->kind(), UnpinnedHostMemorySpace::kKind);
+    EXPECT_EQ(memory_space->kind_id(), UnpinnedHostMemorySpace::kKindId);
+    EXPECT_THAT(device->memory_space_by_kind(UnpinnedHostMemorySpace::kKind),
+                IsOkAndHolds(memory_space));
+  }
+}
 
 TEST(TfrtCpuClientTest, DonationWithExecutionError) {
   constexpr char kProgram[] =
       R"(HloModule DonationWithExecutionError, input_output_alias={ {}: (0, {}, must-alias) }
 ENTRY DonationWithExecutionError() -> f32[2, 2] {
     %input = f32[2, 2] parameter(0)
-    %custom-call = (f32[2, 2], u8[0]) custom-call(%input), custom_call_target="TestError", api_version=API_VERSION_STATUS_RETURNING, output_to_operand_aliasing={{0}: (0, {})}
+    %custom-call = (f32[2, 2], u8[0]) custom-call(%input), custom_call_target="__xla_test$$TestError", api_version=API_VERSION_TYPED_FFI, output_to_operand_aliasing={{0}: (0, {})}
     ROOT %result = f32[2, 2] get-tuple-element(%custom-call), index=0
 })";
 

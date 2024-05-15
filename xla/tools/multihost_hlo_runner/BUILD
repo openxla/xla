@@ -1,6 +1,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_binary")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -16,7 +17,7 @@ build_test(
     name = "hlo_runner_main_build_test",
     tags = [
         "cpu",
-        "gpu",
+        "gpu",  # TODO(ddunleavy): this configuration of tags will only build on GPU in OSS.
     ],
     targets = [
         ":hlo_runner_main",
@@ -28,10 +29,9 @@ xla_cc_binary(
     testonly = True,
     srcs = ["hlo_runner_main.cc"],
     tags = [
-        "gpu",
         "noasan",  # Exceeds linker limit.
         "nomac",
-    ],
+    ] + tf_gpu_tests_tags(),
     deps = [
         ":functional_hlo_runner",
         ":hlo_runner_flags",
@@ -117,7 +117,10 @@ xla_test(
             "notap",
         ],
     },
-    backends = ["gpu"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
     data = [
         "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
@@ -127,6 +130,8 @@ xla_test(
     tags = ["nomac"],
     deps = [
         ":functional_hlo_runner",
+        "//xla:statusor",
+        "//xla/pjrt:pjrt_client",
         "//xla/tests:filecheck",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",

@@ -284,7 +284,7 @@ ENTRY e {
 })";
 
   TritonGemmConfig config(16, 16, 32, 1, 1, 1);
-  EXPECT_OK(
+  TF_EXPECT_OK(
       CreateTritonIrAndFileCheck(kHloText, config, EmitMatMul, "triton_dot", R"(
 CHECK:    tt.func @triton_fn(%[[LHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[RHS:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[OUT:.*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
 CHECK-DAG:  %[[ZERO_KN:.*]] = arith.constant dense<0.000000e+00> : tensor<32x16xf32>
@@ -1083,8 +1083,8 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kHloText));
 
   TritonGemmConfig config(16, 64, 32, 1, 1, 1);
-  ASSERT_OK(CreateTritonIrAndFileCheck(kHloText, config, EmitSoftMax,
-                                       "triton_softmax_computation", R"(
+  TF_ASSERT_OK(CreateTritonIrAndFileCheck(kHloText, config, EmitSoftMax,
+                                          "triton_softmax_computation", R"(
 // CHECK: #[[MAP:.*]] = affine_map<()[s0] -> (s0 * 16)>
 // CHECK-LABEL:   tt.func @triton_fn(
 // CHECK-SAME:                       %[[P0:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32},
@@ -1373,6 +1373,29 @@ ENTRY e {
   TF_EXPECT_OK(tsl::Env::Default()->GetMatchingPaths(
       tsl::io::JoinPath(output_directory, "*.triton-passes.log"), &paths));
   EXPECT_EQ(paths.size(), 1);
+}
+
+TEST_F(TritonGemmTest, DotWithPredFromCompareProducesCorrectResult) {
+  const std::string hlo_text = R"(
+triton_dot {
+  parameter_0 = s32[4,128]{1,0} parameter(0)
+  broadcast.255 = s32[4,128,64]{2,1,0} broadcast(parameter_0), dimensions={0,1}
+  parameter_1 = s32[4,128,64]{2,1,0} parameter(1)
+  compare.39 = pred[4,128,64]{2,1,0} compare(broadcast.255, parameter_1), direction=EQ
+  bitcast.1097 = pred[512,64]{1,0} reshape(compare.39)
+  convert.229 = bf16[512,64]{1,0} convert(bitcast.1097)
+  parameter_2 = bf16[64,256]{0,1} parameter(2)
+  ROOT dot.21 = bf16[512,256]{1,0} dot(convert.229, parameter_2),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+ENTRY main {
+  p0 = s32[4,128]{1,0} parameter(0)
+  p1 = s32[4,128,64]{2,1,0} parameter(1)
+  p2 = bf16[64,256]{0,1} parameter(2)
+  ROOT gemm_fusion_dot.0 = bf16[512,256]{1,0} fusion(p0, p1, p2), kind=kCustom, calls=triton_dot, backend_config={"fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":{"block_m":"64","block_n":"128","block_k":"32","split_k":"1","num_stages":"4","num_warps":"4","num_ctas":"1"}}}
+})";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTest, UseTensorCoresForF32OnAmpere) {
@@ -2838,6 +2861,19 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
 }
 
+TEST_F(TritonGemmTestWithSplitK, SplitKWithTrivialDimension) {
+  const std::string kHloText = R"(
+ENTRY entry_computation {
+  p0 = f16[1001,1]{1,0} parameter(0)
+  convert = f32[1001,1]{1,0} convert(p0)
+  p1 = f32[1001,2048]{1,0} parameter(1)
+  ROOT dot = f32[1,2048]{1,0} dot(convert, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+})";
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
+}
+
 TEST_F(TritonGemmLevel2Test, NarrowingConvertOutputIsFused) {
   const std::string kHloText = R"(
 HloModule m
@@ -3030,7 +3066,7 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTestAny,
-       ShouldNotLowerDotWithLhsWithoutNonContractingDimThroughTriton) {
+       LowerDotWithLhsWithoutNonContractingDimThroughTriton) {
   const std::string hlo_text = R"(
 HloModule t
 
@@ -3040,13 +3076,18 @@ ENTRY e {
   ROOT dot = f32[32,64] dot(f32[32,40] parameter_0, f32[32,40,64] parameter_1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
 
-  MatchOptimizedHlo(hlo_text, "CHECK-NOT: triton");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTestAny,
-       ShouldNotLowerDotWithRhsWithoutNonContractingDimThroughTriton) {
+       LowerDotWithRhsWithoutNonContractingDimThroughTriton) {
   const std::string hlo_text = R"(
 HloModule t
 
@@ -3056,9 +3097,14 @@ ENTRY e {
   ROOT dot = f32[32,64] dot(f32[32,40,64] parameter_0, f32[32,40] parameter_1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
 
-  MatchOptimizedHlo(hlo_text, "CHECK-NOT: triton");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 // This group of tests compares GPU results of dots already rewritten
@@ -4504,7 +4550,7 @@ ENTRY e {
 }
 )";
   TritonGemmConfig config(32, 32, 32, 1, 1, 1);
-  ASSERT_OK(
+  TF_ASSERT_OK(
       CreateTritonIrAndFileCheck(kHloText, config, EmitMatMul, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C_MASK:.*]] = arith.constant dense<-65536> : tensor<32x32xi32>
@@ -4835,7 +4881,7 @@ ENTRY e {
 }
 )";
   TritonGemmConfig config(32, 32, 32, 1, 1, 1);
-  ASSERT_OK(
+  TF_ASSERT_OK(
       CreateTritonIrAndFileCheck(kHloText, config, EmitMatMul, "triton_dot", R"(
 CHECK:          %[[INFINITY:.*]] = arith.constant dense<0x7F800000> : tensor<32x32xf32>
 CHECK:          %[[C_MASK:.*]] = arith.constant dense<-65536> : tensor<32x32xi32>
@@ -5156,6 +5202,46 @@ ENTRY entry {
           absl::StatusCode::kFailedPrecondition,
           ::testing::StrEq(
               "Triton support is only enabled for Ampere GPUs and up.")));
+}
+
+// This test could be modified to allow TF32 once this bug is fixed.
+// TODO(b/320659359) Allow TF32 for 8-bit or less types with F32.
+TEST_F(TritonFilecheckTest, NoTF32For8BitOrLessWithF32) {
+  const std::string hlo_text = R"(
+HloModule t
+
+triton_dot {
+  parameter_0 = s32[11,24]{1,0} parameter(0)
+  broadcast.1747 = s32[11,24,128]{2,1,0} broadcast(parameter_0),
+  dimensions={0,1} parameter_1 = s32[11,24,128]{2,1,0} parameter(1)
+  compare.49 = pred[11,24,128]{2,1,0} compare(broadcast.1747, parameter_1),
+      direction=EQ bitcast.4717 = pred[264,128]{1,0} bitcast(compare.49)
+  convert.142 = f32[264,128]{1,0} convert(bitcast.4717)
+  parameter_2 = f32[128,8]{1,0} parameter(2)
+  ROOT dot.381 = f32[264,8]{1,0} dot(convert.142, parameter_2),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = s32[11,24]{1,0} parameter(0)
+  p1 = s32[11,24,128]{2,1,0} parameter(1)
+  p2 = f32[128,8]{1,0} parameter(2)
+  ROOT _ = f32[264,8] fusion(p0, p1, p2), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+      triton_gemm_config:
+        {"block_m":32,"block_n":16,"block_k":128,
+         "split_k":1,"num_stages":1,"num_warps":4,
+         "num_ctas":1}}}
+})";
+
+  TritonGemmConfig config(32, 16, 128, 1, 1, 4);
+  ASSERT_OK(
+      CreateTritonIrAndFileCheck(hlo_text, config, EmitMatMul, "triton_dot", R"(
+CHECK:      tt.dot
+CHECK-NOT:  inputPrecision = tf32
+  )"));
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 }  // namespace

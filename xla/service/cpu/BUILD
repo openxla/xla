@@ -19,9 +19,9 @@ load(
 )
 load(
     "//xla:xla.bzl",
-    "ORC_JIT_MEMORY_MAPPER_TARGETS",
     "xla_cc_binary",
     "xla_cc_test",
+    "xla_internal",
 )
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
@@ -313,6 +313,7 @@ cc_library(
         "//xla/service:optimize_input_output_buffer_alias",
         "//xla/service:qr_expander",
         "//xla/service:reduce_decomposer",
+        "//xla/service:reduce_window_rewriter",
         "//xla/service:reshape_decomposer",
         "//xla/service:reshape_mover",
         "//xla/service:result_caster",
@@ -429,6 +430,7 @@ cc_library(
         "//xla/service:hlo_profile_printer_data_cc",
         "//xla/service:hlo_proto_cc",
         "//xla/service:llvm_compiler",
+        "//xla/service:reduce_window_rewriter",
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
         "@llvm-project//llvm:Target",
@@ -508,7 +510,7 @@ cc_library(
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:mlir_c_runner_utils",
         "@tsl//tsl/platform:logging",
-    ] + ORC_JIT_MEMORY_MAPPER_TARGETS,
+    ] + xla_internal(["service/cpu:named_orc_jit_memory_mapper"]),
 )
 
 cc_library(
@@ -1182,11 +1184,13 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",
         "//xla/ffi:ffi_api",
         "//xla/service:custom_call_status_public_headers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -1655,6 +1659,15 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_pattern_utils",
+    hdrs = ["onednn_pattern_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onednn_util",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
@@ -1667,6 +1680,7 @@ cc_library(
         ":backend_config_proto_cc",
         ":onednn_matmul",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1695,6 +1709,7 @@ cc_library(
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",

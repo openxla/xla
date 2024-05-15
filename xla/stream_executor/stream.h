@@ -82,7 +82,8 @@ class Stream {
   // Instantiate a stream tied to parent as a platform executor. Work
   // entrained onto this stream will be launched/managed on that
   // StreamExecutor's platform.
-  explicit Stream(StreamExecutor *parent);
+  explicit Stream(StreamExecutor *parent,
+                  std::unique_ptr<StreamInterface> implementation);
 
   // Deallocates any stream resources that the parent StreamExecutor has
   // bestowed
@@ -108,11 +109,6 @@ class Stream {
   // these devices, this method can be used after work is finished to retrieve
   // execution status.
   absl::Status RefreshStatus() TF_LOCKS_EXCLUDED(mu_);
-
-  // Initialize the stream. This must be performed before entraining any other
-  // operations.
-  absl::Status Initialize(
-      std::optional<std::variant<StreamPriority, int>> priority = std::nullopt);
 
   // Get or create a sub-stream from this stream. If there is any sub-stream in
   // the pool that can be reused then just return this sub-stream.  Otherwise

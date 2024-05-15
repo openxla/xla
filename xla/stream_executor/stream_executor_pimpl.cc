@@ -57,7 +57,7 @@ namespace stream_executor {
 
 // Get per-device memory limit in bytes. Returns 0 if
 // TF_PER_DEVICE_MEMORY_LIMIT_MB environment variable is not set.
-static int64_t GetMemoryLimitBytes() {
+static int64_t GetMemoryLimitBytesFromEnvironmentVariable() {
   int64_t value;
   TF_CHECK_OK(
       tsl::ReadInt64FromEnvVar("TF_PER_DEVICE_MEMORY_LIMIT_MB", 0, &value));
@@ -65,7 +65,8 @@ static int64_t GetMemoryLimitBytes() {
 }
 
 StreamExecutor::StreamExecutor(const Platform* platform)
-    : platform_(platform), memory_limit_bytes_(GetMemoryLimitBytes()) {}
+    : platform_(platform),
+      memory_limit_bytes_(GetMemoryLimitBytesFromEnvironmentVariable()) {}
 
 const DeviceDescription& StreamExecutor::GetDeviceDescription() const {
   absl::MutexLock lock(&mu_);
@@ -75,39 +76,6 @@ const DeviceDescription& StreamExecutor::GetDeviceDescription() const {
 
   device_description_ = CreateDeviceDescription().value();
   return *device_description_;
-}
-
-absl::StatusOr<DeviceMemoryBase> StreamExecutor::GetUntypedSymbol(
-    const std::string& symbol_name, ModuleHandle module_handle) {
-  // If failed to get the symbol, opaque/bytes are unchanged. Initialize them to
-  // be nullptr/0 for consistency with DeviceMemory semantics.
-  void* opaque = nullptr;
-  size_t bytes = 0;
-  if (GetSymbol(symbol_name, module_handle, &opaque, &bytes)) {
-    return DeviceMemoryBase(opaque, bytes);
-  }
-
-  return absl::NotFoundError(
-      absl::StrCat("Check if module containing symbol ", symbol_name,
-                   " is loaded (module_handle = ",
-                   reinterpret_cast<uintptr_t>(module_handle.id()), ")"));
-}
-
-absl::Status StreamExecutor::SynchronousMemcpyD2H(
-    const DeviceMemoryBase& device_src, int64_t size, void* host_dst) {
-  return SynchronousMemcpy(host_dst, device_src, size);
-}
-
-absl::Status StreamExecutor::SynchronousMemcpyH2D(
-    const void* host_src, int64_t size, DeviceMemoryBase* device_dst) {
-  return SynchronousMemcpy(device_dst, host_src, size);
-}
-
-absl::StatusOr<std::unique_ptr<Stream>> StreamExecutor::CreateStream(
-    std::optional<std::variant<StreamPriority, int>> priority) {
-  auto stream = std::make_unique<Stream>(this);
-  TF_RETURN_IF_ERROR(stream->Initialize(priority));
-  return std::move(stream);
 }
 
 }  // namespace stream_executor

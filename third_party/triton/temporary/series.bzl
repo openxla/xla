@@ -6,4 +6,6 @@ internal patch during the next triton integration process.
 """
 
 temporary_patch_list = [
+    "//third_party/triton/temporary:mma_limit_pred.patch",
+    "//third_party/triton/temporary:fix_register_constraints.patch",
 ]

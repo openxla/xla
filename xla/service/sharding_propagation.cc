@@ -29,6 +29,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/attributes.h"
+#include "absl/base/call_once.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -492,11 +494,9 @@ bool SupportSpatialPartitioning(
     case HloOpcode::kWhile:
     case HloOpcode::kReduce:
     case HloOpcode::kRngBitGenerator:
-      return true;
     case HloOpcode::kAllReduce:
     case HloOpcode::kReduceScatter:
-      // Only if channel_id is not specified.
-      return instruction->channel_id() == std::nullopt;
+      return true;
     case HloOpcode::kParameter:
       return allow_spmd_sharding_propagation_to_parameters ||
              computation_map.find(instruction->parent()) !=
@@ -2962,59 +2962,20 @@ bool ShardingPropagation::InferShardingFromUsers(
   return improved_sharding;
 }
 
-Status SetParameterShapes(
-    HloModule* module, const std::vector<Shape>& parameter_shapes,
-    const std::vector<bool>&
-        allow_spmd_sharding_propagation_to_parameters_vector) {
-  for (int64_t i = 0; i < module->entry_computation()->num_parameters(); ++i) {
-    if (!allow_spmd_sharding_propagation_to_parameters_vector[i]) {
-      continue;
-    }
-    TF_RETURN_IF_ERROR(module->mutable_config()
-                           .mutable_entry_computation_layout()
-                           ->mutable_parameter_layout(i)
-                           ->CopyLayoutFromShape(parameter_shapes[i]));
-  }
-  return OkStatus();
-}
-
-Status SetResultShape(HloModule* module, const Shape& result_shape) {
-  if (!module->entry_computation_layout().LayoutIsSet() ||
-      !module->entry_computation_layout().result_layout().LayoutIsSet()) {
-    return OkStatus();
-  }
-  TF_RETURN_IF_ERROR(module->mutable_config()
-                         .mutable_entry_computation_layout()
-                         ->mutable_result_layout()
-                         ->CopyLayoutFromShape(result_shape));
-  return OkStatus();
-}
-
-Status ShardingPropagation::CanonicalizeLayouts(HloModule* module) {
-  if (!allow_spmd_sharding_propagation_to_output_ &&
-      !allow_spmd_sharding_propagation_to_parameters_) {
-    return OkStatus();
-  }
-  if (!module->layout_canonicalization_callback()) {
-    LOG(INFO) << "There is no registered layout_canonicalization_callback.";
-    return OkStatus();
-  }
-  TF_ASSIGN_OR_RETURN(auto shapes_with_layout,
-                      module->layout_canonicalization_callback()(*module));
-  if (allow_spmd_sharding_propagation_to_parameters_) {
-    TF_RETURN_IF_ERROR(SetParameterShapes(
-        module, shapes_with_layout.first,
-        allow_spmd_sharding_propagation_to_parameters_vector_));
-  }
-  if (allow_spmd_sharding_propagation_to_output_) {
-    TF_RETURN_IF_ERROR(SetResultShape(module, shapes_with_layout.second));
-  }
-  return OkStatus();
-}
-
 absl::StatusOr<bool> ShardingPropagation::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Register custom-call partitioner for SharBarrierFrom and ShardBarrierTo.
+  ABSL_CONST_INIT static absl::once_flag did_registration;
+  absl::call_once(did_registration, [] {
+    RegisterCustomCallPartitioner(
+        spmd::kShardBarrierFrom,
+        std::make_unique<spmd::ShardBarrierFromPartitioner>());
+    RegisterCustomCallPartitioner(
+        spmd::kShardBarrierTo,
+        std::make_unique<spmd::ShardBarrierToPartitioner>());
+  });
+
   std::optional<absl::flat_hash_map<const HloInstruction*, HloSharding>>
       original_sharding;
   bool any_changed = false;
@@ -3320,6 +3281,14 @@ absl::StatusOr<bool> ShardingPropagation::Run(
           }
           for (auto user : hlo_for_users->users()) {
             already_inferred_from_operands.erase(user);
+            // If the user has called computations, then the parameter
+            // instructions of these called computations are also removed from
+            // already_inferred_from_operands.
+            for (auto c : user->called_computations()) {
+              for (auto parameter : c->parameter_instructions()) {
+                already_inferred_from_operands.erase(parameter);
+              }
+            }
           }
           if (instruction_to_shard_group_id.contains(hlo)) {
             const int64_t shard_group_id =
@@ -3749,7 +3718,11 @@ absl::StatusOr<bool> ShardingPropagation::Run(
       params[0]->set_sharding(std::move(param_sharding));
     }
   }
-  TF_RETURN_IF_ERROR(CanonicalizeLayouts(module));
+
+  TF_RETURN_IF_ERROR(
+      hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
+          module, allow_spmd_sharding_propagation_to_output_,
+          allow_spmd_sharding_propagation_to_parameters_));
 
   VLOG(1) << "Sharding propagation completed after " << iterations
           << " iterations";

@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_pattern_utils.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/pattern_matcher.h"
@@ -40,6 +41,7 @@ namespace cpu {
 
 namespace {
 namespace m = match;
+namespace pu = ::xla::cpu::onednn_pattern_utils_internal;
 
 inline Status ValidateDotDimensionNumbers(
     const DotDimensionNumbers& dim_numbers) {
@@ -61,26 +63,6 @@ inline Status ValidateDotDimensionNumbers(
 inline bool CompatibleElementType(const HloInstruction* instr) {
   PrimitiveType element_type = instr->shape().element_type();
   return element_type == BF16 || element_type == F32 || element_type == F16;
-}
-
-// Type conversion from and to any of BF16 and FP32.
-// TODO(intel-tf): Support more types when enabled.
-template <typename Pattern>
-inline auto SupportedConvert(Pattern pattern) {
-  auto supported_convert = [](const HloInstruction* instr) -> bool {
-    return CompatibleElementType(instr) &&
-           CompatibleElementType(instr->operand(0));
-  };
-  return m::Convert(pattern).WithPredicate(supported_convert);
-}
-
-template <typename Pattern>
-inline auto SupportedConvert(HloInstruction** convert, Pattern pattern) {
-  auto supported_convert = [](const HloInstruction* instr) -> bool {
-    return CompatibleElementType(instr) &&
-           CompatibleElementType(instr->operand(0));
-  };
-  return m::Convert(convert, pattern).WithPredicate(supported_convert);
 }
 
 inline bool IsRowMajor(const Shape& shape) {
@@ -117,9 +99,9 @@ auto ElementwiseSafeIntermediates(HloInstruction** instr,
       m::Slice(instr, pattern.WithOneUser()),
       m::Bitcast(instr, pattern.WithOneUser()),
       m::Reshape(instr, pattern.WithOneUser()),
-      SupportedConvert(instr, pattern.WithOneUser()),
-      SupportedConvert(instr, BitcastWithReshapeSemantics(
-                                  optional_bitcast, pattern.WithOneUser())),
+      pu::SupportedConvert(instr, pattern.WithOneUser()),
+      pu::SupportedConvert(instr, BitcastWithReshapeSemantics(
+                                      optional_bitcast, pattern.WithOneUser())),
       pattern);
 }
 
@@ -138,6 +120,17 @@ inline auto BcastConstScalar(HloInstruction** instr, double value) {
 
 inline auto BcastConstScalar(double value) {
   return BcastConstScalar(nullptr, value);
+}
+
+inline auto BcastConvertConstScalar(double value) {
+  return m::Broadcast(pu::OptionalConvert(m::ConstantScalar(value)));
+}
+
+inline bool IsBatchDot(const HloInstruction& instr) {
+  if (auto* dot_instr = DynCast<HloDotInstruction>(&instr)) {
+    return dot_instr->dot_dimension_numbers().lhs_batch_dimensions_size() > 0;
+  }
+  return false;
 }
 
 auto ConstScalarNear(double value) {
@@ -361,7 +354,7 @@ inline auto OptionalConvertAndBitcast(HloInstruction** optional_convert,
   //   3. pattern-root -> bitcast
   //   4. pattern-root
   auto common = m::AnyOf<HloInstruction>(
-      SupportedConvert(optional_convert, std::move(pattern).WithOneUser())
+      pu::SupportedConvert(optional_convert, std::move(pattern).WithOneUser())
           .WithOperand(0, m::Op().WithElementType(PrimitiveType::BF16))
           .WithElementType(PrimitiveType::F32),
       std::move(pattern).WithOneUser());
@@ -403,8 +396,11 @@ bool OneDnnMatMulRewriter::ShouldRewrite(const HloInstruction* dot_instr) {
 
   // Layout should be row-major, contraction dimensions captures transpose
   // scenarios in last two dimensions.
-  if (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
-      !IsRowMajor(output_shape)) {
+  // Col-major layouts are corrected to row-majow for BatchDot operation as
+  // part of the layout-pass.
+  if (!IsBatchDot(*dot_instr) &&
+      (!IsRowMajor(lhs_shape) || !IsRowMajor(rhs_shape) ||
+       !IsRowMajor(output_shape))) {
     return false;
   }
 
@@ -552,7 +548,8 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       }
 
       // Validate addend for fusion.
-      if (CompatibleElementType(addend) && IsOperandFusible(addend, dot)) {
+      if (IsSupportedType(addend->shape().element_type()) &&
+          IsOperandFusible(addend, dot)) {
         new_operands.push_back(addend);
       } else {
         return OkStatus();
@@ -561,10 +558,16 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       auto matmul_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
           dot->CloneWithNewOperands(dot->shape(), new_operands)));
 
+      OneDnnMatMulConfig_FusionKind kind;
       auto backend_config = matmul_call->backend_config<BackendConfig>();
-      backend_config->mutable_onednn_matmul_config()->add_fused_ops(
-          addend->shape().rank() != 1 ? OneDnnMatMulConfig::BINARY_ADD
-                                      : OneDnnMatMulConfig::BIAS);
+      if (backend_config->mutable_onednn_matmul_config()->fused_ops().empty() &&
+          addend->shape().rank() == 1) {
+        kind = OneDnnMatMulConfig::BIAS;
+      } else {
+        kind = OneDnnMatMulConfig::BINARY_ADD;
+      }
+      backend_config->mutable_onednn_matmul_config()->add_fused_ops(kind);
+
       if (optional_addend_broadcast) {
         backend_config->mutable_onednn_matmul_config()->set_bias_broadcast(
             true);
@@ -631,6 +634,71 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
+  auto ELUActivation(HloInstruction* instr, HloInstruction** src) {
+    //  Reference: tensorflow/compiler/tf2xla/kernels/elu_op.cc
+    //  const auto zero = ScalarLike(x, 0);
+    //  const auto pred = Gt(x, zero);
+    //  const auto expm1 = Expm1(x);
+    //  return Select(pred, x, expm1);
+    auto pattern = m::Select(
+        m::Gt(pu::OptionalConvert(m::Op(src)), BcastConvertConstScalar(0)),
+        m::Op(src),
+        pu::OptionalConvert(m::Expm1(pu::OptionalConvert(m::Op(src)))));
+    return Match(instr, pattern);
+  }
+
+  Status HandleSelect(HloInstruction* instr) override {
+    HloInstruction* matmul_call;
+    HloInstruction* intermediate_instr = nullptr;
+    HloInstruction* optional_bitcast = nullptr;
+    HloInstruction* src;
+    // Attempt to elide ELU subgraph and fuse ELU activation into GEMM,
+    // including when slicing or bitcasting is applied to the result.
+    if (ELUActivation(instr, &src)) {
+      if (Match(src, ElementwiseSafeIntermediates(
+                         &intermediate_instr, &optional_bitcast,
+                         OneDnnMatmulInstr(&matmul_call)))) {
+        return FuseActivation(OneDnnMatMulConfig::ELU, instr, matmul_call,
+                              intermediate_instr);
+      }
+    }
+    return OkStatus();
+  }
+
+  Status HandleTanh(HloInstruction* instr) override {
+    HloInstruction* matmul_call;
+    HloInstruction* intermediate_instr = nullptr;
+    HloInstruction* optional_bitcast = nullptr;
+    // Attempt to elide Tanh and fuse Tanh activation into GEMM, including
+    // when slicing or bitcasting is applied to the result.
+    if (Match(instr, m::Tanh(ElementwiseSafeIntermediates(
+                                 &intermediate_instr, &optional_bitcast,
+                                 OneDnnMatmulInstr(&matmul_call))
+                                 .WithOneUser()))) {
+      return FuseActivation(OneDnnMatMulConfig::TANH, instr, matmul_call,
+                            intermediate_instr);
+    }
+    return OkStatus();
+  }
+
+  Status HandleClamp(HloInstruction* instr) override {
+    HloInstruction* matmul_call;
+    HloInstruction* intermediate_instr = nullptr;
+    HloInstruction* optional_bitcast = nullptr;
+    // Attempt to elide RELU6 and fuse RELU6 activation into GEMM, including
+    // when slicing or bitcasting is applied to the result.
+    if (Match(instr, m::Clamp(BcastConstScalar(0),
+                              ElementwiseSafeIntermediates(
+                                  &intermediate_instr, &optional_bitcast,
+                                  OneDnnMatmulInstr(&matmul_call))
+                                  .WithOneUser(),
+                              BcastConstScalar(6)))) {
+      return FuseActivation(OneDnnMatMulConfig::RELU6, instr, matmul_call,
+                            intermediate_instr);
+    }
+    return OkStatus();
+  }
+
   Status HandleMultiply(HloInstruction* instr) override {
     HloInstruction* matmul_call;
     HloInstruction* intermediate_instr = nullptr;
@@ -647,13 +715,16 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
     }
 
     HloInstruction *dot, *constant;
+    HloInstruction* optional_convert = nullptr;
     auto pattern = m::Op(&instr)
                        .WithOpcode(HloOpcode::kMultiply)
                        .WithBinaryOperandsAnyOrder(
-                           m::Op(&dot)
-                               .WithOneUser()
-                               .WithOpcode(HloOpcode::kCustomCall)
-                               .WithCustomCallTarget({"__onednn$matmul"}),
+                           m::AnyOf<HloInstruction>(
+                               pu::SupportedConvert(&optional_convert,
+                                                    OneDnnMatmulInstr(&dot))
+                                   .WithElementType(PrimitiveType::F32),
+                               OneDnnMatmulInstr(&dot))
+                               .WithOneUser(),
                            m::Broadcast(m::Constant(&constant)));
 
     if (Match(instr, pattern)) {
@@ -673,7 +744,18 @@ class OneDnnMatMulRewriteVisitor : public DfsHloRewriteVisitor {
       backend_config->mutable_onednn_matmul_config()->set_alpha_typecast(
           *(reinterpret_cast<int32_t*>(&constant_value)));
       TF_RETURN_IF_ERROR(matmul_call->set_backend_config(*backend_config));
-      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, matmul_call));
+      HloInstruction* new_instr;
+      if (optional_convert != nullptr &&
+          optional_convert->opcode() == HloOpcode::kConvert) {
+        new_instr = matmul_call->AddInstruction(HloInstruction::CreateConvert(
+            ShapeUtil::ChangeElementType(
+                matmul_call->shape(), optional_convert->shape().element_type()),
+            matmul_call));
+      } else {
+        new_instr = matmul_call;
+      }
+
+      TF_RETURN_IF_ERROR(ReplaceInstruction(instr, new_instr));
     }
     return OkStatus();
   }

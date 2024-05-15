@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_FFI_FFI_H_
 #define XLA_FFI_FFI_H_
 
+#include <memory>
 #ifdef XLA_FFI_API_FFI_H_
 #error Two different XLA FFI implementations cannot be included together
 #endif  // XLA_FFI_API_FFI_H_
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/c_api_internal.h"  // IWYU pragma: keep
+#include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/primitive_util.h"
 #include "xla/status.h"
@@ -54,9 +56,11 @@ struct CalledComputation {};  // binds `HloComputation*`
 //===----------------------------------------------------------------------===//
 
 struct BufferBase {
+  using Shape = absl::Span<const int64_t>;
+
   PrimitiveType dtype;
   se::DeviceMemoryBase data;
-  absl::Span<const int64_t> dimensions;
+  Shape dimensions;
 };
 
 namespace internal {
@@ -70,8 +74,10 @@ using NativeType = typename primitive_util::PrimitiveTypeToNative<dtype>::type;
 
 template <PrimitiveType dtype, size_t rank = internal::kDynamicRank>
 struct Buffer {
+  using Shape = BufferBase::Shape;
+
   se::DeviceMemory<internal::NativeType<dtype>> data;
-  absl::Span<const int64_t> dimensions;
+  Shape dimensions;
 };
 
 // clang-format off
@@ -82,11 +88,16 @@ template <PrimitiveType dtype> using BufferR3 = Buffer<dtype, 3>;
 template <PrimitiveType dtype> using BufferR4 = Buffer<dtype, 4>;
 // clang-format on
 
+using Token = BufferR0<PrimitiveType::TOKEN>;
+
 namespace internal {
 
 inline BufferBase DecodeBuffer(XLA_FFI_Buffer* buf) {
-  size_t size_bytes = primitive_util::ByteWidth(PrimitiveType(buf->dtype));
-  for (int64_t i = 0; i < buf->rank; ++i) size_bytes *= buf->dims[i];
+  size_t size_bytes = 0;
+  if (primitive_util::IsArrayType(PrimitiveType(buf->dtype))) {
+    size_bytes = primitive_util::ByteWidth(PrimitiveType(buf->dtype));
+    for (int64_t i = 0; i < buf->rank; ++i) size_bytes *= buf->dims[i];
+  }
 
   BufferBase buffer;
   buffer.dtype = PrimitiveType(buf->dtype);
@@ -112,8 +123,11 @@ std::optional<Buffer<dtype, rank>> DecodeBuffer(XLA_FFI_Buffer* buf,
     }
   }
 
-  size_t size_bytes = primitive_util::ByteWidth(PrimitiveType(buf->dtype));
-  for (int64_t i = 0; i < buf->rank; ++i) size_bytes *= buf->dims[i];
+  size_t size_bytes = 0;
+  if (primitive_util::IsArrayType(PrimitiveType(buf->dtype))) {
+    size_bytes = primitive_util::ByteWidth(PrimitiveType(buf->dtype));
+    for (int64_t i = 0; i < buf->rank; ++i) size_bytes *= buf->dims[i];
+  }
 
   Buffer<dtype, rank> buffer;
   buffer.data = se::DeviceMemory<NativeType<dtype>>(
@@ -304,6 +318,39 @@ struct CtxDecoding<CalledComputation> {
                                     DiagnosticEngine&) {
     void* ptr = api->internal_api->XLA_FFI_INTERNAL_CalledComputation_Get(ctx);
     return reinterpret_cast<Type>(ptr);
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// UserData
+//===----------------------------------------------------------------------===//
+
+// A type tag for automatic decoding user data passed via the execution context.
+template <typename T>
+struct UserData {};
+
+template <typename T>
+struct CtxDecoding<UserData<T>> {
+  using Type = T*;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_ExecutionContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    auto* execution_context = reinterpret_cast<const ExecutionContext*>(
+        api->internal_api->XLA_FFI_INTERNAL_ExecutionContext_Get(ctx));
+
+    if (execution_context == nullptr) {
+      return diagnostic.Emit(
+          "Execution context must be not null to fetch UserData parameter");
+    }
+
+    auto user_data = execution_context->Lookup<T>();
+    if (!user_data.ok()) {
+      return diagnostic.Emit("Failed to get user data from execution context: ")
+             << user_data.status().message();
+    }
+
+    return *std::move(user_data);
   }
 };
 

@@ -52,6 +52,7 @@ cc_library(
         "//xla/client/lib:comparators",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_reachability",
+        "//xla/hlo/ir:tile_assignment",
         "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:call_graph",
@@ -96,18 +97,22 @@ xla_cc_test(
     deps = [
         ":spmd_partitioner",
         ":spmd_prepare",
+        "//xla:status",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_sharding_util",
+        "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_verifier",
         "//xla/service:sharding_format_picker",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -130,13 +135,11 @@ xla_cc_test(
 
 cc_library(
     name = "shard_barrier_partitioner",
-    srcs = ["shard_barrier_partitioner.cc"],
     hdrs = ["shard_barrier_partitioner.h"],
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/service:custom_call_sharding_helper",
     ],
-    alwayslink = 1,
 )
 
 cc_library(

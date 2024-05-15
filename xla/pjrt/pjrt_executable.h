@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/client/executable_build_options.h"
+#include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/pjrt/compile_options.pb.h"
@@ -152,6 +153,15 @@ struct LoadOptions {
 class ExecuteContext {
  public:
   virtual ~ExecuteContext() = default;
+
+  ffi::ExecutionContext& ffi_context() { return ffi_context_; }
+  const ffi::ExecutionContext& ffi_context() const { return ffi_context_; }
+
+ private:
+  // XLA FFI execution context is a mechanism to attach arbitrary user data to
+  // a particular call of PjRtLoadedExecutable::Execute and forward it to custom
+  // calls implemented as XLA FFI handlers.
+  ffi::ExecutionContext ffi_context_;
 };
 
 struct PjRtTransferMetadata {
@@ -213,7 +223,9 @@ struct ExecuteOptions {
   // the launch IDs may be used by the runtime to detect the mismatch.
   int32_t launch_id = 0;
   // If non-null, an opaque context passed to an execution that may be used to
-  // supply additional arguments to a derived class of PjRtExecutable.
+  // supply additional arguments to a derived class of PjRtExecutable. It is
+  // a caller responsibility to ensure that the context is valid for the
+  // duration of the execution.
   const ExecuteContext* context = nullptr;
   // If true, check that the PjRtBuffer argument shapes match the compiled
   // shapes. Otherwise, any shape with the right size on device may be passed.
@@ -286,39 +298,12 @@ struct CompiledMemoryStats {
   std::string serialized_hlo_proto = "";
   std::string DebugString() const;
 
-  CompiledMemoryStatsProto ToProto() {
-    CompiledMemoryStatsProto proto;
-    proto.set_generated_code_size_in_bytes(generated_code_size_in_bytes);
-    proto.set_argument_size_in_bytes(argument_size_in_bytes);
-    proto.set_output_size_in_bytes(output_size_in_bytes);
-    proto.set_alias_size_in_bytes(alias_size_in_bytes);
-    proto.set_temp_size_in_bytes(temp_size_in_bytes);
-    proto.mutable_hlo_proto()->ParseFromString(serialized_hlo_proto);
-    proto.set_host_generated_code_size_in_bytes(
-        host_generated_code_size_in_bytes);
-    proto.set_host_argument_size_in_bytes(host_argument_size_in_bytes);
-    proto.set_host_output_size_in_bytes(host_output_size_in_bytes);
-    proto.set_host_alias_size_in_bytes(host_alias_size_in_bytes);
-    proto.set_host_temp_size_in_bytes(host_temp_size_in_bytes);
-    return proto;
-  }
+  CompiledMemoryStatsProto ToProto();
 
-  static CompiledMemoryStats FromProto(const CompiledMemoryStatsProto& proto) {
-    CompiledMemoryStats stats;
-    stats.generated_code_size_in_bytes = proto.generated_code_size_in_bytes();
-    stats.argument_size_in_bytes = proto.argument_size_in_bytes();
-    stats.output_size_in_bytes = proto.output_size_in_bytes();
-    stats.alias_size_in_bytes = proto.alias_size_in_bytes();
-    stats.temp_size_in_bytes = proto.temp_size_in_bytes();
-    stats.serialized_hlo_proto = proto.hlo_proto().SerializeAsString();
-    stats.host_generated_code_size_in_bytes =
-        proto.host_generated_code_size_in_bytes();
-    stats.host_argument_size_in_bytes = proto.host_argument_size_in_bytes();
-    stats.host_output_size_in_bytes = proto.host_output_size_in_bytes();
-    stats.host_alias_size_in_bytes = proto.host_alias_size_in_bytes();
-    stats.host_temp_size_in_bytes = proto.host_temp_size_in_bytes();
-    return stats;
-  }
+  static CompiledMemoryStats FromProto(const CompiledMemoryStatsProto& proto);
+
+  void PopulateBufferStatsFromAllocations(
+      absl::Span<const BufferAllocation> allocs);
 };
 
 class PjRtExecutable {

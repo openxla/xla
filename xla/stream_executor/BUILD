@@ -1,8 +1,9 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/stream_executor:build_defs.bzl", "stream_executor_friends", "stream_executor_internal")
+load("//xla/stream_executor:build_defs.bzl", "stream_executor_build_defs_bzl_deps", "stream_executor_friends", "stream_executor_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "transitive_hdrs")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
@@ -23,6 +24,16 @@ package_group(
 package_group(
     name = "internal",
     packages = stream_executor_internal(),
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    deps = [
+        "@local_config_cuda//cuda:build_defs_bzl",
+        "@tsl//tsl/platform:rules_cc_bzl",
+        "@tsl//tsl/platform/default:cuda_build_defs_bzl",
+    ] + stream_executor_build_defs_bzl_deps(),
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -128,6 +139,7 @@ cc_library(
         ":stream_executor_plugin_headers",
     ],
     deps = STREAM_EXECUTOR_DEPENDENCIES + [
+        ":stream_executor_interface",
         ":stream_executor_pimpl",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
@@ -509,17 +521,33 @@ cc_library(
 
 cc_library(
     name = "command_buffer",
-    srcs = ["command_buffer.cc"],
     hdrs = ["command_buffer.h"],
     visibility = ["//visibility:private"],
     deps = [
+        ":device_memory",
+        ":kernel",
+        ":launch_dim",
+        ":platform",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/lib/gtl:int_type",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
+    name = "trace_command_buffer_factory",
+    srcs = ["trace_command_buffer_factory.cc"],
+    hdrs = ["trace_command_buffer_factory.h"],
+    visibility = [":internal"],
+    deps = [
+        ":command_buffer",
         ":stream_executor_headers",
         ":stream_executor_interface",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
@@ -577,11 +605,10 @@ cc_library(
     deps = [
         ":device_memory",
         ":kernel_spec",
+        ":launch_dim",
         ":platform",
-        ":stream_executor_headers",
-        ":stream_executor_interface",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -590,6 +617,35 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "kernel_factory",
+    hdrs = ["kernel_factory.h"],
+    deps = [
+        ":kernel",
+        ":kernel_spec",
+        ":stream_executor_interface",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "typed_kernel_factory",
+    hdrs = ["typed_kernel_factory.h"],
+    deps = [
+        ":kernel",
+        ":kernel_factory",
+        ":kernel_spec",
+        ":stream_executor_interface",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -696,6 +752,7 @@ xla_cc_test(
     deps = [
         ":device_memory",
         ":stream_executor",
+        ":typed_kernel_factory",
         "//xla/stream_executor/host:host_platform",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",

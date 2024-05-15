@@ -16,14 +16,12 @@ load(
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
-    "tf_cuda_tests_tags",
-    "tf_gpu_tests_tags",
 )
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load("//xla:xla.bzl", "xla_cc_test", "xla_cub_deps", "xla_export_hlo_deps")
+load("//xla:xla.bzl", "xla_cc_test", "xla_cub_deps", "xla_internal")
 load(
     "//xla/service/gpu:build_defs.bzl",
     "build_cub_sort_kernels",
@@ -161,7 +159,7 @@ xla_cc_test(
     name = "custom_call_test",
     srcs = if_gpu_is_configured(["custom_call_test.cc"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         "//xla:debug_options_flags",
         "//xla:shape_util",
@@ -171,6 +169,7 @@ xla_cc_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "//xla/ffi",
+        "//xla/ffi:execution_context",
         "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/service:custom_call_status",
@@ -200,7 +199,7 @@ xla_cc_test(
 xla_cc_test(
     name = "gpu_copy_insertion_test",
     srcs = ["gpu_copy_insertion_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":buffer_sharing",
         "//xla:test",
@@ -348,6 +347,7 @@ cc_library(
         "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
         "//xla/hlo/ir:hlo",
@@ -758,12 +758,13 @@ cc_library(
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "//xla/tsl/util/proto:proto_utils",
         "//xla/service/gpu:hlo_traversal",
-    ]),
+    ]) + ["@tsl//tsl/platform:path"],
 )
 
 xla_test(
@@ -813,7 +814,9 @@ xla_test(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
 cc_library(
@@ -871,13 +874,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ],
-)
-
-cuda_library(
-    name = "sleep_kernel",
-    srcs = if_cuda_is_configured(["sleep_kernel.cu.cc"]),
-    hdrs = if_cuda_is_configured(["sleep_kernel.h"]),
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
 )
 
 # TODO(b/244780257): Remove this config.
@@ -991,13 +987,10 @@ cc_library(
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status",
-        "//xla:status_macros",
         "//xla:statusor",
-        "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/mlir_hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:hlo_parser",
         "//xla/service/llvm_ir:buffer_assignment_util",
@@ -1017,15 +1010,11 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:BufferizationDialect",
-        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -1691,7 +1680,7 @@ xla_test(
     srcs = if_gpu_is_configured(["gemm_algorithm_picker_test.cc"]),
     backends = [
         "gpu_v100",
-    ] + if_oss(["gpu"]),
+    ] + if_oss(["gpu_any"]),
     deps = [
         ":autotuner_util",
         ":backend_configs_cc",
@@ -1805,7 +1794,7 @@ cc_library(
 xla_cc_test(
     name = "dot_dimension_sorter_test",
     srcs = ["dot_dimension_sorter_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":dot_dimension_sorter",
         "//xla:error_spec",
@@ -1839,7 +1828,7 @@ cc_library(
 xla_cc_test(
     name = "dot_sparsity_rewriter_test",
     srcs = ["dot_sparsity_rewriter_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":dot_sparsity_rewriter",
         "//xla/hlo/ir:hlo",
@@ -1984,7 +1973,7 @@ xla_test(
     srcs = if_gpu_is_configured(["conv_algorithm_picker_test.cc"]),
     backends = [
         "gpu_v100",
-    ] + if_oss(["gpu"]),
+    ] + if_oss(["gpu_any"]),
     tags = [
         "noasan",
         "nomsan",
@@ -3394,14 +3383,12 @@ cc_library(
     hdrs = if_gpu_is_configured([
         "gpu_compiler.h",
     ]),
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     deps = if_gpu_is_configured([
         ":gpu_p2p_pipeliner",
         ":pipelined_p2p_rewriter",
         ":collective_permute_cycle_decomposer",
         ":address_computation_fusion_rewriter",
+        ":gemv_rewriter",
         ":algorithm_checker",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
@@ -3420,6 +3407,7 @@ cc_library(
         ":gemm_broadcast_folding_rewriter",
         ":gemm_fusion",
         ":gemm_rewriter",
+        ":gpu_algebraic_simplifier",
         ":gpu_all_gather_optimizer",
         ":gpu_async_collective_annotator",
         ":gpu_constants",
@@ -3439,7 +3427,7 @@ cc_library(
         ":instruction_fusion",
         ":ir_emission_utils",
         ":ir_emitter",
-        ":loop_double_buffer_transformer",
+        ":double_buffer_loop_unrolling",
         ":matmul_utils",
         ":metrics",
         ":move_copy_to_users",
@@ -3465,7 +3453,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:variant",
-        "@local_config_cuda//cuda:cuda_headers",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:BitReader",
         "@llvm-project//llvm:BitWriter",
@@ -3549,6 +3536,7 @@ cc_library(
         "//xla/service:qr_expander",
         "//xla/service:real_imag_expander",
         "//xla/service:reduce_decomposer",
+        "//xla/service:reduce_window_rewriter",
         "//xla/service:reduce_scatter_combiner",
         "//xla/service:reduce_scatter_reassociate",
         "//xla/service:reshape_decomposer",
@@ -3583,7 +3571,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor",
         "//xla/stream_executor/gpu:gpu_driver_header",
-        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/translate/mhlo_to_hlo:location_exporter",
@@ -3614,9 +3601,8 @@ cc_library(
         "//xla/service:hlo_ordering",
         "//xla/service:layout_assignment",
         "//xla/service:logical_buffer",
-        "//xla/stream_executor/rocm:rocm_platform_id",
         "@tsl//tsl/platform:numbers",
-    ]) + xla_export_hlo_deps() + [
+    ]) + xla_internal(["service:export_hlo"]) + [
         ":command_buffer_scheduling",
         ":fusion_pipeline",
         ":ir_emitter_context",
@@ -3636,19 +3622,19 @@ xla_test(
     backends = ["gpu"],
     data = ["gpu_compiler_test_autotune_db.textproto"],
     deps = [
+        ":autotuner_util",
         ":gpu_compiler",
         ":gpu_hlo_schedule",
         ":metrics",
         "//xla:autotune_results_proto_cc",
         "//xla:error_spec",
         "//xla/hlo/ir:hlo",
-        "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
         "//xla/service:xla_debug_info_manager",
-        "//xla/service/gpu:autotuner_util",
+        "//xla/stream_executor:device_description",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
@@ -3658,8 +3644,11 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -3705,7 +3694,8 @@ xla_test(
 xla_cc_test(
     name = "auto_sharding_gpu_compiler_test",
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
-    tags = tf_cuda_tests_tags() + ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
+    tags = ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
+    use_gpu = True,
     deps = [
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -3768,6 +3758,7 @@ cc_library(
         ":dot_sparsity_rewriter",
         ":gemm_algorithm_picker",
         ":gemm_fusion_autotuner",
+        ":gpu_algebraic_simplifier",
         ":gpu_asm_opts_util",
         ":gpu_compiler",
         ":gpu_conv_padding_legalization",
@@ -3786,6 +3777,7 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_map",
+        "@local_config_cuda//cuda:cuda_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -3805,7 +3797,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
         "//xla/service:convert_mover",
         "//xla/service:dot_dimension_merger",
@@ -3929,6 +3920,7 @@ cc_library(
     srcs = [
         "amdgpu_compiler_registration.cc",
     ],
+    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     tags = ["manual"],
     deps = [
         ":amdgpu_compiler_impl",
@@ -3990,40 +3982,36 @@ cc_library(
         ":conv_algorithm_picker",
         ":cublas_pad_for_gemms",
         ":cublas_padding_requirements",
+        ":cudnn_fused_conv_rewriter",
         ":cusolver_rewriter",
         ":gemm_algorithm_picker",
-        ":gemm_rewriter",
         ":gpu_compiler",
         ":gpu_conv_padding_legalization",
         ":gpu_conv_rewriter",
-        ":gpu_layout_assignment",
         ":gpu_sort_rewriter",
-        ":reduction_degenerate_dim_remover",
-        ":reduction_dimension_grouper",
-        ":reduction_layout_normalizer",
         ":target_constants",
-        ":tree_reduction_rewriter",
         ":triangular_solve_rewriter",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
+        "//xla/service:convert_mover",
         "//xla/service:dot_dimension_merger",
+        "//xla/service:float_normalization",
         "//xla/service:hlo_constant_folding",
-        "//xla/service:hlo_cse",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_verifier",
+        "//xla/service:reshape_mover",
         "//xla/service:tuple_simplifier",
         "//xla/service/gpu/llvm_gpu_backend",
-        "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:ir_headers",
@@ -4161,7 +4149,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_layout_assignment_test",
     srcs = ["gpu_layout_assignment_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":gpu_layout_assignment",
         ":stream_executor_util",
@@ -4190,7 +4178,6 @@ cc_library(
     hdrs = ["gpu_schedule_postprocessing.h"],
     deps = [
         ":backend_configs_cc",
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_pass",
@@ -4266,7 +4253,7 @@ xla_cc_test(
     srcs = [
         "gpu_hlo_schedule_test.cc",
     ],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":gpu_hlo_schedule",
         "//xla:shape_util",
@@ -4374,7 +4361,9 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "//xla/stream_executor",
+        "//xla/stream_executor:kernel_factory",
         "//xla/stream_executor:launch_dim",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/tsl/util:env_var",
         "//xla/tsl/util/proto:proto_utils",
         "@com_google_absl//absl/algorithm:container",
@@ -4431,17 +4420,15 @@ cc_library(
         ":backend_configs_cc",
         ":hlo_traversal",
         ":ir_emission_utils",
-        ":launch_dimensions",
         ":reduction_utils",
         "//xla:shape_util",
         "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
     ],
@@ -4486,6 +4473,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_handle",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/gpu:asm_compiler",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -4514,7 +4502,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    tags = tf_gpu_tests_tags(),
+    use_gpu = True,
     deps = [
         ":stream_executor_util",
         "//xla:shape_util",
@@ -4574,6 +4562,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -4646,7 +4635,7 @@ xla_test(
     },
     backends = [
         "gpu_a100",
-    ] + if_oss(["gpu"]),
+    ] + if_oss(["gpu_any"]),
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 10,
     deps = [
@@ -4727,7 +4716,7 @@ xla_cc_test(
     name = "cudnn_norm_rewriter_test",
     srcs = ["cudnn_norm_rewriter_test.cc"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":cublas_cudnn",
         ":cudnn_norm_rewriter",
@@ -4878,7 +4867,7 @@ xla_test(
 xla_cc_test(
     name = "conv_layout_normalization_test",
     srcs = ["conv_layout_normalization_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         "//xla:error_spec",
         "//xla/hlo/ir:hlo",
@@ -4965,7 +4954,6 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
@@ -4976,16 +4964,12 @@ xla_cc_test(
     name = "hlo_algorithm_denylist_test",
     srcs = ["hlo_algorithm_denylist_test.cc"],
     data = ["data/hlo_algorithm_denylist.pbtxt"],
-    tags = [
-        "nomsan",
-    ],
     deps = [
         ":hlo_algorithm_denylist",
         "//xla/stream_executor:dnn",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -5054,7 +5038,7 @@ cc_library(
 xla_cc_test(
     name = "horizontal_loop_fusion_test",
     srcs = ["horizontal_loop_fusion_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":gpu_device_info_for_tests",
         ":horizontal_loop_fusion",
@@ -5106,7 +5090,7 @@ cc_library(
 xla_cc_test(
     name = "horizontal_input_fusion_test",
     srcs = ["horizontal_input_fusion_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":gpu_device_info_for_tests",
         ":horizontal_input_fusion",
@@ -5314,19 +5298,22 @@ xla_test(
         "gpu_p100",
         "gpu_v100",
     ],
-    deps = if_cuda_is_configured([
-        ":dot_operand_converter",
-        "@com_google_googletest//:gtest",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:string_view",
-        "//xla:shape_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/service:pattern_matcher",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/platform:statusor",
-    ]),
+    deps = if_cuda_is_configured(
+        [
+            ":dot_operand_converter",
+            "@com_google_googletest//:gtest",
+            "@com_google_absl//absl/strings",
+            "@com_google_absl//absl/strings:string_view",
+            "//xla:shape_util",
+            "//xla/hlo/ir:hlo",
+            "//xla/hlo/utils:hlo_matchers",
+            "//xla/service:pattern_matcher",
+            "//xla/tests:hlo_test_base",
+            "//xla/tests:xla_internal_test_main",
+            "@tsl//tsl/platform:statusor",
+        ],
+        ["@tsl//tsl/platform:test_main"],  # b/317293391
+    ),
 )
 
 cc_library(
@@ -5340,6 +5327,7 @@ cc_library(
         "//xla:util",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:errors",
@@ -5407,7 +5395,7 @@ tsl_gpu_library(
 xla_cc_test(
     name = "runtime_intrinsics_test",
     srcs = ["runtime_intrinsics_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":runtime_intrinsics",
         "//xla/hlo/ir:hlo",
@@ -5587,7 +5575,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    tags = tf_gpu_tests_tags(),
+    use_gpu = True,
     deps = [
         ":topk_specializer",
         "//xla:shape_util",
@@ -5615,9 +5603,9 @@ cc_library(
     hdrs = ["copy_fusion.h"],
     deps = [
         ":gpu_fusible",
+        ":hlo_traversal",
         ":ir_emission_utils",
         ":reduction_utils",
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/algorithm:container",
@@ -5659,6 +5647,7 @@ xla_test(
         "gpu_a100",
     ],
     tags = [
+        "no_oss",  # Needs fix for `ConvertGenerator`
         "nomac",
     ],
     deps = [
@@ -5726,7 +5715,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
@@ -5738,6 +5726,8 @@ xla_cc_test(
     deps = [
         ":hlo_traversal",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -5817,12 +5807,11 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "loop_double_buffer_transformer",
-    srcs = ["loop_double_buffer_transformer.cc"],
-    hdrs = ["loop_double_buffer_transformer.h"],
+    name = "double_buffer_loop_unrolling",
+    srcs = ["double_buffer_loop_unrolling.cc"],
+    hdrs = ["double_buffer_loop_unrolling.h"],
     deps = [
         "//xla:status",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -5844,14 +5833,15 @@ cc_library(
 )
 
 xla_cc_test(
-    name = "loop_double_buffer_transformer_test",
-    srcs = ["loop_double_buffer_transformer_test.cc"],
+    name = "double_buffer_loop_unrolling_test",
+    srcs = ["double_buffer_loop_unrolling_test.cc"],
     deps = [
-        ":loop_double_buffer_transformer",
+        ":double_buffer_loop_unrolling",
         "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
         "//xla/service:tuple_simplifier",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
@@ -5863,28 +5853,31 @@ xla_cc_test(
 
 xla_test(
     name = "determinism_test",
-    srcs = ["determinism_test.cc"],
+    srcs = if_gpu_is_configured(["determinism_test.cc"]),
     backends = [
         "gpu_a100",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    deps = [
-        ":autotuner_util",
-        "//xla:literal",
-        "//xla:xla_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/gpu/tests:gpu_codegen_test",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor/gpu:gpu_timer",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:literal_test_util",
-        "//xla/tests:test_utils",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-    ],
+    deps = if_gpu_is_configured(
+        [
+            ":autotuner_util",
+            "@com_google_googletest//:gtest_main",
+            "@com_google_absl//absl/strings",
+            "//xla:literal",
+            "//xla:xla_proto_cc",
+            "//xla/hlo/ir:hlo",
+            "//xla/service/gpu/tests:gpu_codegen_test",
+            "//xla/stream_executor:device_description",
+            "//xla/stream_executor/gpu:gpu_timer",
+            "//xla/tests:hlo_test_base",
+            "//xla/tests:literal_test_util",
+            "//xla/tests:test_utils",
+            "@tsl//tsl/platform:statusor",
+        ],
+        ["@tsl//tsl/platform:test_main"],  # b/317293391
+    ),
 )
 
 cc_library(
@@ -6079,6 +6072,8 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings:string_view",

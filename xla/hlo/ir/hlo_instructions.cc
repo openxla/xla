@@ -1555,6 +1555,11 @@ HloReshapeInstruction::HloReshapeInstruction(const Shape& shape,
                                              int64_t inferred_dimension)
     : HloInstruction(HloOpcode::kReshape, shape),
       inferred_dimension_(inferred_dimension) {
+  CHECK(operand->shape().is_unbounded_dynamic() ||
+        ShapeUtil::StaticExtentProduct(shape) ==
+            ShapeUtil::StaticExtentProduct(operand->shape()))
+      << "shape: " << ShapeUtil::HumanString(shape)
+      << " operand: " << ShapeUtil::HumanString(operand->shape());
   AppendOperand(operand);
 }
 
@@ -2016,14 +2021,30 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
         clone->ReplaceOperandWith(operand_num, called_computation_parameter));
   }
 
+  if (clone != instruction_to_append) {
+    VLOG(2) << "New clone:\n" << clone->ToString();
+  }
+
   if (add_output) {
     int64_t user_count = instruction_to_append->user_count();
     CHECK(user_count > 0 || instruction_to_append->IsRoot())
         << "Unable to append instruction: " << instruction_to_append->ToString()
         << ", which has " << user_count << " users.";
+    HloInstruction* root = called_computation_root();
+    // Check whether we have replaced an existing fusion root with 'clone'. If
+    // yes, no need to add a duplicate root.
+    if (root->opcode() == HloOpcode::kTuple) {
+      for (int64_t i = 0; i < root->operand_count(); ++i) {
+        if (root->operand(i) == clone) {
+          HloInstruction* new_gte = AddInstruction(
+              HloInstruction::CreateGetTupleElement(clone->shape(), this, i));
+          TF_CHECK_OK(instruction_to_append->ReplaceAllUsesWith(new_gte));
+          return clone;
+        }
+      }
+    }
     // If this is already a multioutput instruction, expand the root tuple
     // by 1.
-    HloInstruction* root = called_computation_root();
     HloInstruction::InstructionVector tuple_elements;
     bool newly_created_tuple_instr = false;
     if (root->opcode() == HloOpcode::kTuple) {
@@ -2085,9 +2106,6 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     }
   }
 
-  if (clone != instruction_to_append) {
-    VLOG(2) << "New clone:\n" << clone->ToString();
-  }
   return clone;
 }
 

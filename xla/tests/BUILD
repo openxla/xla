@@ -1,20 +1,17 @@
 # Description:
 #   Base testing infrastructure for XLA.
 
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
-)
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "tf_cuda_tests_tags",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
+load("//xla:xla.bzl", "tests_build_defs_bzl_deps", "xla_cc_binary", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
     "if_gpu_is_configured",
@@ -1596,6 +1593,24 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "reduce_window_rewriter_execution_test",
+    srcs = ["reduce_window_rewriter_execution_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 # External xla_test targets can add "reduce_window_test_library" to xla_test_library_deps, in order
 # to refer to the cc_library compiled with the correct backend macros. The following test target
 # "reduce_window_test" is an example.
@@ -1768,6 +1783,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "//xla/ffi",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/service:custom_call_status",
@@ -2365,7 +2381,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM",
     ]),
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = if_gpu_is_configured([
         ":verified_hlo_module",
         "//xla:literal_util",
@@ -2681,7 +2697,7 @@ xla_cc_test(
     name = "sample_file_test",
     srcs = ["sample_file_test.cc"],
     data = ["isolated_convolution.hlo"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
@@ -2930,4 +2946,21 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "@tsl//tsl/platform:test",
     ],
+)
+
+bzl_library(
+    name = "plugin_bzl",
+    srcs = ["plugin.bzl"],
+    deps = [],
+)
+
+bzl_library(
+    name = "build_defs_bzl",
+    srcs = ["build_defs.bzl"],
+    deps = [
+        ":plugin_bzl",
+        "//xla:xla_bzl",
+        "//xla/stream_executor:build_defs_bzl",
+        "@tsl//tsl/platform:build_config_root_bzl",
+    ] + tests_build_defs_bzl_deps(),
 )

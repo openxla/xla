@@ -69,54 +69,8 @@ class StreamExecutor : public StreamExecutorInterface {
   ~StreamExecutor() = default;
 
   const Platform* GetPlatform() const override { return platform_; }
-
-  // Returns a reference to the platform that created this executor.
-  // TODO(b/301020144) Delete this once all callers are migrated to GetPlatform.
-  ABSL_DEPRECATED("Use GetPlatform instead.")
-  const Platform* platform() const { return platform_; }
-
-  // Synchronously allocates an array on the device of type T with element_count
-  // elements.
-  template <typename T>
-  DeviceMemory<T> AllocateArray(uint64_t element_count,
-                                int64_t memory_space = 0);
-
-  // Convenience wrapper that allocates space for a single element of type T in
-  // device memory.
-  template <typename T>
-  DeviceMemory<T> AllocateScalar() {
-    return AllocateArray<T>(1);
-  }
-
-  // An untyped version of GetSymbol.
-  absl::StatusOr<DeviceMemoryBase> GetUntypedSymbol(
-      const std::string& symbol_name, ModuleHandle module_handle);
-
-  absl::Status SynchronousMemcpyH2D(const void* host_src, int64_t size,
-                                    DeviceMemoryBase* device_dst);
-
-  // Alternative interface for memcpying from host to device that takes an
-  // array slice. Checks that the destination size can accommodate the host
-  // slice size.
-  template <class T>
-  absl::Status SynchronousMemcpyH2D(absl::Span<const T> host_src,
-                                    DeviceMemoryBase* device_dst) {
-    auto host_size = host_src.size() * sizeof(T);
-    CHECK(device_dst->size() == 0 || device_dst->size() >= host_size);
-    return SynchronousMemcpyH2D(host_src.begin(), host_size, device_dst);
-  }
-
-  // Same as SynchronousMemcpy(void*, ...) above.
-  absl::Status SynchronousMemcpyD2H(const DeviceMemoryBase& device_src,
-                                    int64_t size, void* host_dst);
-
-  // Obtains metadata about the underlying device.
-  // The value is cached on first use.
-  const DeviceDescription& GetDeviceDescription() const;
-
-  // Creates and initializes a Stream.
-  absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
-      std::optional<std::variant<StreamPriority, int>> priority = std::nullopt);
+  const DeviceDescription& GetDeviceDescription() const override;
+  int64_t GetMemoryLimitBytes() const override { return memory_limit_bytes_; }
 
  private:
   // Reader/writer lock for mutable data structures on this StreamExecutor.
@@ -133,10 +87,6 @@ class StreamExecutor : public StreamExecutorInterface {
   mutable std::unique_ptr<DeviceDescription> device_description_
       ABSL_GUARDED_BY(mu_);
 
-  // Only one worker thread is needed; little work will be done by the
-  // executor.
-  static constexpr int kNumBackgroundThreads = 1;
-
   // Memory limit in bytes. Value less or equal to 0 indicates there is no
   // limit.
   int64_t memory_limit_bytes_;
@@ -144,24 +94,6 @@ class StreamExecutor : public StreamExecutorInterface {
   StreamExecutor(const StreamExecutor&) = delete;
   void operator=(const StreamExecutor&) = delete;
 };
-
-////////////
-// Inlines
-
-template <typename T>
-inline DeviceMemory<T> StreamExecutor::AllocateArray(uint64_t element_count,
-                                                     int64_t memory_space) {
-  uint64_t bytes = sizeof(T) * element_count;
-  if (memory_limit_bytes_ > 0 &&
-      static_cast<int64_t>(bytes) > memory_limit_bytes_) {
-    LOG(WARNING) << "Not enough memory to allocate " << bytes << " on device "
-                 << device_ordinal()
-                 << " within provided limit.  limit=" << memory_limit_bytes_
-                 << "]";
-    return DeviceMemory<T>();
-  }
-  return DeviceMemory<T>(Allocate(bytes, memory_space));
-}
 
 }  // namespace stream_executor
 

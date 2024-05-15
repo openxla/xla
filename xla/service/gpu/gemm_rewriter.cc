@@ -167,6 +167,25 @@ HloInstruction *PadOperandToMultipleOf16(absl::Span<const int64_t> batch_dims,
   return PadOperandToTargetShape(padded_shape, x);
 }
 
+// Calculates the reciprocal of scalar when invert is true and converts to FP32.
+absl::StatusOr<HloInstruction *> InvertAndConvertScalar(HloInstruction *scalar,
+                                                        bool invert) {
+  DCHECK(ShapeUtil::IsScalar(scalar->shape()));
+
+  if (invert) {
+    Literal one_literal = LiteralUtil::One(scalar->shape().element_type());
+    HloInstruction *one = scalar->parent()->AddInstruction(
+        HloInstruction::CreateConstant(one_literal.Clone()));
+    TF_ASSIGN_OR_RETURN(scalar, MakeBinaryHlo(HloOpcode::kDivide, one, scalar,
+                                              &scalar->metadata()));
+  }
+  if (scalar->shape().element_type() != F32) {
+    scalar = MakeConvertToHlo(scalar, F32, &scalar->metadata());
+  }
+
+  return scalar;
+}
+
 // Recursively collects unary, divide, dynamic-slice, pad, multiply or select
 // operands of instr and the index of the operand identifying the next op in the
 // sequence until an instruction with FP8 element type is reached. Returns an
@@ -186,7 +205,7 @@ std::vector<std::pair<HloInstruction *, int>> FindF8SubgraphRecursive(
       instr->opcode() == HloOpcode::kDynamicSlice ||
       instr->opcode() == HloOpcode::kPad) {
     return FindF8SubgraphRecursive(instr->mutable_operand(0), visited_instrs,
-                                   subgraph);
+                                   std::move(subgraph));
   } else if (instr->opcode() == HloOpcode::kMultiply ||
              instr->opcode() == HloOpcode::kSelect) {
     for (int k = 0; k < 2; ++k) {
@@ -381,13 +400,17 @@ auto CublasLtMatmul(HloInstruction **instr) {
   return m::CustomCall(instr, {kCublasLtMatmulCallTarget});
 }
 
-auto GemmOrCublasLtMatmul(HloInstruction **instr) {
-  return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget});
+auto CublasLtMatmulF8(HloInstruction **instr) {
+  return m::CustomCall(instr, {kCublasLtMatmulF8CallTarget});
 }
 
 auto CublasLtMatmulMaybeF8(HloInstruction **instr) {
   return m::CustomCall(
       instr, {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget});
+}
+
+auto GemmOrCublasLtMatmul(HloInstruction **instr) {
+  return m::CustomCall(instr, {kGemmCallTarget, kCublasLtMatmulCallTarget});
 }
 
 auto GemmOrCublasLtMatmulMaybeF8(HloInstruction **instr) {
@@ -407,7 +430,7 @@ auto BcastConstScalarNear(double value) {
         // Not a very robust floating-point comparison, but good enough for our
         // purposes.
         std::optional<double> actual =
-            tensorflow::down_cast<const HloConstantInstruction *>(instr)
+            xla::Cast<const HloConstantInstruction>(instr)
                 ->literal()
                 .GetAsDouble({});
         if (!actual.has_value()) return false;
@@ -485,8 +508,11 @@ auto OptionalBitcast(HloInstruction **optional_bitcast, Pattern pattern) {
 class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit GemmRewriterVisitor(const se::GpuComputeCapability &gpu_version,
+                               const int32_t toolkit_version,
                                const bool f8_rewrite)
-      : gpu_version_(gpu_version), f8_rewrite_(f8_rewrite) {}
+      : gpu_version_(gpu_version),
+        toolkit_version_(toolkit_version),
+        f8_rewrite_(f8_rewrite) {}
 
   absl::Status HandleDot(HloInstruction *instr) override {
     if (!IsMatrixMultiplication(*instr) &&
@@ -511,8 +537,10 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     CHECK(!instr->IsRank2Transpose());
-    CHECK(!instr->mutable_operand(0)->IsRank2Transpose());
-    CHECK(!instr->mutable_operand(1)->IsRank2Transpose());
+    if (instr->operand(0)->IsRank2Transpose() ||
+        instr->operand(1)->IsRank2Transpose()) {
+      return absl::OkStatus();
+    }
     // Create a GemmBackendConfig based on the instruction.
     TF_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
                         instr->backend_config<GpuBackendConfig>());
@@ -580,10 +608,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                               TurnF8DotWithUnsupportedOutputTypeIntoF32(instr));
         }
 #endif  // TENSORFLOW_USE_ROCM
-        TF_ASSIGN_OR_RETURN(bool created_call,
-                            CreateF8CustomCall(instr, gpu_backend_config, a, b,
-                                               a_scale, b_scale, a_mult_scale,
-                                               b_mult_scale, a_ops, b_ops));
+        TF_ASSIGN_OR_RETURN(
+            bool created_call,
+            CreateF8CustomCall(instr, gpu_backend_config, a, b, a_scale,
+                               b_scale, a_mult_scale, b_mult_scale,
+                               std::move(a_ops), std::move(b_ops)));
         if (created_call) {
           return absl::OkStatus();
         }
@@ -637,6 +666,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
+    HloInstruction *d_scale;
+    if (Match(instr, m::MultiplyAnyOrder(
+                         CublasLtMatmulF8(&existing_gemm).WithOneUser(),
+                         m::Broadcast(m::Op(&d_scale)).WithOneUser()))) {
+      return F8ScaleD(instr, existing_gemm, d_scale);
+    }
+
     // Attempt to match approximate GELU activation
     // (https://arxiv.org/abs/1606.08415), where:
     // approx_gelu(x) = x * cdf(x)
@@ -683,6 +719,16 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return FuseGeluActivation(instr, existing_gemm, slice_or_bitcast);
     }
     return absl::OkStatus();
+  }
+
+  // Fuse the scaling of an FP8 GEMM into the Custom Call.
+  absl::Status HandleDivide(HloInstruction *instr) override {
+    HloInstruction *existing_gemm, *d_scale;
+    if (Match(instr, m::Divide(CublasLtMatmulF8(&existing_gemm).WithOneUser(),
+                               m::Broadcast(m::Op(&d_scale)).WithOneUser()))) {
+      return F8ScaleD(instr, existing_gemm, d_scale);
+    }
+    return OkStatus();
   }
 
   absl::Status HandleAdd(HloInstruction *instr) override {
@@ -857,30 +903,27 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleConvert(HloInstruction *instr) override {
-    HloInstruction *clamp_lower, *clamp_upper, *d_scale, *existing_gemm,
-        *binary;
+    HloInstruction *clamp_lower, *clamp_upper, *existing_gemm,
+        *d_scale = nullptr, *binary = nullptr;
     // Attempt to elide the scaling and conversion of the result of an FP8
     // GEMM, including the optional calculation of the maximum of the absolute
     // values before scaling, and adapt the Custom Call.
     if (Match(instr,
               m::Convert(
-                  m::Clamp(m::Broadcast(m::ConstantScalar(&clamp_lower)),
-                           m::AnyOf<HloInstruction>(
-                               m::Divide(
-                                   &binary,
-                                   m::CustomCall(&existing_gemm,
-                                                 {kCublasLtMatmulF8CallTarget}),
-                                   m::Broadcast(m::Op(&d_scale))),
-                               m::MultiplyAnyOrder(
-                                   &binary,
-                                   m::CustomCall(&existing_gemm,
-                                                 {kCublasLtMatmulF8CallTarget}),
-                                   m::Broadcast(m::Op(&d_scale)))),
-                           m::Broadcast(m::ConstantScalar(&clamp_upper)))
+                  m::Clamp(
+                      m::Broadcast(m::ConstantScalar(&clamp_lower)),
+                      m::AnyOf<HloInstruction>(
+                          CublasLtMatmulF8(&existing_gemm),
+                          m::Divide(&binary, CublasLtMatmulF8(&existing_gemm),
+                                    m::Broadcast(m::Op(&d_scale))),
+                          m::MultiplyAnyOrder(&binary,
+                                              CublasLtMatmulF8(&existing_gemm),
+                                              m::Broadcast(m::Op(&d_scale)))),
+                      m::Broadcast(m::ConstantScalar(&clamp_upper)))
                       .WithOneUser()))) {
       return F8ConvertD(
           instr, existing_gemm, d_scale, clamp_lower, clamp_upper,
-          /*mult_scale=*/binary->opcode() == HloOpcode::kMultiply);
+          /*mult_scale=*/(binary && binary->opcode() == HloOpcode::kMultiply));
     }
     return absl::OkStatus();
   }
@@ -893,24 +936,24 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       std::vector<std::pair<HloInstruction *, int>> b_ops) {
     GemmBackendConfig &gemm_backend_config =
         *gpu_backend_config.mutable_gemm_backend_config();
-#if GOOGLE_CUDA
-    auto cuda_compute_capability_ =
-        std::get<se::CudaComputeCapability>(gpu_version_);
-    // FP8 GEMM kernels are only available on Ada, Hopper, and later
-    // architectures.
-    if (!cuda_compute_capability_.IsAtLeast(8, 9)) {
-      VLOG(1)
-          << "FP8 Custom Calls require Ada, Hopper, or later architectures.";
-      return false;
+    if (std::holds_alternative<se::CudaComputeCapability>(gpu_version_)) {
+      auto cuda_compute_capability =
+          std::get<se::CudaComputeCapability>(gpu_version_);
+      // FP8 GEMM kernels are only available on Ada, Hopper, and later
+      // architectures.
+      if (!cuda_compute_capability.IsAtLeast(8, 9)) {
+        VLOG(1) << "FP8 Custom Calls require Ada, Hopper, or later "
+                   "architectures. Got: "
+                << cuda_compute_capability.ToString()
+                << " and toolkit version: " << toolkit_version_;
+        return false;
+      }
+      // FP8 GEMM kernels are only available with CUDA 12.0 and above
+      if (toolkit_version_ < 12000) {
+        VLOG(1) << "FP8 Custom Calls require CUDA 12.0 or newer.";
+        return false;
+      }
     }
-
-#if CUDA_VERSION < 12000
-    // FP8 GEMM kernels are only available with CUDA 12.0 and above
-    VLOG(1) << "FP8 Custom Calls require CUDA 12.0 or newer.";
-    return false;
-#endif  // CUDA_VERSION < 12000
-
-#endif  // GOOGLE_CUDA
 
 #if TENSORFLOW_USE_ROCM
     auto isrocm = std::get_if<se::RocmComputeCapability>(&gpu_version_);
@@ -1164,6 +1207,48 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return true;
   }
 
+  absl::Status F8ScaleD(HloInstruction *instr, HloInstruction *existing_gemm,
+                        HloInstruction *d_scale) {
+    if (!ShapeUtil::IsScalar(d_scale->shape())) {
+      return absl::OkStatus();
+    }
+
+    // When the output of an FP8 GEMM is scaled but not type converted to FP8,
+    // cublasLT requires the scaling factor to be forwarded to the Custom Call
+    // as a_scale (chosen here) or b_scale. The scaling factor is fused here
+    // when no input scaling factors were fused during the creation of the
+    // Custom Call. When the maximum of the absolute value of the output of an
+    // FP8 GEMM is calculated and the output is scaled and type converted to
+    // FP8, the scaling of the output is fused in F8ConvertD.
+    if (!existing_gemm->operand(2)->IsConstant() ||
+        existing_gemm->operand(2)->literal().GetAsDouble({}) != 1.) {
+      return absl::OkStatus();
+    }
+
+    // The application of the scaling of the output to the input (see previous
+    // comment) is not valid for epilogues other than ReLU or when a matrix bias
+    // has been fused.
+    TF_ASSIGN_OR_RETURN(auto gpu_backend_config,
+                        existing_gemm->backend_config<GpuBackendConfig>());
+    const GemmBackendConfig &config = gpu_backend_config.gemm_backend_config();
+    if ((config.epilogue() != GemmBackendConfig::DEFAULT &&
+         config.epilogue() != GemmBackendConfig::RELU) ||
+        config.beta() != 0.) {
+      return absl::OkStatus();
+    }
+
+    // If necessary, invert the scaling factor of D and convert to F32.
+    TF_ASSIGN_OR_RETURN(
+        d_scale,
+        InvertAndConvertScalar(d_scale, instr->opcode() == HloOpcode::kDivide));
+
+    TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(2, d_scale));
+    TF_RETURN_IF_ERROR(ReplaceInstruction(instr, existing_gemm));
+
+    VLOG(1) << "Scaling of FP8 GEMM fused into Custom Call.";
+    return absl::OkStatus();
+  }
+
   absl::Status F8ConvertD(HloInstruction *instr, HloInstruction *existing_gemm,
                           HloInstruction *d_scale, HloInstruction *clamp_lower,
                           HloInstruction *clamp_upper,
@@ -1187,7 +1272,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    if (!ShapeUtil::IsScalar(d_scale->shape())) {
+    if (d_scale && !ShapeUtil::IsScalar(d_scale->shape())) {
       return absl::OkStatus();
     }
 
@@ -1256,19 +1341,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     }
 
     // If necessary, invert the scaling factor of D and convert to F32.
-    if (!mult_scale) {
-      Literal one_literal = LiteralUtil::One(d_scale->shape().element_type());
-      HloInstruction *one = instr->AddInstruction(
-          HloInstruction::CreateConstant(one_literal.Clone()));
-      d_scale = instr->AddInstruction(HloInstruction::CreateBinary(
-          d_scale->shape(), HloOpcode::kDivide, one, d_scale));
+    if (d_scale) {
+      TF_ASSIGN_OR_RETURN(d_scale,
+                          InvertAndConvertScalar(d_scale, !mult_scale));
+      TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(
+          gemm_backend_config.beta() == 0.0 ? 5 : 6, d_scale));
     }
-    if (d_scale->shape().element_type() != F32) {
-      d_scale = instr->AddInstruction(HloInstruction::CreateConvert(
-          ShapeUtil::MakeScalarShape(F32), d_scale));
-    }
-    TF_RETURN_IF_ERROR(existing_gemm->ReplaceOperandWith(
-        gemm_backend_config.beta() == 0.0 ? 5 : 6, d_scale));
 
     // If present, elide the calculation of the maximum of the absolute values
     // of the result of the GEMM.
@@ -1280,6 +1358,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         existing_gemm->CloneWithNewShape(instr->shape());
     TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(instr, std::move(new_gemm)));
 
+    VLOG(1) << "Conversion" << (reduce_damax ? " and amax calculation" : "")
+            << " fused into FP8 GEMM.";
     return absl::OkStatus();
   }
 
@@ -1671,6 +1751,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
  private:
   se::GpuComputeCapability gpu_version_;
+  int32_t toolkit_version_;
   bool f8_rewrite_;
 
   // Choose cublas or cublasLt for the target of the custom call that instr will
@@ -2156,7 +2237,8 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
         instr->custom_call_target() == kCublasLtMatmulF8CallTarget) {
       TF_ASSIGN_OR_RETURN(const auto gpu_config,
                           instr->backend_config<xla::gpu::GpuBackendConfig>());
-      xla::gpu::GemmBackendConfig config = gpu_config.gemm_backend_config();
+      const xla::gpu::GemmBackendConfig &config =
+          gpu_config.gemm_backend_config();
       xla::gpu::GemmBackendConfig_Epilogue epilogue = config.epilogue();
       TF_ASSIGN_OR_RETURN(
           has_aux_output,
@@ -2238,8 +2320,9 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 
 absl::StatusOr<bool> RunOnComputation(HloComputation *computation,
                                       se::GpuComputeCapability gpu_version,
+                                      int32_t toolkit_version,
                                       bool f8_rewrite) {
-  GemmRewriterVisitor visitor(gpu_version, f8_rewrite);
+  GemmRewriterVisitor visitor(gpu_version, toolkit_version, f8_rewrite);
   TF_RETURN_IF_ERROR(computation->Accept(&visitor));
   GemmWorkspaceRewriteVisitor workspace_visitor(gpu_version);
   TF_RETURN_IF_ERROR(computation->Accept(&workspace_visitor));
@@ -2249,8 +2332,10 @@ absl::StatusOr<bool> RunOnComputation(HloComputation *computation,
 }  // anonymous namespace
 
 GemmRewriter::GemmRewriter(se::GpuComputeCapability gpu_version,
-                           bool f8_rewrite)
-    : gpu_version_(gpu_version), f8_rewrite_(f8_rewrite) {}
+                           int32_t toolkit_version, bool f8_rewrite)
+    : gpu_version_(gpu_version),
+      toolkit_version_(toolkit_version),
+      f8_rewrite_(f8_rewrite) {}
 
 absl::StatusOr<bool> GemmRewriter::Run(
     HloModule *module,
@@ -2258,8 +2343,9 @@ absl::StatusOr<bool> GemmRewriter::Run(
   bool changed = false;
   for (HloComputation *computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    TF_ASSIGN_OR_RETURN(
-        bool result, RunOnComputation(computation, gpu_version_, f8_rewrite_));
+    TF_ASSIGN_OR_RETURN(bool result,
+                        RunOnComputation(computation, gpu_version_,
+                                         toolkit_version_, f8_rewrite_));
     changed |= result;
   }
   return changed;

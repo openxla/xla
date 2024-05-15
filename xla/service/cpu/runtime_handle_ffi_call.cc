@@ -22,8 +22,10 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
+#include "absl/base/dynamic_annotations.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
@@ -31,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/primitive_util.h"
@@ -44,62 +47,13 @@ namespace ffi = xla::ffi;
 
 namespace {
 
-using Attribute = ffi::CallFrameBuilder::FlatAttribute;
-using AttributesMap = ffi::CallFrameBuilder::FlatAttributesMap;
-
-// TODO(heinsaar): This BuildAttributesMap() is originally an identical
-//                 copy-paste of the same function in custom_call_thunk.cc
-//                 May make sense to have one in a common place & reuse.
-absl::StatusOr<AttributesMap> BuildAttributesMap(mlir::DictionaryAttr dict) {
-  AttributesMap attributes;
-  for (auto& kv : dict) {
-    std::string_view name = kv.getName().strref();
-
-    auto integer = [&](mlir::IntegerAttr integer) {
-      switch (integer.getType().getIntOrFloatBitWidth()) {
-        case 32:
-          attributes[name] = static_cast<int32_t>(integer.getInt());
-          return absl::OkStatus();
-        case 64:
-          attributes[name] = static_cast<int64_t>(integer.getInt());
-          return absl::OkStatus();
-        default:
-          return absl::InvalidArgumentError(absl::StrCat(
-              "Unsupported integer attribute bit width for attribute: ", name));
-      }
-    };
-
-    auto fp = [&](mlir::FloatAttr fp) {
-      switch (fp.getType().getIntOrFloatBitWidth()) {
-        case 32:
-          attributes[name] = static_cast<float>(fp.getValue().convertToFloat());
-          return absl::OkStatus();
-        default:
-          return absl::InvalidArgumentError(absl::StrCat(
-              "Unsupported float attribute bit width for attribute: ", name));
-      }
-    };
-
-    auto str = [&](mlir::StringAttr str) {
-      attributes[name] = str.getValue().str();
-      return absl::OkStatus();
-    };
-
-    TF_RETURN_IF_ERROR(
-        llvm::TypeSwitch<mlir::Attribute, absl::Status>(kv.getValue())
-            .Case<mlir::IntegerAttr>(integer)
-            .Case<mlir::FloatAttr>(fp)
-            .Case<mlir::StringAttr>(str)
-            .Default([&](mlir::Attribute) {
-              return absl::InvalidArgumentError(absl::StrCat(
-                  "Unsupported attribute type for attribute: ", name));
-            }));
-  }
-  return attributes;
-}
-
 absl::Span<const int64_t> DecodeDims(int64_t* encoded_dims_data) {
+  // Annotate memory coming from jit compiled function as initialized to
+  // suppress false positives from msan sanitizer.
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(encoded_dims_data, sizeof(int64_t));
   auto dims_count = encoded_dims_data[0];
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(encoded_dims_data,
+                                      dims_count * sizeof(int64_t));
   auto dims_begin = encoded_dims_data + 1;
   return absl::MakeSpan(dims_begin, dims_begin + dims_count);
 }
@@ -188,7 +142,7 @@ inline absl::Status BuildAndCallFfi(
     // and build an MLIR compatible map of attributes out of it.
     mlir::Attribute attr = mlir::parseAttribute(backend_config, &mlir_context);
     if (auto dict = attr.dyn_cast_or_null<mlir::DictionaryAttr>()) {
-      TF_ASSIGN_OR_RETURN(attributes, BuildAttributesMap(dict));
+      TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
     } else {
       return absl::InternalError(
           "Unsupported backend config. Expected a string parsable into "
@@ -227,6 +181,13 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_HandleFfiCall(
   if (result_count > 1) {  // output is a tuple
     outputs = reinterpret_cast<void**>(output);
   }
+
+  // Annotate memory coming from jit compiled function as initialized to
+  // suppress false positives from msan sanitizer.
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(result_types,
+                                      result_count * sizeof(int32_t));
+  ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(operand_types,
+                                      operand_count * sizeof(int32_t));
 
   absl::Status status = BuildAndCallFfi(
       target_name, backend_config, absl::MakeSpan(outputs, result_count),

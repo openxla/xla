@@ -82,7 +82,7 @@ TEST_F(MlirScatterFusionTest, ThreadIdIndexing) {
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
     ((bl_x * 16 + th_x floordiv 8) floordiv 25) mod 42,
     ((bl_x * 32 + th_x floordiv 4) floordiv 5) mod 10,
-    (th_x + bl_x * 128) mod 20)
+    (bl_x * 128 + th_x) mod 20)
     domain:
     th_x in [0, 127]
     th_y in [0, 0]
@@ -219,6 +219,42 @@ TEST_F(MlirScatterFusionTest, Scatter_UniqueIndices) {
     // CHECK:      } else {
     // CHECK:        scf.yield %[[OUT]] : tensor<10x5xf32>
     // CHECK:      }
+  )"));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirScatterFusionTest, Scatter_Unsigned) {
+  auto kHloString = R"(
+    HloModule module
+
+    add {
+      %p0 = f32[] parameter(0)
+      %p1 = f32[] parameter(1)
+      ROOT %sum = f32[] add(%p0, %p1)
+    }
+    scatter {
+      %operand = f32[10,5]  parameter(0)
+      %indices = u32[24,1] parameter(1)
+      %update = f32[24,2,3] parameter(2)
+
+      ROOT %scatter = f32[10,5] scatter(%operand, %indices, %update),
+          update_window_dims={1,2},
+          inserted_window_dims={},
+          scatter_dims_to_operand_dims={0},
+          index_vector_dim=1,
+          to_apply=add
+    }
+    ENTRY entry {
+      %c1 = f32[] constant(1)
+      %c1_tensor = f32[10,5]  broadcast(%c1), dimensions={}
+      %indices = u32[24,1] parameter(0)
+      %update = f32[24, 2, 3] parameter(1)
+      ROOT %fusion = f32[10, 5] fusion(%c1_tensor, %indices, %update),
+          kind=kLoop, calls=scatter
+    }
+  )";
+  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+    // CHECK: func.func @fused_computation(
   )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
