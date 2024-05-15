@@ -183,6 +183,19 @@ class RocmComputeCapability {
     return absl::StrJoin(kSupportedGfxVersions, ", ");
   }
 
+  bool gfx9_mi100() const {
+    return gfx_version() == "gfx908";
+  }
+
+  bool gfx9_mi200() const {
+    return gfx_version() == "gfx90a";
+  }
+
+  bool gfx9_mi300() const {
+    static constexpr absl::string_view kList[] = {"gfx940", "gfx941", "gfx942"};
+    return absl::c_count(kList, gfx_version()) != 0;
+  }
+
   bool gfx9_mi100_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx908", "gfx90a", "gfx940",
                                                   "gfx941", "gfx942"};
@@ -192,11 +205,6 @@ class RocmComputeCapability {
   bool gfx9_mi200_or_later() const {
     static constexpr absl::string_view kList[] = {"gfx90a", "gfx940", "gfx941",
                                                   "gfx942"};
-    return absl::c_count(kList, gfx_version()) != 0;
-  }
-
-  bool gfx9_mi300() const {
-    static constexpr absl::string_view kList[] = {"gfx940", "gfx941", "gfx942"};
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
@@ -403,6 +411,10 @@ class DeviceDescription {
   constexpr int64_t l1_cache_size_per_SM() const {
     return std::visit([](const auto& capability) -> int64_t {
       if constexpr (std::is_same_v<std::decay_t<decltype(capability)>, RocmComputeCapability>) {
+        // MI100 and MI200 has 16KB L1 cache per CU.
+        if (capability.gfx9_mi100() || capability.gfx9_mi200()) {
+          return 16 * 1024;
+        }
         // MI300 has 32KB L1 cache per CU.
         if (capability.gfx9_mi300()) {
           return 32 * 1024;
@@ -417,7 +429,9 @@ class DeviceDescription {
     return std::visit([](const auto& capability) -> int {
       if constexpr (std::is_same_v<std::decay_t<decltype(capability)>, RocmComputeCapability>) {
         // DRAM->L2 bus is 128 Byte width for MI300.
-        return 128;
+        if (capability.gfx9_mi300()) {
+          return 128;
+        }
       }
       // Cache line is 128B that is split into 4 sectors of 32B. Default transaction
       // size from DRAM -> L2 = 64 Bytes = 2 sectors, since V100, but it can be also
@@ -433,7 +447,9 @@ class DeviceDescription {
     return std::visit([](const auto& capability) -> int {
       if constexpr (std::is_same_v<std::decay_t<decltype(capability)>, RocmComputeCapability>) {
         // 16 works well on MI300.
-        return 16;
+        if (capability.gfx9_mi300()) {
+          return 16;
+        }
       }
       // Default return for other GPUs.
       return 32;
