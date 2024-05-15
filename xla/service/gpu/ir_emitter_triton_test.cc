@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"    // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
@@ -5235,7 +5235,7 @@ ENTRY e {
 })";
 
   TritonGemmConfig config(32, 16, 128, 1, 1, 4);
-  ASSERT_OK(
+  TF_ASSERT_OK(
       CreateTritonIrAndFileCheck(hlo_text, config, EmitMatMul, "triton_dot", R"(
 CHECK:      tt.dot
 CHECK-NOT:  inputPrecision = tf32

@@ -1219,6 +1219,7 @@ xla_test(
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )
