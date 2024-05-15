@@ -3918,7 +3918,6 @@ cc_library(
     srcs = [
         "amdgpu_compiler_registration.cc",
     ],
-    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     tags = ["manual"],
     deps = [
         ":amdgpu_compiler_impl",
@@ -4008,6 +4007,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_headers",
         "//xla/stream_executor/rocm:rocm_platform_id",
+        "@local_config_rocm//rocm:rocm_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

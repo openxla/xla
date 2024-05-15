@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
+#include "rocm/rocm_config.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -93,10 +94,7 @@ struct ConvBfloat16Support : public FloatSupport {
 }  // namespace
 
 int32_t AMDGPUCompiler::GetToolkitVersion() const {
-#if TENSORFLOW_USE_ROCM
   return TF_ROCM_VERSION;
-#endif
-  LOG(FATAL) << "Failed to get ROCm version.";
 }
 
 absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
