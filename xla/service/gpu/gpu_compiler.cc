@@ -54,9 +54,9 @@ limitations under the License.
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"      // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"        // from @llvm-project
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -698,7 +698,7 @@ absl::Status RunOptimizationPasses(
     // Scatter can be indeterministic if indices are not unique or a non
     // associative combiner function is used. Eliminate these Scatter ops.
     pipeline.AddPass<ScatterExpander>(
-        ScatterExpander::kEliminateIndeterminisitcScatters);
+        ScatterExpander::kEliminateIndeterministicScatters);
   }
   // Scatters unsupported on XLA:GPU are eliminated.
   pipeline.AddPass<GpuScatterExpander>();
