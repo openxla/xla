@@ -27,7 +27,13 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-class OneDnnSoftmaxTest : public HloTestBase {};
+class OneDnnSoftmaxTest : public HloTestBase {
+ protected:
+  const char* onednn_softmax_ =
+      R"(
+  ; CHECK: custom_call_target="__onednn$softmax"
+  )";
+};
 
 TEST_F(OneDnnSoftmaxTest, Softmaxtest) {
   const std::string hlo_string = R"(
@@ -63,6 +69,7 @@ TEST_F(OneDnnSoftmaxTest, Softmaxtest) {
     )";
 
   EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_string, onednn_softmax_);
 }
 
 TEST_F(OneDnnSoftmaxTest, SoftmaxFP32) {
@@ -99,6 +106,46 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxFP32) {
     )";
 
   EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_string, onednn_softmax_);
+}
+
+TEST_F(OneDnnSoftmaxTest, SoftmaxFP32_0) {
+  const std::string hlo_string = R"(
+        HloModule jit_softmax, entry_computation_layout={(f32[3,1,1]{2,1,0})->f32[3,1,1]{2,1,0}}
+        region_0.5 {
+          Arg_0.6 = f32[] parameter(0)
+          Arg_1.7 = f32[] parameter(1)
+          ROOT maximum.8 = f32[] maximum(Arg_0.6, Arg_1.7)
+        }
+        region_1.17 {
+          Arg_0.18 = f32[] parameter(0)
+          Arg_1.19 = f32[] parameter(1)
+          ROOT add.20 = f32[] add(Arg_0.18, Arg_1.19)
+        }
+        ENTRY main.27 {
+          Arg_0.1 = f32[3,1,1]{2,1,0} parameter(0)
+          constant.4 = f32[] constant(-inf)
+          reduce.9 = f32[1,1]{1,0} reduce(Arg_0.1, constant.4), dimensions={0}, to_apply=region_0.5
+          constant.2 = f32[1,1]{1,0} constant({ {-inf} })
+          maximum.10 = f32[1,1]{1,0} maximum(reduce.9, constant.2)
+          reshape.11 = f32[1,1,1]{2,1,0} reshape(maximum.10)
+          broadcast.12 = f32[1,1,1]{2,1,0} broadcast(reshape.11), dimensions={0,1,2}
+          reshape.13 = f32[1,1]{1,0} reshape(broadcast.12)
+          broadcast.14 = f32[3,1,1]{2,1,0} broadcast(reshape.13), dimensions={1,2}
+          subtract.15 = f32[3,1,1]{2,1,0} subtract(Arg_0.1, broadcast.14)
+          exponential.16 = f32[3,1,1]{2,1,0} exponential(subtract.15)
+          constant.3 = f32[] constant(0)
+          reduce.21 = f32[1,1]{1,0} reduce(exponential.16, constant.3), dimensions={0}, to_apply=region_1.17
+          reshape.22 = f32[1,1,1]{2,1,0} reshape(reduce.21)
+          broadcast.23 = f32[1,1,1]{2,1,0} broadcast(reshape.22), dimensions={0,1,2}
+          reshape.24 = f32[1,1]{1,0} reshape(broadcast.23)
+          broadcast.25 = f32[3,1,1]{2,1,0} broadcast(reshape.24), dimensions={1,2}
+          ROOT divide.26 = f32[3,1,1]{2,1,0} divide(exponential.16, broadcast.25)
+        }
+    )";
+
+  EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_string, onednn_softmax_);
 }
 
 TEST_F(OneDnnSoftmaxTest, SoftmaxBF16) {
@@ -139,6 +186,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxBF16) {
     )";
 
   EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_string, onednn_softmax_);
 }
 
 TEST_F(OneDnnSoftmaxTest, SoftmaxF32toBF16) {
@@ -180,6 +228,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxF32toBF16) {
     )";
 
   EXPECT_TRUE(RunAndCompare(hlo_string, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(hlo_string, onednn_softmax_);
 }
 
 }  // namespace cpu

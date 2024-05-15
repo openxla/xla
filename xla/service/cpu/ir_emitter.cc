@@ -2728,6 +2728,16 @@ Status IrEmitter::HandleOneDnnLayerNorm(HloInstruction* custom_call) {
 }
 
 Status IrEmitter::HandleOneDnnSoftmax(HloInstruction* custom_call) {
+  // OneDnnSoftmaxConfig.
+  auto typed_custom_call = Cast<HloCustomCallInstruction>(custom_call);
+  auto backend_config = typed_custom_call->backend_config<BackendConfig>();
+  OneDnnSoftmaxConfig softmax_config;
+  softmax_config.CopyFrom(backend_config->onednn_softmax_config());
+  std::string str_config;
+  softmax_config.SerializeToString(&str_config);
+  llvm::Value* softmax_config_val =
+      b_.CreateGlobalStringPtr(llvm_ir::AsStringRef(str_config));
+
   auto input = custom_call->operand(0);
   llvm_ir::IrArray input_array(GetIrArrayFor(input));
   auto input_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, input_array);
@@ -2737,11 +2747,8 @@ Status IrEmitter::HandleOneDnnSoftmax(HloInstruction* custom_call) {
   auto result_stack_alloca = GetAllocaAndEmitMemrefInfo(b_, result_array);
 
   EmitCallToFunc(runtime::kOneDnnSoftmaxSymbolName,
-                 {
-                     GetExecutableRunOptionsArgument(),
-                     input_stack_alloca.value,
-                     result_stack_alloca.value,
-                 },
+                 {GetExecutableRunOptionsArgument(), input_stack_alloca.value,
+                  result_stack_alloca.value, softmax_config_val},
                  b_.getVoidTy());
 
   input_stack_alloca.EmitLifetimeEnd();
