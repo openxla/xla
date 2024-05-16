@@ -78,47 +78,6 @@ using mlir_converter::PartitionedComputation;
 constexpr int kPreTransposeMinorDim = 2;
 constexpr int kPreTransposeVectorizedDim = 3;
 
-int GetVectorSize(const HloFusionAnalysis& analysis,
-                  absl::InlinedVector<int64_t, 4> input_dims,
-                  Vector3 permutation, int64_t threads_per_block) {
-  int vector_size = 2;
-  int64_t threads_max = analysis.device_info().core_count() *
-                        analysis.device_info().threads_per_core_limit();
-
-  auto threads_counts = [&](int vec_size) {
-    int64_t blocks = 1;
-    for (int i = 0; i < permutation.size(); ++i) {
-      if (i == permutation.size() - 1) {
-        blocks *=
-            CeilOfRatio(input_dims[permutation[i]], WarpSize() * vec_size);
-        continue;
-      }
-      if (permutation[i] == input_dims.size() - 1) {
-        blocks *=
-            CeilOfRatio(input_dims[permutation[i]], WarpSize() * vec_size);
-        continue;
-      }
-      blocks *= input_dims[permutation[i]];
-    }
-    return blocks * threads_per_block;
-  };
-
-  while (vector_size != 1) {
-    bool is_aligned =
-        input_dims[permutation[2]] % (WarpSize() * vector_size) == 0 &&
-        input_dims[2] % (WarpSize() * vector_size) == 0;
-    // Enable vectorization iff the below conditions are met:
-    // (1) The minor dim of pre transpose and post transpose should be
-    // divisible by warp_size * vector_size. (2) Device occupancy is high.
-    if (is_aligned && threads_counts(vector_size) >= threads_max) {
-      break;
-    }
-    vector_size = (vector_size + 1) / 2;
-  }
-
-  return vector_size;
-}
-
 Tiling ComputeTransposeTiling(const HloFusionAnalysis& analysis) {
   const auto& tiled_transpose = analysis.tiled_transpose();
   constexpr int kNumRows = 4;
@@ -136,16 +95,32 @@ Tiling ComputeTransposeTiling(const HloFusionAnalysis& analysis) {
                                              transposed_dims[permutation[1]],
                                              transposed_dims[permutation[2]]};
 
-  int vector_size =
-      GetVectorSize(analysis, input_dims, permutation, kNumRows * WarpSize());
-
   // We tile along the minor dimensions pre- and post-transpose.
   absl::InlinedVector<int64_t, 4> tile_sizes{1, 1, 1};
-  tile_sizes[permutation[2]] = WarpSize() * vector_size / kNumRows;
+  tile_sizes[permutation[2]] = WarpSize() / kNumRows;
   absl::InlinedVector<int64_t, 4> num_threads{1, 1, WarpSize()};
-  num_threads[permutation[2]] =
-      WarpSize() * vector_size / tile_sizes[permutation[2]];
+  num_threads[permutation[2]] = kNumRows;
 
+  Tiling non_vectorized_tiling = Tiling(input_dims, tile_sizes, num_threads);
+  int vector_size = 2;
+  int64_t threads_max = analysis.device_info().core_count() *
+                        analysis.device_info().threads_per_core_limit();
+  int64_t non_vectorized_threads =
+      non_vectorized_tiling.GetNumThreadsPerBlock() *
+      non_vectorized_tiling.GetNumThreadsPerBlock();
+  bool is_aligned =
+      input_dims[permutation[2]] % (WarpSize() * vector_size) == 0 &&
+      input_dims[2] % (WarpSize() * vector_size) == 0;
+  // Enable vectorization iff the below conditions are met:
+  // (1) The minor dim of pre transpose and post transpose should be
+  // divisible by warp_size * vector_size. (2) All of the device threads are
+  // active.
+  if (!is_aligned ||
+      non_vectorized_threads < threads_max * vector_size * vector_size) {
+    vector_size = 1;
+  }
+
+  tile_sizes[permutation[2]] = tile_sizes[permutation[2]] * vector_size;
   tile_sizes.push_back(vector_size);
   num_threads.push_back(1);
   input_dims[2] = input_dims[2] / vector_size;
@@ -157,8 +132,7 @@ Tiling ComputeTransposeTiling(const HloFusionAnalysis& analysis) {
 }  // namespace
 
 MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
-    : analysis_(analysis),
-      tiling_(ComputeTransposeTiling(analysis)) {
+    : analysis_(analysis), tiling_(ComputeTransposeTiling(analysis)) {
   ConstHloInstructionSet transposes_to_tile;
   int index = 0;
   for (auto [root, hero] :
@@ -181,7 +155,8 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
 }
 
 // Returns bitcast mapping from block_tile to permuted_block_tile if
-// `original_to_permuted` is true. Otherwise returns the `permuted_to_original` bitcast mapping.
+// `original_to_permuted` is true. Otherwise returns the `permuted_to_original`
+// bitcast mapping.
 IndexingMap GetPermuteBlockTileBitcastMap(
     const Tiling& tiling, const absl::InlinedVector<int64_t, 4>& permutation,
     MLIRContext* mlir_context, bool original_to_permuted = true) {
@@ -192,7 +167,7 @@ IndexingMap GetPermuteBlockTileBitcastMap(
       ShapeUtil::MakeShape(U8, permuted_block_tile);
   if (original_to_permuted) {
     return GetBitcastMap(block_tile_shape, permuted_block_tile_shape,
-                       mlir_context);
+                         mlir_context);
   }
   return GetBitcastMap(permuted_block_tile_shape, block_tile_shape,
                        mlir_context);
