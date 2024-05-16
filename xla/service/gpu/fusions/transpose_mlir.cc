@@ -119,7 +119,8 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
   return vector_size;
 }
 
-Tiling ComputeTransposeTiling(const TransposeDescription& tiled_transpose) {
+Tiling ComputeTransposeTiling(const HloFusionAnalysis& analysis) {
+  const auto& tiled_transpose = analysis.tiled_transpose();
   constexpr int kNumRows = 4;
   static_assert(WarpSize() % kNumRows == 0);
 
@@ -157,7 +158,7 @@ Tiling ComputeTransposeTiling(const TransposeDescription& tiled_transpose) {
 
 MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
     : analysis_(analysis),
-      tiling_(ComputeTransposeTiling(analysis.tiled_transpose())) {
+      tiling_(ComputeTransposeTiling(analysis)) {
   ConstHloInstructionSet transposes_to_tile;
   int index = 0;
   for (auto [root, hero] :
