@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@tsl//tsl/platform:build_config.bzl", "pyx_library", "tf_proto_library")
+load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
@@ -55,18 +55,13 @@ exports_files([
     "xla_client.pyi",
 ])
 
-pyx_library(
-    name = "custom_call_for_test",
-    testonly = True,
-    srcs = ["custom_call_for_test.pyx"],
-)
-
 tsl_pybind_extension(
-    name = "typed_ffi_custom_calls",
-    srcs = ["typed_ffi_custom_call_for_test.cc"],
+    name = "custom_calls_testlib",
+    srcs = ["custom_calls_testlib.cc"],
     visibility = ["//visibility:private"],
     deps = [
-        "//xla/ffi",
+        "//xla/ffi/api:c_api",
+        "//xla/ffi/api:ffi",
         "@com_google_absl//absl/status",
         "@nanobind",
     ],
@@ -111,8 +106,7 @@ py_strict_test(
         "not_run:arm",
     ],  # TODO(phawkins): This test passes, but requires --config=monolithic.
     deps = [
-        ":custom_call_for_test",
-        ":typed_ffi_custom_calls",
+        ":custom_calls_testlib",
         ":xla_client",
         ":xla_extension",
         "@absl_py//absl/flags",
