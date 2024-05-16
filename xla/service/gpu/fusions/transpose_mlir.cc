@@ -109,7 +109,7 @@ int GetVectorSize(const HloFusionAnalysis& analysis,
         input_dims[2] % (WarpSize() * vector_size) == 0;
     // Enable vectorization iff the below conditions are met:
     // (1) The minor dim of pre transpose and post transpose should be
-    // divisable by warp_size * vector_size. (2) Device occupancy is high.
+    // divisible by warp_size * vector_size. (2) Device occupancy is high.
     if (is_aligned && threads_counts(vector_size) >= threads_max) {
       break;
     }
