@@ -4473,7 +4473,7 @@ cc_library(
     ]),
 )
 
-cuda_library(
+gpu_kernel_library(
     name = "buffer_comparator_kernel",
     srcs = if_gpu_is_configured(["buffer_comparator.cu.cc"]),
     copts = rocm_copts(),
@@ -4864,6 +4864,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu/tests:gpu_codegen_test",  # fixdeps: keep
         "//xla/tests:hlo_test_base",
+        "//xla/tests:test_macros_header",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
