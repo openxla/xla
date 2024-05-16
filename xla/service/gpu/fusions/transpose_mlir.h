@@ -94,7 +94,7 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
  private:
   const HloFusionAnalysis& analysis_;
   Tiling tiling_;
-  Vector3 permutation_;
+  absl::InlinedVector<int64_t, 4> permutation_;
   std::vector<const HloInstruction*> shmem_transposes_;
   std::vector<const HloInstruction*> shmem_transpose_roots_;
   std::vector<int> shmem_transpose_root_indices_;

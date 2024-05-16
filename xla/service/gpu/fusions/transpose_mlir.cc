@@ -75,6 +75,50 @@ using mlir_converter::ApplyAffineMap;
 using mlir_converter::CallTargetProvider;
 using mlir_converter::PartitionedComputation;
 
+constexpr int kPreTransposeMinorDim = 2;
+constexpr int kPreTransposeVectorizedDim = 3;
+
+int GetVectorSize(const HloFusionAnalysis& analysis,
+                  absl::InlinedVector<int64_t, 4> input_dims,
+                  Vector3 permutation, int64_t threads_per_block) {
+  int vector_size = 2;
+  int64_t threads_max = analysis.device_info().core_count() *
+                        analysis.device_info().threads_per_core_limit();
+
+  auto threads_counts = [&](int vec_size) {
+    int64_t blocks = 1;
+    for (int i = 0; i < permutation.size(); ++i) {
+      if (i == permutation.size() - 1) {
+        blocks *=
+            CeilOfRatio(input_dims[permutation[i]], WarpSize() * vec_size);
+        continue;
+      }
+      if (permutation[i] == input_dims.size() - 1) {
+        blocks *=
+            CeilOfRatio(input_dims[permutation[i]], WarpSize() * vec_size);
+        continue;
+      }
+      blocks *= input_dims[permutation[i]];
+    }
+    return blocks * threads_per_block;
+  };
+
+  while (vector_size != 1) {
+    bool is_aligned =
+        input_dims[permutation[2]] % (WarpSize() * vector_size) == 0 &&
+        input_dims[2] % (WarpSize() * vector_size) == 0;
+    // Enable vectorization iff the below conditions are met:
+    //   (1) The minor dim of pre transpose and post transpose should be
+    //   divisable by warp_size * vector_size. (2) Device occupancy is high.
+    if (is_aligned && threads_counts(vector_size) >= threads_max) {
+      break;
+    }
+    vector_size = (vector_size + 1) / 2;
+  }
+
+  return vector_size;
+}
+
 Tiling ComputeTransposeTiling(const TransposeDescription& tiled_transpose) {
   constexpr int kNumRows = 4;
   static_assert(WarpSize() % kNumRows == 0);
@@ -91,11 +135,20 @@ Tiling ComputeTransposeTiling(const TransposeDescription& tiled_transpose) {
                                              transposed_dims[permutation[1]],
                                              transposed_dims[permutation[2]]};
 
+  int vector_size =
+      GetVectorSize(analysis, input_dims, permutation, kNumRows * WarpSize());
+
   // We tile along the minor dimensions pre- and post-transpose.
   absl::InlinedVector<int64_t, 4> tile_sizes{1, 1, 1};
-  tile_sizes[permutation[2]] = WarpSize() / kNumRows;
+  tile_sizes[permutation[2]] = WarpSize() * vector_size / kNumRows;
   absl::InlinedVector<int64_t, 4> num_threads{1, 1, WarpSize()};
-  num_threads[permutation[2]] = kNumRows;
+  num_threads[permutation[2]] =
+      WarpSize() * vector_size / tile_sizes[permutation[2]];
+
+  tile_sizes.push_back(vector_size);
+  num_threads.push_back(1);
+  input_dims[2] = input_dims[2] / vector_size;
+  input_dims.push_back(vector_size);
 
   return Tiling(input_dims, tile_sizes, num_threads);
 }
@@ -113,7 +166,6 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
       transposes_to_tile.insert(hero);
       shmem_transpose_roots_.push_back(root);
       shmem_transpose_root_indices_.push_back(index);
-      permutation_ = transpose->permutation;
     } else {
       side_output_roots_.push_back(root);
       side_output_root_indices_.push_back(index);
@@ -121,6 +173,28 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
     ++index;
   }
   shmem_transposes_ = {transposes_to_tile.begin(), transposes_to_tile.end()};
+  const auto& tiled_transpose = analysis.tiled_transpose();
+  absl::c_copy(tiled_transpose.permutation, std::back_inserter(permutation_));
+  permutation_.insert(absl::c_find(permutation_, kPreTransposeMinorDim) + 1,
+                      kPreTransposeVectorizedDim);
+}
+
+// Return bitcast mapping bewteen block_tile and permuted_block_tile if
+// `is_reverse` is false Otherwise return the reverse mapping.
+IndexingMap GetPermuteBlockTileBitcastMap(
+    const Tiling& tiling, const absl::InlinedVector<int64_t, 4>& permutation,
+    MLIRContext* mlir_context, bool is_reverse = false) {
+  const auto& block_tile = tiling.GetBlockTileSize();
+  auto permuted_block_tile = Permute(block_tile, permutation);
+  auto block_tile_shape = ShapeUtil::MakeShape(U8, block_tile);
+  auto permuted_block_tile_shape =
+      ShapeUtil::MakeShape(U8, permuted_block_tile);
+  if (is_reverse) {
+    return GetBitcastMap(permuted_block_tile_shape, block_tile_shape,
+                         mlir_context);
+  }
+  return GetBitcastMap(block_tile_shape, permuted_block_tile_shape,
+                       mlir_context);
 }
 
 std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
@@ -131,14 +205,16 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
                           .getSubMap(std::vector<unsigned>{permutation_.begin(),
                                                            permutation_.end()});
   auto thread_offset = GetThreadOffsetsForTiling(tiling_, mlir_context);
+  auto bitcast_indexing =
+      GetPermuteBlockTileBitcastMap(tiling_, permutation_, mlir_context);
   auto permuted_tiled_shape =
       ShapeUtil::MakeShape(U8, Permute(tiling_.GetShape(), permutation_));
 
   auto map = ComposeIndexingMaps(
       GetIndexingMapForTiling(
-          block_offset, thread_offset, tiling_.GetNumThreadsPerBlock(),
-          tiling_.GetNumBlocks(), tiling_.GetThreadTileSize(),
-          permuted_tiled_shape.dimensions()),
+          block_offset, bitcast_indexing.GetAffineMap().compose(thread_offset),
+          tiling_.GetNumThreadsPerBlock(), tiling_.GetNumBlocks(),
+          tiling_.GetThreadTileSize(), permuted_tiled_shape.dimensions()),
       GetBitcastMap(permuted_tiled_shape, hero.shape(), mlir_context));
   map.Simplify(GetIndexingMapForInstruction);
   return map;
@@ -171,46 +247,38 @@ LaunchDimensions MlirTransposeFusion::launch_dimensions() const {
                           tiling_.GetNumThreadsPerBlock());
 }
 
-// Returns an indexing map with block_x, block_y, block_z set to 0.
+// Transform thread indexing to shared memory write indexing.
 IndexingMap GetSharedMemoryWriteIndexingMap(
-    const IndexingMap& thread_id_indexing, int loop_dim) {
-  auto* mlir_context = thread_id_indexing.GetMLIRContext();
-
-  AffineExpr c0 = mlir::getAffineConstantExpr(0, mlir_context);
-  AffineExpr th_x = mlir::getAffineDimExpr(0, mlir_context);
-  SmallVector<AffineExpr, 3> tile_sizes(3);
-  mlir::bindSymbolsList(mlir_context, llvm::MutableArrayRef(tile_sizes));
-  SmallVector<AffineExpr, 3> shared_memory_indices = {
-      th_x.floorDiv(32) + 4 * tile_sizes[loop_dim], th_x % 32};
-  for (auto [index, range_val] :
-       llvm::enumerate(thread_id_indexing.GetRangeVars())) {
-    if (range_val.range.NumElements() == 1) {
-      shared_memory_indices.insert(shared_memory_indices.begin() + index, c0);
-      break;
-    }
-  }
-
+    const IndexingMap& thread_id_indexing, const Tiling& tiling,
+    MLIRContext* mlir_context) {
+  auto thread_offsets = GetThreadOffsetsForTiling(tiling, mlir_context);
   IndexingMap shmem_write_indexing{
       AffineMap::get(thread_id_indexing.GetDimensionCount(),
-                     thread_id_indexing.GetSymbolCount(), shared_memory_indices,
-                     mlir_context),
+                     thread_id_indexing.GetSymbolCount(),
+                     thread_offsets.getResults(), mlir_context),
       thread_id_indexing.GetDimVars(), thread_id_indexing.GetRangeVars(),
       thread_id_indexing.GetRTVars(), thread_id_indexing.GetConstraints()};
+  shmem_write_indexing.Simplify(GetIndexingMapForInstruction);
   return shmem_write_indexing;
 }
 
-// Returns an indexing map with block_x, block_y, block_z set to 0 and swapped
-// 2nd and 3rd results.
+// Transform thread indexing to shared memory read indexing.
 IndexingMap GetSharedMemoryReadIndexingMap(
-    const IndexingMap& thread_id_indexing, Vector3 permutation) {
-  IndexingMap write_indexing = GetSharedMemoryWriteIndexingMap(
-      thread_id_indexing, /*loop_dim=*/permutation[2]);
-  llvm::SmallVector<unsigned, 3> positions;
-  absl::c_copy(permutation, std::back_inserter(positions));
-  return IndexingMap{write_indexing.GetAffineMap().getSubMap(positions),
-                     write_indexing.GetDimVars(), write_indexing.GetRangeVars(),
-                     write_indexing.GetRTVars(),
-                     write_indexing.GetConstraints()};
+    const IndexingMap& thread_id_indexing, const Tiling& tiling,
+    MLIRContext* mlir_context,
+    const absl::InlinedVector<int64_t, 4>& permutation) {
+  auto thread_offsets = GetThreadOffsetsForTiling(tiling, mlir_context);
+  IndexingMap thread_trans_indexing = IndexingMap{
+      thread_offsets.getSubMap(
+          std::vector<unsigned>(permutation.begin(), permutation.end())),
+      thread_id_indexing.GetDimVars(), thread_id_indexing.GetRangeVars(),
+      thread_id_indexing.GetRTVars(), thread_id_indexing.GetConstraints()};
+  IndexingMap bitcast_indexing = GetPermuteBlockTileBitcastMap(
+      tiling, permutation, mlir_context, /*is_reverse=*/true);
+  IndexingMap shmem_read_indexing =
+      ComposeIndexingMaps(thread_trans_indexing, bitcast_indexing);
+  shmem_read_indexing.Simplify(GetIndexingMapForInstruction);
+  return shmem_read_indexing;
 }
 
 MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
@@ -222,7 +290,7 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
   std::vector<int64_t> shmem_tensor_size(tiling_.GetBlockTileSize().begin(),
                                          tiling_.GetBlockTileSize().end());
   // Avoid bank conflict.
-  ++shmem_tensor_size.back();
+  ++shmem_tensor_size[kPreTransposeMinorDim];
 
   MLIRContext* ctx = builder.getContext();
 
@@ -243,8 +311,10 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
   }
 
   auto tile_indexing = GetIndexingMapForTiling(tiling_, ctx);
-  IndexingMap shmem_write_indexing =
-      GetSharedMemoryWriteIndexingMap(tile_indexing, permutation_[2]);
+  // Remove unnecessary constraince check to help vectorization optimization.
+  tile_indexing.Simplify(GetIndexingMapForInstruction);
+  IndexingMap shmem_write_indexing = GetSharedMemoryWriteIndexingMap(
+      tile_indexing, tiling_, builder.getContext());
   auto body_builder = [&](ValueRange output_tensors, ValueRange dim_values,
                           ValueRange symbol_values) -> SmallVector<Value> {
     auto input_indices = [&](const HloInstruction* instr) {
@@ -316,8 +386,8 @@ void MlirTransposeFusion::EmitReadFromShMemMlir(
     const WriteResult& written) const {
   auto* mlir_context = builder.getContext();
   auto output_indexing = *ComputeThreadIdToOutputIndexing(0, mlir_context);
-  auto shmem_output_indexing =
-      GetSharedMemoryReadIndexingMap(output_indexing, permutation_);
+  auto shmem_output_indexing = GetSharedMemoryReadIndexingMap(
+      output_indexing, tiling_, builder.getContext(), permutation_);
   auto result_tensors = EmitThreadLoopNest(
       builder, written.updated_outputs, output_indexing,
       [&](ValueRange output_tensors, ValueRange dim_values,
