@@ -193,7 +193,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
 
   opts.set_xla_gpu_collective_inflation_factor(1);
-  opts.set_xla_llvm_split_module_level(0);
+  opts.set_xla_llvm_force_inline_before_split(true);
 
   opts.set_xla_gpu_exhaustive_tiling_search(false);
 
@@ -1098,12 +1098,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "collective will execute multiple times (will yield incorrect results)"));
 
   flag_list->push_back(tsl::Flag(
-      "xla_llvm_split_module_level",
-      int32_setter_for(&DebugOptions::set_xla_llvm_split_module_level),
-      debug_options->xla_llvm_split_module_level(),
-      "Decide how llvm modules are split: Whether to force inline or preserve "
-      "locals. 0 = no inline, 1 = force inline before split, 2 = no line and "
-      "PreserveLocals=False during split, default is 0"));
+      "xla_llvm_force_inline_before_split",
+      bool_setter_for(&DebugOptions::set_xla_llvm_force_inline_before_split),
+      debug_options->xla_llvm_force_inline_before_split(),
+      "Decide whether to force inline before llvm module split to get a more "
+      "balanced splits for parallel compilation"));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_reassociation_for_converted_ar",

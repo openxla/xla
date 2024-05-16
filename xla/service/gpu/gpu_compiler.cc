@@ -1788,10 +1788,9 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
                                /*shard_number=*/std::nullopt);
   }
 
-  int split_module_level =
-      module_config.debug_options().xla_llvm_split_module_level();
-  bool preserve_locals = split_module_level != 2;
-  if (split_module_level == 1) {
+  bool force_module_split =
+      module_config.debug_options().xla_llvm_force_inline_before_split();
+  if (force_module_split) {
     for (llvm::Function& func : llvm_module->functions()) {
       if (func.getNumUses() > 0 && !func.isDeclaration()) {
         VLOG(4) << absl::StrFormat("Inlining function %s with %d users.\n",
@@ -1804,8 +1803,11 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
         }
         for (auto* call_to_inline : calls_to_inline) {
           llvm::InlineFunctionInfo inline_function_info;
-          CHECK(llvm::InlineFunction(*call_to_inline, inline_function_info)
-                    .isSuccess());
+          if(!llvm::InlineFunction(*call_to_inline, inline_function_info)
+                    .isSuccess()) {
+            return absl::InternalError(
+              "Can not inline function " + func.getName().str());
+          };
         }
       }
     }
@@ -1857,7 +1859,7 @@ GpuCompiler::CompileToTargetBinary(const HloModuleConfig& module_config,
         }
         llvm_modules.push_back(std::move(module));
       },
-      /*PreserveLocals=*/preserve_locals);
+      /*PreserveLocals=*/true);
 
   std::vector<absl::StatusOr<BackendCompileResult>> compile_results(
       llvm_modules.size());
