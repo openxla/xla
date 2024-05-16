@@ -180,21 +180,21 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
                       kPreTransposeVectorizedDim);
 }
 
-// Return bitcast mapping bewteen block_tile and permuted_block_tile if
-// `is_reverse` is false Otherwise return the reverse mapping.
+// Returns bitcast mapping from block_tile to permuted_block_tile if
+// `original_to_permuted` is true. Otherwise returns the `permuted_to_original` bitcast mapping.
 IndexingMap GetPermuteBlockTileBitcastMap(
     const Tiling& tiling, const absl::InlinedVector<int64_t, 4>& permutation,
-    MLIRContext* mlir_context, bool is_reverse = false) {
+    MLIRContext* mlir_context, bool original_to_permuted = true) {
   const auto& block_tile = tiling.GetBlockTileSize();
   auto permuted_block_tile = Permute(block_tile, permutation);
   auto block_tile_shape = ShapeUtil::MakeShape(U8, block_tile);
   auto permuted_block_tile_shape =
       ShapeUtil::MakeShape(U8, permuted_block_tile);
-  if (is_reverse) {
-    return GetBitcastMap(permuted_block_tile_shape, block_tile_shape,
-                         mlir_context);
+  if (original_to_permuted) {
+    return GetBitcastMap(block_tile_shape, permuted_block_tile_shape,
+                       mlir_context);
   }
-  return GetBitcastMap(block_tile_shape, permuted_block_tile_shape,
+  return GetBitcastMap(permuted_block_tile_shape, block_tile_shape,
                        mlir_context);
 }
 
@@ -275,7 +275,7 @@ IndexingMap GetSharedMemoryReadIndexingMap(
       thread_id_indexing.GetDimVars(), thread_id_indexing.GetRangeVars(),
       thread_id_indexing.GetRTVars(), thread_id_indexing.GetConstraints()};
   IndexingMap bitcast_indexing = GetPermuteBlockTileBitcastMap(
-      tiling, permutation, mlir_context, /*is_reverse=*/true);
+      tiling, permutation, mlir_context, /*original_to_permuted=*/false);
   IndexingMap shmem_read_indexing =
       ComposeIndexingMaps(thread_trans_indexing, bitcast_indexing);
   shmem_read_indexing.Simplify(GetIndexingMapForInstruction);
