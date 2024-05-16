@@ -312,7 +312,7 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
   }
 
   auto tile_indexing = GetIndexingMapForTiling(tiling_, ctx);
-  // Remove unnecessary constraince check to help vectorization optimization.
+  // Remove unnecessary constraint check to help vectorization optimization.
   tile_indexing.Simplify(GetIndexingMapForInstruction);
   IndexingMap shmem_write_indexing = GetSharedMemoryWriteIndexingMap(
       tile_indexing, tiling_, builder.getContext());
