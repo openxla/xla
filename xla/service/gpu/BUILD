@@ -1220,6 +1220,7 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
