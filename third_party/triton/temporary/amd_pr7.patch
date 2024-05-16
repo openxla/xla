@@ -1,0 +1,28 @@
+==== triton/BUILD#46 - /google/src/cloud/csigg/triton_amd/triton/BUILD ====
+# action=edit type=text
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/ElementwiseOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/ElementwiseOpToLLVM.cpp
+index f59efd6..cf601f0 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/ElementwiseOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/ElementwiseOpToLLVM.cpp
+@@ -1132,6 +1132,21 @@ struct FpToFpOpConversion
+     for (unsigned i = 0; i < std::min(numElements, operands.size()); i++) {
+       inVals.push_back(operands[i][0]);
+     }
++
++    bool isSrcFP16 = srcElementType.isF16();
++    bool isSrcBF16 = srcElementType.isBF16();
++
++    if ((isSrcFP16 || isSrcBF16)
++          && isDstFP32) {
++      SmallVector<Value> outVals;
++      for (Value &v : inVals) {
++        if(isSrcFP16)
++          outVals.push_back(convertFp16ToFp32(loc, rewriter, v));
++        else
++          outVals.push_back(convertBf16ToFp32(loc, rewriter, v));
++      }
++      return outVals;
++    }
+     if (useFP16IntermediateSrc)
+       for (Value &v : inVals)
+         v = cvtFp32ToFp16(loc, rewriter, v,
