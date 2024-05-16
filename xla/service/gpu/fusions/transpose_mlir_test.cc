@@ -195,7 +195,7 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized021) {
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2, s3] -> (
           d3,
-          (d0 floordiv 64) * 2 + (d0 floordiv 32) mod 2 + s1 * 4,
+          (d0 floordiv 32) mod 2 + s1 * 4 + (d0 floordiv 64) * 2,
           (d0 mod 32) * 2 + s3
         )
         domain:
@@ -255,7 +255,7 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized210) {
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2, s3] -> (
-          (d0 floordiv 64) * 2 + (d3 mod 128) * 64 + s0 * 4 + (d0 floordiv 32) mod 2,
+          (d3 mod 128) * 64 + s0 * 4 + (d0 floordiv 32) mod 2 + (d0 floordiv 64) * 2,
           d3 floordiv 128,
           (d0 mod 32) * 2 + s3
         )
