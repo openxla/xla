@@ -107,7 +107,7 @@ Tiling ComputeTransposeTiling(const HloFusionAnalysis& analysis) {
                         analysis.device_info().threads_per_core_limit();
   int64_t non_vectorized_threads =
       non_vectorized_tiling.GetNumThreadsPerBlock() *
-      non_vectorized_tiling.GetNumThreadsPerBlock();
+      non_vectorized_tiling.GetNumBlocks();
   bool is_aligned =
       input_dims[permutation[2]] % (WarpSize() * vector_size) == 0 &&
       input_dims[2] % (WarpSize() * vector_size) == 0;
