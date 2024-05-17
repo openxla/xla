@@ -1087,6 +1087,8 @@ cc_library(
         ":py_client",
         ":types",
         # placeholder for index annotation deps
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -1125,7 +1127,10 @@ cc_library(
         "//xla/service:name_uniquer",
         "//xla/service:tuple_simplifier",
         "@tsl//tsl/lib/strings:proto_serialization",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
         "@nanobind",
     ],
 )
