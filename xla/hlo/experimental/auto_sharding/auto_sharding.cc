@@ -1979,6 +1979,11 @@ AutoShardingSolverResult CallSolver(
   request.set_deterministic_mode(deterministic_mode);
   request.set_request_name(std::string(request_name));
   request.set_enable_memory_edge_costs(option.model_resharding_memory_costs);
+  // If we're removing user shardings, we are probably doing internal testing /
+  // debugging where additional output from the solver might be helpful.
+  request.set_enable_output(
+      option.preserve_shardings ==
+      AutoShardingOption::PreserveShardingsType::kRemoveAllShardings);
   if (max_cost) {
     request.mutable_max_cost()->set_coeff(*max_cost);
   }
@@ -2320,7 +2325,7 @@ void SetHloSharding(
   }
 }
 
-Status SetHloShardingPostProcessing(
+absl::Status SetHloShardingPostProcessing(
     const HloInstructionSequence& sequence,
     const absl::flat_hash_set<const HloInstruction*>& instructions_to_shard,
     const StrategyMap& strategy_map, const CostGraph& cost_graph,
@@ -3400,11 +3405,11 @@ void AnnotateShardingWithSimpleHeuristic(
 
 // Filter strategies according to the option.force_batch_dim_to_mesh_dim.
 // This can be used to forcibly generate data-parallel strategies.
-Status FilterStrategy(const HloInstruction* ins, const Shape& shape,
-                      std::unique_ptr<StrategyGroup>& strategy_group,
-                      const ClusterEnvironment& cluster_env,
-                      const InstructionBatchDimMap& batch_map,
-                      const AutoShardingOption& option) {
+absl::Status FilterStrategy(const HloInstruction* ins, const Shape& shape,
+                            std::unique_ptr<StrategyGroup>& strategy_group,
+                            const ClusterEnvironment& cluster_env,
+                            const InstructionBatchDimMap& batch_map,
+                            const AutoShardingOption& option) {
   int mesh_dim = option.force_batch_dim_to_mesh_dim;
   int batch_dim = batch_map.at(GetBatchDimMapKey(ins));
   const Array<int64_t>& device_mesh = cluster_env.device_mesh_;
@@ -3731,7 +3736,8 @@ AutoShardingImplementation::SaveAndRemoveShardingAnnotation(
   return std::make_pair(preserve_shardings, module_is_changed);
 }
 
-Status AutoShardingImplementation::CanonicalizeLayouts(HloModule* module) {
+absl::Status AutoShardingImplementation::CanonicalizeLayouts(
+    HloModule* module) {
   if (!module->layout_canonicalization_callback()) {
     LOG(INFO) << "There is no registered layout_canonicalization_callback.";
     return OkStatus();
@@ -4070,7 +4076,7 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
                              option_.try_multiple_mesh_shapes));
     spmd::AliasSet alias_set =
         spmd::BuildAliasSet(module, input_output_alias_config, strategy_map);
-    if (Status alias_set_status = CheckAliasSetCompatibility(
+    if (absl::Status alias_set_status = CheckAliasSetCompatibility(
             alias_set, strategy_groups, sequence,
             /* crash_at_error */ !option_.try_multiple_mesh_shapes);
         !alias_set_status.ok()) {

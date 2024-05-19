@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_pattern_utils.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/status_macros.h"
@@ -30,11 +31,7 @@ namespace cpu {
 
 namespace {
 namespace m = match;
-
-template <typename Pattern>
-auto OptionalConvert(Pattern pattern) {
-  return m::AnyOf<HloInstruction>(m::Convert(pattern), std::move(pattern));
-}
+namespace pu = ::xla::cpu::onednn_pattern_utils_internal;
 
 inline auto OneDnnConvertibleInstr(HloInstruction** instr) {
   return m::AnyOf<HloInstruction>(m::CustomCall(instr, {"__onednn$layernorm"}),
@@ -64,6 +61,7 @@ HloInstruction* FindLayerNormShift(HloInstruction* instr) {
 }
 
 bool is_neg_inf_const_scalar(const HloInstruction* const_instr) {
+  if (const_instr->opcode() != HloOpcode::kConstant) return false;
   if (!ShapeUtil::IsEffectiveScalar(const_instr->shape())) return false;
   auto value = LiteralUtil::GetFirstScalarLiteral(const_instr->literal());
   return literal_comparison::Equal(
@@ -71,6 +69,7 @@ bool is_neg_inf_const_scalar(const HloInstruction* const_instr) {
       .ok();
 }
 
+// Pattern to match AnyOf  Maximum(Reduce_max(...), -inf) OR Reduce_max(...)
 auto MaxReduce(HloInstruction** instr) {
   auto is_valid_reduce_max = [](const HloInstruction* reduce) {
     HloComputation* reducer = reduce->to_apply();
@@ -87,6 +86,9 @@ auto MaxReduce(HloInstruction** instr) {
       m::Reduce(instr).WithPredicate(is_valid_reduce_max).WithOneUse());
 }
 
+// Match the softmax patter with divide instruction as root node.
+// Here we pass 'instr' as root node and return the producer HloInstruction
+// Axis on which softmax is applied is stored in 'axis'
 std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   //
   // producer
@@ -105,9 +107,15 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   // |
   // exponential
   // |   \
+  // |   Convert(optional)
+  // |     |
   // |  reduce_sum
   // |     |
+  // |   Convert(optional)
+  // |     |
   // |  reshape
+  // |     |
+  // |   Convert(optional)
   // |     |
   // |  broadcast
   // |     |
@@ -129,10 +137,10 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   if (!Match(instr,
              m::Divide(
                  m::Exp(&left_exponential, m::Op()),
-                 m::Broadcast(m::Reshape(
-                     m::Broadcast(OptionalConvert(m::Reshape(OptionalConvert(
+                 m::Broadcast(m::Reshape(m::Broadcast(
+                     pu::OptionalConvert(m::Reshape(pu::OptionalConvert(
                          m::Reduce(&reduce_sum,
-                                   OptionalConvert(
+                                   pu::OptionalConvert(
                                        m::Exp(&right_exponential, m::Op())),
                                    m::ConstantScalar(0))
                              .WithPredicate([](const HloInstruction* reduce) {
@@ -161,14 +169,16 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   }
 
   // Match the reduce max
-  if (!Match(reduce_instr, MaxReduce(&reduce_max))) return std::nullopt;
+  if (!Match(reduce_instr, MaxReduce(&reduce_max))) {
+    return std::nullopt;
+  }
 
   if (left_producer != reduce_max->operand(0) ||
       left_producer->user_count() != 2) {
     return std::nullopt;
   }
 
-  if ((reduce_sum->dimensions()[0]) != (reduce_max->dimensions()[0])) {
+  if (reduce_sum->dimensions()[0] != reduce_max->dimensions()[0]) {
     return std::nullopt;
   }
 
@@ -282,7 +292,7 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
           .WithBinaryOperandsAnyOrder(
               m::Op(&hinge).WithOneUser(),
               m::Subtract(
-                  OptionalConvert(m::Op(&prod_s)),
+                  pu::OptionalConvert(m::Op(&prod_s)),
                   m::Broadcast(
                       m::Reshape(
                           m::Broadcast(m::Reshape(m::Op(&div_red).WithOpcode(
@@ -352,8 +362,8 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
   auto div_red_mul_src =
       m::Divide()
           .WithOperand(0, m::Reduce(m::Multiply().WithBinaryOperandsAnyOrder(
-                                        OptionalConvert(m::Op(&mul_in0)),
-                                        OptionalConvert(m::Op(&mul_in1))),
+                                        pu::OptionalConvert(m::Op(&mul_in0)),
+                                        pu::OptionalConvert(m::Op(&mul_in1))),
                                     m::Constant())
                               .WithPredicate([](const HloInstruction* reduce) {
                                 HloComputation* reducer = reduce->to_apply();
@@ -374,7 +384,7 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
       m::Divide()
           .WithOperand(
               0,
-              m::Reduce(OptionalConvert(m::Op(&reduce_in0)), m::Constant())
+              m::Reduce(pu::OptionalConvert(m::Op(&reduce_in0)), m::Constant())
                   .WithPredicate([](const HloInstruction* reduce) {
                     HloComputation* reducer = reduce->to_apply();
                     return (reducer->root_instruction()->opcode() ==
@@ -414,7 +424,7 @@ bool MatchFlaxLayerNorm(HloInstruction* instr, HloInstruction** src,
 
 class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
  public:
-  Status HandleAdd(HloInstruction* instr) override {
+  absl::Status HandleAdd(HloInstruction* instr) override {
     HloInstruction *src, *scale, *bias;
     float eps;
     bool is_bf16orfp16_convert = false;
@@ -474,7 +484,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleConvert(HloInstruction* instr) override {
+  absl::Status HandleConvert(HloInstruction* instr) override {
     HloInstruction* custom_call;
     HloInstruction* convert_instr;
     auto pattern =
@@ -507,7 +517,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleDivide(HloInstruction* divide_instr) override {
+  absl::Status HandleDivide(HloInstruction* divide_instr) override {
     if (divide_instr->HasControlDependencies()) return OkStatus();
     if (!IsSupportedType(divide_instr->shape().element_type()))
       return OkStatus();
@@ -530,7 +540,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   }
 };
 
-StatusOr<bool> OneDnnOpsRewriter::Run(
+absl::StatusOr<bool> OneDnnOpsRewriter::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   OneDnnOpsRewriterVisitor visitor;

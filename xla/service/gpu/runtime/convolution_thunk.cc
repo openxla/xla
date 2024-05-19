@@ -27,6 +27,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/service/buffer_assignment.h"
+#if TENSORFLOW_USE_ROCM
+#include "xla/service/gpu/stream_executor_util.h"
+#endif  // TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/stream_executor/device_memory.h"
@@ -96,6 +99,9 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
     TF_ASSIGN_OR_RETURN(se::dnn::DataType input_type,
                         GetDNNDataTypeFromPrimitiveType(config_.input_type));
 
+    TF_ASSIGN_OR_RETURN(se::dnn::DataType output_type,
+                        GetDNNDataTypeFromPrimitiveType(config_.output_type));
+
     TF_ASSIGN_OR_RETURN(auto dnn,
                         se::dnn::internal::GetDnnFromStream(params.stream));
     se::OwningScratchAllocator<> scratch_allocator(
@@ -104,7 +110,7 @@ absl::Status ConvolutionThunk::ExecuteOnStream(const ExecuteParams& params) {
 
     std::vector<se::dnn::ProfileResult> profile_results;
     dnn->GetMIOpenConvolveAlgorithms(
-        kind, input_type, params.stream, config_.input_descriptor,
+        kind, input_type, output_type, params.stream, config_.input_descriptor,
         conv_params.input_buf, config_.filter_descriptor,
         conv_params.filter_buf, config_.output_descriptor,
         conv_params.output_buf, config_.conv_desc, &scratch_allocator,

@@ -140,6 +140,41 @@ TEST(StreamExecutorGpuClientTest, MemorySpace) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, PropagateError) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  auto shape = xla::ShapeUtil::MakeScalarShape(xla::F32);
+  absl::Status input_error = absl::InvalidArgumentError("input error");
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->CreateErrorBuffer(
+          input_error, shape,
+          *client->addressable_devices()[0]->default_memory_space()));
+
+  static constexpr char const* kAddProgram =
+      R"(
+HloModule Add.6, entry_computation_layout={(f32[], f32[])->(f32[], f32[])}
+
+ENTRY %Add.6 (a.1: f32[], b.2: f32[]) -> (f32[], f32[]) {
+  %a.1 = f32[] parameter(0)
+  %b.2 = f32[] parameter(1)
+  %add.3 = f32[] add(f32[] %a.1, f32[] %b.2)
+  %add.4 = f32[] add(f32[] %add.3, f32[] %add.3)
+  ROOT %tuple.5 = (f32[], f32[]) tuple(f32[] %add.3, f32[] %add.4)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kAddProgram, *client));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto result,
+      executable->Execute({{buffer.get(), buffer.get()}}, /*options=*/{}));
+
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  EXPECT_EQ(result[0][0]->GetReadyFuture().Await(), input_error);
+}
+
 TEST(StreamExecutorGpuClientTest, SendRecvChunked) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -339,7 +374,7 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsync) {
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get()).OnReady([&](Status s) {
+  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
     absl::MutexLock l(&mu);
     TF_ASSERT_OK(s);
     got_literal = true;
@@ -373,7 +408,7 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsyncBeforeBufferReady) {
       ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
   bool got_literal = false;
 
-  buffer->ToLiteral(literal.get()).OnReady([&](Status s) {
+  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
     absl::MutexLock l(&mu);
     TF_ASSERT_OK(s);
     got_literal = true;
@@ -433,12 +468,12 @@ TEST(StreamExecutorGpuClientTest, FromHostAsync) {
   for (auto& buffer : buffers) {
     literals.push_back(std::make_shared<Literal>(
         ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape())));
-    buffer->ToLiteral(literals.back().get()).OnReady([&](Status s) {
+    buffer->ToLiteral(literals.back().get()).OnReady([&](absl::Status s) {
       absl::MutexLock l(&mu);
       TF_ASSERT_OK(s);
       ++got_literal_count;
     });
-    buffer->GetReadyFuture().OnReady([&](Status s) {
+    buffer->GetReadyFuture().OnReady([&](absl::Status s) {
       absl::MutexLock l(&mu);
       TF_ASSERT_OK(s);
       ++got_callback_count;

@@ -1182,12 +1182,14 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",
         "//xla/ffi:ffi_api",
         "//xla/service:custom_call_status_public_headers",
+        "//xla/service:executable",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -1659,6 +1661,15 @@ cc_library(
 )
 
 cc_library(
+    name = "onednn_pattern_utils",
+    hdrs = ["onednn_pattern_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onednn_util",
+    ] + mkl_deps(),
+)
+
+cc_library(
     name = "onednn_matmul_rewriter",
     srcs = ["onednn_matmul_rewriter.cc"],
     hdrs = [
@@ -1671,6 +1682,7 @@ cc_library(
         ":backend_config_proto_cc",
         ":onednn_matmul",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1699,6 +1711,7 @@ cc_library(
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:literal_comparison",
         "//xla:literal_util",

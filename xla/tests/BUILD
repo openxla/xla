@@ -966,6 +966,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    shard_count = 50,
     tags = [
         "nozapfhahn",
         "optonly",
@@ -994,6 +995,7 @@ xla_test(
 xla_test(
     name = "gather_operation_test",
     srcs = ["gather_operation_test.cc"],
+    shard_count = 20,
     tags = ["test_hlo_pjrt_runner"],
     deps = [
         ":client_library_test_base",
@@ -1012,7 +1014,7 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
-    tags = ["test_hlo_pjrt_runner"],
+    # TODO(b/245550554): enable Pjrt runner for scatter test once it's fixed.
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -1646,7 +1648,7 @@ xla_test(
     name = "reduce_window_test",
     timeout = "long",
     srcs = [],
-    shard_count = 20,
+    shard_count = 40,
     tags = [
         "optonly",
     ],
@@ -2652,6 +2654,7 @@ xla_cc_test(
 xla_test(
     name = "transfer_manager_test",
     srcs = ["transfer_manager_test.cc"],
+    shard_count = 50,
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -2927,6 +2930,9 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:test_helpers",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/service/cpu:onednn_ops_rewriter",
         "//xla/service/cpu:onednn_util",
         "@tsl//tsl/platform:platform_port",
     ],

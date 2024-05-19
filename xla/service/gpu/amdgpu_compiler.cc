@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/gpu/conv_algorithm_picker.h"
 #include "xla/service/gpu/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
+#include "xla/service/gpu/cudnn_fused_conv_rewriter.h"
 #include "xla/service/gpu/cusolver_rewriter.h"
 #include "xla/service/gpu/gemm_algorithm_picker.h"
 #include "xla/service/gpu/gpu_compiler.h"
@@ -59,6 +60,10 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
+
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#endif
 
 namespace xla {
 namespace gpu {
@@ -117,6 +122,8 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
   pipeline.AddPass<GpusolverRewriter>();
   pipeline.AddPass<GpuConvRewriter>();
   pipeline.AddPass<GpuConvPaddingLegalization>();
+  auto rcc = std::get<se::RocmComputeCapability>(gpu_version);
+  pipeline.AddPass<CudnnFusedConvRewriter>(rcc);
 
   // The conv padding/vectorization passes which we need to get rid of.  They
   // also leave behind unnecessary tuple/get-tuple-element pairs that

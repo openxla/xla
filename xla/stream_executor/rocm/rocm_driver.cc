@@ -115,6 +115,17 @@ string ToString(hipError_t result) {
   }
 }
 
+absl::StatusOr<hipError_t> QueryEvent(GpuContext* context, hipEvent_t event) {
+  ScopedActivateContext activated{context};
+  hipError_t res = wrap::hipEventQuery(event);
+  if (res != hipSuccess && res != hipErrorNotReady) {
+    return absl::Status{
+        absl::StatusCode::kInternal,
+        absl::StrFormat("failed to query event: %s", ToString(res).c_str())};
+  }
+  return res;
+}
+
 namespace {
 
 // Returns the current context and checks that it is in the set of HIP contexts
@@ -1466,19 +1477,6 @@ struct BitPatternToValue {
   }
 }
 
-/* static */ absl::StatusOr<hipError_t> GpuDriver::QueryEvent(
-    GpuContext* context, GpuEventHandle event) {
-  ScopedActivateContext activated{context};
-  hipError_t res = wrap::hipEventQuery(event);
-  if (res != hipSuccess && res != hipErrorNotReady) {
-    return absl::Status{
-        absl::StatusCode::kInternal,
-        absl::StrFormat("failed to query event: %s", ToString(res).c_str())};
-  }
-
-  return res;
-}
-
 /* static */ bool GpuDriver::GetEventElapsedTime(GpuContext* context,
                                                  float* elapsed_milliseconds,
                                                  GpuEventHandle start,
@@ -1862,7 +1860,7 @@ struct BitPatternToValue {
 }
 
 // Helper function that turns the integer output of hipDeviceGetAttribute to
-// type T and wraps it in a StatusOr.
+// type T and wraps it in a absl::StatusOr.
 template <typename T>
 static absl::StatusOr<T> GetSimpleAttribute(hipDevice_t device,
                                             hipDeviceAttribute_t attribute) {
