@@ -45,6 +45,8 @@ message OneDnnFusionConfig {
     GELU_TANH = 5;
     BINARY_ADD = 6;
     LINEAR = 7;
+    ELU = 8;
+    RELU6 = 9;
   }
   repeated FusionKind ops = 1;
   // To avoid protobuf failures for specific decimal values,

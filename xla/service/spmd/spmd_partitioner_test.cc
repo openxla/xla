@@ -15,25 +15,35 @@ limitations under the License.
 
 #include "xla/service/spmd/spmd_partitioner.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/status/statusor.h"
+#include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/sharding_format_picker.h"
 #include "xla/service/spmd/spmd_prepare.h"
+#include "xla/status.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace spmd {
@@ -223,6 +233,36 @@ ENTRY entry {
           op::Shape("s32[1,3]")));
 }
 
+TEST_P(SpmdPartitioningTest, PartitionCall) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f
+
+g {
+  Arg_0.6 = s32[8,2]{1,0} parameter(0), sharding={devices=[2,2]<=[4]}
+  constant.0 = s32[] constant(2), sharding={replicated}
+  broadcast.0 = s32[8,2]{1,0} broadcast(constant.0), dimensions={}, sharding={devices=[2,2]<=[4]}
+  ROOT multiply.9 = s32[8,2]{1,0} multiply(Arg_0.6, broadcast.0), sharding={devices=[2,2]<=[4]}
+}
+
+ENTRY main {
+  Arg_0.1 = s32[8,2]{1,0} parameter(0), sharding={devices=[2,2]<=[4]}
+  constant.1 = s32[] constant(3), sharding={replicated}
+  broadcast.1 = s32[8,2]{1,0} broadcast(constant.1), dimensions={}, sharding={devices=[2,2]<=[4]}
+  multiply.4 = s32[8,2]{1,0} multiply(Arg_0.1, broadcast.1), sharding={devices=[2,2]<=[4]}
+  ROOT call = s32[8,2]{1,0} call(multiply.4), to_apply=g, sharding={devices=[2,2]<=[4]}, backend_config={"flag_configs":[],"scoped_memory_configs":[],"compute_type":"COMPUTE_TYPE_DEFAULT","device_type":"DEVICE_TYPE_HOST","used_scoped_memory_configs":[]}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, AllOf(op::Call(), op::Shape("s32[4,1]")));
+  HloInstruction* call_comp_root =
+      root->called_computations()[0]->root_instruction();
+  EXPECT_THAT(call_comp_root, AllOf(op::Multiply(op::Parameter(0),
+                                                 op::Broadcast(op::Constant())),
+                                    op::Shape("s32[4,1]")));
+}
+
 TEST_P(SpmdPartitioningTest, TiledToReplicated) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -243,6 +283,47 @@ ENTRY entry {
               op::Reshape(op::DynamicSlice(op::Constant(), op::PartitionId())),
               op::Constant()),
           op::Shape("s32[2,3]")))));
+}
+
+TEST_P(SpmdPartitioningTest,
+       TiledToReplicatedWhenV2ShardingGeneratesReplicaGroupV2) {
+  // Skip when input sharding is not V2.
+  if (GetParam() != ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    GTEST_SKIP() << "This test only runs when input sharding is in V2 format.";
+  }
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %constant = s32[4,3]{1,0} constant({{1,1,1},{1,1,1},{1,1,1},{1,1,1}}),
+    sharding={devices=[4,1]<=[4]}
+  ROOT %copy = s32[4,3]{1,0} copy(%constant), sharding={replicated}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+  VLOG(1) << module->ToString();
+
+  // Verify all-reduce instruction is generated.
+  auto all_reduce_instruction =
+      std::find_if(module->entry_computation()->instructions().begin(),
+                   module->entry_computation()->instructions().end(),
+                   HloPredicateIsOp<HloOpcode::kAllReduce>);
+  EXPECT_NE(all_reduce_instruction,
+            module->entry_computation()->instructions().end());
+
+  // Verify all-reduce instruction contains ReplicaGroupV2.
+  EXPECT_TRUE((*all_reduce_instruction)
+                  ->device_list()
+                  .iota_replica_group_list()
+                  .has_value());
+  IotaReplicaGroupList list = (*all_reduce_instruction)
+                                  ->device_list()
+                                  .iota_replica_group_list()
+                                  .value();
+  EXPECT_EQ(list.num_replica_groups(), 1);
+  EXPECT_EQ(list.num_devices_per_group(), 4);
+  EXPECT_THAT(list.reshape_dims(), ::testing::ElementsAre(4));
+  EXPECT_THAT(list.transpose_perm(), ::testing::ElementsAre(0));
 }
 
 TEST_P(SpmdPartitioningTest, TiledToSingleDevice) {
@@ -1604,6 +1685,50 @@ ENTRY entry {
                           op::Shape("f32[1,1,64,256]")));
 }
 
+TEST_P(SpmdPartitioningTest,
+       ConvolutionLhsTiledRhsTiledWhenV2ShardingGeneratesReplicaGroupV2) {
+  // Skip when input sharding is not V2.
+  if (GetParam() != ShardingFormatPicker::ShardingType::kBestEffortV2) {
+    GTEST_SKIP() << "This test only runs when input sharding is in V2 format.";
+  }
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[128,56,56,64] parameter(0)
+  %lhs.copy = f32[128,56,56,64] copy(%lhs), sharding={devices=[1,8,1,1]<=[8]}
+  %rhs = f32[128,56,56,256] parameter(1)
+  %rhs.copy = f32[128,56,56,256] copy(%rhs), sharding={devices=[1,8,1,1]<=[8]}
+  ROOT %conv = f32[1,1,64,256] convolution(%lhs.copy, %rhs.copy),
+    window={size=56x56}, dim_labels=f01b_i01o->01bf, sharding={replicated}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+
+  // Verify all-reduce instruction is generated.
+  auto all_reduce_instruction =
+      std::find_if(module->entry_computation()->instructions().begin(),
+                   module->entry_computation()->instructions().end(),
+                   HloPredicateIsOp<HloOpcode::kAllReduce>);
+  EXPECT_NE(all_reduce_instruction,
+            module->entry_computation()->instructions().end());
+
+  // Verify all-reduce instruction contains ReplicaGroupV2.
+  EXPECT_TRUE((*all_reduce_instruction)
+                  ->device_list()
+                  .iota_replica_group_list()
+                  .has_value());
+  IotaReplicaGroupList list = (*all_reduce_instruction)
+                                  ->device_list()
+                                  .iota_replica_group_list()
+                                  .value();
+  EXPECT_EQ(list.num_replica_groups(), 1);
+  EXPECT_EQ(list.num_devices_per_group(), 8);
+  EXPECT_THAT(list.reshape_dims(), ::testing::ElementsAre(8));
+  EXPECT_THAT(list.transpose_perm(), ::testing::ElementsAre(0));
+}
+
 TEST_P(SpmdPartitioningTest, ConvolutionLhsTiledRhsTiledWindowReversal) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -2112,13 +2237,17 @@ ENTRY entry {
       AllOf(op::Copy(op::DynamicSlice(op::Pad(op::Parameter(), op::Constant()),
                                       op::Constant(), op::Reshape())),
             op::Shape("f32[14,129]"));
+  auto param0_adjusted =
+      AllOf(op::Select(op::Compare(op::Add(), op::Broadcast(op::Constant())),
+                       param0, op::Broadcast(op::Constant())),
+            op::Shape("f32[14,129]"));
   auto param1 = AllOf(op::Copy(op::DynamicSlice(op::Parameter(), op::Constant(),
                                                 op::Reshape())),
                       op::Shape("f32[14,58]"));
   EXPECT_THAT(root, AllOf(op::DynamicSlice(
                               AllOf(op::AllReduce(op::DynamicUpdateSlice(
                                         op::DynamicUpdateSlice(
-                                            op::Broadcast(), param0,
+                                            op::Broadcast(), param0_adjusted,
                                             op::Constant(), op::Multiply()),
                                         param1, op::Constant(), op::Add())),
                                     op::Shape("f32[14,374]")),
@@ -2143,11 +2272,15 @@ ENTRY entry {
 
   const auto root = module->entry_computation()->root_instruction();
   auto param0 = AllOf(op::Parameter(0), op::Shape("f32[7,129]"));
+  auto param0_adjusted =
+      AllOf(op::Select(op::Compare(op::Add(), op::Broadcast(op::Constant())),
+                       param0, op::Broadcast(op::Constant())),
+            op::Shape("f32[7,129]"));
   auto param1 = AllOf(op::Parameter(1), op::Shape("f32[7,58]"));
   EXPECT_THAT(root, AllOf(op::DynamicSlice(
                               AllOf(op::AllReduce(op::DynamicUpdateSlice(
                                         op::DynamicUpdateSlice(
-                                            op::Broadcast(), param0,
+                                            op::Broadcast(), param0_adjusted,
                                             op::Constant(), op::Multiply()),
                                         param1, op::Constant(), op::Add())),
                                     op::Shape("f32[7,374]")),

@@ -71,6 +71,8 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::ABS;
     case HloOpcode::kAdd:
       return m::ADD;
+    case HloOpcode::kCeil:
+      return m::CEIL;
     case HloOpcode::kCompare:
       switch (instruction.comparison_direction()) {
         case Comparison::Direction::kEq:
@@ -95,6 +97,8 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::DIV;
     case HloOpcode::kExp:
       return m::EXP;
+    case HloOpcode::kFloor:
+      return m::FLOOR;
     case HloOpcode::kLog:
       return m::LOG;
     case HloOpcode::kMaximum:
@@ -553,8 +557,8 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
   return *graph;
 }
 
-StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
-                                       const int64_t workspace_size) {
+absl::StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
+                                             const int64_t workspace_size) {
   if (workspace_size == 0 || fusion.shape().IsTuple()) {
     return &fusion;
   }

@@ -22,6 +22,7 @@ lit_test_suite(
             "verify_call_loaded_executable.mlir",
             "verify_disassemble.mlir",
             "verify_loaded_executable.mlir",
+            "verify_remap_arrays.mlir",
             "verify_reshard.mlir",
         ],
         include = [
@@ -85,6 +86,7 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
+        "//xla/python/ifrt/hlo:hlo_program",
         "//xla/python/ifrt/ir:compiler",
         "//xla/python/ifrt/ir:sharding_param",
         "//xla/python/pjrt_ifrt:xla_ifrt",

@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -174,6 +175,8 @@ class MatmulBfloat16Support : public FloatSupport {
 };
 
 }  // namespace
+
+int32_t NVPTXCompiler::GetToolkitVersion() const { return CUDA_VERSION; }
 
 absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, se::GpuComputeCapability gpu_version,
@@ -366,7 +369,8 @@ absl::Status NVPTXCompiler::AddConvAndGemmAutotuningPasses(
 absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
     HloPassPipeline* pipeline, HloModule* hlo_module,
     AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool) {
-  pipeline->AddPass<GemmFusionAutotuner>(autotune_config, thread_pool);
+  pipeline->AddPass<GemmFusionAutotuner>(autotune_config, GetToolkitVersion(),
+                                         thread_pool);
   return absl::OkStatus();
 }
 

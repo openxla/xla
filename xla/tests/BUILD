@@ -6,10 +6,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "tf_cuda_tests_tags",
-)
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
@@ -818,7 +814,10 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@ml_dtypes//:float8",
         "@tsl//tsl/platform:ml_dtypes",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 cc_library(
@@ -920,7 +919,10 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 # Run dot tests with auto-tuning disabled.  This just does a basic sanity check
@@ -954,7 +956,10 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 # Run dot tests with dot canonicalization after the layout assignment pass.
@@ -970,6 +975,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    shard_count = 50,
     tags = [
         "nozapfhahn",
         "optonly",
@@ -992,12 +998,16 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
     name = "gather_operation_test",
     srcs = ["gather_operation_test.cc"],
+    shard_count = 20,
     tags = ["test_hlo_pjrt_runner"],
     deps = [
         ":client_library_test_base",
@@ -1016,7 +1026,7 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
-    tags = ["test_hlo_pjrt_runner"],
+    # TODO(b/245550554): enable Pjrt runner for scatter test once it's fixed.
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -1064,7 +1074,10 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
@@ -1597,6 +1610,24 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "reduce_window_rewriter_execution_test",
+    srcs = ["reduce_window_rewriter_execution_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:error_spec",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 # External xla_test targets can add "reduce_window_test_library" to xla_test_library_deps, in order
 # to refer to the cc_library compiled with the correct backend macros. The following test target
 # "reduce_window_test" is an example.
@@ -1632,7 +1663,7 @@ xla_test(
     name = "reduce_window_test",
     timeout = "long",
     srcs = [],
-    shard_count = 20,
+    shard_count = 40,
     tags = [
         "optonly",
     ],
@@ -1769,6 +1800,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/client/lib:constants",
         "//xla/ffi",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/service:custom_call_status",
@@ -1892,7 +1924,10 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:test",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
@@ -2366,7 +2401,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM",
     ]),
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = if_gpu_is_configured([
         ":verified_hlo_module",
         "//xla:literal_util",
@@ -2637,6 +2672,7 @@ xla_cc_test(
 xla_test(
     name = "transfer_manager_test",
     srcs = ["transfer_manager_test.cc"],
+    shard_count = 50,
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -2682,7 +2718,7 @@ xla_cc_test(
     name = "sample_file_test",
     srcs = ["sample_file_test.cc"],
     data = ["isolated_convolution.hlo"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",  # fixdeps: keep

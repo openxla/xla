@@ -13,7 +13,6 @@ load(
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
-    "tf_gpu_tests_tags",
 )
 load(
     "@tsl//tsl/platform:rules_cc.bzl",
@@ -153,6 +152,7 @@ gpu_only_cc_library(
         ":gpu_types_header",
         "//xla/stream_executor",
         "//xla/stream_executor:stream_executor_interface",
+        "//xla/stream_executor:typed_kernel_factory",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
@@ -344,6 +344,7 @@ gpu_kernel_library(
         ":gpu_semaphore",
         ":gpu_stream",
         "//xla/stream_executor",
+        "//xla/stream_executor:typed_kernel_factory",
         "@com_google_absl//absl/status:statusor",
     ],
 )
@@ -485,6 +486,7 @@ gpu_kernel_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/cuda:cuda_asm_compiler",
         "//xla/stream_executor/cuda:cuda_driver",
         "@com_google_absl//absl/base",
@@ -513,6 +515,7 @@ gpu_kernel_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream_executor_headers",
+        "//xla/stream_executor:typed_kernel_factory",
         "@com_google_absl//absl/status:statusor",
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:statusor",
@@ -557,7 +560,7 @@ gpu_only_cc_library(
 xla_cc_test(
     name = "redzone_allocator_test",
     srcs = ["redzone_allocator_test.cc"],
-    tags = tf_gpu_tests_tags(),
+    use_gpu = True,
     deps = [
         ":gpu_asm_opts",
         ":gpu_init",
@@ -669,6 +672,7 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:typed_kernel_factory",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
@@ -695,6 +699,8 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:trace_command_buffer_factory",
+        "//xla/stream_executor:typed_kernel_factory",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -720,7 +726,7 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    tags = tf_gpu_tests_tags(),
+    use_gpu = True,
     deps = [
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
@@ -743,13 +749,12 @@ xla_cc_test(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    tags = tf_gpu_tests_tags() + [
-        "requires-gpu-nvidia",
-    ],
+    use_gpu = True,
     deps = [
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda([

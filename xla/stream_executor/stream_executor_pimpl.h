@@ -70,10 +70,8 @@ class StreamExecutor : public StreamExecutorInterface {
 
   const Platform* GetPlatform() const override { return platform_; }
   const DeviceDescription& GetDeviceDescription() const override;
-  absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
-      std::optional<std::variant<StreamPriority, int>> priority =
-          std::nullopt) override;
   int64_t GetMemoryLimitBytes() const override { return memory_limit_bytes_; }
+  absl::StatusOr<std::unique_ptr<Event>> CreateEvent() override;
 
  private:
   // Reader/writer lock for mutable data structures on this StreamExecutor.
@@ -89,10 +87,6 @@ class StreamExecutor : public StreamExecutorInterface {
   // once it has been queried from DeviceDescription().
   mutable std::unique_ptr<DeviceDescription> device_description_
       ABSL_GUARDED_BY(mu_);
-
-  // Only one worker thread is needed; little work will be done by the
-  // executor.
-  static constexpr int kNumBackgroundThreads = 1;
 
   // Memory limit in bytes. Value less or equal to 0 indicates there is no
   // limit.

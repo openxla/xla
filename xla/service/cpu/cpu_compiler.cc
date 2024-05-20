@@ -63,6 +63,7 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "xla/service/reduce_window_rewriter.h"
 #ifdef TF_LLVM_X86_AVAILABLE
 #include "llvm/TargetParser/X86TargetParser.h"
 #endif
@@ -351,13 +352,13 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
       : hlo_to_profile_idx_(hlo_to_profile_idx),
         assigned_indices_(assigned_indices) {}
 
-  Status DefaultAction(HloInstruction* hlo_instruction) override {
+  absl::Status DefaultAction(HloInstruction* hlo_instruction) override {
     hlo_to_profile_idx_->insert(
         {hlo_instruction, FindOrDie(assigned_indices_, hlo_instruction)});
     return absl::OkStatus();
   }
 
-  Status HandleCall(HloInstruction* call) override {
+  absl::Status HandleCall(HloInstruction* call) override {
     TF_RETURN_IF_ERROR(DefaultAction(call));
     CollectProfileCandidates candidates_for_call(hlo_to_profile_idx_,
                                                  assigned_indices_);
@@ -365,7 +366,7 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
     return absl::OkStatus();
   }
   // Recurse into "conditional" so we can profile inside of it.
-  Status HandleConditional(HloInstruction* conditional) override {
+  absl::Status HandleConditional(HloInstruction* conditional) override {
     TF_RETURN_IF_ERROR(DefaultAction(conditional));
 
     CollectProfileCandidates candidates_for_true(hlo_to_profile_idx_,
@@ -382,12 +383,16 @@ class CollectProfileCandidates : public DfsHloVisitorWithDefault {
   }
 
   // Skip constants, there is nothing to profile.
-  Status HandleConstant(HloInstruction*) override { return absl::OkStatus(); }
+  absl::Status HandleConstant(HloInstruction*) override {
+    return absl::OkStatus();
+  }
   // Skip parameters, they are a simple load.
-  Status HandleParameter(HloInstruction*) override { return absl::OkStatus(); }
+  absl::Status HandleParameter(HloInstruction*) override {
+    return absl::OkStatus();
+  }
   // It is important to recurse for "while" or else we risk overly coarse
   // profiling information.
-  Status HandleWhile(HloInstruction* xla_while) override {
+  absl::Status HandleWhile(HloInstruction* xla_while) override {
     TF_RETURN_IF_ERROR(DefaultAction(xla_while));
 
     CollectProfileCandidates candidates_for_condition(hlo_to_profile_idx_,
@@ -423,9 +428,10 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 
 }  // namespace
 
-Status CpuCompiler::RunHloPassesThroughLayoutAssn(
+absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
+  const DebugOptions& debug_options = module->config().debug_options();
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -577,6 +583,12 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
+
+  if (debug_options.xla_reduce_window_rewrite_base_length() != 0) {
+    pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(
+        debug_options.xla_reduce_window_rewrite_base_length());
+  }
+
   auto dynamic_padder_options = DynamicPadderOptions();
   // TODO(pgavin): ShapeChecks were never implemented correctly by the dynamic
   // padder.  The mode defaults to kIgnore, and it was not overridden for nested
@@ -690,7 +702,7 @@ Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   return pipeline.Run(module).status();
 }
 
-Status CpuCompiler::RunHloPassesAfterLayoutAssn(
+absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features,
     const CompileOptions& compile_options, bool is_mlir_compile) {
@@ -795,10 +807,10 @@ Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   return pipeline.Run(module).status();
 }
 
-Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
-                                 llvm::TargetMachine* target_machine,
-                                 const CompileOptions& compile_options,
-                                 bool is_mlir_compile) {
+absl::Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
+                                       llvm::TargetMachine* target_machine,
+                                       const CompileOptions& compile_options,
+                                       bool is_mlir_compile) {
   LLVMTargetMachineFeatures target_machine_features(target_machine);
   TF_RETURN_IF_ERROR(RunHloPassesThroughLayoutAssn(
       module, is_aot_compile, &target_machine_features, is_mlir_compile));
@@ -866,7 +878,7 @@ std::pair<LLVMCompiler::ModuleHook, LLVMCompiler::ModuleHook> GetIRModuleHooks(
           }};
 }
 
-Status VerifyLlvmModule(const llvm::Module& llvm_module) {
+absl::Status VerifyLlvmModule(const llvm::Module& llvm_module) {
   XLA_SCOPED_LOGGING_TIMER("CpuCompiler - Running LLVM verifier");
 
   std::string err;
@@ -881,7 +893,7 @@ Status VerifyLlvmModule(const llvm::Module& llvm_module) {
   return absl::OkStatus();
 }
 
-Status CreateHloProfilingArtifacts(
+absl::Status CreateHloProfilingArtifacts(
     const HloModule& module,
     absl::flat_hash_map<const HloInstruction*, int64_t>*
         instruction_to_profile_idx,
@@ -1400,7 +1412,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       // Run the LLVM verifier over the unoptimized LLVM IR.  If it fails, run
       // the pre-optimization IR dump hook before returning.
       {
-        Status verify_status = VerifyLlvmModule(*llvm_module);
+        absl::Status verify_status = VerifyLlvmModule(*llvm_module);
         if (!verify_status.ok() && pre_optimization_ir_hook) {
           pre_optimization_ir_hook(*llvm_module);
         }

@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -39,7 +38,6 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -48,6 +46,8 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/client/local_client.h"
 #include "xla/client/xla_computation.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -80,8 +80,11 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/framework/allocator.h"
 #include "tsl/lib/strings/proto_serialization.h"
+#include "tsl/platform/casts.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/fingerprint.h"
 #include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -200,7 +203,7 @@ class AsyncHostToDeviceTransferManager
     return std::move(buffers_[buffer_index]);
   };
 
-  Status TransferLiteralToBuffer(
+  absl::Status TransferLiteralToBuffer(
       int buffer_index, const LiteralSlice& literal,
       absl::AnyInvocable<void() &&> on_done) override {
     tsl::profiler::TraceMe traceme(
@@ -292,7 +295,7 @@ class AsyncHostToDeviceTransferManager
     return OkStatus();
   }
 
-  Status TransferRawDataToBuffer(
+  absl::Status TransferRawDataToBuffer(
       int buffer_index, absl::string_view data,
       absl::AnyInvocable<void() &&> on_done) override {
     return TransferRawDataToSubBuffer(buffer_index, data.data(),
@@ -301,7 +304,7 @@ class AsyncHostToDeviceTransferManager
                                       std::move(on_done));
   }
 
-  Status TransferRawDataToSubBuffer(
+  absl::Status TransferRawDataToSubBuffer(
       int buffer_index, const void* data, int64_t offset, int64_t transfer_size,
       bool is_last_transfer, absl::AnyInvocable<void() &&> on_done) override {
     auto* stream = device_->local_device_state()->host_to_device_stream();
@@ -390,15 +393,15 @@ class AsyncHostToDeviceTransferManager
                                                                 event.value());
 
     auto cleanup = [this, buffer_index, event = std::move(event).value(),
-                    stream, is_last_transfer,
-                    on_done = std::move(on_done)]() mutable {
+                    stream, is_last_transfer, on_done = std::move(on_done),
+                    staging_buffer = std::move(staging_buffer)]() mutable {
       CleanUp(buffer_index, std::move(event), stream, is_last_transfer,
               std::move(on_done));
     };
     return stream->DoHostCallback(std::move(cleanup));
   }
 
-  void SetBufferError(int buffer_index, Status error) override {
+  void SetBufferError(int buffer_index, absl::Status error) override {
     {
       absl::MutexLock l(&mu_);
       // For a given buffer_index, SetBufferError can't be called twice, or
@@ -487,6 +490,13 @@ StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
       tensorflow::down_cast<PjRtStreamExecutorDevice*>(device);
   return xla::AsyncHostToDeviceTransferManager::Create(
       shapes, stream_executor_device, this);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtClient::AsyncHostToDeviceTransferManager>>
+StreamExecutorGpuClient::CreateBuffersForAsyncHostToDevice(
+    absl::Span<const Shape> shapes, PjRtMemorySpace* memory_space) {
+  CHECK_EQ(memory_space->devices().size(), 1);
+  return CreateBuffersForAsyncHostToDevice(shapes, memory_space->devices()[0]);
 }
 
 absl::StatusOr<xla::DeviceAssignment>
@@ -884,7 +894,7 @@ GetStreamExecutorGpuDeviceAllocator(
 
 }  // namespace
 
-Status BuildDistributedDevices(
+absl::Status BuildDistributedDevices(
     std::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
     int node_id, int num_nodes,
@@ -973,6 +983,23 @@ Status BuildDistributedDevices(
   return OkStatus();
 }
 
+std::vector<std::unique_ptr<PjRtStreamExecutorMemorySpace>> BuildMemorySpaces(
+    absl::Span<const std::unique_ptr<PjRtStreamExecutorDevice>> devices) {
+  std::vector<std::unique_ptr<PjRtStreamExecutorMemorySpace>> memory_spaces;
+  for (const auto& device : devices) {
+    if (device->IsAddressable()) {
+      // Use the device id to construct a globally unique memory space id. We
+      // do not promise that memory space ids and device ids are the same.
+      const int id = device->id();
+      auto memory_space =
+          std::make_unique<StreamExecutorGpuHbmMemorySpace>(id, device.get());
+      device->AttachMemorySpace(memory_space.get());
+      memory_spaces.push_back(std::move(memory_space));
+    }
+  }
+  return memory_spaces;
+}
+
 std::string MakeComputeCapabilityString(const se::DeviceDescription* desc) {
   se::GpuComputeCapability cc = desc->gpu_compute_capability();
   if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
@@ -1055,6 +1082,20 @@ int StreamExecutorGpuDevice::core_on_chip() const {
   return description().core_on_chip();
 }
 
+absl::StatusOr<PjRtMemorySpace*> StreamExecutorGpuDevice::default_memory_space()
+    const {
+  return memory_space_by_kind_id(StreamExecutorGpuHbmMemorySpace::kKindId);
+}
+
+const int StreamExecutorGpuHbmMemorySpace::kKindId = []() {
+  uint32_t kind_id = tsl::Fingerprint32(StreamExecutorGpuHbmMemorySpace::kKind);
+  return static_cast<int>(kind_id);
+}();
+
+StreamExecutorGpuHbmMemorySpace::StreamExecutorGpuHbmMemorySpace(
+    int id, PjRtDevice* device)
+    : PjRtStreamExecutorMemorySpace(id, device, kKind, kKindId) {}
+
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options) {
 #if TENSORFLOW_USE_ROCM
@@ -1092,10 +1133,12 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       pjrt_platform_name, std::move(local_device_states), options.node_id,
       options.num_nodes, &devices, gpu_run_options.get(), kv_store,
       options.enable_mock_nccl));
+  auto memory_spaces = BuildMemorySpaces(devices);
 
   return std::unique_ptr<PjRtClient>(std::make_unique<StreamExecutorGpuClient>(
-      pjrt_platform_name, xla_client, std::move(devices), options.node_id,
-      std::move(allocator), std::move(host_memory_allocator),
+      pjrt_platform_name, xla_client, std::move(devices),
+      std::move(memory_spaces), options.node_id, std::move(allocator),
+      std::move(host_memory_allocator),
       options.should_stage_host_to_device_transfers,
       std::move(gpu_run_options)));
 }

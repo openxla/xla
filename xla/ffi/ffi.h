@@ -331,7 +331,7 @@ struct UserData {};
 
 template <typename T>
 struct CtxDecoding<UserData<T>> {
-  using Type = std::shared_ptr<T>;
+  using Type = T*;
 
   static std::optional<Type> Decode(const XLA_FFI_Api* api,
                                     XLA_FFI_ExecutionContext* ctx,
@@ -340,7 +340,8 @@ struct CtxDecoding<UserData<T>> {
         api->internal_api->XLA_FFI_INTERNAL_ExecutionContext_Get(ctx));
 
     if (execution_context == nullptr) {
-      return diagnostic.Emit("Failed to get execution context");
+      return diagnostic.Emit(
+          "Execution context must be not null to fetch UserData parameter");
     }
 
     auto user_data = execution_context->Lookup<T>();
@@ -359,7 +360,7 @@ struct CtxDecoding<UserData<T>> {
 
 template <>
 struct ResultEncoding<Status> {
-  static XLA_FFI_Error* Encode(const XLA_FFI_Api* api, Status status) {
+  static XLA_FFI_Error* Encode(const XLA_FFI_Api* api, absl::Status status) {
     return api->internal_api->XLA_FFI_INTERNAL_Error_Forward(&status);
   }
 };

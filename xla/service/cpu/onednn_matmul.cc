@@ -138,6 +138,9 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
       case OneDnnFusionConfig::GELU_ERF:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_erf, 0.f, 0.f);
         break;
+      case OneDnnFusionConfig::RELU6:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_clip_v2, 0.f, 6.0f);
+        break;
       case OneDnnFusionConfig::BIAS: {
         bias_md = fused_mds.at(fused_operand_idx);
         // Extend bias rank to match result rank.
@@ -156,6 +159,9 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
         }
         fused_operand_idx++;
       } break;
+      case OneDnnFusionConfig::ELU:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_elu, 1.0f, 0.0f);
+        break;
       case OneDnnFusionConfig::BINARY_ADD: {
         auto binary_md = fused_mds.at(fused_operand_idx);
         if (fused_operands_ref) {

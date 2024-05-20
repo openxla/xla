@@ -72,6 +72,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"  // from @llvm-project
 #include "mlir/Target/LLVMIR/Export.h"  // from @llvm-project
 #include "xla/ffi/api/c_api.h"
+#include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -237,7 +238,7 @@ static ConditionalThunkConfig GetConditionalThunkConfig(
   return config;
 }
 
-Status IrEmitterUnnested::EmitConditional(const HloInstruction* instr) {
+absl::Status IrEmitterUnnested::EmitConditional(const HloInstruction* instr) {
   std::vector<ThunkSequence> branch_thunks;
   branch_thunks.reserve(instr->branch_count());
 
@@ -655,7 +656,9 @@ absl::Status IrEmitterUnnested::EmitGemmThunk(
   }
 
   bool deterministic_ops =
-      ir_emitter_context_->debug_options().xla_gpu_deterministic_ops();
+      ir_emitter_context_->debug_options().xla_gpu_deterministic_ops() ||
+      ir_emitter_context_->debug_options()
+          .xla_gpu_exclude_nondeterministic_ops();
 
   TF_ASSIGN_OR_RETURN(
       GemmConfig config,
@@ -1307,12 +1310,6 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
       return absl::OkStatus();
     }
 
-    // TODO(ezhulenev): Custom calls registered with an XLA runtime are not part
-    // of a legacy registry, or an FFI registry. For now we simply ignore them.
-    if (debug_options.xla_gpu_enable_xla_runtime_executable()) {
-      return absl::OkStatus();
-    }
-
     return absl::UnimplementedError(
         absl::StrCat("No registered implementation for custom call to ",
                      call_target_name, " for platform ", platform_name()));
@@ -1411,7 +1408,7 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
         mlir::Attribute attr = mlir::parseAttribute(
             backend_config_str, ir_emitter_context_->mlir_context());
         if (auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr)) {
-          TF_ASSIGN_OR_RETURN(attributes, BuildAttributesMap(dict));
+          TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
           break;
         }
         return absl::InternalError(
@@ -1695,11 +1692,13 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr,
 
 absl::Status IrEmitterUnnested::AssertNonDeterminismIsOkay(
     const std::string& op_name) {
-  if (ir_emitter_context_->debug_options().xla_gpu_deterministic_ops()) {
+  if (ir_emitter_context_->debug_options().xla_gpu_deterministic_ops() ||
+      ir_emitter_context_->debug_options()
+          .xla_gpu_exclude_nondeterministic_ops()) {
     return Unimplemented(
         "HLO instruction %s does not have a deterministic implementation, "
-        "but run-to-run determinism is required by "
-        "--xla_gpu_deterministic_ops.",
+        "but run-to-run determinism is required by --xla_gpu_deterministic_ops "
+        "or --xla_gpu_exclude_nondeterministic_ops.",
         op_name);
   }
   return absl::OkStatus();
@@ -2149,7 +2148,7 @@ absl::Status IrEmitterUnnested::EmitReplicaOrPartitionId(
   return absl::OkStatus();
 }
 
-Status IrEmitterUnnested::EmitCollectivePermute(
+absl::Status IrEmitterUnnested::EmitCollectivePermute(
     const HloCollectivePermuteInstruction* instr) {
   TF_RET_CHECK(instr->operand_count() == 1);
   auto* operand = instr->operand(0);

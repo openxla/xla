@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
-#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/allocation.h"
@@ -943,8 +942,9 @@ void MsaAlgorithm::DumpDebugStringsIfEnabled() const {
   options_.dump_fn("scheduleinfo", instruction_schedule_str_);
 }
 
-Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
-                                             int loop_end_idx, int loop_size) {
+absl::Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
+                                                   int loop_end_idx,
+                                                   int loop_size) {
   // The MemoryBoundLoopOptimizer works with a minimum of three unrolled loop
   // iterations: previous, current, and next. So, we pick the second iteration
   // out of the loop as the current iteration.
@@ -1708,16 +1708,15 @@ MsaAlgorithm::GetInefficientAllocationSites(
           const HloPosition& defining_position =
               allocation->defining_position();
           int64_t accessed =
-              options_.cost_analysis->hlo_cost_analysis().output_bytes_accessed(
+              options_.cost_analysis->base_costs().OutputBytesAccessed(
                   *defining_position.instruction, defining_position.index);
           VLOG(3) << "  pos: " << defining_position.ToString()
                   << ", accessed: " << accessed << " / " << size;
         }
         for (const HloUse& use : allocation->uses()) {
           int64_t accessed =
-              options_.cost_analysis->hlo_cost_analysis()
-                  .operand_bytes_accessed(*use.instruction, use.operand_number,
-                                          use.operand_index);
+              options_.cost_analysis->base_costs().OperandBytesAccessed(
+                  *use.instruction, use.operand_number, use.operand_index);
           VLOG(3) << "  use: " << use.ToString() << ", accessed: " << accessed
                   << " / " << size;
         }
@@ -1745,17 +1744,15 @@ MsaAlgorithm::GetInefficientAllocationSites(
         copy_bytes += size;
       }
       if (position_memory_space == MemorySpace::kAlternate) {
-        use_bytes +=
-            options_.cost_analysis->hlo_cost_analysis().output_bytes_accessed(
-                *allocation->defining_position().instruction,
-                allocation->defining_position().index);
+        use_bytes += options_.cost_analysis->base_costs().OutputBytesAccessed(
+            *allocation->defining_position().instruction,
+            allocation->defining_position().index);
       }
       if (allocation->memory_space() == MemorySpace::kAlternate) {
         for (const HloUse& use : allocation->uses()) {
           use_bytes +=
-              options_.cost_analysis->hlo_cost_analysis()
-                  .operand_bytes_accessed(*use.instruction, use.operand_number,
-                                          use.operand_index);
+              options_.cost_analysis->base_costs().OperandBytesAccessed(
+                  *use.instruction, use.operand_number, use.operand_index);
         }
       }
     }
@@ -1916,7 +1913,7 @@ absl::StatusOr<MsaAlgorithm::Result> MsaAlgorithm::AllocateAllocationValues(
         result_mark(AllocateSegment(request), result);
         if (request.require_no_copy_alternate_mem_allocation &&
             result != Result::kSuccess) {
-          Status failed_precondition = FailedPrecondition(
+          absl::Status failed_precondition = FailedPrecondition(
               "The value defined at %s requires allocation in the alternate "
               "memory, which could not be satisfied. This typically happens "
               "because more pinned buffers are live than the alternate memory "
@@ -3377,7 +3374,7 @@ void MsaAlgorithm::ImportRepackedSlicedAllocation(
           << "; Allocation: " << allocation->ToString();
 }
 
-Status MsaAlgorithm::AreRepackedSlicesValid(
+absl::Status MsaAlgorithm::AreRepackedSlicesValid(
     const RepackAllocationBlock& block) {
   if (!block.repacked_slice_data.has_value()) {
     return OkStatus();
@@ -3626,13 +3623,12 @@ MsaAlgorithm::Result MsaAlgorithm::AllocateSegment(
             << " use benefit = "
             << options_.cost_analysis->GetAlternateMemoryBenefit(
                    request.use->hlo_use);
-    VLOG(3)
-        << "Definition bytes accessed = "
-        << options_.cost_analysis->hlo_cost_analysis().output_bytes_accessed(
-               *defining_position.instruction, defining_position.index)
-        << ", use bytes accessed = "
-        << options_.cost_analysis->hlo_cost_analysis().operand_bytes_accessed(
-               *use.instruction, use.operand_number, use.operand_index);
+    VLOG(3) << "Definition bytes accessed = "
+            << options_.cost_analysis->base_costs().OutputBytesAccessed(
+                   *defining_position.instruction, defining_position.index)
+            << ", use bytes accessed = "
+            << options_.cost_analysis->base_costs().OperandBytesAccessed(
+                   *use.instruction, use.operand_number, use.operand_index);
   }
 
   // There could be a requirement to pin this buffer to default memory either

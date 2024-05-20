@@ -81,11 +81,6 @@ tensorflow::tpu::TpuCoreLocationExternal TpuExecutor::GetCoreLocationExternal()
       ExecutorApiFn()->TpuExecutor_GetCoreLocationFn(executor_));
 }
 
-bool TpuExecutor::AllocateStream(Stream* stream) {
-  return ExecutorApiFn()->TpuExecutor_AllocateStreamFn(
-      executor_, get_stream(stream->implementation()));
-}
-
 void TpuExecutor::DeallocateStream(Stream* stream) {
   ExecutorApiFn()->TpuExecutor_DeallocateStreamFn(
       executor_, get_stream(stream->implementation()));
@@ -100,7 +95,13 @@ bool TpuExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
       get_stream(other->implementation()));
 }
 
-Status TpuExecutor::AllocateEvent(Event* event) { return absl::OkStatus(); }
+Status TpuExecutor::AllocateEvent(Event* event) {
+  StatusHelper status;
+  auto se_event = tpu_platform().LookupEvent(event->implementation());
+  ExecutorApiFn()->TpuExecutor_AllocateEventFn(executor_, se_event,
+                                               status.c_status);
+  return status.status();
+}
 
 Status TpuExecutor::DeallocateEvent(Event* event) {
   tpu_platform().EraseEvent(event->implementation());
@@ -134,20 +135,15 @@ Status TpuExecutor::WaitForEvent(Stream* stream,
   return status.status();
 }
 
-// Implementations for Stream, Event
-// We need to map these implementations to internal equivalents -- thus we
-// allocate the internal Stream and Event operations here, and map
-// the implementations to the internal values. The "wrapper" interfaces are
-// responsible for deallocating the internal value when they are destroyed.
-
-// Called by Stream::Stream
-std::unique_ptr<StreamInterface> TpuExecutor::GetStreamImplementation() {
+absl::StatusOr<std::unique_ptr<Stream>> TpuExecutor::CreateStream(
+    std::optional<std::variant<StreamPriority, int>> priority) {
   SE_Stream* tpu_stream = ExecutorApiFn()->TpuStream_NewFn(executor_);
   auto ptr = std::make_unique<tensorflow::tpu::TpuStream>(tpu_stream);
   tpu_platform().mutex().Lock();
   stream_map()[ptr.get()] = tpu_stream;
   tpu_platform().mutex().Unlock();
-  return ptr;
+  auto stream = std::make_unique<Stream>(this, std::move(ptr));
+  return std::move(stream);
 }
 
 // Called by Event::Event

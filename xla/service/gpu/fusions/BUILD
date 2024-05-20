@@ -1,5 +1,4 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@tsl//tsl/platform:build_config_root.bzl", "tf_cuda_tests_tags")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -37,7 +36,7 @@ cc_library(
 xla_cc_test(
     name = "in_place_dynamic_update_slice_test",
     srcs = ["in_place_dynamic_update_slice_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":fusions",
         ":in_place_dynamic_update_slice",
@@ -85,7 +84,7 @@ cc_library(
 xla_cc_test(
     name = "in_place_dynamic_update_slice_mlir_test",
     srcs = ["in_place_dynamic_update_slice_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":in_place_dynamic_update_slice_mlir",
         ":mlir_emitter_test_base",
@@ -127,6 +126,7 @@ cc_library(
         "//xla:status",
         "//xla:statusor",
         "//xla:util",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:ffi_api",
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
@@ -386,7 +386,7 @@ cc_library(
 xla_cc_test(
     name = "loop_mlir_test",
     srcs = ["loop_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":loop_mlir",
         ":mlir_emitter_test_base",
@@ -429,6 +429,7 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
     ],
 )
@@ -436,7 +437,7 @@ cc_library(
 xla_cc_test(
     name = "scatter_mlir_test",
     srcs = ["scatter_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":mlir_emitter_test_base",
         ":scatter_mlir",
@@ -444,6 +445,7 @@ xla_cc_test(
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -489,7 +491,7 @@ cc_library(
 xla_cc_test(
     name = "transpose_mlir_test",
     srcs = ["transpose_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":mlir_emitter_test_base",
         ":transpose_mlir",
@@ -584,8 +586,10 @@ cc_library(
         "//xla/service/llvm_ir:kernel_support_library",
         "//xla/service/llvm_ir:llvm_loop",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
@@ -664,7 +668,7 @@ xla_test(
     name = "cudnn_test",
     srcs = if_cuda_is_configured(["cudnn_test.cc"]),
     backend_tags = {"gpu": [
-        "requires-gpu-sm80",
+        "requires-gpu-sm90",
     ]},
     backends = [
         "gpu",
@@ -726,14 +730,10 @@ cc_library(
         "//xla:shape_util",
         "//xla:status",
         "//xla:status_macros",
-        "//xla:union_find",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/utils:hlo_query",
         "//xla/service:buffer_assignment",
-        "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
-        "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:ir_emitter",
         "//xla/service/gpu:ir_emitter_context",
@@ -743,8 +743,6 @@ cc_library(
         "//xla/service/gpu:parallel_loop_emitter",
         "//xla/service/gpu:reduction_utils",
         "//xla/service/gpu:target_util",
-        "//xla/service/gpu/model:indexing_analysis",
-        "//xla/service/gpu/model:indexing_map",
         "//xla/service/gpu/runtime:kernel_thunk",
         "//xla/service/gpu/runtime:thunk",
         "//xla/service/llvm_ir:fused_ir_emitter",
@@ -754,7 +752,6 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/stream_executor:device_description",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -765,7 +762,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:ir_headers",
-        "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -818,7 +814,6 @@ xla_cc_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emitter_context",
-        "//xla/service/gpu/model:indexing_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
@@ -835,9 +830,9 @@ cc_library(
     srcs = ["reduction_mlir.cc"],
     hdrs = ["reduction_mlir.h"],
     deps = [
+        ":fusion_emitter",
         ":reduction_base",
         "//xla:shape_util",
-        "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
@@ -851,6 +846,7 @@ cc_library(
         "//xla/service/gpu/model:indexing_map",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -861,25 +857,21 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:TensorDialect",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
 xla_cc_test(
     name = "reduction_mlir_test",
     srcs = ["reduction_mlir_test.cc"],
-    shard_count = 11,
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":mlir_emitter_test_base",
         ":reduction_mlir",
         "//xla:error_spec",
         "//xla/service:gpu_plugin",
-        "//xla/tests:filecheck",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -957,7 +949,7 @@ cc_library(
 xla_cc_test(
     name = "concatenate_mlir_test",
     srcs = ["concatenate_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":concatenate_mlir",
         ":mlir_emitter_test_base",
@@ -1090,7 +1082,7 @@ cc_library(
 xla_cc_test(
     name = "input_slices_mlir_test",
     srcs = ["input_slices_mlir_test.cc"],
-    tags = tf_cuda_tests_tags(),
+    use_gpu = True,
     deps = [
         ":input_slices_mlir",
         ":mlir_emitter_test_base",

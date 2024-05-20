@@ -373,6 +373,7 @@ struct GroupedSharding {
         sharding(std::move(grouped_sharding)),
         subgroup_manual(subgroup_manual) {}
   std::string ToString() const;
+  // TODO(b/316622399): Migrate this to be a TileAssignment.
   std::vector<std::vector<int64_t>> device_groups;
   DimensionVector group_dims;
   DimensionVector group_dim_sizes;
@@ -493,7 +494,7 @@ Shape TileLeafShape(const HloSharding& sharding, const Shape& shape);
 // that assigns layouts based on runtime shapes. Refer to
 // DetermineArgumentLayoutsFromCompileOptions() in
 // tensorflow/compiler/xla/pjrt/utils.h.
-Status CanonicalizeLayoutAfterShardingPropagation(
+absl::Status CanonicalizeLayoutAfterShardingPropagation(
     HloModule* module, bool update_output_layout,
     bool update_parameters_layout);
 

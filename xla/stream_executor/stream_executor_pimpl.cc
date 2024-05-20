@@ -78,11 +78,13 @@ const DeviceDescription& StreamExecutor::GetDeviceDescription() const {
   return *device_description_;
 }
 
-absl::StatusOr<std::unique_ptr<Stream>> StreamExecutor::CreateStream(
-    std::optional<std::variant<StreamPriority, int>> priority) {
-  auto stream = std::make_unique<Stream>(this);
-  TF_RETURN_IF_ERROR(stream->Initialize(priority));
-  return std::move(stream);
+absl::StatusOr<std::unique_ptr<Event>> StreamExecutor::CreateEvent() {
+  auto event = std::make_unique<Event>(this);
+  if (event->Init()) {
+    return std::move(event);
+  }
+
+  return absl::InternalError("Failed to create event.");
 }
 
 }  // namespace stream_executor
