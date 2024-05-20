@@ -228,9 +228,6 @@ class PjRtStreamExecutorMemorySpace : public PjRtMemorySpace {
   PjRtStreamExecutorMemorySpace(int id, PjRtDevice* device,
                                 absl::string_view kind, int kind_id);
 
-  // Must set client exactly once.
-  void SetClient(PjRtClient* client);
-
   PjRtClient* client() const override { return device_->client(); }
 
   absl::Span<PjRtDevice* const> devices() const override {
@@ -262,7 +259,6 @@ class PjRtStreamExecutorClient : public PjRtClient {
   explicit PjRtStreamExecutorClient(
       std::string platform_name, LocalClient* client,
       std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices,
-      std::vector<std::unique_ptr<PjRtStreamExecutorMemorySpace>> memory_spaces,
       int process_index, std::unique_ptr<se::DeviceMemoryAllocator> allocator,
       std::unique_ptr<tsl::Allocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
@@ -506,8 +502,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
   std::vector<PjRtDevice*> addressable_devices_;
   int process_index_;
 
-  std::vector<std::unique_ptr<PjRtStreamExecutorMemorySpace>>
-      owned_memory_spaces_;
+  std::vector<std::unique_ptr<PjRtMemorySpace>> owned_memory_spaces_;
   // Pointers to `owned_memory_spaces_`.
   std::vector<PjRtMemorySpace*> memory_spaces_;
 
@@ -867,7 +862,7 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
   PjRtStreamExecutorClient* const client_;
   const Shape on_device_shape_;
   PjRtStreamExecutorDevice* const device_;
-  PjRtStreamExecutorMemorySpace* const memory_space_;
+  PjRtMemorySpace* const memory_space_;
 
   mutable absl::Mutex mu_;
   std::shared_ptr<TrackedDeviceBuffer> device_buffer_ ABSL_GUARDED_BY(mu_);
@@ -875,6 +870,25 @@ class PjRtStreamExecutorBuffer : public PjRtBuffer {
   std::array<int, ScopedHold::Type::kMaxValue> holds_ ABSL_GUARDED_BY(mu_);
   PjRtFuture<>::Promise definition_promise_ ABSL_GUARDED_BY(mu_);
 };
+
+// Allocates the device buffers for a buffer that will be used as the
+// destination of a copy, either from the host or another device. copy_stream
+// may be nullptr, e.g., when allocating a buffer for a cross-host copy. If the
+// buffer is a tuple then the tuple tables are allocated, and all necessary
+// synchronization for them is dealt with, before the buffer is returned.
+//
+// It is safe to delete the returned PjRtBuffer without further
+// synchronization if an error occurs before the buffer is used.
+//
+// The caller may optionally provide a definition event to be recorded in
+// the buffer.
+// TODO(phawkins): replace on_host_shape here with on_device_shape.
+absl::StatusOr<std::unique_ptr<PjRtStreamExecutorBuffer>>
+AllocateDestinationBuffer(
+    const Shape& on_host_shape, PjRtDevice* device,
+    LocalDeviceState* local_device, se::Stream* copy_stream,
+    bool is_uninitialized_create, PjRtStreamExecutorClient* client,
+    std::shared_ptr<BufferSequencingEvent> definition_event = nullptr);
 
 // Wraps one or more XLA LocalExecutables (one per partition, as specified by
 // the build options).

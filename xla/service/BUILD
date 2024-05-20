@@ -7785,6 +7785,7 @@ xla_cc_test(
     name = "xla_aot_compile_stablehlo_cpu_test",
     srcs = ["xla_aot_compile_stablehlo_cpu_test.cc"],
     data = [":xla_aot_compile_stablehlo_test_cpu_executable"],
+    tags = ["no_aarch64"],  # b/341355246
     deps = [
         ":cpu_plugin",
         ":platform_util",
