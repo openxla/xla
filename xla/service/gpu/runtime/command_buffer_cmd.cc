@@ -952,12 +952,9 @@ absl::Status CaseCmd::Record(const Thunk::ExecuteParams& execute_params,
 }
 
 bool CaseCmd::force_update() {
-  for (auto& seq : branches_commands_) {
-    if (seq.force_update()) {
-      return true;
-    }
-  }
-  return false;
+  return absl::c_any_of(branches_commands_, [](const auto& seq) {
+    return seq.force_update();
+  });
 }
 
 CommandBufferCmd::BufferUsageVector CaseCmd::buffers() {
