@@ -585,6 +585,10 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // convolution.
   absl::StatusOr<bool> SwapConvOperands(HloInstruction* convolution);
 
+  // Checks if the given convolution is in BF16 and is oneDNN rewritable, if not
+  // then it promotes the data type of the convolution to F32
+  absl::StatusOr<bool> IsOneDnnRewritableBF16Conv(HloInstruction** convolution);
+
   // Tries to use a kDot in place of the given convolution.
   absl::StatusOr<bool> SimplifyConvToDot(HloInstruction* convolution);
   // Tries to use a multiplication in place of the given convolution.
