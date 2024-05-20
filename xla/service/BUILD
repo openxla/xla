@@ -145,6 +145,7 @@ cc_library(
     deps = [
         ":hlo_domain_map",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
     ],
 )
 
@@ -2649,7 +2650,6 @@ cc_library(
     name = "collective_combiner_utils",
     hdrs = ["collective_combiner_utils.h"],
     deps = [
-        ":hlo_domain_map",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
@@ -2658,6 +2658,10 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -3624,12 +3628,14 @@ cc_library(
         ":hlo_pass",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
+        "//xla:status",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -7427,9 +7433,11 @@ xla_cc_test(
     name = "scatter_simplifier_test",
     srcs = ["scatter_simplifier_test.cc"],
     deps = [
+        ":hlo_parser",
         ":hlo_pass",
         ":hlo_pass_pipeline",
         ":scatter_simplifier",
+        "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
     ],
@@ -7465,7 +7473,11 @@ xla_cc_test(
     ],
     deps = [
         ":layout_normalization",
+        ":scatter_simplifier",
+        "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -7490,6 +7502,7 @@ cc_library(
     deps = [
         ":hlo_creation_utils",
         "//xla:permutation_util",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/types:span",
     ],
@@ -7771,6 +7784,7 @@ xla_cc_test(
     name = "xla_aot_compile_stablehlo_cpu_test",
     srcs = ["xla_aot_compile_stablehlo_cpu_test.cc"],
     data = [":xla_aot_compile_stablehlo_test_cpu_executable"],
+    tags = ["no_aarch64"],  # b/341355246
     deps = [
         ":cpu_plugin",
         ":platform_util",

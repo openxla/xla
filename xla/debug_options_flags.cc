@@ -251,6 +251,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_require_complete_aot_autotune_results(false);
 
+  opts.set_xla_gpu_enable_host_memory_offloading(false);
+
   return opts;
 }
 
@@ -1011,6 +1013,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_deterministic_ops(),
                 "Guarantees run-to-run determinism on GPU."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_exclude_nondeterministic_ops",
+      bool_setter_for(&DebugOptions::set_xla_gpu_exclude_nondeterministic_ops),
+      debug_options->xla_gpu_exclude_nondeterministic_ops(),
+      "Excludes non-deterministic ops from compiled executables."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_disable_async_collectives",
       setter_for_xla_gpu_disable_async_collectives,
       collective_op_types_to_string(
@@ -1670,6 +1677,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_reduce_window_rewrite_base_length),
       debug_options->xla_reduce_window_rewrite_base_length(),
       "Base length to rewrite the reduce window to, no rewrite if set to 0."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_host_memory_offloading",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_host_memory_offloading),
+      debug_options->xla_gpu_enable_host_memory_offloading(),
+      "Whether to trigger host memory offloading on a device."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

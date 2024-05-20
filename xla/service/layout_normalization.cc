@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/permutation_util.h"
@@ -58,7 +59,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
       : custom_call_transformer_(custom_call_transformer) {}
 
   // To handle a constant, just give the literal data a new layout.
-  Status HandleConstant(HloInstruction* hlo) override {
+  absl::Status HandleConstant(HloInstruction* hlo) override {
     Literal& literal = *Cast<HloConstantInstruction>(hlo)->mutable_literal();
     if (literal.shape().IsTuple()) {
       // TODO(cheshire): Tuple constants.
@@ -83,7 +84,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
   // Slice is layout-preserving, so handling is analoguous to elementwise unary,
   // and transposing the elements inside the metadata.
-  Status HandleSlice(HloInstruction* hlo) override {
+  absl::Status HandleSlice(HloInstruction* hlo) override {
     HloInstruction* operand = hlo->mutable_operand(0);
     const Shape& s = hlo->shape();
     const Shape& operand_shape = operand->shape();
@@ -118,7 +119,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //
   // Bitcast to descending layout and then bitcast back to make sure that shapes
   // match.
-  Status DefaultAction(HloInstruction* hlo) override {
+  absl::Status DefaultAction(HloInstruction* hlo) override {
     if (!hlo->user_count()) {
       // The local postcondition does not have to apply to the case when there
       // are no users.
@@ -144,7 +145,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //
   // With respect to layouts, concatenations are simple, as they are
   // layout-preserving.
-  Status HandleConcatenate(HloInstruction* hlo) override {
+  absl::Status HandleConcatenate(HloInstruction* hlo) override {
     const Shape& s = hlo->shape();
     int64_t orig_concat_dim = hlo->dimensions(0);
 
@@ -166,7 +167,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleReduceWindow(HloInstruction* hlo) override {
+  absl::Status HandleReduceWindow(HloInstruction* hlo) override {
     if (hlo->shape().IsTuple()) {
       // TODO(cheshire): Handle variadic reductions.
       return OkStatus();
@@ -212,7 +213,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   // Into:
   //
   //  A{I} -> broadcast[S']{I} -> bitcast[S]{L'}
-  Status HandleBroadcast(HloInstruction* hlo) override {
+  absl::Status HandleBroadcast(HloInstruction* hlo) override {
     VLOG(3) << "Input broadcast: " << hlo->ToString();
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
@@ -240,7 +241,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleIota(HloInstruction* hlo) override {
+  absl::Status HandleIota(HloInstruction* hlo) override {
     VLOG(3) << "Input iota: " << hlo->ToString();
     auto s = hlo->shape();
     auto normalized_shape = Normalize(s);
@@ -258,7 +259,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   }
 
   // BitcastConvert is only layout-preserving if it doesn't change the rank.
-  Status HandleBitcastConvert(HloInstruction* hlo) override {
+  absl::Status HandleBitcastConvert(HloInstruction* hlo) override {
     // If the rank isn't changing this is just an unary op.
     if (hlo->shape().rank() == hlo->operand(0)->shape().rank()) {
       return HandleElementwiseUnary(hlo);
@@ -277,7 +278,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //    H_0{I} -> U{I} -> B{L}
   //
   // where {I} denotes default layout.
-  Status HandleElementwiseUnary(HloInstruction* hlo) override {
+  absl::Status HandleElementwiseUnary(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
     auto operand_shape = operand->shape();
@@ -331,7 +332,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //         B{I} - bitcast{L}
   //        /
   //  A2{I}
-  Status HandleElementwiseBinary(HloInstruction* hlo) override {
+  absl::Status HandleElementwiseBinary(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto a = hlo->mutable_operand(0);
     auto b = hlo->mutable_operand(1);
@@ -363,7 +364,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //
   // A{I} -> R [S']{I} -> bitcast[S]{L2}
   //
-  Status HandleReshape(HloInstruction* hlo) override {
+  absl::Status HandleReshape(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
     TF_RET_CHECK(ShapeUtil::ReshapeIsBitcast(s, operand->shape()));
@@ -374,6 +375,127 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     SetVisited(*new_reshape);
     auto bc_to_orig = MakeBitcastHlo(new_reshape, s);
     TF_RETURN_IF_ERROR(ReplaceInstruction(hlo, bc_to_orig));
+    return OkStatus();
+  }
+
+  // Scatter is layout-preserving regarding the scatter operands, so we only
+  // have to permute values inside the ScatterDimensionNumbers.
+  Status HandleScatter(HloInstruction* hlo) override {
+    auto* scatter = Cast<HloScatterInstruction>(hlo);
+    std::vector<HloInstruction*> normalized_operands;
+    normalized_operands.reserve(scatter->scatter_operand_count());
+    Shape operand_shape = scatter->scatter_operands().front()->shape();
+    for (HloInstruction* operand : scatter->scatter_operands()) {
+      if (operand->shape().layout() != operand_shape.layout()) {
+        return FailedPrecondition(
+            "All scatter operands must have the same layout");
+      }
+      TF_ASSIGN_OR_RETURN(auto normalized_operand, GetNormalizedInput(operand));
+      normalized_operands.push_back(normalized_operand);
+    }
+    std::vector<HloInstruction*> normalized_updates;
+    normalized_updates.reserve(scatter->scatter_operand_count());
+    Shape update_shape = scatter->scatter_updates().front()->shape();
+    for (HloInstruction* operand : scatter->scatter_updates()) {
+      if (operand->shape().layout() != update_shape.layout()) {
+        return FailedPrecondition(
+            "All scatter updates must have the same layout");
+      }
+      TF_ASSIGN_OR_RETURN(auto normalized_update, GetNormalizedInput(operand));
+      normalized_updates.push_back(normalized_update);
+    }
+
+    // Since normalization might reorder the 'scatter_updates' operands
+    // differently than the 'scatter_indices' update, we have no way to specify
+    // the order of 'scatter' (batch) dimensions, as that is not an attribute in
+    // ScatterDimensionNumbers. Scatter implicitly assumes that the 'scatter'
+    // dimensions appear in the same order in 'scatter_updates' and
+    // 'scatter_indices'. So we require that there is just a single
+    // 'scatter' dimension. This is ensured by the ScatterSimplifier pass.
+    const auto& dims = scatter->scatter_dimension_numbers();
+    if (scatter->scatter_updates().front()->shape().rank() -
+            dims.update_window_dims_size() >
+        1) {
+      return FailedPrecondition(
+          "There should be just a single scatter dimension. Make sure to run "
+          "ScatterSimplifier before LayoutNormalization");
+    }
+    TF_ASSIGN_OR_RETURN(auto normalized_indices,
+                        GetNormalizedInput(scatter->scatter_indices()));
+
+    // The scatter operands are normalized by applying a permutation such that
+    // perm(layout) = standard layout -> inverse layout permutation is applied.
+    auto indices_permutation = InversePermutation(
+        ToTransposeDimensions(scatter->scatter_indices()->shape().layout()));
+
+    auto layout_permutation =
+        ToTransposeDimensions(scatter->scatter_operands()[0]->shape().layout());
+    auto operand_permutation = InversePermutation(layout_permutation);
+
+    auto update_permutation = InversePermutation(
+        ToTransposeDimensions(scatter->scatter_updates()[0]->shape().layout()));
+
+    // scatter_dims_to_operand_dims -> mapping from scatter dimensions to
+    // operand dimensions. scatter dimension i corresponds to
+    // scatter_dims_to_operand_dims[i] operand dimension.
+
+    ScatterDimensionNumbers normalized_dims;
+    normalized_dims.set_index_vector_dim(
+        indices_permutation[dims.index_vector_dim()]);
+    for (int64_t dim : dims.scatter_dims_to_operand_dims()) {
+      normalized_dims.add_scatter_dims_to_operand_dims(
+          operand_permutation[dim]);
+    }
+    std::vector<int64_t> normalized_update_window_dims;
+    normalized_update_window_dims.reserve(dims.update_window_dims_size());
+    for (int64_t dim : dims.update_window_dims()) {
+      normalized_update_window_dims.push_back(update_permutation[dim]);
+    }
+
+    // Now reorder 'normalized_update_window_dims' and 'inserted_window_dims'
+    // according to the output permutation, so that the window dimensions again
+    // appear in the same order as in the output. First we need to build a
+    // combined array of window dimensions. Note: 'inserted_window_dims' and
+    // 'update_window_dims' must be sorted according to shape inference/hlo
+    // verifier. We will temporarily create an unsorted update_window_dims
+    // attribute and rely on ScatterSimplifier to clean this up.
+    std::vector<int64_t> window_dimensions(operand_permutation.size());
+    for (int64_t i = 0, j = 0, k = 0; i < window_dimensions.size(); ++i) {
+      if (j < dims.inserted_window_dims_size() &&
+          dims.inserted_window_dims(j) == i) {
+        window_dimensions[i] = -1;
+        ++j;
+      } else {
+        window_dimensions[i] = normalized_update_window_dims[k];
+        ++k;
+      }
+    }
+    std::vector<int64_t> permuted_window_dimensions =
+        ComposePermutations(window_dimensions, layout_permutation);
+    for (int64_t i = 0; i < permuted_window_dimensions.size(); ++i) {
+      if (permuted_window_dimensions[i] == -1) {
+        normalized_dims.add_inserted_window_dims(i);
+      } else {
+        normalized_dims.add_update_window_dims(permuted_window_dimensions[i]);
+      }
+    }
+
+    auto normalized_shape = normalized_operands.front()->shape();
+    if (scatter->shape().IsTuple()) {
+      std::vector<Shape> tuple_shapes;
+      tuple_shapes.reserve(normalized_operands.size());
+      for (HloInstruction* operand : normalized_operands) {
+        tuple_shapes.push_back(operand->shape());
+      }
+      normalized_shape = ShapeUtil::MakeTupleShape(tuple_shapes);
+    }
+    auto normalized_scatter = hlo->AddInstruction(HloInstruction::CreateScatter(
+        normalized_shape, normalized_operands, normalized_indices,
+        normalized_updates, scatter->to_apply(), normalized_dims,
+        scatter->indices_are_sorted(), scatter->unique_indices()));
+    SetVisited(*normalized_scatter);
+    auto bc_to_orig = MakeBitcastHlo(normalized_scatter, scatter->shape());
+    TF_RETURN_IF_ERROR(ReplaceInstruction(scatter, bc_to_orig));
     return OkStatus();
   }
 
@@ -401,7 +523,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //
   // where dim_0 is dimensions of the original transposition, and `o` denotes
   // permutation composition.
-  Status HandleTranspose(HloInstruction* hlo) override {
+  absl::Status HandleTranspose(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
     auto operand_s = operand->shape();
@@ -442,7 +564,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   //
   // Where S' is normalization of [S]{L'}, and transposition dimensions are
   // given by L'.
-  Status HandleCopy(HloInstruction* hlo) override {
+  absl::Status HandleCopy(HloInstruction* hlo) override {
     VLOG(3) << "Processing copy: " << hlo->ToString();
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
@@ -461,7 +583,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
   }
 
   // The reverse HLO has a list of dimensions it reverses.
-  Status HandleReverse(HloInstruction* hlo) override {
+  absl::Status HandleReverse(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
     TF_ASSIGN_OR_RETURN(auto a0, GetNormalizedInput(operand));
@@ -484,7 +606,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
   // Padding is layout-preserving, so we only have to permute values inside the
   // padding config.
-  Status HandlePad(HloInstruction* hlo) override {
+  absl::Status HandlePad(HloInstruction* hlo) override {
     auto s = hlo->shape();
     auto operand = hlo->mutable_operand(0);
     auto padded_by = hlo->mutable_operand(1);
@@ -515,7 +637,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleCustomCall(HloInstruction* hlo) override {
+  absl::Status HandleCustomCall(HloInstruction* hlo) override {
     if (custom_call_transformer_) {
       TF_ASSIGN_OR_RETURN(
           std::optional<HloInstruction*> transformed_custom_call,
@@ -531,14 +653,14 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
   // Pushes down bitcast across the ternary select operation: same logic as
   // HandleElementwiseBinary.
-  Status HandleSelect(HloInstruction* hlo) override {
+  absl::Status HandleSelect(HloInstruction* hlo) override {
     return HandleTernary(hlo);
   }
 
   // DyanmicSlice is layout-preserving, so handling is analoguous to elementwise
   // unary, and transposing the elements inside the metadata, as well as the
   // operands specifying dimension sizes.
-  Status HandleDynamicSlice(HloInstruction* hlo) override {
+  absl::Status HandleDynamicSlice(HloInstruction* hlo) override {
     const Shape& s = hlo->shape();
     HloInstruction* operand = hlo->mutable_operand(0);
     const Shape& operand_shape = operand->shape();
@@ -570,7 +692,7 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleDynamicUpdateSlice(HloInstruction* hlo) override {
+  absl::Status HandleDynamicUpdateSlice(HloInstruction* hlo) override {
     const Shape& s = hlo->shape();
     HloInstruction* operand = hlo->mutable_operand(0);
     HloInstruction* update = hlo->mutable_operand(1);
@@ -599,13 +721,13 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return OkStatus();
   }
 
-  Status HandleClamp(HloInstruction* hlo) override {
+  absl::Status HandleClamp(HloInstruction* hlo) override {
     return HandleTernary(hlo);
   }
 
  private:
   // Replace clamp/select ternary operation with a normalized one.
-  Status HandleTernary(HloInstruction* hlo) {
+  absl::Status HandleTernary(HloInstruction* hlo) {
     Shape s = hlo->shape();
     HloOpcode opcode = hlo->opcode();
     TF_RET_CHECK(opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect);

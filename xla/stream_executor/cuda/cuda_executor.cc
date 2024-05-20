@@ -709,7 +709,8 @@ absl::Status GpuExecutor::Memcpy(Stream* stream, void* host_dst,
   bool ok = GpuDriver::AsynchronousMemcpyD2H(context_, host_dst,
                                              AsCudaDevicePtr(gpu_src), size,
                                              AsGpuStreamValue(stream));
-  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return Status.
+  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return
+  // absl::Status.
   if (!ok) {
     return absl::InternalError("Failed to memcpy from device to host.");
   }
@@ -721,7 +722,8 @@ absl::Status GpuExecutor::Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
   bool ok = GpuDriver::AsynchronousMemcpyH2D(context_, AsCudaDevicePtr(gpu_dst),
                                              host_src, size,
                                              AsGpuStreamValue(stream));
-  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return Status.
+  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return
+  // absl::Status.
   if (!ok) {
     return absl::InternalError("Failed to memcpy from device to host.");
   }
@@ -754,10 +756,6 @@ bool GpuExecutor::HostCallback(Stream* stream,
   auto* callback = reinterpret_cast<absl::AnyInvocable<void() &&>*>(data);
   std::move (*callback)();
   delete callback;
-}
-
-absl::Status GpuExecutor::AllocateEvent(Event* event) {
-  return AsGpuEvent(event)->Init();
 }
 
 absl::Status GpuExecutor::DeallocateEvent(Event* event) {
@@ -948,8 +946,10 @@ absl::Status FillBlockDimLimit(GpuDeviceHandle device,
   return absl::OkStatus();
 }
 
-std::unique_ptr<EventInterface> GpuExecutor::CreateEventImplementation() {
-  return std::unique_ptr<EventInterface>(new GpuEvent(this));
+absl::StatusOr<std::unique_ptr<Event>> GpuExecutor::CreateEvent() {
+  auto gpu_event = std::make_unique<GpuEvent>(this);
+  TF_RETURN_IF_ERROR(gpu_event->Init());
+  return std::make_unique<Event>(this, std::move(gpu_event));
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> GpuExecutor::CreateStream(

@@ -217,6 +217,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_driver",
         "//xla/stream_executor/cuda:cuda_executor",
     ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
         "@local_config_rocm//rocm:rccl",
         "//xla/stream_executor/rocm:rocm_driver",
         "//xla/stream_executor/rocm:rocm_executor",
@@ -527,7 +528,10 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
-    ] + if_rocm_is_configured(["//xla/service/gpu:stream_executor_util"]),
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "//xla/service/gpu:stream_executor_util",
+    ]),
 )
 
 cc_library(
@@ -844,6 +848,7 @@ cc_library(
         ":nccl_api",
         ":nccl_collective_thunk",
         ":nccl_p2p_thunk_common",
+        ":thunk",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -851,11 +856,11 @@ cc_library(
         "//xla/service:global_device_id",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu/runtime:thunk",
         "//xla/stream_executor",
         "//xla/translate/mhlo_to_hlo:attribute_exporter",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
@@ -902,7 +907,6 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -1116,6 +1120,40 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "for_all_thunks",
+    srcs = ["for_all_thunks.cc"],
+    hdrs = ["for_all_thunks.h"],
+    deps = [
+        ":address_computation_thunk",
+        ":command_buffer_thunk",
+        ":conditional_thunk",
+        ":sequential_thunk",
+        ":thunk",
+        ":while_thunk",
+        "@com_google_absl//absl/functional:function_ref",
+        "@tsl//tsl/platform:casts",
+    ],
+)
+
+cc_test(
+    name = "for_all_thunks_test",
+    srcs = ["for_all_thunks_test.cc"],
+    deps = [
+        ":address_computation_thunk",
+        ":command_buffer_cmd",
+        ":command_buffer_thunk",
+        ":conditional_thunk",
+        ":for_all_thunks",
+        ":sequential_thunk",
+        ":thunk",
+        ":while_thunk",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

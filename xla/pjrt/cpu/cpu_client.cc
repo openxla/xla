@@ -304,11 +304,12 @@ TfrtCpuDevice::TfrtCpuDevice(int id, int process_index, int local_hardware_id,
       max_inflight_computations_semaphore_(
           /*capacity=*/max_inflight_computations) {}
 
-Status TfrtCpuDevice::TransferToInfeed(const LiteralSlice& literal) {
+absl::Status TfrtCpuDevice::TransferToInfeed(const LiteralSlice& literal) {
   return TransferLiteralToInfeedOnCpu(local_hardware_id(), literal);
 }
 
-Status TfrtCpuDevice::TransferFromOutfeed(MutableBorrowingLiteral literal) {
+absl::Status TfrtCpuDevice::TransferFromOutfeed(
+    MutableBorrowingLiteral literal) {
   return TransferLiteralFromOutfeedOnCpu(local_hardware_id(), literal);
 }
 
@@ -410,7 +411,9 @@ static tsl::ThreadOptions GetThreadOptions() {
   tsl::ThreadOptions thread_options;
   // On Mac OS the default stack size is 512KiB, which is too small for some
   // BLAS and LAPACK functions (https://github.com/google/jax/issues/20428).
-  thread_options.stack_size = 2 * 1024 * 1024;
+  // On Linux we also observed that 2MB wasn't enough to run some OpenBLAS
+  // functions.
+  thread_options.stack_size = 8 * 1024 * 1024;
   return thread_options;
 }
 
@@ -901,7 +904,7 @@ TfrtCpuClient::CreateViewOfDeviceBuffer(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
-    Status error, const Shape& shape, PjRtDevice* device) {
+    absl::Status error, const Shape& shape, PjRtDevice* device) {
   if (device->client() != this) {
     return absl::InvalidArgumentError("Device is not attached to this client");
   }
@@ -918,7 +921,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
-    Status error, const Shape& shape, PjRtMemorySpace* memory) {
+    absl::Status error, const Shape& shape, PjRtMemorySpace* memory) {
   return CreateErrorBuffer(std::move(error), shape, memory->devices()[0]);
 }
 
@@ -1169,11 +1172,11 @@ absl::StatusOr<std::optional<std::string>> TfrtCpuExecutable::Fingerprint()
   return std::optional<std::string>();
 }
 
-Status TfrtCpuExecutable::SetUpDonation(bool tuple_inputs) {
+absl::Status TfrtCpuExecutable::SetUpDonation(bool tuple_inputs) {
   TF_ASSIGN_OR_RETURN(parameters_that_must_be_donated_,
                       ComputeParametersThatMustBeDonated(
                           *cpu_executable_->shared_module(), tuple_inputs));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 namespace {
@@ -1309,7 +1312,7 @@ static absl::InlinedVector<BufferInfo, 4> CreateResultBufferInfo(
   return output_buffer_info;
 }
 
-Status TfrtCpuExecutable::CheckBufferCompatibilities(
+absl::Status TfrtCpuExecutable::CheckBufferCompatibilities(
     absl::Span<std::pair<bool, TrackedTfrtCpuDeviceBuffer*> const>
         input_buffers) const {
   if (input_buffers.size() != input_buffer_sizes_in_bytes_.size()) {
@@ -1327,7 +1330,7 @@ Status TfrtCpuExecutable::CheckBufferCompatibilities(
           i, input_buffer_sizes_in_bytes_[i], buffer->BufferSizes()[0]);
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
@@ -1407,7 +1410,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     }
 
     TrackedTfrtCpuDeviceBuffer* tracked_buffer;
-    auto get_buffer = [&](int i) -> Status {
+    auto get_buffer = [&](int i) -> absl::Status {
       bool must_donate = donate_it != parameters_that_must_be_donated_.end() &&
                          *donate_it == i;
       TF_RETURN_IF_ERROR(TestBufferDonationClashes(
@@ -1434,7 +1437,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
           tracked_buffer = donation_transaction->device_buffer();
           tracked_buffers.emplace_back(/*can_donate=*/true, tracked_buffer);
           donation_transactions.push_back(std::move(*donation_transaction));
-          return OkStatus();
+          return absl::OkStatus();
         }
       }
       tracked_buffer = tfrt_buffer->AcquireUsage(execute_event);
@@ -1442,7 +1445,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
         return InvalidArgument(
             "Invalid buffer passed: buffer has been deleted or donated.");
       tracked_buffers.emplace_back(/*can_donate=*/false, tracked_buffer);
-      return OkStatus();
+      return absl::OkStatus();
     };
     TF_RETURN_IF_ERROR(get_buffer(i));
 
@@ -1528,6 +1531,9 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     if (!last_enqueue_event.IsAvailable()) {
       input_deps.push_back(std::move(last_enqueue_event));
     }
+  }
+  if (options.context != nullptr) {
+    run_options.set_ffi_execution_context(&options.context->ffi_context());
   }
 
   bool execute_inline = cheap_computation_ || !client_->asynchronous_;
@@ -1833,7 +1839,7 @@ TfrtCpuExecutable::Execute(
     absl::Mutex mu;
     int running = num_addressable_devices;
     int failed = 0;
-    Status first_failure_status;
+    absl::Status first_failure_status;
 
     for (int i = 0; i < num_addressable_devices; ++i) {
       const int replica = addressable_device_logical_ids_[i].replica;

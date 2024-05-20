@@ -42,6 +42,7 @@ limitations under the License.
 
 namespace stream_executor {
 
+class Event;
 class Stream;
 
 // Interface which defines the method for interacting with an accelerator device
@@ -64,6 +65,9 @@ class StreamExecutorInterface {
   virtual absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
       std::optional<std::variant<StreamPriority, int>> priority =
           std::nullopt) = 0;
+
+  // Creates and initializes an Event.
+  virtual absl::StatusOr<std::unique_ptr<Event>> CreateEvent() = 0;
 
   // Obtains metadata about the underlying device.
   // The value is cached on first use.
@@ -100,8 +104,8 @@ class StreamExecutorInterface {
   // Loads a module for the platform this StreamExecutor is acting upon.
   //
   // `spec` describes the module to be loaded.  On success writes the handle for
-  // the loaded module to `module_handle` and returns OkStatus().  Otherwise,
-  // returns the error which has occurred.
+  // the loaded module to `module_handle` and returns absl::OkStatus().
+  // Otherwise, returns the error which has occurred.
   virtual absl::Status LoadModule(const MultiModuleLoaderSpec& spec,
                                   ModuleHandle* module_handle) {
     return absl::UnimplementedError("Not Implemented");
@@ -259,9 +263,6 @@ class StreamExecutorInterface {
   virtual bool HostCallback(Stream* stream,
                             absl::AnyInvocable<absl::Status() &&> callback) = 0;
 
-  // Performs platform-specific allocation and initialization of an event.
-  virtual absl::Status AllocateEvent(Event* event) = 0;
-
   // Performs platform-specific deallocation and cleanup of an event.
   virtual absl::Status DeallocateEvent(Event* event) = 0;
 
@@ -352,10 +353,6 @@ class StreamExecutorInterface {
   // Returns null if there was an error initializing the DNN support for the
   // underlying platform.
   virtual dnn::DnnSupport* AsDnn() { return nullptr; }
-
-  // Each call creates a new instance of the platform-specific implementation of
-  // the corresponding interface type.
-  virtual std::unique_ptr<EventInterface> CreateEventImplementation() = 0;
 
   // Creates a new Kernel object.
   // TODO(klucke) Combine with GetKernel.
