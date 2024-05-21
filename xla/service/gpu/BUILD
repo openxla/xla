@@ -1832,6 +1832,7 @@ xla_cc_test(
     use_gpu = True,
     deps = [
         ":dot_sparsity_rewriter",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
@@ -2634,6 +2635,7 @@ xla_cc_test(
         ":gpu_device_info_for_tests",
         ":gpu_fusible",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:pattern_matcher",
@@ -4434,6 +4436,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
     ],
 )
@@ -5318,7 +5321,7 @@ xla_test(
             "@tsl//tsl/platform:statusor",
         ],
         ["@tsl//tsl/platform:test_main"],  # b/317293391
-    ),
+    ) + ["//xla:xla_data_proto_cc"],
 )
 
 cc_library(
