@@ -2922,9 +2922,12 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
         PrecisionConfig::Algorithm_Name(hlo->precision_config().algorithm())));
   }
   const HloDotInstruction* dot = Cast<HloDotInstruction>(hlo);
+
+  #if GOOGLE_CUDA
   if (dot->sparse_operands()) {
     return Unimplemented("Sparse dot is supported by Triton emitter only.");
   }
+  #endif  // GOOGLE_CUDA
 
   auto lhs_generator = operand_to_generator.at(hlo->operand(0));
   auto rhs_generator = operand_to_generator.at(hlo->operand(1));
