@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/container/node_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/union_find.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -134,7 +136,7 @@ ReductionGroups GroupDisjointReductions(const HloFusionAnalysis& analysis,
     disjoint_sets[root].Get() = root;
     reachable_outputs[root].insert(root);
     result.is_reduction_root.push_back(
-        IsRealReductionHero(root.instruction(), *hero));
+        IsRealReductionHero(root.instruction(), hero.instruction()));
     if (result.is_reduction_root.back()) {
       roots_with_reduction.insert(root);
     } else if (first_non_reduction_root) {
@@ -337,7 +339,7 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
     auto map = ComposeIndexingMaps(
         GetIndexingMapForTiling(tiling_, ctx),
         GetBitcastMap(tiling_.GetXlaShape(),
-                      analysis_.fusion_roots()[root_index]->shape(), ctx));
+                      analysis_.fusion_root(root_index).shape(), ctx));
     AddGroupIdConstraint(map, root_index, ctx);
     return map;
   }
@@ -345,8 +347,7 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToOutputIndexing(
 
   auto block_offsets = GetBlockOffsetsForTiling(tiling_, ctx);
   auto thread_ids = DelinearizeInBoundsIndex(mlir::getAffineDimExpr(0, ctx),
-                                             tiling_.GetThreadsPerBlock(),
-                                             tiling_.GetThreadStrides());
+                                             tiling_.GetThreadsPerBlock());
 
   auto physical_shape =
       ShapeUtil::DeleteDimensions(hero.dimensions(), hero.operand(0)->shape());
@@ -432,8 +433,8 @@ std::optional<IndexingMap> ReductionInfo::ComputeThreadIdToInputIndexing(
   if (!groups_.is_reduction_root[root_index]) {
     return ComposeIndexingMaps(
         *ComputeThreadIdToOutputIndexing(root_index, ctx),
-        *ComputeOutputToInputIndexing(analysis_.fusion_roots()[root_index], 0,
-                                      ctx)
+        *ComputeOutputToInputIndexing(
+             &analysis_.fusion_root(root_index).instruction(), 0, ctx)
              .indexing_maps[hero_operand_index]
              .begin());
   }
