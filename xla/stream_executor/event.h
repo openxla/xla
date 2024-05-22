@@ -17,13 +17,11 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_EVENT_H_
 
 #include <cstdint>
-#include <memory>
 
 #include "absl/status/status.h"
 
 namespace stream_executor {
 
-class EventInterface;
 class StreamExecutorInterface;
 
 // The Event class, when supported by a platform, enables low-overhead status
@@ -43,33 +41,27 @@ class Event {
     kComplete,
   };
 
-  Event(StreamExecutorInterface* stream_exec,
-        std::unique_ptr<EventInterface> implementation);
+  explicit Event(StreamExecutorInterface* stream_exec);
 
   // Releases any resources held by the Event object.
-  ~Event();
+  virtual ~Event() = default;
 
   // Returns the current Status for the event.
   Status PollForStatus();
 
   // Blocks `stream` on this event. `stream` is a raw platform-specific
   // stream (e.g. GpuStreamHandle).
-  absl::Status WaitForEventOnExternalStream(std::intptr_t stream);
+  virtual absl::Status WaitForEventOnExternalStream(std::intptr_t stream) {
+    return absl::UnimplementedError("Not supported for this Event.");
+  }
 
-  // Returns a pointer to the underlying platform-specific implementation.
-  EventInterface* implementation() { return implementation_.get(); }
-
-  Event(Event&&);
-  Event& operator=(Event&&);
+  Event(Event&&) = default;
+  Event& operator=(Event&&) = default;
 
  private:
   // Pointer to the StreamExecutorInterface interface used to create this
   // object. Not owned.
   StreamExecutorInterface* stream_exec_;
-
-  // Pointer to the platform-specific EventInterface implementation underlying
-  // the object. Owned.
-  std::unique_ptr<EventInterface> implementation_;
 
   Event(const Event&) = delete;
   void operator=(const Event&) = delete;

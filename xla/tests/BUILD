@@ -100,6 +100,7 @@ cc_library(
         "//xla/service:hlo_dataflow_analysis",
         "//xla/service:hlo_verifier",
         "//xla/service:transfer_manager",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -145,6 +146,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_verifier",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -283,6 +285,7 @@ cc_library(
         "//xla/service:interpreter_plugin",  # reference backend
         "//xla/service:platform_util",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:bitmap",
@@ -302,6 +305,7 @@ cc_library(
         ":filecheck",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
     ],
@@ -549,7 +553,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["no_aarch64"],
+    tags = ["not_run:arm"],
     deps = [
         ":client_library_test_base",
         ":test_macros_header",
@@ -564,6 +568,7 @@ xla_test(
         "//xla/service:stream_pool",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:regexp",
@@ -633,6 +638,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
     ],
@@ -2407,6 +2413,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
         "//xla/service:backend",
         "//xla/service:cpu_plugin",
         "//xla/service:gpu_plugin",
@@ -2509,7 +2516,7 @@ xla_cc_test(
         ":local_client_aot_test_computation.o",
     ],
     linkstatic = 1,
-    tags = ["no_aarch64"],  # b/341355246
+    tags = ["not_run:arm"],  # b/341355246
     deps = [
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:dynamic_annotations",

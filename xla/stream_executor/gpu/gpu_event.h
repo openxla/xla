@@ -16,17 +16,18 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_EVENT_H_
 
+#include <cstdint>
+
 #include "absl/status/status.h"
-#include "xla/stream_executor/event_interface.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 
 namespace stream_executor {
 namespace gpu {
 
-// GpuEvent wraps a GpuEventHandle in the platform-independent EventInterface
-// interface.
-class GpuEvent : public EventInterface {
+// GpuEvent wraps a GpuEventHandle in the platform-independent Event interface.
+class GpuEvent : public Event {
  public:
   explicit GpuEvent(GpuExecutor* parent);
 
@@ -47,6 +48,8 @@ class GpuEvent : public EventInterface {
 
   // The underlying CUDA event element.
   GpuEventHandle gpu_event();
+
+  absl::Status WaitForEventOnExternalStream(std::intptr_t stream) override;
 
  private:
   // The Executor used to which this object and GpuEventHandle are bound.

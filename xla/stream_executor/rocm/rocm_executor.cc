@@ -66,7 +66,7 @@ namespace gpu {
 
 static GpuEvent* AsGpuEvent(Event* event) {
   DCHECK(event != nullptr);
-  return static_cast<GpuEvent*>(event->implementation());
+  return static_cast<GpuEvent*>(event);
 }
 
 // Given const GPU memory, returns a librocm device pointer datatype, suitable
@@ -660,10 +660,6 @@ bool GpuExecutor::HostCallback(Stream* stream,
   delete callback;
 }
 
-absl::Status GpuExecutor::DeallocateEvent(Event* event) {
-  return AsGpuEvent(event)->Destroy();
-}
-
 absl::Status GpuExecutor::RecordEvent(Stream* stream, Event* event) {
   return AsGpuEvent(event)->Record(AsGpuStream(stream));
 }
@@ -677,18 +673,6 @@ absl::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
         absl::StatusCode::kInternal,
         absl::StrFormat("error recording waiting for ROCM event on stream %p",
                         stream)};
-  }
-}
-
-absl::Status GpuExecutor::WaitForEventOnExternalStream(std::intptr_t stream,
-                                                       Event* event) {
-  if (GpuDriver::WaitStreamOnEvent(context_,
-                                   absl::bit_cast<GpuStreamHandle>(stream),
-                                   AsGpuEvent(event)->gpu_event())) {
-    return absl::OkStatus();
-  } else {
-    return absl::InternalError(
-        "error waiting for ROCM event on external stream");
   }
 }
 
@@ -855,7 +839,7 @@ absl::Status FillBlockDimLimit(GpuDeviceHandle device,
 absl::StatusOr<std::unique_ptr<Event>> GpuExecutor::CreateEvent() {
   auto gpu_event = std::make_unique<GpuEvent>(this);
   TF_RETURN_IF_ERROR(gpu_event->Init());
-  return std::make_unique<Event>(this, std::move(gpu_event));
+  return std::move(gpu_event);
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> GpuExecutor::CreateStream(

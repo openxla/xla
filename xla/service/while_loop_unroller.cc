@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/service/call_inliner.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/flatten_call_graph.h"
+#include "xla/service/hlo_creation_utils.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_pass_fix.h"
 #include "xla/service/pattern_matcher.h"
@@ -67,22 +68,6 @@ const int kUnrollTripCountThreshold = 64;
 const int kUnrollInstructionCountThreshold = 800;
 const int kUnrollExpandFactorThreshold = 10000;
 
-std::unique_ptr<HloInstruction> GetConstantWithShape(const Shape& shape,
-                                                     int64_t value) {
-  return primitive_util::PrimitiveTypeSwitch<std::unique_ptr<HloInstruction>>(
-      [&](auto literal_constant) -> std::unique_ptr<HloInstruction> {
-        if constexpr (primitive_util::IsIntegralType(literal_constant)) {
-          using NativeT = primitive_util::NativeTypeOf<literal_constant>;
-          auto constant = HloInstruction::CreateConstant(
-              LiteralUtil::CreateR0(static_cast<NativeT>(value)));
-          *constant->mutable_shape() = shape;
-          return std::move(constant);
-        }
-        LOG(FATAL) << "literal is of non-integral type";
-      },
-      shape.element_type());
-}
-
 // Helper function to create a condition for a single iteration while loop in
 // the form of 'i <= init_value' where i is the induction variable.
 std::unique_ptr<HloComputation> MakeTrivialLoopCondition(
@@ -99,7 +84,7 @@ std::unique_ptr<HloComputation> MakeTrivialLoopCondition(
           param_instruction.value(), induction_idx));
 
   HloInstruction* init_value_constant = condition_builder.AddInstruction(
-      GetConstantWithShape(indvar_instruction->shape(), init_value));
+      MakeConstantWithShape(indvar_instruction->shape(), init_value));
 
   return condition_builder.Build(
       condition_builder.AddInstruction(HloInstruction::CreateCompare(
@@ -155,7 +140,7 @@ UnrollSingleIterationOfTrivialLoop(HloInstruction* while_op,
     }
 
     HloInstruction* induction_value_constant = while_body_clone->AddInstruction(
-        GetConstantWithShape(induction_var_hlo->shape(), induction_value));
+        MakeConstantWithShape(induction_var_hlo->shape(), induction_value));
 
     // Finds all the uses of induction var within the while body and replace it
     // with the constant.
@@ -332,6 +317,79 @@ absl::StatusOr<bool> UnrollInternalWrapped(HloInstruction* while_op,
 }
 
 };  // namespace
+
+// Recursively checks if the given instruction points to the induction var of
+// the given loop config.
+bool IsLoopInductionVar(const HloInstruction* instr,
+                        const WhileLoopConfig& config) {
+  if (!instr->parent()->IsFusionComputation()) {
+    return Match(instr, match::GetTupleElement(match::Parameter(),
+                                               config.induction_var_idx));
+  } else {
+    if (!Match(instr, match::Parameter())) {
+      return false;
+    }
+    HloInstruction* caller_fusion = instr->parent()->FusionInstruction();
+    return IsLoopInductionVar(caller_fusion->operand(instr->parameter_number()),
+                              config);
+  }
+}
+
+bool MatchShapeCoveringDynamicIndexInstruction(HloInstruction* instr,
+                                               HloInstruction* input,
+                                               HloOpcode opcode,
+                                               const WhileLoopConfig& config) {
+  // Based on the instruction type, start indices start from index 1 or 2 of the
+  // operands.
+  int64_t start_indices_offset;
+  if (instr->opcode() == HloOpcode::kDynamicSlice) {
+    start_indices_offset = 1;
+  } else if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
+    start_indices_offset = 2;
+  } else {
+    return false;
+  }
+  HloInstruction* operand = instr->mutable_operand(0);
+  if (operand != input) {
+    return false;
+  }
+
+  int64_t dynamic_index = -1;
+  for (int64_t start_index = start_indices_offset;
+       start_index < instr->operand_count(); ++start_index) {
+    HloInstruction* index = instr->mutable_operand(start_index);
+    // All constants must be zero in order to slice the entire shape.
+    if (Match(index, match::ConstantScalar())) {
+      std::optional<int64_t> offset =
+          LiteralUtil::LiteralAsScalarInt64(index->literal());
+      if (offset.has_value() && offset.value() != 0) {
+        return false;
+      }
+    }
+
+    // Check that the instruction's dynamic index points to the loop induction
+    // variable.
+    if (IsLoopInductionVar(index, config)) {
+      // In order to cover the whole shape only a single non-constant index is
+      // allowed.
+      if (dynamic_index != -1) {
+        return false;
+      }
+      dynamic_index = start_index - start_indices_offset;
+    }
+  }
+
+  if (dynamic_index == -1) {
+    return false;
+  }
+
+  // The shape's broadcast_dim must be exactly equal to the loop trip count.
+  if (operand->shape().dimensions(dynamic_index) != config.trip_count) {
+    return false;
+  }
+
+  return true;
+}
 
 /*static*/ std::optional<WhileLoopConfig> WhileLoopUnroller::IsLoopUnrollable(
     HloInstruction* while_op) {

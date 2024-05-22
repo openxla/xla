@@ -256,7 +256,7 @@ absl::Status IrEmitterUnnested::EmitConditional(const HloInstruction* instr) {
   AddThunkToThunkSequence(std::unique_ptr<Thunk>(
       new ConditionalThunk(Thunk::ThunkInfo::WithProfileAnnotation(instr),
                            std::move(config), slice)));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 llvm::Value* IrEmitterUnnested::CreateLoad(llvm::Value* address,
@@ -632,7 +632,7 @@ absl::Status IrEmitterUnnested::EmitConvolutionThunk(
   AddThunkToThunkSequence(std::make_unique<ConvolutionThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(config),
       std::move(operand_slices), std::move(result_slices), scratch_slice));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::Status IrEmitterUnnested::EmitGemmThunk(
@@ -758,9 +758,9 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
 
   TF_ASSIGN_OR_RETURN(bool has_vector_bias,
                       xla::gpu::gpublas_lt::EpilogueAddsVectorBias(epilogue));
-  bool has_damax = instr->shape().IsTuple();
-  xla::ShapeIndex output_index =
-      has_damax ? xla::ShapeIndex{0} : xla::ShapeIndex{};
+
+  TF_RET_CHECK(instr->shape().IsTuple());
+  xla::ShapeIndex output_index = xla::ShapeIndex{0};
 
   TF_ASSIGN_OR_RETURN(
       bool has_aux_output,
@@ -805,7 +805,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   }
 
   BufferAllocation::Slice d_amax;
-  if (has_damax) {
+  if (config.damax_output()) {
     TF_ASSIGN_OR_RETURN(d_amax, GetAllocationSliceForHlo(instr, {1}));
   }
 
@@ -822,10 +822,7 @@ absl::Status IrEmitterUnnested::EmitCublasLtMatmulThunkF8(
   BufferAllocation::Slice aux;  // Not used.
   TF_RET_CHECK(!has_aux_output);
   std::optional<BufferAllocation::Slice> workspace_buffer;
-  if (instr->shape().IsTuple() &&
-      (instr->shape().tuple_shapes_size() - has_aux_output - 1)) {
-    TF_RET_CHECK((has_aux_output && instr->shape().tuple_shapes_size() == 3) ||
-                 (!has_aux_output && instr->shape().tuple_shapes_size() == 2));
+  if (instr->shape().tuple_shapes_size() - config.damax_output() == 2) {
     TF_ASSIGN_OR_RETURN(workspace_buffer,
                         GetAllocationSliceForHlo(
                             instr, {instr->shape().tuple_shapes_size() - 1}));
@@ -1601,6 +1598,7 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
 
     auto triton_module =
         mlir::parseSourceString<mlir::ModuleOp>(call.ir, &mlir_context);
+    TF_RET_CHECK(triton_module);
     auto triton_fn =
         triton_module->lookupSymbol<mlir::triton::FuncOp>(call.name);
     triton_fn.setName(kernel_name);
@@ -1682,11 +1680,10 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
 
 absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr,
                                            HloFusionAnalysis& fusion_analysis) {
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<FusionInterface> emitter,
+  std::unique_ptr<FusionInterface> emitter =
       GetFusionEmitter(HloFusionInfo(fusion_analysis, instr,
                                      &ir_emitter_context_->buffer_assignment()),
-                       /*is_emission_phase=*/true));
+                       /*is_emission_phase=*/true);
   return AddThunksToThunkSequence(emitter->Emit(*ir_emitter_context_, *instr));
 }
 
