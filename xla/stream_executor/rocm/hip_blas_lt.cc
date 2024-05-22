@@ -217,6 +217,9 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
     gpu::ScopedActivateExecutorContext sac{blas_lt_ref_.parent_};
 
+    // hipBlasLt requires setting the bias pointer (even a dummy one), otherwise
+    // no algorithms can be found for "bias epilogues". This is to be removed
+    // later when this limitation is gone.
     if (op_desc_.has_bias_epilogue()) {
       static int64_t dummyPointer = 0xACEBALL;
       TF_RETURN_IF_ERROR(SetAttr(op_desc_.get(), 
