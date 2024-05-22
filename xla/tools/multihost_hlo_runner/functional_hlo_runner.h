@@ -228,7 +228,7 @@ class FunctionalHloRunner {
   // The distributed client pointer passed as a parameter is expected to be
   // non-null, and 0 <= node_id < num_nodes must hold.
   static absl::StatusOr<std::unique_ptr<PjRtClient>> CreateGpuClient(
-      std::shared_ptr<xla::DistributedRuntimeClient> distributed_client,
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store,
       int node_id, int num_nodes);
 
   // Loads an ExecutionOptions proto (which can be used in RawCompileOptions).
@@ -242,7 +242,8 @@ class FunctionalHloRunner {
   static absl::StatusOr<CompileOptions> CreateCompileOptions(
       const PjRtClient& client,
       const FunctionalHloRunner::RawCompileOptions& raw_options,
-      int task_id = 0);
+      int task_id = 0, int num_nodes = 1,
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
 
   // Runs on HLO module and dumps the output if needed.
   //
@@ -253,7 +254,8 @@ class FunctionalHloRunner {
       const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
       const xla::FunctionalHloRunner::RunningOptions& running_options,
       absl::Span<const std::string> hlo_files, InputFormat input_format,
-      std::string dump_output_to = "", int task_id = 0);
+      std::string dump_output_to = "", int task_id = 0, int num_nodes = 1,
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
 
   // Loads an HLO module from hlo_file according to input_format and run it.
   // The HLO module is run with the provided arguments if the arguments map is
@@ -276,7 +278,8 @@ class FunctionalHloRunner {
       PjRtClient& client, const DebugOptions& debug_options,
       const PreprocessingOptions& preproc_options,
       const RawCompileOptions& raw_compile_options, std::string_view hlo_file,
-      InputFormat input_format, int task_id = 0);
+      InputFormat input_format, int task_id = 0, int num_nodes = 1,
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
 
   // Compiles and runs the given HLO module with the given arguments for each
   // device. The given arguments is a map from device ID to a list of arguments.

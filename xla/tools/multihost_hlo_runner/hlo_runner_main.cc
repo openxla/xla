@@ -75,7 +75,8 @@ consider using --hlo_argument_mode=uninitialized.
 absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetClient(
     const std::string& device_type_str, bool enable_mock_nccl, int num_nodes,
     const std::string& address_str, int task_id,
-    std::unique_ptr<xla::DistributedRuntimeService>* service) {
+    std::unique_ptr<xla::DistributedRuntimeService>* service,
+    std::shared_ptr<xla::KeyValueStoreInterface>& kv_store) {
   if (device_type_str == "host") {
     CHECK_EQ(num_nodes, 1);
     return xla::FunctionalHloRunner::CreateHostClient();
@@ -108,8 +109,10 @@ absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetClient(
       auto distributed_client =
           xla::GetDistributedRuntimeClient(address_str, options);
       TF_QCHECK_OK(distributed_client->Connect());
-      return xla::FunctionalHloRunner::CreateGpuClient(distributed_client,
-                                                       task_id, num_nodes);
+      kv_store = GetDistributedKeyValueStore(distributed_client,
+                                             /*key_prefix=*/"gpu:");
+      return xla::FunctionalHloRunner::CreateGpuClient(kv_store, task_id,
+                                                       num_nodes);
     }
   }
 }
@@ -187,9 +190,11 @@ int main(int argc, char** argv) {
       << "Can only dump output literal when single input file is specified";
 
   std::unique_ptr<xla::DistributedRuntimeService> service;
+  std::shared_ptr<xla::KeyValueStoreInterface> kv_store;
+
   absl::StatusOr<std::unique_ptr<xla::PjRtClient>> client =
       GetClient(device_type_str, enable_mock_nccl, num_nodes, address_str,
-                task_id, &service);
+                task_id, &service, kv_store);
   TF_QCHECK_OK(client.status());
 
   for (int c = 1; c < argc; c++) {
