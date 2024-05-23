@@ -1526,7 +1526,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // true if those uses all come before this operation.  But copy-insertion
     // runs before scheduling, so it can't know and has to conservatively insert
     // copies.)
-    if (IsLegacyCublasMatmul(*fused_op) || can_overwrite_bias) {
+    if (!IsCublasLtMatmulF8(*fused_op) &&
+        (IsLegacyCublasMatmul(*fused_op) || can_overwrite_bias)) {
       xla::Cast<HloCustomCallInstruction>(fused_op.get())
           ->set_output_to_operand_aliasing({{{}, {2, {}}}});
     }

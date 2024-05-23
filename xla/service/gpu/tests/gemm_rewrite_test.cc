@@ -4967,6 +4967,52 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
       )");
 }
 
+// Do not reuse matrix bias for fp8 matmul output.
+TEST_P(ParameterizedFp8GemmRewriteTest, DoNotReuseBiasForF8Output) {
+#if GOOGLE_CUDA && CUDA_VERSION < 12000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
+#endif  // CUDA_VERSION < 12000
+
+#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION < 60000
+  GTEST_SKIP() << "F8 gemm rewrite is only supported in ROCm 6.0 and above.";
+#endif  // TF_ROCM_VERSION < 60000
+
+  const char* hlo_text = R"(
+    HloModule test
+
+    ENTRY test {
+      x = f8e4m3fn[16,32] parameter(0)
+      w = f8e4m3fn[32,64] parameter(1)
+      y = bf16[16,64] dot(x, w), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      b = bf16[16,64] parameter(2)
+      one = bf16[] constant(1)
+      ones = bf16[16,64] broadcast(one), dimensions={}
+      fake_b = bf16[16,64] add(b, ones)
+      bias_add = bf16[16,64] add(y, fake_b)
+      y_scale = bf16[] parameter(3)
+      y_scales = bf16[16,64] broadcast(y_scale), dimensions={}
+      y_scaled = bf16[16,64] divide(bias_add, y_scales)
+      lo = bf16[] constant(-448.)
+      los = bf16[16,64] broadcast(lo), dimensions={}
+      hi = bf16[] constant(448.)
+      his = bf16[16,64] broadcast(hi), dimensions={}
+      y_clamped = bf16[16,64] clamp(los, y_scaled, his)
+      ROOT y_f8 = <<F8E4M3>>[16,64] convert(y_clamped)
+    } // test
+)";
+
+  RunAndFilecheckHloRewrite(
+      hlo_text,
+      GemmRewriter(CudaHopperOrRocmMI300(), GetToolkitVersion(),
+                   /*f8_rewrite=*/true),
+      R"(
+; CHECK-LABEL: ENTRY %test ({{.*}}) -> <<F8E4M3>>[16,64] {
+; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK-NOT:       output_to_operand_aliasing
+      )"
+  );
+}
+
 TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
 #if GOOGLE_CUDA && CUDA_VERSION < 12000
   GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
