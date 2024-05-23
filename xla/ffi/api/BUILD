@@ -73,6 +73,7 @@ xla_cc_test(
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status_matchers",
