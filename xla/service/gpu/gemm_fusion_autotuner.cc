@@ -240,9 +240,9 @@ class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
 
     AutotuneCacheKey key = AutotunerUtil::GetKey(hlo, impl_->GetConfig());
 
-    auto insertion_result = fusion_count_map_.insert({key, 1});
-    if (!insertion_result.second) {
-      ++(insertion_result.first->second);
+    auto [iterator, inserted] = fusion_count_map_.insert({key, 1});
+    if (!inserted) {
+      ++(iterator->second);
     }
 
     if (AutotunerUtil::IsInCache(key) || handled_fusions_.contains(key)) {
@@ -709,8 +709,8 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
 
   const int log_every_n = GetLogEveryN();
   int64_t config_count = 0;
-  for (const auto& key_value : task) {
-    config_count += key_value.second.size();
+  for (const auto& [unused, configs] : task) {
+    config_count += configs.size();
   }
 
   std::atomic<int> done_count = 0;
@@ -815,10 +815,7 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
                    << task.size() << " fusions on a single thread.";
     }
 
-    for (const auto& key_value : task) {
-      const HloFusionInstruction* fusion = key_value.first;
-      const auto& gemm_config_set = key_value.second;
-
+    for (const auto& [fusion, gemm_config_set] : task) {
       VLOG(10) << "Compiling fusion: " << fusion->name();
       VLOG(10) << "Dumping fusion computation: "
                << fusion->called_computation()->ToString();
@@ -1062,19 +1059,17 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
 
   // Sort the candidates to make their execution order well-defined for each
   // fusion.
-  for (auto& key_value : executable_sets) {
-    absl::c_sort(key_value.second, [](const auto& a, const auto& b) {
+  for (auto& [unused, candidates] : executable_sets) {
+    absl::c_sort(candidates, [](const auto& a, const auto& b) {
       return a.config < b.config;
     });
   }
 
   AutotuningLogs autotuning_logs;
   int fusion_id = 0;
-  for (const auto& key_value : executable_sets) {
-    const HloFusionInstruction* fusion = key_value.first;
-    TF_ASSIGN_OR_RETURN(
-        std::vector<AutotuneResult> results,
-        Profile(compile_util, *fusion, /*candidates=*/key_value.second));
+  for (const auto& [fusion, candidates] : executable_sets) {
+    TF_ASSIGN_OR_RETURN(std::vector<AutotuneResult> results,
+                        Profile(compile_util, *fusion, candidates));
 
     // The reference config (if it exists) will be the first in the results,
     // due to how sorting the variants work.
