@@ -172,6 +172,7 @@ xla_test(
         "data/sharded_2_devices.hlo",
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
+        "data/multiple_gemm_fusions.hlo"
     ],
     tags = ["nomac"],
     deps = [
@@ -179,8 +180,8 @@ xla_test(
         "//xla:statusor",
         "//xla/pjrt:pjrt_client",
         "//xla/tests:filecheck",
-        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
