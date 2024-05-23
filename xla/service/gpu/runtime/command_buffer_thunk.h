@@ -130,6 +130,8 @@ class CommandBufferThunk : public Thunk {
   // Command buffer thunk state allocated in heap to allow global (per-process)
   // management of instantiated command buffers.
   std::shared_ptr<State> state_;
+
+  bool disable_multi_threading_per_device_;
 };
 
 }  // namespace xla::gpu

@@ -783,7 +783,12 @@ message DebugOptions {
   // a deterministic implementation.
   bool xla_gpu_exclude_nondeterministic_ops = 297;
 
-  // Next id: 299
+  // If set to true, XLA will assume that there is no multi-threading 
+  // running per GPU device, this enable some optimization to remove the 
+  // overhead introduced by resource sharing
+  bool xla_gpu_disable_multi_threading_per_device = 299;
+
+  // Next id: 300
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

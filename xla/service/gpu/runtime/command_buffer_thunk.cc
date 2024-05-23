@@ -75,6 +75,10 @@ CommandBufferThunk::CommandBufferThunk(CommandBufferCmdSequence commands,
   // all have a pretty large LRU cache for keeping O(1000) XLA executables.
   EvictCommandBuffers();
   TrackCommandBuffers(state_);
+
+  disable_multi_threading_per_device_ =
+      xla::GetDebugOptionsFromFlags()
+          .xla_gpu_disable_multi_threading_per_device();
 }
 
 bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
@@ -164,8 +168,10 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   // If command buffer in any other state we check it is has to be updated, i.e.
   // if captured pointers changed or command buffer has commands that require
   // update on each call.
-  if (cmd_buffer->command_buffer->state() ==
-          se::CommandBuffer::State::kCreate &&
+
+  if ((cmd_buffer->command_buffer->state() ==
+           se::CommandBuffer::State::kCreate ||
+       disable_multi_threading_per_device_) &&
       cmd_buffer->ShouldUpdateCommandBuffer(commands_, execute_params)) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
@@ -221,10 +227,12 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   absl::MutexLock lock(&cmd_buffer->mutex);
 
-  if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
+  if (!disable_multi_threading_per_device_ &&
+      cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
     VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence" << " after "
-            << cmd_buffer->num_executions << " executions since last update"
+            << " by recoding command buffer cmd sequence"
+            << " after " << cmd_buffer->num_executions
+            << " executions since last update"
             << "; num_commands=" << commands_.size();
 
     TraceMe trace([&] {

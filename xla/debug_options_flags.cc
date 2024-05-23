@@ -48,6 +48,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_llvm_enable_noalias_metadata(true);
   opts.set_xla_llvm_enable_invariant_load_metadata(true);
   opts.set_xla_llvm_disable_expensive_passes(false);
+  opts.set_xla_gpu_disable_multi_threading_per_device(false);
   opts.set_xla_backend_optimization_level(3);
   opts.set_xla_gpu_autotune_level(4);
   opts.set_xla_gpu_autotune_max_solutions(0);
@@ -1024,6 +1025,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_exclude_nondeterministic_ops),
       debug_options->xla_gpu_exclude_nondeterministic_ops(),
       "Excludes non-deterministic ops from compiled executables."));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_disable_multi_threading_per_device",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_disable_multi_threading_per_device),
+      debug_options->xla_gpu_disable_multi_threading_per_device(),
+      "If set to true, XLA will assume that there is no multi-threading "
+      "running per GPU device, this enable some optimization to remove the "
+      "overhead introduced by resource sharing"));
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_disable_async_collectives",
       setter_for_xla_gpu_disable_async_collectives,
