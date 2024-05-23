@@ -112,6 +112,7 @@ namespace xla {
 namespace gpu {
 
 using Config = GemmFusionAutotunerImpl::Config;
+using TilingConfigs = GemmFusionAutotunerImpl::TilingConfigs;
 using ProfilingOutput = AutotunerCompileUtil::ProfilingOutput;
 
 namespace {
@@ -204,16 +205,13 @@ class GemmFusionAutotunerVisitor : public DfsHloRewriteVisitor {
   AutotuneConfig config_;
 };
 
-using TilingConfigsMap =
-    absl::flat_hash_map<const HloFusionInstruction*, std::vector<Config>>;
-
 class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
  public:
   explicit GemmConfigSetCollector(GemmFusionAutotunerImpl* impl)
       : impl_(impl) {}
 
   // Find configurations to tune.
-  absl::StatusOr<TilingConfigsMap> CollectGemmConfigSets(
+  absl::StatusOr<TilingConfigs> CollectGemmConfigSets(
       const HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads = {}) {
     error_out_on_cache_miss_ =
@@ -265,8 +263,7 @@ class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
 
       TF_ASSIGN_OR_RETURN(std::vector<Config> configs,
                           impl_->GenerateConfigs(*fusion));
-      TF_RET_CHECK(
-          gemm_config_sets_.insert({fusion, std::move(configs)}).second);
+      gemm_config_sets_.push_back({fusion, std::move(configs)});
     }
 
     handled_fusions_.insert(key);
@@ -280,7 +277,7 @@ class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
  private:
   bool error_out_on_cache_miss_;
   GemmFusionAutotunerImpl* impl_;
-  TilingConfigsMap gemm_config_sets_;
+  TilingConfigs gemm_config_sets_;
   AutoTuneCacheKeyCount fusion_count_map_;
   absl::flat_hash_set<AutotuneCacheKey> handled_fusions_;
 };
@@ -699,10 +696,8 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
 absl::StatusOr<absl::flat_hash_map<
     const HloFusionInstruction*,
     std::vector<GemmFusionAutotunerImpl::ExecutableCandidate>>>
-GemmFusionAutotunerImpl::CompileAll(
-    AutotunerCompileUtil& compile_util,
-    const absl::flat_hash_map<const HloFusionInstruction*, std::vector<Config>>&
-        task) {
+GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
+                                    const TilingConfigs& task) {
   tsl::profiler::ScopedAnnotation annotation("XlaAutotunerCompilation");
   absl::Mutex results_mu;
   absl::flat_hash_map<const HloFusionInstruction*,
@@ -1060,9 +1055,7 @@ absl::Status DumpAutotuningLogs(const DebugOptions& debug_opts,
 }
 
 absl::Status GemmFusionAutotunerImpl::Autotune(
-    AutotunerCompileUtil& compile_util,
-    const absl::flat_hash_map<const HloFusionInstruction*, std::vector<Config>>&
-        gemm_config_sets,
+    AutotunerCompileUtil& compile_util, const TilingConfigs& gemm_config_sets,
     AutoTuneCacheKeyCount fusion_count_map) {
   TF_ASSIGN_OR_RETURN(auto executable_sets,
                       CompileAll(compile_util, gemm_config_sets));
@@ -1143,7 +1136,7 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
   GemmFusionAutotunerImpl autotuner(config_, toolkit_version_, debug_options,
                                     thread_pool_);
   GemmConfigSetCollector gemm_config_set_collector(&autotuner);
-  TF_ASSIGN_OR_RETURN(TilingConfigsMap gemm_config_sets,
+  TF_ASSIGN_OR_RETURN(TilingConfigs gemm_config_sets,
                       gemm_config_set_collector.CollectGemmConfigSets(
                           module, execution_threads));
 
