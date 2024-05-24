@@ -228,9 +228,9 @@ ENTRY entry {
   EXPECT_TRUE(hlo_module->has_entry_computation());
 
   std::string profiled_instructions_text_proto = R"pb(
-    costs { name: "send.7.0" cost_us: 110.0 }
-    costs { name: "recv.7.0" cost_us: 100.0 }
-  )pb";
+      costs { name: "send.7.0" cost_us: 110.0 }
+      costs { name: "recv.7.0" cost_us: 100.0 }
+    )pb";
   ;
   tensorflow::profiler::ProfiledInstructionsProto profiled_instructions_proto;
   ASSERT_TRUE(tsl::protobuf::TextFormat::ParseFromString(

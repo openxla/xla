@@ -106,10 +106,11 @@ bool LatencyEstimator::IsAsyncPair(const HloGraphNode& from,
 
 bool LatencyEstimator::IsP2pPair(const HloGraphNode& from,
                                  const HloGraphNode& target) const {
-  return (from.GetInstr().opcode() == HloOpcode::kSend &&
-          target.GetInstr().opcode() == HloOpcode::kSendDone) ||
-         (from.GetInstr().opcode() == HloOpcode::kRecv &&
-          target.GetInstr().opcode() == HloOpcode::kRecvDone);
+  HloOpcode src_opcode = from.GetInstr().opcode();
+  HloOpcode tgt_opcode = target.GetInstr().opcode();
+  return (src_opcode == HloOpcode::kSend &&
+          tgt_opcode == HloOpcode::kSendDone) ||
+         (src_opcode == HloOpcode::kRecv && tgt_opcode == HloOpcode::kRecvDone);
 }
 
 LatencyEstimator::TimeCost ApproximateLatencyEstimator::GetLatencyBetween(
