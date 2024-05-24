@@ -939,6 +939,7 @@ xla_test(
             "//xla:literal",
             "//xla:literal_util",
             "//xla/tests:xla_internal_test_main",
+            "@tsl//tsl/lib/core:status_test_util",
         ],
         ["@tsl//tsl/platform:test_main"],  # b/317293391
     ),
