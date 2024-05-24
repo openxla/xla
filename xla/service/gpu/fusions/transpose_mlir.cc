@@ -141,9 +141,9 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     // The shape of non-transpose roots are bitcast compatible with the input
     // shape of transpose heroes.
     auto map = ComposeIndexingMaps(
-        GetIndexingMapForTiling(tiling_, mlir_context),
-        GetBitcastMap(tiling_.GetXlaShape(),
-                      analysis_.fusion_roots()[root_index]->shape(),
+        GetIndexing(/*input=*/false, hero.shape(), mlir_context),
+        GetBitcastMap(hero.shape(),
+                      analysis_.fusion_roots()[root_index].instruction().shape(),
                       mlir_context));
     map.Simplify(GetIndexingMapForInstruction);
     return map;
@@ -279,16 +279,9 @@ void MlirTransposeFusion::EmitReadFromShMemMlir(
     const mlir_converter::PartitionedComputations& computations,
     const WriteResult& written) const {
   auto* mlir_context = builder.getContext();
-<<<<<<< HEAD
-  auto output_indexing = *ComputeThreadIdToOutputIndexing(
-      shmem_transpose_root_indices_[0], mlir_context);
-  auto shmem_output_indexing =
-      GetSharedMemoryReadIndexingMap(output_indexing, permutation_[2]);
-=======
   auto output_indexing = *ComputeThreadIdToOutputIndexing(0, mlir_context);
   auto shmem_read_indexing =
       GetSharedMemoryIndexing(/*read=*/true, mlir_context);
->>>>>>> origin
   auto result_tensors = EmitThreadLoopNest(
       builder, written.updated_outputs, output_indexing,
       [&](ValueRange output_tensors, ValueRange dim_values,
