@@ -615,9 +615,9 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
   EXPECT_THAT(
       fusion.ComputeThreadIdToInputIndexing(1, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
-        (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
+        (d0, d1, d2, d3, d4, d5)[s0, s1] -> (
           d3 floordiv 2,
-          d0 floordiv 32 + s1 * 4
+          d0 floordiv 32 + s0 * 4
         )
         domain:
         d0 in [0, 127]
@@ -627,16 +627,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
         d4 in [0, 0]
         d5 in [0, 0]
 
-        s0 in [0, 0]
-        s1 in [0, 7]
-        s2 in [0, 0]
+        s0 in [0, 7]
+        s1 in [0, 0]
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
       MatchIndexingString(R"(
-        (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
+        (d0, d1, d2, d3, d4, d5)[s0, s1] -> (
           d3 floordiv 2,
-          d0 floordiv 32 + s1 * 4,
+          d0 floordiv 32 + s0 * 4,
           (d3 mod 2) * 32 + d0 mod 32
         )
         domain:
@@ -647,9 +646,8 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
         d4 in [0, 0]
         d5 in [0, 0]
 
-        s0 in [0, 0]
-        s1 in [0, 7]
-        s2 in [0, 0]
+        s0 in [0, 7]
+        s1 in [0, 0]
       )"));
 }
 

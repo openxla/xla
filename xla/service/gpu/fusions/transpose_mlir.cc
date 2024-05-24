@@ -141,7 +141,7 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     // The shape of non-transpose roots are bitcast compatible with the input
     // shape of transpose heroes.
     auto map = ComposeIndexingMaps(
-        GetIndexing(/*input=*/false, hero.shape(), mlir_context),
+        GetIndexing(/*input=*/true, hero.shape(), mlir_context),
         GetBitcastMap(
             hero.shape(),
             analysis_.fusion_roots()[root_index].instruction().shape(),
