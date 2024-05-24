@@ -860,6 +860,10 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   absl::Span<const BufferAllocation> allocations = GetAllocations();
 
   if (VLOG_IS_ON(5)) {
+    // Debug code to compare current allocation's address with previous run's
+    // address, and report the allocation info if memory addressed changed.
+    // Useful for identify in user's model if it is command buffer perf friendly
+    // (no command buffer update cost).
     absl::MutexLock lock(&module_handle_mutex_);
     if (module_allocations_.find(executor) == module_allocations_.end()) {
       std::vector<se::DeviceMemoryBase> allocs_addr;

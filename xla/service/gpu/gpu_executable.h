@@ -291,6 +291,8 @@ class GpuExecutable : public Executable {
                       std::unique_ptr<BufferAllocToDeviceMemoryMap>>
       module_globals_ ABSL_GUARDED_BY(module_handle_mutex_);
 
+  // Cache previous memory allocations for current module, this is used to help
+  // identify if user's model have unstable pointers by turning on VLOG(5).
   absl::flat_hash_map<stream_executor::StreamExecutor*,
                       std::vector<se::DeviceMemoryBase>>
       module_allocations_ ABSL_GUARDED_BY(module_handle_mutex_);
