@@ -20,7 +20,7 @@ load(
     "if_google",
     "internal_visibility",
 )
-load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -968,7 +968,7 @@ cc_library(
     name = "profiler_utils",
     srcs = ["profiler_utils.cc"],
     hdrs = ["profiler_utils.h"],
-    compatible_with = ["//buildenv/target:libtpu"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/plugin:plugin_tracer",
