@@ -76,9 +76,9 @@ using LoopVariantParameterInfo =
 
 // Update all control dependencies for a cloned instruction to connect other
 // cloned instructions rather than originals.
-Status UpdateControlDependencies(HloInstruction* original,
-                                 HloInstruction* new_instr,
-                                 const InstructionMap& cloned_map) {
+absl::Status UpdateControlDependencies(HloInstruction* original,
+                                       HloInstruction* new_instr,
+                                       const InstructionMap& cloned_map) {
   for (auto* pred : original->control_predecessors()) {
     auto it = cloned_map.find(pred);
     if (it == cloned_map.end()) {
@@ -86,7 +86,7 @@ Status UpdateControlDependencies(HloInstruction* original,
     }
     TF_RETURN_IF_ERROR(it->second->AddControlDependencyTo(new_instr));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Checks for the condition where all indices except the one passed as parameter
@@ -1176,14 +1176,12 @@ HloInstruction* CreateZero(HloComputation* comp, const Shape& shape,
 // }
 // xg_last = all-reduce(x)
 // yg_last = all-reduce(y)
-Status TransformLoopForward(const WhileLoopAnalysis& loop_analysis,
-                            bool insert_non_alias_custom_call,
-                            int64_t level_to_operate_on, bool pipeline_use_tree,
-                            bool process_different_sized_ops,
-                            HloPredicate should_process,
-                            HloPredicate acceptable_formatting,
-                            HloPredicate reuse_output_buffer,
-                            int64_t& next_channel_id) {
+absl::Status TransformLoopForward(
+    const WhileLoopAnalysis& loop_analysis, bool insert_non_alias_custom_call,
+    int64_t level_to_operate_on, bool pipeline_use_tree,
+    bool process_different_sized_ops, HloPredicate should_process,
+    HloPredicate acceptable_formatting, HloPredicate reuse_output_buffer,
+    int64_t& next_channel_id) {
   // Defining some maps/sets to keep track of instructions duplicated.
   InstructionMap while_body_to_peeled;
   absl::flat_hash_set<HloInstruction*> to_skip_set;
@@ -1534,7 +1532,7 @@ Status TransformLoopForward(const WhileLoopAnalysis& loop_analysis,
             TF_RETURN_IF_ERROR(
                 computation->RemoveInstructionAndUnusedOperands(to_replace));
           }
-          return OkStatus();
+          return absl::OkStatus();
         };
     auto* new_peeled_dus = input_stacked_data;
     if (it == moves_requiring_special_output_to_idx.end()) {
@@ -1556,7 +1554,7 @@ Status TransformLoopForward(const WhileLoopAnalysis& loop_analysis,
         absl::MakeSpan(loop_output_to_replace), output_stacked_data));
   }
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Function that does the work of sinking all-reduces the output of which are
@@ -1584,13 +1582,13 @@ Status TransformLoopForward(const WhileLoopAnalysis& loop_analysis,
 // }
 // xg_all = all-reduce(x_all)
 // yg_all = all-reduce(y_all)
-Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
-                                bool insert_non_alias_custom_call,
-                                int64_t level_to_operate_on,
-                                bool pipeline_use_tree,
-                                bool process_different_sized_ops,
-                                HloPredicate should_process,
-                                int64_t& next_channel_id) {
+absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
+                                      bool insert_non_alias_custom_call,
+                                      int64_t level_to_operate_on,
+                                      bool pipeline_use_tree,
+                                      bool process_different_sized_ops,
+                                      HloPredicate should_process,
+                                      int64_t& next_channel_id) {
   // Defining some maps/sets to keep track of instructions duplicated.
   absl::flat_hash_map<HloInstruction*, int64_t> is_output_instruction;
   absl::flat_hash_map<const HloInstruction*, bool> invariant_cache;
@@ -2056,7 +2054,7 @@ Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
   TF_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Function that does the work of pushing backward instructions that have been
@@ -2082,7 +2080,7 @@ Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
 //   x_ag = p0_ag_next
 // }
 // x_last = computation(p0_ag_next)
-static Status TransformLoopBackward(
+static absl::Status TransformLoopBackward(
     const WhileLoopAnalysis& loop_analysis, bool insert_non_alias_custom_call,
     int64_t level_to_operate_on, bool process_different_sized_ops,
     HloPredicate should_process, HloPredicate acceptable_formatting,
@@ -2383,7 +2381,7 @@ static Status TransformLoopBackward(
   TF_RETURN_IF_ERROR(
       loop_computation->RemoveInstructionAndUnusedOperands(while_loop));
   TF_RETURN_IF_ERROR(loop_computation->parent()->RemoveUnusedComputations());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<bool> CollectivePipeliner::Run(

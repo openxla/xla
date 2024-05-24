@@ -38,46 +38,20 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/stacktrace.h"
+#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 
-Stream::Stream(StreamExecutor *parent,
-               std::unique_ptr<StreamInterface> implementation)
-    : parent_(parent),
-      implementation_(std::move(implementation)),
-      status_(absl::OkStatus()) {}
-
-absl::Status Stream::Initialize(
-    std::optional<std::variant<StreamPriority, int>> priority) {
-  absl::MutexLock lock(&mu_);
-  if (parent_->AllocateStream(this)) {
-    // Successful initialization!
-    return absl::OkStatus();
-  }
-
-  return absl::InternalError("failed to allocate stream during initialization");
+Stream::Stream(StreamExecutor *parent)
+    : parent_(parent), status_(absl::OkStatus()) {
+  CHECK_NE(parent, nullptr);
 }
 
-Stream::~Stream() {
-  // Ensure the stream is completed.
-  auto status = BlockHostUntilDone();
-  if (!status.ok()) {
-    LOG(WARNING) << "Error blocking host until done in stream destructor: "
-                 << status;
-  }
-
-  if (implementation_ != nullptr) {
-    parent_->DeallocateStream(this);
-  }
-}
-
-std::variant<StreamPriority, int> Stream::priority() const {
-  return implementation_->priority();
-}
+Stream::~Stream() { parent_->DeallocateStream(this); }
 
 Stream::PlatformSpecificHandle Stream::platform_specific_handle() const {
   PlatformSpecificHandle handle;
-  handle.stream = implementation_->platform_specific_stream();
+  handle.stream = platform_specific_stream();
   return handle;
 }
 

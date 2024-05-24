@@ -18,12 +18,14 @@ cc_library(
     srcs = ["call_frame.cc"],
     hdrs = ["call_frame.h"],
     deps = [
+        ":api",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
@@ -35,10 +37,15 @@ cc_library(
     srcs = ["execution_context.cc"],
     hdrs = ["execution_context.h"],
     deps = [
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/lib/gtl:int_type",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -89,11 +96,27 @@ cc_library(
         "//xla/ffi/api:c_api",
         "//xla/ffi/api:c_api_internal",
         "//xla/hlo/ir:hlo",
-        "//xla/service:executable",
+        "//xla/stream_executor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "attribute_map",
+    srcs = ["attribute_map.cc"],
+    hdrs = ["attribute_map.h"],
+    deps = [
+        ":call_frame",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -106,7 +129,6 @@ xla_cc_test(
         ":ffi",
         ":ffi_api",
         "//xla:xla_data_proto_cc",
-        "//xla/service:executable",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/status",

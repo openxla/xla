@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status.h"
@@ -214,7 +215,8 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
 
   CommandBufferCmd::RecordParams record_params = {state};
 
-  auto command_buffer = se::CommandBuffer::Create(executor).value();
+  auto command_buffer =
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary).value();
   TF_ASSERT_OK(commands.Record(params, record_params, command_buffer.get()));
 
   // Execute command buffer and verify that it copied the memory.
@@ -282,7 +284,8 @@ TEST(CommandBufferCmdTest, BarrierCmd) {
 
   CommandBufferCmd::RecordParams record_params = {state};
 
-  auto command_buffer = se::CommandBuffer::Create(executor).value();
+  auto command_buffer =
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary).value();
   TF_ASSERT_OK(commands.Record(params, record_params, command_buffer.get()));
 
   // Execute command buffer and verify that it copied the memory.
@@ -359,7 +362,8 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
 
   CommandBufferCmd::RecordParams record_params = {state};
 
-  auto command_buffer = se::CommandBuffer::Create(executor).value();
+  auto command_buffer =
+      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary).value();
   TF_ASSERT_OK(commands.Record(params, record_params, command_buffer.get()));
 
   // Execute command buffer and verify that it copied the memory.

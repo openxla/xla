@@ -21,6 +21,7 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/loops.h"
@@ -36,9 +37,9 @@ namespace tridiagonal {
 
 namespace {
 
-Status CheckSecondToLastDimension(const Shape& op_shape, int64_t rank,
-                                  int64_t expected,
-                                  const std::string& op_name) {
+absl::Status CheckSecondToLastDimension(const Shape& op_shape, int64_t rank,
+                                        int64_t expected,
+                                        const std::string& op_name) {
   const auto actual_num_dims = ShapeUtil::GetDimension(op_shape, rank - 2);
 
   if (actual_num_dims != expected) {
@@ -47,7 +48,7 @@ Status CheckSecondToLastDimension(const Shape& op_shape, int64_t rank,
         expected, actual_num_dims);
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<int64_t> CheckSystemAndReturnNumEquations(XlaOp lower_diagonal,
@@ -119,9 +120,9 @@ struct TridiagonalMatMulShapeParams {
   PrimitiveType element_type;
 };
 
-Status ValidateTridiagonalMatMulDiagonal(const Shape& diagonal_shape,
-                                         const std::string_view diagonal_name,
-                                         const Shape& rhs_shape) {
+absl::Status ValidateTridiagonalMatMulDiagonal(
+    const Shape& diagonal_shape, const std::string_view diagonal_name,
+    const Shape& rhs_shape) {
   const int64_t diagonal_rank = diagonal_shape.rank();
   const int64_t rhs_rank = rhs_shape.rank();
   if (diagonal_rank != rhs_rank) {
@@ -157,7 +158,7 @@ Status ValidateTridiagonalMatMulDiagonal(const Shape& diagonal_shape,
         "but got %d and %d.",
         diagonal_name, digonal_last_dimension, rhs_second_last_dimension);
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<TridiagonalMatMulShapeParams>

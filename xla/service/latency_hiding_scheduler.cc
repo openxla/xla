@@ -1810,16 +1810,18 @@ void HloScheduleGraph::InitializeGraphAnalysis(
   }
 }
 
-Status DefaultSchedulerCore::InitializeScheduler(const HloModule* module) {
+absl::Status DefaultSchedulerCore::InitializeScheduler(
+    const HloModule* module) {
   TF_ASSIGN_OR_RETURN(alias_analysis_, HloAliasAnalysis::Run(module));
   module_pressure_state_ = std::make_unique<ModulePressureState>(
       module, alias_analysis_.get(), shape_size_bytes_);
   module_pressure_state_->InitializePressureStates();
   module_pressure_state_->SetMemoryPeak(0);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status DefaultSchedulerCore::SchedulingStep(SchedulingState* sched_state) {
+absl::Status DefaultSchedulerCore::SchedulingStep(
+    SchedulingState* sched_state) {
   // Get the first available node for scheduling that is the node that
   // satisfies our ready heuristic the best.
   TF_ASSIGN_OR_RETURN(HloGraphNode * node,
@@ -1830,7 +1832,7 @@ Status DefaultSchedulerCore::SchedulingStep(SchedulingState* sched_state) {
                       ScheduleNode(node, sched_state));
   VLOG(5) << "Scheduled: ";
   XLA_VLOG_LINES(5, node->ToString());
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::vector<HloInstruction*>>

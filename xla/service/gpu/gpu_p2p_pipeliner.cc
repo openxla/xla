@@ -76,7 +76,7 @@ bool ShouldAllowLoopVariantParameterInChain(const HloInstruction* instr) {
   return true;
 }
 
-Status PostprocessP2PImpl(
+absl::Status PostprocessP2PImpl(
     HloInstruction* instr,
     std::function<std::string(std::vector<ReplicaGroup>&)> transformer) {
   // The input instruction is a Done instruction.
@@ -91,7 +91,7 @@ Status PostprocessP2PImpl(
       instr->frontend_attributes().map().find(kSendRecvValidationAttr);
   if (validation_it == instr->frontend_attributes().map().end() ||
       validation_it->second == "invalid") {
-    return OkStatus();
+    return absl::OkStatus();
   }
   auto statusor_bounds = ParseReplicaGroupsOnly(validation_it->second);
   if (!statusor_bounds.ok()) {
@@ -101,12 +101,12 @@ Status PostprocessP2PImpl(
   xla::FrontendAttributes attributes = instr->frontend_attributes();
   (*attributes.mutable_map())[kSendRecvValidationAttr] = validation_attr;
   instr->set_frontend_attributes(attributes);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Modifies the loop iteration frontend attribute for the peeled off Send and
 // Recv for the first iteration of a loop.
-Status PostprocessPeeledP2P(HloInstruction* instr) {
+absl::Status PostprocessPeeledP2P(HloInstruction* instr) {
   auto transform_bounds = [&](std::vector<ReplicaGroup>& replica_groups) {
     std::vector<std::pair<int64_t, int64_t>> bounds;
     bounds.reserve(replica_groups.size());
@@ -149,7 +149,7 @@ Status PostprocessPeeledP2P(HloInstruction* instr) {
 
 // Modifies the loop iteration frontend attribute for the rotated Send and Recv
 // for the remaining iterations in a loop.
-Status PostprocessRotatedP2P(HloInstruction* instr) {
+absl::Status PostprocessRotatedP2P(HloInstruction* instr) {
   auto transform_bounds = [&](std::vector<ReplicaGroup>& replica_groups) {
     std::vector<std::pair<int64_t, int64_t>> bounds;
     bounds.reserve(replica_groups.size());

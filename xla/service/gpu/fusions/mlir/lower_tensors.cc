@@ -24,7 +24,6 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"  // from @llvm-project
-#include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"  // from @llvm-project
@@ -54,6 +53,7 @@ limitations under the License.
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"  // from @llvm-project
 #include "xla/layout_util.h"
 #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
+#include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
@@ -78,7 +78,6 @@ using mlir::TypedValue;
 using mlir::TypeRange;
 using mlir::Value;
 using mlir::ValueRange;
-using mlir::arith::AtomicRMWKind;
 
 namespace arith = ::mlir::arith;
 namespace scf = ::mlir::scf;
@@ -142,15 +141,15 @@ Value GetLinearIndex(TypedValue<mlir::RankedTensorType> tensor,
     *byte_shape.mutable_layout() = LayoutUtil::MakeLayout(llvm::to_vector(
         mlir::cast<mlir::DenseElementsAttr>(encoding).getValues<int64_t>()));
   }
-  auto linearize_map = mlir::getAffineConstantExpr(0, rewriter.getContext());
-  for (auto [dim, stride] :
-       llvm::enumerate(*ShapeUtil::ByteStrides(byte_shape))) {
-    linearize_map = linearize_map +
-                    mlir::getAffineDimExpr(dim, rewriter.getContext()) * stride;
-  }
-
-  Value index = rewriter.create<mlir::affine::AffineApplyOp>(
-      tensor.getLoc(), linearize_map, indices);
+  auto linear_shape =
+      ShapeUtil::MakeShape(U8, {ShapeUtil::ElementsIn(byte_shape)});
+  auto linearize_map =
+      GetBitcastMap(byte_shape, linear_shape, tensor.getContext());
+  mlir::SmallVector<Value> result;
+  rewriter.createOrFold<ApplyIndexingOp>(result, tensor.getLoc(), indices,
+                                         ValueRange{}, linearize_map);
+  CHECK_EQ(result.size(), 1);
+  auto index = result.front();
   auto index_ty = rewriter.getIntegerType(
       mlir::DataLayout::closest(rewriter.getInsertionBlock()->getParentOp())
           .getTypeSizeInBits(index.getType()));
@@ -334,6 +333,13 @@ mlir::LLVM::GlobalOp CreateGlobalOp(mlir::Attribute value,
                                     mlir::ModuleOp module, bool is_constant,
                                     int addr_space,
                                     mlir::ImplicitLocOpBuilder& b) {
+  if (auto elements = mlir::dyn_cast_or_null<mlir::DenseElementsAttr>(value)) {
+    // The lowering to LLVM only works for 1d tensors or those with trailing
+    // unit dimensions.
+    value = elements.reshape(mlir::RankedTensorType::get(
+        {elements.getNumElements()}, elements.getElementType()));
+  }
+
   Type element_type = shaped_ty.getElementType();
   // Needed to support complex element type.
   mlir::LLVMTypeConverter converter(b.getContext());
@@ -387,6 +393,9 @@ struct RewriteNonScalarConstants
   mlir::LogicalResult matchAndRewrite(
       mlir::arith::ConstantOp op,
       mlir::PatternRewriter& rewriter) const override {
+    if (mlir::isa<mlir::VectorType>(op.getType())) {
+      return rewriter.notifyMatchFailure(op, "the op is a vector constant");
+    }
     auto shaped_ty = mlir::dyn_cast<mlir::ShapedType>(op.getValue().getType());
     // We only need to rewrite non-scalar constants.
     if (!shaped_ty || shaped_ty.getNumElements() < 2) {
@@ -425,10 +434,40 @@ struct RewriteSyncThreads : mlir::OpRewritePattern<SyncThreadsOp> {
   }
 };
 
+// TODO(jreiffers): Generalize this to support index switches with some used
+// results and upstream it as a canonicalization pattern.
+struct RemoveUnusedIndexSwitchResults
+    : mlir::OpRewritePattern<scf::IndexSwitchOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(
+      scf::IndexSwitchOp op, mlir::PatternRewriter& rewriter) const override {
+    if (op->getNumResults() == 0 || !op->use_empty()) {
+      return rewriter.notifyMatchFailure(op, "the op has users");
+    }
+
+    auto new_op = rewriter.create<scf::IndexSwitchOp>(
+        op.getLoc(), mlir::TypeRange{}, op.getArg(), op.getCases(),
+        op.getNumCases());
+    for (int i = 0; i < op->getNumRegions(); ++i) {
+      auto& old_region = op->getRegion(i);
+      auto& new_region = new_op->getRegion(i);
+      rewriter.mergeBlocks(&old_region.getBlocks().front(),
+                           &new_region.emplaceBlock());
+      auto yield_op = new_region.getBlocks().front().getTerminator();
+      rewriter.modifyOpInPlace(yield_op, [&]() { yield_op->setOperands({}); });
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 bool IsAtomicIntegral(Type element_type) {
+  if (!element_type.isInteger()) {
+    return false;
+  }
   unsigned element_bitwidth = element_type.getIntOrFloatBitWidth();
-  return element_type.isInteger() &&
-         (element_bitwidth == 32 || element_bitwidth == 64);
+  return element_bitwidth == 32 || element_bitwidth == 64;
 }
 
 Value CreateBitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type ty) {
@@ -868,7 +907,8 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
     }
 
     mlir::RewritePatternSet function_patterns(mlir_context);
-    function_patterns.add<RewriteFunctionSignatures, RewriteCall>(mlir_context);
+    function_patterns.add<RewriteFunctionSignatures, RewriteCall,
+                          RemoveUnusedIndexSwitchResults>(mlir_context);
     scf::ForOp::getCanonicalizationPatterns(function_patterns, mlir_context);
     scf::IfOp::getCanonicalizationPatterns(function_patterns, mlir_context);
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(

@@ -47,7 +47,6 @@ namespace profiler {
 using tensorflow::ProfileOptions;
 using tsl::mutex;
 using tsl::mutex_lock;
-using tsl::OkStatus;
 using tsl::Status;
 using tsl::profiler::Annotation;
 using tsl::profiler::AnnotationStack;
@@ -75,13 +74,13 @@ class GpuTracer : public profiler::ProfilerInterface {
   ~GpuTracer() override {}
 
   // GpuTracer interface:
-  Status Start() override;
-  Status Stop() override;
-  Status CollectData(XSpace* space) override;
+  absl::Status Start() override;
+  absl::Status Stop() override;
+  absl::Status CollectData(XSpace* space) override;
 
  private:
-  Status DoStart();
-  Status DoStop();
+  absl::Status DoStart();
+  absl::Status DoStop();
 
   RocmTracerOptions GetRocmTracerOptions();
 
@@ -184,7 +183,7 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
   return options;
 }
 
-Status GpuTracer::DoStart() {
+absl::Status GpuTracer::DoStart() {
   if (!rocm_tracer_->IsAvailable()) {
     return tsl::errors::Unavailable("Another profile session running.");
   }
@@ -205,51 +204,51 @@ Status GpuTracer::DoStart() {
   RocmTracerOptions tracer_options = GetRocmTracerOptions();
   rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GpuTracer::Start() {
-  Status status = DoStart();
+absl::Status GpuTracer::Start() {
+  absl::Status status = DoStart();
   if (status.ok()) {
     profiling_state_ = State::kStartedOk;
-    return OkStatus();
+    return absl::OkStatus();
   } else {
     profiling_state_ = State::kStartedError;
     return status;
   }
 }
 
-Status GpuTracer::DoStop() {
+absl::Status GpuTracer::DoStop() {
   rocm_tracer_->Disable();
   AnnotationStack::Enable(false);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GpuTracer::Stop() {
+absl::Status GpuTracer::Stop() {
   if (profiling_state_ == State::kStartedOk) {
-    Status status = DoStop();
+    absl::Status status = DoStop();
     profiling_state_ = status.ok() ? State::kStoppedOk : State::kStoppedError;
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-Status GpuTracer::CollectData(XSpace* space) {
+absl::Status GpuTracer::CollectData(XSpace* space) {
   switch (profiling_state_) {
     case State::kNotStarted:
       VLOG(3) << "No trace data collected, session wasn't started";
-      return OkStatus();
+      return absl::OkStatus();
     case State::kStartedOk:
       return tsl::errors::FailedPrecondition(
           "Cannot collect trace before stopping");
     case State::kStartedError:
       LOG(ERROR) << "Cannot collect, roctracer failed to start";
-      return OkStatus();
+      return absl::OkStatus();
     case State::kStoppedError:
       VLOG(3) << "No trace data collected";
-      return OkStatus();
+      return absl::OkStatus();
     case State::kStoppedOk: {
       if (rocm_trace_collector_) rocm_trace_collector_->Export(space);
-      return OkStatus();
+      return absl::OkStatus();
     }
   }
   return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);

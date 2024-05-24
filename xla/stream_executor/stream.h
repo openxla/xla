@@ -23,13 +23,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -71,7 +68,7 @@ class StreamExecutor;
 // !ok(), it will never be ok().
 //
 // Thread-safe post-initialization.
-class Stream {
+class Stream : public StreamInterface {
  public:
   // Platform specific handle to the underlying resources behind a stream
   // implementation (e.g. it gives access to CUstream for CUDA platform).
@@ -82,8 +79,7 @@ class Stream {
   // Instantiate a stream tied to parent as a platform executor. Work
   // entrained onto this stream will be launched/managed on that
   // StreamExecutor's platform.
-  explicit Stream(StreamExecutor *parent,
-                  std::unique_ptr<StreamInterface> implementation);
+  explicit Stream(StreamExecutor *parent);
 
   // Deallocates any stream resources that the parent StreamExecutor has
   // bestowed
@@ -109,11 +105,6 @@ class Stream {
   // these devices, this method can be used after work is finished to retrieve
   // execution status.
   absl::Status RefreshStatus() TF_LOCKS_EXCLUDED(mu_);
-
-  // Initialize the stream. This must be performed before entraining any other
-  // operations.
-  absl::Status Initialize(
-      std::optional<std::variant<StreamPriority, int>> priority = std::nullopt);
 
   // Get or create a sub-stream from this stream. If there is any sub-stream in
   // the pool that can be reused then just return this sub-stream.  Otherwise
@@ -150,20 +141,10 @@ class Stream {
   absl::Status ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
                           const TypedKernel<Params...> &kernel, Args... args);
 
-  template <typename... Params, typename... Args>
-  absl::Status ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
-                          ClusterDim cluster_dims,
-                          const TypedKernel<Params...> &kernel, Args... args);
-
   // Same as above, with an explicit argument for shared memory size in bytes.
   template <typename... Params, typename... Args>
   absl::Status ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
                           int32_t shmem_bytes,
-                          const TypedKernel<Params...> &kernel, Args... args);
-
-  template <typename... Params, typename... Args>
-  absl::Status ThenLaunch(ThreadDim thread_dims, BlockDim block_dims,
-                          ClusterDim cluster_dims, int32_t shmem_bytes,
                           const TypedKernel<Params...> &kernel, Args... args);
 
   // Create a dependency for this stream's next work on the other stream
@@ -256,7 +237,7 @@ class Stream {
 
   // Returns the (opaque) platform-specific backing object. Ownership is not
   // transferred to the caller.
-  StreamInterface *implementation() { return implementation_.get(); }
+  StreamInterface *implementation() { return this; }
 
   // Entrains onto the stream a callback to the host (from the device).
   // Behaves as DoHostCallbackWithStatus below, but the callback should
@@ -284,7 +265,6 @@ class Stream {
     return parent_;
   }
 
-  //
   CudaComputeCapability GetCudaComputeCapability() const {
     return parent()->GetDeviceDescription().cuda_compute_capability();
   }
@@ -292,8 +272,6 @@ class Stream {
   RocmComputeCapability GetRocmComputeCapability() const {
     return parent()->GetDeviceDescription().rocm_compute_capability();
   }
-
-  std::variant<StreamPriority, int> priority() const;
 
  private:
   bool InErrorState() const TF_LOCKS_EXCLUDED(mu_) {
@@ -313,10 +291,6 @@ class Stream {
   // The StreamExecutor that supports the operation of this stream.
   StreamExecutor *parent_;
 
-  // The platform-dependent implementation that the StreamExecutor interface
-  // delegates to.
-  std::unique_ptr<StreamInterface> implementation_;
-
   // mutex that guards the allocation / error state flags.
   // Mutable so that it can be obtained via const reader lock.
   mutable absl::Mutex mu_;
@@ -333,9 +307,6 @@ class Stream {
   Stream(const Stream &) = delete;
   void operator=(const Stream &) = delete;
 };
-
-////////////
-// Inlines
 
 template <typename... Params, typename... Args>
 inline absl::Status Stream::ThenLaunch(ThreadDim thread_dims,
@@ -356,28 +327,6 @@ inline absl::Status Stream::ThenLaunch(ThreadDim thread_dims,
   auto kernel_args = PackKernelArgs(shmem_bytes, args...);
   TF_RETURN_IF_ERROR(
       parent_->Launch(this, thread_dims, block_dims, *kernel, *kernel_args));
-  return absl::OkStatus();
-}
-
-template <typename... Params, typename... Args>
-inline absl::Status Stream::ThenLaunch(ThreadDim thread_dims,
-                                       BlockDim block_dims,
-                                       ClusterDim cluster_dims,
-                                       const TypedKernel<Params...> &kernel,
-                                       Args... args) {
-  auto kernel_args = PackKernelArgs(kernel, args...);
-  TF_RETURN_IF_ERROR(parent_->Launch(this, thread_dims, block_dims,
-                                     cluster_dims, *kernel, *kernel_args));
-  return absl::OkStatus();
-}
-
-template <typename... Params, typename... Args>
-inline absl::Status Stream::ThenLaunch(
-    ThreadDim thread_dims, BlockDim block_dims, ClusterDim cluster_dims,
-    int32_t shmem_bytes, const TypedKernel<Params...> &kernel, Args... args) {
-  auto kernel_args = PackKernelArgs(shmem_bytes, args...);
-  TF_RETURN_IF_ERROR(parent_->Launch(this, thread_dims, block_dims,
-                                     cluster_dims, *kernel, *kernel_args));
   return absl::OkStatus();
 }
 

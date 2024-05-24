@@ -1,20 +1,20 @@
-// RUN: mlir_fusions_opt %s -split-input-file \
+// RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=6.0" \
 // RUN: | FileCheck %s
 
-// RUN: mlir_fusions_opt %s -split-input-file \
+// RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=7.0" \
 // RUN: | FileCheck %s --check-prefix=CHECK-VOLTA
 
-// RUN: mlir_fusions_opt %s -split-input-file \
+// RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-lower-tensors="is_amd_gpu=false gpu_arch=8.0" \
 // RUN: | FileCheck %s --check-prefix=CHECK-AMPERE
 
-// RUN: mlir_fusions_opt %s -split-input-file \
+// RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-lower-tensors="is_amd_gpu=true gpu_arch=gfx908:sramecc+:xnack" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX908-MI100
 
-// RUN: mlir_fusions_opt %s -split-input-file \
+// RUN: mlir_fusions_opt %s --allow-unregistered-dialect -split-input-file \
 // RUN: -xla-gpu-lower-tensors="is_amd_gpu=true gpu_arch=gfx90a:sramecc+:xnack" \
 // RUN: | FileCheck %s --check-prefix=CHECK-GFX90A-MI200
 
@@ -86,10 +86,12 @@ module {
   }
 }
 
-// CHECK:      #[[MAP:.*]] = affine_map<(d0, d1) -> (d0 + d1 * 2)>
-// CHECK:      @layout(%[[ARG0:.*]]: !llvm.ptr,
-// CHECK-SAME:     %[[X:.*]]: index, %[[Y:.*]]: index
-// CHECK:        %[[IDX:.*]] = affine.apply #[[MAP]](%[[X]], %[[Y]])
+// CHECK:        #[[$MAP:.*]] = affine_map<(d0, d1) -> (d1 * 2 + d0)>
+// CHECK-LABEL:  @layout(
+// CHECK-SAME:      %[[ARG0:.*]]: !llvm.ptr,
+// CHECK-SAME:      %[[X:.*]]: index, %[[Y:.*]]: index
+// CHECK:        %[[IDX:.*]] = xla_gpu.apply_indexing #[[$MAP]]
+// CHECK-SAME:      (%[[X]] in [0, 1], %[[Y]] in [0, 2])
 // CHECK:        %[[IDX_CAST:.*]] = arith.index_castui %[[IDX]] : index to i64
 // CHECK:        %[[PTR:.*]] = llvm.getelementptr inbounds %[[ARG0]][%[[IDX_CAST]]]
 // CHECK:        llvm.load %[[PTR]]
@@ -163,14 +165,27 @@ module {
     return %0 : f32
   }
 }
-// CHECK: llvm.mlir.global private constant @global_cst_0(dense<[
-// CHECK-SAME: [1.000000e+00], [2.000000e+00]]> : tensor<2x1xf32>) {addr_space = 0 : i32} : !llvm.array<2 x f32>
+// CHECK: llvm.mlir.global private constant @global_cst_0(dense<
+// CHECK-SAME: [1.000000e+00, 2.000000e+00]> : tensor<2xf32>) {addr_space = 0 : i32} : !llvm.array<2 x f32>
 // CHECK: @extract_from_constant
 // CHECK: %[[ADDR_OF:.*]] = llvm.mlir.addressof @global_cst_0 : !llvm.ptr
 // CHECK: %[[GEP:.*]] = llvm.getelementptr inbounds %[[ADDR_OF]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, f32
 // CHECK: %[[LOAD:.*]] = llvm.load %[[GEP]] : !llvm.ptr -> f32
 // CHECK: %[[ADD:.*]] = arith.addf %{{.*}}, %[[LOAD]] : f32
 // CHECK: return %[[ADD]] : f32
+
+// -----
+
+module {
+  func.func @vector_constant() -> vector<2xindex> {
+    %c1 = arith.constant dense<[1, 2]> : vector<2xindex>
+    func.return %c1 : vector<2xindex>
+  }
+}
+
+// vector constants should not be rewritten.
+// CHECK: @vector_constant
+// CHECK-NEXT: arith.constant
 
 // -----
 
@@ -665,3 +680,32 @@ module {
 // CHECK: llvm.store %[[ITER_ARG]], %[[TMP]]
 // CHECK: %[[LD:.*]] = llvm.load %[[TMP]] : {{.*}} -> !llvm.struct<(f32, f32)>
 // CHECK: builtin.unrealized_conversion_cast %[[LD]] : {{.*}} to complex<f32>
+
+// -----
+
+module {
+  func.func @unused_index_switch_results(%i: index) -> index {
+    %ret, %ret2 = scf.index_switch %i -> tensor<2x4xi32>, tensor<3xf32>
+    case 0 {
+      %x, %y = "dummy.op1"() : () -> (tensor<2x4xi32>, tensor<3xf32>)
+      scf.yield %x, %y : tensor<2x4xi32>, tensor<3xf32>
+    }
+    default {
+      %x, %y = "dummy.op2"() : () -> (tensor<2x4xi32>, tensor<3xf32>)
+      scf.yield %x, %y : tensor<2x4xi32>, tensor<3xf32>
+    }
+    return %i : index
+  }
+}
+
+// CHECK-LABEL: func.func @unused_index_switch_results
+// CHECK-SAME:      (%[[I:.*]]: index)
+// CHECK-NEXT:    scf.index_switch %[[I]]
+// CHECK-NEXT:    case 0 {
+// CHECK-NEXT:      "dummy.op1"
+// CHECK-NEXT:      scf.yield
+// CHECK-NEXT:    }
+// CHECK-NEXT:    default {
+// CHECK-NEXT:      "dummy.op2"
+// CHECK-NEXT:    }
+// CHECK-NEXT:    return %[[I]] : index

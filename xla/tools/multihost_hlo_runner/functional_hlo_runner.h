@@ -186,10 +186,16 @@ class FunctionalHloRunner {
     ModuleOutputMode module_output_mode = ModuleOutputMode::kReturnOutputs;
     // Repeatedly execute the HLO for this many times.
     size_t num_repeats = 1;
+    // If true, we recreate the buffers between repeats to reset of effect of
+    // buffer donation.
+    bool recreate_buffers_between_repeats = false;
     // This indicates whether we log the inputs and outputs to stderr.
     LogOutputMode log_input_output_mode = LogOutputMode::kNotLogOutput;
     const MultiSliceConfig* multi_slice_config = nullptr;
     ProfilerInterface* profiler = nullptr;
+    // Whether to untuple the result of running HLO module into a vector of
+    // arrays. If unprovided, use the default in ExecuteOptions.
+    std::optional<bool> untuple_result = std::nullopt;
 
     // Should we log the inputs and outputs to stderr?
     bool log_input_output() const {
@@ -241,7 +247,7 @@ class FunctionalHloRunner {
   // Runs on HLO module and dumps the output if needed.
   //
   // This is the highest level API in this file.
-  static Status LoadAndRunAndDump(
+  static absl::Status LoadAndRunAndDump(
       PjRtClient& client, const DebugOptions& debug_options,
       const xla::FunctionalHloRunner::PreprocessingOptions& preproc_options,
       const xla::FunctionalHloRunner::RawCompileOptions& raw_compile_options,
@@ -266,12 +272,11 @@ class FunctionalHloRunner {
   //
   // This function allows compiling multi-device HLOs on machines with fewer
   // devices.
-  static Status LoadAndCompile(PjRtClient& client,
-                               const DebugOptions& debug_options,
-                               const PreprocessingOptions& preproc_options,
-                               const RawCompileOptions& raw_compile_options,
-                               std::string_view hlo_file,
-                               InputFormat input_format, int task_id = 0);
+  static absl::Status LoadAndCompile(
+      PjRtClient& client, const DebugOptions& debug_options,
+      const PreprocessingOptions& preproc_options,
+      const RawCompileOptions& raw_compile_options, std::string_view hlo_file,
+      InputFormat input_format, int task_id = 0);
 
   // Compiles and runs the given HLO module with the given arguments for each
   // device. The given arguments is a map from device ID to a list of arguments.
@@ -326,7 +331,7 @@ class FunctionalHloRunner {
 
   // This would ideally be private, but we need it for the implementation of
   // MultihostHloRunner.
-  static Status PrepareHloModuleForCompilation(
+  static absl::Status PrepareHloModuleForCompilation(
       HloModule* hlo_module, const DebugOptions& debug_options,
       const PreprocessingOptions& preproc_options);
   // This would ideally be private, but we need it for the implementation of
@@ -334,7 +339,7 @@ class FunctionalHloRunner {
   static CompileOptions CompleteCompileOptions(const HloModule& hlo_module,
                                                CompileOptions compile_options);
 
-  static Status DumpOutput(
+  static absl::Status DumpOutput(
       const FunctionalHloRunner::PerDeviceLiteralVecType& output,
       absl::string_view dump_output_to, int task_id);
 

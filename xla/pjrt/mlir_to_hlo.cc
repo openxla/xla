@@ -193,9 +193,9 @@ void UpgradeStablehlo(mlir::ModuleOp module) {
 
 }  // namespace
 
-Status MlirToXlaComputation(mlir::ModuleOp module,
-                            XlaComputation& xla_computation,
-                            bool use_tuple_args, bool return_tuple) {
+absl::Status MlirToXlaComputation(mlir::ModuleOp module,
+                                  XlaComputation& xla_computation,
+                                  bool use_tuple_args, bool return_tuple) {
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(module->getContext());
   {
     mlir::PassManager pm(module->getContext());
@@ -224,10 +224,10 @@ Status MlirToXlaComputation(mlir::ModuleOp module,
       ConvertMlirHloToHlo(module, &proto, use_tuple_args, return_tuple));
 
   xla_computation = XlaComputation(std::move(*proto.mutable_hlo_module()));
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
     absl::string_view mlir_module_str, mlir::MLIRContext& context) {
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect>();
@@ -267,7 +267,7 @@ StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
   return std::move(module);
 }
 
-Status ParseMlirModuleStringAndConvertToXlaComputation(
+absl::Status ParseMlirModuleStringAndConvertToXlaComputation(
     absl::string_view mlir_module_str, XlaComputation& xla_computation,
     bool use_tuple_args, bool return_tuple) {
   mlir::MLIRContext context;
@@ -334,7 +334,7 @@ absl::StatusOr<std::string> SerializeUsingVersionedStablehlo(
   return buffer;
 }
 
-Status UpgradeVersionedStablehlo(mlir::ModuleOp mlir_module) {
+absl::Status UpgradeVersionedStablehlo(mlir::ModuleOp mlir_module) {
   // Apply StableHLO bytecode patch
   UpgradeStablehlo(mlir_module);
 
@@ -343,7 +343,7 @@ Status UpgradeVersionedStablehlo(mlir::ModuleOp mlir_module) {
   mlir::stablehlo::createStablehloDeserializePipeline(pm);
   if (!mlir::succeeded(pm.run(mlir_module)))
     return xla::InvalidArgument("Failed to upgrade versioned StableHLO.");
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace xla

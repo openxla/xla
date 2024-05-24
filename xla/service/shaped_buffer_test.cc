@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor_interface.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/test.h"
 #include "tsl/platform/test_benchmark.h"
 
@@ -72,9 +73,10 @@ class TestAllocator : public se::DeviceMemoryAllocator {
                                   device_ordinal, this);
   }
 
-  Status Deallocate(int device_ordinal, se::DeviceMemoryBase mem) override {
+  absl::Status Deallocate(int device_ordinal,
+                          se::DeviceMemoryBase mem) override {
     if (mem.is_null()) {
-      return OkStatus();
+      return absl::OkStatus();
     }
 
     auto it = allocations_.find({device_ordinal, mem.opaque()});
@@ -84,7 +86,7 @@ class TestAllocator : public se::DeviceMemoryAllocator {
       free(mem.opaque());
       allocations_.erase(it);
     }
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   bool AllowsAsynchronousDeallocation() const override { return false; }

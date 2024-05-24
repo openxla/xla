@@ -19,13 +19,13 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/statusor.h"
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/status_macros.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/statusor.h"
@@ -33,8 +33,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
-
-using ::testing::HasSubstr;
 
 class TransposeTest : public HloTestBase {
  protected:
@@ -44,8 +42,7 @@ class TransposeTest : public HloTestBase {
 
 absl::StatusOr<std::unique_ptr<TransposeFusion>> GetTransposeFusion(
     const HloFusionAnalysis& analysis) {
-  TF_ASSIGN_OR_RETURN(
-      auto emitter, GetFusionEmitter(PreBufferAssignmentFusionInfo{analysis}));
+  auto emitter = GetFusionEmitter(PreBufferAssignmentFusionInfo{analysis});
   auto fusion = dynamic_cast<TransposeFusion*>(emitter.get());
   TF_RET_CHECK(fusion != nullptr);
 
@@ -99,7 +96,7 @@ TEST_F(TransposeTest, ThreadIndexing021) {
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3 floordiv 2,
-          d0 floordiv 32 + (d3 mod 2) * 32 + s1 * 4,
+          (d3 mod 2) * 32 + s1 * 4 + d0 floordiv 32,
           d0 mod 32
         )
         domain:
@@ -141,7 +138,7 @@ TEST_F(TransposeTest, ThreadIndexing201) {
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d3 floordiv 2,
-          d0 floordiv 32 + (d3 * 32 + s1 * 4) mod 64,
+          (d3 * 32 + s1 * 4) mod 64 + d0 floordiv 32,
           d0 mod 32
         )
         domain:

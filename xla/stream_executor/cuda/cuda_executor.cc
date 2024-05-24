@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_driver.h"
+#include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/gpu_collectives.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
@@ -106,7 +107,7 @@ namespace gpu {
 
 static GpuEvent* AsGpuEvent(Event* event) {
   DCHECK(event != nullptr);
-  return static_cast<GpuEvent*>(event->implementation());
+  return static_cast<GpuEvent*>(event);
 }
 
 // Given const GPU memory, returns a libcuda device pointer datatype, suitable
@@ -709,7 +710,8 @@ absl::Status GpuExecutor::Memcpy(Stream* stream, void* host_dst,
   bool ok = GpuDriver::AsynchronousMemcpyD2H(context_, host_dst,
                                              AsCudaDevicePtr(gpu_src), size,
                                              AsGpuStreamValue(stream));
-  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return Status.
+  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return
+  // absl::Status.
   if (!ok) {
     return absl::InternalError("Failed to memcpy from device to host.");
   }
@@ -721,7 +723,8 @@ absl::Status GpuExecutor::Memcpy(Stream* stream, DeviceMemoryBase* gpu_dst,
   bool ok = GpuDriver::AsynchronousMemcpyH2D(context_, AsCudaDevicePtr(gpu_dst),
                                              host_src, size,
                                              AsGpuStreamValue(stream));
-  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return Status.
+  // TODO(b/326130105): Change AsynchronousMemcpyD2H calls to return
+  // absl::Status.
   if (!ok) {
     return absl::InternalError("Failed to memcpy from device to host.");
   }
@@ -756,14 +759,6 @@ bool GpuExecutor::HostCallback(Stream* stream,
   delete callback;
 }
 
-absl::Status GpuExecutor::AllocateEvent(Event* event) {
-  return AsGpuEvent(event)->Init();
-}
-
-absl::Status GpuExecutor::DeallocateEvent(Event* event) {
-  return AsGpuEvent(event)->Destroy();
-}
-
 absl::Status GpuExecutor::RecordEvent(Stream* stream, Event* event) {
   return AsGpuEvent(event)->Record(AsGpuStream(stream));
 }
@@ -776,29 +771,6 @@ absl::Status GpuExecutor::WaitForEvent(Stream* stream, Event* event) {
     return absl::InternalError(absl::StrFormat(
         "error recording waiting for CUDA event on stream %p", stream));
   }
-}
-
-absl::Status GpuExecutor::WaitForEventOnExternalStream(std::intptr_t stream,
-                                                       Event* event) {
-  if (GpuDriver::WaitStreamOnEvent(context_,
-                                   absl::bit_cast<GpuStreamHandle>(stream),
-                                   AsGpuEvent(event)->gpu_event())) {
-    return absl::OkStatus();
-  } else {
-    return absl::InternalError(
-        "error waiting for CUDA event on external stream");
-  }
-}
-
-Event::Status GpuExecutor::PollForEventStatus(Event* event) {
-  return AsGpuEvent(event)->PollForStatus();
-}
-
-bool GpuExecutor::AllocateStream(Stream* stream) {
-  absl::MutexLock l(&alive_gpu_streams_mu_);
-  bool out = AsGpuStream(stream)->Init();
-  alive_gpu_streams_[stream->platform_specific_handle().stream] = stream;
-  return out;
 }
 
 void GpuExecutor::DeallocateStream(Stream* stream) {
@@ -955,8 +927,10 @@ absl::Status FillBlockDimLimit(GpuDeviceHandle device,
   return absl::OkStatus();
 }
 
-std::unique_ptr<EventInterface> GpuExecutor::CreateEventImplementation() {
-  return std::unique_ptr<EventInterface>(new GpuEvent(this));
+absl::StatusOr<std::unique_ptr<Event>> GpuExecutor::CreateEvent() {
+  auto gpu_event = std::make_unique<CudaEvent>(this);
+  TF_RETURN_IF_ERROR(gpu_event->Init());
+  return std::move(gpu_event);
 }
 
 absl::StatusOr<std::unique_ptr<Stream>> GpuExecutor::CreateStream(
@@ -969,9 +943,15 @@ absl::StatusOr<std::unique_ptr<Stream>> GpuExecutor::CreateStream(
       gpu_stream->SetPriority(std::get<int>(*priority));
     }
   }
-  auto stream = std::make_unique<Stream>(this, std::move(gpu_stream));
-  TF_RETURN_IF_ERROR(stream->Initialize(priority));
-  return std::move(stream);
+  absl::MutexLock l(&alive_gpu_streams_mu_);
+  bool init_worked = gpu_stream->Init();
+  if (init_worked) {
+    auto platform_specific_stream = gpu_stream->platform_specific_stream();
+    alive_gpu_streams_[platform_specific_stream] = gpu_stream.get();
+    return std::move(gpu_stream);
+  } else {
+    return absl::InvalidArgumentError("Failed to initialize gpu stream");
+  }
 }
 
 absl::StatusOr<std::unique_ptr<Kernel>> GpuExecutor::CreateKernel() {

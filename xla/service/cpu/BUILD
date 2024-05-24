@@ -1182,14 +1182,16 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/ffi:attribute_map",
         "//xla/ffi:call_frame",
         "//xla/ffi:ffi_api",
         "//xla/service:custom_call_status_public_headers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -1229,7 +1231,7 @@ xla_cc_test(
 xla_cc_test(
     name = "cpu_instruction_fusion_test",
     srcs = ["cpu_instruction_fusion_test.cc"],
-    tags = ["no_aarch64"],
+    tags = ["not_run:arm"],
     deps = [
         ":cpu_instruction_fusion",
         "//xla:shape_util",
@@ -1492,7 +1494,7 @@ xla_cc_test(
     name = "vectorized_reduce_with_no_vector_registers_test",
     size = "small",
     srcs = ["vectorized_reduce_with_no_vector_registers_test.cc"],
-    tags = ["no_aarch64"],
+    tags = ["not_run:arm"],
     deps = [
         ":cpu_compiler",
         ":cpu_transfer_manager",
@@ -1648,11 +1650,19 @@ cc_library(
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/log:check",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:platform_port",
+    ] + mkl_deps(),
+)
+
+cc_library(
+    name = "onednn_pattern_utils",
+    hdrs = ["onednn_pattern_utils.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onednn_util",
     ] + mkl_deps(),
 )
 
@@ -1669,6 +1679,7 @@ cc_library(
         ":backend_config_proto_cc",
         ":onednn_matmul",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:executable_run_options",
         "//xla:shape_util",
@@ -1697,6 +1708,7 @@ cc_library(
     deps = [
         ":backend_config_proto_cc",
         ":onednn_memory_util",
+        ":onednn_pattern_utils",
         ":onednn_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",

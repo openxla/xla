@@ -126,17 +126,17 @@ CycleType ShouldDecomposeWithCycleType(
 
 // Constructs the frontend attributes for the two decomposed CollectivePermute
 // instructions.
-Status GetFrontendAttributes(HloCollectivePermuteInstruction* cp,
-                             CycleType cycle_type,
-                             xla::FrontendAttributes& cp1_attr,
-                             xla::FrontendAttributes& cp2_attr) {
+absl::Status GetFrontendAttributes(HloCollectivePermuteInstruction* cp,
+                                   CycleType cycle_type,
+                                   xla::FrontendAttributes& cp1_attr,
+                                   xla::FrontendAttributes& cp2_attr) {
   cp1_attr = cp->frontend_attributes();
   cp2_attr = cp->frontend_attributes();
   auto validation_it =
       cp->frontend_attributes().map().find(kSendRecvValidationAttr);
   if (validation_it == cp->frontend_attributes().map().end() ||
       validation_it->second == "invalid") {
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   auto statusor_bounds = ParseReplicaGroupsOnly(validation_it->second);
@@ -172,16 +172,14 @@ Status GetFrontendAttributes(HloCollectivePermuteInstruction* cp,
   std::string cp2_validation_str = bounds_to_string(cp2_bounds);
   (*cp1_attr.mutable_map())[kSendRecvValidationAttr] = cp1_validation_str;
   (*cp2_attr.mutable_map())[kSendRecvValidationAttr] = cp2_validation_str;
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Decomposes a CollectivePermute instruction with a cycle in its source-target
 // pairs into two CollectivePermute instructions.
-Status DecomposeCollectivePermuteCycle(HloCollectivePermuteInstruction* cp,
-                                       HloComputation* computation,
-                                       HloModule* module,
-                                       int64_t next_channel_id,
-                                       CycleType cycle_type) {
+absl::Status DecomposeCollectivePermuteCycle(
+    HloCollectivePermuteInstruction* cp, HloComputation* computation,
+    HloModule* module, int64_t next_channel_id, CycleType cycle_type) {
   const SourceTargetPairs& pairs = cp->source_target_pairs();
   int64_t num_pairs = pairs.size();
   // A forward cycle has its backedge at the end as in
@@ -240,7 +238,7 @@ Status DecomposeCollectivePermuteCycle(HloCollectivePermuteInstruction* cp,
   TF_RETURN_IF_ERROR(cp->ReplaceAllUsesWith(recv_data));
   TF_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(cp));
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 }  // namespace
 

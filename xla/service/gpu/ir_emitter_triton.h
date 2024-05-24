@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -76,7 +77,7 @@ absl::Status EmitSoftMax(mlir::OpBuilder b, absl::string_view libdevice_path,
                          mlir::triton::FuncOp fn,
                          const TritonGemmConfig& config);
 
-using TritonIrEmitter = std::function<Status(
+using TritonIrEmitter = std::function<absl::Status(
     mlir::OpBuilder, absl::string_view, const se::DeviceDescription&,
     const TritonFusionAnalysis& analysis, const HloComputation*,
     mlir::triton::FuncOp, const TritonGemmConfig&)>;
