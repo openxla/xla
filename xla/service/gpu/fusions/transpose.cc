@@ -315,8 +315,9 @@ std::optional<IndexingMap> TransposeFusion::ComputeThreadIdToOutputIndexing(
     // shape of transpose heroes.
     auto map = ComposeIndexingMaps(
         GetIndexingMapForTiling(tiling_, ctx),
-        GetBitcastMap(tiling_.GetXlaShape(),
-                      analysis_.fusion_roots()[root_index].instruction().shape(), ctx));
+        GetBitcastMap(
+            tiling_.GetXlaShape(),
+            analysis_.fusion_roots()[root_index].instruction().shape(), ctx));
     map.Simplify(GetIndexingMapForInstruction);
     return map;
   }

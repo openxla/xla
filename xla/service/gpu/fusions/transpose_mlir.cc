@@ -142,9 +142,10 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     // shape of transpose heroes.
     auto map = ComposeIndexingMaps(
         GetIndexing(/*input=*/false, hero.shape(), mlir_context),
-        GetBitcastMap(hero.shape(),
-                      analysis_.fusion_roots()[root_index].instruction().shape(),
-                      mlir_context));
+        GetBitcastMap(
+            hero.shape(),
+            analysis_.fusion_roots()[root_index].instruction().shape(),
+            mlir_context));
     map.Simplify(GetIndexingMapForInstruction);
     return map;
   }
