@@ -280,7 +280,8 @@ void MlirTransposeFusion::EmitReadFromShMemMlir(
     const mlir_converter::PartitionedComputations& computations,
     const WriteResult& written) const {
   auto* mlir_context = builder.getContext();
-  auto output_indexing = *ComputeThreadIdToOutputIndexing(0, mlir_context);
+  auto output_indexing = *ComputeThreadIdToOutputIndexing(
+      shmem_transpose_root_indices_[0], mlir_context);
   auto shmem_read_indexing =
       GetSharedMemoryIndexing(/*read=*/true, mlir_context);
   auto result_tensors = EmitThreadLoopNest(
