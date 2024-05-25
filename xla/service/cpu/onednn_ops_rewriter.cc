@@ -61,19 +61,39 @@ HloInstruction* FindLayerNormShift(HloInstruction* instr) {
 }
 
 bool is_neg_inf_const_scalar(const HloInstruction* const_instr) {
-  if (const_instr->opcode() != HloOpcode::kConstant) return false;
-  if (!ShapeUtil::IsEffectiveScalar(const_instr->shape())) return false;
+  if (const_instr->opcode() != HloOpcode::kConstant) {
+    return false;
+  };
+  if (!ShapeUtil::IsEffectiveScalar(const_instr->shape())) {
+    return false;
+  };
   auto value = LiteralUtil::GetFirstScalarLiteral(const_instr->literal());
   return literal_comparison::Equal(
              value, LiteralUtil::MinValue(const_instr->shape().element_type()))
       .ok();
 }
 
+// This function is to make sure the reducer computation is strictly a max
+// reducer and root instruction (kMaximum) has same inputs as computation
+bool IsMaxReducerComputation(const HloComputation* comp) {
+  if (comp->root_instruction()->opcode() != HloOpcode::kMaximum) {
+    return false;
+  }
+  auto max_instr = comp->root_instruction();
+  for (int idx = 0; idx < comp->num_parameters(); ++idx) {
+    if (comp->parameter_instruction(idx) != max_instr->operand(0) &&
+        comp->parameter_instruction(idx) != max_instr->operand(1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Pattern to match AnyOf  Maximum(Reduce_max(...), -inf) OR Reduce_max(...)
 auto MaxReduce(HloInstruction** instr) {
   auto is_valid_reduce_max = [](const HloInstruction* reduce) {
     HloComputation* reducer = reduce->to_apply();
-    return (reducer->root_instruction()->opcode() == HloOpcode::kMaximum) &&
+    return IsMaxReducerComputation(reducer) &&
            (reduce->dimensions().size() == 1) &&
            (reduce->operand(1)->opcode() == HloOpcode::kConstant) &&
            is_neg_inf_const_scalar(reduce->operand(1));
@@ -82,13 +102,14 @@ auto MaxReduce(HloInstruction** instr) {
   return m::AnyOf<HloInstruction>(
       m::Maximum().WithBinaryOperandsAnyOrder(
           m::Reduce(instr).WithPredicate(is_valid_reduce_max).WithOneUse(),
-          m::Constant().WithPredicate(is_neg_inf_const_scalar)),
+          pu::OptionalBroadcast(
+              m::Constant().WithPredicate(is_neg_inf_const_scalar))),
       m::Reduce(instr).WithPredicate(is_valid_reduce_max).WithOneUse());
 }
 
-// Match the softmax patter with divide instruction as root node.
-// Here we pass 'instr' as root node and return the producer HloInstruction
-// Axis on which softmax is applied is stored in 'axis'
+// Matches the softmax pattern with divide instruction as root node.
+// Here we pass 'instr' as root node and return the producer HloInstruction.
+// Tha axis on which softmax is applied is stored in 'axis'
 std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   //
   // producer
@@ -126,6 +147,11 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   // divide  // (instr parameter)
   //
   // where both reductions occur only on the last axis.
+
+  // Though this is most common SoftMax pattern we see and The patterns added
+  // here are based on the models we ran during practice, Necessary
+  // modifications need to be done for different variants of SoftMax, based on
+  // framework / model architecture.
   HloInstruction* left_exponential;
   HloInstruction* right_exponential;
   HloInstruction* left_producer;

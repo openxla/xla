@@ -94,7 +94,7 @@ TEST_P(OneDnnSoftmaxTest, SoftmaxGenericTest) {
             ROOT add = $0[] add(Arg_0, Arg_1)
         }
         ENTRY main {
-            Arg_0 = $0[$1,128,30522]{2,1,0} parameter(0), sharding={replicated}
+            Arg_0 = $0[$1,128,30522]{2,1,0} parameter(0)
             neg_inf = $0[] constant(-inf)
             reduce_max = $0[$1,128]{1,0} reduce(Arg_0, neg_inf), dimensions={2}, to_apply=region_max
             reshape.0 = $0[$1,128,1]{2,1,0} reshape(reduce_max)
@@ -182,7 +182,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxWithBF16ConvertOutputFP32Pattern) {
             ROOT add = f32[] add(Arg_0, Arg_1)
         }
         ENTRY main {
-            Arg_0 = f32[16,128,30522]{2,1,0} parameter(0), sharding={replicated}
+            Arg_0 = f32[16,128,30522]{2,1,0} parameter(0)
             neg_inf = f32[] constant(-inf)
             reduce_max = f32[16,128]{1,0} reduce(Arg_0, neg_inf), dimensions={2}, to_apply=region_max
             reshape.0 = f32[16,128,1]{2,1,0} reshape(reduce_max)
