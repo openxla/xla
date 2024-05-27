@@ -1,3 +1,4 @@
+load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 
 package(
@@ -36,6 +37,8 @@ cc_library(
     deps = [
         ":buffer_allocations",
         "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -48,6 +51,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:statusor",
