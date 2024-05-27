@@ -177,9 +177,11 @@ absl::Status BlasLt::Init() {
   SE_HIPBLAS_RETURN_IF_ERROR(wrap::hipblasLtMatmulDescCreate(
       &hip_desc, hip_compute_type, hip_scale_type));
 
+  int32_t bias_flag = static_cast<int32_t>(epilogue) & 
+                                      static_cast<int32_t>(Epilogue::kBias);
   // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatmulDesc desc(hip_desc, hip_compute_type, hip_scale_type,
-        int32_t(epilogue) & int32_t(Epilogue::kBias));
+        bias_flag != 0);
   if (pointer_mode != PointerMode::kHost) {
     return absl::InternalError("hipblaslt does not support device pointers");
   }
