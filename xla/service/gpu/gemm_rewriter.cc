@@ -1377,8 +1377,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // The F8ConvertD may change the output dtype. We need to turn off the
     // output to operand aliasing when it happens.
-    const auto& maybe_bias = existing_gemm->operand(2);
-    if (!ShapeUtil::Equal(maybe_bias->shape(), new_gemm->shape())) {
+    if (gemm_backend_config.beta() != 0.0 &&
+        !ShapeUtil::Equal(existing_gemm->operand(2)->shape(),
+                          new_gemm->shape())) {
       xla::Cast<HloCustomCallInstruction>(new_gemm.get())
           ->set_output_to_operand_aliasing({});
     }
