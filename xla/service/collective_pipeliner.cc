@@ -457,7 +457,10 @@ std::vector<HloInstruction*> CollectDependenciesToPipeline(
 std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     HloInstruction* instr, int64_t loop_iter,
     const absl::flat_hash_set<const HloInstruction*>& loop_invariant_params,
-    HloPredicate should_allow_loop_variant_parameter_in_chain) {
+    HloPredicate should_allow_loop_variant_parameter_in_chain,
+    const absl::flat_hash_set<const HloInstruction*>&
+        loop_invariant_instructions,
+    bool should_add_loop_invariant_op_in_chain) {
   std::vector<HloInstruction*> chain;
   absl::flat_hash_set<const HloInstruction*> visited_set({instr});
   std::vector<std::pair<HloInstruction*, int>> stack(1, {instr, 0});
@@ -508,10 +511,12 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     const bool is_scalar_shaped =
         ShapeUtil::IsEffectiveScalar(chain_instr->shape());
     if (!all_users_in_chain) {
-      if (!loop_invariant_params.contains(chain_instr) && !is_scalar_shaped &&
-          (chain_instr->opcode() != HloOpcode::kGetTupleElement ||
-           chain_instr->operand(0)->opcode() != HloOpcode::kParameter ||
-           !should_allow_loop_variant_parameter_in_chain(chain_instr))) {
+      if ((!loop_invariant_params.contains(chain_instr) && !is_scalar_shaped &&
+           (chain_instr->opcode() != HloOpcode::kGetTupleElement ||
+            chain_instr->operand(0)->opcode() != HloOpcode::kParameter ||
+            !should_allow_loop_variant_parameter_in_chain(chain_instr))) &&
+          !(should_add_loop_invariant_op_in_chain &&
+            loop_invariant_instructions.contains(chain_instr))) {
         return std::nullopt;
       }
     }
@@ -530,13 +535,17 @@ std::optional<std::vector<HloInstruction*>> CollectChainsToPushBackwards(
     int64_t level_to_operate_on,
     const absl::flat_hash_set<const HloInstruction*>& loop_invariant_params,
     HloPredicate should_allow_loop_variant_parameter_in_chain,
-    bool should_allow_control_dependencies) {
+    bool should_allow_control_dependencies,
+    const absl::flat_hash_set<const HloInstruction*>&
+        loop_invariant_instructions,
+    bool should_add_loop_invariant_op_in_chain) {
   if (instr->HasControlDependencies() && !should_allow_control_dependencies) {
     return std::nullopt;
   }
   return CollectIndependentOperandChain(
       instr, loop_iter, loop_invariant_params,
-      should_allow_loop_variant_parameter_in_chain);
+      should_allow_loop_variant_parameter_in_chain, loop_invariant_instructions,
+      should_add_loop_invariant_op_in_chain);
 }
 
 // Given a dynamic-update-slice find the output index of the loop we feed into.
@@ -694,7 +703,8 @@ class WhileLoopAnalysis {
       HloPredicate should_process, HloPredicate acceptable_formatting,
       HloPredicate should_allow_loop_variant_parameter_in_chain =
           HloPredicateFalse,
-      bool should_allow_control_dependencies = false);
+      bool should_allow_control_dependencies = false,
+      bool should_add_loop_invariant_op_in_chain = false);
   HloInstruction* while_loop_instruction() const { return while_; }
 
  private:
@@ -707,6 +717,7 @@ class WhileLoopAnalysis {
   std::vector<WhileMoveInfo> move_infos_;
   absl::flat_hash_map<HloInstruction*, int64_t> dus_index_map_;
   absl::flat_hash_set<const HloInstruction*> invariant_loop_parameters_;
+  absl::flat_hash_set<const HloInstruction*> invariant_loop_instructions_;
   int64_t max_pipelining_per_loop_;
   bool pipeline_use_tree_;
   bool process_different_sized_options_;
@@ -796,6 +807,28 @@ bool WhileLoopAnalysis::ComputeLoopStatistics() {
       invariant_loop_parameters_.insert(loop_root->operand(i));
     }
   }
+
+  // Extract all loop invariant instructions.
+  for (HloInstruction* inst :
+       while_->while_body()->MakeInstructionPostOrder()) {
+    if (inst->opcode() == HloOpcode::kConstant) {
+      invariant_loop_instructions_.insert(inst);
+      continue;
+    }
+    if (invariant_loop_instructions_.contains(inst)) {
+      continue;
+    }
+    // Nodes that only consume loop invariants are also invariants.
+    bool should_add = true;
+    for (const HloInstruction* operand : inst->operands()) {
+      should_add &= (invariant_loop_instructions_.contains(operand) ||
+                     invariant_loop_parameters_.contains(operand));
+    }
+    if (should_add) {
+      invariant_loop_instructions_.insert(inst);
+    }
+  }
+
   return true;
 }
 
@@ -804,7 +837,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
     CollectivePipeliner::PipeliningDirection direction,
     HloPredicate should_process, HloPredicate acceptable_formatting,
     HloPredicate should_allow_loop_variant_parameter_in_chain,
-    bool should_allow_control_dependencies) {
+    bool should_allow_control_dependencies,
+    bool should_add_loop_invariant_op_in_chain) {
   move_infos_.clear();
   HloComputation* while_body = while_->while_body();
   const HloInstruction* loop_parameter =
@@ -1013,7 +1047,8 @@ void WhileLoopAnalysis::CollectCollectivesToMove(
           instr, *loop_iteration_idx_, while_body, level_to_operate_on,
           invariant_loop_parameters_,
           should_allow_loop_variant_parameter_in_chain,
-          should_allow_control_dependencies);
+          should_allow_control_dependencies, invariant_loop_instructions_,
+          should_add_loop_invariant_op_in_chain);
       if (!chain_collected.has_value()) {
         VLOG(5) << "Skipping " << instr->name()
                 << " because didn't find compatible slice of parameter";
@@ -2420,7 +2455,8 @@ absl::StatusOr<bool> CollectivePipeliner::Run(
         config_.level_to_operate_on, config_.pipelining_direction,
         config_.should_process, config_.acceptable_formatting,
         config_.should_allow_loop_variant_parameter_in_chain,
-        config_.should_allow_control_dependencies);
+        config_.should_allow_control_dependencies,
+        config_.should_add_loop_invariant_op_in_chain);
     if (loop_analysis.GetMoveInfos().empty()) {
       continue;
     }
