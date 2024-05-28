@@ -52,7 +52,7 @@ absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient() {
   if (IsTestingCpu()) {
     return xla::FunctionalHloRunner::CreateHostClient();
   }
-  return xla::FunctionalHloRunner::CreateGpuClient();
+  return xla::FunctionalHloRunner::CreateGpuClient({});
 }
 
 using FunctionalHloRunnerTest = ::testing::Test;
