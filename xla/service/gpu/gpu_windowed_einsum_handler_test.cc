@@ -44,6 +44,16 @@ HloInstruction* FindInstructionByName(HloComputation* comp, std::string name) {
   return nullptr;
 }
 
+std::vector<HloInstruction*> GatherAllInstructions(const HloComputation& computation, HloOpcode opcode) {
+  std::vector<HloInstruction*> all_instructions;
+  for (const auto& instruction : computation.instructions()) {
+    if (instruction->opcode() == opcode) {
+      all_instructions.push_back(instruction);
+    }
+  }
+  return all_instructions;
+}
+
 TEST_F(GpuWindowedEinsumHanlderTest, AgLoopsHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,512,24576]{2,1,0}, bf16[24576,24576]{1,0})->bf16[2048,24576]{1,0}}, num_partitions=4
@@ -262,7 +272,6 @@ ENTRY main.12_spmd {
   bool changed;
   TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
-
   HloInstruction* ag_loop =
       FindInstructionByName(module->entry_computation(), "while");
   HloInstruction* inst =
@@ -286,6 +295,71 @@ ENTRY main.12_spmd {
                           m::Op(), m::Op(), m::Op(), m::Op()),
                       m::Op(), m::Op(), m::Op(), m::Op()),
                   m::Op())));
+}
+TEST_F(GpuWindowedEinsumHanlderTest, A2aGemmHaveStreamIds) {
+  constexpr absl::string_view kHloString = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,8192,32768]{2,1,0}, bf16[1,4,2048,8192]{3,2,1,0})->bf16[1,4,2048,32768]{3,2,1,0}}, num_partitions=8
+
+ENTRY main.9_spmd {
+  param.9 = bf16[1,8192,32768]{2,1,0} parameter(0)
+  param.10 = bf16[1,4,2048,8192]{3,2,1,0} parameter(1)
+  all-to-all = bf16[1,4,2048,8192]{3,2,1,0} all-to-all(param.10), channel_id=4, replica_groups={{0,1,2,3},{4,5,6,7}}, dimensions={1}
+  ROOT dot.12 = bf16[1,4,2048,32768]{3,2,1,0} dot(all-to-all, param.9), lhs_batch_dims={0}, lhs_contracting_dims={3}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  GpuWindowedEinsumHandler gpu_handler;
+  bool changed;
+  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  std::vector<HloInstruction*> a2a_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kAllToAll);
+  std::vector<HloInstruction*> dot_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kDot);
+  std::vector<HloInstruction*> slice_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kSlice);
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(a2a_inst.size(), 4);
+  EXPECT_EQ(dot_inst.size(), 4);
+  EXPECT_EQ(slice_inst.size(), 8);
+  for(HloInstruction* dot: dot_inst) {
+    EXPECT_TRUE(dot->backend_config<GpuBackendConfig>()->operation_queue_id() > 0);
+    EXPECT_THAT(dot,
+                GmockMatch(m::Dot(m::AllToAll(m::Slice()), m::Slice())));
+  }
+}
+
+TEST_F(GpuWindowedEinsumHanlderTest, GemmA2aHaveStreamIds) {
+  constexpr absl::string_view kHloString = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,8192,32768]{2,1,0}, bf16[1,8,2048,32768]{3,2,1,0})->bf16[1,8,2048,8192]{3,2,1,0}}, num_partitions=8
+
+ENTRY main.9_spmd {
+  param.9 = bf16[1,8192,32768]{2,1,0} parameter(0)
+  param.10 = bf16[1,8,2048,32768]{3,2,1,0} parameter(1)
+  dot.12 = bf16[1,8,2048,8192]{3,2,1,0} dot(param.10, param.9), lhs_batch_dims={0}, lhs_contracting_dims={3}, rhs_batch_dims={0}, rhs_contracting_dims={2}
+  ROOT all-to-all = bf16[1,8,2048,8192]{3,2,1,0} all-to-all(dot.12), channel_id=4, replica_groups={{0,1,2,3,4,5,6,7}}, dimensions={1}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  GpuWindowedEinsumHandler gpu_handler;
+  bool changed;
+  TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
+  std::vector<HloInstruction*> a2a_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kAllToAll);
+  std::vector<HloInstruction*> dot_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kDot);
+  std::vector<HloInstruction*> slice_inst = GatherAllInstructions(*module->entry_computation(), HloOpcode::kSlice);
+
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(a2a_inst.size(), 8);
+  EXPECT_EQ(dot_inst.size(), 8);
+  EXPECT_EQ(slice_inst.size(), 16);
+  for(int64_t i = 0; i < a2a_inst.size(); i++) {
+    EXPECT_TRUE(dot_inst[i]->backend_config<GpuBackendConfig>()->operation_queue_id() > 0);
+    EXPECT_THAT(a2a_inst[i],
+                GmockMatch(m::AllToAll(m::Dot(m::Slice(), m::Slice()))));
+  }
 }
 
 TEST_F(GpuWindowedEinsumHanlderTest, AllGatherF8) {
