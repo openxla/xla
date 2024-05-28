@@ -4968,7 +4968,8 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
 }
 
 // Do not reuse matrix bias for fp8 matmul output.
-TEST_P(ParameterizedFp8GemmRewriteTest, DoNotReuseBiasForF8Output) {
+TEST_P(ParameterizedFp8GemmRewriteTest,
+       UnscaledABScaledDMatrixBiasNoAliasingF8) {
 #if GOOGLE_CUDA && CUDA_VERSION < 12000
   GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
 #endif  // CUDA_VERSION < 12000
@@ -5865,6 +5866,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
       x = <<F8E4M3>>[16,32] parameter(0)
       y = <<F8E4M3>>[32,16] parameter(1)
       b = f32[16,16] parameter(2)
+      one = f32[] constant(1)
+      ones = f32[16,16] broadcast(one), dimensions={}
+      fake_b = f32[16,16] add(b, ones)
       x_f32 = f32[16,32] convert(x)
       y_f32 = f32[32,16] convert(y)
       x_scale = f32[] parameter(3)
@@ -5874,7 +5878,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
       x_unscaled = f32[16,32] multiply(x_f32, x_scale_bcast)
       y_unscaled = f32[32,16] multiply(y_f32, y_scale_bcast)
       dot_a = f32[16,16] dot(x_unscaled, y_unscaled), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-      ROOT out = add(dot_a, b)
+      ROOT out = add(dot_a, fake_b)
           }
 
 )";
@@ -5890,12 +5894,15 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[32,16]{1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
-; CHECK-NEXT:    [[C0:%[^ ]+]] = f32[16,16]{1,0} parameter(2)
+; CHECK:         [[C0:%[^ ]+]] = f32[16,16]{1,0} add({{.*}})
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[P2]], [[P3]], /*index=5*/[[C1]], [[C1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           output_to_operand_aliasing={
+; CHECK-SAME:        {0}: (2, {})
+; CHECK-SAME:      }
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0

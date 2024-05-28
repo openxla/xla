@@ -1374,6 +1374,15 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     std::unique_ptr<HloInstruction> new_gemm =
         existing_gemm->CloneWithNewShape(instr->shape());
+
+    // The F8ConvertD may change the output dtype. We need to turn off the
+    // output to operand aliasing when it happens.
+    const auto& maybe_bias = existing_gemm->operand(2);
+    if (!ShapeUtil::Equal(maybe_bias->shape(), new_gemm->shape())) {
+      xla::Cast<HloCustomCallInstruction>(new_gemm.get())
+          ->set_output_to_operand_aliasing({});
+    }
+
     TF_RETURN_IF_ERROR(ReplaceWithNewInstruction(instr, std::move(new_gemm)));
 
     VLOG(1) << "Conversion" << (reduce_damax ? " and amax calculation" : "")
@@ -1526,8 +1535,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // true if those uses all come before this operation.  But copy-insertion
     // runs before scheduling, so it can't know and has to conservatively insert
     // copies.)
-    if (!IsCublasLtMatmulF8(*fused_op) &&
-        (IsLegacyCublasMatmul(*fused_op) || can_overwrite_bias)) {
+    if (IsLegacyCublasMatmul(*fused_op) || can_overwrite_bias) {
       xla::Cast<HloCustomCallInstruction>(fused_op.get())
           ->set_output_to_operand_aliasing({{{}, {2, {}}}});
     }
