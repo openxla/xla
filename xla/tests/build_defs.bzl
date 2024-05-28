@@ -27,7 +27,7 @@ AMD_GPU_DEFAULT_BACKENDS = ["amd_gpu_any"]
 
 _DEFAULT_BACKENDS = ["cpu"] + NVIDIA_GPU_DEFAULT_BACKENDS + AMD_GPU_DEFAULT_BACKENDS
 
-ALL_GPU_BACKENDS = NVIDIA_GPU_BACKENDS + AMD_GPU_DEFAULT_BACKENDS
+GPU_BACKENDS = NVIDIA_GPU_BACKENDS + AMD_GPU_DEFAULT_BACKENDS
 
 _ALL_BACKENDS = ["cpu", "interpreter"] + NVIDIA_GPU_BACKENDS + AMD_GPU_DEFAULT_BACKENDS + list(plugins.keys())
 
@@ -318,7 +318,7 @@ def xla_test_library(
         this_backend_copts = []
         if backend == "cpu":
             backend_deps = ["//xla/tests:test_macros_cpu"]
-        elif backend in ALL_GPU_BACKENDS:
+        elif backend in GPU_BACKENDS:
             backend_deps = ["//xla/tests:test_macros_%s" % backend]
         elif backend == "interpreter":
             backend_deps = ["//xla/tests:test_macros_interpreter"]
