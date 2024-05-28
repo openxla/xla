@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+package xla.cpu;
+
 message OneDnnDataLayoutProto {
   // The batch dimension of the tensor
   uint64 batch_dim = 1;
