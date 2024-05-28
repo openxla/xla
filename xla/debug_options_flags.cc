@@ -148,7 +148,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_redzone_scratch_max_megabytes(1LL << 12);
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
   opts.set_xla_gpu_shape_checks(DebugOptions::RUNTIME);
-  opts.set_xla_gpu_normalize_layouts(true);
   opts.set_xla_dump_latency_hiding_schedule(false);
   opts.set_xla_gpu_enable_latency_hiding_scheduler(false);
   opts.set_xla_gpu_lhs_enable_gpu_async_tracker(true);
@@ -1257,12 +1256,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_shape_checks", setter_for_xla_gpu_shape_checks,
       DebugOptions::ShapeChecks_Name(debug_options->xla_gpu_shape_checks()),
       "When to perform shape checks in XLA:GPU."));
-  flag_list->push_back(
-      tsl::Flag("xla_gpu_normalize_layouts",
-                bool_setter_for(&DebugOptions::set_xla_gpu_normalize_layouts),
-                debug_options->xla_gpu_normalize_layouts(),
-                "An experimental option to force all layouts present in the "
-                "after-optimizations HLO to be descending"));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_strict_dot_conv_math",
       bool_setter_for(&DebugOptions::set_xla_cpu_strict_dot_conv_math),
