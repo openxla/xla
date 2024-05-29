@@ -332,6 +332,7 @@ cc_library(
         "//xla/stream_executor:memory_allocation",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -340,6 +341,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
