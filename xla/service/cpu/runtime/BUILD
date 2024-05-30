@@ -124,3 +124,18 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+cc_library(
+    name = "while_thunk",
+    srcs = ["while_thunk.cc"],
+    hdrs = ["while_thunk.h"],
+    deps = [
+        ":thunk",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
