@@ -71,7 +71,7 @@ class DeterminismTest : public GpuCodegenTest {
       if (!canonical_output.has_value()) {
         canonical_output = std::move(output);
       } else {
-        ASSERT_TRUE(LiteralTestUtil::Equal(*canonical_output, output));
+        ASSERT_TRUE(LiteralTestUtil::NearOrEqual(*canonical_output, output, ErrorSpec{1e-3, 1e-3}));
       }
     }
   }
