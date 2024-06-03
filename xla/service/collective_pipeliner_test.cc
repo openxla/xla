@@ -2229,55 +2229,45 @@ ENTRY main.3813_spmd {
   ASSERT_IS_OK(verifier.Run(module.get()).status());
 }
 
-TEST_F(CollectivePipelinerTest, PipelineBackwardIncludeInvariantInChain) {
+TEST_F(CollectivePipelinerTest,
+       PipelineBackwardIncludeInvariantMultiConsumerInChain) {
   constexpr absl::string_view hlo_string = R"(
 HloModule module
 
 while_cond {
-  param = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}) parameter(0)
+  param = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}) parameter(0)
   gte = s32[] get-tuple-element(param), index=0
   constant.1 = s32[] constant(3)
   ROOT cmp = pred[] compare(gte, constant.1), direction=LT
 }
 
 while_body {
-  param = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}) parameter(0)
+  param = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}) parameter(0)
   get-tuple-element.394 = s32[] get-tuple-element(param), index=0
   get-tuple-element.395 = bf16[1,8,2048,32768]{3,2,1,0} get-tuple-element(param), index=1
   get-tuple-element.397 = bf16[1,8,2048,32768]{3,2,1,0} get-tuple-element(param), index=2
-  get-tuple-element.398 = bf16[1,64,2048,32768]{3,2,1,0} get-tuple-element(param), index=3
-  get-tuple-element.399 = bf16[1,64,2048,32768]{3,2,1,0} get-tuple-element(param), index=4
 
   constant.1 = bf16[] constant(2)
   broadcast.3593 = bf16[1,8,2048,32768]{3,2,1,0} broadcast(constant.1), dimensions={}
 
   add.2 = bf16[1,8,2048,32768]{3,2,1,0} add(broadcast.3593, get-tuple-element.395)
-  add.3 = bf16[1,8,2048,32768]{3,2,1,0} add(broadcast.3593, get-tuple-element.397)
 
-  all-gather.1 = bf16[1,64,2048,32768]{3,2,1,0} all-gather(add.2), channel_id=1, dimensions={1}, replica_groups={}
-  all-gather.2 = bf16[1,64,2048,32768]{3,2,1,0} all-gather(add.3), channel_id=2, dimensions={1}, replica_groups={}
+  all-gather.1 = bf16[1,64,2048,32768]{3,2,1,0} all-gather(broadcast.3593), channel_id=1, dimensions={1}, replica_groups={}
 
-  mul.1 = bf16[1,64,2048,32768]{3,2,1,0} multiply(all-gather.1, get-tuple-element.398)
-  mul.2 = bf16[1,64,2048,32768]{3,2,1,0} multiply(all-gather.2, get-tuple-element.399)
-  add.4 = bf16[1,64,2048,32768]{3,2,1,0} add(mul.1, mul.2)
-
-  slice.1 = bf16[1,8,2048,32768]{3,2,1,0} slice(add.4), slice={[0:1], [0:8], [0:2048], [0:32768]}
-  slice.2 = bf16[1,8,2048,32768]{3,2,1,0} slice(add.4), slice={[0:1], [8:16], [0:2048], [0:32768]}
+  slice.2 = bf16[1,8,2048,32768]{3,2,1,0} slice(all-gather.1), slice={[0:1], [8:16], [0:2048], [0:32768]}
   constant.2 = s32[] constant(1)
   add.230 = s32[] add(get-tuple-element.394, constant.2)
 
-  ROOT tuple = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}) tuple(add.230, slice.1, slice.2, mul.1, mul.2)
+  ROOT tuple = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}) tuple(add.230, add.2, slice.2)
 }
 
 ENTRY entry {
   c0 = s32[] constant(0)
   p0 = bf16[1,8,2048,32768]{3,2,1,0} parameter(0)
   p1 = bf16[1,8,2048,32768]{3,2,1,0} parameter(1)
-  p2 = bf16[1,64,2048,32768]{3,2,1,0} parameter(2)
-  p3 = bf16[1,64,2048,32768]{3,2,1,0} parameter(3)
 
-  tuple = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}) tuple(c0, p0, p1, p2, p3)
-  while = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}, bf16[1,64,2048,32768]{3,2,1,0}) while(tuple), condition=while_cond, body=while_body
+  tuple = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}) tuple(c0, p0, p1)
+  while = (s32[], bf16[1,8,2048,32768]{3,2,1,0}, bf16[1,8,2048,32768]{3,2,1,0}) while(tuple), condition=while_cond, body=while_body
   ROOT gte1 = bf16[1,8,2048,32768]{3,2,1,0} get-tuple-element(while), index=1
 }
 )";
@@ -2301,17 +2291,33 @@ ENTRY entry {
   XLA_VLOG_LINES(1, module->ToString());
   HloInstruction* while_instr =
       FindInstruction(module.get(), HloOpcode::kWhile);
-  // Expect the while instruction input tuple to have 8 operands instead of 5
-  // operands. 6th and 7th operands should be peeled allgather in the main
+  // Expect the while instruction input tuple to have 5 operands instead of 3
+  // operands. 4th operand should be the peeled allgather in the main
   // computation.
-  EXPECT_THAT(while_instr, op::While(op::Tuple(_, _, _, _, _, op::AllGather(),
-                                               op::AllGather(), _)));
+  EXPECT_THAT(while_instr, op::While(op::Tuple(_, _, _, op::AllGather(), _)));
 
   HloInstruction* root = while_instr->while_body()->root_instruction();
-  // Expect the while loop now to have 8 operands at the root instead of 5
-  // operands. 6th and 7th operands should be pipelined allgather.
-  EXPECT_THAT(root,
-              op::Tuple(_, _, _, _, _, op::AllGather(), op::AllGather(), _));
+  // Expect the while loop now to have 5 operands at the root instead of 3
+  // operands. 4th operands should be the pipelined allgather.
+  EXPECT_THAT(root, op::Tuple(_, _, _, op::AllGather(), _));
+
+  // Now we turn should_add_loop_invariant_op_in_chain off, the hlo shouldn't
+  // change at all.
+  auto ref_module = ParseAndReturnUnverifiedModule(hlo_string, config_).value();
+  EXPECT_FALSE(
+      RunOptimizer(
+          ref_module.get(), /*last_run=*/true, 0,
+          /*pipeline_use_tree=*/false,
+          /*process_different_sized_ops=*/false,
+          /*direction=*/CollectivePipeliner::PipeliningDirection::kBackward,
+          /*should_process=*/IsAllGather,
+          /*acceptable_formatting=*/HloPredicateTrue,
+          /*reuse_pipelined_op_buffer=*/HloPredicateTrue,
+          /*should_allow_loop_variant_parameter_in_chain=*/HloPredicateTrue,
+          /*postprocess_backward_peeled=*/std::nullopt,
+          /*postprocess_backward_rotated=*/std::nullopt,
+          /*should_add_loop_invariant_op_in_chain=*/false)
+          .value());
 }
 
 }  // namespace

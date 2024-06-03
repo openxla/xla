@@ -511,12 +511,20 @@ std::optional<std::vector<HloInstruction*>> CollectIndependentOperandChain(
     const bool is_scalar_shaped =
         ShapeUtil::IsEffectiveScalar(chain_instr->shape());
     if (!all_users_in_chain) {
+      // Whether we should allow loop variant parameter in the operand chain of
+      // the collective.
+      bool allow_loop_variant_parameter_in_chain =
+          (chain_instr->opcode() != HloOpcode::kGetTupleElement ||
+           chain_instr->operand(0)->opcode() != HloOpcode::kParameter ||
+           !should_allow_loop_variant_parameter_in_chain(chain_instr));
+      // Whether we should allow loop invariant instructions in the operand
+      // chain of the collective.
+      bool add_loop_invariant_op_in_chain =
+          (should_add_loop_invariant_op_in_chain &&
+           loop_invariant_instructions.contains(chain_instr));
       if ((!loop_invariant_params.contains(chain_instr) && !is_scalar_shaped &&
-           (chain_instr->opcode() != HloOpcode::kGetTupleElement ||
-            chain_instr->operand(0)->opcode() != HloOpcode::kParameter ||
-            !should_allow_loop_variant_parameter_in_chain(chain_instr))) &&
-          !(should_add_loop_invariant_op_in_chain &&
-            loop_invariant_instructions.contains(chain_instr))) {
+           allow_loop_variant_parameter_in_chain) &&
+          !add_loop_invariant_op_in_chain) {
         return std::nullopt;
       }
     }
@@ -706,6 +714,7 @@ class WhileLoopAnalysis {
       bool should_allow_control_dependencies = false,
       bool should_add_loop_invariant_op_in_chain = false);
   HloInstruction* while_loop_instruction() const { return while_; }
+  void ExtractLoopInvariantOps();
 
  private:
   HloInstruction* while_;
@@ -727,6 +736,28 @@ int64_t WhileLoopAnalysis::GetDUSIndex(const HloInstruction* dus) const {
   auto it = dus_index_map_.find(dus);
   CHECK(it != dus_index_map_.end());
   return it->second;
+}
+
+void WhileLoopAnalysis::ExtractLoopInvariantOps() {
+  for (HloInstruction* inst :
+       while_->while_body()->MakeInstructionPostOrder()) {
+    if (inst->opcode() == HloOpcode::kConstant) {
+      invariant_loop_instructions_.insert(inst);
+      continue;
+    }
+    if (invariant_loop_instructions_.contains(inst)) {
+      continue;
+    }
+    // Nodes that only consume loop invariants are also invariants.
+    bool should_add = true;
+    for (const HloInstruction* operand : inst->operands()) {
+      should_add &= (invariant_loop_instructions_.contains(operand) ||
+                     invariant_loop_parameters_.contains(operand));
+    }
+    if (should_add) {
+      invariant_loop_instructions_.insert(inst);
+    }
+  }
 }
 
 bool WhileLoopAnalysis::ComputeLoopStatistics() {
@@ -809,25 +840,7 @@ bool WhileLoopAnalysis::ComputeLoopStatistics() {
   }
 
   // Extract all loop invariant instructions.
-  for (HloInstruction* inst :
-       while_->while_body()->MakeInstructionPostOrder()) {
-    if (inst->opcode() == HloOpcode::kConstant) {
-      invariant_loop_instructions_.insert(inst);
-      continue;
-    }
-    if (invariant_loop_instructions_.contains(inst)) {
-      continue;
-    }
-    // Nodes that only consume loop invariants are also invariants.
-    bool should_add = true;
-    for (const HloInstruction* operand : inst->operands()) {
-      should_add &= (invariant_loop_instructions_.contains(operand) ||
-                     invariant_loop_parameters_.contains(operand));
-    }
-    if (should_add) {
-      invariant_loop_instructions_.insert(inst);
-    }
-  }
+  ExtractLoopInvariantOps();
 
   return true;
 }
