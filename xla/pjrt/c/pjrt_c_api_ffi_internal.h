@@ -13,22 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_STREAM_EXECUTOR_EVENT_INTERFACE_H_
-#define XLA_STREAM_EXECUTOR_EVENT_INTERFACE_H_
+#ifndef XLA_PJRT_C_PJRT_C_API_FFI_INTERNAL_H_
+#define XLA_PJRT_C_PJRT_C_API_FFI_INTERNAL_H_
 
-namespace stream_executor {
+#include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 
-// Base class for all kinds of Events supported by StreamExecutors.
-class EventInterface {
- public:
-  EventInterface() = default;
-  virtual ~EventInterface() = default;
+namespace pjrt {
 
- private:
-  EventInterface(const EventInterface&) = delete;
-  void operator=(const EventInterface&) = delete;
-};
+PJRT_FFI_Extension CreateFfiExtension(PJRT_Extension_Base* next);
 
-}  // namespace stream_executor
+}  // namespace pjrt
 
-#endif  // XLA_STREAM_EXECUTOR_EVENT_INTERFACE_H_
+#endif  // XLA_PJRT_C_PJRT_C_API_FFI_INTERNAL_H_

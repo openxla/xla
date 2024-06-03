@@ -114,7 +114,7 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   //
   // producer
   // |   \
-  // |  reduce_max or max(reduce_max))
+  // |  reduce_max or max(reduce_max)
   // |     |
   // |  reshape
   // |     |
@@ -146,12 +146,11 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   // |   /
   // divide  // (instr parameter)
   //
-  // where both reductions occur only on the last axis.
 
   // Though this is most common SoftMax pattern we see and The patterns added
-  // here are based on the models we ran during practice, Necessary
-  // modifications need to be done for different variants of SoftMax, based on
-  // framework / model architecture.
+  // here are based on the models run during practice, Necessary
+  // modifications need to be done for different variants of SoftMax HLO
+  // pattern, based on framework / model architecture.
   HloInstruction* left_exponential;
   HloInstruction* right_exponential;
   HloInstruction* left_producer;
@@ -466,7 +465,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
                                     &is_producer_bf16orfp16, &convert_instr);
     }
 
-    if (!found_ln) return OkStatus();
+    if (!found_ln) return absl::OkStatus();
 
     const Shape& src_shape = src->shape();
     auto scale_type = scale->shape().element_type();
@@ -507,7 +506,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(ReplaceInstruction(instr, ln_call));
     }
 
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   absl::Status HandleConvert(HloInstruction* instr) override {
@@ -520,12 +519,13 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
                                 .WithOneUser()
                                 .WithElementType(PrimitiveType::F32));
 
-    if (!IsSupportedType(instr->shape().element_type())) return OkStatus();
+    if (!IsSupportedType(instr->shape().element_type()))
+      return absl::OkStatus();
     if (Match(instr, pattern)) {
       bool is_bf16orfp16_convert =
           (convert_instr->shape().element_type() == PrimitiveType::BF16) ||
           (convert_instr->shape().element_type() == PrimitiveType::F16);
-      if (!is_bf16orfp16_convert) return OkStatus();
+      if (!is_bf16orfp16_convert) return absl::OkStatus();
       HloInstruction* producer = instr->mutable_operand(0)->mutable_operand(0);
       HloInstruction* newinp =
           producer->AddInstruction(HloInstruction::CreateConvert(
@@ -540,16 +540,16 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
       TF_RETURN_IF_ERROR(ReplaceInstruction(instr, updated_call));
     }
 
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   absl::Status HandleDivide(HloInstruction* divide_instr) override {
-    if (divide_instr->HasControlDependencies()) return OkStatus();
+    if (divide_instr->HasControlDependencies()) return absl::OkStatus();
     if (!IsSupportedType(divide_instr->shape().element_type()))
-      return OkStatus();
+      return absl::OkStatus();
     int axis = -1;
     std::optional<HloInstruction*> producer = MatchSoftmax(divide_instr, &axis);
-    if (producer == std::nullopt) return OkStatus();
+    if (producer == std::nullopt) return absl::OkStatus();
 
     const Shape& output_shape = divide_instr->shape();
     HloInstruction* softmax_call =
@@ -562,7 +562,7 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     TF_RETURN_IF_ERROR(softmax_call->set_backend_config(backend_config));
     TF_RETURN_IF_ERROR(ReplaceInstruction(divide_instr, softmax_call));
 
-    return OkStatus();
+    return absl::OkStatus();
   }
 };
 

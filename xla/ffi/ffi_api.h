@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_FFI_FFI_API_H_
 #define XLA_FFI_FFI_API_H_
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -26,8 +27,9 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/service/service_executable_run_options.h"
 #include "xla/status.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/stream.h"
 
 namespace xla::ffi {
 
@@ -44,8 +46,13 @@ namespace xla::ffi {
 //===----------------------------------------------------------------------===//
 
 struct CallOptions {
-  const ServiceExecutableRunOptions* run_options = nullptr;
+  int32_t device_ordinal = -1;
+
+  se::Stream* stream = nullptr;
+  se::DeviceMemoryAllocator* allocator = nullptr;
+
   const HloComputation* called_computation = nullptr;
+  const ExecutionContext* execution_context = nullptr;
 };
 
 // Takes ownership of the XLA FFI error and returns underlying status. Frees
@@ -88,8 +95,8 @@ class ScopedExecutionContext {
 //===----------------------------------------------------------------------===//
 
 struct HandlerRegistration {
-  XLA_FFI_Handler* handler = nullptr;
-  XLA_FFI_Handler_Traits traits = 0;
+  XLA_FFI_Handler_Bundle bundle = {};
+  XLA_FFI_Handler_Traits traits = {};
 };
 
 bool IsCommandBufferCompatible(XLA_FFI_Handler_Traits traits);

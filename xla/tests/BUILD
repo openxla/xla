@@ -100,6 +100,7 @@ cc_library(
         "//xla/service:hlo_dataflow_analysis",
         "//xla/service:hlo_verifier",
         "//xla/service:transfer_manager",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -145,6 +146,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_verifier",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -218,6 +220,7 @@ cc_library(
         "//xla/service:interpreter_plugin",  # reference backend
         "//xla/service:platform_util",
         "//xla/stream_executor",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
@@ -283,6 +286,7 @@ cc_library(
         "//xla/service:interpreter_plugin",  # reference backend
         "//xla/service:platform_util",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:bitmap",
@@ -302,6 +306,7 @@ cc_library(
         ":filecheck",
         "//xla/service:llvm_compiler",
         "//xla/service/llvm_ir:llvm_util",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
     ],
@@ -369,6 +374,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
@@ -410,6 +416,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:backend",
         "//xla/service:executable",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -534,6 +541,7 @@ xla_test(
         "//xla/client:xla_computation",
         "//xla/client/lib:arithmetic",
         "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
@@ -549,7 +557,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    tags = ["no_aarch64"],
+    tags = ["not_run:arm"],
     deps = [
         ":client_library_test_base",
         ":test_macros_header",
@@ -564,6 +572,7 @@ xla_test(
         "//xla/service:stream_pool",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:regexp",
@@ -633,6 +642,7 @@ xla_test(
         "//xla/client:local_client",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
     ],
@@ -814,7 +824,10 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@ml_dtypes//:float8",
         "@tsl//tsl/platform:ml_dtypes",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 cc_library(
@@ -913,10 +926,14 @@ xla_test(
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 # Run dot tests with auto-tuning disabled.  This just does a basic sanity check
@@ -947,10 +964,14 @@ xla_test(
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 # Run dot tests with dot canonicalization after the layout assignment pass.
@@ -986,10 +1007,14 @@ xla_test(
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
@@ -1059,10 +1084,14 @@ xla_test(
         "//xla/client/lib:arithmetic",
         "//xla/client/lib:matrix",
         "//xla/service:hlo_parser",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
@@ -1512,6 +1541,7 @@ xla_test(
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
     ],
@@ -1909,7 +1939,10 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:test",
-    ],
+    ] + if_rocm_is_configured([
+        # keep sorted
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 xla_test(
@@ -2389,6 +2422,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
         "//xla/service:backend",
         "//xla/service:cpu_plugin",
         "//xla/service:gpu_plugin",
@@ -2450,6 +2484,7 @@ xla_test(
         "//xla/client:xla_builder",
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
@@ -2491,6 +2526,7 @@ xla_cc_test(
         ":local_client_aot_test_computation.o",
     ],
     linkstatic = 1,
+    tags = ["not_run:arm"],  # b/341355246
     deps = [
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -2546,6 +2582,7 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/stream_executor/host:host_platform",
         "//xla/stream_executor/host:host_platform_id",
         "@tsl//tsl/platform:env",

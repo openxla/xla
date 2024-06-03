@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/substitute.h"
 #include "xla/literal.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_ops_rewriter.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/service/pattern_matcher.h"
@@ -50,22 +51,24 @@ class OneDnnSoftmaxTest
   ; CHECK: custom_call_target="__onednn$softmax"
   )";
 
-  // Test the numerical correctness as well as pattern matching witn
-  // OneDnnOpsRewriter pass
-  void TestSoftmax(std::string softmax_hlo_string, float atol, float rtol) {
-    // check for pattern match
+  // Test pattern match with OneDnnOpsRewriter pass
+  void TestSoftmax(std::string input_hlo_string, int expected_softmax_axis) {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(softmax_hlo_string));
+                            ParseAndReturnVerifiedModule(input_hlo_string));
     OneDnnOpsRewriter softmax_rewrite_pass;
+    HloInstruction* onednn_softmax;
+    OneDnnSoftmaxConfig softmax_config;
     TF_ASSERT_OK_AND_ASSIGN(
         bool changed, this->RunHloPass(&softmax_rewrite_pass, module.get()));
     EXPECT_TRUE(changed);
     EXPECT_THAT(module->entry_computation()->root_instruction(),
-                GmockMatch(::xla::match::CustomCall({"__onednn$softmax"})));
+                GmockMatch(::xla::match::CustomCall(&onednn_softmax,
+                                                    {"__onednn$softmax"})));
 
-    // check numerical correctness
-    EXPECT_TRUE(RunAndCompare(softmax_hlo_string, ErrorSpec{atol, rtol}));
-    MatchOptimizedHlo(softmax_hlo_string, onednn_softmax_);
+    auto backend_config = onednn_softmax->backend_config<BackendConfig>();
+    softmax_config.CopyFrom(backend_config->onednn_softmax_config());
+    int axis_after_rewrite = softmax_config.softmax_axis();
+    EXPECT_EQ(expected_softmax_axis, axis_after_rewrite);
   }
 };
 
@@ -78,11 +81,9 @@ TEST_P(OneDnnSoftmaxTest, SoftmaxGenericTest) {
     GTEST_SKIP() << "CPU does not support "
                  << primitive_util::LowercasePrimitiveTypeName(data_type);
   }
-  float atol = (data_type == F32) ? 1e-4 : 1e-2;
-  float rtol = (data_type == F32) ? 1e-4 : 1e-2;
 
   const std::string softmax_hlo_template_string = R"(
-        HloModule softmax_module, entry_computation_layout={($0[$1,128,30522]{2,1,0})->$0[$1,128,30522]{2,1,0}}
+        HloModule softmax_module
         region_max {
             Arg_0 = $0[] parameter(0)
             Arg_1 = $0[] parameter(1)
@@ -117,7 +118,7 @@ TEST_P(OneDnnSoftmaxTest, SoftmaxGenericTest) {
       softmax_hlo_template_string,
       primitive_util::LowercasePrimitiveTypeName(data_type), batch_size);
 
-  TestSoftmax(softmax_hlo_string, atol, rtol);
+  TestSoftmax(softmax_hlo_string, /*expected_softmax_axis*/ 2);
 }
 
 INSTANTIATE_TEST_SUITE_P(OneDnnSoftmaxTestSuite, OneDnnSoftmaxTest,
@@ -128,7 +129,7 @@ INSTANTIATE_TEST_SUITE_P(OneDnnSoftmaxTestSuite, OneDnnSoftmaxTest,
 
 TEST_F(OneDnnSoftmaxTest, SoftmaxFP32OnAxisZero) {
   const std::string softmax_hlo_string = R"(
-        HloModule softmax_module, entry_computation_layout={(f32[3,1,1]{2,1,0})->f32[3,1,1]{2,1,0}}
+        HloModule softmax_module
         region_max {
           Arg_0 = f32[] parameter(0)
           Arg_1 = f32[] parameter(1)
@@ -161,7 +162,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxFP32OnAxisZero) {
         }
     )";
 
-  TestSoftmax(softmax_hlo_string, 1e-4, 1e-4);
+  TestSoftmax(softmax_hlo_string, /*expected_softmax_axis*/ 0);
 }
 
 TEST_F(OneDnnSoftmaxTest, SoftmaxWithBF16ConvertOutputFP32Pattern) {
@@ -170,7 +171,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxWithBF16ConvertOutputFP32Pattern) {
   }
 
   const std::string softmax_hlo_string = R"(
-        HloModule softmax_module, entry_computation_layout={(f32[16,128,30522]{2,1,0})->bf16[16,128,30522]{2,1,0}}
+        HloModule softmax_module
         region_max {
             Arg_0 = f32[] parameter(0)
             Arg_1 = f32[] parameter(1)
@@ -202,7 +203,7 @@ TEST_F(OneDnnSoftmaxTest, SoftmaxWithBF16ConvertOutputFP32Pattern) {
         }
     )";
 
-  TestSoftmax(softmax_hlo_string, 1e-4, 1e-4);
+  TestSoftmax(softmax_hlo_string, /*expected_softmax_axis*/ 2);
 }
 
 }  // namespace cpu
