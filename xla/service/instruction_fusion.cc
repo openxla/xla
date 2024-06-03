@@ -943,8 +943,8 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
           return {};
         }
         // If consumer fusion have inplace ops and non-elementwise ops and all
-        // of them access the buffer of producer, there exists inplace conflict
-        // also even though producer has no non-elementwise ops.
+        // of them access the same buffer of producer, there exists inplace
+        // conflict also even though producer has no non-elementwise ops.
         auto inplace_instr_and_index = FollowTupleIndirection(
             consumer->fused_expression_root(), pair.second);
         auto consumer_nonelementwise_ops =
