@@ -6510,7 +6510,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
       )");
 }
 
-TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasF8) {
+TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
 #if GOOGLE_CUDA && CUDA_VERSION < 12000
   GTEST_SKIP() << "F8 gemm rewrite is only supported in CUDA 12 and above.";
 #endif  // CUDA_VERSION < 12000
