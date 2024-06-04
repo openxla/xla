@@ -104,7 +104,6 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:test",
     ],
 )
