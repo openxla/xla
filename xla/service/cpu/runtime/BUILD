@@ -59,6 +59,24 @@ cc_library(
 )
 
 cc_library(
+    name = "conditional_thunk",
+    srcs = ["conditional_thunk.cc"],
+    hdrs = ["conditional_thunk.h"],
+    deps = [
+        ":thunk",
+        "//xla:util",
+        "//xla/service:buffer_assignment",
+        "//xla/stream_executor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
     name = "copy_thunk",
     srcs = ["copy_thunk.cc"],
     hdrs = ["copy_thunk.h"],
