@@ -1811,6 +1811,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
     ],
@@ -1823,13 +1824,17 @@ xla_cc_test(
     deps = [
         ":hlo_dataflow_analysis",
         ":hlo_ordering",
+        ":hlo_value",
         "//xla:shape_util",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
