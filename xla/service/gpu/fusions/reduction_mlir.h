@@ -33,12 +33,20 @@ namespace gpu {
 // Reduction fusion. Lowers to LLVM via MLIR. Currently not fully
 // implemented: only single reduction groups, no side outputs, only row
 // reductions.
-class MlirReductionFusion
-    : public ReductionFusionBase<MlirFusionEmitterBase, /*is_mlir=*/true> {
+class MlirReductionFusion : public MlirFusionEmitterBase {
  public:
   explicit MlirReductionFusion(const HloFusionAnalysis& analysis);
 
-  static bool IsSupported(const HloFusionAnalysis& analysis);
+  std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
+      int64_t root_index, mlir::MLIRContext* ctx) const override;
+
+  std::optional<IndexingMap> ComputeThreadIdToInputIndexing(
+      int64_t root_index, int64_t hero_operand_index,
+      mlir::MLIRContext* ctx) const override;
+
+  LaunchDimensions launch_dimensions() const override;
+
+  const ReductionGroups& GetGroups() const { return groups_; }
 
  protected:
   absl::Status EmitEntryFunction(
@@ -55,6 +63,15 @@ class MlirReductionFusion
   struct EmitterState;
   friend struct EmitterState;
 
+  Shape GetReduceOperandShape() const {
+    return first_reduce_->operand(0)->shape();
+  }
+
+  int GetRowsPerWarp() const;
+
+  void AddGroupIdConstraint(IndexingMap& map, int64_t root_index,
+                            mlir::MLIRContext* ctx) const;
+
   llvm::SmallVector<mlir::Value> EmitReduction(int group_id,
                                                EmitterState& state) const;
 
@@ -64,6 +81,22 @@ class MlirReductionFusion
   std::vector<std::vector<const HloInstruction*>> reduction_roots_;
   // The side output roots for each reduction group.
   std::vector<std::vector<const HloInstruction*>> side_output_roots_;
+  const HloFusionAnalysis& analysis_;
+
+  // The number of elements in each dimension.
+  absl::InlinedVector<int64_t, 4> tiled_shape_;
+
+  // The number of elements for each dimension of a tile.
+  absl::InlinedVector<int64_t, 4> tile_sizes_per_thread_;
+  absl::InlinedVector<int64_t, 4> tile_sizes_per_block_;
+
+  absl::InlinedVector<int64_t, 4> num_threads_;
+  absl::InlinedVector<int64_t, 4> num_blocks_;
+
+  bool is_row_reduction_;
+  bool is_race_free_;
+  ReductionGroups groups_;
+  const HloInstruction* first_reduce_;
 };
 
 }  // namespace gpu

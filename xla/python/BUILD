@@ -1068,9 +1068,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//xla:util",
-        "//xla/pjrt:pjrt_client",
-        "//xla/pjrt:pjrt_future",
         "//xla/python/ifrt",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
     ],
@@ -1379,6 +1378,7 @@ tsl_pybind_extension(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform/cloud:gcs_file_system",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@nanobind",
     ] + select({

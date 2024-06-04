@@ -659,7 +659,6 @@ cc_test(
         ":ir_emitter_triton",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
-        "//xla/service/gpu/fusions/mlir/ir:xla_gpu",
         "//xla/service/gpu/model:indexing_analysis",
         "//xla/service/gpu/model:tiled_hlo_instruction",
         "//xla/service/llvm_ir:llvm_util",
@@ -667,7 +666,6 @@ cc_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
-        "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:NVVMDialect",
@@ -1381,6 +1379,41 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "gemv_rewriter",
+    srcs = ["gemv_rewriter.cc"],
+    hdrs = ["gemv_rewriter.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "gemv_rewriter_test",
+    srcs = ["gemv_rewriter_test.cc"],
+    deps = [
+        ":gemv_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -2891,12 +2924,14 @@ cc_library(
         ":triton_fusion_analysis",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@local_config_cuda//cuda:cudnn_header",
         "//xla:shape_util",
+        "//xla:comparison_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_query",
@@ -2906,7 +2941,6 @@ cc_library(
         "//xla/stream_executor/cuda:cudnn_plugin",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-        "@com_google_absl//absl/container:flat_hash_set",
     ]) + ["@com_google_absl//absl/status"],
 )
 
@@ -3310,6 +3344,7 @@ cc_library(
         ":pipelined_p2p_rewriter",
         ":collective_permute_cycle_decomposer",
         ":address_computation_fusion_rewriter",
+        ":gemv_rewriter",
         ":algorithm_checker",
         ":alias_passthrough_params",
         ":all_reduce_blueconnect",
@@ -3328,6 +3363,7 @@ cc_library(
         ":gemm_broadcast_folding_rewriter",
         ":gemm_fusion",
         ":gemm_rewriter",
+        ":gpu_algebraic_simplifier",
         ":gpu_all_gather_optimizer",
         ":gpu_async_collective_annotator",
         ":gpu_constants",
@@ -3529,6 +3565,7 @@ cc_library(
         ":prepare_hlo_for_ir_emitting_pipeline",
         ":rename_fusions",
         ":stream_executor_util",
+        "//xla/service:all_reduce_splitter",
         "//xla/service/gpu/runtime:thunk",
         "//xla/stream_executor:platform_manager",
         "@com_google_absl//absl/status",
@@ -3678,6 +3715,7 @@ cc_library(
         ":dot_sparsity_rewriter",
         ":gemm_algorithm_picker",
         ":gemm_fusion_autotuner",
+        ":gpu_algebraic_simplifier",
         ":gpu_asm_opts_util",
         ":gpu_compiler",
         ":gpu_conv_padding_legalization",
@@ -3714,7 +3752,6 @@ cc_library(
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:algebraic_simplifier",
         "//xla/service:call_inliner",
         "//xla/service:convert_mover",
         "//xla/service:dot_dimension_merger",
@@ -3861,6 +3898,7 @@ cc_library(
         "gpu_algebraic_simplifier.h",
     ],
     deps = [
+        ":matmul_utils",
         ":triton_support",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -3869,6 +3907,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
@@ -4467,6 +4506,7 @@ cc_library(
         ":hlo_traversal",
         ":ir_emission_utils",
         ":reduction_utils",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -5532,7 +5572,6 @@ xla_test(
         "gpu_amd_any",
     ],
     tags = [
-        "no_oss",  # Needs fix for `ConvertGenerator`
         "nomac",
     ],
     deps = [

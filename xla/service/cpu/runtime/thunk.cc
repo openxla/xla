@@ -35,8 +35,16 @@ std::string_view Thunk::KindToString(Kind kind) {
       return "call";
     case Kind::kCopy:
       return "copy";
+    case Kind::kConditional:
+      return "conditional";
+    case Kind::kInfeed:
+      return "infeed";
+    case Kind::kRngGetAndUpdateState:
+      return "rng-get-and-update-state";
     case Kind::kKernel:
       return "kernel";
+    case Kind::kOutfeed:
+      return "outfeed";
     case Kind::kWhile:
       return "while";
   }

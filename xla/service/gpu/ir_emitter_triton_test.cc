@@ -3178,6 +3178,19 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
 }
 
+TEST_F(TritonGemmTestWithSplitK, SplitKWithTrivialDimension) {
+  const std::string kHloText = R"(
+ENTRY entry_computation {
+  p0 = f16[1001,1]{1,0} parameter(0)
+  convert = f32[1001,1]{1,0} convert(p0)
+  p1 = f32[1001,2048]{1,0} parameter(1)
+  ROOT dot = f32[1,2048]{1,0} dot(convert, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+})";
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-2}));
+}
+
 TEST_F(TritonGemmLevel2Test, NarrowingConvertOutputIsFused) {
   const std::string kHloText = R"(
 HloModule m
@@ -3370,35 +3383,47 @@ ENTRY e {
 }
 
 TEST_F(TritonGemmTestAny,
-       ShouldNotLowerDotWithLhsWithoutNonContractingDimThroughTriton) {
+       LowerDotWithLhsWithoutNonContractingDimThroughTriton) {
   const std::string hlo_text = R"(
 HloModule t
 
 ENTRY e {
-  parameter_0 = f32[32,40] parameter(0)
-  parameter_1 = f32[32,40,64] parameter(1)
-  ROOT dot = f32[32,64] dot(f32[32,40] parameter_0, f32[32,40,64] parameter_1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+  parameter_0 = f32[32,4000] parameter(0)
+  parameter_1 = f32[32,4000,6400] parameter(1)
+  ROOT dot = f32[32,6400] dot(parameter_0, parameter_1), lhs_batch_dims={0},
+    lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
 
-  MatchOptimizedHlo(hlo_text, "CHECK-NOT: triton");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonGemmTestAny,
-       ShouldNotLowerDotWithRhsWithoutNonContractingDimThroughTriton) {
+       LowerDotWithRhsWithoutNonContractingDimThroughTriton) {
   const std::string hlo_text = R"(
 HloModule t
 
 ENTRY e {
-  parameter_0 = f32[32,40,64] parameter(0)
-  parameter_1 = f32[32,40] parameter(1)
-  ROOT dot = f32[32,64] dot(f32[32,40,64] parameter_0, f32[32,40] parameter_1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+  parameter_0 = f32[32,4000,6400] parameter(0)
+  parameter_1 = f32[32,4000] parameter(1)
+  ROOT dot = f32[32,6400] dot(parameter_0, parameter_1), lhs_batch_dims={0},
+    lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
 })";
 
-  MatchOptimizedHlo(hlo_text, "CHECK-NOT: triton");
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo_text));
 
-  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::Parameter(), m::Parameter())
+                     .WithFusionKind(HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 // This group of tests compares GPU results of dots already rewritten
@@ -5519,7 +5544,8 @@ triton_dot {
   broadcast.1747 = s32[11,24,128]{2,1,0} broadcast(parameter_0),
   dimensions={0,1} parameter_1 = s32[11,24,128]{2,1,0} parameter(1)
   compare.49 = pred[11,24,128]{2,1,0} compare(broadcast.1747, parameter_1),
-      direction=EQ bitcast.4717 = pred[264,128]{1,0} bitcast(compare.49)
+      direction=EQ
+  bitcast.4717 = pred[264,128]{1,0} bitcast(compare.49)
   convert.142 = f32[264,128]{1,0} convert(bitcast.4717)
   parameter_2 = f32[128,8]{1,0} parameter(2)
   ROOT dot.381 = f32[264,8]{1,0} dot(convert.142, parameter_2),

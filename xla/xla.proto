@@ -405,8 +405,11 @@ message DebugOptions {
   bool xla_gpu_enable_all_gather_combine_by_dim = 254;
   bool xla_gpu_enable_reduce_scatter_combine_by_dim = 257;
 
-  // Combine GPU all-reduces into a single operation over a contiguous buffer.
-  bool xla_gpu_all_reduce_contiguous = 158;
+  // Was xla_gpu_all_reduce_contiguous
+  reserved 158;
+
+  // Split AR across all partitions into logical RS followed by AR.
+  bool xla_gpu_enable_all_reduce_splitter = 299;
 
   // Enable allreduce reassociation on allreduces that are converted to a wider
   // type. The resulting allreduce will be promoted to a wider-typed allreduce.
@@ -783,7 +786,10 @@ message DebugOptions {
   // a deterministic implementation.
   bool xla_gpu_exclude_nondeterministic_ops = 297;
 
-  // Next id: 299
+  // If true, Nccl errors will terminate the process.
+  bool xla_gpu_nccl_terminate_on_error = 301;
+
+  // Next id: 302
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
