@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/service/transfer_manager.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/hlo_test_base.h"
@@ -973,9 +974,7 @@ ENTRY main {
 void BM_DynamicSlice(::testing::benchmark::State& state) {
   se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
   auto executors = PlatformUtil::GetStreamExecutors(platform).value();
-  se::StreamExecutorMemoryAllocator allocator(
-      platform, std::vector<se::StreamExecutorInterface*>(executors.begin(),
-                                                          executors.end()));
+  se::StreamExecutorMemoryAllocator allocator(platform, executors);
   LocalClient* client = ClientLibrary::GetOrCreateLocalClient(platform).value();
   auto* transfer_manager = TransferManager::GetForPlatform(platform).value();
   int device_ordinal = client->default_device_ordinal();

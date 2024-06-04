@@ -27,6 +27,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
+#include "xla/stream_executor/stream_common.h"
+#include "xla/stream_executor/stream_executor_pimpl.h"
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/setround.h"
@@ -34,8 +36,9 @@ limitations under the License.
 namespace stream_executor {
 namespace host {
 
-HostStream::HostStream()
-    : thread_(tsl::Env::Default()->StartThread({}, "host_executor",
+HostStream::HostStream(StreamExecutor* executor)
+    : StreamCommon(executor),
+      thread_(tsl::Env::Default()->StartThread({}, "host_executor",
                                                [this]() { WorkLoop(); })) {}
 
 HostStream::~HostStream() {
@@ -45,6 +48,7 @@ HostStream::~HostStream() {
   }
   // thread_'s destructor blocks until the thread finishes running.
   thread_.reset();
+  parent()->DeallocateStream(this);
 }
 
 bool HostStream::EnqueueTask(absl::AnyInvocable<void() &&> task) {

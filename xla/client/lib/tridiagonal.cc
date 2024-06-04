@@ -21,13 +21,13 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/loops.h"
 #include "xla/client/lib/slicing.h"
 #include "xla/client/xla_builder.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
 
@@ -47,7 +47,7 @@ absl::Status CheckSecondToLastDimension(const Shape& op_shape, int64_t rank,
         expected, actual_num_dims);
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<int64_t> CheckSystemAndReturnNumEquations(XlaOp lower_diagonal,
@@ -157,7 +157,7 @@ absl::Status ValidateTridiagonalMatMulDiagonal(
         "but got %d and %d.",
         diagonal_name, digonal_last_dimension, rhs_second_last_dimension);
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::StatusOr<TridiagonalMatMulShapeParams>

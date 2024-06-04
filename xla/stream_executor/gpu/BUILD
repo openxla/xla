@@ -23,10 +23,6 @@ load(
     "if_cuda_is_configured",
 )
 load(
-    "//xla:xla.bzl",
-    "xla_cc_test",
-)
-load(
     "//xla/service/gpu:build_defs.bzl",
     "gpu_kernel_library",
 )
@@ -294,9 +290,9 @@ gpu_only_cc_library(
     name = "gpu_stream_header",
     hdrs = ["gpu_stream.h"],
     deps = [
+        ":gpu_executor_header",
         ":gpu_types_header",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_interface",
         "@com_google_absl//absl/log:check",
     ],
 )
@@ -310,7 +306,6 @@ gpu_only_cc_library(
         ":gpu_executor_header",
         ":gpu_types_header",
         "//xla/stream_executor",
-        "//xla/stream_executor:stream_executor_interface",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -556,16 +551,19 @@ gpu_only_cc_library(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "redzone_allocator_test",
     srcs = ["redzone_allocator_test.cc"],
-    use_gpu = True,
+    backends = ["gpu"],
+    # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
+    tags = ["gpu"],
     deps = [
         ":gpu_asm_opts",
         ":gpu_init",
         ":redzone_allocator",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory_allocator",
+        "//xla/stream_executor:stream_executor_memory_allocator",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -623,7 +621,6 @@ cc_library(
     ]),
     deps = [
         "//xla:shape_util",
-        "//xla:status",
         "//xla:status_macros",
         "//xla:statusor",
         "//xla:types",
@@ -719,13 +716,15 @@ xla_test(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "memcpy_test",
     srcs = ["memcpy_test.cc"],
+    backends = ["gpu"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    use_gpu = True,
+    # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
+    tags = ["gpu"],
     deps = [
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
@@ -741,14 +740,16 @@ xla_cc_test(
     ]),
 )
 
-xla_cc_test(
+xla_test(
     name = "stream_search_test",
     size = "small",
     srcs = ["stream_search_test.cc"],
+    backends = ["gpu"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
         "TENSORFLOW_USE_ROCM=1",
     ]),
-    use_gpu = True,
+    # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
+    tags = ["gpu"],
     deps = [
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform",

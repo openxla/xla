@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/statusor.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
@@ -1250,9 +1251,7 @@ void BM_WhileLoop(::testing::benchmark::State& state) {
 
   se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
   auto executors = PlatformUtil::GetStreamExecutors(platform).value();
-  se::StreamExecutorMemoryAllocator allocator(
-      platform, std::vector<se::StreamExecutorInterface*>(executors.begin(),
-                                                          executors.end()));
+  se::StreamExecutorMemoryAllocator allocator(platform, executors);
   LocalClient* client = ClientLibrary::GetOrCreateLocalClient(platform).value();
 
   const int64_t seq_len = 100;

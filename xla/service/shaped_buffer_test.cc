@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream_executor_interface.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/test.h"
 #include "tsl/platform/test_benchmark.h"
 
@@ -34,9 +35,7 @@ TEST(ShapedBufferTest, ScopedShapeBufferAsShapedBufferB71629047) {
                           xla::PlatformUtil::GetDefaultPlatform());
   TF_ASSERT_OK_AND_ASSIGN(auto executors,
                           xla::PlatformUtil::GetStreamExecutors(platform));
-  xla::se::StreamExecutorMemoryAllocator allocator(
-      platform, std::vector<se::StreamExecutorInterface*>{executors.begin(),
-                                                          executors.end()});
+  xla::se::StreamExecutorMemoryAllocator allocator(platform, executors);
   const xla::Shape shape = xla::ShapeUtil::MakeShape(xla::F32, {});
   const int kDeviceOrdinal = 0;
   auto scoped_buffer = std::make_unique<xla::ScopedShapedBuffer>(

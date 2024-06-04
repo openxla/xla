@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/printer.h"
-#include "xla/status.h"
 #include "tsl/platform/errors.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
@@ -192,7 +191,7 @@ class SourceLocationVisitor : public ConstDfsHloVisitorWithDefault {
                                           op_name,
                                           meta.source_line()});
     }
-    return OkStatus();
+    return absl::OkStatus();
   }
 
   std::pair<StringHandle, int32_t> LongestSourceLocationPrefix() const {

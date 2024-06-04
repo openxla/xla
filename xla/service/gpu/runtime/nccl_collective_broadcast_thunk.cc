@@ -20,13 +20,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
-#include "xla/status.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
@@ -46,7 +46,7 @@ NcclCollectiveBroadcastStartThunk::NcclCollectiveBroadcastStartThunk(
 /*static*/ absl::Status NcclCollectiveBroadcastStartThunk::CheckImplementable(
     const HloInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 /*static*/ CollectiveOpGroupMode

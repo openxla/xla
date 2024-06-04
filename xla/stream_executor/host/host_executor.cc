@@ -42,16 +42,19 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_interface.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/env.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/profile_utils/cpu_utils.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/threadpool.h"
 
 namespace stream_executor {
 namespace host {
 
 HostStream* AsHostStream(Stream* stream) {
   DCHECK(stream != nullptr);
-  return dynamic_cast<HostStream*>(stream->implementation());
+  return dynamic_cast<HostStream*>(stream);
 }
 
 static std::vector<HostExecutor::KernelFunctionLoader>&
@@ -64,10 +67,14 @@ void HostExecutor::RegisterKernelFunctionLoader(KernelFunctionLoader loader) {
   KernelFunctionLoaderRegistry().push_back(std::move(loader));
 }
 
-absl::Status HostExecutor::Init() { return absl::OkStatus(); }
+absl::Status HostExecutor::Init() {
+  thread_pool_ = std::make_shared<tsl::thread::ThreadPool>(
+      tsl::Env::Default(), "host-executor", tsl::port::MaxParallelism());
+  return absl::OkStatus();
+}
 
 absl::StatusOr<std::unique_ptr<Kernel>> HostExecutor::CreateKernel() {
-  return std::make_unique<HostKernel>();
+  return std::make_unique<HostKernel>(thread_pool_);
 }
 
 absl::Status HostExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
@@ -93,11 +100,20 @@ absl::Status HostExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
                                   const BlockDim& block_dims,
                                   const Kernel& kernel,
                                   const KernelArgs& args) {
-  // const HostKernel* host_kernel = AsHostKernel(&kernel);
+  const HostKernel* host_kernel = AsHostKernel(&kernel);
 
-  // TODO(tsilytskyi): convert args into proper format
-  // host_kernel->Launch(thread_dims, args);
-  return absl::UnimplementedError("Not Implemented");
+  const KernelArgsDeviceMemoryArray* device_mem =
+      DynCast<KernelArgsDeviceMemoryArray>(&args);
+
+  absl::Status result;
+  if (device_mem != nullptr) {
+    result = host_kernel->Launch(thread_dims, device_mem->device_memory_args());
+  } else {
+    result = absl::UnimplementedError(
+        "Host kernel implements Launch method only for DeviceMemoryArray "
+        "arguments.");
+  }
+  return result;
 }
 
 bool HostExecutor::DeviceMemoryUsage(int64_t* free, int64_t* total) const {
@@ -223,11 +239,14 @@ bool HostExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
 
 class HostEvent : public Event {
  public:
-  HostEvent(StreamExecutorInterface* executor)
-      : Event(executor),
-        notification_(std::make_shared<absl::Notification>()) {}
+  HostEvent() : notification_(std::make_shared<absl::Notification>()) {}
 
   std::shared_ptr<absl::Notification>& notification() { return notification_; }
+
+  Status PollForStatus() override {
+    return notification_->HasBeenNotified() ? Event::Status::kComplete
+                                            : Event::Status::kPending;
+  }
 
  private:
   // We use a std::shared_ptr here because the client may delete the HostEvent
@@ -237,7 +256,7 @@ class HostEvent : public Event {
 };
 
 absl::StatusOr<std::unique_ptr<Event>> HostExecutor::CreateEvent() {
-  return std::make_unique<HostEvent>(this);
+  return std::make_unique<HostEvent>();
 }
 
 static HostEvent* AsHostEvent(Event* event) {
@@ -261,12 +280,6 @@ absl::Status HostExecutor::WaitForEvent(Stream* stream, Event* event) {
   AsHostStream(stream)->EnqueueTask(
       [notification]() { notification->WaitForNotification(); });
   return absl::OkStatus();
-}
-
-Event::Status HostExecutor::PollForEventStatus(Event* event) {
-  absl::Notification& notification = *AsHostEvent(event)->notification();
-  return notification.HasBeenNotified() ? Event::Status::kComplete
-                                        : Event::Status::kPending;
 }
 
 absl::Status HostExecutor::BlockHostUntilDone(Stream* stream) {
@@ -295,7 +308,7 @@ HostExecutor::CreateDeviceDescription(int device_ordinal) {
 
 absl::StatusOr<std::unique_ptr<Stream>> HostExecutor::CreateStream(
     std::optional<std::variant<StreamPriority, int>> priority) {
-  return std::make_unique<Stream>(this, std::make_unique<HostStream>());
+  return std::make_unique<HostStream>(this);
 }
 
 }  // namespace host

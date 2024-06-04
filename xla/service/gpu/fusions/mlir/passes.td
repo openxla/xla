@@ -63,6 +63,7 @@ def LowerTensorsPass : Pass<"xla-gpu-lower-tensors", "mlir::ModuleOp"> {
     "mlir::gpu::GPUDialect",
     "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect",
+    "xla::gpu::XlaGpuDialect",
   ];
   let options = [
     Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
@@ -89,7 +90,7 @@ def MergePointersToSameSlicePass :
   let constructor = "CreateMergePointersToSameSlicePass()";
 }
 
-def SimplifyArithPass : Pass<"xla-gpu-simplify-arith", "mlir::ModuleOp"> {
+def SimplifyArithPass : Pass<"xla-gpu-simplify-arith", "mlir::func::FuncOp"> {
   let summary = "Simplifies arith using XLA's range-aware simplifier.";
 
   let description = [{
@@ -98,7 +99,8 @@ def SimplifyArithPass : Pass<"xla-gpu-simplify-arith", "mlir::ModuleOp"> {
   }];
 
   let dependentDialects = [
-    "mlir::arith::ArithDialect"
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
   ];
 
   let constructor = "CreateSimplifyArithPass()";
@@ -155,6 +157,21 @@ def LowerXlaGpuToScfPass :
   let constructor = "CreateLowerXlaGpuToScfPass()";
 }
 
+def EraseDeadFunctionsPass : Pass<"xla-erase-dead-functions", "mlir::ModuleOp"> {
+  let summary = "Deletes unused functions";
+
+  let description = [{
+      Deletes functions that are not called.
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "xla::gpu::XlaGpuDialect"
+  ];
+
+  let constructor = "CreateEraseDeadFunctionsPass()";
+}
+
 def LowerToLLVMPass :
    Pass<"xla-gpu-lower-to-llvm", "mlir::ModuleOp"> {
   let summary = "Lowers to LLVM.";
@@ -168,6 +185,54 @@ def LowerToLLVMPass :
   ];
 
   let constructor = "CreateLowerToLLVMPass()";
+}
+
+def UnswitchLoopsPass :
+   Pass<"xla-gpu-unswitch-loops", "mlir::func::FuncOp"> {
+  let summary = "Swaps scf.if and scf.for.";
+
+  let description = [{
+      Extracts `scf.if` ops with conditions that are independent of the loop
+      variable from `scf.for` by doing the following rewrite:
+
+      Before:
+
+      %cond = some_cond() : i1
+      %results = scf.for {
+        %some_val = scf.if %cond  {
+        } else {
+        }
+        scf.yield %some_val
+      }
+
+      After:
+
+      %cond = some_cond() : i1
+      %results = scf.if %cond {
+         %results = scf.for {
+            %some_val = scf.if %true  {
+            } else {
+            }
+         }
+         yield %results
+      } else {
+         %results = scf.for {
+            %some_val = scf.if %false  {
+            } else {
+            }
+         }
+         yield %results
+      }
+
+      This only triggers if there is a single `scf.if` op in the loop body (and
+      nothing else).
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect", "mlir::scf::SCFDialect"
+  ];
+
+  let constructor = "CreateUnswitchLoopsPass()";
 }
 
 #endif  // XLA_SERVICE_GPU_FUSIONS_MLIR_PASSES_TD_

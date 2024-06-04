@@ -50,7 +50,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
-#include "xla/status.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
 #include "xla/stream_executor/stream.h"
@@ -329,7 +328,7 @@ absl::Status RegisterBufferOnce(NcclApi* nccl_api, int device_ordinal,
     all_registered.handles.push_back(handle);
     all_registered.records.insert({device_ordinal, comm, base_ptr});
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
@@ -345,7 +344,7 @@ absl::Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
                                             buffers[i].destination_buffer));
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 absl::Status NcclCollectiveThunk::AsyncEvents::Initialize(

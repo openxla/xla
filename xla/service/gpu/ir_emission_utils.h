@@ -63,6 +63,11 @@ inline constexpr int64_t WarpSize() { return 32; }
 // FusionBackendConfig.kind requel to this string.
 inline constexpr absl::string_view kCustomFusionKind = "__custom_fusion";
 
+// Generic fusions that use Triton have FusionBackendConfig.kind equal to this
+// string. This fusion kind will eventually subsume all usages of
+// kTritonGemmFusionKind and kTritonSoftmaxFusionKind.
+inline constexpr absl::string_view kTritonFusionKind = "__triton";
+
 // Fusions that use Triton have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 
@@ -188,13 +193,8 @@ struct TransposeDescription {
 std::optional<TransposeDescription> GetDescriptionForTiledTransposeEmitter(
     const HloInstruction& root, const HloInstruction& hero);
 
-// Checks if the instruction is elementwise and only has a single user. If
-// a fusion adaptor is provided, only checks for users within the fusion. If
-// `add_single_user_check` is true, then it is also checked whether `instr` has
-// at most 1 user.
-bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count = 1,
-                    const HloFusionAdaptor* fusion = nullptr,
-                    bool add_single_user_check = false);
+// Checks if the instruction is elementwise.
+bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count = 1);
 
 // Log the given module if the VLOG level is >= level.
 void VLogModule(int level, const llvm::Module& module);

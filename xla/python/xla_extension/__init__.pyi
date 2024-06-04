@@ -61,11 +61,13 @@ class XlaRuntimeError(RuntimeError):
 class PrimitiveType(enum.IntEnum):
   PRIMITIVE_TYPE_INVALID: PrimitiveType
   PRED: PrimitiveType
+  S2: PrimitiveType
   S4: PrimitiveType
   S8: PrimitiveType
   S16: PrimitiveType
   S32: PrimitiveType
   S64: PrimitiveType
+  U2: PrimitiveType
   U4: PrimitiveType
   U8: PrimitiveType
   U16: PrimitiveType
@@ -773,8 +775,10 @@ class DistributedRuntimeClient:
   ) -> _Status: ...
   def key_value_dir_get(self, key: str) -> _Status: ...
   def key_value_dir_get_bytes(self, key: str) -> _Status: ...
-  def key_value_set(self, key: str, value: str) -> _Status: ...
-  def key_value_set_bytes(self, key: str, value: bytes) -> _Status: ...
+  def key_value_set(self, key: str, value: str,
+                    allow_overwrite: bool = False) -> _Status: ...
+  def key_value_set_bytes(self, key: str, value: bytes,
+                          allow_overwrite: bool = False) -> _Status: ...
   def key_value_delete(self, key: str) -> _Status: ...
   def wait_at_barrier(
       self, barrier_id: str, timeout_in_ms: int, process_ids: Optional[List[int]]

@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
@@ -892,9 +893,7 @@ void BM_ParallelFusion(::testing::benchmark::State& state) {
 
   se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
   auto executors = PlatformUtil::GetStreamExecutors(platform).value();
-  se::StreamExecutorMemoryAllocator allocator(
-      platform, std::vector<se::StreamExecutorInterface*>(executors.begin(),
-                                                          executors.end()));
+  se::StreamExecutorMemoryAllocator allocator(platform, executors);
 
   const int64_t intra_op_parallelism_threads = 24;
   xla::LocalClientOptions client_options;

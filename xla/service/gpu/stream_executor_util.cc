@@ -68,17 +68,24 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-se::dnn::VersionInfo GetDnnVersionInfo(
-    stream_executor::StreamExecutor* stream_exec,
-    se::dnn::VersionInfo fallback_version) {
+absl::StatusOr<se::dnn::VersionInfo> GetDnnVersionInfo(
+    stream_executor::StreamExecutor* stream_exec) {
   if (!stream_exec) {
-    return fallback_version;
+    return absl::InvalidArgumentError("StreamExecutor is null");
   }
   stream_executor::dnn::DnnSupport* dnn = stream_exec->AsDnn();
   if (!dnn) {
-    return fallback_version;
+    return absl::FailedPreconditionError(
+        "DNN library initialization failed. Look at the errors above for more "
+        "details.");
   }
-  return dnn->GetVersion().value_or(fallback_version);
+  return dnn->GetVersion();
+}
+
+se::dnn::VersionInfo GetDnnVersionInfoOrDefault(
+    stream_executor::StreamExecutor* stream_exec,
+    se::dnn::VersionInfo fallback_version) {
+  return GetDnnVersionInfo(stream_exec).value_or(fallback_version);
 }
 
 namespace {
@@ -665,12 +672,12 @@ absl::Status NoAlgorithmSuppliedInternalError(
     std::optional<std::string_view> instr_str) {
   std::ostringstream msg;
   if (instr_str.has_value()) {
-    msg << "There are no algorithm candiates for computing: \n  "
+    msg << "There are no algorithm candidates for computing: \n  "
         << instr_str.value()
         << "\nThis likely means that the instruction shape is not supported by "
            "the target GPU library.";
   } else {
-    msg << "There are no algorithm candiates for computing the instruction.\n"
+    msg << "There are no algorithm candidates for computing the instruction.\n"
            "This likely means that the instruction shape is not supported by "
            "the target GPU library.";
   }

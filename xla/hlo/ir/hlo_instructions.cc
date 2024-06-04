@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -58,7 +59,6 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/status.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
@@ -1555,11 +1555,6 @@ HloReshapeInstruction::HloReshapeInstruction(const Shape& shape,
                                              int64_t inferred_dimension)
     : HloInstruction(HloOpcode::kReshape, shape),
       inferred_dimension_(inferred_dimension) {
-  CHECK(operand->shape().is_unbounded_dynamic() ||
-        ShapeUtil::StaticExtentProduct(shape) ==
-            ShapeUtil::StaticExtentProduct(operand->shape()))
-      << "shape: " << ShapeUtil::HumanString(shape)
-      << " operand: " << ShapeUtil::HumanString(operand->shape());
   AppendOperand(operand);
 }
 

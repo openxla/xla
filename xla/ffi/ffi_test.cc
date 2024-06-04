@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/ffi_api.h"
-#include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
@@ -83,8 +82,8 @@ TEST(FfiTest, WrongNumArgs) {
   builder.AddBufferArg(se::DeviceMemoryBase(nullptr), PrimitiveType::F32, {});
   auto call_frame = builder.Build();
 
-  auto handler = Ffi::Bind().Arg<BufferBase>().Arg<BufferBase>().To(
-      [](BufferBase, BufferBase) { return absl::OkStatus(); });
+  auto handler = Ffi::Bind().Arg<AnyBuffer>().Arg<AnyBuffer>().To(
+      [](AnyBuffer, AnyBuffer) { return absl::OkStatus(); });
 
   auto status = Call(*handler, call_frame);
 
@@ -414,19 +413,27 @@ TEST(FfiTest, DecodingErrors) {
 
   EXPECT_TRUE(absl::StrContains(
       status.message(),
-      "Failed to decode all FFI handler operands (bad operands at: 0, 1, 3)"));
+      "Failed to decode all FFI handler operands (bad operands at: 0, 1, 3)"))
+      << "status.message():\n"
+      << status.message() << "\n";
 
   EXPECT_TRUE(absl::StrContains(
-      status.message(), "Attribute name mismatch: i32 vs not_i32_should_fail"));
+      status.message(), "Attribute name mismatch: i32 vs not_i32_should_fail"))
+      << "status.message():\n"
+      << status.message() << "\n";
 
   EXPECT_TRUE(absl::StrContains(
-      status.message(), "Attribute name mismatch: i64 vs not_i64_should_fail"));
+      status.message(), "Attribute name mismatch: i64 vs not_i64_should_fail"))
+      << "status.message():\n"
+      << status.message() << "\n";
 
   EXPECT_TRUE(absl::StrContains(
-      status.message(), "Attribute name mismatch: str vs not_str_should_fail"));
+      status.message(), "Attribute name mismatch: str vs not_str_should_fail"))
+      << "status.message():\n"
+      << status.message() << "\n";
 }
 
-TEST(FfiTest, BufferBaseArgument) {
+TEST(FfiTest, AnyBufferArgument) {
   std::vector<float> storage(4, 0.0f);
   se::DeviceMemoryBase memory(storage.data(), 4 * sizeof(float));
 
@@ -434,7 +441,7 @@ TEST(FfiTest, BufferBaseArgument) {
   builder.AddBufferArg(memory, PrimitiveType::F32, /*dims=*/{2, 2});
   auto call_frame = builder.Build();
 
-  auto fn = [&](BufferBase buffer) {
+  auto fn = [&](AnyBuffer buffer) {
     EXPECT_EQ(buffer.dtype, PrimitiveType::F32);
     EXPECT_EQ(buffer.data.opaque(), storage.data());
     EXPECT_EQ(buffer.dimensions.size(), 2);
@@ -442,7 +449,7 @@ TEST(FfiTest, BufferBaseArgument) {
   };
 
   {  // Test explicit binding signature declaration.
-    auto handler = Ffi::Bind().Arg<BufferBase>().To(fn);
+    auto handler = Ffi::Bind().Arg<AnyBuffer>().To(fn);
     auto status = Call(*handler, call_frame);
     TF_ASSERT_OK(status);
   }
@@ -564,8 +571,8 @@ TEST(FfiTest, RemainingArgs) {
 
   auto fn = [&](RemainingArgs args) {
     EXPECT_EQ(args.size(), 1);
-    EXPECT_TRUE(args.get<BufferBase>(0).has_value());
-    EXPECT_FALSE(args.get<BufferBase>(1).has_value());
+    EXPECT_TRUE(args.get<AnyBuffer>(0).has_value());
+    EXPECT_FALSE(args.get<AnyBuffer>(1).has_value());
     return absl::OkStatus();
   };
 
@@ -584,14 +591,14 @@ TEST(FfiTest, RemainingRets) {
   builder.AddBufferRet(memory, PrimitiveType::F32, /*dims=*/{2, 2});
   auto call_frame = builder.Build();
 
-  auto fn = [&](Result<BufferBase> ret, RemainingResults rets) {
+  auto fn = [&](Result<AnyBuffer> ret, RemainingResults rets) {
     EXPECT_EQ(rets.size(), 1);
-    EXPECT_TRUE(rets.get<BufferBase>(0).has_value());
-    EXPECT_FALSE(rets.get<BufferBase>(1).has_value());
+    EXPECT_TRUE(rets.get<AnyBuffer>(0).has_value());
+    EXPECT_FALSE(rets.get<AnyBuffer>(1).has_value());
     return absl::OkStatus();
   };
 
-  auto handler = Ffi::Bind().Ret<BufferBase>().RemainingResults().To(fn);
+  auto handler = Ffi::Bind().Ret<AnyBuffer>().RemainingResults().To(fn);
   auto status = Call(*handler, call_frame);
 
   TF_ASSERT_OK(status);
@@ -601,16 +608,16 @@ TEST(FfiTest, RunOptionsCtx) {
   auto call_frame = CallFrameBuilder().Build();
   auto* expected = reinterpret_cast<se::Stream*>(0x01234567);
 
-  ServiceExecutableRunOptions opts;
-  opts.mutable_run_options()->set_stream(expected);
-
   auto fn = [&](const se::Stream* run_options) {
     EXPECT_EQ(run_options, expected);
     return absl::OkStatus();
   };
 
+  CallOptions options;
+  options.stream = expected;
+
   auto handler = Ffi::Bind().Ctx<Stream>().To(fn);
-  auto status = Call(*handler, call_frame, {&opts});
+  auto status = Call(*handler, call_frame, options);
 
   TF_ASSERT_OK(status);
 }
@@ -632,12 +639,10 @@ TEST(FfiTest, UserData) {
     return absl::OkStatus();
   };
 
+  CallOptions options;
+  options.execution_context = &execution_context;
+
   auto handler = Ffi::Bind().Ctx<UserData<StrUserData>>().To(fn);
-
-  ServiceExecutableRunOptions opts;
-  opts.mutable_run_options()->set_ffi_execution_context(&execution_context);
-
-  CallOptions options = {&opts};
   auto status = Call(*handler, call_frame, options);
 
   TF_ASSERT_OK(status);
