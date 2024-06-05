@@ -20,7 +20,10 @@ limitations under the License.
 #include <string_view>
 #include <type_traits>
 
+#include <sys/syscall.h>
+
 #include "nvtx3/nvToolsExt.h"
+#include "nvtx3/nvToolsExtCudaRt.h"
 #include "nvtx3/nvToolsExtPayload.h"
 
 namespace tsl::profiler {
@@ -31,6 +34,14 @@ ProfilerDomainHandle DefaultProfilerDomain() {
   static ProfilerDomainHandle domain =
       reinterpret_cast<ProfilerDomainHandle>(nvtxDomainCreateA("TSL"));
   return domain;
+}
+
+void NameCurrentThread(const char* thread_name) {
+  nvtxNameOsThreadA(syscall(SYS_gettid), thread_name);
+}
+
+void NameDevice(int device_id, const char* device_name) {
+  nvtxNameCudaDeviceA(device_id, device_name);
 }
 
 void RangePop(ProfilerDomainHandle domain) {
