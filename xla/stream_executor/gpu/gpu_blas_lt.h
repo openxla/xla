@@ -191,7 +191,7 @@ struct BlasLt {
         const HostOrDeviceScalar<Scale>& beta, const DeviceMemory<C>& c,
         DeviceMemory<D>& d, const MatmulAlgorithm& algorithm,
         const DeviceMemory<C>& bias = {},
-        const DeviceMemoryBase& aux = {},
+        const DeviceMemoryBase& aux = DeviceMemoryBase{nullptr, 0},
         const DeviceMemory<Scale>& a_scale = {},
         const DeviceMemory<Scale>& b_scale = {},
         const DeviceMemory<Scale>& c_scale = {},
