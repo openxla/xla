@@ -126,7 +126,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_reduce_scatter_combine_threshold_bytes(kDefaultThreshold);
   opts.set_xla_gpu_enable_all_gather_combine_by_dim(true);
   opts.set_xla_gpu_enable_reduce_scatter_combine_by_dim(true);
-  opts.set_xla_gpu_all_reduce_contiguous(true);
   opts.set_xla_gpu_enable_all_reduce_splitter(false);
 
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
@@ -255,6 +254,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_require_complete_aot_autotune_results(false);
 
   opts.set_xla_gpu_enable_host_memory_offloading(false);
+
+  opts.set_xla_gpu_nccl_terminate_on_error(false);
+
+  opts.set_xla_use_shardonnay(false);
 
   return opts;
 }
@@ -1067,11 +1070,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Combine reduce-scatter ops with the same dimension or irrespective of "
       "their dimension."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_all_reduce_contiguous",
-      bool_setter_for(&DebugOptions::set_xla_gpu_all_reduce_contiguous),
-      debug_options->xla_gpu_all_reduce_contiguous(),
-      "Combine all-reduces into a single operation over a contiguous buffer."));
-  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_all_reduce_splitter",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_all_reduce_splitter),
       debug_options->xla_gpu_enable_all_reduce_splitter(),
@@ -1698,6 +1696,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_host_memory_offloading),
       debug_options->xla_gpu_enable_host_memory_offloading(),
       "Whether to trigger host memory offloading on a device."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_nccl_terminate_on_error",
+      bool_setter_for(&DebugOptions::set_xla_gpu_nccl_terminate_on_error),
+      debug_options->xla_gpu_nccl_terminate_on_error(),
+      "If set, then NCCL errors will terminate the process."));
+  flag_list->push_back(tsl::Flag(
+      "xla_use_shardonnay",
+      bool_setter_for(&DebugOptions::set_xla_use_shardonnay),
+      debug_options->xla_use_shardonnay(), "Whether to use Shardonnay."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

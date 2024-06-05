@@ -66,6 +66,10 @@ message OneDnnTensorLayoutProto {
   }
 }
 
+message OneDnnSoftmaxConfig {
+  int32 softmax_axis = 1;
+}
+
 message OneDnnMatMulConfig {
   bool transpose_a = 1;
   bool transpose_b = 2;

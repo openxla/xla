@@ -126,6 +126,23 @@ xla_cc_test(
     ],
 )
 
+xla_cc_test(
+    name = "async_command_buffer_test",
+    srcs = ["async_command_buffer_test.cc"],
+    tags = tf_cuda_tests_tags(),
+    deps = [
+        "//xla:debug_options_flags",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/service:gpu_plugin",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:literal_test_util",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 xla_test(
     name = "float_conversions_test",
     srcs = ["float_conversions_test.cc"],
@@ -988,7 +1005,7 @@ xla_test(
     name = "gpu_cub_sort_test",
     srcs = ["gpu_cub_sort_test.cc"],
     backends = ["gpu"],
-    shard_count = 10,
+    shard_count = 15,
     deps = [
         "//xla:error_spec",
         "//xla:shape_util",

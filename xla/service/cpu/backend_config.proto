@@ -15,7 +15,9 @@ message BackendConfig {
     OneDnnMatMulConfig onednn_matmul_config = 2;
     // Configuration to be used by oneDNN layer norm
     OneDnnNormConfig onednn_layer_norm_config = 3;
+    // Configuration to be used by oneDNN softmax
+    OneDnnSoftmaxConfig onednn_softmax_config = 4;
     // Configuration to be used by oneDNN convolution
-    OneDnnConvolutionConfig onednn_conv_config = 4;
+    OneDnnConvolutionConfig onednn_conv_config = 5;
   }
 }
