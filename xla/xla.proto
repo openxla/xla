@@ -847,6 +847,10 @@ message DebugOptions {
   repeated string legacy_command_buffer_custom_call_targets = 314;
 
   // Next id: 315
+  // Relative precision for comparing different GEMM solutions 
+  float xla_gpu_autotune_gemm_rtol = 314;
+
+  // Next id: 315
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
