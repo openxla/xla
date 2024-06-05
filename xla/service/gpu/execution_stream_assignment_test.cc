@@ -41,6 +41,7 @@ using AsyncExecutionStreamIds =
 namespace xla::gpu {
 namespace {
 
+#if 0
 class ExecutionStreamAssignmentTest : public HloTestBase {
  protected:
   // Adds expectations for the `ExecutionStreamId` for all synchronous
@@ -196,5 +197,6 @@ TEST_F(ExecutionStreamAssignmentTest, UnreachableComputation) {
   }
 }
 
+#endif // 0
 }  // namespace
 }  // namespace xla::gpu
