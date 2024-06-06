@@ -97,11 +97,20 @@ def prepare_amd_gpu_backend_data(backends, backend_tags):
 
     new_backend_tags = {key: value for key, value in backend_tags.items() if key != "gpu"}
     gpu_backend_tags = backend_tags.get("gpu", [])
+    nvidia_tags = []
+    for key in gpu_backend_tags:
+        if key.startswith("requires-"):
+            nvidia_tags.append(key)
+
+    for key in nvidia_tags:
+        gpu_backend_tags.remove(key)
+
     for key in AMD_GPU_DEFAULT_BACKENDS:
         new_backend_tags.setdefault(key, gpu_backend_tags[:])
 
     for backend in AMD_GPU_DEFAULT_BACKENDS:
-        new_backend_tags[backend].append("requires-gpu-amd")
+        if "no_rocm" not in gpu_backend_tags:
+            new_backend_tags[backend].append("requires-gpu-amd")
         new_backend_tags[backend].append("notap")
 
     return new_backends, new_backend_tags
