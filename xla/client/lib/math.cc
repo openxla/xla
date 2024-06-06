@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/client/lib/math.h"
+#include "xla/client/lib/math_impl.h"
 
 #include <algorithm>
 #include <array>
@@ -1201,109 +1202,19 @@ XlaOp Asin(XlaOp x) {
   XlaBuilder* b = x.builder();
   auto do_it = [&](XlaOp z) -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(z));
-    if (primitive_util::IsComplexType(shape.element_type())) {
-      // According to "Implementing the complex arcsine and arccosine
-      // functions using exception handling" by Hull et al
-      // [https://dl.acm.org/doi/10.1145/275323.275324], complex
-      // arcsin function can be defined as
-      //   arcsin(z) = arcsin(x/a) + sign(y; x) * I * log(a + sqrt(a*a-1))
-      // where
-      //   a = (hypot(x+1, y) + hypot(x-1, y))/2
-      //   sign(y; x) = 1 when y >= 0 and abs(x) <= 1, otherwise -1
-      //
-      // Hull et al provide an algorithm for computing complex arcsin
-      // that is based on splitting the first quarter of the complex
-      // plane into 11 regions and providing its own approximations
-      // to each region. The evaluation of arcsin in other quarters
-      // is resolved by using identities
-      //   arcsin(-z) == -arcsin(z)
-      //   arcsin(conj(z)) == conj(arcsin(z))
-      //
-      // When considering the evaluation of arcsin real and imaginary
-      // parts separately, the 11 regions by Hull et al can be reduced
-      // to 3 regions for the real part and 6 regions for the
-      // imaginary part. In the following, the corresponding
-      // modification of the Hull et al algorithm is provided. It is
-      // validated against the mpmath.mp.asin that implements the
-      // original Hull et al algorithm.
-
-      auto dtype = primitive_util::ComplexComponentType(shape.element_type());
-
-      double safe_min_, safe_max_;
-      switch (dtype) {
-        case F64:
-          safe_min_ = std::sqrt(std::numeric_limits<double>::min()) * 4;
-          safe_max_ = std::sqrt(std::numeric_limits<double>::max()) / 8;
-          break;
-        case F32:
-          safe_min_ = std::sqrt(std::numeric_limits<float>::min()) * 4;
-          safe_max_ = std::sqrt(std::numeric_limits<float>::max()) / 8;
-          break;
-        default:
-          safe_min_ = safe_max_ = 0.0;
-          assert(false);  // unreachable
-      }
-      auto signed_x = Real(z);
-      auto signed_y = Imag(z);
-      auto x = Abs(signed_x);
-      auto y = Abs(signed_y);
-
-      auto safe_min = ScalarLike(x, safe_min_);
-      auto safe_max = ScalarLike(x, safe_max_);
-      auto safe_max_m6 = ScalarLike(x, safe_max_ * 1e-6);
-      auto safe_max_p12 = ScalarLike(x, safe_max_ * 1e12);
-      auto safe_max_p2 = ScalarLike(x, safe_max_ * 1e2);
-      auto safe_max_opt = Select(Lt(x, safe_max_p12), safe_max_m6, safe_max_p2);
-      auto y_ge_max_opt = Ge(y, safe_max_opt);
-
-      auto zero = ScalarLike(x, 0);
-      auto one = ScalarLike(x, 1);
-      auto none = ScalarLike(x, -1);
-      auto half = ScalarLike(x, 0.5);
-      auto log2 = ScalarLike(x, std::log(2.0));
-      auto xp1 = Add(x, one);
-      auto xm1 = Add(x, none);
-      auto yy = Mul(y, y);
-      auto half_yy = Mul(half, yy);
-      auto r = Hypot(xp1, y);
-      auto s = Hypot(xm1, y);
-      auto a = Mul(half, Add(r, s));
-      auto ap1 = Add(a, one);
-      auto half_apx = Mul(half, Add(a, x));
-      auto rpxp1 = Add(r, xp1);
-      auto spxm1 = Add(s, xm1);
-      auto smxm1 = Sub(s, xm1);
-      auto y_is_finite = Not(IsPosInf(y));
-      auto max_xy = Select(Gt(x, y), x, y);
-
-      auto y1 = Select(
-          Gt(max_xy, safe_max), y,
-          Select(
-              Le(x, one), Sqrt(Mul(half_apx, Add(Div(yy, rpxp1), smxm1))),
-              Mul(y, Sqrt(Add(Div(half_apx, rpxp1), Div(half_apx, spxm1))))));
-      auto real = Atan2(signed_x, y1);
-
-      auto am1 = Select(
-          And(Lt(y, safe_min), Lt(x, one)), Mul(none, Div(Mul(xp1, xm1), ap1)),
-          Select(Ge(x, one), Add(Div(half_yy, rpxp1), Mul(half, spxm1)),
-                 Select(Le(a, ScalarLike(a, 1.5)),
-                        Add(Div(half_yy, rpxp1), Div(half_yy, smxm1)),
-                        Add(a, none))));
-      auto sq = Sqrt(Mul(am1, ap1));
-      auto xoy = Select(And(y_ge_max_opt, y_is_finite), Div(x, y), zero);
-      auto log1p_xoy = Log1p(Mul(xoy, xoy));
-      auto mx = Select(y_ge_max_opt, y, x);
-      auto imag = Select(Ge(mx, Select(y_ge_max_opt, safe_max_opt, safe_max)),
-                         Add(log2, Add(Log(mx), Mul(half, log1p_xoy))),
-                         Select(And(Lt(y, safe_min), Lt(x, one)), Div(y, sq),
-                                Log1p(Add(am1, sq))));
-      auto signed_imag = Select(Lt(signed_y, zero), Mul(none, imag), imag);
-
-      return Complex(real, signed_imag);
+    auto elem_ty = shape.element_type();
+    switch(elem_ty) {
+      case C128: return math_impl::AsinComplex<double>(z);
+      case C64: return math_impl::AsinComplex<float>(z);
+      case F64: return math_impl::AsinReal<double>(z);
+      case F32: return math_impl::AsinReal<float>(z);
+        // todo(pearu): add implementations for BF16 and F16 to avoid
+        // the upcast below
+      default:
+        return InvalidArgument(
+            "Asin got unsupported element type %s",
+            PrimitiveType_Name(elem_ty));
     }
-    // TODO: handle overflow in x*x
-    return ScalarLike(z, 2.0) *
-           Atan2(x, ScalarLike(z, 1.0) + Sqrt(ScalarLike(z, 1.0) - z * z));
   };
   // These upcasts are not strictly necessary on all platforms to get within our
   // error tolerances, so we could relax this if it ever mattered.
