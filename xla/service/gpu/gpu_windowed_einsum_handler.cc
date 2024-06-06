@@ -458,12 +458,116 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
 bool HasReplicaGroups(const HloInstruction* inst) {
   return inst->replica_groups().size() > 0;
 }
+
+bool ShouldAddToChain(const HloInstruction* inst) {
+  switch (inst->opcode()) {
+    case HloOpcode::kTranspose:
+    case HloOpcode::kReshape:
+    case HloOpcode::kCopy:
+      return inst->user_count() == 1;
+    default:
+      return false;
+  }
+}
+
+struct MatchedGemmA2aResult {
+  HloInstruction* producer_gemm;
+  HloInstruction* lhs;
+  HloInstruction* rhs;
+  HloInstruction* a2a_replacement = nullptr;
+  HloInstruction* additional_reshape = nullptr;
+  bool matched = false;
+};
+
 class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
  public:
   explicit WindowedEinsumVisitor(
       std::vector<GpuWindowedEinsumHandler::WindowedEinsumAgLoops>&
           all_ag_loops)
       : all_ag_loops_(all_ag_loops) {}
+  absl::StatusOr<bool> MatchA2aGemmWithIntermediateReshapes(
+      HloInstruction* dot, HloInstruction** lhs, HloInstruction** rhs) {
+    if (Match(dot, m::Dot(m::AllToAll(lhs).WithOneUse().WithPredicate(
+                              HasReplicaGroups),
+                          m::Op(rhs))) &&
+        !DynCast<HloAllToAllInstruction>((*lhs))->constrain_layout() &&
+        !(*lhs)->shape().IsTuple()) {
+      return true;
+    }
+    std::vector<HloInstruction*> allowed_intermediate_ops(
+        {dot->mutable_operand(0)});
+
+    HloAllToAllInstruction* matched_a2a = nullptr;
+    // We keep pushing until an unmet condition or we have found the a2a.
+    while (true) {
+      HloInstruction* curr = allowed_intermediate_ops.back();
+      if (ShouldAddToChain(curr)) {
+        allowed_intermediate_ops.insert(allowed_intermediate_ops.end(),
+                                        std::begin(curr->operands()),
+                                        std::end(curr->operands()));
+      } else if (curr->opcode() == HloOpcode::kAllToAll &&
+                 curr->user_count() == 1) {
+        matched_a2a = DynCast<HloAllToAllInstruction>(curr);
+        break;
+      } else {
+        return false;
+      }
+    }
+    CHECK(matched_a2a != nullptr);
+    if (matched_a2a->constrain_layout() || matched_a2a->shape().IsTuple() ||
+        !HasReplicaGroups(matched_a2a) || !matched_a2a->split_dimension()) {
+      return false;
+    }
+    // We need to create a new a2a that's a direct producer of the dot and
+    // replace it with the original a2a. A new reshape will be added to the
+    // orginal a2a's input. We first need to determine the new split dimension
+    // after all the reshape ops.
+    int64_t split_dimension = *matched_a2a->split_dimension();
+    for (int64_t i = allowed_intermediate_ops.size() - 1; i >= 0; i--) {
+      HloInstruction* current_op = allowed_intermediate_ops[i];
+      if (current_op->opcode() == HloOpcode::kReshape) {
+        std::vector<std::pair<int64_t, int64_t>> unmodified_dims =
+            ShapeUtil::DimensionsUnmodifiedByReshape(
+                current_op->operand(0)->shape(), current_op->shape());
+        auto it = absl::c_find_if(
+            unmodified_dims,
+            [&split_dimension](std::pair<int64_t, int64_t>& dim_pair) {
+              return dim_pair.first == split_dimension;
+            });
+        // Split dimension of a2a has been modified, we cannot deduce the new
+        // split dim easily, so skip decomposition.
+        if (it == unmodified_dims.end()) {
+          VLOG(5) << "Split dimension of: " << matched_a2a->ToShortString()
+                  << " has been modified by reshapes. Skip process it for "
+                     "decomposition.";
+          return false;
+        }
+        // Assign the new split dim.
+        split_dimension = it->second;
+      } else if (current_op->opcode() == HloOpcode::kTranspose) {
+        const auto& transpose_dims = current_op->dimensions();
+        for (int64_t j = 0; j < transpose_dims.size(); j++) {
+          if ((int64_t)transpose_dims[j] == split_dimension) {
+            split_dimension = j;
+            break;
+          }
+        }
+      }
+    }
+    HloInstruction* new_reshape =
+        matched_a2a->parent()->AddInstruction(HloInstruction::CreateReshape(
+            dot->operand(0)->shape(), matched_a2a->mutable_operand(0)));
+    HloInstruction* new_a2a =
+        matched_a2a->parent()->AddInstruction(HloInstruction::CreateAllToAll(
+            new_reshape->shape(), {new_reshape}, matched_a2a->replica_groups(),
+            false, hlo_query::NextChannelId(*matched_a2a->GetModule()),
+            split_dimension));
+    TF_RETURN_IF_ERROR(ReplaceInstruction(dot->mutable_operand(0), new_a2a));
+    *lhs = new_a2a;
+    *rhs = dot->mutable_operand(1);
+    return true;
+  }
+
   absl::Status HandleDot(HloInstruction* dot) override {
     CHECK_EQ(dot->opcode(), HloOpcode::kDot);
     HloComputation* comp = dot->parent();
@@ -526,17 +630,14 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       }
     }
     // Rewrites an all-to-all+gemm into multiple independent partial a2a+gemms
-    // to minimize communication overhead. To do this, the original input will be
-    // sliced into replica_group size and perform all-to-all+gemm.
+    // to minimize communication overhead. To do this, the original input will
+    // be sliced into replica_group size and perform all-to-all+gemm.
     HloInstruction* lhs;
     HloInstruction* rhs;
     std::vector<xla::ReplicaGroup> replica_groups;
-    if (Match(dot, m::Dot(m::AllToAll(&lhs).WithOneUse().WithPredicate(
-                              HasReplicaGroups),
-                          m::Op(&rhs))
-                       .WithAtMostNumUser(1)) &&
-        !DynCast<HloAllToAllInstruction>(lhs)->constrain_layout() &&
-        !lhs->shape().IsTuple()) {
+    TF_ASSIGN_OR_RETURN(bool matched,
+                        MatchA2aGemmWithIntermediateReshapes(dot, &lhs, &rhs));
+    if (matched) {
       replica_groups = lhs->replica_groups();
       // We split the a2a+gemm along the contracting dimension into multiple
       // a2a+gemms and perform partial dots, partial results are added to the
@@ -614,7 +715,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       HloInstruction* lhs_slice;
       HloInstruction* rhs_slice;
 
-      HloInstruction* partial_result;
+      HloInstruction* partial_result = output_buffer;
 
       Shape partial_all_to_all_shape = lhs_slice_shape;
 
@@ -652,8 +753,9 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
             comp->AddInstruction(HloInstruction::CreateDot(
                 partial_dot_shape, partial_all_to_all, rhs_slice,
                 original_dot_dnums, original_precision));
-        partial_result = comp->AddInstruction(HloInstruction::CreateBinary(
-            partial_dot->shape(), HloOpcode::kAdd, partial_dot, output_buffer));
+        partial_result = comp->AddInstruction(
+            HloInstruction::CreateBinary(partial_dot->shape(), HloOpcode::kAdd,
+                                         partial_dot, partial_result));
         a2a->SetupDerivedInstruction(partial_result);
         TF_RETURN_IF_ERROR(
             UpdateDotAndConsumerConfig(partial_dot, stream_id++));
@@ -663,29 +765,110 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+  absl::StatusOr<MatchedGemmA2aResult> MatchGemmA2aWithIntermediateReshapes(
+      HloInstruction* inst) {
+    MatchedGemmA2aResult result;
+    HloAllToAllInstruction* a2a = DynCast<HloAllToAllInstruction>(inst);
+    if (!HasReplicaGroups(a2a) || a2a->constrain_layout() ||
+        a2a->shape().IsTuple()) {
+      return result;
+    }
+    if (Match(a2a, m::AllToAll(m::Dot(&result.producer_gemm, m::Op(&result.lhs),
+                                      m::Op(&result.rhs))
+                                   .WithOneUse()))) {
+      result.matched = true;
+      return result;
+    }
+    std::vector<HloInstruction*> allowed_intermediate_ops(
+        {a2a->mutable_operand(0)});
+
+    HloInstruction* matched_dot = nullptr;
+    // We keep pushing until an unmet condition or we have found the producer
+    // dot.
+    while (true) {
+      HloInstruction* curr = allowed_intermediate_ops.back();
+      if (ShouldAddToChain(curr)) {
+        allowed_intermediate_ops.insert(allowed_intermediate_ops.end(),
+                                        std::begin(curr->operands()),
+                                        std::end(curr->operands()));
+      } else if (curr->opcode() == HloOpcode::kDot && curr->user_count() == 1) {
+        matched_dot = curr;
+        break;
+      } else {
+        return result;
+      }
+    }
+    CHECK(matched_dot != nullptr);
+    // We need to create a new a2a that's a direct consumer of the dot and
+    // replace it with the original a2a. A new reshape will be added to the
+    // orginal a2a's output. We first need to determine the new split dimension
+    // after all the reshape ops.
+    int64_t split_dimension = *a2a->split_dimension();
+    for (int64_t i = 0; i < allowed_intermediate_ops.size(); i++) {
+      HloInstruction* current_op = allowed_intermediate_ops[i];
+      if (current_op->opcode() == HloOpcode::kReshape) {
+        std::vector<std::pair<int64_t, int64_t>> unmodified_dims =
+            ShapeUtil::DimensionsUnmodifiedByReshape(
+                current_op->operand(0)->shape(), current_op->shape());
+        auto it = absl::c_find_if(
+            unmodified_dims,
+            [&split_dimension](std::pair<int64_t, int64_t>& dim_pair) {
+              return dim_pair.second == split_dimension;
+            });
+        // Split dimension of a2a has been modified, we cannot deduce the new
+        // split dim easily, so skip decomposition.
+        if (it == unmodified_dims.end()) {
+          VLOG(5) << "Split dimension of: " << a2a->ToShortString()
+                  << " has been modified by reshapes. Skip process it for "
+                     "decomposition.";
+          return result;
+        }
+        // Assign the new split dim.
+        split_dimension = it->first;
+      } else if (current_op->opcode() == HloOpcode::kTranspose) {
+        const auto& transpose_dims = current_op->dimensions();
+        split_dimension = transpose_dims[split_dimension];
+      }
+    }
+    result.a2a_replacement =
+        matched_dot->parent()->AddInstruction(HloInstruction::CreateAllToAll(
+            matched_dot->shape(), {matched_dot}, a2a->replica_groups(), false,
+            hlo_query::NextChannelId(*matched_dot->GetModule()),
+            split_dimension));
+    result.additional_reshape = matched_dot->parent()->AddInstruction(
+        HloInstruction::CreateReshape(a2a->shape(), result.a2a_replacement));
+    inst->SetupDerivedInstruction(result.a2a_replacement);
+    inst->SetupDerivedInstruction(result.additional_reshape);
+
+    TF_RETURN_IF_ERROR(ReplaceInstruction(inst, result.additional_reshape));
+    result.lhs = matched_dot->mutable_operand(0);
+    result.rhs = matched_dot->mutable_operand(1);
+    result.producer_gemm = matched_dot;
+    result.matched = true;
+    return result;
+  }
+
   // Rewrites an gemm+all-to-all into multiple independent partial gemm+a2a's
   // to minimize communication overhead. To do this, the original input will be
   // sliced into replica_group size and perform gemm+all-to-all.
-  absl::Status HandleAllToAll(HloInstruction* a2a) override {
-    CHECK_EQ(a2a->opcode(), HloOpcode::kAllToAll);
-    HloComputation* comp = a2a->parent();
+  absl::Status HandleAllToAll(HloInstruction* inst) override {
+    CHECK_EQ(inst->opcode(), HloOpcode::kAllToAll);
+    HloComputation* comp = inst->parent();
     // Rewrites a gemm+alltoall into multiple independent partial gemm+a2as
     // to minimize communication overhead.
-    HloInstruction* lhs;
-    HloInstruction* producer_gemm;
-    HloInstruction* rhs;
     std::vector<xla::ReplicaGroup> replica_groups;
-    if (Match(a2a,
-              m::AllToAll(
-                  m::Dot(&producer_gemm, m::Op(&lhs), m::Op(&rhs)).WithOneUse())
-                  .WithAtMostNumUser(1)
-                  .WithPredicate(HasReplicaGroups)) &&
-        !DynCast<HloAllToAllInstruction>(a2a)->constrain_layout() &&
-        !a2a->shape().IsTuple()) {
+    TF_ASSIGN_OR_RETURN(MatchedGemmA2aResult matched_result,
+                        MatchGemmA2aWithIntermediateReshapes(inst));
+    if (matched_result.matched) {
+      HloInstruction* a2a = inst;
+      if (matched_result.a2a_replacement) {
+        a2a = matched_result.a2a_replacement;
+      }
       replica_groups = a2a->replica_groups();
       // Similar to a2a+gemm, we split along contracting dimensions
       // and aggregate result at each step.
       int64_t group_size = replica_groups[0].replica_ids_size();
+
       if (absl::c_find_if(replica_groups, [&](ReplicaGroup& group) {
             return group.replica_ids_size() != group_size;
           }) != replica_groups.end()) {
@@ -697,13 +880,15 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       // Get the dimension to slice for lhs and rhs, we slice on the contracting
       // dimensions to calculate partial results
       const DotDimensionNumbers& original_dot_dnums =
-          producer_gemm->dot_dimension_numbers();
+          matched_result.producer_gemm->dot_dimension_numbers();
       const PrecisionConfig& original_precision =
-          producer_gemm->precision_config();
+          matched_result.producer_gemm->precision_config();
       const auto& lhs_contracting_dims =
-          producer_gemm->dot_dimension_numbers().lhs_contracting_dimensions();
+          matched_result.producer_gemm->dot_dimension_numbers()
+              .lhs_contracting_dimensions();
       const auto& rhs_contracting_dims =
-          producer_gemm->dot_dimension_numbers().rhs_contracting_dimensions();
+          matched_result.producer_gemm->dot_dimension_numbers()
+              .rhs_contracting_dimensions();
 
       if (lhs_contracting_dims.size() != 1 ||
           rhs_contracting_dims.size() != 1) {
@@ -715,19 +900,24 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       int64_t rhs_contracting_dim = rhs_contracting_dims[0];
       HloAllToAllInstruction* all_to_all = DynCast<HloAllToAllInstruction>(a2a);
       int64_t contracting_dim_value =
-          rhs->shape().dimensions()[rhs_contracting_dim];
-
+          matched_result.rhs->shape().dimensions()[rhs_contracting_dim];
       // Each split is sliced out of the input buffer, we need to determine the
       // slice sizes and increments.
-      std::vector<int64_t> lhs_slice_sizes(lhs->shape().rank(), 0);
-      std::vector<int64_t> lhs_slice_increments(lhs->shape().rank(), 1);
+      std::vector<int64_t> lhs_slice_sizes(matched_result.lhs->shape().rank(),
+                                           0);
+      std::vector<int64_t> lhs_slice_increments(
+          matched_result.lhs->shape().rank(), 1);
       std::vector<int64_t> lhs_slice_max_range(
-          lhs->shape().dimensions().begin(), lhs->shape().dimensions().end());
+          matched_result.lhs->shape().dimensions().begin(),
+          matched_result.lhs->shape().dimensions().end());
 
-      std::vector<int64_t> rhs_slice_sizes(rhs->shape().rank(), 0);
-      std::vector<int64_t> rhs_slice_increments(rhs->shape().rank(), 1);
+      std::vector<int64_t> rhs_slice_sizes(matched_result.rhs->shape().rank(),
+                                           0);
+      std::vector<int64_t> rhs_slice_increments(
+          matched_result.rhs->shape().rank(), 1);
       std::vector<int64_t> rhs_slice_max_range(
-          rhs->shape().dimensions().begin(), rhs->shape().dimensions().end());
+          matched_result.rhs->shape().dimensions().begin(),
+          matched_result.rhs->shape().dimensions().end());
 
       // Create a zero-valued buffer to hold output.
       HloInstruction* output_buffer =
@@ -742,14 +932,15 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
             contracting_dim_value, group_size);
         return absl::OkStatus();
       }
+
       int64_t size_per_split = contracting_dim_value / group_size;
       // Each split is sliced out of the input buffer, we need to determine the
       // slice sizes and increments.
       lhs_slice_max_range[lhs_contracting_dim] = size_per_split;
       rhs_slice_max_range[rhs_contracting_dim] = size_per_split;
 
-      Shape lhs_slice_shape = lhs->shape();
-      Shape rhs_slice_shape = rhs->shape();
+      Shape lhs_slice_shape = matched_result.lhs->shape();
+      Shape rhs_slice_shape = matched_result.rhs->shape();
 
       lhs_slice_shape.set_dimensions(lhs_contracting_dim, size_per_split);
       rhs_slice_shape.set_dimensions(rhs_contracting_dim, size_per_split);
@@ -757,8 +948,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       HloInstruction* lhs_slice;
       HloInstruction* rhs_slice;
 
-      HloInstruction* partial_result;
-
+      HloInstruction* partial_result = output_buffer;
       Shape partial_all_to_all_shape = all_to_all->shape();
 
       TF_ASSIGN_OR_RETURN(
@@ -769,16 +959,16 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       int64_t stream_id = hlo_query::NextChannelId(*all_to_all->GetModule());
       for (int64_t i = 0; i < group_size; ++i) {
         lhs_slice = comp->AddInstruction(HloInstruction::CreateSlice(
-            lhs_slice_shape, lhs, lhs_slice_sizes, lhs_slice_max_range,
-            lhs_slice_increments));
+            lhs_slice_shape, matched_result.lhs, lhs_slice_sizes,
+            lhs_slice_max_range, lhs_slice_increments));
         all_to_all->SetupDerivedInstruction(lhs_slice);
         lhs_slice_sizes[lhs_contracting_dim] =
             lhs_slice_max_range[lhs_contracting_dim];
         lhs_slice_max_range[lhs_contracting_dim] += size_per_split;
 
         rhs_slice = comp->AddInstruction(HloInstruction::CreateSlice(
-            rhs_slice_shape, rhs, rhs_slice_sizes, rhs_slice_max_range,
-            rhs_slice_increments));
+            rhs_slice_shape, matched_result.rhs, rhs_slice_sizes,
+            rhs_slice_max_range, rhs_slice_increments));
 
         all_to_all->SetupDerivedInstruction(rhs_slice);
         rhs_slice_sizes[rhs_contracting_dim] =
@@ -796,11 +986,9 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
                 hlo_query::NextChannelId(*all_to_all->GetModule()),
                 all_to_all->split_dimension()));
         all_to_all->SetupDerivedInstruction(partial_all_to_all);
-
         partial_result = comp->AddInstruction(HloInstruction::CreateBinary(
             partial_all_to_all_shape, HloOpcode::kAdd, partial_all_to_all,
-            output_buffer));
-
+            partial_result));
         all_to_all->SetupDerivedInstruction(partial_result);
         TF_RETURN_IF_ERROR(
             UpdateDotAndConsumerConfig(partial_dot, stream_id++));
