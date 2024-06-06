@@ -5378,7 +5378,7 @@ OpFoldResult TransposeOp::fold(FoldAdaptor adaptor) {
 }
 
 // transpose(transpose(X)) => transpose(X)
-static LogicalResult eliminateRedundantTranspse(TransposeOp op,
+static LogicalResult eliminateRedundantTranspose(TransposeOp op,
                                                 PatternRewriter& rewriter) {
   auto tranposeOperand = op.getOperand().getDefiningOp<TransposeOp>();
   if (!tranposeOperand) {
@@ -5453,7 +5453,7 @@ static LogicalResult simplifyTranspose(TransposeOp op,
 
 void TransposeOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                               MLIRContext* /*context*/) {
-  results.add(eliminateRedundantTranspse);
+  results.add(eliminateRedundantTranspose);
   results.add(eliminateBroadcastInDimTranspose);
   results.add(simplifyTranspose);
 }
