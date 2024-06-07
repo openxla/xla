@@ -64,14 +64,11 @@ bzl_library(
 filegroup(
     name = "stream_executor_api_headers",
     srcs = [
-        "data_type.h",
         "device_description.h",
         "device_memory.h",
         "device_memory_allocator.h",
-        "event.h",
         "kernel.h",
         "launch_dim.h",
-        "numeric_options.h",
         "platform.h",
         "platform_manager.h",
         "scratch_allocator.h",
@@ -86,7 +83,6 @@ filegroup(
     name = "stream_executor_plugin_headers",
     srcs = [
         "blas.h",
-        "dnn.h",
     ],
     visibility = ["//visibility:private"],
 )
@@ -100,12 +96,16 @@ cc_library(
     deps = [
         ":allocator_stats",
         ":command_buffer",
+        ":data_type",
         ":device_description_proto_cc",
+        ":dnn",
+        ":event",
         ":fft",
         ":host_or_device_scalar",
         ":kernel_spec",
         ":memory_allocation",
         ":module_spec",
+        ":numeric_options",
         ":stream_executor_h",
         ":stream_executor_pimpl",
         "//xla/stream_executor/platform",
@@ -231,7 +231,6 @@ cc_library(
 cc_library(
     name = "data_type",
     hdrs = ["data_type.h"],
-    visibility = [":internal"],
     deps = [
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/protobuf:dnn_proto_cc",
@@ -580,7 +579,6 @@ cc_library(
     name = "kernel_spec",
     srcs = ["kernel_spec.cc"],
     hdrs = ["kernel_spec.h"],
-    visibility = [":internal"],
     deps = [
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -645,7 +643,6 @@ cc_library(
 cc_library(
     name = "scratch_allocator",
     hdrs = ["scratch_allocator.h"],
-    visibility = ["//visibility:private"],
     deps = [
         ":device_memory",
         ":device_memory_allocator",

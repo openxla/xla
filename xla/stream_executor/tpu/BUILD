@@ -33,6 +33,7 @@ cc_library(
     deps = [
         ":libtftpu_header",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
     ],
 )
 
@@ -202,6 +203,7 @@ cc_library(
         ":tpu_topology_external",
         "//xla/stream_executor",
         "//xla/stream_executor:allocator_stats",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_h",
@@ -235,6 +237,7 @@ cc_library(
         ":tpu_platform_interface",
         ":tpu_topology_external",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -265,6 +268,7 @@ cc_library(
         ":tpu_topology_external",
         "//xla/stream_executor",
         "//xla/stream_executor:allocator_stats",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_common",
@@ -490,6 +494,7 @@ cc_library(
         ":c_api_decl",
         ":tpu_topology_external",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",

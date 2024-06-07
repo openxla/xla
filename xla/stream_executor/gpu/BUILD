@@ -548,6 +548,7 @@ gpu_only_cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_handle",
+        "//xla/stream_executor:scratch_allocator",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

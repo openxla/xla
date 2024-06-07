@@ -4146,6 +4146,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:memory_allocation",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:node_hash_map",
