@@ -63,8 +63,8 @@ ENTRY main {
   CheckTreeRewriter(hlo,
                     R"(
 // CHECK: [[pad_0:%[^ ]+]] = f32[50022]{0} pad([[input_1:%[^ ]+]], [[zero_2:%[^ ]+]]), padding=0_1
-// CHECK: [[bitcast_3:%[^ ]+]] = f32[397,126]{1,0} bitcast([[pad_0]])
-// CHECK: [[reduce_4:%[^ ]+]] = f32[397]{0} reduce([[bitcast_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_5:%[^ ]+]]
+// CHECK: [[bitcast_3:%[^ ]+]] = f32[126,397]{1,0} bitcast([[pad_0]])
+// CHECK: [[reduce_4:%[^ ]+]] = f32[126]{0} reduce([[bitcast_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_5:%[^ ]+]]
 // CHECK: ROOT [[out_1_6:%[^ ]+]] = f32[] reduce([[reduce_4]], [[zero_2]]), dimensions={0}, to_apply=[[add_5]]
       )");
 }
@@ -114,9 +114,9 @@ ENTRY main {
   CheckTreeRewriter(hlo,
                     R"(
 // CHECK: [[input_0:%[^ ]+]] = f32[50048]{0} parameter(0)
-// CHECK: [[bitcast_1:%[^ ]+]] = f32[391,128]{1,0} bitcast([[input_0]])
+// CHECK: [[bitcast_1:%[^ ]+]] = f32[128,391]{1,0} bitcast([[input_0]])
 // CHECK: [[zero_2:%[^ ]+]] = f32[] constant(0)
-// CHECK: [[reduce_3:%[^ ]+]] = f32[391]{0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
+// CHECK: [[reduce_3:%[^ ]+]] = f32[128]{0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK: ROOT [[out_1_5:%[^ ]+]] = f32[] reduce([[reduce_3]], [[zero_2]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
@@ -274,8 +274,8 @@ ENTRY main {
 // CHECK:  [[input_0:%[^ ]+]] = f32[10303,100]{1,0} parameter(0)
 // CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
 // CHECK:  [[pad_0:%[^ ]+]] = f32[10304,100]{1,0} pad([[input_1:%[^ ]+]], [[zero_2:%[^ ]+]]), padding=0_1x0_0
-// CHECK:  [[bitcast_1:%[^ ]+]] = f32[161,64,100]{2,1,0} bitcast([[pad_0]])
-// CHECK:  [[reduce_3:%[^ ]+]] = f32[161,100]{1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  [[bitcast_1:%[^ ]+]] = f32[64,161,100]{2,1,0} bitcast([[pad_0]])
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[64,100]{1,0} reduce([[bitcast_1]], [[zero_2]]), dimensions={1}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[100]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={0}, to_apply=[[add_4]]
       )");
 }
@@ -371,13 +371,13 @@ ENTRY main {
   CheckTreeRewriter(hlo,
                     R"(
 // CHECK:  [[pad_0:%[^ ]+]] = f32[2,100005]{1,0} pad([[input_1:%[^ ]+]], [[zero_2:%[^ ]+]]), padding=0_0x0_2
-// CHECK:  [[bitcast_3:%[^ ]+]] = f32[2,339,295]{2,1,0} bitcast([[pad_0]])
+// CHECK:  [[bitcast_3:%[^ ]+]] = f32[2,295,339]{2,1,0} bitcast([[pad_0]])
 // CHECK:  [[zero_idx_4:%[^ ]+]] = u32[] constant(0)
 // CHECK:  [[pad_1_5:%[^ ]+]] = u32[2,100005]{1,0} pad([[idxs_6:%[^ ]+]], [[zero_idx_4]]), padding=0_0x0_2
-// CHECK:  [[bitcast_1_7:%[^ ]+]] = u32[2,339,295]{2,1,0} bitcast([[pad_1_5]])
-// CHECK:  [[reduce_8:%[^ ]+]] = (f32[2,339]{1,0}, u32[2,339]{1,0}) reduce([[bitcast_3]], [[bitcast_1_7]], [[zero_2]], [[zero_idx_4]]), dimensions={2}, to_apply=[[argmax_9:%[^ ]+]]
-// CHECK:  [[get_tuple_element_10:%[^ ]+]] = f32[2,339]{1,0} get-tuple-element([[reduce_8]]), index=0
-// CHECK:  [[get_tuple_element_1_11:%[^ ]+]] = u32[2,339]{1,0} get-tuple-element([[reduce_8]]), index=1
+// CHECK:  [[bitcast_1_7:%[^ ]+]] = u32[2,295,339]{2,1,0} bitcast([[pad_1_5]])
+// CHECK:  [[reduce_8:%[^ ]+]] = (f32[2,295]{1,0}, u32[2,295]{1,0}) reduce([[bitcast_3]], [[bitcast_1_7]], [[zero_2]], [[zero_idx_4]]), dimensions={2}, to_apply=[[argmax_9:%[^ ]+]]
+// CHECK:  [[get_tuple_element_10:%[^ ]+]] = f32[2,295]{1,0} get-tuple-element([[reduce_8]]), index=0
+// CHECK:  [[get_tuple_element_1_11:%[^ ]+]] = u32[2,295]{1,0} get-tuple-element([[reduce_8]]), index=1
 // CHECK:  ROOT [[out_1_12:%[^ ]+]] = (f32[2]{0}, u32[2]{0}) reduce([[get_tuple_element_10]], [[get_tuple_element_1_11]], [[zero_2]], [[zero_idx_4]]), dimensions={1}, to_apply=[[argmax_9]]
       )");
 }

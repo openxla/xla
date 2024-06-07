@@ -86,6 +86,29 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     return false;
   }
 
+  // We observe larger n_div_k can improve tree reduction performance. Swap k
+  // and n_div_k if possible.
+  bool ShouldSwapInnerAndOuterReducedMinorDimension(uint64_t k,
+                                                    uint64_t n_div_k,
+                                                    uint64_t n,
+                                                    int64_t race_free_bound,
+                                                    bool is_row_reduction) {
+    CHECK(k >= n_div_k);
+    // Keep inner reduction as race free.
+    if (k > race_free_bound) {
+      return false;
+    }
+    // Rough conditions for row reduction vectorization, not mean that
+    // vectorization will definitely occur.
+    bool maybe_vectorized = n_div_k % 2 == 0 && n % 2 == 0;
+    // Swapping only affects row reduction vectorization.
+    if (is_row_reduction && maybe_vectorized) {
+      // Swap if n_div_k is small enough even though vectorization may occur.
+      return n_div_k * 2 < k;
+    }
+    return true;
+  }
+
   absl::Status RewriteReduction(HloInstruction *hlo) {
     ReductionDimensions reduction_dimensions =
         GetReductionKindAndContiguousComponents(*hlo);
@@ -162,6 +185,10 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
     uint64_t padded_n = n + minimum_padding;
+    if (ShouldSwapInnerAndOuterReducedMinorDimension(
+            best_k, padded_n / best_k, n, race_free_bound, is_row_reduction)) {
+      best_k = padded_n / best_k;
+    }
 
     // Pad reduced dimension to the required number of elements.
     bool no_padding_necessary = n == padded_n;
