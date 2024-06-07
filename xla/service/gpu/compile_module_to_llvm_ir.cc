@@ -36,10 +36,10 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"         // from @llvm-project
+#include "mlir/IR/DialectRegistry.h"     // from @llvm-project
+#include "mlir/Pass/PassManager.h"       // from @llvm-project
+#include "mlir/Support/LLVM.h"           // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -109,12 +109,21 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const std::string& platform_name, se::Platform::Id platform_id,
     const se::DeviceDescription& gpu_device_info,
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
-    const BufferValue::SizeFunction& buffer_size_bytes_function) {
+    const BufferValue::SizeFunction& buffer_size_bytes_function,
+    bool split_constants_module) {
   CompileModuleResults results;
   results.llvm_module =
       std::make_unique<llvm::Module>(hlo_module->name(), *llvm_context);
   results.llvm_module->setTargetTriple(target_triple);
   results.llvm_module->setDataLayout(data_layout);
+
+  if (split_constants_module) {
+    // Constants are emitted into a separate module to avoid caching them.
+    results.llvm_module_constants = std::make_unique<llvm::Module>(
+        absl::StrCat(hlo_module->name(), "_consts"), *llvm_context);
+    results.llvm_module_constants->setTargetTriple(target_triple);
+    results.llvm_module_constants->setDataLayout(data_layout);
+  }
 
   {
     tsl::profiler::ScopedAnnotation annotation([&] {
@@ -179,7 +188,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   IrEmitterContext ir_emitter_context(
       hlo_module, results.buffer_assignment.get(),
       results.execution_stream_assignment.get(), platform_name, gpu_device_info,
-      mlir_context.get(), results.llvm_module.get(), /*emit_kernels=*/true);
+      mlir_context.get(), results.llvm_module.get(),
+      results.llvm_module_constants.get(), /*emit_kernels=*/true);
 
   std::vector<BufferAllocation*> allocations;
   results.output_shape = hlo_module->result_shape();
@@ -203,8 +213,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     if (supports_runtime_managed_constants) {
       // Remove these globals from the generated code to indicate that XLA is
       // responsible for allocating and initializing them.
-      RemoveUnusedAndUninitializedGlobals(ir_emitter_context.llvm_module(),
-                                          ir_emitter_context.constants());
+      RemoveUnusedAndUninitializedGlobals(
+          ir_emitter_context.llvm_module_constants(),
+          ir_emitter_context.constants());
     }
 
     results.constants = std::move(ir_emitter_context.constants());
