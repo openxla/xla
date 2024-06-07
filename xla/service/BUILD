@@ -5260,14 +5260,23 @@ cc_library(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
 xla_cc_test(
     name = "hlo_cse_test",
     srcs = ["hlo_cse_test.cc"],
+    # TODO(b/345771111): Reenable HloCSE for debug mode.
+    copts = ["-DNDEBUG"],
     deps = [
         ":hlo_cse",
         ":hlo_parser",
