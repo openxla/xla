@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -166,12 +167,13 @@ class IrEmitter2::ElementalIrEmitter : public xla::ElementalIrEmitter {
         VLOG(2) << "Emit nested computation: " << computation->name();
         TF_RETURN_IF_ERROR(
             nested_ir_emitter_
-                ->EmitComputation(const_cast<HloComputation*>(computation),
-                                  name, false,
-                                  hlo_module_->schedule()
-                                      .sequence(computation)
-                                      .instructions(),
-                                  /*allow_reassociation=*/is_reducer)
+                ->EmitComputation(
+                    const_cast<HloComputation*>(computation), name, false,
+                    hlo_module_->schedule()
+                        .sequence(computation)
+                        .instructions(),
+                    /*allow_reassociation=*/is_reducer,
+                    /*function_attributes=*/{llvm::Attribute::AlwaysInline})
                 .status());
       }
       return absl::OkStatus();
