@@ -104,7 +104,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     // Swapping only affects row reduction vectorization.
     if (is_row_reduction && maybe_vectorized) {
       // Swap if n_div_k is small enough or k is divisible by 2 also.
-      return n_div_k * 2 < k;
+      return n_div_k * 2 <= k;
     }
     return true;
   }
