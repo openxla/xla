@@ -177,6 +177,7 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
