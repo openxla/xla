@@ -593,6 +593,11 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         break;
 
       case PyTreeKind::kNone:
+        if (!object.is_none()) {
+          throw std::invalid_argument(
+              absl::StrFormat("Expected None, got %s.",
+                              nb::cast<std::string_view>(nb::repr(object))));
+        }
         break;
 
       case PyTreeKind::kTuple: {
