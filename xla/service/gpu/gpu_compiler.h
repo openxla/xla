@@ -117,6 +117,11 @@ class GpuCompiler : public LLVMCompiler {
 
   virtual int32_t GetToolkitVersion() const = 0;
 
+  virtual absl::StatusOr<bool> CanUseLinkModules(
+      const HloModuleConfig& config) {
+    return false;
+  }
+
  protected:
   struct BackendCompileResult {
     std::string asm_text;
@@ -227,11 +232,6 @@ class GpuCompiler : public LLVMCompiler {
       const HloModule* debug_module, const CompileOptions& options) = 0;
 
   absl::Status PrepareHloModuleForIrEmitting(HloModule* hlo_module);
-
-  virtual absl::StatusOr<bool> CanUseLinkModules(
-      const HloModuleConfig& config) {
-    return false;
-  }
 
   virtual absl::StatusOr<std::vector<uint8_t>> LinkModules(
       se::StreamExecutor* stream_exec,

@@ -536,6 +536,16 @@ CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0"}
 
 class KernelCacheTest : public HloTestBase {
  public:
+  void SetUp() override {
+    HloModuleConfig config;
+    config.set_debug_options(GetDebugOptionsForTest());
+    TF_ASSERT_OK_AND_ASSIGN(bool can_use_link_modules,
+                            dynamic_cast<GpuCompiler*>(backend().compiler())
+                                ->CanUseLinkModules(config));
+    if (!can_use_link_modules) {
+      GTEST_SKIP() << "Caching compiled kernels requires support of linking.";
+    }
+  }
   DebugOptions GetDebugOptionsForTest() override {
     CHECK(tsl::Env::Default()->LocalTempFilename(&cache_file_name_));
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
