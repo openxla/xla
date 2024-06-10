@@ -47,6 +47,8 @@ class KernelReuseCache {
   };
 
   absl::Status Load(const CompilationCacheProto& proto);
+  // Exporting skips kernels that were loaded but not used during emission.
+  // See comment for hits_ below.
   CompilationCacheProto Export() const;
   bool IsEmpty() const { return cache_.empty(); }
   void Clear() {

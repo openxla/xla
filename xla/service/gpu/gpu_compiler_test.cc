@@ -555,9 +555,7 @@ class KernelCacheTest : public HloTestBase {
   }
 
   bool CacheFileExists() {
-    tsl::FileSystem* fs_ = nullptr;
-    CHECK_OK(tsl::Env::Default()->GetFileSystemForFile(cache_file_name_, &fs_));
-    if (!fs_->FileExists(cache_file_name_).ok()) {
+    if (!tsl::Env::Default()->FileExists(cache_file_name_).ok()) {
       return false;
     }
     return true;
@@ -606,6 +604,19 @@ TEST_F(KernelCacheTest, NoCacheIsGeneratedWithoutCompiledKernels) {
   EXPECT_FALSE(CacheFileExists());
 }
 
+TEST_F(KernelCacheTest, UsingCacheFromAnotherModuleDoesNotFail) {
+  EXPECT_FALSE(CacheFileExists());
+  EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
+  EXPECT_TRUE(NonEmptyCacheExists());
+  // Second run - with cache file and another HLO
+  EXPECT_TRUE(Run(R"(
+  ENTRY e {
+    p = s8[] parameter(0)
+    ROOT _ = s8[] multiply(p, p)
+  })",
+                  /*run_hlo_passes=*/false));
+}
+
 class KernelCacheTestSingleThreaded : public KernelCacheTest {
  public:
   DebugOptions GetDebugOptionsForTest() override {
@@ -620,19 +631,6 @@ TEST_F(KernelCacheTestSingleThreaded, CacheIsGenerated) {
   EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
   EXPECT_TRUE(NonEmptyCacheExists());
   EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
-}
-
-TEST_F(KernelCacheTestSingleThreaded, UsingCacheFromAnotherModuleDoesNotFail) {
-  EXPECT_FALSE(CacheFileExists());
-  EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
-  EXPECT_TRUE(NonEmptyCacheExists());
-  // Second run - with cache file and another HLO
-  EXPECT_TRUE(Run(R"(
-  ENTRY e {
-    p = s8[] parameter(0)
-    ROOT _ = s8[] multiply(p, p)
-  })",
-                  /*run_hlo_passes=*/false));
 }
 
 class NoKernelCacheTest : public KernelCacheTest {

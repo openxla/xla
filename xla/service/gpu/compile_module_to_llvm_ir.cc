@@ -102,6 +102,35 @@ void RemoveUnusedAndUninitializedGlobals(
   }
 }
 
+static absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
+                              absl::string_view cache_file_path) {
+  std::string resolved_path;
+  if (!tsl::io::ResolveTestPrefixes(cache_file_path, resolved_path)) {
+    return FailedPrecondition("File path can not be resolved: %s",
+                              cache_file_path);
+  }
+  if (tsl::Env::Default()->FileExists(resolved_path).ok()) {
+    std::string serialized;
+    TF_RETURN_IF_ERROR(
+        tsl::ReadFileToString(tsl::Env::Default(), resolved_path, &serialized));
+    CompilationCacheProto proto;
+    if (!proto.ParseFromString(std::string(serialized))) {
+      return Internal("Failed to parse serialized CompilationCacheProto.");
+    }
+    // Register all cached kernel names with the name uniquer to avoid
+    // naming conflicts.
+    for (const auto& [name, _] : proto.entries()) {
+      TF_RET_CHECK(ir_emitter_context.name_uniquer()->GetUniqueName(name) ==
+                   name)
+          << "Failed registering " << name << "in NameUniquer.";
+    }
+    TF_RETURN_IF_ERROR(ir_emitter_context.kernel_cache().Load(proto));
+  } else {
+    VLOG(1) << "Compilation cache file does not exist: " << resolved_path;
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
@@ -201,30 +230,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       results.llvm_module_constants.get(), /*emit_kernels=*/true);
 
   if (use_cache) {
-    std::string resolved_path;
-    if (!tsl::io::ResolveTestPrefixes(cache_file_path, resolved_path)) {
-      return FailedPrecondition("File path can not be resolved: %s",
-                                cache_file_path);
-    }
-    if (tsl::Env::Default()->FileExists(resolved_path).ok()) {
-      std::string serialized;
-      TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
-                                               resolved_path, &serialized));
-      CompilationCacheProto proto;
-      if (!proto.ParseFromString(std::string(serialized))) {
-        return Internal("Failed to parse serialized CompilationCacheProto.");
-      }
-      // Register all cached kernel names with the name uniquer to avoid
-      // naming conflicts.
-      for (const auto& [name, _] : proto.entries()) {
-        TF_RET_CHECK(ir_emitter_context.name_uniquer()->GetUniqueName(name) ==
-                     name)
-            << "Failed registering " << name << "in NameUniquer.";
-      }
-      TF_RETURN_IF_ERROR(ir_emitter_context.kernel_cache().Load(proto));
-    } else {
-      VLOG(1) << "Compilation cache file does not exist: " << resolved_path;
-    }
+    TF_RETURN_IF_ERROR(LoadCache(ir_emitter_context, cache_file_path));
   }
 
   std::vector<BufferAllocation*> allocations;

@@ -1776,6 +1776,38 @@ GpuCompiler::CompileSingleModule(const HloModuleConfig& module_config,
   return result;
 }
 
+namespace {
+static int CountFunctions(const llvm::Module& module) {
+  int num_functions = 0;
+  for (const llvm::Function& func : module.functions()) {
+    if (!func.isDeclaration() &&
+        func.getLinkage() == llvm::GlobalValue::LinkageTypes::ExternalLinkage) {
+      ++num_functions;
+    }
+  }
+  return num_functions;
+}
+
+// Returns the name of the single function in the module or empty string if it's
+// not a single-function module.
+std::string SingleFunctionName(const llvm::Module& module) {
+  std::string name;
+  for (const llvm::Function& func : module.functions()) {
+    if (!func.isDeclaration() &&
+        func.getLinkage() == llvm::GlobalValue::LinkageTypes::ExternalLinkage) {
+      if (name.empty()) {
+        // First function in a module: name the module with it.
+        name = func.getName().str();
+      } else {
+        // Not the first function - the module is not cacheable.
+        return "";
+      }
+    }
+  }
+  return name;
+}
+}  // namespace
+
 absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     const HloModuleConfig& module_config,
     CompileModuleResults& compile_module_results,
@@ -1841,17 +1873,13 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
       module_config.debug_options().xla_gpu_kernel_cache_file();
   const bool use_cache = !cache_path.empty();
 
-  // The string is the function name for single-function modules (used to cache
-  // them), empty for all other modules.
-  std::vector<std::pair<std::string, std::unique_ptr<llvm::Module>>>
-      llvm_modules;
-  int num_functions = 0;
-  for (llvm::Function& func : llvm_module->functions()) {
-    if (!func.isDeclaration() &&
-        func.getLinkage() == llvm::GlobalValue::LinkageTypes::ExternalLinkage) {
-      ++num_functions;
-    }
-  }
+  struct NamedModule {
+    // The string is the function name for single-function modules (used to
+    // cache them), empty for all other modules.
+    std::string name;
+    std::unique_ptr<llvm::Module> module;
+  };
+  std::vector<NamedModule> llvm_modules;
   MaybeOwningThreadPool thread_pool = CreateMaybeOwningThreadPool(
       /*parallelism=*/module_config.debug_options()
           .xla_gpu_force_compilation_parallelism(),
@@ -1860,7 +1888,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   // Only single-function module are cacheable -> for caching try to get 1
   // function per module. If caching is not used limit the number of modules to
   // the number of threads.
-  int num_modules = num_functions;
+  int num_modules = CountFunctions(*llvm_module);
   if (thread_pool.get() != nullptr && !use_cache) {
     num_modules = std::max(1, std::min(thread_pool->NumThreads(), num_modules));
   }
@@ -1883,21 +1911,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
             gv.setLinkage(llvm::GlobalValue::InternalLinkage);
           }
         }
-        std::string name;
-        for (const llvm::Function& func : module->functions()) {
-          if (!func.isDeclaration() &&
-              func.getLinkage() ==
-                  llvm::GlobalValue::LinkageTypes::ExternalLinkage) {
-            if (name.empty()) {
-              // First function in a module: name the module with it.
-              name = func.getName().str();
-            } else {
-              // Not the first function - the module is not cacheable.
-              name.clear();
-              break;
-            }
-          }
-        }
+        const std::string name = SingleFunctionName(*module);
         if (!name.empty()) {
           ++single_function_module_count;
         }
@@ -1907,9 +1921,12 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   VLOG(2) << "Single-function cacheable modules: "
           << single_function_module_count << " / " << llvm_modules.size();
 
-  // The string is the function name or empty just like for llvm_modules.
-  std::vector<std::pair<std::string, absl::StatusOr<BackendCompileResult>>>
-      compile_results(llvm_modules.size());
+  struct NamedCompileResult {
+    // Single function name or empty just like for llvm_modules.
+    std::string name;
+    absl::StatusOr<BackendCompileResult> result;
+  };
+  std::vector<NamedCompileResult> compile_results(llvm_modules.size());
   if (thread_pool.get() != nullptr) {
     tsl::BlockingCounter counter(llvm_modules.size());
     for (int i = 0; i < llvm_modules.size(); ++i) {
@@ -1919,9 +1936,9 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
             // Each thread has its own context to avoid race conditions.
             llvm::LLVMContext new_context;
             std::unique_ptr<llvm::Module> new_module =
-                CopyToContext(*llvm_modules.at(i).second, new_context);
+                CopyToContext(*llvm_modules.at(i).module, new_context);
             compile_results.at(i) = {
-                llvm_modules.at(i).first,
+                llvm_modules.at(i).name,
                 CompileSingleModule(module_config, gpu_version, debug_module,
                                     new_module.get(),
                                     /*relocatable=*/true, options,
@@ -1933,9 +1950,9 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   } else {
     for (int i = 0; i < llvm_modules.size(); ++i) {
       compile_results.at(i) = {
-          llvm_modules.at(i).first,
+          llvm_modules.at(i).name,
           CompileSingleModule(module_config, gpu_version, debug_module,
-                              &*llvm_modules.at(i).second,
+                              &*llvm_modules.at(i).module,
                               /*relocatable=*/true, options,
                               /*shard_number=*/i)};
     }
@@ -1944,8 +1961,12 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   std::string ptx_snippets;
   std::vector<std::vector<uint8_t>> binaries_to_link;
   binaries_to_link.reserve(compile_results.size());
-  // The string is the function name or empty just like for llvm_modules.
-  std::vector<std::pair<std::string, std::vector<uint8_t>>> binaries_to_cache;
+  struct NamedBinary {
+    // The string is the function name or empty just like for llvm_modules.
+    std::string name;
+    std::vector<uint8_t> binary;
+  };
+  std::vector<NamedBinary> binaries_to_cache;
   binaries_to_cache.reserve(single_function_module_count);
   for (const auto& [name, maybe_result] : compile_results) {
     TF_ASSIGN_OR_RETURN(auto result, maybe_result);
@@ -2085,7 +2106,12 @@ GpuCompiler::CompileToBackendResult(
   // Disable multi-threading during deviceless AOT compilation.
   // TODO(anlunx): Enable multi-threading once deviceless AOT compilation is
   // enabled.
-  if (!split_modules) {
+  if (split_modules) {
+    TF_ASSIGN_OR_RETURN(backend_result,
+                        CompileAndLink(module->config(), compile_module_results,
+                                       gpu_device_info.gpu_compute_capability(),
+                                       executor, options, module));
+  } else {
     CHECK(compile_module_results.llvm_module_constants == nullptr);
     TF_ASSIGN_OR_RETURN(
         backend_result,
@@ -2094,11 +2120,6 @@ GpuCompiler::CompileToBackendResult(
                             &*compile_module_results.llvm_module,
                             /*relocatable=*/false, options,
                             /*shard_number=*/std::nullopt));
-  } else {
-    TF_ASSIGN_OR_RETURN(backend_result,
-                        CompileAndLink(module->config(), compile_module_results,
-                                       gpu_device_info.gpu_compute_capability(),
-                                       executor, options, module));
   }
   RecordXlaDeviceBinarySize(backend_result.binary.size());
   if (DumpingEnabledForHloModule(*module)) {
