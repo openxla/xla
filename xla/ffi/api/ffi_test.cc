@@ -30,13 +30,14 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
-namespace xla::ffi {
 
+namespace xla::ffi {
 namespace {
 
 using ::testing::HasSubstr;
@@ -47,8 +48,7 @@ enum class Int32BasedEnum : int32_t {
   kTwo = 2,
 };
 
-constexpr const int64_t kI32MaxValue =
-    static_cast<int64_t>(std::numeric_limits<int32_t>::max());
+static constexpr int64_t kI32MaxValue = std::numeric_limits<int32_t>::max();
 
 enum class Int64BasedEnum : int64_t {
   kOne = kI32MaxValue + 1,
@@ -91,6 +91,42 @@ TEST(FfiTest, DataTypeEnumValue) {
   EXPECT_EQ(encoded(PrimitiveType::C128), encoded(DataType::C128));
 
   EXPECT_EQ(encoded(PrimitiveType::TOKEN), encoded(DataType::TOKEN));
+}
+
+TEST(FfiTest, ErrorEnumValue) {
+  // Verify that absl::StatusCode and xla::ffi::ErrorCode use the same
+  // integer value for encoding error (status) codes.
+  auto encoded = [](auto value) { return static_cast<uint8_t>(value); };
+
+  EXPECT_EQ(encoded(absl::StatusCode::kOk), encoded(ErrorCode::kOk));
+  EXPECT_EQ(encoded(absl::StatusCode::kCancelled),
+            encoded(ErrorCode::kCancelled));
+  EXPECT_EQ(encoded(absl::StatusCode::kUnknown), encoded(ErrorCode::kUnknown));
+  EXPECT_EQ(encoded(absl::StatusCode::kInvalidArgument),
+            encoded(ErrorCode::kInvalidArgument));
+  EXPECT_EQ(encoded(absl::StatusCode::kNotFound),
+            encoded(ErrorCode::kNotFound));
+  EXPECT_EQ(encoded(absl::StatusCode::kAlreadyExists),
+            encoded(ErrorCode::kAlreadyExists));
+  EXPECT_EQ(encoded(absl::StatusCode::kPermissionDenied),
+            encoded(ErrorCode::kPermissionDenied));
+  EXPECT_EQ(encoded(absl::StatusCode::kResourceExhausted),
+            encoded(ErrorCode::kResourceExhausted));
+  EXPECT_EQ(encoded(absl::StatusCode::kFailedPrecondition),
+            encoded(ErrorCode::kFailedPrecondition));
+  EXPECT_EQ(encoded(absl::StatusCode::kAborted), encoded(ErrorCode::kAborted));
+  EXPECT_EQ(encoded(absl::StatusCode::kOutOfRange),
+            encoded(ErrorCode::kOutOfRange));
+  EXPECT_EQ(encoded(absl::StatusCode::kUnimplemented),
+            encoded(ErrorCode::kUnimplemented));
+  EXPECT_EQ(encoded(absl::StatusCode::kInternal),
+            encoded(ErrorCode::kInternal));
+  EXPECT_EQ(encoded(absl::StatusCode::kUnavailable),
+            encoded(ErrorCode::kUnavailable));
+  EXPECT_EQ(encoded(absl::StatusCode::kDataLoss),
+            encoded(ErrorCode::kDataLoss));
+  EXPECT_EQ(encoded(absl::StatusCode::kUnauthenticated),
+            encoded(ErrorCode::kUnauthenticated));
 }
 
 TEST(FfiTest, AnyBufferArgument) {
@@ -460,6 +496,48 @@ TEST(FfiTest, UserData) {
 
   CallOptions options;
   options.execution_context = &execution_context;
+
+  auto status = Call(*handler, call_frame, options);
+
+  TF_ASSERT_OK(status);
+}
+
+TEST(FfiTest, ScratchAllocator) {
+  static void* kAddr = reinterpret_cast<void*>(0xDEADBEEF);
+
+  // A test only memory allocator that returns a fixed memory address.
+  struct TestDeviceMemoryAllocator final : public se::DeviceMemoryAllocator {
+    TestDeviceMemoryAllocator() : se::DeviceMemoryAllocator(nullptr) {}
+
+    absl::StatusOr<se::OwningDeviceMemory> Allocate(int, uint64_t size, bool,
+                                                    int64_t) final {
+      return se::OwningDeviceMemory(se::DeviceMemoryBase(kAddr, size), 0, this);
+    }
+
+    absl::Status Deallocate(int, se::DeviceMemoryBase mem) final {
+      EXPECT_EQ(mem.opaque(), kAddr);
+      return absl::OkStatus();
+    }
+
+    absl::StatusOr<se::Stream*> GetStream(int) final {
+      return absl::UnimplementedError("Not implemented");
+    }
+  };
+
+  auto fn = [&](ScratchAllocator scratch_allocator) {
+    auto mem = scratch_allocator.Allocate(1024);
+    EXPECT_EQ(*mem, kAddr);
+    return Error::Success();
+  };
+
+  TestDeviceMemoryAllocator allocator;
+
+  auto handler = Ffi::Bind().Ctx<ScratchAllocator>().To(fn);
+
+  CallFrame call_frame = CallFrameBuilder().Build();
+
+  CallOptions options;
+  options.allocator = &allocator;
 
   auto status = Call(*handler, call_frame, options);
 

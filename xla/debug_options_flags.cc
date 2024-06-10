@@ -126,7 +126,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_reduce_scatter_combine_threshold_bytes(kDefaultThreshold);
   opts.set_xla_gpu_enable_all_gather_combine_by_dim(true);
   opts.set_xla_gpu_enable_reduce_scatter_combine_by_dim(true);
-  opts.set_xla_gpu_enable_all_reduce_splitter(false);
+  opts.set_xla_gpu_enable_all_reduce_splitter(true);
 
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
 
@@ -137,7 +137,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_dumping(true);
 
   opts.set_xla_gpu_enable_custom_fusions(false);
-  opts.set_xla_gpu_enable_address_computation_fusion(true);
+  opts.set_xla_gpu_enable_address_computation_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -233,7 +233,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
 
-  opts.set_xla_gpu_enable_mlir_emitters(false);
+  opts.set_xla_gpu_mlir_emitter_level(0);
   opts.set_xla_gpu_max_mlir_kernels(0);
   opts.set_xla_gpu_skip_mlir_kernels(0);
 
@@ -1646,11 +1646,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Specify the maximum number of channels(SMs) NCCL will use "
       "for p2p operations. Default is 0 which is to let "
       "NCCL decide."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_mlir_emitters",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_mlir_emitters),
-      debug_options->xla_gpu_enable_mlir_emitters(),
-      "Enable new MLIR-based emitters."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_mlir_emitter_level",
+                int64_setter_for(&DebugOptions::set_xla_gpu_mlir_emitter_level),
+                debug_options->xla_gpu_mlir_emitter_level(),
+                "Enable new MLIR-based emitters. Level 0 means disabled, "
+                "higher levels enable more of the emitters."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_max_mlir_kernels",
                 int64_setter_for(&DebugOptions::set_xla_gpu_max_mlir_kernels),

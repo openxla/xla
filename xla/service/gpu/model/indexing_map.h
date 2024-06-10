@@ -246,16 +246,6 @@ class IndexingMap {
   // Returns an undefined indexing map.
   static IndexingMap GetUndefined() { return IndexingMap(); }
 
-  // Returns a "known" empty indexing map, i.e. () -> () affine map, no
-  // dimensions, no symbols and `is_know_empty` set to true.
-  static IndexingMap GetKnownEmpty(mlir::MLIRContext* mlir_context) {
-    IndexingMap known_empty(mlir::AffineMap::get(mlir_context),
-                            std::vector<DimVar>{}, std::vector<RangeVar>{},
-                            std::vector<RTVar>{});
-    known_empty.is_known_empty_ = true;
-    return known_empty;
-  }
-
   static IndexingMap FromTensorSizes(
       mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
       absl::Span<const int64_t> symbol_upper_bounds);
@@ -391,8 +381,8 @@ class IndexingMap {
                     const llvm::SmallBitVector& unused_symbols);
 
   // Resets the indexing map to the canonical "known" empty indexing map, i.e.
-  // () -> () affine map, no dimensions, no symbols and `is_know_empty` set to
-  // true.
+  // (d0...)[s0...] -> (0...) affine map. Does not change the number of symbols,
+  // dimensions or results.
   void ResetToKnownEmpty();
 
   // Verify if all intervals for DimVars, RangeVars and RTVars are feasible.

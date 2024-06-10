@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -165,12 +167,13 @@ class IrEmitter2::ElementalIrEmitter : public xla::ElementalIrEmitter {
         VLOG(2) << "Emit nested computation: " << computation->name();
         TF_RETURN_IF_ERROR(
             nested_ir_emitter_
-                ->EmitComputation(const_cast<HloComputation*>(computation),
-                                  name, false,
-                                  hlo_module_->schedule()
-                                      .sequence(computation)
-                                      .instructions(),
-                                  /*allow_reassociation=*/is_reducer)
+                ->EmitComputation(
+                    const_cast<HloComputation*>(computation), name, false,
+                    hlo_module_->schedule()
+                        .sequence(computation)
+                        .instructions(),
+                    /*allow_reassociation=*/is_reducer,
+                    /*function_attributes=*/{llvm::Attribute::AlwaysInline})
                 .status());
       }
       return absl::OkStatus();
@@ -272,7 +275,9 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitElementalHostKernel(
 
   TF_RETURN_IF_ERROR(EmitElementalLoops(b, instr, element_generator,
                                         kernel_prototype.results));
-  return kernels_.emplace_back(kernel_prototype.function->getName().str());
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
 }
 
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
@@ -306,7 +311,9 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
 
   TF_RETURN_IF_ERROR(EmitElementalLoops(b, fusion, element_generator,
                                         kernel_prototype.results));
-  return kernels_.emplace_back(kernel_prototype.function->getName().str());
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
 }
 
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitReductionHostKernel(
@@ -381,6 +388,10 @@ IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
       module_->getOrInsertFunction(name, KernelFunctionTy(ctx)).getCallee());
   function->setCallingConv(llvm::CallingConv::C);
   function->setDoesNotThrow();
+
+  // Always keep a frame pointer for the host kernel so we can see them in all
+  // performance profiling tools.
+  function->addFnAttr("frame-pointer", "all");
 
   // Create an entry basic block and set insert point to the end of it.
   b.SetInsertPoint(llvm::BasicBlock::Create(ctx, "", function));

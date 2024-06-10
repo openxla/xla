@@ -495,11 +495,20 @@ AffineExpr AffineExprSimplifier::SimplifyOnce(AffineExpr expr) {
         for (int div_i = 0; div_i < divs.size(); ++div_i) {
           auto [div, div_mul] = divs[div_i];
           if (!div) continue;  // Already erased.
-          if (GetLhs(mod) != GetLhs(div)) continue;
+          if ((div_mul % mod_mul) || (div_mul / mod_mul) != mod_c) continue;
 
-          auto div_c = GetConstantRhs(div, AffineExprKind::FloorDiv);
-          if (div_mul % mod_mul) continue;
-          if (mod_c != div_c || (div_mul / mod_mul) != mod_c) continue;
+          auto mod_lhs = GetLhs(mod);
+          if (GetConstantRhs(mod_lhs, AffineExprKind::FloorDiv)) {
+            // If x is a floorDiv itself, we need to check a bit more carefully:
+            //    ((x // c0) % c1) * d + (x // (c0 * c1)) * (c1 * d)`
+            // `x // (c0 * c1)` will be simplified, so we we may not even have
+            // `c0 * c1` in the expression, if `x` contains a multiplier.
+            if (Simplify(mod_lhs.floorDiv(*mod_c)) != Simplify(div)) continue;
+          } else {
+            if (mod_lhs != GetLhs(div)) continue;
+            auto div_c = GetConstantRhs(div, AffineExprKind::FloorDiv);
+            if (mod_c != div_c) continue;
+          }
 
           others.push_back(GetLhs(mod) * mod_mul);
           divs[div_i].first = nullptr;
@@ -1524,10 +1533,17 @@ SmallBitVector IndexingMap::RemoveUnusedDimensions() {
 }
 
 void IndexingMap::ResetToKnownEmpty() {
-  affine_map_ = AffineMap::get(GetMLIRContext());
-  dim_vars_.clear();
-  range_vars_.clear();
-  rt_vars_.clear();
+  auto zero = getAffineConstantExpr(0, GetMLIRContext());
+  affine_map_ = AffineMap::get(
+      affine_map_.getNumDims(), affine_map_.getNumSymbols(),
+      llvm::SmallVector<AffineExpr>(affine_map_.getNumResults(), zero),
+      GetMLIRContext());
+  for (auto& dim_var : dim_vars_) {
+    dim_var.bounds = Interval{0, -1};
+  }
+  for (auto& range_var : range_vars_) {
+    range_var.range = Interval{0, -1};
+  }
   constraints_.clear();
   is_known_empty_ = true;
 }
@@ -1633,9 +1649,6 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
     return IndexingMap::GetUndefined();
   }
   MLIRContext* mlir_context = first.GetMLIRContext();
-  if (first.IsKnownEmpty() || second.IsKnownEmpty()) {
-    return IndexingMap::GetKnownEmpty(mlir_context);
-  }
   AffineMap producer_affine_map = second.GetAffineMap();
   AffineMap composed_map = producer_affine_map.compose(first.GetAffineMap());
 

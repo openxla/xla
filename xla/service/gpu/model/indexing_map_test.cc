@@ -347,10 +347,13 @@ TEST_F(IndexingMapTest, KnownEmpty_AddingConstraintOutOfRange) {
 TEST_F(IndexingMapTest, KnownEmpty_Composition) {
   IndexingMap indexing_map = IndexingMap::FromTensorSizes(
       ParseAffineMap("(d0) -> (d0)", &mlir_context_), {50}, {});
-  EXPECT_THAT(indexing_map * IndexingMap::GetKnownEmpty(&mlir_context_),
-              MatchIndexingMap("KNOWN EMPTY"));
-  EXPECT_THAT(IndexingMap::GetKnownEmpty(&mlir_context_) * indexing_map,
-              MatchIndexingMap("KNOWN EMPTY"));
+  IndexingMap known_empty = IndexingMap::FromTensorSizes(
+      ParseAffineMap("(d0) -> (0)", &mlir_context_), {0}, {});
+  EXPECT_THAT(known_empty, MatchIndexingMap("KNOWN EMPTY"));
+  EXPECT_THAT(indexing_map * known_empty, MatchIndexingMap("KNOWN EMPTY"));
+  EXPECT_THAT(known_empty * indexing_map, MatchIndexingMap("KNOWN EMPTY"));
+  EXPECT_EQ((indexing_map * known_empty).GetAffineMap().getNumResults(), 1);
+  EXPECT_EQ((known_empty * indexing_map).GetAffineMap().getNumResults(), 1);
 }
 
 TEST_F(IndexingMapTest,
@@ -643,6 +646,26 @@ TEST_F(IndexingMapTest, AffineMapSimplification_SimplifyReshape2) {
       (d0, d1) -> (d0 * 128 + d1)
       domain:
       d0 in [0, 1023]
+      d1 in [0, 127]
+  )"));
+}
+
+TEST_F(IndexingMapTest, AffineMapSimplification_SimplifyBitcastAndBack) {
+  // `d0 floordiv 1536` is the result of simplifying this:
+  // `((d0 * 2 + d1 floordiv 64) floordiv 3) floordiv 1024`.
+  // This test verifies that we can still simplify the map after the
+  // simplification of the floordiv.
+  auto serialized_map =
+      "(d0, d1) -> ((d0 floordiv 1536) * 786432 + (((d0 * 2 + d1 floordiv "
+      "64) floordiv 3) mod 1024) * 768 + ((d0 * 2 + d1 floordiv 64) mod 3) * "
+      "256 + (d1 mod 64) * 4)";
+  IndexingMap indexing_map = IndexingMap::FromTensorSizes(
+      ParseAffineMap(serialized_map, &mlir_context_), {3072, 128}, {});
+  indexing_map.Simplify();
+  EXPECT_THAT(indexing_map.ToString(printer_), MatchIndexingString(R"(
+      (d0, d1) -> (d0 * 512 + d1 * 4)
+      domain:
+      d0 in [0, 3071]
       d1 in [0, 127]
   )"));
 }

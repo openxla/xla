@@ -51,6 +51,7 @@ cc_library(
         ":host_executor",
         ":host_platform_id",
         "//xla/stream_executor",
+        "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
@@ -96,6 +97,7 @@ cc_library(
         ":host_kernel_c_api",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:kernel_spec",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -113,9 +115,11 @@ xla_cc_test(
         ":host_kernel_c_api",
         ":host_platform",
         ":jit_host_kernel_function",
+        ":ptr_host_kernel_function",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel_factory",
+        "//xla/stream_executor:kernel_spec",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
@@ -140,6 +144,10 @@ cc_library(
         ":host_kernel",
         ":host_stream",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:host_memory_allocation",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/functional:any_invocable",
@@ -169,9 +177,26 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
+)
+
+cc_library(
+    name = "ptr_host_kernel_function",
+    srcs = ["ptr_host_kernel_function.cc"],
+    hdrs = ["ptr_host_kernel_function.h"],
+    deps = [
+        ":host_executor",
+        ":host_kernel",
+        ":host_kernel_c_api",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor/platform",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+    alwayslink = True,  # static kernel function loader registration
 )
 
 cc_library(
