@@ -1132,9 +1132,9 @@ static TilingConfigs TrimConfigs(const TilingConfigs& gemm_config_sets,
 }
 
 // Exchange the results with the other ranks.
-absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
-                             const int module_id, const int shard_index,
-                             const int shard_count) {
+static absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
+                                    const int module_id, const int shard_index,
+                                    const int shard_count) {
   AutotuneResults results;
   TF_RETURN_IF_ERROR(AutotunerUtil::SerializeAutotuneResults(&results));
   TF_ASSIGN_OR_RETURN(std::string results_str,
