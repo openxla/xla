@@ -45,6 +45,7 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/service/cpu:cpu_runtime",
         "//xla/stream_executor/host:host_kernel_c_api",
+        "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -52,6 +53,19 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+xla_cc_test(
+    name = "thunk_test",
+    srcs = ["thunk_test.cc"],
+    deps = [
+        ":thunk",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
