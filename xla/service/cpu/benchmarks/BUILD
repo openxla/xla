@@ -84,3 +84,17 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_cc_test(
+    name = "convolution_benchmark_test",
+    srcs = ["convolution_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
