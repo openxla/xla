@@ -183,6 +183,8 @@ tsl_gpu_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/backends/cpu:annotation_stack",
+        "@tsl//tsl/profiler/utils:lock_free_queue",
+        "@tsl//tsl/profiler/utils:per_thread",
     ],
 )
 
@@ -302,6 +304,7 @@ tsl_gpu_library(
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+        "@tsl//tsl/profiler/utils:lock_free_queue",
         "@tsl//tsl/profiler/utils:parse_annotation",
         "@tsl//tsl/profiler/utils:trace_utils",
         "@tsl//tsl/profiler/utils:xplane_builder",
@@ -318,6 +321,7 @@ tsl_gpu_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cupti_interface",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:node_hash_set",
@@ -328,6 +332,7 @@ tsl_gpu_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/profiler/utils:buffer_pool",
+        "@tsl//tsl/profiler/utils:lock_free_queue",
     ] + if_cuda(["//xla/tsl/cuda:cupti"]),
 )
 
