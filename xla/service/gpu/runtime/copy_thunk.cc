@@ -125,12 +125,13 @@ absl::Status DeviceToHostCopyThunk::ExecuteOnStream(
   TF_ASSIGN_OR_RETURN(
       se::Stream * stream,
       GetStreamForExecution(Thunk::execution_stream_id(), params));
+  TF_RETURN_IF_ERROR(stream->WaitFor(params.stream));
   TF_RETURN_IF_ERROR(stream->Memcpy(cpu_dst, source_data, size_bytes()));
   if (stream == params.stream) {
     VLOG(2) << "Memcpy D2H from the main stream";
     return absl::OkStatus();
   }
-  VLOG(2) << "Memcpy D2H from the other stream";
+  VLOG(2) << "Memcpy D2H from the stream " << Thunk::execution_stream_id();
   se::StreamExecutor* executor = params.stream->parent();
   TF_ASSIGN_OR_RETURN(auto event, executor->CreateEvent());
   // Record memcpy operation completion.
