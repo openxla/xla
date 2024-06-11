@@ -267,7 +267,10 @@ cc_library(
     deps = [
         ":pjrt_ifrt",
         "//xla/pjrt/cpu:cpu_client",
+        "//xla/python/ifrt",
         "//xla/python/ifrt:test_util",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
 )
