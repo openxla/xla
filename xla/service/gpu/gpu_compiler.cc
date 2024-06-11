@@ -1777,7 +1777,7 @@ GpuCompiler::CompileSingleModule(const HloModuleConfig& module_config,
 }
 
 namespace {
-static int CountFunctions(const llvm::Module& module) {
+int CountFunctions(const llvm::Module& module) {
   int num_functions = 0;
   for (const llvm::Function& func : module.functions()) {
     if (!func.isDeclaration() &&
