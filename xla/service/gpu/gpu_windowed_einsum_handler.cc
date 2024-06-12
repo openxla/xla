@@ -475,7 +475,6 @@ struct MatchedGemmA2aResult {
   HloInstruction* lhs;
   HloInstruction* rhs;
   HloInstruction* a2a_replacement = nullptr;
-  HloInstruction* additional_reshape = nullptr;
   bool matched = false;
 };
 
@@ -508,6 +507,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
       } else if (curr->opcode() == HloOpcode::kAllToAll &&
                  curr->user_count() == 1) {
         matched_a2a = DynCast<HloAllToAllInstruction>(curr);
+        allowed_intermediate_ops.pop_back();
         break;
       } else {
         return false;
@@ -554,15 +554,19 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         }
       }
     }
-    HloInstruction* new_reshape =
-        matched_a2a->parent()->AddInstruction(HloInstruction::CreateReshape(
-            dot->operand(0)->shape(), matched_a2a->mutable_operand(0)));
+    TF_RETURN_IF_ERROR(allowed_intermediate_ops.back()->ReplaceOperandWith(
+        0, matched_a2a->mutable_operand(0)));
     HloInstruction* new_a2a =
         matched_a2a->parent()->AddInstruction(HloInstruction::CreateAllToAll(
-            new_reshape->shape(), {new_reshape}, matched_a2a->replica_groups(),
+            allowed_intermediate_ops.front()->shape(),
+            {allowed_intermediate_ops.front()}, matched_a2a->replica_groups(),
             false, hlo_query::NextChannelId(*matched_a2a->GetModule()),
             split_dimension));
-    TF_RETURN_IF_ERROR(ReplaceInstruction(dot->mutable_operand(0), new_a2a));
+
+    TF_RETURN_IF_ERROR(dot->ReplaceOperandWith(0, new_a2a));
+    TF_RETURN_IF_ERROR(
+        matched_a2a->parent()->RemoveInstructionAndUnusedOperands(matched_a2a));
+    MarkAsChanged();
     *lhs = new_a2a;
     *rhs = dot->mutable_operand(1);
     return true;
@@ -793,6 +797,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
                                         std::end(curr->operands()));
       } else if (curr->opcode() == HloOpcode::kDot && curr->user_count() == 1) {
         matched_dot = curr;
+        allowed_intermediate_ops.pop_back();
         break;
       } else {
         return result;
@@ -835,12 +840,12 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
             matched_dot->shape(), {matched_dot}, a2a->replica_groups(), false,
             hlo_query::NextChannelId(*matched_dot->GetModule()),
             split_dimension));
-    result.additional_reshape = matched_dot->parent()->AddInstruction(
-        HloInstruction::CreateReshape(a2a->shape(), result.a2a_replacement));
+    TF_RETURN_IF_ERROR(allowed_intermediate_ops.back()->ReplaceOperandWith(
+        0, result.a2a_replacement));
     inst->SetupDerivedInstruction(result.a2a_replacement);
-    inst->SetupDerivedInstruction(result.additional_reshape);
 
-    TF_RETURN_IF_ERROR(ReplaceInstruction(inst, result.additional_reshape));
+    TF_RETURN_IF_ERROR(
+        ReplaceInstruction(inst, allowed_intermediate_ops.front()));
     result.lhs = matched_dot->mutable_operand(0);
     result.rhs = matched_dot->mutable_operand(1);
     result.producer_gemm = matched_dot;
