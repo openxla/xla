@@ -5605,18 +5605,14 @@ cc_library(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "hlo_module_config_test",
     srcs = ["hlo_module_config_test.cc"],
-    tags = [
-        "no_oss",
-    ],  # b/169705709, no protobuf matchers in OSS.
     deps = [
         ":hlo_module_config",
         "//xla:xla_proto_cc",
         "//xla/tests:test_utils",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:test",
     ],
 )
