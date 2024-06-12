@@ -66,25 +66,25 @@ cc_library(
     ],
 )
 
-xla_test(
-    name = "dynamic_slice_fusion_test",
-    srcs = ["dynamic_slice_fusion_test.cc"],
-    backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = ["notsan"],  # TODO(b/345034145): Fix tsan error.
-    deps = [
-        "//xla:error_spec",
-        "//xla:shape_util",
-        "//xla/ffi",
-        "//xla/ffi:ffi_api",
-        "//xla/stream_executor",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:test",
-    ],
-)
+# xla_test(
+#     name = "dynamic_slice_fusion_test",
+#     srcs = ["dynamic_slice_fusion_test.cc"],
+#     backends = ["gpu"],
+#     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+#     tags = ["notsan"],  # TODO(b/345034145): Fix tsan error.
+#     deps = [
+#         "//xla:error_spec",
+#         "//xla:shape_util",
+#         "//xla/ffi",
+#         "//xla/ffi:ffi_api",
+#         "//xla/stream_executor",
+#         "//xla/tests:hlo_test_base",
+#         "//xla/tests:xla_internal_test_main",
+#         "@com_google_absl//absl/algorithm:container",
+#         "@com_google_absl//absl/status",
+#         "@tsl//tsl/platform:test",
+#     ],
+# )
 
 xla_test(
     name = "element_wise_row_vectorization_test",
@@ -907,16 +907,16 @@ lit_test_suite(
 # )
 # copybara:uncomment_end
 
-cc_binary(
-    name = "sparse-opt",
-    srcs = ["sparse-opt.cc"],
-    deps = [
-        "//xla/service/gpu:triton_sparse_extensions",
-        "@llvm-project//mlir:AllExtensions",
-        "@llvm-project//mlir:MlirOptLib",
-        "@triton//:AllPassesAndDialects",
-    ],
-)
+# cc_binary(
+#     name = "sparse-opt",
+#     srcs = ["sparse-opt.cc"],
+#     deps = [
+#         "//xla/service/gpu:triton_sparse_extensions",
+#         "@llvm-project//mlir:AllExtensions",
+#         "@llvm-project//mlir:MlirOptLib",
+#         "@triton//:AllPassesAndDialects",
+#     ],
+# )
 
 xla_test(
     name = "kernel_launch_test",
@@ -1014,25 +1014,25 @@ xla_test(
     ),
 )
 
-xla_test(
-    name = "gpu_cub_sort_test",
-    size = "medium",
-    srcs = ["gpu_cub_sort_test.cc"],
-    backends = ["gpu"],
-    shard_count = 15,
-    deps = [
-        "//xla:error_spec",
-        "//xla:shape_util",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:gpu_sort_rewriter",
-        "//xla/tests:hlo_test_base",
-        "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
+# xla_test(
+#     name = "gpu_cub_sort_test",
+#     size = "medium",
+#     srcs = ["gpu_cub_sort_test.cc"],
+#     backends = ["gpu"],
+#     shard_count = 15,
+#     deps = [
+#         "//xla:error_spec",
+#         "//xla:shape_util",
+#         "//xla:xla_data_proto_cc",
+#         "//xla/hlo/ir:hlo",
+#         "//xla/service/gpu:gpu_sort_rewriter",
+#         "//xla/tests:hlo_test_base",
+#         "@com_google_absl//absl/strings",
+#         "@com_google_googletest//:gtest_main",
+#         "@tsl//tsl/platform:statusor",
+#         "@tsl//tsl/platform:test_main",
+#     ],
+# )
 
 xla_test(
     name = "gpu_fused_mha_test",

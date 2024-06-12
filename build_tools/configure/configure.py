@@ -43,7 +43,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
-from typing import Optional
+from typing import Optional, List
 
 _REQUIRED_CUDA_LIBRARIES = ["cublas", "cuda", "cudnn"]
 _DEFAULT_BUILD_AND_TEST_TAG_FILTERS = ("-no_oss",)
@@ -99,7 +99,7 @@ def _find_executable_or_die(
   return resolved_path_to_exe
 
 
-def _get_cuda_compute_capabilities_or_die() -> list[str]:
+def _get_cuda_compute_capabilities_or_die() -> List[str]:
   """Finds compute capabilities via nvidia-smi or rasies exception.
 
   Returns:
@@ -226,7 +226,7 @@ class DiscoverablePathsAndVersions:
   # CUDA specific
   cublas_version: Optional[str] = None
   cuda_toolkit_path: Optional[str] = None
-  cuda_compute_capabilities: Optional[list[str]] = None
+  cuda_compute_capabilities: Optional[List[str]] = None
   cudnn_version: Optional[str] = None
   nccl_version: Optional[str] = None
 
@@ -328,7 +328,7 @@ class XLAConfigOptions:
   os: OS
   python_bin_path: str
   host_compiler: HostCompiler
-  compiler_options: list[str]
+  compiler_options: List[str]
 
   # CUDA specific
   cuda_compiler: CudaCompiler
@@ -338,7 +338,7 @@ class XLAConfigOptions:
   def to_bazelrc_lines(
       self,
       dpav: DiscoverablePathsAndVersions,
-  ) -> list[str]:
+  ) -> List[str]:
     """Creates a bazelrc given an XLAConfigOptions.
 
     Necessary paths are provided by the user, or retrieved via

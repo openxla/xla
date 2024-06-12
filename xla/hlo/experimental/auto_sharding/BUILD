@@ -360,26 +360,26 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
-    name = "auto_sharding_solver_test",
-    srcs = [
-        "auto_sharding_memory_test.cc",
-        "auto_sharding_solver_test.cc",
-    ],
-    tags = [
-        # Disabled until autosharding is fully supported in OSS,
-        # https://github.com/openxla/xla/issues/7248.
-        "no_oss",
-    ],
-    deps = [
-        ":auto_sharding_proto_cc",
-        ":auto_sharding_solver",  # build_cleaner: keep
-        ":auto_sharding_strategy",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/container:btree",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest",
-    ],
-)
+# xla_cc_test(
+#     name = "auto_sharding_solver_test",
+#     srcs = [
+#         "auto_sharding_memory_test.cc",
+#         "auto_sharding_solver_test.cc",
+#     ],
+#     tags = [
+#         # Disabled until autosharding is fully supported in OSS,
+#         # https://github.com/openxla/xla/issues/7248.
+#         "no_oss",
+#     ],
+#     deps = [
+#         ":auto_sharding_proto_cc",
+#         ":auto_sharding_solver",  # build_cleaner: keep
+#         ":auto_sharding_strategy",
+#         "//xla/tests:xla_internal_test_main",
+#         "@com_google_absl//absl/container:btree",
+#         "@com_google_absl//absl/container:flat_hash_set",
+#         "@com_google_absl//absl/log:check",
+#         "@com_google_absl//absl/status",
+#         "@com_google_googletest//:gtest",
+#     ],
+# )

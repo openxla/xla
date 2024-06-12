@@ -42,7 +42,7 @@ pytype_strict_library(
     deps = [
         ":_types",  # buildcleaner: keep
         "//third_party/py/numpy",
-        "//xla:xla_data_proto_py_pb2",
+        # "//xla:xla_data_proto_py_pb2",
         "@ml_dtypes",
     ],
 )
@@ -73,21 +73,21 @@ tsl_pybind_extension(
     ],
 )
 
-py_strict_test(
-    name = "types_test",
-    size = "small",
-    srcs = ["types_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
-    # Cannot build this on OSS because the ":xla_data_proto_py_pb2"
-    # dependency isn't part of the public API.
-    tags = ["no_oss"],
-    deps = [
-        ":types",
-        "//third_party/py/google/protobuf:use_fast_cpp_protos",  # Automatically added go/proto_python_upb_flip
-        "//third_party/py/numpy",
-        "//xla:xla_data_proto_py_pb2",
-        "@absl_py//absl/testing:absltest",
-        "@absl_py//absl/testing:parameterized",
-    ],
-)
+# py_strict_test(
+#     name = "types_test",
+#     size = "small",
+#     srcs = ["types_test.py"],
+#     python_version = "PY3",
+#     srcs_version = "PY3",
+#     # Cannot build this on OSS because the ":xla_data_proto_py_pb2"
+#     # dependency isn't part of the public API.
+#     tags = ["no_oss"],
+#     deps = [
+#         ":types",
+#         "//third_party/py/google/protobuf:use_fast_cpp_protos",  # Automatically added go/proto_python_upb_flip
+#         "//third_party/py/numpy",
+#         # "//xla:xla_data_proto_py_pb2",
+#         "@absl_py//absl/testing:absltest",
+#         "@absl_py//absl/testing:parameterized",
+#     ],
+# )

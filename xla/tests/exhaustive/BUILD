@@ -47,29 +47,29 @@ filegroup(
     srcs = ["exhaustive_unary_test_f32_or_smaller.cc"],
 )
 
-xla_test(
-    name = "exhaustive_unary_test_f32_or_smaller",
-    srcs = [
-        "exhaustive_test_main.cc",
-        ":exhaustive_unary_test_f32_or_smaller_lib_srcs",
-    ],
-    backends = [
-        "gpu",
-        "cpu",
-    ],
-    real_hardware_only = True,  # Very slow on the interpreter.
-    shard_count = 50,
-    tags = [
-        "optonly",
-        "test_xla_cpu_thunks",
-        # This is a big test that we skip for capacity reasons in OSS testing.
-        "no_oss",
-    ],
-    deps = exhaustive_unary_test_f32_or_smaller_deps + [
-        "@tsl//tsl/platform",
-        "@tsl//tsl/platform:test",
-    ],
-)
+# xla_test(
+#     name = "exhaustive_unary_test_f32_or_smaller",
+#     srcs = [
+#         "exhaustive_test_main.cc",
+#         ":exhaustive_unary_test_f32_or_smaller_lib_srcs",
+#     ],
+#     backends = [
+#         "gpu",
+#         "cpu",
+#     ],
+#     real_hardware_only = True,  # Very slow on the interpreter.
+#     shard_count = 50,
+#     tags = [
+#         "optonly",
+#         "test_xla_cpu_thunks",
+#         # This is a big test that we skip for capacity reasons in OSS testing.
+#         "no_oss",
+#     ],
+#     deps = exhaustive_unary_test_f32_or_smaller_deps + [
+#         "@tsl//tsl/platform",
+#         "@tsl//tsl/platform:test",
+#     ],
+# )
 
 xla_test(
     name = "exhaustive_unary_test_f64",

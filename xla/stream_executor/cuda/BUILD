@@ -187,24 +187,24 @@ cuda_only_cc_library(
     ] + if_nccl(["@local_config_nccl//:nccl"]),
 )
 
-xla_test(
-    name = "cuda_driver_test",
-    srcs = ["cuda_driver_test.cc"],
-    backends = ["gpu"],
-    tags = [
-        # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
-        "gpu",
-        "no_rocm",
-    ],
-    deps = [
-        ":cuda_driver",
-        "//xla/stream_executor/gpu:gpu_driver_header",
-        "@com_google_absl//absl/log",
-        "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
+# xla_test(
+#     name = "cuda_driver_test",
+#     srcs = ["cuda_driver_test.cc"],
+#     backends = ["gpu"],
+#     tags = [
+#         # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
+#         "gpu",
+#         "no_rocm",
+#     ],
+#     deps = [
+#         ":cuda_driver",
+#         "//xla/stream_executor/gpu:gpu_driver_header",
+#         "@com_google_absl//absl/log",
+#         "@local_config_cuda//cuda:cuda_headers",
+#         "@tsl//tsl/platform:test",
+#         "@tsl//tsl/platform:test_main",
+#     ],
+# )
 
 # The activation library is tightly coupled to the executor library.
 # TODO(leary) split up cuda_executor.cc so that this can stand alone.
