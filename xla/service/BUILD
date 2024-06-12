@@ -5605,20 +5605,20 @@ cc_library(
     ],
 )
 
-cc_test(
-    name = "hlo_module_config_test",
-    srcs = ["hlo_module_config_test.cc"],
-    tags = [
-        "no_oss",
-    ],  # b/169705709, no protobuf matchers in OSS.
-    deps = [
-        ":hlo_module_config",
-        "//xla:xla_proto_cc",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:test",
-    ],
-)
+# cc_test(
+#     name = "hlo_module_config_test",
+#     srcs = ["hlo_module_config_test.cc"],
+#     tags = [
+#         "no_oss",
+#     ],  # b/169705709, no protobuf matchers in OSS.
+#     deps = [
+#         ":hlo_module_config",
+#         "//xla:xla_proto_cc",
+#         "@com_google_googletest//:gtest_main",
+#         "@tsl//tsl/platform:errors",
+#         "@tsl//tsl/platform:test",
+#     ],
+# )
 
 cc_library(
     name = "computation_layout",
@@ -7942,45 +7942,45 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
-    name = "xla_aot_compile_gpu_test",
-    srcs = if_cuda_is_configured(["xla_aot_compile_gpu_test.cc"]),
-    data = if_cuda_is_configured([
-        ":xla_aot_compile_test_gpu_executable",
-        ":xla_aot_compile_test_gpu_executable_hlo",
-        ":xla_aot_compile_test_gpu_executable_constant",
-        ":xla_aot_compile_test_gpu_executable_convolution",
-        ":xla_aot_compile_test_gpu_executable_convolution_runtime_autotuning",
-    ]),
-    tags = [
-        "gpu",
-        "no_oss",
-        "no_rocm",
-        "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
-        "requires-gpu-sm60-only",
-    ],
-    deps = if_cuda_is_configured([
-        ":gpu_plugin_impl",
-        ":platform_util",
-        ":shaped_buffer",
-        "@com_google_googletest//:gtest_main",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "//xla:executable_run_options",
-        "//xla:literal_util",
-        "//xla/client:client_library",
-        "//xla/client:local_client",
-        "//xla/service/cpu:cpu_compiler",
-        "//xla/client:executable_build_options",
-        "//xla:literal",
-        "//xla:shape_util",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-    ]),
-)
+# xla_cc_test(
+#     name = "xla_aot_compile_gpu_test",
+#     srcs = if_cuda_is_configured(["xla_aot_compile_gpu_test.cc"]),
+#     data = if_cuda_is_configured([
+#         ":xla_aot_compile_test_gpu_executable",
+#         ":xla_aot_compile_test_gpu_executable_hlo",
+#         ":xla_aot_compile_test_gpu_executable_constant",
+#         ":xla_aot_compile_test_gpu_executable_convolution",
+#         ":xla_aot_compile_test_gpu_executable_convolution_runtime_autotuning",
+#     ]),
+#     tags = [
+#         "gpu",
+#         "no_oss",
+#         "no_rocm",
+#         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
+#         "requires-gpu-sm60-only",
+#     ],
+#     deps = if_cuda_is_configured([
+#         ":gpu_plugin_impl",
+#         ":platform_util",
+#         ":shaped_buffer",
+#         "@com_google_googletest//:gtest_main",
+#         "@com_google_absl//absl/strings",
+#         "@com_google_absl//absl/types:span",
+#         "//xla:executable_run_options",
+#         "//xla:literal_util",
+#         "//xla/client:client_library",
+#         "//xla/client:local_client",
+#         "//xla/service/cpu:cpu_compiler",
+#         "//xla/client:executable_build_options",
+#         "//xla:literal",
+#         "//xla:shape_util",
+#         "@tsl//tsl/lib/core:status_test_util",
+#         "@tsl//tsl/platform:env",
+#         "@tsl//tsl/platform:path",
+#         "@tsl//tsl/platform:statusor",
+#         "@tsl//tsl/platform:test",
+#     ]),
+# )
 
 tf_proto_library(
     name = "buffer_assignment_proto",

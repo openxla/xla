@@ -360,7 +360,6 @@ xla_cc_test(
         "//xla/service/gpu:nvptx_compiler_impl",
         "//xla/stream_executor/cuda:cublas_plugin",
     ]) + if_rocm([
-        "//xla/service/gpu:amdgpu_compiler_impl",
         "//xla/stream_executor/rocm:rocblas_plugin",
     ]),
 )

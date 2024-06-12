@@ -46,6 +46,8 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/shape.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/service/compiler.h"
 
 namespace xla {
 
@@ -93,7 +95,7 @@ class AutoShardingImplementation {
   // module.layout_canonicalization_callback(), which gives canonicalized
   // argument and result layouts based on current module. Currently used by
   // PJRT which assigns layouts based on runtime shapes: see
-  // DetermineArgumentLayoutsFromCompileOptions() in
+  // DetermineArgumentLayoutsFromCompiler::CompileOptions() in
   //     tensorflow/compiler/xla/pjrt/utils.cc
   absl::Status CanonicalizeLayouts(HloModule* module);
 
@@ -136,6 +138,9 @@ class AutoSharding : public HloModulePass {
 };
 
 namespace spmd {
+
+Status RunAutoShardingPass(HloModule* hlo_module,
+                           const Compiler::CompileOptions& options);
 // Function declarations.
 // Their comments can be found in their definitions in *.cc files.
 HloSharding Tile(const Shape& shape, absl::Span<const int64_t> tensor_dims,

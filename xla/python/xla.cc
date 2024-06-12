@@ -66,7 +66,7 @@ limitations under the License.
 #endif  // XLA_PYTHON_ENABLE_GPU
 
 #ifdef __linux__
-#include "gloo/transport/tcp/attr.h"  // from @gloo
+#include "gloo/transport/tcp/attr.h"    // from @gloo
 #include "gloo/transport/tcp/device.h"  // from @gloo
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
@@ -91,7 +91,7 @@ limitations under the License.
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/mlir.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/nb_absl_span.h"           // IWYU pragma: keep
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/ops.h"
 #include "xla/python/outfeed_receiver_py.h"
@@ -118,6 +118,11 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/status.h"
+
+/*******added by mesha ********/
+// #include "xla/service/spmd/auto_sharding.h"
+#include "xla/hlo/experimental/auto_sharding.h"
+
 
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 
@@ -337,8 +342,7 @@ NB_MODULE(xla_extension, m_nb) {
     absl::StatusOr<const PJRT_Api*> pjrt_api = pjrt::PjrtApi(platform_name);
     return pjrt_api.ok();
   });
-  m_nb.def(
-      "load_pjrt_plugin",
+  m_nb.def("load_pjrt_plugin",
       [](std::string platform_name, std::optional<std::string> library_path,
          std::optional<nb::capsule> c_api) -> nb::capsule {
         if (library_path.has_value()) {
@@ -898,6 +902,18 @@ NB_MODULE(xla_extension, m_nb) {
   m_nb.def("check_and_canonicalize_memory_kind",
            &jax::CheckAndCanonicalizeMemoryKind, nb::arg("memory_kind").none(),
            nb::arg("device_list"));
+
+  /*******************added by mesha**************/
+  // m_nb.def(
+  //     "run_auto_sharding",
+  //     [](HloModule* hlo_module, const CompileOptions& options) {
+  //       spmd::RunAutoShardingPass(hlo_module, options);
+  //       return xla::OkStatus();
+  //     },
+  //     "Compile options for running auto sharding pass");
+  
+  /*******************end added by mesha**************/
+
 }  // NOLINT(readability/fn_size)
 
 }  // namespace xla

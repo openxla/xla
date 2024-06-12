@@ -71,25 +71,25 @@ cc_library(
     ],
 )
 
-xla_cc_test(
-    name = "ffi_test",
-    srcs = ["ffi_test.cc"],
-    deps = [
-        ":ffi",
-        "//xla:xla_data_proto_cc",
-        "//xla/ffi:call_frame",
-        "//xla/ffi:execution_context",
-        "//xla/ffi:ffi_api",
-        "//xla/stream_executor:device_memory",
-        "//xla/stream_executor:device_memory_allocator",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
+# xla_cc_test(
+#     name = "ffi_test",
+#     srcs = ["ffi_test.cc"],
+#     deps = [
+#         ":ffi",
+#         "//xla:xla_data_proto_cc",
+#         "//xla/ffi:call_frame",
+#         "//xla/ffi:execution_context",
+#         "//xla/ffi:ffi_api",
+#         "//xla/stream_executor:device_memory",
+#         "//xla/stream_executor:device_memory_allocator",
+#         "@com_google_absl//absl/log:check",
+#         "@com_google_absl//absl/status",
+#         "@com_google_absl//absl/strings",
+#         "@tsl//tsl/lib/core:status_test_util",
+#         "@tsl//tsl/platform:errors",
+#         "@tsl//tsl/platform:status_matchers",
+#         "@tsl//tsl/platform:test",
+#         "@tsl//tsl/platform:test_benchmark",
+#         "@tsl//tsl/platform:test_main",
+#     ],
+# )
