@@ -5614,6 +5614,7 @@ cc_test(
     deps = [
         ":hlo_module_config",
         "//xla:xla_proto_cc",
+        "//xla/tests:test_utils",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:test",
