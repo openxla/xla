@@ -55,9 +55,9 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"      // from @llvm-project
 #include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Support/LLVM.h"        // from @llvm-project
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -467,13 +467,14 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 }
 
 void CheckNotScheduled(HloModule* hlo_module) {
-  CHECK(!hlo_module->has_schedule())
-      << "\nThe current HLO module " << hlo_module->name()
-      << " is scheduled and optimized. \n"
-      << "It is not expected to run optimization passes again.\nPlease use "
-      << "RunAndCompareNoHloPasses() or RunAndCompareTwoModules() instead of "
-      << "RunAndCompare()\nif running unit tests as they set"
-      << " run_hlo_passes=false.";
+  if (hlo_module->has_schedule() &&
+      !hlo_module->config().debug_options().xla_disable_all_hlo_passes()) {
+    LOG(WARNING) << "\nThe current HLO module " << hlo_module->name()
+                 << " is scheduled and optimized. \n"
+                 << "It is not expected to run optimization passes again.\n"
+                    "Use a test method like RunAndCompareNoHloPasses() or "
+                 << "the xla_disable_all_hlo_passes flag.";
+  }
 }
 
 void LogDebugOptions(HloModule* hlo_module) {
