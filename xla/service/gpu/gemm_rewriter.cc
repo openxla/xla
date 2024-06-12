@@ -2040,7 +2040,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         {ComputationType::kF64, DataType::kComplexDouble, PrimitiveType::C128,
          PrimitiveType::C128, DataType::kComplexDouble},
     };
-    if (IsCuda(gpu_version_) &&
+    if (/*IsCuda(gpu_version_) &&*/
         absl::c_linear_search(supported_cublas_type_combinations,
                               std::tuple{compute_type, scale_type, a_dtype,
                                               b_dtype, output_dtype})) {
