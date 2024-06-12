@@ -569,10 +569,27 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "run_hlo_module_test",
+    srcs = ["run_hlo_module_test.cc"],
+    deps = [
+        ":run_hlo_module_lib",
+        ":run_hlo_module_proto_cc",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_data_proto_cc",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
