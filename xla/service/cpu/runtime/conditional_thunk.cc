@@ -16,10 +16,11 @@ limitations under the License.
 #include "xla/service/cpu/runtime/conditional_thunk.h"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
-#include "absl/status/status.h"
+#include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime/thunk.h"
@@ -30,6 +31,14 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<std::unique_ptr<ConditionalThunk>> ConditionalThunk::Create(
+    Info info, BufferAllocation::Slice branch_index_buffer,
+    std::vector<ThunkSequence> branch_sequences) {
+  return absl::WrapUnique(new ConditionalThunk(std::move(info),
+                                               std::move(branch_index_buffer),
+                                               std::move(branch_sequences)));
+}
+
 ConditionalThunk::ConditionalThunk(Info info,
                                    BufferAllocation::Slice branch_index_buffer,
                                    std::vector<ThunkSequence> branch_sequences)
@@ -37,7 +46,8 @@ ConditionalThunk::ConditionalThunk(Info info,
       branch_index_buffer_(branch_index_buffer),
       branch_sequences_(std::move(branch_sequences)) {}
 
-absl::Status ConditionalThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> ConditionalThunk::Execute(
+    const ExecuteParams& params) {
   TF_ASSIGN_OR_RETURN(
       se::DeviceMemoryBase branch_index_data,
       params.buffer_allocations->GetDeviceAddress(branch_index_buffer_));

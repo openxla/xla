@@ -169,7 +169,7 @@ AffineExpr AffineExprSimplifier::RewriteMod(AffineBinaryOpExpr mod) {
   // = (c - c // b * b) * a
   // = (c % b) * a
   if (auto mul = GetConstantRhs(lhs_simplified, AffineExprKind::Mul);
-      mul && (m % *mul == 0)) {
+      mul && *mul > 0 && (m % *mul == 0)) {
     return (GetLhs(lhs_simplified) % (m / *mul)) * *mul;
   }
 
@@ -495,11 +495,20 @@ AffineExpr AffineExprSimplifier::SimplifyOnce(AffineExpr expr) {
         for (int div_i = 0; div_i < divs.size(); ++div_i) {
           auto [div, div_mul] = divs[div_i];
           if (!div) continue;  // Already erased.
-          if (GetLhs(mod) != GetLhs(div)) continue;
+          if ((div_mul % mod_mul) || (div_mul / mod_mul) != mod_c) continue;
 
-          auto div_c = GetConstantRhs(div, AffineExprKind::FloorDiv);
-          if (div_mul % mod_mul) continue;
-          if (mod_c != div_c || (div_mul / mod_mul) != mod_c) continue;
+          auto mod_lhs = GetLhs(mod);
+          if (GetConstantRhs(mod_lhs, AffineExprKind::FloorDiv)) {
+            // If x is a floorDiv itself, we need to check a bit more carefully:
+            //    ((x // c0) % c1) * d + (x // (c0 * c1)) * (c1 * d)`
+            // `x // (c0 * c1)` will be simplified, so we we may not even have
+            // `c0 * c1` in the expression, if `x` contains a multiplier.
+            if (Simplify(mod_lhs.floorDiv(*mod_c)) != Simplify(div)) continue;
+          } else {
+            if (mod_lhs != GetLhs(div)) continue;
+            auto div_c = GetConstantRhs(div, AffineExprKind::FloorDiv);
+            if (mod_c != div_c) continue;
+          }
 
           others.push_back(GetLhs(mod) * mod_mul);
           divs[div_i].first = nullptr;
@@ -775,8 +784,17 @@ void Interval::Print(std::ostream& out) const {
   out << '[' << lower << ", " << upper << "]";
 }
 
+int64_t Interval::GetLoopTripCount() const {
+  if (!IsFeasible()) {
+    return 0;
+  }
+  DCHECK((static_cast<absl::int128>(upper) - lower + 1) <=
+         std::numeric_limits<int64_t>::max());
+  return upper - lower + 1;
+}
+
 Interval::ComparisonResult Interval::operator>(const Interval& b) const {
-  if (NumElements() == 0 || b.NumElements() == 0) {
+  if (!IsFeasible() || !b.IsFeasible()) {
     return {std::nullopt};
   }
   if (lower > b.upper) {
@@ -790,7 +808,7 @@ Interval::ComparisonResult Interval::operator>(const Interval& b) const {
 
 Interval::ComparisonResult Interval::operator==(const Interval& b) const {
   Interval intersection = Intersect(b);
-  if (intersection.NumElements() == 0) return {false};
+  if (!intersection.IsFeasible()) return {false};
   if (intersection.IsPoint() && IsPoint() && b.IsPoint()) {
     return {true};
   }
@@ -1524,10 +1542,17 @@ SmallBitVector IndexingMap::RemoveUnusedDimensions() {
 }
 
 void IndexingMap::ResetToKnownEmpty() {
-  affine_map_ = AffineMap::get(GetMLIRContext());
-  dim_vars_.clear();
-  range_vars_.clear();
-  rt_vars_.clear();
+  auto zero = getAffineConstantExpr(0, GetMLIRContext());
+  affine_map_ = AffineMap::get(
+      affine_map_.getNumDims(), affine_map_.getNumSymbols(),
+      llvm::SmallVector<AffineExpr>(affine_map_.getNumResults(), zero),
+      GetMLIRContext());
+  for (auto& dim_var : dim_vars_) {
+    dim_var.bounds = Interval{0, -1};
+  }
+  for (auto& range_var : range_vars_) {
+    range_var.range = Interval{0, -1};
+  }
   constraints_.clear();
   is_known_empty_ = true;
 }
@@ -1633,9 +1658,6 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
     return IndexingMap::GetUndefined();
   }
   MLIRContext* mlir_context = first.GetMLIRContext();
-  if (first.IsKnownEmpty() || second.IsKnownEmpty()) {
-    return IndexingMap::GetKnownEmpty(mlir_context);
-  }
   AffineMap producer_affine_map = second.GetAffineMap();
   AffineMap composed_map = producer_affine_map.compose(first.GetAffineMap());
 

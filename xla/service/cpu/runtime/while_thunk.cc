@@ -15,18 +15,29 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime/while_thunk.h"
 
+#include <memory>
 #include <utility>
 
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime/thunk.h"
 #include "xla/stream_executor/device_memory.h"
-#include "tsl/platform/errors.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
+
+absl::StatusOr<std::unique_ptr<WhileThunk>> WhileThunk::Create(
+    Info info, BufferAllocation::Slice cond_buffer, ThunkSequence cond_sequence,
+    ThunkSequence body_sequence) {
+  return absl::WrapUnique(new WhileThunk(std::move(info), cond_buffer,
+                                         std::move(cond_sequence),
+                                         std::move(body_sequence)));
+}
 
 WhileThunk::WhileThunk(Info info, BufferAllocation::Slice cond_buffer,
                        ThunkSequence cond_sequence, ThunkSequence body_sequence)
@@ -35,7 +46,8 @@ WhileThunk::WhileThunk(Info info, BufferAllocation::Slice cond_buffer,
       cond_sequence_(std::move(cond_sequence)),
       body_sequence_(std::move(body_sequence)) {}
 
-absl::Status WhileThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> WhileThunk::Execute(
+    const ExecuteParams& params) {
   tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   TF_ASSIGN_OR_RETURN(
@@ -44,13 +56,21 @@ absl::Status WhileThunk::Execute(const ExecuteParams& params) {
 
   bool* condition = reinterpret_cast<bool*>(cond_data.opaque());
 
-  TF_RETURN_IF_ERROR(cond_sequence_.Execute(params));
+  auto init_event = cond_sequence_.Execute(params);
+  tsl::BlockUntilReady(init_event);
+  if (init_event.IsError()) return init_event.GetError();
+
   while (*condition) {
-    TF_RETURN_IF_ERROR(body_sequence_.Execute(params));
-    TF_RETURN_IF_ERROR(cond_sequence_.Execute(params));
+    auto body_event = body_sequence_.Execute(params);
+    tsl::BlockUntilReady(body_event);
+    if (body_event.IsError()) return body_event.GetError();
+
+    auto cond_event = cond_sequence_.Execute(params);
+    tsl::BlockUntilReady(cond_event);
+    if (cond_event.IsError()) return cond_event.GetError();
   }
 
-  return absl::OkStatus();
+  return OkExecuteEvent();
 }
 
 WhileThunk::BufferUses WhileThunk::buffer_uses() const {

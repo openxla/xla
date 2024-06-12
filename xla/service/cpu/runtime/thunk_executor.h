@@ -18,21 +18,21 @@ limitations under the License.
 
 #include <atomic>
 #include <cstdint>
-#include <functional>
 #include <limits>
-#include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/container/fixed_array.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/service/cpu/runtime/thunk.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 
 namespace xla::cpu {
 
@@ -46,15 +46,6 @@ class ThunkExecutor {
   // tasks on the same thread, or a runner backed by a thread pool.
   using Task = absl::AnyInvocable<void()>;
   using TaskRunner = absl::AnyInvocable<void(Task)>;
-
-  // Converts a Task (absl::AnyInvocable) to a std::function. Task is not
-  // copyable, so we need to wrap it into a std::shared_ptr to be able to pass
-  // to thread pools (Eigen) that expect copyable std::function task type.
-  static std::function<void()> ToStdFunction(Task task) {
-    return [shared_task = std::make_shared<Task>(std::move(task))] {
-      (*shared_task)();
-    };
-  }
 
   // Nodes identified by their index in the captured ThunkSequence.
   using NodeId = int64_t;
@@ -107,13 +98,25 @@ class ThunkExecutor {
     ThunkExecutor* executor;
     TaskRunner runner;
 
+    std::atomic<bool> abort;
+    absl::Mutex abort_mutex;
+    absl::Status abort_status ABSL_GUARDED_BY(abort_mutex);
+
     absl::FixedArray<std::atomic<int64_t>> counters;
     absl::InlinedVector<Node, 32> nodes;
     absl::BlockingCounter done;
   };
 
-  absl::Status Execute(ExecuteState* state, const Thunk::ExecuteParams& params,
-                       ReadyQueue ready_queue);
+  // Executes nodes in the ready queue with given thunk parameters.
+  void Execute(ExecuteState* state, const Thunk::ExecuteParams& params,
+               ReadyQueue ready_queue);
+
+  // Processes out edges of a completed `node` and updates `ready_queue` with
+  // nodes that are ready to execute. If `event` is in error state, aborts the
+  // execution and records the error status to forward it to the caller.
+  void ProcessOutEdges(ExecuteState* state,
+                       tsl::AsyncValuePtr<Thunk::ExecuteEvent> execute_event,
+                       Node& node, ReadyQueue& ready_queue);
 
   ThunkSequence thunk_sequence_;
   std::vector<NodeDef> nodes_defs_;

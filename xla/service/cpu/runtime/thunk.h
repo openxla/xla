@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_RUNTIME_THUNK_H_
 #define XLA_SERVICE_CPU_RUNTIME_THUNK_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ostream>
@@ -25,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -32,6 +34,13 @@ limitations under the License.
 #include "xla/service/cpu/runtime/buffer_allocations.h"
 #include "xla/service/cpu/xfeed_manager.h"
 #include "xla/stream_executor/host/host_kernel_c_api.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
+#include "tsl/platform/statusor.h"
+
+namespace Eigen {
+struct ThreadPoolDevice;
+}  // namespace Eigen
 
 namespace xla::cpu {
 
@@ -109,9 +118,23 @@ class Thunk {
     HostKernels* host_kernels = nullptr;
     const BufferAllocations* buffer_allocations = nullptr;
     runtime::XfeedManager* xfeed = nullptr;
+    const Eigen::ThreadPoolDevice* intra_op_threadpool = nullptr;
   };
 
-  virtual absl::Status Execute(const ExecuteParams& params) = 0;
+  // An execute event that becomes ready when all tasks are completed.
+  using ExecuteEvent = tsl::Chain;
+
+  // Returns non-reference-counted async value ref for thunks executed in the
+  // caller thread to avoid reference counting overhead.
+  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent();
+
+  // Thunk execution must be asynchronous and never block the caller thread,
+  // especially waiting for work submitted into the `intra_op_threadpool`,
+  // because thunks themselves are executed on the same thread pool.
+  //
+  // Thunk execution completion must be reported via the `ExecuteEvent`.
+  virtual tsl::AsyncValueRef<ExecuteEvent> Execute(
+      const ExecuteParams& params) = 0;
 
  protected:
   // Encodes thunk info into the TraceMe compatible format.
@@ -130,17 +153,21 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
   ThunkSequence() = default;
   explicit ThunkSequence(std::unique_ptr<Thunk> thunk);
 
-  // Return a ThunkSequence that contains a single thunk of type `T`.
+  // Returns a thunk sequence that contains a single thunk of type `T`. Uses
+  // factory constructor `T::Create()` to create the thunk.
   template <typename T, typename... Args>
-  static ThunkSequence Of(Args&&... args) {
+  static absl::StatusOr<ThunkSequence> Of(Args&&... args) {
     static_assert(std::is_base_of_v<Thunk, T>,
                   "ThunkSequence::Of() requires `T` to be a `Thunk` subclass.");
-    return ThunkSequence(std::make_unique<T>(std::forward<Args>(args)...));
+    TF_ASSIGN_OR_RETURN(auto thunk, T::Create(std::forward<Args>(args)...));
+    return ThunkSequence(std::move(thunk));
   }
 
+  // Returns an empty thunk sequence.
   static ThunkSequence Empty() { return ThunkSequence(); }
 
-  absl::Status Execute(const Thunk::ExecuteParams& params);
+  tsl::AsyncValueRef<Thunk::ExecuteEvent> Execute(
+      const Thunk::ExecuteParams& params);
 
   using BufferUses = Thunk::BufferUses;
   BufferUses buffer_uses() const;

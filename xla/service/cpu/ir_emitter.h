@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -116,7 +117,8 @@ class IrEmitter : public DfsHloVisitorWithDefault,
       HloComputation* computation, absl::string_view function_name_prefix,
       bool is_top_level_computation,
       absl::Span<HloInstruction* const> instruction_order,
-      bool allow_reassociation);
+      bool allow_reassociation,
+      absl::Span<const llvm::Attribute::AttrKind> function_attributes = {});
 
   llvm::IRBuilder<>* b() { return &b_; }
 
@@ -687,7 +689,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   struct LiteralPtrEqualityFunctor {
     bool operator()(const Literal* lhs, const Literal* rhs) const {
-      return *lhs == *rhs && lhs->shape().layout() == rhs->shape().layout();
+      return lhs->Equal(*rhs, true);
     }
   };
 

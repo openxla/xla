@@ -36,10 +36,12 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
+#include "xla/stream_executor/host/host_event.h"
 #include "xla/stream_executor/host/host_kernel.h"
 #include "xla/stream_executor/host/host_stream.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/env.h"
@@ -88,7 +90,7 @@ absl::Status HostExecutor::GetKernel(const MultiKernelLoaderSpec& spec,
     if (!loaded.has_value()) continue;
 
     TF_ASSIGN_OR_RETURN(auto kernel_function, *std::move(loaded));
-    host_kernel->SetExecutionEngine(std::move(kernel_function));
+    host_kernel->SetKernelFunction(std::move(kernel_function));
     return absl::OkStatus();
   }
 
@@ -236,24 +238,6 @@ bool HostExecutor::CreateStreamDependency(Stream* dependent, Stream* other) {
   return true;
 }
 
-class HostEvent : public Event {
- public:
-  HostEvent() : notification_(std::make_shared<absl::Notification>()) {}
-
-  std::shared_ptr<absl::Notification>& notification() { return notification_; }
-
-  Status PollForStatus() override {
-    return notification_->HasBeenNotified() ? Event::Status::kComplete
-                                            : Event::Status::kPending;
-  }
-
- private:
-  // We use a std::shared_ptr here because the client may delete the HostEvent
-  // object while there are still RecordEvent and WaitForEvent callbacks pending
-  // on a stream.
-  std::shared_ptr<absl::Notification> notification_;
-};
-
 absl::StatusOr<std::unique_ptr<Event>> HostExecutor::CreateEvent() {
   return std::make_unique<HostEvent>();
 }
@@ -270,14 +254,6 @@ absl::Status HostExecutor::RecordEvent(Stream* stream, Event* event) {
     CHECK(!notification->HasBeenNotified());
     notification->Notify();
   });
-  return absl::OkStatus();
-}
-
-absl::Status HostExecutor::WaitForEvent(Stream* stream, Event* event) {
-  std::shared_ptr<absl::Notification> notification =
-      AsHostEvent(event)->notification();
-  AsHostStream(stream)->EnqueueTask(
-      [notification]() { notification->WaitForNotification(); });
   return absl::OkStatus();
 }
 

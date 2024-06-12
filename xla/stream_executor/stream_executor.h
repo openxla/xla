@@ -271,9 +271,6 @@ class StreamExecutor {
   // Inserts the specified event at the end of the specified stream.
   virtual absl::Status RecordEvent(Stream* stream, Event* event) = 0;
 
-  // Waits for the specified event at the end of the specified stream.
-  virtual absl::Status WaitForEvent(Stream* stream, Event* event) = 0;
-
   // Deallocates stream resources on the underlying platform.
   virtual void DeallocateStream(Stream* stream) = 0;
 
@@ -286,11 +283,6 @@ class StreamExecutor {
   // operations enqueued on the stream before this program point.
   virtual absl::Status BlockHostUntilDone(Stream* stream) = 0;
 
-  // Without blocking the device, retrieve the current stream status.
-  virtual absl::Status GetStatus(Stream* stream) {
-    return absl::UnimplementedError(
-        "GetStatus is not supported on this executor.");
-  }
   // Enables peer access from this StreamExecutor to memory
   // allocated by other, such that launched device code, memcpies, etc may
   // access it directly.

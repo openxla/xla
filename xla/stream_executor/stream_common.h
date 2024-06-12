@@ -68,12 +68,10 @@ class StreamCommon : public Stream {
 
   PlatformSpecificHandle platform_specific_handle() const override;
   bool ok() const override { return !InErrorState(); }
-  absl::Status RefreshStatus() override TF_LOCKS_EXCLUDED(mu_);
   absl::StatusOr<Stream *> GetOrCreateSubStream() override
       TF_LOCKS_EXCLUDED(mu_);
   void ReturnSubStream(Stream *sub_stream) override TF_LOCKS_EXCLUDED(mu_);
   absl::Status WaitFor(Stream *other) override;
-  absl::Status WaitFor(Event *event) override;
   absl::Status RecordEvent(Event *event) override;
   absl::Status Memcpy(void *host_dst, const DeviceMemoryBase &gpu_src,
                       uint64_t size) override;

@@ -15,27 +15,42 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime/kernel_thunk.h"
 
+#define EIGEN_USE_THREADS
+
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/status/status.h"
+#include "absl/memory/memory.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/cpu/runtime/task.h"
 #include "xla/service/cpu/runtime/thunk.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/host/host_kernel.h"
 #include "xla/stream_executor/host/host_kernel_c_api.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
+
+absl::StatusOr<std::unique_ptr<KernelThunk>> KernelThunk::Create(
+    Info info, absl::Span<const BufferAllocation::Slice> arguments_buffers,
+    absl::Span<const BufferAllocation::Slice> results_buffers,
+    std::string kernel_name, se::ThreadDim thread_dim) {
+  return absl::WrapUnique(new KernelThunk(std::move(info), arguments_buffers,
+                                          results_buffers,
+                                          std::move(kernel_name), thread_dim));
+}
 
 KernelThunk::KernelThunk(
     Info info, absl::Span<const BufferAllocation::Slice> arguments_buffers,
@@ -48,7 +63,8 @@ KernelThunk::KernelThunk(
       thread_dim_(thread_dim),
       kernel_ptr_(nullptr) {}
 
-absl::Status KernelThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> KernelThunk::Execute(
+    const ExecuteParams& params) {
   tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   VLOG(3) << absl::StreamFormat(
@@ -89,12 +105,21 @@ absl::Status KernelThunk::Execute(const ExecuteParams& params) {
     kernel_ptr_.store(kernel_ptr);
   }
 
-  // TODO(ezhulenev): Instead of using HostKernel directly we should be going
-  // through the stream executor APIs.
   se::host::HostKernel kernel(buffers_data.size(), kernel_ptr, nullptr);
-  TF_RETURN_IF_ERROR(kernel.Launch(thread_dim_, buffers_data));
 
-  return absl::OkStatus();
+  // If intra-op thread pool is not nullptr, we launch HostKernel in async mode
+  // by scheduling tasks into it. HostKernel launch completion will
+  // automatically signal KernelThunk execute completion.
+  if (params.intra_op_threadpool) {
+    return kernel.Launch(thread_dim_, buffers_data,
+                         [&params](se::host::HostKernel::Task task) {
+                           params.intra_op_threadpool->getPool()->Schedule(
+                               ToCopyableTask(std::move(task)));
+                         });
+  }
+
+  TF_RETURN_IF_ERROR(kernel.Launch(thread_dim_, buffers_data));
+  return OkExecuteEvent();
 }
 
 KernelThunk::BufferUses KernelThunk::buffer_uses() const {

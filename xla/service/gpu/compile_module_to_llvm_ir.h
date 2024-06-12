@@ -45,6 +45,7 @@ namespace gpu {
 
 struct CompileModuleResults {
   std::unique_ptr<llvm::Module> llvm_module;
+  std::unique_ptr<llvm::Module> llvm_module_constants;
   std::unique_ptr<BufferAssignment> buffer_assignment;
   std::unique_ptr<ExecutionStreamAssignment> execution_stream_assignment;
   std::vector<BufferAllocation> allocations;
@@ -53,6 +54,7 @@ struct CompileModuleResults {
   absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo> output_info;
   Shape output_shape;
   std::string module_name;
+  CompilationCacheProto kernel_compilation_cache;
 
   // If true, the compiled module uses buffer allocations owned by
   // buffer_assignment. Otherwise the compiled module uses buffer allocations
@@ -69,7 +71,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const std::string& platform_name, se::Platform::Id platform_id,
     const se::DeviceDescription& gpu_device_info,
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
-    const BufferValue::SizeFunction& buffer_size_bytes_function);
+    const BufferValue::SizeFunction& buffer_size_bytes_function,
+    bool split_constants_module = false);
 
 }  // namespace gpu
 }  // namespace xla

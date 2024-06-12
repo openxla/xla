@@ -17,8 +17,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
-#include "absl/status/status.h"
+#include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/runtime/buffer_use.h"
@@ -33,12 +35,18 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<std::unique_ptr<InfeedThunk>> InfeedThunk::Create(
+    Info info, absl::Span<const InfeedBuffer> infeed_buffers) {
+  return absl::WrapUnique(new InfeedThunk(info, infeed_buffers));
+}
+
 InfeedThunk::InfeedThunk(Info info,
                          absl::Span<const InfeedBuffer> infeed_buffers)
     : Thunk(Kind::kInfeed, info),
       infeed_buffers_(infeed_buffers.begin(), infeed_buffers.end()) {}
 
-absl::Status InfeedThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> InfeedThunk::Execute(
+    const ExecuteParams& params) {
   tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   VLOG(3) << absl::StreamFormat("Infeed %d buffers", infeed_buffers_.size());
@@ -80,7 +88,7 @@ absl::Status InfeedThunk::Execute(const ExecuteParams& params) {
                                           infeed_buffer.shape);
   }
 
-  return absl::OkStatus();
+  return OkExecuteEvent();
 }
 
 InfeedThunk::BufferUses InfeedThunk::buffer_uses() const {

@@ -803,12 +803,18 @@ message DebugOptions {
   // details.
   bool xla_use_shardonnay = 302;
 
+  bool xla_gpu_shard_autotuning = 304;
+
+  bool xla_gpu_enable_approx_costly_collectives = 305;
+
+  string xla_gpu_kernel_cache_file = 306;
+  
   // Recognises rotate-right patterns (slice, slice, concat) within a while
   // loop and labels the while loop as a pipelined while loop. This is an
   // unsafe flag.
-  bool xla_gpu_unsafe_pipelined_while_loop_annotator_rotate_right_pattern = 304;
-  
-  // Next id: 305
+  bool xla_gpu_unsafe_pipelined_while_loop_annotator_rotate_right_pattern = 307;
+
+  // Next id: 308
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1074,15 +1080,6 @@ message ResetDeviceRequest {
 }
 
 message ResetDeviceResponse {}
-
-message ComputationGraphStatsRequest {
-  HloModuleProto computation = 1;
-  DebugOptions debug_options = 2;
-}
-
-message ComputationStatsResponse {
-  ComputationStats stats = 1;
-}
 
 message CreateChannelHandleRequest {
   ChannelHandle.ChannelType channel_type = 1;

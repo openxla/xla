@@ -7842,6 +7842,31 @@ INSTANTIATE_TEST_SUITE_P(
     DotOfGatherSimplificationTestInstantiation, DotOfGatherSimplificationTest,
     ::testing::ValuesIn(DotOfGatherPositiveNegativeTests()));
 
+TEST_F(AlgebraicSimplifierTest, GatherWithDegenerateIndex) {
+  const char* hlo_string = R"(
+  HloModule repeat
+
+  ENTRY main {
+    o = f32[25,25] parameter(0)
+    i = s32[1,100] parameter(1)
+    ROOT g = f32[100,25] gather(o, i), collapsed_slice_dims={0},
+                                  start_index_map={0},
+                                  index_vector_dim=0,
+                                  offset_dims={1},
+                                  slice_sizes={1,25}
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options;
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(simplifier.Run(module.get()).value());
+  auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Gather(m::Parameter(0),
+                                         m::Reshape(m::Parameter(1)))));
+}
+
 TEST_F(AlgebraicSimplifierTest, GatherOfScalarToBroadcast) {
   const char* hlo_string = R"(
   HloModule repeat
@@ -11195,6 +11220,58 @@ TEST_F(AlgebraicSimplifierTest, BroadcastToTranspose2) {
   EXPECT_EQ(root->dimensions(), std::vector<int64_t>({1, 0, 2}));
 }
 
+TEST_F(AlgebraicSimplifierTest, LayoutConstraintToNoop) {
+  const std::string hlo_string = R"(
+  HloModule layout_constraint
+    ENTRY %main {
+      input = f32[6,4,3]{0,1,2} parameter(0)
+      ROOT output = f32[6,4,3]{0,1,2} custom-call(input), custom_call_target="LayoutConstraint"
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(AlgebraicSimplifier(options).Run(m.get()).value());
+  HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, LayoutConstraintToCopy) {
+  const std::string hlo_string = R"(
+  HloModule layout_constraint
+    ENTRY %main {
+      input = f32[6,4,3]{0,1,2} parameter(0)
+      ROOT output = f32[6,4,3]{2,0,1} custom-call(input), custom_call_target="LayoutConstraint"
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnUnverifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(AlgebraicSimplifier(options).Run(m.get()).value());
+  HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Copy(m::Parameter(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest, KeepLayoutConstraint) {
+  const std::string hlo_string = R"(
+  HloModule layout_constraint
+    ENTRY %main {
+      input = f32[6,4,3]{0,1,2} parameter(0)
+      ROOT output = f32[6,4,3]{2,0,1} custom-call(input), custom_call_target="LayoutConstraint"
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnUnverifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(false);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, PreserveSharding) {
   const std::string hlo_string = R"(
   HloModule jit_matmul, entry_computation_layout={(f64[8,3]{1,0}, f64[])->f64[8,3]{1,0}}, allow_spmd_sharding_propagation_to_parameters={false,true}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=2
@@ -11207,6 +11284,32 @@ TEST_F(AlgebraicSimplifierTest, PreserveSharding) {
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
   EXPECT_TRUE(m->entry_computation()->parameter_instruction(0)->has_sharding());
+}
+
+// Move parameter from the LHS of a dot to the RHS.
+TEST_F(AlgebraicSimplifierTest, SwapDotOperands) {
+  verifier_layout_sensitive_ = false;
+  instruction_can_change_layout_func_ = {};
+  const std::string hlo_string = R"(
+HloModule main
+
+ENTRY main.1 {
+  param_0 = s8[1024,1024] parameter(0)
+  param_1 = bf16[1024,1024] parameter(1)
+  activations = bf16[1024,1024] add(param_1, param_1)
+  weights = bf16[1024,1024] convert(param_0)
+  ROOT dot = bf16[1024,1024] dot(weights, activations), lhs_batch_dims={}, lhs_contracting_dims={1}, rhs_batch_dims={}, rhs_contracting_dims={0}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  default_options_.set_enable_move_dot_param_to_rhs(true);
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kTranspose);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kDot);
+  EXPECT_NE(root->operand(0)->operand(0)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->operand(0)->operand(1)->operand(0)->opcode(),
+            HloOpcode::kParameter);
 }
 
 }  // namespace

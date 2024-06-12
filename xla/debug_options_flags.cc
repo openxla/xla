@@ -70,6 +70,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_max_hlo_modules(-1);
   opts.set_xla_dump_module_metadata(false);
   opts.set_xla_dump_hlo_as_long_text(false);
+  opts.set_xla_dump_large_constants(false);
   opts.set_xla_dump_enable_mlir_pretty_form(true);
   opts.set_xla_debug_buffer_assignment_show_max(15);
 #ifdef ENABLE_MKL
@@ -126,7 +127,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_reduce_scatter_combine_threshold_bytes(kDefaultThreshold);
   opts.set_xla_gpu_enable_all_gather_combine_by_dim(true);
   opts.set_xla_gpu_enable_reduce_scatter_combine_by_dim(true);
-  opts.set_xla_gpu_enable_all_reduce_splitter(false);
+  opts.set_xla_gpu_enable_all_reduce_splitter(true);
+  opts.set_xla_gpu_enable_approx_costly_collectives(false);
 
   opts.set_xla_gpu_enable_reassociation_for_converted_ar(true);
 
@@ -137,7 +139,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_dumping(true);
 
   opts.set_xla_gpu_enable_custom_fusions(false);
-  opts.set_xla_gpu_enable_address_computation_fusion(true);
+  opts.set_xla_gpu_enable_address_computation_fusion(false);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -260,6 +262,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_terminate_on_error(false);
 
   opts.set_xla_use_shardonnay(false);
+
+  opts.set_xla_gpu_shard_autotuning(false);
 
   return opts;
 }
@@ -852,6 +856,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "are written to the --xla_dump_to dir, or, if no dir is specified, to "
       "stdout. Ignored unless xla_dump_hlo_as_text is true."));
   flag_list->push_back(
+      tsl::Flag("xla_dump_large_constants",
+                bool_setter_for(&DebugOptions::set_xla_dump_large_constants),
+                debug_options->xla_dump_large_constants(),
+                "Dumps HLO modules including large constants before and after "
+                "optimizations. debug_options are written to the --xla_dump_to "
+                "dir, or, if no dir is specified, to stdout. Ignored unless "
+                "xla_dump_hlo_as_text is true."));
+  flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_proto",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_proto),
                 debug_options->xla_dump_hlo_as_proto(),
@@ -1089,6 +1101,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_enable_all_reduce_splitter(),
       "Splits cross-device all reduce into logical reduce scatter followed by "
       "dynamic slice and all reduce."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_approx_costly_collectives",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_approx_costly_collectives),
+      debug_options->xla_gpu_enable_approx_costly_collectives(),
+      "Enables more accurate latency approximation of collectives. Used in "
+      "`ApproximateLatencyEstimator` scheduler."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_all_reduce_blueconnect_num_devices_per_host",
       int32_setter_for(
@@ -1720,6 +1739,20 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_use_shardonnay",
       bool_setter_for(&DebugOptions::set_xla_use_shardonnay),
       debug_options->xla_use_shardonnay(), "Whether to use Shardonnay."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_shard_autotuning",
+      bool_setter_for(&DebugOptions::set_xla_gpu_shard_autotuning),
+      debug_options->xla_gpu_shard_autotuning(),
+      "Shard autotuning between participating compiler processes (typically in "
+      "multi-host setups) and join the results when it's done."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_kernel_cache_file",
+      string_setter_for(&DebugOptions::set_xla_gpu_kernel_cache_file),
+      debug_options->xla_gpu_kernel_cache_file(),
+      "Path to a file to cache compiled kernels. If the file doesn't exist "
+      "write the compilation cache of the first compiled HLO module into it."
+      "Once the file exists, further compilations will read it to reuse "
+      "the kernels, but not write it. This behavior may change later."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

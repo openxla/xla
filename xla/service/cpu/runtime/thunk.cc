@@ -22,7 +22,7 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status.h"
-#include "xla/runtime/buffer_use.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -51,6 +51,15 @@ std::string_view Thunk::KindToString(Kind kind) {
   }
 }
 
+tsl::AsyncValueRef<Thunk::ExecuteEvent> Thunk::OkExecuteEvent() {
+  static tsl::AsyncValueOwningRef<ExecuteEvent>* event = [] {
+    auto* storage = new tsl::internal::AsyncValueStorage<ExecuteEvent>();
+    return new tsl::AsyncValueOwningRef<ExecuteEvent>(
+        tsl::MakeAvailableAsyncValueRef<ExecuteEvent>(*storage));
+  }();
+  return event->AsRef();
+}
+
 // Encodes thunk info into the TraceMe compatible format.
 std::string Thunk::TraceMeEncode() const {
   return tsl::profiler::TraceMeEncode(info_.op_name,
@@ -75,12 +84,15 @@ void ThunkSequence::Append(ThunkSequence other) {
   }
 }
 
-absl::Status ThunkSequence::Execute(const Thunk::ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> ThunkSequence::Execute(
+    const Thunk::ExecuteParams& params) {
   VLOG(2) << "Execute thunk sequence of size " << size();
   for (auto& thunk : *this) {
-    TF_RETURN_IF_ERROR(thunk->Execute(params));
+    auto event = thunk->Execute(params);
+    tsl::BlockUntilReady(event);
+    if (event.IsError()) return event.GetError();
   }
-  return absl::OkStatus();
+  return Thunk::OkExecuteEvent();
 }
 
 ThunkSequence::BufferUses ThunkSequence::buffer_uses() const {
