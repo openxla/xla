@@ -59,7 +59,7 @@ cd /opt/xla/
 # test-pax.sh --help for more details on the parallelization options
 (export XLA_FLAGS="--xla_dump_to=/tmp/dump --xla_dump_hlo_as_text"; test-pax.sh --fsdp 8 --batch-per-gpu 1)
 
-ls -lSh /tmp/dump/*after_optimizations.txt
+ls -lSh /tmp/dump/*before_optimizations.txt
 # The biggest file one is normally the one you care about.
 # I picked one, for the rest of the scripts, but the name could change when you change the JAX or XLA version.
 ```
