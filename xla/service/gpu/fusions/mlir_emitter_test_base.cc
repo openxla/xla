@@ -73,7 +73,11 @@ MlirEmitterTestBaseImpl::MlirEmitterTestBaseImpl() {
 
 DebugOptions MlirEmitterTestBaseImpl::GetDebugOptionsForTest() {
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
+#ifdef GOOGLE_CUDA
   debug_options.set_xla_gpu_mlir_emitter_level(4);
+#elif TENSORFLOW_USE_ROCM
+  debug_options.set_xla_gpu_mlir_emitter_level(0);
+#endif
   return debug_options;
 }
 

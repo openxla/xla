@@ -284,6 +284,8 @@ cc_library(
     testonly = True,
     srcs = ["mlir_emitter_test_base.cc"],
     hdrs = ["mlir_emitter_test_base.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) +
+                    if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     deps = [
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
