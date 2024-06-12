@@ -90,12 +90,55 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
+
+#include "xla/hlo/experimental/auto_sharding/slice_auto_sharded_stages.h"
+#include "xla/service/sharding_remover.h"
+#include "xla/service/hlo_dce.h"
+#include "xla/service/hlo_pass_pipeline.h"
+#include "xla/service/compiler.h"
+#include "xla/service/algebraic_simplifier.h"
+#include "xla/service/call_inliner.h"
+#include "xla/service/gpu/gpu_conv_rewriter.h"
+#include "xla/service/gpu/gpu_compiler.h"
+
 namespace xla {
 namespace spmd {
 
 namespace {
 constexpr double kSaltiplier = 0.0;  // This value (0.0) disables salting.
 }  // namespace
+
+// add by mesha
+const char kBeforeAutoShardingDumpName[] = "before_run_auto_sharding";
+
+Status RunAutoShardingPass(HloModule* hlo_module,
+                           const Compiler::CompileOptions& options) {
+  TF_ASSIGN_OR_RETURN(auto module_config,
+                      CreateHloModuleConfig(hlo_module, options));
+  hlo_module->set_config(module_config);
+  DumpHloModuleIfEnabled(*hlo_module, kBeforeAutoShardingDumpName);
+
+  const DebugOptions& debug_options = hlo_module->config().debug_options();
+
+  AlgebraicSimplifierOptions layout_insensitive_algsimp_opts({},
+                                                             ConvIsLowerable);
+  layout_insensitive_algsimp_opts.set_minmax_propagate_nan(
+      !debug_options.xla_gpu_enable_fast_min_max());
+  layout_insensitive_algsimp_opts.set_enable_dot_strength_reduction(false);
+
+  if (hlo_module->config().use_spmd_partitioning()) {
+    HloPassPipeline spmd_pipeline("run-auto-sharding");
+    AddHloVerifier(&spmd_pipeline);
+    const int64_t num_partitions = hlo_module->config().num_partitions();
+    spmd_pipeline.AddPass<CallInliner>();
+    spmd_pipeline.AddPass<SliceAutoShardedStages>();
+    // Remove redundant sharding ops when partition_count == 1.
+    spmd_pipeline.AddPass<ShardingRemover>();
+    spmd_pipeline.AddPass<HloDCE>();
+    TF_RETURN_IF_ERROR(spmd_pipeline.Run(hlo_module).status());
+  }
+  return OkStatus();
+}
 
 // Compute the resharding cost vector from multiple possible strategies to a
 // desired sharding spec.
