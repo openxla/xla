@@ -111,7 +111,7 @@ class HloPrintOptions {
         print_ids_(true),
         canonicalize_computations_(false),
         print_extra_attributes_(true),
-        syntax_sugar_async_ops_(true),
+        syntax_sugar_async_ops_(false),
         print_name_after_closing_brace_(false) {}
   // Static reference to a default construction HloPrintOptions, to avoid
   // constructing a new one each time default is needed.

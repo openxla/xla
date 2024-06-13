@@ -846,7 +846,9 @@ message DebugOptions {
   // command buffer.
   repeated string legacy_command_buffer_custom_call_targets = 314;
 
-  // Next id: 315
+  bool xla_syntax_sugar_async_ops = 315;
+
+  // Next id: 316
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
