@@ -686,7 +686,6 @@ cc_library(
         ":ir_emitter_triton",
         ":matmul_utils",
         ":triton_fusion_analysis",
-        "//testing/base/public:gunit_for_library_testonly",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
