@@ -632,6 +632,36 @@ tsl_gpu_library(
     ],
 )
 
+xla_test(
+    name = "gpu_cudamallocasync_allocator_test",
+    srcs = if_cuda(["gpu_cudamallocasync_allocator_test.cc"]),
+    backends = ["gpu_any"],
+    local_defines = if_cuda(["GOOGLE_CUDA=1"]),
+    tags = ["config-cuda-only"],
+    deps = [
+        ":gpu_stream",
+        "//xla:types",
+        "//xla/service:platform_util",
+        "//xla/stream_executor",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/framework:device_id",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ] + if_cuda([
+        # copybara:uncomment ":gpu_cudamallocasync_allocator",
+        "@local_config_cuda//cuda:cuda_headers",
+        "//xla/stream_executor/cuda:cuda_platform",
+    ]),
+)
+
 cc_library(
     name = "gpu_blas_lt",
     srcs = ["gpu_blas_lt.cc"],
