@@ -557,6 +557,10 @@ ENTRY e {
 }
 
 TEST_F(CuDnnFusionLevel2Test, ClampExecutesCorrectly) {
+  if (!IsAtLeastCuDnn91()) {
+    GTEST_SKIP() << "Clamp test requires cuDNN 9.1+.";
+  }
+
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   x = bf16[16,32] parameter(0)
