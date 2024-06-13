@@ -4,7 +4,7 @@ load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test", "xla_nvml_deps")
 
 # Libraries for performance modeling of HLO.
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/service/gpu:build_defs.bzl", "xla_gpu_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
@@ -42,15 +42,10 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "analytical_latency_estimator_test",
     srcs = ["analytical_latency_estimator_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-sm70",
-    ]},
-    backends = [
-        "gpu",
-    ],
+    with_cuda = "volta+",
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",
@@ -59,7 +54,6 @@ xla_test(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/stream_executor:device_description",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -854,16 +848,13 @@ cc_library(
     ]
 ]
 
-xla_test(
+xla_gpu_test(
     name = "hlo_op_profiler_test",
     srcs = ["hlo_op_profiler_test.cc"],
-    backends = ["gpu"],
-    local_defines = if_cuda(["GOOGLE_CUDA"]),
     deps = [
         ":hlo_op_profiler_lib",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:test_main",
     ],
 )

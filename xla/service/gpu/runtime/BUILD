@@ -1,10 +1,9 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/service/gpu:build_defs.bzl", "get_cub_sort_kernel_types")
+load("//xla/service/gpu:build_defs.bzl", "get_cub_sort_kernel_types", "xla_gpu_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility", "nvtx_headers")
+load("//xla/tsl:tsl.bzl", "if_nccl", "internal_visibility", "nvtx_headers")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 
 package(
@@ -140,11 +139,9 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "command_buffer_cmd_test",
-    srcs = if_gpu_is_configured(["command_buffer_cmd_test.cc"]),
-    backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    srcs = ["command_buffer_cmd_test.cc"],
     deps = [
         ":command_buffer_cmd",
         ":thunk",
@@ -168,7 +165,6 @@ xla_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -339,19 +335,10 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "dynamic_slice_thunk_test",
-    srcs = if_gpu_is_configured(["dynamic_slice_thunk_test.cc"]),
-    backend_tags = {
-        "gpu_a100": if_google(["config-cuda-only"]),
-        "gpu_v100": if_google(["config-cuda-only"]),
-    },
-    backends = [
-        "gpu_a100",
-        "gpu_v100",
-        "gpu_amd_any",
-    ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    srcs = ["dynamic_slice_thunk_test.cc"],
+    with_cuda = "volta+",
     deps = [
         ":custom_call_thunk",
         ":dynamic_slice_thunk",
@@ -380,8 +367,8 @@ xla_test(
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ] + if_cuda_is_configured([
+    ],
+    platform_deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
@@ -439,19 +426,10 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "command_buffer_thunk_test",
-    srcs = if_gpu_is_configured(["command_buffer_thunk_test.cc"]),
-    backend_tags = {
-        "gpu_a100": if_google(["config-cuda-only"]),
-        "gpu_v100": if_google(["config-cuda-only"]),
-    },
-    backends = [
-        "gpu_a100",
-        "gpu_v100",
-        "gpu_amd_any",
-    ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
+    srcs = ["command_buffer_thunk_test.cc"],
+    with_cuda = "volta+",
     deps = [
         ":command_buffer_cmd",
         ":command_buffer_thunk",
@@ -478,8 +456,8 @@ xla_test(
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ] + if_cuda_is_configured([
+    ],
+    platform_deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )

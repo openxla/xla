@@ -1,7 +1,7 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/service/gpu:build_defs.bzl", "xla_gpu_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -76,17 +76,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "in_place_dynamic_update_slice_mlir_test",
     srcs = ["in_place_dynamic_update_slice_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":in_place_dynamic_update_slice_mlir",
         ":mlir_emitter_test_base",
         "//xla:error_spec",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -163,11 +161,9 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "dynamic_slice_fusion_test",
-    srcs = if_cuda_is_configured(["dynamic_slice_fusion_test.cc"]),
-    backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    srcs = ["dynamic_slice_fusion_test.cc"],
     deps = [
         "//xla:error_spec",
         "//xla:shape_util",
@@ -193,8 +189,8 @@ xla_test(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-    ] + if_cuda_is_configured([
+    ],
+    platform_deps = if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
@@ -374,17 +370,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "loop_mlir_test",
     srcs = ["loop_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":loop_mlir",
         ":mlir_emitter_test_base",
         "//xla:error_spec",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -423,17 +417,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "scatter_mlir_test",
     srcs = ["scatter_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":mlir_emitter_test_base",
         ":scatter_mlir",
         "//xla:error_spec",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -475,17 +467,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "transpose_mlir_test",
     srcs = ["transpose_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":mlir_emitter_test_base",
         ":transpose_mlir",
         "//xla:error_spec",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -661,15 +651,11 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "cudnn_test",
-    srcs = if_cuda_is_configured(["cudnn_test.cc"]),
-    backend_tags = {"gpu": [
-        "requires-gpu-sm90",
-    ]},
-    backends = [
-        "gpu",
-    ],
+    srcs = ["cudnn_test.cc"],
+    with_cuda = "hopper+",
+    with_rocm = False,
     deps = [
         "//xla:comparison_util",
         "//xla:debug_options_flags",
@@ -695,7 +681,6 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -868,16 +853,14 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "reduction_mlir_test",
     srcs = ["reduction_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":mlir_emitter_test_base",
         ":reduction_mlir",
         "//xla:error_spec",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
@@ -954,17 +937,15 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "concatenate_mlir_test",
     srcs = ["concatenate_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":concatenate_mlir",
         ":mlir_emitter_test_base",
         "//xla:error_spec",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
@@ -1086,16 +1067,14 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "input_slices_mlir_test",
     srcs = ["input_slices_mlir_test.cc"],
-    backends = ["gpu"],
     deps = [
         ":input_slices_mlir",
         ":mlir_emitter_test_base",
         "//xla:error_spec",
         "//xla/service/gpu/model:indexing_test_utils",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
     ],
 )

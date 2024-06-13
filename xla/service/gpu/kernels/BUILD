@@ -5,9 +5,8 @@ load(
     "if_cuda_is_configured",
     "if_cuda_newer_than",
 )
-load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
+load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library", "xla_gpu_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -100,13 +99,12 @@ cc_library(
     alwayslink = 1,  # static fusion registration
 )
 
-xla_test(
+xla_gpu_test(
     name = "cutlass_gemm_fusion_test",
     srcs = ["cutlass_gemm_fusion_test.cc"],
-    backends = ["gpu"],
+    with_rocm = False,
     # TODO(b/332820384): Enable when it passes on H100.
     disabled_backends = ["gpu_h100"],
-    tags = ["no_rocm"],
     deps = [
         ":custom_kernel_fusion_pattern",
         ":cutlass_gemm_fusion",
@@ -120,7 +118,6 @@ xla_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -170,10 +167,9 @@ gpu_kernel_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "topk_kernel_test",
-    srcs = if_gpu_is_configured(["topk_kernel_test.cc"]),
-    backends = ["gpu"],
+    srcs = ["topk_kernel_test.cc"],
     deps = [
         ":topk_kernel",
         "//xla:types",
@@ -191,7 +187,6 @@ xla_test(
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -220,10 +215,9 @@ cc_library(
     ]),
 )
 
-xla_test(
+xla_gpu_test(
     name = "topk_custom_kernel_test",
-    srcs = if_gpu_is_configured(["topk_custom_kernel_test.cc"]),
-    backends = ["gpu"],
+    srcs = ["topk_custom_kernel_test.cc"],
     deps = [
         ":topk_custom_kernel",
         "//xla:types",
@@ -241,7 +235,6 @@ xla_test(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -272,10 +265,10 @@ cc_library(
     ],
 )
 
-xla_test(
+xla_gpu_test(
     name = "cutlass_gemm_custom_kernel_test",
-    srcs = if_cuda_is_configured(["cutlass_gemm_custom_kernel_test.cc"]),
-    backends = ["gpu"],
+    srcs = ["cutlass_gemm_custom_kernel_test.cc"],
+    with_rocm = False,
     data = [":cutlass_gemm_kernel_f32xf32_to_f32.so"],
     deps = [
         ":cutlass_gemm_custom_kernel",
