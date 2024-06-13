@@ -49,8 +49,7 @@ class MlirEmitterTestBaseImpl : public HloTestBase {
   absl::Status EmitAndCheckIR(std::string_view hlo_string,
                               std::string_view pattern);
 
-  stream_executor::DeviceDescription device_info_ =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo();
+  stream_executor::DeviceDescription device_info_;
   mlir::MLIRContext mlir_context_;
   AffineMapPrinter thread_id_printer_;
 };
