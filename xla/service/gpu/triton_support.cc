@@ -631,7 +631,8 @@ absl::Status EnsureTritonSupportsComputeCapability(
   if (!cuda_compute_capability && !rocm_compute_capability) {
     return absl::FailedPreconditionError(
         "Triton support is only enabled for CUDA and ROCm GPUs.");
-  } else if (cuda_compute_capability && !cuda_compute_capability->IsAtLeastAmpere()) {
+  }
+  if (cuda_compute_capability && !cuda_compute_capability->IsAtLeastAmpere()) {
     return absl::FailedPreconditionError(
         absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
                      "capability 8.0) and up, but got compute capability ",
