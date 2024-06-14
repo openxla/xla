@@ -479,9 +479,9 @@ ENTRY main {
       )");
 }
 
-TEST_F(TreeReductionRewriterTest, NonAlignedBeforePadding) {
+TEST_F(TreeReductionRewriterTest, SwapIfNonAlignedBeforePadding) {
   const char* hlo = R"(
-HloModule NonAlignedBeforePadding
+HloModule SwapIfNonAlignedBeforePadding
 
 add {
   accum = f32[] parameter(0)
@@ -500,6 +500,33 @@ ENTRY main {
                     R"(
 
 // CHECK-DAG:  [[bitcast_0:%[^ ]+]] = f32[1024,140,141]{2,1,0} bitcast([[input_1:%[^ ]+]])
+// CHECK-DAG:  [[zero_2:%[^ ]+]] = f32[] constant(0)
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[1024,140]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={2}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[1024]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_4]]
+      )");
+}
+
+TEST_F(TreeReductionRewriterTest, DontSwapIfNonAlignedBeforePadding) {
+  const char* hlo = R"(
+HloModule DontSwapIfNonAlignedBeforePadding
+
+add {
+  accum = f32[] parameter(0)
+  op = f32[] parameter(1)
+  ROOT out = f32[] add(accum, op)
+}
+
+ENTRY main {
+  input = f32[1024,19459] parameter(0)
+  zero = f32[] constant(0)
+  ROOT out = f32[1024] reduce(input, zero), dimensions={1}, to_apply=add
+}
+)";
+
+  CheckTreeRewriter(hlo,
+                    R"(
+
+// CHECK-DAG:  [[bitcast_0:%[^ ]+]] = f32[1024,140,139]{2,1,0} bitcast([[input_1:%[^ ]+]])
 // CHECK-DAG:  [[zero_2:%[^ ]+]] = f32[] constant(0)
 // CHECK:  [[reduce_3:%[^ ]+]] = f32[1024,140]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={2}, to_apply=[[add_4:%[^ ]+]]
 // CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[1024]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_4]]

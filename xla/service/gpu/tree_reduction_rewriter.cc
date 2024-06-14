@@ -98,15 +98,24 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     if (k > race_free_bound) {
       return false;
     }
-    // Rough conditions for row reduction vectorization, not mean that
-    // vectorization will definitely occur.
-    bool maybe_vectorized = n_div_k % 2 == 0 && n % 2 == 0;
     // Swapping only affects row reduction vectorization.
-    if (is_row_reduction && maybe_vectorized) {
-      // Swap if n_div_k is small enough or k dim can be vectorized also.
-      return n_div_k * 2 < k || k % 2 == 0;
+    if (is_row_reduction) {
+      // Rough conditions for row reduction vectorization, not mean that
+      // vectorization will definitely occur.
+      bool maybe_vectorized = n_div_k % 2 == 0 && n % 2 == 0;
+      if (maybe_vectorized) {
+        // Swap if n_div_k is small enough or k dim can be vectorized also.
+        return n_div_k * 2 < k || k % 2 == 0;
+      }
+      // Current reduction emitter only checks reduction input dimensions but
+      // not fusion input dimensions. Due to pad and inner reduction always fuse
+      // into same computation, it may leads to each thread reads multiple non
+      // aligned elements but can not vectorized so that get bad performance.
+      // Don't swap If encountered this situation.
+      return n % 2 == 0 || k % 2 != 0;
     }
-    // Swap to reduce memory store and the launch overhead of blocks.
+    // For column reduction, swap to reduce memory store and the launch overhead
+    // of blocks.
     return true;
   }
 
