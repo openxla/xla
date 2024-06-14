@@ -66,7 +66,7 @@ using stream_executor::internal::CachedDsoLoader::GetRocblasDsoHandle;
       return f;                                                          \
     }                                                                    \
     template <typename... Args>                                          \
-    auto operator()(Args... args) {                            \
+    auto operator()(Args... args) {                                      \
       return DynLoad()(args...);                                         \
     }                                                                    \
   } __name;

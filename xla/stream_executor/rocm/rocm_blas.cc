@@ -365,8 +365,9 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
   }
 #if TF_ROCM_VERSION >= 60000
   if (auto *workspace = GetWorkspace();
-      workspace && workspace->opaque() && workspace->size() > 0) {
-      (void)wrap::rocblas_set_workspace(blas_, workspace->opaque(), workspace->size());
+      workspace != nullptr && workspace->opaque() && workspace->size() > 0) {
+      (void)wrap::rocblas_set_workspace(blas_, workspace->opaque(), 
+              workspace->size());
   }
 #endif
 
