@@ -1039,12 +1039,25 @@ cc_library(
 
 cc_library(
     name = "logging",
+    srcs = ["logging.cc"],
+    hdrs = ["logging.h"],
     compatible_with = get_compatible_with_portable(),
-    textual_hdrs = ["logging.h"],
     visibility = [
         "//visibility:public",
     ],
-    deps = tf_logging_deps(),
+    deps = tf_logging_deps() + [
+        ":mutex",
+        ":platform",
+        ":thread_annotations",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:die_if_null",
+        "@com_google_absl//absl/log:flags",
+        "@com_google_absl//absl/log:log_entry",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
+        "@com_google_absl//absl/log:log_streamer",
+    ],
 )
 
 cc_library(
