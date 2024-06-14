@@ -95,7 +95,8 @@ def prepare_amd_gpu_backend_data(backends, backend_tags):
     if len(new_backends) < len(backends):
         new_backends.extend(AMD_GPU_DEFAULT_BACKENDS)
 
-    new_backend_tags = {key: value for key, value in backend_tags.items() if key != "gpu"}
+    new_backend_tags = {key: value for key, value in backend_tags.items()
+                        if key not in ["gpu"] + NVIDIA_GPU_BACKENDS}
     gpu_backend_tags = backend_tags.get("gpu", [])
     nvidia_tags = []
     for key in gpu_backend_tags:
