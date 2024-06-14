@@ -106,8 +106,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
       // Swap if n_div_k is small enough or k dim can be vectorized also.
       return n_div_k * 2 < k || k % 2 == 0;
     }
-    // If no vectorization, swapping can reduce memory store and the launch
-    // overhead of blocks.
+    // Swap to reduce memory store and the launch overhead of blocks.
     return true;
   }
 
