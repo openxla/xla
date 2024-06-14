@@ -103,9 +103,11 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     bool maybe_vectorized = n_div_k % 2 == 0 && n % 2 == 0;
     // Swapping only affects row reduction vectorization.
     if (is_row_reduction && maybe_vectorized) {
-      // Swap if n_div_k is small enough or k is divisible by 2 also.
+      // Swap if n_div_k is small enough or k dim can be vectorized also.
       return n_div_k * 2 < k || k % 2 == 0;
     }
+    // If no vectorization, swapping can reduce memory store and the launch
+    // overhead of blocks.
     return true;
   }
 
