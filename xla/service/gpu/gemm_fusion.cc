@@ -805,7 +805,9 @@ absl::StatusOr<bool> GemmFusion::Run(
   if (!cuda_compute_capability && !rocm_compute_capability) {
     return absl::FailedPreconditionError(
         "Triton support is only enabled for CUDA and ROCm GPUs.");
-  } else if (cuda_compute_capability != nullptr &&
+  }
+
+  if (cuda_compute_capability &&
              !cuda_compute_capability->IsAtLeastAmpere()) {
     return absl::FailedPreconditionError(
         absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",

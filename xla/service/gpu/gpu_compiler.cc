@@ -1348,13 +1348,11 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
                                    /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && ((cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) ||
-        rocm_cc != nullptr)) {
+        rocm_cc)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
     }
-    if (debug_options.xla_gpu_enable_triton_gemm() && rocm_cc != nullptr) {
-      pipeline.AddPass<GemmFusion>(gpu_version);
-    }
+
     // Rewrite non-FP8 GEMMs.
     pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
                                    /*f8_rewrite=*/false);
