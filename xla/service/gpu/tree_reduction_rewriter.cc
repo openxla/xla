@@ -195,9 +195,16 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
     uint64_t padded_n = n + minimum_padding;
+    // We get the best_k, which only need very small padding and may be power of
+    // 2 to accelerate index computation. But we didn't consider whether n_div_k
+    // is the best. We choose one of the {best_k, padded_n / best_k} as the
+    // best_n_div_k so that keep the advantages brought by the best_k
+    // (regardless choose any, padding is same and still has one dimension that
+    // is power of 2) and achieve better performance within optional range.
+    uint64_t best_n_div_k = padded_n / best_k;
     if (ShouldSwapInnerAndOuterReducedMinorDimension(
-            best_k, padded_n / best_k, n, race_free_bound, is_row_reduction)) {
-      best_k = padded_n / best_k;
+            best_k, best_n_div_k, n, race_free_bound, is_row_reduction)) {
+      std::swap(best_k, best_n_div_k);
     }
 
     // Pad reduced dimension to the required number of elements.
