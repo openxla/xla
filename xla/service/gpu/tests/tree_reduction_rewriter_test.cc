@@ -425,5 +425,86 @@ ENTRY main {
       )");
 }
 
+TEST_F(TreeReductionRewriterTest, KeepInnerReductionVectorized) {
+  const char* hlo = R"(
+HloModule KeepInnerRowReductionVectorized
+
+add {
+  accum = f32[] parameter(0)
+  op = f32[] parameter(1)
+  ROOT out = f32[] add(accum, op)
+}
+
+ENTRY main {
+  input = f32[1024,73984] parameter(0)
+  zero = f32[] constant(0)
+  ROOT out = f32[1024] reduce(input, zero), dimensions={1}, to_apply=add
+}
+)";
+
+  CheckTreeRewriter(hlo,
+                    R"(
+
+// CHECK:  [[bitcast_0:%[^ ]+]] = f32[1024,289,256]{2,1,0} bitcast([[input_1:%[^ ]+]])
+// CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[1024,289]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={2}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[1024]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_4]]
+      )");
+}
+
+TEST_F(TreeReductionRewriterTest, PreferLargeVectorizedDimension) {
+  const char* hlo = R"(
+HloModule PreferLargeVectorizedDimension
+
+add {
+  accum = f32[] parameter(0)
+  op = f32[] parameter(1)
+  ROOT out = f32[] add(accum, op)
+}
+
+ENTRY main {
+  input = f32[1024,98304] parameter(0)
+  zero = f32[] constant(0)
+  ROOT out = f32[1024] reduce(input, zero), dimensions={1}, to_apply=add
+}
+)";
+
+  CheckTreeRewriter(hlo,
+                    R"(
+
+// CHECK:  [[bitcast_0:%[^ ]+]] = f32[1024,256,384]{2,1,0} bitcast([[input_1:%[^ ]+]])
+// CHECK:  [[zero_2:%[^ ]+]] = f32[] constant(0)
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[1024,256]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={2}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[1024]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_4]]
+      )");
+}
+
+TEST_F(TreeReductionRewriterTest, NonAlignedBeforePadding) {
+  const char* hlo = R"(
+HloModule NonAlignedBeforePadding
+
+add {
+  accum = f32[] parameter(0)
+  op = f32[] parameter(1)
+  ROOT out = f32[] add(accum, op)
+}
+
+ENTRY main {
+  input = f32[1024,19739] parameter(0)
+  zero = f32[] constant(0)
+  ROOT out = f32[1024] reduce(input, zero), dimensions={1}, to_apply=add
+}
+)";
+
+  CheckTreeRewriter(hlo,
+                    R"(
+
+// CHECK-DAG:  [[bitcast_0:%[^ ]+]] = f32[1024,140,141]{2,1,0} bitcast([[input_1:%[^ ]+]])
+// CHECK-DAG:  [[zero_2:%[^ ]+]] = f32[] constant(0)
+// CHECK:  [[reduce_3:%[^ ]+]] = f32[1024,140]{1,0} reduce([[bitcast_0]], [[zero_2]]), dimensions={2}, to_apply=[[add_4:%[^ ]+]]
+// CHECK:  ROOT [[out_1_5:%[^ ]+]] = f32[1024]{0} reduce([[reduce_3]], [[zero_2]]), dimensions={1}, to_apply=[[add_4]]
+      )");
+}
+
 }  // namespace
 }  // namespace xla
