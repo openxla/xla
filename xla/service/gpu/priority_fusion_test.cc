@@ -733,7 +733,7 @@ TEST_F(PriorityFusionTest, DoNotFuseIntoRoot) {
   EXPECT_THAT(priority_fusion_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_F(PriorityFusionTest, DontFuseConcat) {
+TEST_F(PriorityFusionTest, DontFuseConcatIntoReduce) {
   // Regression test that verifies we don't fuse concat into a column reduction.
   auto module = *ParseAndReturnVerifiedModule(R"(
     HloModule module
@@ -783,6 +783,77 @@ TEST_F(PriorityFusionTest, DontFuseConcat) {
   )");
 
   EXPECT_THAT(priority_fusion_.Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(PriorityFusionTest, DontFuseReduceIntoConcat) {
+  // Regression test that verifies we don't fuse concat into a column reduction.
+
+  auto module = *ParseAndReturnVerifiedModule(R"(
+    HloModule fusion.18
+
+    sum {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    ENTRY main {
+      param_8 = pred[554112]{0} parameter(8)
+      bitcast_0 = pred[222,2496]{1,0} bitcast(param_8)
+      convert_0 = f16[222,2496]{1,0} convert(bitcast_0)
+      broadcast_0 = f16[1,222,2496,48]{3,2,1,0} broadcast(convert_0), dimensions={1,2}
+      const0_f16 = f16[] constant(0)
+      broadcast_1 = f16[554112,16]{1,0} broadcast(const0_f16), dimensions={}
+      param_4 = f16[554112,16]{1,0} parameter(4)
+      param_5 = f16[16]{0} parameter(5)
+      broadcast_2 = f16[554112,16]{1,0} broadcast(param_5), dimensions={1}
+      add = f16[554112,16]{1,0} add(param_4, broadcast_2)
+      const6_f16 = f16[] constant(6)
+      broadcast_3 = f16[554112,16]{1,0} broadcast(const6_f16), dimensions={}
+      clamp = f16[554112,16]{1,0} clamp(broadcast_1, add, broadcast_3)
+      bitcast_1 = f16[1,554112,16]{2,1,0} bitcast(clamp)
+      param_2 = f32[2496,222,3,3]{3,2,1,0} parameter(2)
+      bitcast_2 = f32[222,2496,9]{2,1,0} bitcast(param_2)
+      broadcast_4 = f32[222,2496,9,16]{3,2,1,0} broadcast(bitcast_2), dimensions={0,1,2}
+      param_1 = f16[1,2496,128,16]{3,2,1,0} parameter(1)
+      convert_1 = f32[1,2496,128,16]{3,2,1,0} convert(param_1)
+      bitcast_3 = f32[2496,128,1,16]{3,1,0,2} bitcast(convert_1)
+      param_0 = s32[2496,222,2]{2,1,0} parameter(0)
+      bitcast_4 = s32[554112,2]{1,0} bitcast(param_0)
+      gather_0 = f32[554112,3,3,1,16]{4,2,1,0,3} gather(bitcast_3, bitcast_4), offset_dims={1,2,3,4}, collapsed_slice_dims={}, start_index_map={0,1}, index_vector_dim=1, slice_sizes={3,3,1,16}
+      bitcast_5 = f32[222,2496,9,16]{3,2,1,0} bitcast(gather_0)
+      multiply = f32[222,2496,9,16]{3,2,1,0} multiply(broadcast_4, bitcast_5)
+      const0_f32 = f32[] constant(0)
+      reduce = f32[222,2496,16]{2,1,0} reduce(multiply, const0_f32), dimensions={2}, to_apply=sum
+      convert_2 = f16[222,2496,16]{2,1,0} convert(reduce)
+      bitcast_6 = f16[1,554112,16]{2,1,0} bitcast(convert_2)
+      param_6 = pred[554112]{0} parameter(6)
+      broadcast_5 = pred[1,554112,16]{2,1,0} broadcast(param_6), dimensions={1}
+      param_3 = f16[1,480,400,64]{3,2,1,0} parameter(3)
+      bitcast_7 = f16[768000,16]{1,0} bitcast(param_3)
+      param_7 = s64[554112]{0} parameter(7)
+      const0_s64 = s64[] constant(0)
+      broadcast_6 = s64[554112]{0} broadcast(const0_s64), dimensions={}
+      select_0 = s64[554112]{0} select(param_6, param_7, broadcast_6)
+      bitcast_8 = s64[554112,1]{1,0} bitcast(select_0)
+      gather_1 = f16[554112,1,16]{2,0,1} gather(bitcast_7, bitcast_8), offset_dims={1,2}, collapsed_slice_dims={}, start_index_map={0}, index_vector_dim=1, slice_sizes={1,16}
+      bitcast_9 = f16[1,554112,16]{2,1,0} bitcast(gather_1)
+      broadcast_7 = f16[1,554112,16]{2,1,0} broadcast(const0_f16), dimensions={}
+      select_1 = f16[1,554112,16]{2,1,0} select(broadcast_5, bitcast_9, broadcast_7)
+      concat = f16[1,554112,48]{2,1,0} concatenate(bitcast_1, bitcast_6, select_1), dimensions={2}
+      bitcast_10 = f16[1,222,2496,48]{3,2,1,0} bitcast(concat)
+      ROOT root = f16[1,222,2496,48]{3,2,1,0} multiply(broadcast_0, bitcast_10)
+    }
+  )");
+
+  EXPECT_THAT(priority_fusion_.Run(module.get()), IsOkAndHolds(true));
+
+  auto is_fusion = [](HloInstruction* instruction) {
+    return instruction->opcode() == HloOpcode::kFusion;
+  };
+  auto num_fusions =
+      absl::c_count_if(module->entry_computation()->instructions(), is_fusion);
+  EXPECT_EQ(num_fusions, 2);
 }
 
 TEST_F(PriorityFusionTest, FuseOnlySmallConstant) {
