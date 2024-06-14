@@ -300,8 +300,7 @@ void LogLines(int sev, absl::string_view text, const char* fname, int lineno) {
       eol = text.size();
     }
     auto msg = text.substr(cur, eol - cur);
-    tsl::internal::LogString(fname, lineno, sev,
-                             std::string(msg.data(), msg.size()));
+    tsl::internal::LogString(fname, lineno, sev, msg);
     cur = eol + 1;
   }
 
