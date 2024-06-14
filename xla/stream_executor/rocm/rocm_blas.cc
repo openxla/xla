@@ -697,7 +697,7 @@ bool ROCMBlas::GetBlasGemmAlgorithms(
     if (auto ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
                          nullptr, &num_sols); ret == rocblas_status_success) {
       solutions_.resize(num_sols);
-      if(ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
+      if (ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
                 solutions_.data(), &num_sols); ret != rocblas_status_success) {
         num_sols = 0;
       }
