@@ -116,6 +116,7 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
+        "@tsl//tsl/profiler/lib:nvtx_utils",
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda_or_rocm([
         ":nccl_id_store",
