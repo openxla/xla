@@ -125,7 +125,4 @@ TEST(GpuCudaMallocAsyncAllocator, SyncAddressAlignedNewPool) {
   EXPECT_TRUE(stream->ok());
 }
 
-
-
-
 }  // namespace stream_executor
