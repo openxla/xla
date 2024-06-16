@@ -86,8 +86,9 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     return false;
   }
 
-  // We observe larger n_div_k can improve tree reduction performance. Swap k
-  // and n_div_k if possible.
+  // We observe larger n_div_k can improve tree reduction performance in most of
+  // the cases by reducing memory store and the launch overhead of blocks. Swap
+  // k and n_div_k if possible.
   bool ShouldSwapInnerAndOuterReducedMinorDimension(uint64_t k,
                                                     uint64_t n_div_k,
                                                     uint64_t n,
@@ -114,8 +115,8 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
       // Don't swap If encountered this situation.
       return n % 2 == 0 || k % 2 != 0;
     }
-    // For column reduction, swap to reduce memory store and the launch overhead
-    // of blocks.
+    // There exists no specific situation where swapping has no performance gain
+    // for column reduction.
     return true;
   }
 
