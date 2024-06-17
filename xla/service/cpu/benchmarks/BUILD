@@ -141,6 +141,7 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
