@@ -146,6 +146,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_unnested.h"
+#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
@@ -1961,12 +1962,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   std::string ptx_snippets;
   std::vector<std::vector<uint8_t>> binaries_to_link;
   binaries_to_link.reserve(compile_results.size());
-  struct NamedBinary {
-    // The string is the function name or empty just like for llvm_modules.
-    std::string name;
-    std::vector<uint8_t> binary;
-  };
-  std::vector<NamedBinary> binaries_to_cache;
+  std::vector<KernelReuseCache::NamedBinary> binaries_to_cache;
   binaries_to_cache.reserve(single_function_module_count);
   for (const auto& [name, maybe_result] : compile_results) {
     TF_ASSIGN_OR_RETURN(auto result, maybe_result);
@@ -2017,39 +2013,9 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
               << current_cache.entries_size() << " cached kernels.";
     }
     if (!binaries_to_cache.empty()) {
-      CompilationCacheProto disk_cache;
-      if (cache_file_exists) {
-        // Load the unmodified existing cache file to augment it.
-        std::string serialized;
-        TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
-                                                 resolved_path, &serialized));
-        if (!disk_cache.ParseFromString(std::string(serialized))) {
-          return Internal("Failed to parse serialized CompilationCacheProto.");
-        }
-      }
-      // Add kernels from the current compilation to the cache file. Binaries
-      // are taken from binaries_to_cache, all other kernel properties are
-      // copied from current_cache.
-      auto entries = disk_cache.mutable_entries();
-      int stored_kernel_count = 0;
-      for (const auto& [name, binary] : binaries_to_cache) {
-        auto it_current = current_cache.entries().find(name);
-        TF_RET_CHECK(it_current != current_cache.entries().end());
-        auto [it_disk, inserted] = entries->insert({name, it_current->second});
-        TF_RET_CHECK(inserted);
-        TF_RET_CHECK(!binary.empty());
-        it_disk->second.set_binary(reinterpret_cast<const char*>(binary.data()),
-                                   binary.size());
-        VLOG(5) << "Cached kernel: " << name << ": " << binary.size();
-        ++stored_kernel_count;
-      }
-      if (stored_kernel_count > 0) {
-        TF_RETURN_IF_ERROR(
-            tsl::WriteStringToFile(tsl::Env::Default(), resolved_path,
-                                   disk_cache.SerializeAsString()));
-        VLOG(2) << "Stored " << stored_kernel_count << " / "
-                << binaries_to_cache.size() << " kernels in the cache file.";
-      }
+      TF_RETURN_IF_ERROR(
+          UpdateDiskKernelCache(resolved_path, /*do_append=*/cache_file_exists,
+                                current_cache, binaries_to_cache));
     }
   }
 
