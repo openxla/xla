@@ -5659,7 +5659,9 @@ xla_cc_test(
     deps = [
         ":kernel_reuse_cache",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
     ],
 )
