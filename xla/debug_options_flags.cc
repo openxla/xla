@@ -1743,7 +1743,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       tsl::Flag("xla_gpu_kernel_cache_file",
                 string_setter_for(&DebugOptions::set_xla_gpu_kernel_cache_file),
                 debug_options->xla_gpu_kernel_cache_file(),
-                "Path to a file to cache compiled kernels."));
+                "Path to a file to cache compiled kernels. Cached kernels get "
+                "reused in further compilations; not yet cached kernels are "
+                "compiled as usual and get appended to the cache file whenever "
+                "possible."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
