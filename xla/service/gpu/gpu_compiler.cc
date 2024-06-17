@@ -1995,11 +1995,12 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
       // current executable.
       int loaded_kernel_count = 0;
       for (const auto& [name, entry] : current_cache.entries()) {
-        if (llvm_module->getFunction(name)) {
-          VLOG(5)
-              << "Skipping cached " << name
-              << " in favor of the just compiled kernel with the same name.";
-          CHECK(entry.binary().empty());
+        if (llvm_module->getFunction(name) != nullptr) {
+          VLOG(5) << "Using the just compiled kernel for " << name;
+          TF_RET_CHECK(entry.binary().empty())
+              << name
+              << " is a just compiled kernel and is not expected to have a "
+                 "binary yet.";
           continue;
         }
         const uint8_t* binary =
