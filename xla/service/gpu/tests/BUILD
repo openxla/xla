@@ -852,18 +852,18 @@ lit_test_suite(
 #         "@triton//:triton-opt",
 #     ],
 # )
+#
+# cc_binary(
+#     name = "sparse-opt",
+#     srcs = ["sparse-opt.cc"],
+#     deps = [
+#         "//xla/service/gpu:triton_sparse_extensions",
+#         "@llvm-project//mlir:AllExtensions",
+#         "@llvm-project//mlir:MlirOptLib",
+#         "@triton//:AllPassesAndDialects",
+#     ],
+# )
 # copybara:uncomment_end
-
-cc_binary(
-    name = "sparse-opt",
-    srcs = ["sparse-opt.cc"],
-    deps = [
-        "//xla/service/gpu:triton_sparse_extensions",
-        "@llvm-project//mlir:AllExtensions",
-        "@llvm-project//mlir:MlirOptLib",
-        "@triton//:AllPassesAndDialects",
-    ],
-)
 
 xla_test(
     name = "kernel_launch_test",
@@ -965,6 +965,7 @@ xla_test(
     srcs = ["gpu_cub_sort_test.cc"],
     backends = ["gpu"],
     shard_count = 15,
+    tags = ["nodebug"],
     deps = [
         "//xla:error_spec",
         "//xla:shape_util",

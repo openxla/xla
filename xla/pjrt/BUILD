@@ -194,6 +194,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_cost_analysis",
+        "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -205,7 +206,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -337,7 +337,7 @@ xla_cc_test(
 cc_library(
     name = "pjrt_common",
     hdrs = ["pjrt_common.h"],
-    visibility = [":friends"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         "@tsl//tsl/lib/gtl:int_type",
     ],
@@ -492,6 +492,7 @@ cc_library(
         "//xla/service:transfer_manager",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor",
+        "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -507,7 +508,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -593,10 +593,26 @@ cc_library(
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
+        "@stablehlo//:chlo_ops",
         "@stablehlo//:register",
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@stablehlo//:stablehlo_serialization",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "mlir_to_hlo_test",
+    srcs = ["mlir_to_hlo_test.cc"],
+    deps = [
+        ":mlir_to_hlo",
+        "//xla:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -757,6 +773,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
+        "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -772,7 +789,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/framework:allocator",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",

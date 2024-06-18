@@ -123,6 +123,10 @@ message DebugOptions {
   // operations in parallel on separate threads.
   bool xla_cpu_enable_concurrency_optimized_scheduler = 307;
 
+  // A `prefer-vector-width` value that is passed to the LLVM backend. Default
+  // value is `256` (AVX2 on x86 platforms).
+  int32 xla_cpu_prefer_vector_width = 308;
+
   reserved 98;  // Was xla_gpu_max_kernel_unroll_factor
 
   // When true, "unsafe" mathematical optimizations are enabled. These
@@ -815,7 +819,14 @@ message DebugOptions {
 
   string xla_gpu_kernel_cache_file = 306;
 
-  // Next id: 308
+  // Recognises rotate-right patterns (slice, slice, concat) within a while
+  // loop and labels the while loop as a pipelined while loop. This is an
+  // unsafe flag.
+  bool xla_gpu_unsafe_pipelined_loop_annotator = 309;
+
+  string xla_gpu_per_fusion_autotune_cache_dir = 310;
+
+  // Next id: 311
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "xla/stream_executor/stream_executor.h"  // IWYU pragma: keep
-#include "tsl/framework/allocator.h"
-#include "tsl/framework/device_id.h"
+#include "xla/tsl/framework/allocator.h"
+#include "xla/tsl/framework/device_id.h"
 #include "tsl/platform/mutex.h"
 
 #if GOOGLE_CUDA
@@ -77,8 +77,9 @@ class GpuCudaMallocAsyncAllocator : public tsl::Allocator {
   explicit GpuCudaMallocAsyncAllocator(tsl::PlatformDeviceId platform_device_id,
                                        bool create_new_pool,
                                        size_t new_pool_size,
-                                       size_t release_threshold = 0,
                                        bool reserve_memory = false,
+                                       size_t reserve_memory_size = 0,
+                                       bool sync_mode = false,
                                        bool compute_stats = true);
 
   ~GpuCudaMallocAsyncAllocator() override;
@@ -133,6 +134,10 @@ class GpuCudaMallocAsyncAllocator : public tsl::Allocator {
   bool reserve_memory_;
 
   bool create_new_pool_;
+
+  // When the allocator is working in sync mode, the allocator will block host
+  // thread until memory allocation has completed.
+  bool sync_mode_;
 
   GpuCudaMallocAsyncAllocator(const GpuCudaMallocAsyncAllocator&) = delete;
   void operator=(const GpuCudaMallocAsyncAllocator&) = delete;

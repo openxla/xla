@@ -111,6 +111,7 @@ limitations under the License.
 #include "xla/service/gpu/kernels/topk_custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/parallel_loop_emitter.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd_emitter.h"
@@ -1607,15 +1608,18 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
     triton_fn.setName(kernel_name);
 
     HloModule* hlo_module = instr->GetModule();
-    auto gemm_config = TritonGemmConfig(
-        /*block_m=*/-1, /*block_n=*/-1, /*block_k=*/-1, /*split_k=*/-1,
-        call.num_stages, call.num_warps);
+
+    BlockLevelParameters block_level_parameters;
+    block_level_parameters.num_stages = call.num_stages;
+    block_level_parameters.num_warps = call.num_warps;
+    block_level_parameters.num_ctas = 1;
+
     TF_ASSIGN_OR_RETURN(
         auto result,
         CompileTritonToLLVM(hlo_module->config(), hlo_module->name(),
                             ir_emitter_context_->cuda_compute_capability(),
-                            ir_emitter_context_->gpu_device_info(), gemm_config,
-                            triton_module.get(),
+                            ir_emitter_context_->gpu_device_info(),
+                            block_level_parameters, triton_module.get(),
                             ir_emitter_context_->llvm_module(), mlir_context));
 
     llvm::Function* impl_fn =
@@ -1702,6 +1706,49 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
     AddThunkToThunkSequence(std::move(thunk));
   }
   return absl::OkStatus();
+}
+
+absl::Status IrEmitterUnnested::EmitAsyncCustomCallStart(
+    const HloInstruction* instr) {
+  const HloInstruction* wrapped = instr->async_wrapped_instruction();
+  auto* async_start = Cast<HloAsyncInstruction>(instr);
+  const ExecutionStreamAssignment& stream_assignment =
+      ir_emitter_context_->execution_stream_assignment();
+  TF_ASSIGN_OR_RETURN(
+      ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+      stream_assignment.GetAsyncExecutionStreamIds(async_start));
+  AddThunkToThunkSequence(std::make_unique<WaitForStreamsThunk>(
+      Thunk::ThunkInfo::WithProfileAnnotation(instr),
+      streams.destination_stream_id, streams.source_stream_id));
+  TF_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
+                      stream_assignment.GetSyncExecutionStreamId(wrapped));
+
+  auto* custom_call = Cast<HloCustomCallInstruction>(wrapped);
+  if (IsLegacyCublasMatmul(*wrapped)) {
+    auto status = EmitGemmThunk(custom_call);
+    if (status.ok()) {
+      thunk_sequence_.back()->set_execution_stream_id(execution_stream_id);
+    }
+    return status;
+  }
+#if GOOGLE_CUDA || TF_HIPBLASLT
+  if (IsCublasLtMatmul(*wrapped)) {
+    auto status = EmitGemmThunk(custom_call);
+    if (status.ok()) {
+      thunk_sequence_.back()->set_execution_stream_id(execution_stream_id);
+    }
+    return status;
+  }
+  if (IsCublasLtMatmulF8(*wrapped)) {
+    auto status = EmitGemmThunk(custom_call);
+    if (status.ok()) {
+      thunk_sequence_.back()->set_execution_stream_id(execution_stream_id);
+    }
+    return status;
+  }
+#endif  // GOOGLE_CUDA || TF_HIPBLASLT
+  return Internal("Unsupported async custom call instruction: %s",
+                  HloOpcodeString(wrapped->opcode()));
 }
 
 absl::Status IrEmitterUnnested::AssertNonDeterminismIsOkay(
@@ -2769,7 +2816,8 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclAsyncDone(Thunk::kNcclAllToAllDone, instr);
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
-        case HloOpcode::kFusion: {
+        case HloOpcode::kFusion:
+        case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
           const ExecutionStreamAssignment& stream_assignment =
@@ -2826,6 +2874,9 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
               Thunk::ThunkInfo::WithProfileAnnotation(instr),
               streams.destination_stream_id, streams.source_stream_id));
           return EmitFusion(Cast<HloFusionInstruction>(wrapped));
+        }
+        case HloOpcode::kCustomCall: {
+          return EmitAsyncCustomCallStart(instr);
         }
         default:
           return Internal("Unsupported async start wrapped instruction: %s",

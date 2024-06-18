@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/gpu/gpu_stream.h"
 
+#include <cstdint>
 #include <variant>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_event.h"
@@ -56,6 +58,15 @@ Stream::PlatformSpecificHandle GpuStream::platform_specific_handle() const {
   return handle;
 }
 
+absl::Status GpuStream::MemZero(DeviceMemoryBase* location, uint64_t size) {
+  if (reinterpret_cast<uintptr_t>(location->opaque()) % 4 == 0 &&
+      size % 4 == 0) {
+    return Memset32(location, 0x0, size);
+  } else {
+    return parent_->Memset(this, location, 0x0, size);
+  }
+}
+
 absl::Status GpuStream::WaitFor(Stream* other) {
   GpuStream* other_gpu = AsGpuStream(other);
   GpuEventHandle other_completed_event = *(other_gpu->completed_event());
@@ -69,6 +80,10 @@ absl::Status GpuStream::WaitFor(Stream* other) {
     return absl::OkStatus();
   }
   return absl::InternalError("Couldn't wait for stream.");
+}
+
+absl::Status GpuStream::RecordEvent(Event* event) {
+  return static_cast<GpuEvent*>(event)->Record(this);
 }
 
 absl::Status GpuStream::WaitFor(Event* event) {

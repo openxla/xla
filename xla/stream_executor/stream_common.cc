@@ -61,10 +61,6 @@ StreamCommon::PlatformSpecificHandle StreamCommon::platform_specific_handle()
   return handle;
 }
 
-absl::Status StreamCommon::RecordEvent(Event *event) {
-  return parent_->RecordEvent(this, event);
-}
-
 absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   // Do not destroy bad streams when holding mu_ because ~Stream() may
   // BlockHostUntilDone and it's host callbacks might attempt to acquire mu_.
@@ -165,10 +161,6 @@ absl::Status StreamCommon::Memcpy(DeviceMemoryBase *gpu_dst,
     return absl::OkStatus();
   }
   return absl::InternalError("failed to memcpy");
-}
-
-absl::Status StreamCommon::MemZero(DeviceMemoryBase *location, uint64_t size) {
-  return parent_->MemZero(this, location, size);
 }
 
 absl::Status StreamCommon::Memset32(DeviceMemoryBase *location,

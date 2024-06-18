@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/literal.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/cpu/runtime/buffer_allocations.h"
@@ -95,10 +96,9 @@ se::DeviceMemoryBase ConstantAllocation::AsDeviceMemoryBase() const {
     return se::DeviceMemoryBase();
   }
 
-  if (auto* owned = std::get_if<std::vector<uint8_t>>(&data)) {
-    return se::DeviceMemoryBase(
-        const_cast<void*>(reinterpret_cast<const void*>(owned->data())),
-        owned->size());
+  if (auto* owned = std::get_if<std::unique_ptr<Literal>>(&data)) {
+    return se::DeviceMemoryBase((*owned)->untyped_data(),
+                                (*owned)->size_bytes());
   }
 
   auto* view = std::get_if<absl::Span<const uint8_t>>(&data);
@@ -354,10 +354,14 @@ absl::Status CpuExecutable::ExecuteThunks(
                              profile_counters_size);
   VLOG(3) << absl::StrFormat("  Profile counters: %p", profile_counters);
 
+  // Prepare for executing XLA program collectively.
+  TF_ASSIGN_OR_RETURN(Thunk::CollectiveExecuteParams collective_execute_params,
+                      Thunk::CollectiveExecuteParams::Create(run_options));
+
   Thunk::ExecuteParams execute_params = {
       &*host_kernels_, &allocations,
       runtime::GetXfeedManager(run_options->device_ordinal()),
-      run_options->intra_op_thread_pool()};
+      run_options->intra_op_thread_pool(), &collective_execute_params};
 
   auto executed_event = thunks_->Execute(execute_params);
   tsl::BlockUntilReady(executed_event);

@@ -98,8 +98,6 @@ class HostExecutor : public StreamExecutorCommon {
                             const DeviceMemoryBase& gpu_src,
                             uint64_t size) override;
 
-  absl::Status MemZero(Stream* stream, DeviceMemoryBase* location,
-                       uint64_t size) override;
   absl::Status Memset(Stream* stream, DeviceMemoryBase* location,
                       uint8_t pattern, uint64_t size) override;
   absl::Status Memset32(Stream* stream, DeviceMemoryBase* location,
@@ -118,8 +116,6 @@ class HostExecutor : public StreamExecutorCommon {
 
   bool HostCallback(Stream* stream,
                     absl::AnyInvocable<absl::Status() &&> callback) override;
-
-  absl::Status RecordEvent(Stream* stream, Event* event) override;
 
   void DeallocateStream(Stream* stream) override;
 

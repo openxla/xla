@@ -56,6 +56,9 @@ namespace cpu {
 // This class is the top-level API for the XLA HLO --> LLVM IR compiler.  It
 // implements the DfsHloVisitor interface and emits HLO computations as LLVM IR
 // functions.
+// NOTE: A lot of functionality in this class (e.g. ElementTypesSameAndSupported
+// helper function) is duplicated by ThunkEmitter and IrEmitter2. These two
+// classes are part of the new runtime and will eventually replace IrEmitter.
 class IrEmitter : public DfsHloVisitorWithDefault,
                   public IrBuilderMixin<IrEmitter> {
   class CpuElementalIrEmitter;
@@ -150,6 +153,10 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   bool is_computation_emitted(const HloComputation& callee,
                               bool allow_reassociation) {
     return emitted_functions_.contains({&callee, allow_reassociation});
+  }
+
+  const TargetMachineFeatures& target_machine_features() const {
+    return target_machine_features_;
   }
 
  protected:

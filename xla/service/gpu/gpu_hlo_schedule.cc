@@ -21,7 +21,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -34,9 +33,9 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -47,7 +46,6 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/gpu_schedule_postprocessing.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
@@ -58,7 +56,6 @@ limitations under the License.
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "tsl/platform/env.h"
@@ -71,19 +68,6 @@ namespace xla {
 namespace gpu {
 
 namespace {
-
-// A threshold for which we consider AR to be costly perf-wise.
-static constexpr int64_t kCostlyAllReduceThreshold = 30 * 1024 * 1024;
-
-// Multiplier which we apply to expand the base cost for the costly AR.
-static constexpr int64_t kCostlyAllReduceMultiplier = 4;
-
-bool IsNopInstruction(const HloInstruction& hlo) {
-  HloOpcode op = hlo.opcode();
-  return op == HloOpcode::kGetTupleElement || op == HloOpcode::kBitcast ||
-         op == HloOpcode::kConstant || op == HloOpcode::kParameter ||
-         hlo.IsEffectiveBitcast();
-}
 
 bool ShouldScheduleAsEarlyAsPossible(const HloInstruction& instr) {
   switch (instr.opcode()) {
@@ -279,70 +263,6 @@ SchedulerConfig GetSchedulerConfig(int64_t memory_limit) {
   return config;
 }
 
-class GpuLatencyEstimator : public ApproximateLatencyEstimator {
- public:
-  explicit GpuLatencyEstimator(
-      int64_t pointer_size,
-      GetCanonicalAsyncOpFunc func = GpuGetCanonicalAsyncOp)
-      : ApproximateLatencyEstimator(func), pointer_size_(pointer_size) {}
-  TimeCost NodeCost(const HloInstruction* instr) const override {
-    if (IsNopInstruction(*instr)) {
-      return 0.0;
-    }
-    // Consider cublas/cuddn/softmax custom calls as medium cost. Since the
-    // latency between async-start and async-done is 5000 and cost of each
-    // custom call is 1000, the LHS will try to schedule approximately 5 of
-    // these in between each start/end pair.
-    if (instr->opcode() == HloOpcode::kCustomCall) {
-      if (IsCublasGemm(*instr) || IsCustomCallToDnnConvolution(*instr)) {
-        return ApproximateLatencyEstimator::kMediumCost;
-      }
-      // consider other custom calls as medium cost for now. Keeping the case
-      // explicitly separate for further tuning.
-      return ApproximateLatencyEstimator::kMediumCost;
-    }
-    return ApproximateLatencyEstimator::NodeCost(instr);
-  }
-
-  LatencyEstimator::TimeCost GetLatencyBetween(
-      const HloGraphNode& from, const HloGraphNode& target) const override {
-    if (IsAsyncPair(from, target)) {
-      if (from.GetInstr().opcode() == HloOpcode::kRecv) {
-        // Recv -> RecvDone has a low latency.
-        return ApproximateLatencyEstimator::kLowLatency;
-      } else if (from.GetInstr().opcode() == HloOpcode::kSend) {
-        // Send -> SendDone has a very high latency.
-        return ApproximateLatencyEstimator::kHighLatency * 10;
-      }
-
-      bool enable_approx_collectives =
-          from.GetInstr()
-              .GetModule()
-              ->config()
-              .debug_options()
-              .xla_gpu_enable_approx_costly_collectives();
-      bool is_all_reduce =
-          from.GetInstr().opcode() == HloOpcode::kAllReduceStart;
-      bool collective_size_exceeds_threshold =
-          GetSizeOfShape(from.GetInstr().shape(), pointer_size_) >
-          kCostlyAllReduceThreshold;
-      if (enable_approx_collectives && is_all_reduce &&
-          collective_size_exceeds_threshold) {
-        return ApproximateLatencyEstimator::kHighLatency *
-               kCostlyAllReduceMultiplier;
-      }
-
-      return ApproximateLatencyEstimator::kHighLatency;
-    }
-    // Every other instruction we consider synchronous, which means the
-    // latency between each of them is always one unit.
-    return ApproximateLatencyEstimator::kLowLatency;
-  }
-
- private:
-  int64_t pointer_size_;
-};
-
 tensorflow::profiler::ProfiledInstructionsProto GetProfileForFingerprint(
     tensorflow::profiler::ProfiledInstructionsProto& profile,
     const std::string& fingerprint) {
@@ -494,49 +414,42 @@ std::optional<tensorflow::profiler::ProfiledInstructionsProto> ReadPGLEProfile(
                                        pgle_profile_file_or_dir_path);
   }
 }
+}  // end namespace
 
-// Return true if the profile is applicable to the module. That is true if every
-// instruction in the profile is present in the module.
 absl::Status IsProfileApplicable(
     const HloModule* module,
     const tensorflow::profiler::ProfiledInstructionsProto& profile) {
-  absl::flat_hash_set<absl::string_view> instruction_names;
+  absl::flat_hash_set<absl::string_view> all_instruction_names;
   for (HloComputation* comp : module->MakeNonfusionComputations()) {
     for (HloInstruction* instr : comp->instructions()) {
-      instruction_names.insert(instr->name());
+      all_instruction_names.insert(instr->name());
     }
   }
 
+  std::vector<std::string> missing_costs_names;
   for (const auto& cost : profile.costs()) {
-    if (!instruction_names.contains(cost.name())) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "cost name %s not in module %s", cost.name(), module->name()));
+    if (!all_instruction_names.contains(cost.name())) {
+      missing_costs_names.push_back(cost.name());
     }
   }
+  std::vector<std::string> missing_latency_names;
   for (const auto& latency : profile.latencies()) {
-    if (!instruction_names.contains(latency.source())) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "cost name %s not in module %s", latency.source(), module->name()));
+    if (!all_instruction_names.contains(latency.source())) {
+      missing_latency_names.push_back(latency.source());
     }
 
-    if (!instruction_names.contains(latency.target())) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "cost name %s not in module %s", latency.target(), module->name()));
+    if (!all_instruction_names.contains(latency.target())) {
+      missing_latency_names.push_back(latency.target());
     }
   }
+  if (!(missing_costs_names.empty() && missing_latency_names.empty())) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("\nMissing costs: %s;\nMissing latencies: %s",
+                        absl::StrJoin(missing_costs_names, ", "),
+                        absl::StrJoin(missing_latency_names, ", ")));
+  }
+
   return absl::OkStatus();
-}
-
-}  // end namespace
-
-int64_t GetSizeOfShape(const Shape& shape, int pointer_size) {
-  int64_t size = ShapeUtil::ByteSizeOf(shape, pointer_size);
-  if (shape.IsTuple() || shape.is_static()) {
-    return size;
-  }
-  // Each dynamic dimension size is represented as a S32.
-  int64_t metadata_size = sizeof(int32_t) * shape.dimensions_size();
-  return size + metadata_size;
 }
 
 static int64_t GetSchedulerMemoryLimit(
@@ -595,7 +508,9 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   if (profile.has_value()) {
     latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
         config, std::move(gpu_latency_estimator), profile.value());
-    LOG(INFO) << "Found profile, using profile guided latency estimator";
+    LOG(INFO)
+        << "Found profile, using profile guided latency estimator. Profile:\n"
+        << profile->DebugString();
     absl::Status s = IsProfileApplicable(module, profile.value());
     if (!s.ok()) {
       LOG(INFO) << "PGLE profile may not applicable to the module, but will "

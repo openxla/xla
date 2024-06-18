@@ -18,7 +18,9 @@ limitations under the License.
 
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -65,6 +67,9 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitHloInstruction(
       const HloInstruction* instruction);
 
+  absl::StatusOr<ThunkSequence> EmitAllReduceThunk(
+      const HloInstruction* instruction);
+
   absl::StatusOr<ThunkSequence> EmitCallThunk(
       const HloInstruction* instruction);
 
@@ -76,6 +81,8 @@ class ThunkEmitter {
 
   absl::StatusOr<ThunkSequence> EmitElementalKernelThunk(
       const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitFftThunk(const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitFusionKernelThunk(
       const HloInstruction* instruction);
@@ -98,6 +105,8 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitWhileThunk(
       const HloInstruction* instruction);
 
+  absl::StatusOr<ThunkSequence> EmitDotThunk(const HloInstruction* instruction);
+
   // Returns the list of buffer allocation slices assigned to the given
   // instruction that will be passed to the host kernel as arguments: a
   // flattened list of all the leaf buffers for all operands and result. We do
@@ -105,6 +114,13 @@ class ThunkEmitter {
   // corresponding to arrays.
   absl::StatusOr<HostKernelAllocationSlices> GetHostKernelAllocationSlices(
       const HloInstruction* instruction);
+
+  // Verifies that the element types of all of the given operand instructions
+  // match and are of one of the given supported types.
+  absl::Status ElementTypesSameAndSupported(
+      const HloInstruction& instruction,
+      absl::Span<const HloInstruction* const> operands,
+      absl::Span<const PrimitiveType> supported_types);
 
   IrEmitter2& ir_emitter_;
   const BufferAssignment& buffer_assignment_;

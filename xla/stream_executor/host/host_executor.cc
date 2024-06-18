@@ -178,16 +178,6 @@ bool HostExecutor::MemcpyDeviceToDevice(Stream* stream,
   return true;
 }
 
-absl::Status HostExecutor::MemZero(Stream* stream, DeviceMemoryBase* location,
-                                   uint64_t size) {
-  void* gpu_mem = location->opaque();
-  // Enqueue the [asynchronous] memzero on the stream (HostStream) associated
-  // with the HostExecutor.
-  AsHostStream(stream)->EnqueueTask(
-      [gpu_mem, size]() { memset(gpu_mem, 0, size); });
-  return absl::OkStatus();
-}
-
 absl::Status HostExecutor::Memset(Stream* stream, DeviceMemoryBase* location,
                                   uint8 pattern, uint64_t size) {
   void* gpu_mem = location->opaque();
@@ -237,16 +227,6 @@ absl::StatusOr<std::unique_ptr<Event>> HostExecutor::CreateEvent() {
 static HostEvent* AsHostEvent(Event* event) {
   DCHECK(event != nullptr);
   return static_cast<HostEvent*>(event);
-}
-
-absl::Status HostExecutor::RecordEvent(Stream* stream, Event* event) {
-  std::shared_ptr<absl::Notification> notification =
-      AsHostEvent(event)->notification();
-  AsHostStream(stream)->EnqueueTask([notification]() {
-    CHECK(!notification->HasBeenNotified());
-    notification->Notify();
-  });
-  return absl::OkStatus();
 }
 
 absl::Status HostExecutor::BlockHostUntilDone(Stream* stream) {

@@ -157,8 +157,7 @@ namespace gpu {
 // simplified later.
 class SymbolicTile {
  public:
-  static std::optional<SymbolicTile> FromIndexingMap(
-      const IndexingMap& indexing_map);
+  static std::optional<SymbolicTile> FromIndexingMap(IndexingMap indexing_map);
 
   using ConstraintMap = llvm::DenseMap<mlir::AffineExpr, Interval>;
 
@@ -224,6 +223,25 @@ class SymbolicTile {
         constraints_(std::move(constraints)),
         is_satisfiable_(is_satisfiable) {}
 };
+
+// Merges `maybe_first_map` and `second_map` if
+//  (1) `maybe_first_map` is present, and
+//  (2) `second_map` and `*maybe_first_map` have distinct sets of keys.
+// Otherwise, returns `std::nullopt`.
+//
+//
+// The behaviour of this function is in spirit equivalent to using C++23's
+// `std::optional<T>::and_then` to merge a collection of `ConstraintMap`s.
+//
+// We pass `maybe_first_map` by value here in order to exploit move semantics
+// to avoid copies when possible.
+//
+// TODO(bchetioui): allow merging constraints in more edge cases, e.g. if one
+// of the intervals is contained within the other.
+std::optional<SymbolicTile::ConstraintMap>
+MergeConstraintMapIfPresentAndCompatible(
+    std::optional<SymbolicTile::ConstraintMap> maybe_first_map,
+    const SymbolicTile::ConstraintMap& second_map);
 
 }  // namespace gpu
 }  // namespace xla

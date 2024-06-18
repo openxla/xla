@@ -65,8 +65,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/transforms/hlo_constant_splitter.h"
 #include "xla/maybe_owning.h"
+#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/all_gather_broadcast_reorder.h"
 #include "xla/service/all_gather_combiner.h"
 #include "xla/service/all_reduce_combiner.h"
@@ -136,16 +136,19 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
+#include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/gpu_layout_assignment.h"
 #include "xla/service/gpu/gpu_p2p_pipeliner.h"
 #include "xla/service/gpu/gpu_reduce_scatter_creator.h"
 #include "xla/service/gpu/gpu_sanitize_constant_names.h"
 #include "xla/service/gpu/gpu_scatter_expander.h"
+#include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/gpu_windowed_einsum_handler.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_unnested.h"
+#include "xla/service/gpu/kernel_reuse_cache.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
@@ -205,14 +208,11 @@ limitations under the License.
 #include "xla/service/rng_expander.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/scatter_simplifier.h"
-#include "xla/service/sharding_propagation.h"
 #include "xla/service/sharding_remover.h"
 #include "xla/service/simplify_fp_conversions.h"
 #include "xla/service/slice_sinker.h"
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/service/sort_simplifier.h"
-#include "xla/service/spmd/collective_permute_motion.h"
-#include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 #include "xla/service/stable_sort_expander.h"
 #include "xla/service/stochastic_convert_decomposer.h"
 #include "xla/service/sub_byte_normalization.h"
@@ -468,13 +468,14 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 }
 
 void CheckNotScheduled(HloModule* hlo_module) {
-  CHECK(!hlo_module->has_schedule())
-      << "\nThe current HLO module " << hlo_module->name()
-      << " is scheduled and optimized. \n"
-      << "It is not expected to run optimization passes again.\nPlease use "
-      << "RunAndCompareNoHloPasses() or RunAndCompareTwoModules() instead of "
-      << "RunAndCompare()\nif running unit tests as they set"
-      << " run_hlo_passes=false.";
+  if (hlo_module->has_schedule() &&
+      !hlo_module->config().debug_options().xla_disable_all_hlo_passes()) {
+    LOG(WARNING) << "\nThe current HLO module " << hlo_module->name()
+                 << " is scheduled and optimized. \n"
+                 << "It is not expected to run optimization passes again.\n"
+                    "Use a test method like RunAndCompareNoHloPasses() or "
+                 << "the xla_disable_all_hlo_passes flag.";
+  }
 }
 
 void LogDebugOptions(HloModule* hlo_module) {
@@ -547,15 +548,14 @@ absl::Status RunPreSPMDPartitionerPasses(HloModule* hlo_module) {
 absl::Status RunSPMDPasses(
     HloModule* hlo_module, const Compiler::TargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts) {
-  const int64_t num_partitions = hlo_module->config().num_partitions();
   bool auto_sharding = hlo_module->config().use_auto_spmd_partitioning();
-
 #ifndef PLATFORM_GOOGLE
   if (auto_sharding) {
     LOG(ERROR) << "GPU autosharding is not yet available in open source.";
   }
 #endif
 
+  const int64_t num_partitions = hlo_module->config().num_partitions();
   if (num_partitions > 1) {
     if (!hlo_module->config().use_spmd_partitioning()) {
       return InvalidArgument(
@@ -563,83 +563,46 @@ absl::Status RunSPMDPasses(
           num_partitions);
     }
     HloPassPipeline spmd_pipeline("spmd-partitioner");
-    HloPassPipeline& spmd_simplify =
-        spmd_pipeline.AddPass<HloPassFix<HloPassPipeline>>("spmd-simplify");
-
-    se::GpuComputeCapability gpu_version =
-        gpu_target_config.device_description.gpu_compute_capability();
-    spmd_simplify.AddPass<GpuAlgebraicSimplifier>(
-        layout_insensitive_algsimp_opts, gpu_version);
-    spmd_simplify.AddPass<SortSimplifier>();
-    spmd_simplify.AddPass<TupleSimplifier>();
-    spmd_simplify.AddPass<ScatterExpander>(
-        ScatterExpander::kEliminateSimpleScatters);
-    spmd_simplify.AddPass<GatherExpander>(
-        GatherExpander::kEliminateSimpleGathers);
-    spmd_simplify.AddPass<WhileLoopConstantSinking>();
-    spmd_simplify.AddPass<WhileLoopSimplifier>();
-
-    ReshapeMoverOptions reshape_mover_options;
-    reshape_mover_options.reshape_of_1d_broadcast_is_cheap = true;
-    spmd_simplify.AddPass<ReshapeMover>(reshape_mover_options);
-    // Run AlgebraicSimplifier directly before HloConstantFolding, because we
-    // need to simplify DynamicSlice(Broadcast) away. Constant folding of
-    // DynamicSlice can be quite costly, as the whole operand will be evaluated.
-    // We run AlgebraicSimplifier as HloPassFix to make sure all simplifications
-    // have been done before running HloConstantFolding. This is necessary
-    // because simplifications create new instructions which may not be visited
-    // in the same iteration of AlgebraicSimplifier.
-    spmd_simplify.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
-        layout_insensitive_algsimp_opts, gpu_version);
-    spmd_simplify.AddPass<HloConstantFolding>();
-    spmd_simplify.AddPass<ConditionalSimplifier>();
-
-    spmd_pipeline.AddPass<HloConstantSplitter>();
-    spmd_simplify.AddPass<HloDCE>();
-
+    AddSPMDPasses(
+        hlo_module, layout_insensitive_algsimp_opts,
+        gpu_target_config.device_description.gpu_compute_capability(),
+        spmd_pipeline,
 #ifdef PLATFORM_GOOGLE
-    if (auto_sharding) {
-      AutoShardingOption option;
-      option.enable = true;
-      if (!hlo_module->config().auto_spmd_partitioning_mesh_shape().empty()) {
-        option.device_mesh_shape =
-            hlo_module->config().auto_spmd_partitioning_mesh_shape();
-      } else {
-        // Use a simple mesh shape if not specified.
-        option.device_mesh_shape = {
-            gpu_target_config.device_description.core_count(), 1};
-      }
-      if (!hlo_module->config().auto_spmd_partitioning_mesh_ids().empty()) {
-        option.device_mesh_ids =
-            hlo_module->config().auto_spmd_partitioning_mesh_ids();
-      }
-      option.memory_budget_per_device =
-          hlo_module->config()
-              .debug_options()
-              .xla_gpu_auto_spmd_partitioning_memory_budget_gb() *
-          1024 * 1024 * 1024;
-      option.memory_budget_ratio =
-          hlo_module->config()
-              .debug_options()
-              .xla_gpu_auto_spmd_partitioning_memory_budget_ratio();
-      spmd_pipeline.AddPass<AutoSharding>(option);
-    }
+        [&](HloPassPipeline& pipeline) {
+          if (auto_sharding) {
+            AutoShardingOption option;
+            option.enable = true;
+            if (!hlo_module->config()
+                     .auto_spmd_partitioning_mesh_shape()
+                     .empty()) {
+              option.device_mesh_shape =
+                  hlo_module->config().auto_spmd_partitioning_mesh_shape();
+            } else {
+              // Use a simple mesh shape if not specified.
+              option.device_mesh_shape = {
+                  gpu_target_config.device_description.core_count(), 1};
+            }
+            if (!hlo_module->config()
+                     .auto_spmd_partitioning_mesh_ids()
+                     .empty()) {
+              option.device_mesh_ids =
+                  hlo_module->config().auto_spmd_partitioning_mesh_ids();
+            }
+            option.memory_budget_per_device =
+                hlo_module->config()
+                    .debug_options()
+                    .xla_gpu_auto_spmd_partitioning_memory_budget_gb() *
+                1024 * 1024 * 1024;
+            option.memory_budget_ratio =
+                hlo_module->config()
+                    .debug_options()
+                    .xla_gpu_auto_spmd_partitioning_memory_budget_ratio();
+            spmd_pipeline.AddPass<AutoSharding>(option);
+          }
+        });
+#else
+        std::nullopt);
 #endif  // PLATFORM_GOOGLE
-
-    spmd_pipeline.AddPass<ShardingPropagation>(
-        /*is_spmd=*/true, /*propagate_metadata=*/false,
-        hlo_module->config().allow_spmd_sharding_propagation_to_output());
-    spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
-        num_partitions, hlo_module->config().replica_count(),
-        hlo_module->config()
-            .debug_options()
-            .xla_gpu_threshold_for_windowed_einsum_mib(),
-        hlo_module->config()
-            .debug_options()
-            .xla_gpu_multi_streamed_windowed_einsum(),
-        /*skip_checking_windowed_einsum_users=*/true,
-        /*disable_ag_rewrite_for_multiple_consumers=*/true);
-    spmd_pipeline.AddPass<CollectivePermuteMotion>();
     return spmd_pipeline.Run(hlo_module).status();
   } else {
     HloPassPipeline sharding_removal_pipeline("sharding-removal");
@@ -1961,12 +1924,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   std::string ptx_snippets;
   std::vector<std::vector<uint8_t>> binaries_to_link;
   binaries_to_link.reserve(compile_results.size());
-  struct NamedBinary {
-    // The string is the function name or empty just like for llvm_modules.
-    std::string name;
-    std::vector<uint8_t> binary;
-  };
-  std::vector<NamedBinary> binaries_to_cache;
+  std::vector<KernelReuseCache::NamedBinary> binaries_to_cache;
   binaries_to_cache.reserve(single_function_module_count);
   for (const auto& [name, maybe_result] : compile_results) {
     TF_ASSIGN_OR_RETURN(auto result, maybe_result);
@@ -1987,51 +1945,40 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
       return FailedPrecondition("File path can not be resolved: %s",
                                 cache_path);
     }
-    CompilationCacheProto& cache =
+    // current_cache contains new kernels from the current compilation and
+    // kernels to reuse from previous compilations if some were loaded from the
+    // cache file.
+    const CompilationCacheProto& current_cache =
         compile_module_results.kernel_compilation_cache;
-    if (tsl::Env::Default()->FileExists(resolved_path).ok()) {
+    const bool cache_file_exists =
+        tsl::Env::Default()->FileExists(resolved_path).ok();
+    if (cache_file_exists) {
+      // Pick reused binaries from previous compilations needed to link the
+      // current executable.
       int loaded_kernel_count = 0;
-      for (const auto& [name, entry] : cache.entries()) {
-        if (llvm_module->getFunction(name)) {
-          VLOG(5)
-              << "Skipping cached " << name
-              << " in favor of the just compiled kernel with the same name.";
-          CHECK(entry.binary().empty());
+      for (const auto& [name, entry] : current_cache.entries()) {
+        if (llvm_module->getFunction(name) != nullptr) {
+          VLOG(5) << "Using the just compiled kernel for " << name;
+          TF_RET_CHECK(entry.binary().empty())
+              << name
+              << " is a just compiled kernel and is not expected to have a "
+                 "binary yet.";
           continue;
         }
         const uint8_t* binary =
             reinterpret_cast<const uint8_t*>(entry.binary().data());
         binaries_to_link.push_back(
             std::vector<uint8_t>(binary, binary + entry.binary().size()));
-        VLOG(5) << "Loaded " << name << ": " << entry.binary().size();
+        VLOG(5) << "Using " << name << " from cache: " << entry.binary().size();
         ++loaded_kernel_count;
       }
-      VLOG(2) << "Loaded " << loaded_kernel_count << " / "
-              << cache.entries_size() << " cached kernels.";
-    } else {
-      auto entries = cache.mutable_entries();
-      for (const auto& [name, binary] : binaries_to_cache) {
-        auto it = entries->find(name);
-        if (it == entries->end()) {
-          continue;
-        }
-        it->second.set_binary(reinterpret_cast<const char*>(binary.data()),
-                              binary.size());
-        VLOG(5) << "Cached kernels: " << name << ": " << binary.size();
-      }
-      for (auto it = entries->begin(); it != entries->end();) {
-        if (it->second.binary().empty()) {
-          it = entries->erase(it);
-        } else {
-          ++it;
-        }
-      }
-      if (cache.entries_size() > 0) {
-        TF_RETURN_IF_ERROR(tsl::WriteStringToFile(
-            tsl::Env::Default(), resolved_path, cache.SerializeAsString()));
-        VLOG(2) << "Stored " << cache.entries_size() << " / "
-                << binaries_to_cache.size();
-      }
+      VLOG(2) << "Using " << loaded_kernel_count << " / "
+              << current_cache.entries_size() << " cached kernels.";
+    }
+    if (!binaries_to_cache.empty()) {
+      TF_RETURN_IF_ERROR(
+          UpdateDiskKernelCache(resolved_path, /*do_append=*/cache_file_exists,
+                                current_cache, binaries_to_cache));
     }
   }
 
@@ -2046,6 +1993,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
     return maybe_backend_result.status();
   }
   VLOG(4) << "Binary size after linking [B]: " << maybe_backend_result->size();
+  compile_module_results.kernel_compilation_cache.Clear();
   return BackendCompileResult{ptx_snippets, std::move(*maybe_backend_result)};
 }
 

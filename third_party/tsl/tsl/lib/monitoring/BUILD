@@ -23,7 +23,7 @@ package(
         "@xla//xla/hlo/experimental:__subpackages__",
         "//tensorflow/core/lib/monitoring:__subpackages__",
         "@xla//xla/service:__subpackages__",
-        "//tsl/framework:__subpackages__",
+        "@xla//xla/tsl/framework:__subpackages__",
         "@xla//xla/tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
         "//tensorflow_serving/model_servers:__subpackages__",

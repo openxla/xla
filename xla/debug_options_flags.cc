@@ -81,6 +81,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
   opts.set_xla_cpu_use_thunk_runtime(false);
   opts.set_xla_cpu_enable_concurrency_optimized_scheduler(false);
+  opts.set_xla_cpu_prefer_vector_width(256);
 
   opts.set_xla_cpu_enable_fast_math(false);
   // Disable forms of fast math that have caused users problems in the past.
@@ -200,6 +201,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
+  opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(true);
   opts.set_xla_gpu_collect_cost_model_stats(false);
@@ -236,7 +238,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
 
+#if GOOGLE_CUDA
+  opts.set_xla_gpu_mlir_emitter_level(1);
+#else
   opts.set_xla_gpu_mlir_emitter_level(0);
+#endif
   opts.set_xla_gpu_max_mlir_kernels(0);
   opts.set_xla_gpu_skip_mlir_kernels(0);
 
@@ -263,6 +269,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_use_shardonnay(false);
 
   opts.set_xla_gpu_shard_autotuning(false);
+
+  opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
   return opts;
 }
@@ -788,6 +796,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Use HLO module scheduler that is optimized for extracting concurrency "
       "from an HLO module by trading off extra memory pressure."));
   flag_list->push_back(tsl::Flag(
+      "xla_cpu_prefer_vector_width",
+      int32_setter_for(&DebugOptions::set_xla_cpu_prefer_vector_width),
+      debug_options->xla_cpu_prefer_vector_width(),
+      "Preferred vector with for the XLA:CPU LLVM backend."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_crash_on_verification_failures",
       bool_setter_for(
           &DebugOptions::set_xla_gpu_crash_on_verification_failures),
@@ -1009,6 +1022,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "that falling back to the driver can have drawbacks like using more "
       "memory and/or other bugs during compilation, so we recommend setting "
       "this flag to false."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_unsafe_pipelined_loop_annotator",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_unsafe_pipelined_loop_annotator),
+      debug_options->xla_gpu_unsafe_pipelined_loop_annotator(),
+      "If this option is true, then the while loop with rotate right "
+      "pattern will be considered a pipelined while loop and the "
+      "operations within the pipeline bubbles may be considered no-ops. "
+      "Specifically, collective-permute may become a no-op for the iterations "
+      "within pipeline bubble. This is an unsafe flag."));
   flag_list->push_back(tsl::Flag(
       "xla_multiheap_size_constraint_per_heap",
       int32_setter_for(
@@ -1739,14 +1762,27 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_shard_autotuning(),
       "Shard autotuning between participating compiler processes (typically in "
       "multi-host setups) and join the results when it's done."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_kernel_cache_file",
+                string_setter_for(&DebugOptions::set_xla_gpu_kernel_cache_file),
+                debug_options->xla_gpu_kernel_cache_file(),
+                "Path to a file to cache compiled kernels. Cached kernels get "
+                "reused in further compilations; not yet cached kernels are "
+                "compiled as usual and get appended to the cache file whenever "
+                "possible."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_kernel_cache_file",
-      string_setter_for(&DebugOptions::set_xla_gpu_kernel_cache_file),
-      debug_options->xla_gpu_kernel_cache_file(),
-      "Path to a file to cache compiled kernels. If the file doesn't exist "
-      "write the compilation cache of the first compiled HLO module into it."
-      "Once the file exists, further compilations will read it to reuse "
-      "the kernels, but not write it. This behavior may change later."));
+      "xla_gpu_per_fusion_autotune_cache_dir",
+      string_setter_for(
+          &DebugOptions::set_xla_gpu_per_fusion_autotune_cache_dir),
+      debug_options->xla_gpu_per_fusion_autotune_cache_dir(),
+      "Experimental: Maintain a per-fusion autotune cache in the given "
+      "directory. XLA will try to read existing results when they are needed "
+      "and write new results when they are determined. The directory must "
+      "exist. Cache invalidation has to be handled by the user (e.g. please "
+      "use an empty directory if you want to start with an empty cache). XLA "
+      "version checks must be done by the user (e.g. if you want to use "
+      "separate caches for different versions of XLA, please use different "
+      "directories). Default: no cache."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

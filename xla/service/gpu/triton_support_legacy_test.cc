@@ -24,20 +24,17 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
-#include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/ir_emitter_triton.h"
+#include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/gpu/triton_support.h"
 #include "xla/service/gpu/triton_test_utils.h"
@@ -79,7 +76,7 @@ class DotTest : public TritonSupportTestWithParam {
         primitive_util::LowercasePrimitiveTypeName(output_type);
 
     const std::string kHloTestTemplate = R"(
-triton_gemm___computation {
+triton_computation {
   parameter_0 = $0[92,11]{1,0} parameter(0)
   parameter_1 = $1[11,63]{1,0} parameter(1)
   ROOT dot = $2[92,63]{1,0} $3(parameter_0, parameter_1),
@@ -89,25 +86,26 @@ triton_gemm___computation {
 ENTRY e {
   parameter_0 = $0[92,11]{1,0} parameter(0)
   parameter_1 = $1[11,63]{1,0} parameter(1)
-  ROOT triton_gemm = $2[92,63]{1,0} fusion(parameter_0, parameter_1), kind=kCustom,
-    calls=triton_gemm___computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+  ROOT triton_op = $2[92,63]{1,0} fusion(parameter_0, parameter_1), kind=kCustom,
+    calls=triton_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
+      triton_gemm_config:
+        {"block_m":16,"block_n":32,"block_k":512,
+         "split_k":1,"num_stages":4,"num_warps":8,
+         "num_ctas":1}}}
 })";
+    // TODO(b/345763510): Change the kind above to "__triton" once dots are
+    // supported.
     const std::string hlo_test = absl::Substitute(
         kHloTestTemplate, lhs, rhs, output, HloOpcodeString(opcode));
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_test));
-    const HloFusionInstruction* fusion = Cast<HloFusionInstruction>(
-        module->entry_computation()->root_instruction());
-    const HloComputation* computation =
-        fusion->fused_instructions_computation();
-    ASSERT_TRUE(computation != nullptr);
-    const HloInstruction* instr =
-        hlo_query::GetFirstInstructionWithOpcode(*computation, opcode);
-    if (IsTritonSupportedInstruction(*instr, GetCudaComputeCapability())) {
-      TF_EXPECT_OK(ApplyFloatNormalization(module.get()));
+    TF_ASSERT_OK_AND_ASSIGN(
+        TestedInstruction ti,
+        ParseTemplateAndGetInstruction(hlo_test, /*data_type=*/{}, opcode));
+    if (legacy_triton::IsTritonSupportedInstruction(
+            ti.Instruction(), GetCudaComputeCapability())) {
+      TF_EXPECT_OK(ApplyFloatNormalization(ti.Module().get()));
       EXPECT_TRUE(RunAndCompareNoHloPasses(
-          std::move(module),
+          std::move(ti.Module()),
           ErrorSpec{/*aabs=*/primitive_util::IsF8Type(lhs_type) ? 1.0 : 2e-4,
                     /*arel=*/2e-4}));
     } else {
@@ -117,13 +115,17 @@ ENTRY e {
       }
       const se::DeviceDescription dev_info =
           TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
-      EXPECT_THAT(TritonWrapper(*TritonFusionAnalysis::Execute(*computation),
-                                "test_fn", fusion, GetCudaComputeCapability(),
-                                dev_info, config_, /*output_tile_sizes=*/{},
-                                &llvm_module_, &EmitMatMul, mlir_context_),
-                  tsl::testing::StatusIs(
-                      absl::StatusCode::kInternal,
-                      ::testing::HasSubstr("Failed to compile Triton kernel")));
+      BlockLevelParameters block_level_parameters;
+      block_level_parameters.num_ctas = 1;
+      block_level_parameters.num_stages = 4;
+      block_level_parameters.num_warps = 8;
+      EXPECT_THAT(
+          TritonWrapper("test_fn", &ti.TritonFusion(),
+                        GetCudaComputeCapability(), dev_info,
+                        block_level_parameters, &llvm_module_, mlir_context_),
+          tsl::testing::StatusIs(
+              absl::StatusCode::kInternal,
+              ::testing::HasSubstr("Failed to compile Triton kernel")));
     }
   }
 };
@@ -194,8 +196,6 @@ TEST_P(DynamicSliceTest, IsTritonSupportedDynamicSlice) {
 
   constexpr absl::string_view kHloTestTemplate =
       R"(
-HloModule m
-
 triton_computation {
   dynamic_slice_input = $0[$2,$3] parameter(0)
   dot_rhs = f32[2,4] parameter(1)
@@ -231,28 +231,26 @@ ENTRY e {
       param.is_the_majormost_dim_being_sliced ? 1 : 0,  // start_index0
       param.is_the_majormost_dim_being_sliced ? 0 : 1   // start_index1
   );
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_test));
-  const HloComputation* computation =
-      module->GetComputationWithName("triton_computation");
-  ASSERT_NE(computation, nullptr);
-  const HloInstruction* instr = hlo_query::GetFirstInstructionWithOpcode(
-      *computation, HloOpcode::kDynamicSlice);
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
+                                                    hlo_test, /*data_type=*/{},
+                                                    HloOpcode::kDynamicSlice));
 
   const bool is_supported_instruction =
-      IsTritonSupportedInstruction(*instr, GetCudaComputeCapability())
+      legacy_triton::IsTritonSupportedInstruction(ti.Instruction(),
+                                                  GetCudaComputeCapability())
           .CanFuse();
   const bool is_supported_dynamic_slice =
-      IsTritonSupportedDynamicSlice(*Cast<HloDynamicSliceInstruction>(instr))
+      legacy_triton::IsTritonSupportedDynamicSlice(
+          *Cast<HloDynamicSliceInstruction>(&ti.Instruction()))
           .CanFuse();
   EXPECT_EQ(is_supported_instruction, is_supported_dynamic_slice);
 
   if (is_supported_instruction) {
-    TF_EXPECT_OK(ApplyFloatNormalization(module.get()));
+    TF_EXPECT_OK(ApplyFloatNormalization(ti.Module().get()));
     EXPECT_TRUE(RunAndCompareNoHloPasses(
-        std::move(module), ErrorSpec{/*aabs=*/2e-4, /*arel=*/2e-4}));
+        std::move(ti.Module()), ErrorSpec{/*aabs=*/2e-4, /*arel=*/2e-4}));
   } else {
-    EXPECT_THAT(TritonFusionAnalysis::Execute(*computation),
+    EXPECT_THAT(TritonFusionAnalysis::Execute(ti.TritonComputation()),
                 tsl::testing::StatusIs(absl::StatusCode::kFailedPrecondition));
   }
 }
@@ -278,26 +276,28 @@ ENTRY e {
   parameter_1 = f32[11,63]{1,0} parameter(1)
   ROOT triton_op = pred[92,63]{1,0} fusion(parameter_0, parameter_1), kind=kCustom,
     calls=triton_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
+      triton_gemm_config:
+        {"block_m":16,"block_n":32,"block_k":512,
+         "split_k":1,"num_stages":4,"num_warps":8,
+         "num_ctas":1}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kHloTest));
-
-  const HloFusionInstruction* fusion = Cast<HloFusionInstruction>(
-      hlo_module->entry_computation()->root_instruction());
-  const HloComputation* computation = fusion->fused_instructions_computation();
-  ASSERT_TRUE(computation != nullptr);
-  const HloInstruction* instr =
-      hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                          ParseTemplateAndGetInstruction(
+                              kHloTest, /*data_type=*/{}, HloOpcode::kDot));
   const se::DeviceDescription dev_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
-  EXPECT_THAT(IsTritonSupportedInstruction(*instr, GetCudaComputeCapability())
+  EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
+                  ti.Instruction(), GetCudaComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("Unsupported output data type for Dot op."));
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.num_ctas = 1;
+  block_level_parameters.num_stages = 4;
+  block_level_parameters.num_warps = 8;
   EXPECT_THAT(
-      TritonWrapper(*TritonFusionAnalysis::Execute(*computation), "test_fn",
-                    fusion, GetCudaComputeCapability(), dev_info, config_,
-                    /*output_tile_sizes=*/{}, &llvm_module_, &EmitMatMul,
+      TritonWrapper("test_fn", &ti.TritonFusion(), GetCudaComputeCapability(),
+                    dev_info, block_level_parameters, &llvm_module_,
                     mlir_context_),
       tsl::testing::StatusIs(
           absl::StatusCode::kInternal,
@@ -320,26 +320,28 @@ ENTRY e {
   parameter_1 = f32[2,2,2,2]{3,2,1,0} parameter(1)
   ROOT triton_op = f32[2,2,2,2]{3,2,1,0} fusion(parameter_0, parameter_1),
     kind=kCustom, calls=triton_computation,
-    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm",
+      triton_gemm_config:
+        {"block_m":16,"block_n":32,"block_k":512,
+         "split_k":1,"num_stages":4,"num_warps":8,
+         "num_ctas":1}}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kHloTest));
-
-  const HloFusionInstruction* fusion = Cast<HloFusionInstruction>(
-      hlo_module->entry_computation()->root_instruction());
-  const HloComputation* computation = fusion->fused_instructions_computation();
-  ASSERT_TRUE(computation != nullptr);
-  const HloInstruction* instr =
-      hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                          ParseTemplateAndGetInstruction(
+                              kHloTest, /*data_type=*/{}, HloOpcode::kDot));
   const se::DeviceDescription dev_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
-  EXPECT_THAT(IsTritonSupportedInstruction(*instr, GetCudaComputeCapability())
+  EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
+                  ti.Instruction(), GetCudaComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("Multiple batch dimensions"));
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.num_ctas = 1;
+  block_level_parameters.num_stages = 4;
+  block_level_parameters.num_warps = 8;
   EXPECT_THAT(
-      TritonWrapper(*TritonFusionAnalysis::Execute(*computation), "test_fn",
-                    fusion, GetCudaComputeCapability(), dev_info, config_,
-                    /*output_tile_sizes=*/{}, &llvm_module_, &EmitMatMul,
+      TritonWrapper("test_fn", &ti.TritonFusion(), GetCudaComputeCapability(),
+                    dev_info, block_level_parameters, &llvm_module_,
                     mlir_context_),
       tsl::testing::StatusIs(absl::StatusCode::kInternal,
                              ::testing::HasSubstr("num_batch_dims <= 1")));
@@ -362,18 +364,14 @@ ENTRY e {
     calls=triton_computation,
     backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kHloTest));
-
-  const HloComputation* computation =
-      hlo_module->GetComputationWithName("triton_computation");
-  ASSERT_TRUE(computation != nullptr);
-  const HloInstruction* instr =
-      hlo_query::GetFirstInstructionWithOpcode(*computation, HloOpcode::kDot);
-  EXPECT_THAT(IsTritonSupportedInstruction(*instr, GetCudaComputeCapability())
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                          ParseTemplateAndGetInstruction(
+                              kHloTest, /*data_type=*/{}, HloOpcode::kDot));
+  EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
+                  ti.Instruction(), GetCudaComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("No non-contracting dimensions."));
-  EXPECT_THAT(TritonFusionAnalysis::Execute(*computation),
+  EXPECT_THAT(TritonFusionAnalysis::Execute(ti.TritonComputation()),
               tsl::testing::StatusIs(
                   absl::StatusCode::kInternal,
                   ::testing::HasSubstr("non_contracting_dims.size() == 1")));
