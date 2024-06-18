@@ -5,10 +5,8 @@ load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured", "rocm_copts")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("@bazel_skylib//lib:paths.bzl", "paths")
-load(
-    "//xla/tests:build_defs.bzl",
-    "prepare_gpu_backend_data",
-)
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/tests:build_defs.bzl", "prepare_gpu_backend_data", "xla_test")
 
 # buildifier: disable=out-of-order-load
 # Internally this loads a macro, but in OSS this is a function
@@ -187,3 +185,104 @@ def gen_gpu_hlo_compile_tests(
                 data = ["//xla/tools/multihost_hlo_runner:hlo_runner_main_gpu", data_label],
                 tags = backend_tags[backend] + ["requires-mem:16g"] + tags,
             )
+
+SUPPORTED_CUDA_BACKENDS = {
+    "pascal": {"backend": "gpu_p100", "sm": (6, 0)},
+    "volta": {"backend": "gpu_v100", "sm": (7, 0)},
+    "ampere": {"backend": "gpu_a100", "sm": (8, 0)},
+    "hopper": {"backend": "gpu_h100", "sm": (9, 0)},
+}
+
+def _xla_gpu_wrapper(with_cuda, with_rocm):
+    if with_cuda and with_rocm:
+        wrapper = if_gpu_is_configured
+    elif with_cuda:
+        wrapper = if_cuda_is_configured
+    elif with_rocm:
+        wrapper = if_rocm_is_configured
+    else:
+        wrapper = lambda *_: []
+    return wrapper
+
+def _xla_gpu_defines(with_cuda, with_rocm):
+    defines = []
+    if with_cuda:
+        defines += if_cuda_is_configured(["GOOGLE_CUDA=1"])
+    if with_rocm:
+        defines += if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"])
+    return defines
+
+def xla_gpu_test(
+        name,
+        srcs,
+        deps,
+        platform_deps = [],
+        local_defines = [],
+        tags = [],
+        args = [],
+        with_cuda = "all",
+        with_rocm = "all",
+        **kwargs):
+    """GPU-specific version of `xla_test`.
+
+    By default, generates tests for all backends (CUDA and ROCM).
+
+    Args:
+      name: Test target name.
+      srcs: List of test source files.
+      deps: List of test dependencies.
+      platform_deps: Conditional dependencies, optional.
+      local_defines: Conditional definitions, optional.
+      tags: Common tags for all generated targets, optional.
+      args: Common command line arguments for all generated targets, optional.
+      with_cuda: Supported CUDA architectures:
+            - False for disabling the test on cuda backends;
+            - "all" for all supported cuda backends;
+            - e.g. ["ampere", "hopper"] for the specific backends;
+            - e.g. "ampere+" for the compatible backends;
+      with_rocm: Supported ROCM architectures:
+            - False for disabling the test on rocm backends;
+            - "all" for all supported rocm backends;
+      **kwargs: Additional arguments passed to `xla_test`
+    """
+    test_main = ["//xla/tests:xla_internal_test_main"]
+    deps_wrapper = _xla_gpu_wrapper(with_cuda, with_rocm)
+    local_defines += _xla_gpu_defines(with_cuda, with_rocm)
+
+    backend_tags = kwargs.pop("backend_tags", {})
+    backend_args = kwargs.pop("backend_args", {})
+    backends = []
+
+    if with_cuda:
+        if with_cuda == "all":
+            with_cuda = list(SUPPORTED_CUDA_BACKENDS)
+        elif with_cuda[-1] == "+":
+            ref = SUPPORTED_CUDA_BACKENDS[with_cuda[:-1]]
+            with_cuda = [k for k, v in SUPPORTED_CUDA_BACKENDS.items() if v["sm"] >= ref["sm"]]
+        for key in with_cuda:
+            item = SUPPORTED_CUDA_BACKENDS[key]
+            backend = item["backend"]
+            extra_tags = ["cuda_%s" % key, "requires-gpu-sm%s%s-only" % item["sm"]]
+            backends.append(backend)
+            backend_tags[backend] = backend_tags.pop(backend, []) + tags + extra_tags
+            backend_args[backend] = backend_args.pop(backend, []) + args
+
+    if with_rocm:
+        if with_rocm != "all":
+            fail("Unsupported ROCM backend name")
+        backend = "gpu_amd_any"
+        extra_tags = ["requires-gpu-amd", "notap"]
+        backends.append(backend)
+        backend_tags[backend] = backend_tags.pop(backend, []) + tags + extra_tags
+        backend_args[backend] = backend_args.pop(backend, []) + args
+
+    xla_test(
+        name = name,
+        srcs = deps_wrapper(srcs),
+        deps = deps_wrapper(deps + test_main, test_main) + platform_deps,
+        local_defines = local_defines,
+        backends = backends,
+        backend_tags = backend_tags,
+        backend_args = backend_args,
+        **kwargs
+    )
