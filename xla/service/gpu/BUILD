@@ -1185,6 +1185,7 @@ build_cub_sort_kernels(
     types = get_cub_sort_kernel_types(),
     deps = if_gpu_is_configured([
         ":gpu_prim",
+        "//xla/stream_executor/gpu:gpu_types_header",
     ]),
 )
 
@@ -1241,6 +1242,7 @@ cc_library(
         "//xla/service:instruction_fusion",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:tensor_float_32_utils",
     ],
@@ -4257,6 +4259,7 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
     ],
 )
 
@@ -4281,9 +4284,11 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
     ],

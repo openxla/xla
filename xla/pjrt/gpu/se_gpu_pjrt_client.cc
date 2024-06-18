@@ -79,7 +79,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/framework/allocator.h"
+#include "xla/tsl/framework/allocator.h"
 #include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/errors.h"
@@ -988,6 +988,9 @@ absl::Status BuildDistributedDevices(
     std::vector<LocalTopologyProto> local_topologies(num_nodes, local_topology);
     for (int i = 0; i < num_nodes; ++i) {
       local_topologies[i].set_node_id(i);
+      // Set a distinct boot_id for each local topology to change slice_index
+      // for each node.
+      local_topologies[i].set_boot_id(absl::StrCat(i));
     }
     global_topology = BuildGlobalTopology(absl::MakeSpan(local_topologies),
                                           /*assign_global_device_ids=*/true);
