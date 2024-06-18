@@ -24,25 +24,25 @@ Interface:
 
 namespace xla {
 
-    // Pass that searches for a near-optimal sharding strategy for an
-    // HloModule to maximize cluster usage. Requires knowledge of cluster
-    // configurations. Maintains user-specified shardings and only
-    // inserts new ones 
-    class AutoParallelizer : public HloModulePass {
-    public:
-        AutoParallelizer();
-        ~AutoParallelizer() = default;
+  // Pass that searches for a near-optimal sharding strategy for an
+  // HloModule to maximize cluster usage. Requires knowledge of cluster
+  // configurations. Maintains user-specified shardings and only
+  // inserts new ones 
+  class AutoParallelizer : public HloModulePass {
+  public:
+    AutoParallelizer();
+    ~AutoParallelizer() = default;
 
-        absl::string_view name() const override { return "auto-parallelizer"; }
+    absl::string_view name() const override { return "auto-parallelizer"; }
 
-        using HloPassInterface::Run;
-        absl::StatusOr<bool> Run(
-            HloModule* module,
-            const absl::flat_hash_set<absl::string_view>& execution_threads
-        ) override;
+    using HloPassInterface::Run;
+    absl::StatusOr<bool> Run(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads
+    ) override;
 
 
-    };
+  };
 }
 
 #endif // XLA_SERVICE_CPU_AUTO_PARALLEL_H_
