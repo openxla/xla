@@ -54,6 +54,7 @@ cc_library(
         ":preemption_notifier",
         "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/distributed_runtime/coordination:coordination_service_agent",
+        "//xla/tsl/protobuf:coordination_service_proto_cc",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -62,7 +63,6 @@ cc_library(
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:coordination_service_proto_cc",
     ],
 )
 
@@ -80,6 +80,9 @@ tsl_cc_test(
         "//xla/tsl/distributed_runtime/rpc:async_service_interface",
         "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_client",
         "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
+        "//xla/tsl/protobuf:coordination_config_proto_cc_impl",
+        "//xla/tsl/protobuf:coordination_service_proto_cc_impl",
+        "//xla/tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:env",
@@ -89,8 +92,5 @@ tsl_cc_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:coordination_config_proto_cc_impl",
-        "@tsl//tsl/protobuf:coordination_service_proto_cc_impl",
-        "@tsl//tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
     ] + tsl_grpc_cc_dependencies(),
 )

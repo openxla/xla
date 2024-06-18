@@ -36,13 +36,13 @@ cc_library(
     srcs = ["grpc_util.cc"],
     hdrs = ["grpc_util.h"],
     deps = [
+        "//xla/tsl/protobuf:distributed_runtime_payloads_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:cord",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:stringprintf",
-        "@tsl//tsl/protobuf:distributed_runtime_payloads_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -56,12 +56,12 @@ tsl_cc_test(
     deps = [
         ":grpc_util",
         ":test_request_proto_cc_impl",
+        "//xla/tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:distributed_runtime_payloads_proto_cc_impl",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -83,6 +83,7 @@ cc_library(
     deps = [
         ":grpc_channel_common",
         ":grpc_util",
+        "//xla/tsl/protobuf:rpc_options_proto_cc",
         "//xla/tsl/util:device_name_utils",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/lib/gtl:map_util",
@@ -96,7 +97,6 @@ cc_library(
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/protobuf:rpc_options_proto_cc",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -108,13 +108,13 @@ tsl_cc_test(
     ],
     deps = [
         ":grpc_channel",
+        "//xla/tsl/protobuf:rpc_options_proto_cc_impl",
         "//xla/tsl/util:device_name_utils",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:rpc_options_proto_cc_impl",
     ],
 )
 

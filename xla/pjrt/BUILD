@@ -133,13 +133,13 @@ cc_library(
         "//xla:util",
         "//xla/client:local_client",
         "//xla/stream_executor",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -167,10 +167,10 @@ xla_cc_test(
         ":pjrt_api",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_wrapper_impl",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -726,6 +726,7 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:util",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/numeric:int128",
         "@eigen_archive//:eigen3",
@@ -733,7 +734,6 @@ xla_cc_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
