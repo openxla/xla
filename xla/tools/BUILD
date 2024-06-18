@@ -839,6 +839,7 @@ xla_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
+        "@tsl//tsl/protobuf:status_proto_cc",
     ],
 )
 
