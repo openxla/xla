@@ -18,6 +18,7 @@ namespace tsl::profiler {
 ProfilerDomainHandle DefaultProfilerDomain() { return {}; }
 void NameCurrentThread(const std::string&) {}
 void NameDevice(int, const std::string&) {}
+void NameStream(StreamHandle, const std::string&) {}
 void RangePop(ProfilerDomainHandle) {}
 void RangePush(ProfilerDomainHandle, const char*) {}
 namespace detail {

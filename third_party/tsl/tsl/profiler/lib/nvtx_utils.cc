@@ -24,6 +24,7 @@ limitations under the License.
 #include <sys/syscall.h>
 
 #include "nvtx3/nvToolsExt.h"
+#include "nvtx3/nvToolsExtCuda.h"
 #include "nvtx3/nvToolsExtCudaRt.h"
 #include "nvtx3/nvToolsExtPayload.h"
 
@@ -42,6 +43,7 @@ std::optional<uint32_t> GetCurrentThreadId() {
 }  // namespace
 
 namespace tsl::profiler {
+static_assert(std::is_pointer_v<CUstream>);
 static_assert(std::is_pointer_v<nvtxDomainHandle_t>);
 static_assert(std::is_pointer_v<nvtxStringHandle_t>);
 
@@ -59,6 +61,10 @@ void NameCurrentThread(const std::string& thread_name) {
 
 void NameDevice(int device_id, const std::string& device_name) {
   nvtxNameCudaDeviceA(device_id, device_name.c_str());
+}
+
+void NameStream(StreamHandle stream, const std::string& stream_name) {
+  nvtxNameCuStreamA(reinterpret_cast<CUstream>(stream), stream_name.c_str());
 }
 
 void RangePop(ProfilerDomainHandle domain) {

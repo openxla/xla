@@ -29,10 +29,8 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/platform/errors.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
 
-#if GOOGLE_CUDA
-#include "nvtx3/nvToolsExtCuda.h"
-#endif
 namespace stream_executor {
 namespace gpu {
 
@@ -107,9 +105,8 @@ bool GpuStream::IsIdle() const {
 
 void GpuStream::set_name(absl::string_view name) {
   name_ = name;
-#if GOOGLE_CUDA
-  nvtxNameCuStreamA(gpu_stream(), name_.c_str());
-#endif
+  tsl::profiler::NameStream(
+      reinterpret_cast<tsl::profiler::StreamHandle>(gpu_stream()), name_);
 }
 
 GpuStream* AsGpuStream(Stream* stream) {
