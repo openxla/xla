@@ -30,7 +30,7 @@ namespace xla {
   // inserts new ones 
   class AutoParallelizer : public HloModulePass {
   public:
-    AutoParallelizer();
+    AutoParallelizer() = default;
     ~AutoParallelizer() = default;
 
     absl::string_view name() const override { return "auto-parallelizer"; }
