@@ -1030,8 +1030,8 @@ absl::Status BuildDistributedDevices(
         // id and slice index are known. These are not available when the thread
         // is created.
         local_device->execute_thread()->Schedule(
-            [name = "XlaLauncher" + suffix] {
-              tsl::profiler::NameCurrentThread(name.c_str());
+            [name = absl::StrCat("XlaLauncher", suffix)] {
+              tsl::profiler::NameCurrentThread(name);
             });
       }
       auto device = std::make_unique<StreamExecutorGpuDevice>(
