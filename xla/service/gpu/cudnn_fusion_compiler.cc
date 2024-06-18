@@ -730,7 +730,7 @@ int CuDnnFusionCompiler::GetAvailablePlanCount(
   if (!graph.ok()) {
     return 0;
   }
-  constexpr int64_t kMaxPlans = 10;
+  constexpr int64_t kMaxPlans = 5;
   return std::min(graph->Graph().get_execution_plan_count(), kMaxPlans);
 }
 
