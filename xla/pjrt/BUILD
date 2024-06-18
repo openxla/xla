@@ -598,6 +598,7 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@stablehlo//:stablehlo_passes",
         "@stablehlo//:stablehlo_serialization",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
