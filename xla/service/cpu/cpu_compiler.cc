@@ -101,6 +101,7 @@ limitations under the License.
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/convolution_group_converter.h"
 #include "xla/service/copy_insertion.h"
+#include "xla/service/auto_parallel.h"
 #include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/compiler_functor.h"
 #include "xla/service/cpu/conv_canonicalization.h"
@@ -426,11 +427,26 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 
 }  // namespace
 
+// runs a simple pipeline that will create a pass and run the auto parallel pass
+void RunDummyPipeline(HloModule* module) {
+
+  HloPassPipeline pipeline("dummy-pipeline");
+  pipeline.AddPass<AutoParallelizer>();
+
+  VLOG(2) << "Running dummy HloModulePass";
+  pipeline.Run(module);
+}
+
 absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
   const DebugOptions& debug_options = module->config().debug_options();
   const int64_t num_partitions = module->config().num_partitions();
+
+  VLOG(2) << "num_partitions=" << num_partitions << " use_spmd_partitioning=" << module->config().use_spmd_partitioning();
+
+  RunDummyPipeline(module);
+
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
       return InvalidArgument(

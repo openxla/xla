@@ -202,25 +202,11 @@ cc_library(
 )
 
 cc_library(
-    name = "auto_parallel",
-    srcs = ["auto_parallel.cc"],
-    hdrs = ["auto_parallel.h"],
-    deps = [
-        "//xla/service:hlo_pass", 
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/status:status",
-        "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-cc_library(
     name = "cpu_compiler_pure",
     srcs = ["cpu_compiler.cc"],
     hdrs = ["cpu_compiler.h"],
     copts = tsl_copts(),
     deps = [
-        ":auto_parallel", 
         ":buffer_info_util",
         ":compiler_functor",
         ":conv_canonicalization",
@@ -261,6 +247,7 @@ cc_library(
         "//xla/service:algebraic_simplifier",
         "//xla/service:all_reduce_promotion",
         "//xla/service:all_to_all_decomposer",
+        "//xla/service:auto_parallel",
         "//xla/service:batch_dot_simplification",
         "//xla/service:batchnorm_expander",
         "//xla/service:bitcast_dtypes_expander",

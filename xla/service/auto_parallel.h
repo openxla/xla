@@ -1,8 +1,8 @@
 // TODO: add copyright
 
 
-#ifndef XLA_SERVICE_CPU_AUTO_PARALLEL_H_
-#define XLA_SERVICE_CPU_AUTO_PARALLEL_H_
+#ifndef XLA_SERVICE_AUTO_PARALLEL_H_
+#define XLA_SERVICE_AUTO_PARALLEL_H_
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -45,4 +45,4 @@ namespace xla {
   };
 }
 
-#endif // XLA_SERVICE_CPU_AUTO_PARALLEL_H_
+#endif // XLA_SERVICE_AUTO_PARALLEL_H_
