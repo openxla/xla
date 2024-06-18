@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -25,6 +26,20 @@ limitations under the License.
 #include "nvtx3/nvToolsExt.h"
 #include "nvtx3/nvToolsExtCudaRt.h"
 #include "nvtx3/nvToolsExtPayload.h"
+
+namespace {
+// Get the ID of the current thread following the convention for
+// nvtxNameOsThreadA:
+// https://nvidia.github.io/NVTX/doxygen/group___r_e_s_o_u_r_c_e___n_a_m_i_n_g.html
+// This convention may not match the one in tsl::Env::GetCurrentThreadId().
+std::optional<uint32_t> GetCurrentThreadId() {
+#ifdef __linux__
+  return syscall(SYS_gettid);
+#else
+  return std::nullopt;
+#endif
+}
+}  // namespace
 
 namespace tsl::profiler {
 static_assert(std::is_pointer_v<nvtxDomainHandle_t>);
@@ -36,12 +51,14 @@ ProfilerDomainHandle DefaultProfilerDomain() {
   return domain;
 }
 
-void NameCurrentThread(const char* thread_name) {
-  nvtxNameOsThreadA(syscall(SYS_gettid), thread_name);
+void NameCurrentThread(const std::string& thread_name) {
+  if (std::optional<uint32_t> tid = GetCurrentThreadId(); tid.has_value()) {
+    nvtxNameOsThreadA(*tid, thread_name.c_str());
+  }
 }
 
-void NameDevice(int device_id, const char* device_name) {
-  nvtxNameCudaDeviceA(device_id, device_name);
+void NameDevice(int device_id, const std::string& device_name) {
+  nvtxNameCudaDeviceA(device_id, device_name.c_str());
 }
 
 void RangePop(ProfilerDomainHandle domain) {

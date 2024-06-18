@@ -1024,8 +1024,11 @@ absl::Status BuildDistributedDevices(
                             device_proto.slice_index());
         // Name the device.
         tsl::profiler::NameDevice(device_proto.local_device_ordinal(),
-                                  ("Xla" + suffix).c_str());
-        // Name the thread that launches work on this device.
+                                  absl::StrCat("Xla", suffix));
+        // Name the thread that launches work on this device. This is deferred
+        // until after ExchangeTopologies has been called so the global device
+        // id and slice index are known. These are not available when the thread
+        // is created.
         local_device->execute_thread()->Schedule(
             [name = "XlaLauncher" + suffix] {
               tsl::profiler::NameCurrentThread(name.c_str());
