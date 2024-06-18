@@ -63,6 +63,7 @@ xla_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_portable_api",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
