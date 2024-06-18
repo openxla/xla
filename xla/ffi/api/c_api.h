@@ -180,9 +180,9 @@ typedef enum {
   XLA_FFI_DataType_TOKEN = 17,
   XLA_FFI_DataType_F8E5M2 = 19,
   XLA_FFI_DataType_F8E4M3FN = 20,
-  XLA_FFI_DataType_F8E4M3B11FNUZ = 21,
-  XLA_FFI_DataType_F8E5M2FNUZ = 22,
-  XLA_FFI_DataType_F8E4M3FNUZ = 23,
+  XLA_FFI_DataType_F8E4M3B11FNUZ = 23,
+  XLA_FFI_DataType_F8E5M2FNUZ = 24,
+  XLA_FFI_DataType_F8E4M3FNUZ = 25,
 } XLA_FFI_DataType;
 // LINT.ThenChange(ffi_test.cc)
 
