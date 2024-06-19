@@ -85,7 +85,6 @@ HloPassPipeline PrepareHloModuleForIrEmittingPipeline(
   sub_pipeline.AddPass<CopyFusion>();
   sub_pipeline.AddPass<GpuHorizontalLoopFusion>("copy_");
   sub_pipeline.AddPass<HloDCE>();
-  pipeline.AddPass<GpuSanitizeConstantNames>();
   return pipeline;
 }
 
