@@ -79,6 +79,7 @@ using mlir_converter::ApplyIndexing;
 constexpr int kNumRows = 4;
 constexpr int kBaseBlockSize = WarpSize();
 constexpr int kNumThreadsPerBlock = 128;
+constexpr int kMaxVectorizedBytes = 4;
 
 }  // namespace
 
@@ -126,13 +127,22 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
   // the input dimensions are divisible by the vector size. Vectorizing loads
   // for large data types does not help (there's already enough parallelism).
   const auto& device = analysis_.device_info();
-  bool enough_work = Product(block_counts_) * kNumThreadsPerBlock >=
-                     4 * device.core_count() * device.threads_per_core_limit();
-  bool enough_shmem = shmem_usage * 4 <= device.shared_memory_per_block();
-  bool aligned_dims =
-      (input_shape_[2] % 2 == 0) && (input_shape_[permutation_[2]] % 2 == 0);
-  if (max_element_bytes < 4 && enough_work && enough_shmem && aligned_dims) {
-    compute_block_sizes(2);
+  int prefered_vec_size = kMaxVectorizedBytes / max_element_bytes;
+  while (prefered_vec_size > 1) {
+    bool enough_work = Product(block_counts_) * kNumThreadsPerBlock >=
+                       prefered_vec_size * prefered_vec_size *
+                           device.core_count() *
+                           device.threads_per_core_limit();
+    bool enough_shmem = shmem_usage * prefered_vec_size * prefered_vec_size <=
+                        device.shared_memory_per_block();
+    bool aligned_dims =
+        (input_shape_[2] % prefered_vec_size == 0) &&
+        (input_shape_[permutation_[2]] % prefered_vec_size == 0);
+    if (enough_work && enough_shmem && aligned_dims) {
+      compute_block_sizes(prefered_vec_size);
+      break;
+    }
+    prefered_vec_size /= 2;
   }
 }
 
