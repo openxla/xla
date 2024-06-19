@@ -3830,10 +3830,46 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
+diff --ruN a/stablehlo/stablehlo/integrations/python/StablehloModule.cpp b/stablehlo/stablehlo/integrations/python/StablehloModule.cpp
+--- stablehlo/stablehlo/integrations/python/StablehloModule.cpp
++++ stablehlo/stablehlo/integrations/python/StablehloModule.cpp
+@@ -23,6 +23,7 @@
+ #include "stablehlo/integrations/c/StablehloTypes.h"
+ #include "stablehlo/integrations/python/PortableApi.h"
+ #include "stablehlo/reference/Api.h"
++#include "stablehlo/transforms/Passes.h"
+ 
+ namespace py = pybind11;
+ 
+@@ -64,6 +65,12 @@
+         }
+       },
+       py::arg("context"), py::arg("load") = true);
++
++  //
++  // Passes.
++  //
++
++  m.def("register_passes", []() { mlir::stablehlo::registerPasses(); });
+ 
+   //
+   // Types.
 diff --ruN a/stablehlo/stablehlo/integrations/python/tests/stablehlo.py b/stablehlo/stablehlo/integrations/python/tests/stablehlo.py
 --- stablehlo/stablehlo/integrations/python/tests/stablehlo.py
 +++ stablehlo/stablehlo/integrations/python/tests/stablehlo.py
-@@ -283,11 +283,13 @@
+@@ -17,9 +17,10 @@
+ 
+ # pylint: disable=wildcard-import,undefined-variable
+ 
++import io
+ import re
+-import io
+ from mlir import ir
++from mlir import passmanager as pm
+ from mlir.dialects import stablehlo
+ import numpy as np
+ 
+@@ -283,11 +284,13 @@
      expected = arg + arg
      assert (actual == expected).all()
  
@@ -3847,4 +3883,36 @@ diff --ruN a/stablehlo/stablehlo/integrations/python/tests/stablehlo.py b/stable
  
  @run
  def test_serialization_apis():
+@@ -301,6 +304,7 @@
+     serialized = stablehlo.serialize_portable_artifact(m, curr_version)
+     deserialized = stablehlo.deserialize_portable_artifact(context, serialized)
+     assert module_str == str(deserialized)
++
+ 
+ @run
+ def test_str_serialization_apis():
+@@ -321,3 +325,23 @@
+     deserialized = stablehlo.deserialize_portable_artifact(serialized)
+     deserialized_module = ir.Module.parse(deserialized)
+     assert module_str == str(deserialized_module)
++
++
++@run
++def test_register_passes():
++  """Tests pass registration."""
++  with ir.Context() as context:
++    stablehlo.register_dialect(context)
++    module = ir.Module.parse(ASM_FORMAT.format("2xf32"))
++    assert module is not None
++
++    stablehlo.register_passes()
++    pipeline = [
++        'stablehlo-legalize-to-vhlo',
++        'vhlo-legalize-to-stablehlo',
++    ]
++    pipeline = pm.PassManager.parse(f"builtin.module({','.join(pipeline)})")
++
++    cloned_module = module.operation.clone()
++    pipeline.run(cloned_module.operation)
++    assert str(module) == str(cloned_module)
 
