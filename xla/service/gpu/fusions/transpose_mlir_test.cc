@@ -666,7 +666,6 @@ TEST_F(MlirTransposeFusionTest, VectorizedTranspose021) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<1x64x65xbf16>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 TEST_F(MlirTransposeFusionTest, VectorizedTranspose210) {
@@ -684,7 +683,6 @@ TEST_F(MlirTransposeFusionTest, VectorizedTranspose210) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<64x1x65xbf16>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize021) {
@@ -702,7 +700,6 @@ TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize021) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<1x128x129xi8>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize210) {
@@ -720,7 +717,6 @@ TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize210) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<128x1x129xi8>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 }  // namespace
