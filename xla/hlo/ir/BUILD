@@ -71,6 +71,7 @@ cc_library(
         "//xla:shape_tree",
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:window_util",

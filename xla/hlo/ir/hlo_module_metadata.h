@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
