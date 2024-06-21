@@ -719,6 +719,7 @@ cc_test(
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Support",
         "@triton//:TritonDialects",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:logging",
     ],
 )
