@@ -1096,30 +1096,24 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    switch (instr->shape().element_type()) {
-      case F8E4M3FN:
-      case F8E5M2:
-#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60200
-      case F8E4M3FNUZ:
-      case F8E5M2FNUZ:
-#endif
-      case BF16:
-      case F16:
-      case F32:
-        break;
-      default:
-
-        VLOG(1)
-            << "Failed to rewrite " << instr->ToShortString()
-            << " into FP8 Custom Call. Output element type must be "
-#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION >= 60200
-               "F8E4M3FN, F8E5M2, F8E4M3FNUZ, F8E5M2FNUZ, BF16, F16 or F32. "
-#else
-               "F8E4M3FN, F8E5M2, BF16, F16 or F32. "
-#endif
-               "Actual element type is "
-            << PrimitiveType_Name(instr->shape().element_type());
-        return false;
+    PrimitiveType d_type = instr->shape().element_type();
+    bool supported_d_type = (d_type == BF16 || d_type == F16 || d_type == F32);
+    if (IsCuda(gpu_version_) && (d_type == F8E4M3FN || d_type == F8E5M2)) {
+      supported_d_type = true;
+    }
+    if (IsRocm(gpu_version_) && toolkit_version_ >= 60200 &&
+        (d_type == F8E4M3FNUZ || d_type == F8E5M2FNUZ)) {
+      supported_d_type = true;
+    }
+    if (!supported_d_type) {
+      VLOG(1) << "Failed to rewrite " << instr->ToShortString()
+              << " into FP8 Custom Call. Output element type must be "
+              << (IsCuda(gpu_version_) ? "F8E4M3FN, F8E5M2, BF16, F16 or F32. "
+                  : toolkit_version_ >= 60200
+                      ? "F8E4M3FNUZ, F8E5M2FNUZ, BF16, F16 or F32. "
+                      : "BF16, F16 or F32. ")
+              << "Actual element type is " << PrimitiveType_Name(d_type);
+      return false;
     }
 
     // Each operand must have exactly one contracting and one non-contracting
