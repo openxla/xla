@@ -121,6 +121,7 @@ struct SchedulerConfig {
   bool resource_sharing = false;
   bool resource_serializing = false;
   bool depth_based_memory_pressure_reduction = false;
+  bool ready_node_only_memory_pressure_reduction = false;
   int64_t rerun = 0;
 };
 

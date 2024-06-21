@@ -753,13 +753,21 @@ class ReadySetLt {
             IsNop(*a.node), a, IsNop(*b.node), b, "kIsNop")) {
       return *value;
     }
+    // Only consider scheduling ready nodes to reduce memory pressure if the
+    // option is enabled.
+    bool is_a_ready = (a.node->GetReadyTime() - sched_state_.current_time) <= 0;
+    bool is_b_ready = (b.node->GetReadyTime() - sched_state_.current_time) <= 0;
+    bool a_and_b_ready =
+        !sched_state_.config.ready_node_only_memory_pressure_reduction ||
+        (is_a_ready && is_b_ready);
     std::pair<int64_t, int64_t> a_increase = std::make_pair(0LL, 0LL);
     std::pair<int64_t, int64_t> b_increase = std::make_pair(0LL, 0LL);
     // Check if memory pressure tracking is enabled. Even if it evaluate memory
     // pressure.
     if (sched_state_.config.memory_limit != UINT64_MAX &&
-        sched_state_.memory_pressure_tracker->memory_usage() >
-            (sched_state_.config.memory_limit / 2)) {
+        (sched_state_.memory_pressure_tracker->memory_usage() >
+         (sched_state_.config.memory_limit / 2)) &&
+        a_and_b_ready) {
       a_increase = GetMemoryPressureChanges(a);
       b_increase = GetMemoryPressureChanges(b);
       // If out of memory reduce memory at all costs. Choose the instruction
