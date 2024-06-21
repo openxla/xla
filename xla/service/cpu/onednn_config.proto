@@ -60,9 +60,9 @@ message OneDnnFusionConfig {
 message OneDnnTensorLayoutProto {
   uint64 dims = 1;
   oneof layout {
-    OneDnnDataLayoutProto data = 3;
-    OneDnnFilterLayoutProto filter = 4;
-    OneDnnFactorLayoutProto tensor = 5;
+    OneDnnDataLayoutProto data = 2;
+    OneDnnFilterLayoutProto filter = 3;
+    OneDnnFactorLayoutProto tensor = 4;
   }
 }
 
@@ -75,8 +75,13 @@ message OneDnnMatMulConfig {
   bool transpose_b = 2;
 
   OneDnnFusionConfig fusions = 3;
+
+  reserved 4; // was bias_broadcast
+  reserved 5; // was alpha_typecast
+  reserved 6; // was weights_prepacked
+  reserved 7; // was user_scratchpad
+
   OneDnnOptimizationConfig optimization_config = 8;
-  // Next: 9
 }
 
 message OneDnnWindowProto {
