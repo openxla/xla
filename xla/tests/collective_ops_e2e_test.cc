@@ -967,7 +967,7 @@ ENTRY entry {
   HloInstruction* gemm_op =
       FindInstruction(&executable->module(), HloOpcode::kCustomCall);
   EXPECT_THAT(gemm_op, NotNull());
-  EXPECT_TRUE(gemm_op->custom_call_target() == "__cublas$lt$matmul$f8");
+  EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
 }
 }  // namespace
 }  // namespace xla
