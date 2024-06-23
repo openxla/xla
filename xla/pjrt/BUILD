@@ -478,6 +478,7 @@ cc_library(
         "//xla/client:xla_computation",
         "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:protocol_proto_cc",
+        "//xla/pjrt:host_memory_spaces",
         "//xla/service:compiler",
         "//xla/service:computation_layout",
         "//xla/service:computation_placer",
