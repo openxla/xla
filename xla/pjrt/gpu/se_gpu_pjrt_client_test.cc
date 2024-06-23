@@ -876,5 +876,67 @@ TEST(StreamExecutorGpuClientTest, ExecutePinnedHostOutputTupleTest) {
   EXPECT_EQ(result_buffers[1]->memory_space()->kind(), "pinned_host");
 }
 
+TEST(StreamExecutorGpuClientTest, ExecutablePinnedHostOutputMemoryKindTest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  static constexpr char const* kD2HProgram = R"(
+    HloModule f
+
+    ENTRY main.5 {
+      p = s32[4]{0} parameter(0)
+      ROOT cc = s32[4] custom-call(p),
+          custom_call_target="annotate_device_placement",
+          frontend_attributes={_xla_buffer_placement="pinned_host"}
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kD2HProgram, *client));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto memory_kinds,
+                          executable->GetOutputMemoryKinds());
+  EXPECT_EQ(memory_kinds.size(), 1);
+  EXPECT_EQ(memory_kinds[0].size(), 1);
+  EXPECT_EQ(memory_kinds[0][0], "pinned_host");
+}
+
+TEST(StreamExecutorGpuClientTest,
+     ExecutablePinnedHostTupleOutputMemoryKindTest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  static constexpr char const* kD2HProgram = R"(
+    HloModule f
+
+    ENTRY main.5 {
+      p = s32[4]{0} parameter(0)
+      cc = s32[4] custom-call(p),
+          custom_call_target="annotate_device_placement",
+          frontend_attributes={_xla_buffer_placement="pinned_host"}
+      ROOT tuple = (s32[4]{0}, s32[4]{0}) tuple(s32[4]{0} p, s32[4]{0} cc)
+    }
+  )";
+
+  // Build the output shape with the correct memory space set.
+  Shape shape = ShapeUtil::MakeShapeWithDenseLayout(S32, {4}, {0});
+  Shape host_shape = shape;
+  host_shape.mutable_layout()->set_memory_space(Layout::kHostMemorySpace);
+  Shape out_shape = ShapeUtil::MakeTupleShape({shape, host_shape});
+
+  // Set the result layout so that the compiler assertions on memory
+  // spaces pass.
+  xla::CompileOptions options;
+  options.executable_build_options.set_result_layout(out_shape);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kD2HProgram, *client, options));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto memory_kinds,
+                          executable->GetOutputMemoryKinds());
+  EXPECT_EQ(memory_kinds.size(), 1);
+  EXPECT_EQ(memory_kinds[0].size(), 2);
+  EXPECT_EQ(memory_kinds[0][0], "device");
+  EXPECT_EQ(memory_kinds[0][1], "pinned_host");
+}
+
 }  // namespace
 }  // namespace xla
