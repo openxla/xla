@@ -14,7 +14,9 @@ limitations under the License.
 ==============================================================================*/
 #include "tsl/profiler/lib/nvtx_utils.h"
 
+#ifdef __linux__
 #include <sys/syscall.h>
+#endif
 
 #include <cstddef>
 #include <cstdint>
