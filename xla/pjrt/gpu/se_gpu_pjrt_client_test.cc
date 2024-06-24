@@ -971,8 +971,7 @@ TEST(StreamExecutorGpuClientTest, MlirParameterHostMemorySpaceIsSetInHlo) {
   TF_ASSIGN_OR_RETURN(auto module,
                       xla::ParseMlirModuleString(kMlirH2D, context));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto executable,
-                          client->Compile(*module, {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, {}));
   TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
 
   auto first_param_layout =
@@ -1010,8 +1009,7 @@ TEST(StreamExecutorGpuClientTest, MlirResultHostMemorySpaceIsSetInHlo) {
   TF_ASSIGN_OR_RETURN(auto module,
                       xla::ParseMlirModuleString(kMlirD2H, context));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto executable,
-                          client->Compile(*module, {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, {}));
   TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
 
   auto first_param_layout =

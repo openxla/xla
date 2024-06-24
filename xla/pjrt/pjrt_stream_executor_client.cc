@@ -3516,7 +3516,7 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
 
   Shape result_layout;
   ExecutableBuildOptions build_options = options.executable_build_options;
-  TF_ASSIGN_OR_RETURN(auto arg_shapes_and_layouts,
+  TF_ASSIGN_OR_RETURN(auto arg_layouts_and_pointers,
                       LayoutModesToXla(
                           xla_computation, arg_layout_modes, out_layout_modes,
                           arg_memory_spaces, out_memory_spaces,
@@ -3528,7 +3528,7 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
                           },
                           build_options));
 
-  return Compile(xla_computation, arg_shapes_and_layouts.second,
+  return Compile(xla_computation, arg_layouts_and_pointers.second,
                  *(build_options.result_layout()), options);
 }
 
