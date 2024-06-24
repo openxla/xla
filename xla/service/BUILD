@@ -119,6 +119,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@tsl//tsl/platform:errors",
     ],
 )
