@@ -659,7 +659,6 @@ class CollectiveOpsTestE2EWindowedNonWindowed : public CollectiveOpsTestE2E {
     auto opts = GetDebugOptionsForTest();
     opts.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     opts.set_xla_gpu_multi_streamed_windowed_einsum(true);
-    opts.set_xla_gpu_mlir_emitter_level(0);
     opts.set_xla_gpu_graph_min_graph_size(200);
     opts.set_xla_gpu_enable_triton_gemm(false);
     config.set_debug_options(opts);

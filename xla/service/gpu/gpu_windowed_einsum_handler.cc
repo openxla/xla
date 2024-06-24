@@ -495,37 +495,31 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
               {dus_boundary_constant, slice_indices, dus_boundary_constant}));
     }
 
-    // If we have a DS(parameter_index1), then operands are sharded along the
-    // contracting dim. Slice indices will be the contracting dim's slices.
+    // If we have a Dot(DS(parameter_index1)), then operands are sharded along
+    // the contracting dim. Slice indices will be the contracting dim's slices.
     HloInstruction* slice_index;
     HloInstruction* ds_index_constant;
     HloInstruction* remainder;
     HloInstruction* ds_param;
     HloInstruction* ds_operand2;
     HloInstruction* ds_operand3;
-    // There will be 2 DSes for unrolled loops, match for each one.
-    if (Match(inst, m::DynamicSlice(&ds_param).WithPredicate(
-                        [&](const HloInstruction* instr) {
-                          bool op1_is_param =
-                              Match(instr->operand(0),
-                                    m::GetTupleElement(m::Parameter(), 1));
-                          return op1_is_param && instr->operands().size() >= 3;
-                        }))) {
-      ds_operand2 = ds_param->mutable_operand(1);
-      ds_operand3 = ds_param->mutable_operand(2);
-      bool matched_rhs_sharded_contracting =
-          Match(ds_operand2,
+    // There will be 2 dynamic-slices for unrolled loops, match for each one to
+    // get the slice index which will be used to write the corresponding
+    // received shard into cached activation buffer. For unrolled loops, we need
+    // to write to the final buffer twice per iteration, so we need to match for
+    // the correct slice index based on each DS.
+    if (Match(inst, m::Dot(m::Op(), m::DynamicSlice(&ds_param))) &&
+        Match(ds_param->operand(0), m::GetTupleElement(m::Parameter(), 1))) {
+      for (int64_t ds_op_i = 1; ds_op_i < ds_param->operands().size();
+           ds_op_i++) {
+        if (!Match(
+                ds_param->mutable_operand(ds_op_i),
                 m::Reshape(&slice_index, m::DynamicSlice(m::Constant(),
                                                          m::Op(&remainder)))) &&
-          Match(ds_operand3, m::Constant(&ds_index_constant));
-      bool matched_rhs_sharded_noncontracting =
-          Match(ds_operand3,
-                m::Reshape(&slice_index, m::DynamicSlice(m::Constant(),
-                                                         m::Op(&remainder)))) &&
-          Match(ds_operand2, m::Constant(&ds_index_constant));
-      if (!matched_rhs_sharded_contracting &&
-          !matched_rhs_sharded_noncontracting) {
-        return absl::OkStatus();
+            !Match(ds_param->mutable_operand(ds_op_i),
+                   m::Constant(&ds_index_constant))) {
+          return absl::OkStatus();
+        }
       }
       // First DS has slice index calculated based on loop iterator
       // Remainder(add(gte, partition_id))
