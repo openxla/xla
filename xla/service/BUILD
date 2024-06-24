@@ -2856,7 +2856,6 @@ cc_library(
     srcs = ["bitcast_dtypes_expander.cc"],
     hdrs = ["bitcast_dtypes_expander.h"],
     deps = [
-        ":hlo_pass",
         ":op_expander_pass",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -2868,6 +2867,7 @@ cc_library(
         "//xla/client/lib:constants",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
