@@ -306,7 +306,8 @@ cc_library(
         # Remove this once we clean up all the CUDA specific deps.
         "libtpu_on_gce": [":nvtx_utils_libtpu"],
         "//conditions:default": [":nvtx_utils_impl"],
-    })
+    }),
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
