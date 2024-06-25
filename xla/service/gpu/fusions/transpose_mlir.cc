@@ -127,22 +127,20 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
   // the input dimensions are divisible by the vector size. Vectorizing loads
   // for large data types does not help (there's already enough parallelism).
   const auto& device = analysis_.device_info();
-  int prefered_vec_size = kMaxVectorizedBytes / max_element_bytes;
-  while (prefered_vec_size > 1) {
-    int elems_per_thread = prefered_vec_size * prefered_vec_size;
+  for (int vec_size = kMaxVectorizedBytes / max_element_bytes; vec_size > 1;
+       vec_size /= 2) {
+    int elems_per_thread = vec_size * vec_size;
     bool enough_work = Product(block_counts_) * kNumThreadsPerBlock >=
                        elems_per_thread * device.core_count() *
                            device.threads_per_core_limit();
     bool enough_shmem =
         shmem_usage * elems_per_thread <= device.shared_memory_per_block();
-    bool aligned_dims =
-        (input_shape_[2] % prefered_vec_size == 0) &&
-        (input_shape_[permutation_[2]] % prefered_vec_size == 0);
+    bool aligned_dims = (input_shape_[2] % vec_size == 0) &&
+                        (input_shape_[permutation_[2]] % vec_size == 0);
     if (enough_work && enough_shmem && aligned_dims) {
-      compute_block_sizes(prefered_vec_size);
+      compute_block_sizes(vec_size);
       break;
     }
-    prefered_vec_size /= 2;
   }
 }
 
