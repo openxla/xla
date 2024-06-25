@@ -501,8 +501,6 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
     HloInstruction* ds_index_constant;
     HloInstruction* remainder;
     HloInstruction* ds_param;
-    HloInstruction* ds_operand2;
-    HloInstruction* ds_operand3;
     // There will be 2 dynamic-slices for unrolled loops, match for each one to
     // get the slice index which will be used to write the corresponding
     // received shard into cached activation buffer. For unrolled loops, we need
