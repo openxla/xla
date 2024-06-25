@@ -304,9 +304,7 @@ cc_library(
     deprecation = "Use @com_google_absl//absl/status instead.",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
     ],
 )
 
