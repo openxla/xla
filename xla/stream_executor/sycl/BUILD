@@ -9,6 +9,10 @@ load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
 )
+load(
+    "//xla:xla.bzl",
+    "xla_cc_test",
+)
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
@@ -49,6 +53,17 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_collectives_header",
     ]),
     alwayslink = True,  # Registers itself with the PlatformManager.
+)
+
+xla_cc_test(
+    name = "sycl_platform_test",
+    srcs = if_sycl_is_configured(["sycl_platform_test.cc"]),
+    deps = if_sycl_is_configured([
+        ":sycl_platform",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ]),
 )
 
 cc_library(
