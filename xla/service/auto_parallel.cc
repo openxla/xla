@@ -14,57 +14,55 @@ namespace xla {
 
 namespace {
 
-  // static functions only to this file itself
-  void CorrectParameterInstruction(HloParameterInstruction* instruction) {
+  // clones a parameter instruction specifically for single-instruction HloComputations
+  std::unique_ptr<HloInstruction> CloneParameterInstruction(HloParameterInstruction* instruction) {
 
-    // set the parameter count to 0
+    // create parameter-retrieving instruction with same shape, cloned name, param_no of 0
+    Shape s = instruction->shape();
+    absl::string_view name = instruction->name();
 
-
-    return;
+    return std::move(HloInstruction::CreateParameter(0, s, name));
   }
 
   // fixes instructions so that it can be the only one inside of a computation
-  void CorrectSingleInstruction(HloInstruction* instruction) {
+  std::unique_ptr<HloInstruction> CloneSingleInstruction(HloInstruction* instruction) {
+
+    std::unique_ptr<HloInstruction> result;
 
     // choose appropriate correction based on instruction type
     switch (instruction->opcode()) {
       case HloOpcode::kParameter: {
-        CorrectParameterInstruction(Cast<HloParameterInstruction>(instruction));
+        result = CloneParameterInstruction(Cast<HloParameterInstruction>(instruction));
         break;
       }
       default: {
+        result = instruction->Clone();
         break;
       }
     }
 
-    return; 
+    return std::move(result); 
   }
   
   // Creates a module from a single instruction for running a simple pass on
   HloModule* CreateModuleFromInstruction(HloInstruction* instruction) {
 
     // copy the instruction so as not to modify the HloModule
-    std::unique_ptr<HloInstruction> instr_clone = instruction->Clone();
-    CorrectSingleInstruction(instr_clone.get());
+    std::unique_ptr<HloInstruction> instr_clone = std::move(CloneSingleInstruction(instruction));
     
-    VLOG(5) << "\t\t\t" << instruction->ToString();
-
     // create entry computation from the single instruction
     HloComputation::Builder builder{"single-instr"};
     HloInstruction* instrp = builder.AddInstruction(std::move(instr_clone));
     std::unique_ptr<HloComputation> computation = builder.Build(instrp);
 
-    // // construct the module's configuration
-    // HloModuleConfig config{computation->ComputeProgramShape()};
+    // construct the module's configuration
+    HloModuleConfig config{computation->ComputeProgramShape()};
 
-    // // construct the module from the computation
-    // HloModule* module = new HloModule(std::string(instruction->name()), config);
-    // module->AddEmbeddedComputation(std::move(computation));
+    // construct the module from the computation
+    HloModule* module = new HloModule(std::string(instruction->name()), config);
+    module->AddEmbeddedComputation(std::move(computation));
 
-    // VLOG(5) << "Successful instruction creation for " << module->name();
-    // return module;
-    
-    return nullptr;
+    return module;
   }
 
 }   // namespace
