@@ -129,12 +129,12 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
   const auto& device = analysis_.device_info();
   int prefered_vec_size = kMaxVectorizedBytes / max_element_bytes;
   while (prefered_vec_size > 1) {
+    int elems_per_thread = prefered_vec_size * prefered_vec_size;
     bool enough_work = Product(block_counts_) * kNumThreadsPerBlock >=
-                       prefered_vec_size * prefered_vec_size *
-                           device.core_count() *
+                       elems_per_thread * device.core_count() *
                            device.threads_per_core_limit();
-    bool enough_shmem = shmem_usage * prefered_vec_size * prefered_vec_size <=
-                        device.shared_memory_per_block();
+    bool enough_shmem =
+        shmem_usage * elems_per_thread <= device.shared_memory_per_block();
     bool aligned_dims =
         (input_shape_[2] % prefered_vec_size == 0) &&
         (input_shape_[permutation_[2]] % prefered_vec_size == 0);
