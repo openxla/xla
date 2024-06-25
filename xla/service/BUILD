@@ -1859,6 +1859,7 @@ xla_cc_test(
         ":copy_insertion",
         ":cpu_plugin",
         ":flatten_call_graph",
+        ":hlo_alias_analysis",
         ":hlo_dce",
         ":hlo_memory_scheduler",
         ":hlo_ordering",
