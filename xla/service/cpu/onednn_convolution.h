@@ -1,4 +1,4 @@
-/* Copyright 2019 The OpenXLA Authors.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// This is the canonicalize pattern definition file.
+#ifndef XLA_SERVICE_CPU_ONEDNN_CONVOLUTION_H_
+#define XLA_SERVICE_CPU_ONEDNN_CONVOLUTION_H_
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
-include "mlir/IR/OpBase.td"
-include "mhlo/IR/hlo_ops.td"
-include "mhlo/IR/hlo_utils.td"
+namespace xla {
+namespace cpu {
 
-def UnaryToBinaryEinsumEq : NativeCodeCall<
-  "$_builder.getStringAttr(\",\" + $0.getValue().str())">;
+extern "C" {
+extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void** args);
+}  // extern "C"
 
-// Convert UnaryEinsumOp to EinsumOp with two operands with redundant first
-// operand.
-def UnaryEinsumToEinsum : Pat<
-  (MHLO_UnaryEinsumOp $operand, $equation),
-  (MHLO_EinsumOp (MHLO_ConstantOp (GetScalarOfType<1> $operand)),
-                $operand, (UnaryToBinaryEinsumEq $equation))>;
+}  // namespace cpu
+}  // namespace xla
+
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
+#endif  // XLA_SERVICE_CPU_ONEDNN_CONVOLUTION_H_

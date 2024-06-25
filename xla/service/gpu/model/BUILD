@@ -357,6 +357,7 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:hlo_traversal",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu/fusions:triton",
         "//xla/stream_executor:device_description",
@@ -386,6 +387,8 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
+        "//xla/service/gpu:hlo_traversal",
+        "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
@@ -530,7 +533,7 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -634,7 +637,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/gtl:iterator_range",
     ],
 )
@@ -644,6 +646,7 @@ xla_cc_test(
     srcs = ["tiled_hlo_computation_test.cc"],
     deps = [
         ":tiled_hlo_computation",
+        "//xla/service/gpu:backend_configs_cc",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -688,6 +691,7 @@ xla_cc_test(
     srcs = ["symbolic_tile_analysis_test.cc"],
     deps = [
         ":indexing_test_utils",
+        ":symbolic_tile",
         ":symbolic_tile_analysis",
         ":tiled_hlo_computation",
         ":tiled_hlo_instruction",
@@ -704,6 +708,7 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )

@@ -34,12 +34,14 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
+#include "xla/service/gpu/model/symbolic_tile.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/util.h"
+#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -369,8 +371,13 @@ ENTRY main {
 })"));
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
-  EXPECT_THAT(analysis->GetConstraints(), SizeIs(1));
+  const ConstraintExpression& constraints = analysis->GetConstraints();
+  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(1));
+  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(1));
 }
+
+// TODO(b/334043867): add disjunction tests here once disjunctions are actually
+// used in `SymbolicTile`s.
 
 TEST_F(SymbolicTileAnalysisTest, DoesNotBailOutOnConstrainedBitcast) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
@@ -386,7 +393,9 @@ ENTRY main {
 })"));
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
-  EXPECT_THAT(analysis->GetConstraints(), SizeIs(1));
+  const ConstraintExpression& constraints = analysis->GetConstraints();
+  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(1));
+  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(1));
 }
 
 TEST_F(SymbolicTileAnalysisTest, BailOutOnUnsupportedConcatenate) {
@@ -439,7 +448,9 @@ ENTRY main {
 })"));
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
-  EXPECT_THAT(analysis->GetConstraints(), SizeIs(2));
+  const ConstraintExpression& constraints = analysis->GetConstraints();
+  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(1));
+  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(2));
 
   // We expect the constraints here to be
   //    s0 mod 6 in [0, 0]
@@ -462,7 +473,8 @@ ENTRY main {
 
   // Passing tile parameters that satisfy the constraints should let us compute
   // a TiledHloComputation.
-  EXPECT_OK(analysis->ParametersSatisfyConstraints(possible_tile_parameters));
+  TF_EXPECT_OK(
+      analysis->ParametersSatisfyConstraints(possible_tile_parameters));
 
   // Passing tile parameters that do not satisfy the constraints should result
   // in an error...
@@ -470,7 +482,7 @@ ENTRY main {
               StatusIs(absl::StatusCode::kInvalidArgument));
 
   // ... unless we pinky-promise (lie) that they satisfy the constraints ;)
-  EXPECT_OK(analysis->ComputeTiledHloInstructions(
+  TF_EXPECT_OK(analysis->ComputeTiledHloInstructions(
       impossible_tile_parameters, /*constraints_are_known_satisfied=*/true));
 }
 
@@ -494,7 +506,9 @@ ENTRY main {
   ASSERT_TRUE(analysis.has_value());
   // Each bitcast in the above module introduces one constraint. Once they are
   // aggregated, we have two!
-  EXPECT_THAT(analysis->GetConstraints(), SizeIs(2));
+  const ConstraintExpression& constraints = analysis->GetConstraints();
+  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(1));
+  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(2));
 }
 
 TEST_F(SymbolicTileAnalysisTest, BailsOutWhenConstraintsCanNotBeMerged) {
@@ -640,13 +654,13 @@ TEST_F(SymbolicTileAnalysisTest, GetGoodTilingsWorksForSoftmaxExample) {
                           ParseAndReturnVerifiedModule(R"(
 HloModule m
 
-region {
+max_computation {
   param_0 = f32[] parameter(0)
   param_1 = f32[] parameter(1)
   ROOT maximum = f32[] maximum(param_0, param_1)
 }
 
-region.1 {
+add_computation {
   param_0 = f32[] parameter(0)
   param_1 = f32[] parameter(1)
   ROOT add = f32[] add(param_0, param_1)
@@ -656,13 +670,13 @@ fused_computation {
   param_0 = f32[8192,50304] parameter(0)
   bitcast = f32[4,2048,50304] bitcast(param_0)
   constant = f32[] constant(-inf)
-  reduce = f32[8192] reduce(param_0, constant), dimensions={1}, to_apply=region
+  reduce = f32[8192] reduce(param_0, constant), dimensions={1}, to_apply=max_computation
   bitcast.1 = f32[4,2048] bitcast(reduce)
   broadcast = f32[4,2048,50304] broadcast(bitcast.1), dimensions={0,1}
   subtract = f32[4,2048,50304] subtract(bitcast, broadcast)
   exponential = f32[4,2048,50304] exponential(subtract)
   constant.1 = f32[] constant(0)
-  reduce.1 = f32[4,2048] reduce(exponential, constant.1), dimensions={2}, to_apply=region.1
+  reduce.1 = f32[4,2048] reduce(exponential, constant.1), dimensions={2}, to_apply=add_computation
   log = f32[4,2048] log(reduce.1)
   broadcast.1 = f32[4,2048,50304] broadcast(log), dimensions={0,1}
   ROOT subtract.1 = f32[4,2048,50304] subtract(subtract, broadcast.1)
@@ -684,6 +698,106 @@ ENTRY entry_computation {
       analysis.GetGoodTilings());
   EXPECT_THAT(good_tilings, Not(IsEmpty()));
   LogTilingsIfVlog1(good_tilings);
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       GetGoodTilingsWorksForSoftmaxAndReduceExample) {
+  // The example is from
+  // https://github.com/google/paxml/blob/91893818862645f5e9f23b84f530e611551745f6/paxml/contrib/gpu/scripts_gpu/configs.py#L107-L120.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+max_computation {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(param_0, param_1)
+}
+
+add_computation {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  ROOT add = f32[] add(param_0, param_1)
+}
+
+fused_computation {
+  param_0 = f32[8192,50304] parameter(0)
+  param_1 = s32[4,2048] parameter(1)
+  broadcast = s32[4,2048,50304] broadcast(param_1), dimensions={0,1}
+  iota = s32[4,2048,50304] iota(), iota_dimension=2
+  compare = pred[4,2048,50304] compare(broadcast, iota), direction=EQ
+  bitcast = f32[4,2048,50304] bitcast(param_0)
+  constant = f32[] constant(-inf)
+  reduce = f32[8192] reduce(param_0, constant), dimensions={1}, to_apply=max_computation
+  bitcast.1 = f32[4,2048] bitcast(reduce)
+  broadcast.1 = f32[4,2048,50304] broadcast(bitcast.1), dimensions={0,1}
+  subtract = f32[4,2048,50304] subtract(bitcast, broadcast.1)
+  exponential = f32[4,2048,50304] exponential(subtract)
+  constant.1 = f32[] constant(0)
+  reduce.1 = f32[4,2048] reduce(exponential, constant.1), dimensions={2}, to_apply=add_computation
+  log = f32[4,2048] log(reduce.1)
+  broadcast.2 = f32[4,2048,50304] broadcast(log), dimensions={0,1}
+  subtract.1 = f32[4,2048,50304] subtract(subtract, broadcast.2)
+  constant.2 = f32[] constant(0)
+  broadcast.3 = f32[4,2048,50304] broadcast(constant.2), dimensions={}
+  select = f32[4,2048,50304] select(compare, subtract.1, broadcast.3)
+  bitcast.2 = f32[4,2048,393,128] bitcast(select)
+  ROOT reduce.2 = f32[4,2048,393] reduce(bitcast.2, constant.2), dimensions={3}, to_apply=add_computation
+}
+
+ENTRY entry_computation {
+  param_0 = f32[8192,50304] parameter(0)
+  param_1 = s32[4,2048] parameter(1)
+  ROOT fusion = f32[4,2048,393] fusion(param_0, param_1), kind=kCustom, calls=fused_computation, backend_config={"fusion_backend_config":{"kind":"__triton_softmax"}}
+}
+)"));
+
+  std::optional<SymbolicTileAnalysis> opt_analysis =
+      TryAnalyzeModule(module.get());
+  ASSERT_TRUE(opt_analysis.has_value());
+  const SymbolicTileAnalysis& analysis = opt_analysis.value();
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<SymbolicTileAnalysis::Tiling> good_tilings,
+      analysis.GetGoodTilings());
+  EXPECT_THAT(good_tilings, Not(IsEmpty()));
+  LogTilingsIfVlog1(good_tilings);
+}
+
+// This test means to catch integer overflow errors when run with ASan build.
+TEST_F(SymbolicTileAnalysisTest,
+       FusionWithNumberOfTilesLargerThanInt32MaxIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule softmax
+
+fused_computation {
+  param_0 = f16[65538,32768]{1,0} parameter(0)
+  ROOT log = f16[65538,32768]{1,0} log(param_0)
+}
+
+ENTRY main {
+  param_0 = f16[65538,32768]{1,0} parameter(0)
+  ROOT fusion = f16[65538,32768]{1,0} fusion(param_0), kind=kLoop, calls=fused_computation
+}
+)"));
+
+  std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
+  ASSERT_TRUE(analysis.has_value());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_hlo_computation,
+      analysis->ComputeTiledHloInstructions(/*tile_parameters=*/{1, 1}));
+
+  EXPECT_THAT(*tiled_hlo_computation.GetRoot(),
+              MatchTiledHloInstruction(
+                  /*tile_sizes=*/{1, 1},
+                  /*tile_strides=*/{1, 1},
+                  /*block_id_to_tile_offsets_indexing=*/R"(
+    (d0) -> (d0 floordiv 32768, d0 mod 32768)
+    domain:
+    d0 in [0, 2147549183]
+  )"));
 }
 
 }  // namespace

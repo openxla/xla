@@ -50,47 +50,38 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
+#include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
-bool TritonTest::SkipBF16Tests() {
-  if (std::holds_alternative<stream_executor::RocmComputeCapability>(
-          GpuComputeComp())) {
-    auto rcc = device_desc().rocm_compute_capability();
-    return !rcc.has_bf16_dtype_support();
+bool SupportsBF16(const stream_executor::GpuComputeCapability& cc) {
+  if (std::holds_alternative<stream_executor::CudaComputeCapability>(cc)) {
+    return std::get<stream_executor::CudaComputeCapability>(cc).IsAtLeast(
+        se::CudaComputeCapability::AMPERE);
+  } else if (std::holds_alternative<stream_executor::RocmComputeCapability>(
+                 cc)) {
+    return std::get<stream_executor::RocmComputeCapability>(cc)
+        .has_bf16_dtype_support();
   }
-  return !GetCudaComputeCapability().IsAtLeast(
-      se::CudaComputeCapability::AMPERE);
+  CHECK(false);
 }
 
-stream_executor::GpuComputeCapability TritonTest::CudaAmpereOrRocm() {
-  if (std::holds_alternative<stream_executor::RocmComputeCapability>(
-          GpuComputeComp())) {
-    return stream_executor::GpuComputeCapability{
-        device_desc().rocm_compute_capability()};
-  } else {
-    return stream_executor::GpuComputeCapability{
-        stream_executor::CudaComputeCapability{
-            stream_executor::CudaComputeCapability::AMPERE, 0}};
-  }
-}
-
-absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheck(
-    absl::string_view hlo_text,
+absl::Status CreateTritonIrAndFileCheck(
+    HloTestBase* test, absl::string_view hlo_text,
     const BlockLevelParameters& block_level_parameters,
     absl::string_view triton_fusion_name, absl::string_view filecheck_pattern) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> verified_module,
-                      ParseAndReturnVerifiedModule(hlo_text));
+                      test->ParseAndReturnVerifiedModule(hlo_text));
   auto* comp = verified_module->GetComputationWithName(triton_fusion_name);
   TF_RET_CHECK(comp != nullptr);
   return CreateTritonIrAndFileCheck(*comp, block_level_parameters,
                                     filecheck_pattern);
 }
 
-absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheck(
+absl::Status CreateTritonIrAndFileCheck(
     const HloComputation& computation,
     const BlockLevelParameters& block_level_parameters,
     absl::string_view filecheck_pattern) {
@@ -112,36 +103,58 @@ absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheck(
   return absl::OkStatus();
 }
 
-absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheckForDot(
-    absl::string_view hlo_text, absl::string_view triton_fusion_name,
-    absl::string_view filecheck_pattern) {
-  return CreateTritonIrAndFileCheck(hlo_text, /*block_level_parameters=*/{},
+absl::Status CreateTritonIrAndFileCheckForDot(
+    HloTestBase* test, absl::string_view hlo_text,
+    absl::string_view triton_fusion_name, absl::string_view filecheck_pattern) {
+  return CreateTritonIrAndFileCheck(test, hlo_text,
+                                    /*block_level_parameters=*/{},
                                     triton_fusion_name, filecheck_pattern);
 }
 
-absl::Status TritonFilecheckTest::CreateTritonIrAndFileCheckForDot(
+absl::Status CreateTritonIrAndFileCheckForDot(
     const HloComputation& computation, absl::string_view filecheck_pattern) {
   return CreateTritonIrAndFileCheck(computation, /*block_level_parameters=*/{},
                                     filecheck_pattern);
 }
 
-absl::StatusOr<bool> TritonSupportTest::ApplyFloatNormalization(
-    HloModule* module) {
-  const GpuFloatSupport bf16_support(GetCudaComputeCapability(), BF16);
+absl::StatusOr<bool> ApplyFloatNormalization(
+    HloModule* module, const stream_executor::GpuComputeCapability& cc) {
+  const GpuFloatSupport bf16_support(cc, BF16);
   HloPassPipeline pipeline("hlo float normalization");
   pipeline.AddPass<FloatNormalization>(&bf16_support);
   return pipeline.Run(module);
 }
 
-std::string TritonSupportTestParamsToString(
-    const ::testing::TestParamInfo<std::tuple<PrimitiveType, HloOpcode>>&
-        data) {
-  PrimitiveType data_type;
-  HloOpcode opcode;
-  std::tie(data_type, opcode) = data.param;
+namespace {
+
+std::string PrimitiveTypeAndHloOpcodeToString(PrimitiveType data_type,
+                                              HloOpcode opcode) {
   return absl::StrCat(
       primitive_util::LowercasePrimitiveTypeName(data_type), "_",
       absl::StrReplaceAll(HloOpcodeString(opcode), {{"-", "_"}}));
+}
+
+}  // namespace
+
+std::string TritonSupportTestParamsToString(
+    const ::testing::TestParamInfo<std::tuple<PrimitiveType, HloOpcode>>&
+        data) {
+  auto [data_type, opcode] = data.param;
+  return PrimitiveTypeAndHloOpcodeToString(data_type, opcode);
+}
+
+std::string TritonSupportTestTypeOpcodeAndDeviceToString(
+    const ::testing::TestParamInfo<
+        std::tuple<PrimitiveType, HloOpcode, se::GpuComputeCapability>>& data) {
+  auto [data_type, opcode, cc] = data.param;
+  std::string cc_str;
+  if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
+    cc_str = std::get<se::CudaComputeCapability>(cc).ToString();
+  } else {
+    cc_str = "rocm";
+  }
+  return absl::StrCat(PrimitiveTypeAndHloOpcodeToString(data_type, opcode), "_",
+                      absl::StrReplaceAll(cc_str, {{".", ""}}));
 }
 
 namespace {
@@ -172,7 +185,8 @@ absl::Status ConvertEntryToTritonFusion(HloModule* module) {
       module->entry_computation()));
 
   gpu::GpuBackendConfig gpu_config;
-  gpu_config.mutable_fusion_backend_config()->set_kind(kTritonFusionKind);
+  gpu_config.mutable_fusion_backend_config()->set_kind(
+      std::string(kTritonFusionKind));
   TF_RETURN_IF_ERROR(fusion->set_backend_config(gpu_config));
 
   auto new_entry =
@@ -184,8 +198,8 @@ absl::Status ConvertEntryToTritonFusion(HloModule* module) {
 
 }  // namespace
 
-absl::StatusOr<TritonSupportTest::TestedInstruction>
-TritonSupportTest::ParseTemplateAndGetInstruction(
+absl::StatusOr<TritonSupportTestBase::TestedInstruction>
+TritonSupportTestBase::ParseTemplateAndGetInstruction(
     absl::string_view hlo_template, xla::PrimitiveType data_type,
     xla::HloOpcode opcode) {
   const std::string hlo_text = absl::Substitute(

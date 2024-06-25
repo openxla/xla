@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 
 namespace xla {
 
@@ -53,7 +54,10 @@ class XlaRuntimeError : public std::runtime_error {
   }
 
   static bool ShowStackTraces() {
-    return absl::string_view(getenv("JAX_TRACEBACK_FILTERING")) == "off";
+    if (char* env = getenv("JAX_TRACEBACK_FILTERING")) {
+      return absl::string_view(env) == "off";
+    }
+    return false;
   }
 
   std::optional<absl::Status> status_;

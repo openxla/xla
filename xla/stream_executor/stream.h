@@ -192,8 +192,12 @@ class Stream {
   // of the given target size. gpu_src/dst must be pointers to GPU memory and
   // peer access must be enabled between their owning StreamExecutors.
   virtual absl::Status Memcpy(DeviceMemoryBase *gpu_dst,
-                              const DeviceMemoryBase &gpu_src,
-                              uint64_t size) = 0;
+                              const DeviceMemoryBase &gpu_src, uint64_t size) {
+    return absl::UnimplementedError(
+        "Memcpy from device to device is not implemented for this "
+        "stream.");
+  }
+
   absl::Status MemcpyD2D(DeviceMemoryBase *gpu_dst,
                          const DeviceMemoryBase &gpu_src, uint64_t size) {
     return Memcpy(gpu_dst, gpu_src, size);
@@ -209,7 +213,10 @@ class Stream {
   // size bytes, where bytes must be evenly 32-bit sized (i.e. evenly divisible
   // by 4). The location must not be null.
   virtual absl::Status Memset32(DeviceMemoryBase *location, uint32_t pattern,
-                                uint64_t size) = 0;
+                                uint64_t size) {
+    return absl::UnimplementedError(
+        "Memset32 is not supported on this stream.");
+  }
 
   // (Synchronously) block the host code waiting for the operations
   // entrained on the stream (enqueued to this point in program

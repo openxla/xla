@@ -78,11 +78,11 @@ IndexingMap ComputeBlockIdToOutputTileIndexing(
     mlir::MLIRContext* mlir_context) {
   CHECK_EQ(dimensions.size(), tile_sizes.size());  // Crash OK
 
-  int num_tiles = 1;
+  int64_t num_tiles = 1;
   std::vector<int64_t> outer_loop_bounds;
   outer_loop_bounds.reserve(dimensions.size());
   for (auto [dim_size, tile_size] : llvm::zip(dimensions, tile_sizes)) {
-    int num_tiles_per_dim = (dim_size + tile_size - 1) / tile_size;
+    int64_t num_tiles_per_dim = (dim_size + tile_size - 1) / tile_size;
 
     num_tiles *= num_tiles_per_dim;
     outer_loop_bounds.push_back(num_tiles_per_dim);
@@ -171,7 +171,7 @@ absl::StatusOr<IndexingMap> ComputeBlockIdToTileOffsetIndexing(
       const HloInstructionAdaptor&, IndexingMap)>
       get_tiled_hlo_instruction;
 
-  std::optional<ConstraintMap> constraints = ConstraintMap();
+  ConstraintExpression constraints;
 
   // Create a new tiled hlo instruction or return existing instruction from
   // cache for the given hlo and indexing map.
@@ -215,13 +215,11 @@ absl::StatusOr<IndexingMap> ComputeBlockIdToTileOffsetIndexing(
                               << hlo->ToString();
     }
 
-    constraints = MergeConstraintMapIfPresentAndCompatible(
-        std::move(constraints), symbolic_tile->constraints());
+    constraints = ConstraintExpression::And(std::move(constraints),
+                                            symbolic_tile->constraints());
 
-    if (!constraints.has_value()) {
-      return FusionDecision{} << "Failed to merge constraints of "
-                              << hlo->ToString() << " in pre-existing "
-                              << "constraint map";
+    if (!constraints.is_satisfiable()) {
+      return FusionDecision{} << "Fusion has unsatisfiable constraints";
     }
 
     tiled_hlo_instructions.push_back(
@@ -247,6 +245,12 @@ absl::StatusOr<IndexingMap> ComputeBlockIdToTileOffsetIndexing(
         IndexingMap operand_indexing_map =
             ComposeIndexingMaps(tiled_hlo_instruction->indexing_map(),
                                 *operand_indexing_map_set.begin());
+        if (operand_indexing_map.IsUndefined()) {
+          return FusionDecision{}
+                 << "Couldn't derive indexing map for instruction "
+                 << tiled_hlo_instruction->hlo()->ToString() << " and operand "
+                 << operand.instruction().ToString();
+        }
         operand_indexing_map.Simplify();
         operand_indexing_map.RescaleSymbols();
         operand_indexing_map.RemoveUnusedSymbols();
@@ -287,36 +291,58 @@ absl::StatusOr<IndexingMap> ComputeBlockIdToTileOffsetIndexing(
   });
 
   return SymbolicTileAnalysis(std::move(tiled_hlo_instructions),
-                              std::move(*constraints), ctx);
+                              std::move(constraints), ctx);
 }
 
 absl::StatusOr<bool> SymbolicTileAnalysis::ParametersSatisfyConstraints(
     absl::Span<const int64_t> tile_parameters) const {
+  if (!constraints_.is_satisfiable()) {
+    return absl::FailedPreconditionError(
+        "SymbolicTileAnalysis's constraints are not satisfiable. "
+        "This should never happen.");
+  }
+
+  // Handle the unconstrained case.
+  if (constraints_.IsAlwaysSatisfied()) {
+    return true;
+  }
+
   // Populate parameter map.
   llvm::SmallVector<AffineExpr> parameters = llvm::to_vector(
       llvm::map_range(tile_parameters, [this](const int64_t v) -> AffineExpr {
         return mlir::getAffineConstantExpr(v, context_);
       }));
 
-  for (auto [constrained_expr, interval] : constraints_) {
-    AffineExpr constrained_expr_value =
-        constrained_expr.replaceSymbols(parameters);
-    if (constrained_expr_value.getKind() != mlir::AffineExprKind::Constant) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Failed to reduce ", AffineMapPrinter().ToString(constrained_expr),
-          " to a constant with tile parameters ",
-          absl::StrJoin(tile_parameters, ", ")));
-    }
+  // TODO(bchetioui): replace with convenience methods in
+  // `ConstraintExpression`.
+  bool constraints_are_satisfied = false;
+  for (const ConstraintExpression::ConjointConstraints& conjunction :
+       constraints_.DisjointConjointConstraints()) {
+    bool conjunction_is_satisfied = true;
+    for (const auto& [constrained_expr, interval] : conjunction) {
+      AffineExpr constrained_expr_value =
+          constrained_expr.replaceSymbols(parameters);
+      if (constrained_expr_value.getKind() != mlir::AffineExprKind::Constant) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Failed to reduce ", AffineMapPrinter().ToString(constrained_expr),
+            " to a constant with tile parameters ",
+            absl::StrJoin(tile_parameters, ", ")));
+      }
 
-    int64_t constrained_value =
-        llvm::cast<mlir::AffineConstantExpr>(constrained_expr_value).getValue();
+      int64_t constrained_value =
+          llvm::cast<mlir::AffineConstantExpr>(constrained_expr_value)
+              .getValue();
 
-    if (constrained_value < interval.lower ||
-        constrained_value > interval.upper) {
-      return false;
+      if (constrained_value < interval.lower ||
+          constrained_value > interval.upper) {
+        conjunction_is_satisfied = false;
+        break;
+      }
     }
+    constraints_are_satisfied |= conjunction_is_satisfied;
   }
-  return true;
+
+  return constraints_are_satisfied;
 }
 
 absl::StatusOr<TiledHloComputation>

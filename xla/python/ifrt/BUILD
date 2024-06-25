@@ -90,7 +90,6 @@ cc_library(
         ":sharding_proto_cc",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -135,6 +134,31 @@ xla_cc_test(
         ":mock",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "attribute_map",
+    srcs = ["attribute_map.cc"],
+    hdrs = ["attribute_map.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":attribute_map_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "attribute_map_test",
+    size = "small",
+    srcs = ["attribute_map_test.cc"],
+    deps = [
+        ":attribute_map",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -220,8 +244,8 @@ cc_library(
     hdrs = ["test_util.h"],
     deps = [
         ":ifrt",
-        "//xla:statusor",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -284,6 +308,11 @@ xla_cc_test(
         ":array_impl_test_lib",
         ":no_impl_test_main",
     ],
+)
+
+tf_proto_library(
+    name = "attribute_map_proto",
+    srcs = ["attribute_map.proto"],
 )
 
 cc_library(

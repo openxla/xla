@@ -123,7 +123,7 @@ static bool NeedsAsyncCommsStream(Thunk& thunk) {
 // `GpuExecutable`. At run time `Thunks` may use additional streams to launch
 // compute operations in parallel.
 static absl::flat_hash_set<ExecutionStreamId> GetExecutionStreamIds(
-    const ThunkSequence& thunks) {
+    const SequentialThunk& thunks) {
   absl::flat_hash_set<ExecutionStreamId> stream_ids;
   ForAllThunks(
       [&](const Thunk* thunk) {
@@ -355,11 +355,18 @@ absl::Status RendezvousAfterInitialization(
 
 absl::Status ExecuteThunks(
     const DebugOptions* debug_options, const std::string& module_name,
-    ModuleIdentifier module_id, const ThunkSequence& thunk_sequence,
+    ModuleIdentifier module_id, SequentialThunk& thunk_sequence,
     Thunk::ExecutableSource executable_source,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
     const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids) {
+  bool mock_collectives =
+      run_options->run_options().gpu_executable_run_options()
+          ? run_options->run_options()
+                .gpu_executable_run_options()
+                ->enable_mock_nccl_collectives()
+          : false;
+
   int64_t collective_max_nchannels =
       debug_options ? debug_options->xla_gpu_nccl_collective_max_nchannels()
                     : 0;
@@ -382,9 +389,11 @@ absl::Status ExecuteThunks(
   absl::InlinedVector<se::Stream*, kAsyncStreamTotal> async_comms_streams(
       kAsyncStreamTotal, nullptr);
   se::Stream* command_buffer_trace_stream = nullptr;
+  std::vector<StreamPool::Ptr> async_comms_streams_ownr;
+  StreamPool::Ptr borrowed_command_buffer_trace_stream;
   if (run_options->HasStreamBorrower()) {
     TF_ASSIGN_OR_RETURN(
-        std::vector<StreamPool::Ptr> async_comms_streams_ownr,
+        async_comms_streams_ownr,
         run_options->BorrowStreams(executor->device_ordinal(),
                                    kAsyncStreamTotal, stream_priority));
     for (int64_t i = 0; i < kAsyncStreamTotal; ++i) {
@@ -392,7 +401,7 @@ absl::Status ExecuteThunks(
     }
 
     // Borrow stream for tracing command buffers.
-    TF_ASSIGN_OR_RETURN(StreamPool::Ptr borrowed_command_buffer_trace_stream,
+    TF_ASSIGN_OR_RETURN(borrowed_command_buffer_trace_stream,
                         run_options->BorrowStream(executor->device_ordinal()));
     command_buffer_trace_stream = borrowed_command_buffer_trace_stream.get();
   }
@@ -441,15 +450,17 @@ absl::Status ExecuteThunks(
     Thunk::PrepareParams prepare_params{&collective_params};
 
     tsl::profiler::TraceMe trace([&] { return "Thunks::Prepare"; });
-    for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
-      TF_RETURN_IF_ERROR(thunk->Prepare(prepare_params, resource_requests));
-    }
+    TF_RETURN_IF_ERROR(
+        thunk_sequence.Prepare(prepare_params, resource_requests));
   }
 
   // Acquire collective cliques requested by thunks.
-  TF_ASSIGN_OR_RETURN(
-      Thunk::CollectiveCliques collective_cliques,
-      resource_requests.AcquireCollectiveCliques(collective_params));
+  Thunk::CollectiveCliques collective_cliques;
+  if (!mock_collectives) {
+    TF_ASSIGN_OR_RETURN(
+        collective_cliques,
+        resource_requests.AcquireCollectiveCliques(collective_params));
+  }
 
   {  // Initialize thunks using prepared resources before execution.
     Thunk::InitializeParams initialize_params{
@@ -463,9 +474,7 @@ absl::Status ExecuteThunks(
         run_options->run_options().ffi_execution_context()};
 
     tsl::profiler::TraceMe trace([&] { return "Thunks::Initialize"; });
-    for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
-      TF_RETURN_IF_ERROR(thunk->Initialize(initialize_params));
-    }
+    TF_RETURN_IF_ERROR(thunk_sequence.Initialize(initialize_params));
   }
 
   // Maybe join a round of rendezvous after thunk initialization. We do this
@@ -481,14 +490,8 @@ absl::Status ExecuteThunks(
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       std::move(additional_execution_streams));
 
-  for (const std::unique_ptr<Thunk>& thunk : thunk_sequence) {
-    // Annotate execution of this op if tracing was enabled when we started
-    // running this module.  If tracing is enabled *while* we're running the
-    // module, we won't get any data, but that's probably an OK trade-off.
-    auto scoped_annotation = GetKernelAnnotation(thunk->profile_annotation());
-    VLOG(3) << "Executing the thunk for " << thunk->profile_annotation();
-    TF_RETURN_IF_ERROR(thunk->ExecuteOnStream(execute_params));
-  }
+  TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
+
   return MaybeSyncAndProfile(run_options, std::move(execution_timer),
                              block_host_until_done ? main_stream : nullptr);
 }

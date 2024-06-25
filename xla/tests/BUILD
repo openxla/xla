@@ -1177,6 +1177,7 @@ xla_test(
         "optonly",
         # Timed out on 2020-07-18
         "nozapfhahn",
+        "test_xla_cpu_thunks",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
         "@com_google_absl//absl/memory",
@@ -1828,6 +1829,7 @@ xla_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
     backends = ["cpu"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2167,6 +2169,7 @@ xla_test(
         "gpu",
         "cpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2174,7 +2177,10 @@ xla_test(
         ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
+        "//xla/service:computation_placer",
+        "//xla/service:hlo_module_config",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
@@ -2184,8 +2190,8 @@ xla_test(
 )
 
 xla_test(
-    name = "collective_ops_test_e2e",
-    srcs = ["collective_ops_test_e2e.cc"],
+    name = "collective_ops_e2e_test",
+    srcs = ["collective_ops_e2e_test.cc"],
     backend_tags = {
         # This test is tagged "manual" because it requires multiple GPUs, and
         # Forge only supports single-GPU tests.  Guitar skips "manual" tests
@@ -2975,6 +2981,26 @@ xla_test(
         "//xla:test_helpers",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service/cpu:onednn_util",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_test(
+    name = "onednn_convolution_test",
+    srcs = ["onednn_convolution_test.cc"],
+    backends = [
+        "cpu",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:test",
+        "//xla:test_helpers",
+        "//xla/hlo/utils:hlo_matchers",
         "@tsl//tsl/platform:platform_port",
     ],
 )

@@ -21,12 +21,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/client/xla_computation.h"
 #include "xla/literal.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/service.h"
-#include "xla/statusor.h"
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -40,7 +40,7 @@ class Client {
   explicit Client(Service* stub);
   virtual ~Client();
 
-  using XlaComputationInstance = XlaComputationInstance;
+  using XlaComputationInstance = xla::XlaComputationInstance;
 
   // Compile the computation with the given argument shapes and returns the
   // handle to the compiled executable. The compiled executable is cached on the

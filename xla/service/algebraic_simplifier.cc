@@ -94,6 +94,19 @@ bool IsAll(const HloInstruction* op, int8_t value) {
   }
 }
 
+// Unwraps broadcasts hunting for a constant.  If we find one, checks if the
+// constant contains only the given value.
+bool IsAllFloat(const HloInstruction* op, float value) {
+  switch (op->opcode()) {
+    case HloOpcode::kBroadcast:
+      return IsAllFloat(op->operand(0), value);
+    case HloOpcode::kConstant:
+      return op->literal().IsAllFloat(value);
+    default:
+      return false;
+  }
+}
+
 bool IsAll(const HloInstruction* op, const Literal& scalar) {
   CHECK(ShapeUtil::IsScalar(scalar.shape()));
   switch (op->opcode()) {
@@ -4569,6 +4582,13 @@ absl::Status AlgebraicSimplifierVisitor::HandleMultiply(
         HloInstruction::CreateUnary(multiply->shape(), HloOpcode::kExp, add));
   }
 
+  VLOG(10) << "trying transform [sqrt(x) * sqrt(x) => x], for x >= 0 "
+           << multiply->ToString();
+  if (Match(multiply, m::Multiply(m::Sqrt(m::Op(&a)), m::Sqrt(m::Op(&a)))) &&
+      IsNonNegative(a, options_)) {
+    return ReplaceInstruction(multiply, a);
+  }
+
   VLOG(10) << "trying transform [rsqrt(B) * rsqrt(B) => 1/B], for B >= 0 "
            << multiply->ToString();
   HloInstruction* b;
@@ -5447,6 +5467,14 @@ absl::Status AlgebraicSimplifierVisitor::HandlePower(HloInstruction* power) {
     return ReplaceWithNewInstruction(
         power, HloInstruction::CreateBinary(power->shape(), HloOpcode::kDivide,
                                             MakeScalarLike(lhs, 1), lhs));
+  }
+
+  VLOG(10) << "trying transform [pow(A, 0.5) => sqrt(A)], for A >= 0: "
+           << power->ToString();
+  if (IsAllFloat(rhs, 0.5) && IsNonNegative(lhs, options_)) {
+    return ReplaceWithNewInstruction(
+        power,
+        HloInstruction::CreateUnary(power->shape(), HloOpcode::kSqrt, lhs));
   }
 
   return absl::OkStatus();
@@ -8805,6 +8833,82 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::SwapConvOperands(
   return true;
 }
 
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::IsOneDnnRewritableBF16Conv(
+    HloInstruction** convolution) {
+  bool can_rewrite = true;
+  auto from_dtype = (*convolution)->shape().element_type();
+  if (!options_.executing_on_cpu() || from_dtype != PrimitiveType::BF16) {
+    return false;
+  }
+  if ((*convolution)->batch_group_count() != 1 ||
+      (*convolution)->operand(1)->opcode() == HloOpcode::kReverse) {
+    can_rewrite = false;
+  }
+  const Shape& inp_shape = (*convolution)->operand(0)->shape();
+  const Shape& ker_shape = (*convolution)->operand(1)->shape();
+  const Shape& out_shape = (*convolution)->shape();
+  if (ShapeUtil::IsZeroElementArray(inp_shape) ||
+      ShapeUtil::IsZeroElementArray(ker_shape) ||
+      ShapeUtil::IsZeroElementArray(out_shape)) {
+    can_rewrite = false;
+  }
+
+  auto dims = (*convolution)->window().dimensions().size();
+  if (dims >= 4 || dims <= 0) can_rewrite = false;
+
+  if (inp_shape.rank() != ker_shape.rank() ||
+      inp_shape.rank() != out_shape.rank()) {
+    can_rewrite = false;
+  }
+
+  for (auto it = (*convolution)->window().dimensions().begin();
+       it != (*convolution)->window().dimensions().end(); it++) {
+    if ((*it).padding_low() < 0 || (*it).padding_high() < 0 ||
+        (*it).stride() < 0 || (*it).base_dilation() != 1 ||
+        (*it).window_reversal()) {
+      can_rewrite = false;
+    }
+  }
+
+  if (can_rewrite) {
+    return true;
+  }
+
+  // To ensure the correctness of the generated LLVM IR, we cast
+  // the convolutions that are not rewritable to onednn custom calls to higher
+  // precision. This does not compromise performance as lower floating point
+  // precision convolutions are converted to higher precision in the regular
+  // optimization pipeline.
+  auto to_dtype = PrimitiveType::F32;
+  std::vector<HloInstruction*> new_operands;
+  auto from_dtype_operands = (*convolution)->operands();
+
+  std::for_each(
+      from_dtype_operands.begin(), from_dtype_operands.end(),
+      [&new_operands, &to_dtype](HloInstruction* instr) {
+        new_operands.push_back(
+            instr->AddInstruction(HloInstruction::CreateConvert(
+                ShapeUtil::ChangeElementType(instr->shape(), to_dtype),
+                instr)));
+      });
+
+  HloInstruction* to_conv =
+      (*convolution)
+          ->AddInstruction(
+              (*convolution)
+                  ->CloneWithNewOperands(ShapeUtil::ChangeElementType(
+                                             (*convolution)->shape(), to_dtype),
+                                         new_operands));
+
+  HloInstruction* from_conv =
+      to_conv->AddInstruction(HloInstruction::CreateConvert(
+          ShapeUtil::ChangeElementType(to_conv->shape(), from_dtype), to_conv));
+
+  TF_RETURN_IF_ERROR(ReplaceInstruction(*convolution, from_conv));
+  *convolution = to_conv;
+  return false;
+}
+
 absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToDot(
     HloInstruction* convolution) {
   auto* lhs = convolution->mutable_operand(0);
@@ -9064,6 +9168,15 @@ absl::Status AlgebraicSimplifierVisitor::HandleConvolution(
   if (swapped) {
     return absl::OkStatus();
   }
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+  // Convert the data type back to F32 if we can't rewrite BF16 convolution to
+  // oneDNN custom call.
+  TF_ASSIGN_OR_RETURN(bool can_rewrite_bf16_conv_to_onednn,
+                      IsOneDnnRewritableBF16Conv(&convolution));
+  if (can_rewrite_bf16_conv_to_onednn) {
+    return absl::OkStatus();
+  }
+#endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   // Try to replace the convolution with a kDot or a kMultiply instruction.
   TF_ASSIGN_OR_RETURN(bool replaced_with_dot, SimplifyConvToDot(convolution));
   if (replaced_with_dot) {

@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -49,22 +50,32 @@ namespace xla {
 namespace gpu {
 namespace {
 
-bool CombinationCrashesTriton(
-    PrimitiveType lhs_type, PrimitiveType rhs_type, PrimitiveType output_type,
-    se::CudaComputeCapability cuda_compute_capability) {
-  if (!cuda_compute_capability.IsAtLeastHopper() &&
-      (lhs_type == F8E4M3FN || rhs_type == F8E4M3FN ||
-       output_type == F8E4M3FN)) {
-    return true;
+se::GpuComputeCapability GetComputeCapability() {
+  // TODO(b/348572380) Make this more general and test additional platforms.
+  return se::CudaComputeCapability::Ampere();
+}
+
+bool CombinationCrashesTriton(PrimitiveType lhs_type, PrimitiveType rhs_type,
+                              PrimitiveType output_type,
+                              se::GpuComputeCapability gpu_compute_capability) {
+  if (std::holds_alternative<se::CudaComputeCapability>(
+          gpu_compute_capability)) {
+    auto cuda_compute_capability =
+        std::get<se::CudaComputeCapability>(gpu_compute_capability);
+    if (!cuda_compute_capability.IsAtLeastHopper() &&
+        (lhs_type == F8E4M3FN || rhs_type == F8E4M3FN ||
+         output_type == F8E4M3FN)) {
+      return true;
+    }
   }
   return false;
 }
 
-class DotTest : public TritonSupportTestWithParam {
+class DotTest : public TritonSupportTestBaseWithParam {
  protected:
   void TestDotWithTypes(PrimitiveType lhs_type, PrimitiveType rhs_type,
                         PrimitiveType output_type) {
-    if (lhs_type == BF16 && SkipBF16Tests()) {
+    if (lhs_type == BF16 && !SupportsBF16(GetComputeCapability())) {
       GTEST_SKIP();
     }
     const HloOpcode opcode = HloOpcode::kDot;
@@ -101,28 +112,29 @@ ENTRY e {
     TF_ASSERT_OK_AND_ASSIGN(
         TestedInstruction ti,
         ParseTemplateAndGetInstruction(hlo_test, /*data_type=*/{}, opcode));
-    if (legacy_triton::IsTritonSupportedInstruction(
-            ti.Instruction(), GetCudaComputeCapability())) {
-      TF_EXPECT_OK(ApplyFloatNormalization(ti.Module().get()));
+    if (legacy_triton::IsTritonSupportedInstruction(ti.Instruction(),
+                                                    GetComputeCapability())) {
+      TF_EXPECT_OK(
+          ApplyFloatNormalization(ti.Module().get(), GetComputeCapability()));
       EXPECT_TRUE(RunAndCompareNoHloPasses(
           std::move(ti.Module()),
           ErrorSpec{/*aabs=*/primitive_util::IsF8Type(lhs_type) ? 1.0 : 2e-4,
                     /*arel=*/2e-4}));
     } else {
       if (CombinationCrashesTriton(lhs_type, rhs_type, output_type,
-                                   GetCudaComputeCapability())) {
+                                   GetComputeCapability())) {
         return;
       }
       const se::DeviceDescription dev_info =
-          TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
+          TestGpuDeviceInfo::RTXA6000DeviceInfo(GetComputeCapability());
       BlockLevelParameters block_level_parameters;
       block_level_parameters.num_ctas = 1;
       block_level_parameters.num_stages = 4;
       block_level_parameters.num_warps = 8;
       EXPECT_THAT(
-          TritonWrapper("test_fn", &ti.TritonFusion(),
-                        GetCudaComputeCapability(), dev_info,
-                        block_level_parameters, &llvm_module_, mlir_context_),
+          TritonWrapper("test_fn", &ti.TritonFusion(), GetComputeCapability(),
+                        dev_info, block_level_parameters, &llvm_module_,
+                        mlir_context_),
           tsl::testing::StatusIs(
               absl::StatusCode::kInternal,
               ::testing::HasSubstr("Failed to compile Triton kernel")));
@@ -185,12 +197,12 @@ std::string DynamicSliceTestParamToString(
 // ::testing::ConvertGenerator, which broke the build in some OSS
 // configurations.
 class DynamicSliceTest
-    : public TritonSupportTest,
+    : public TritonSupportTestBase,
       public ::testing::WithParamInterface<DynamicSliceTestParam::TupleType> {};
 
 TEST_P(DynamicSliceTest, IsTritonSupportedDynamicSlice) {
   const DynamicSliceTestParam param(GetParam());
-  if (param.data_type == BF16 && SkipBF16Tests()) {
+  if (param.data_type == BF16 && !SupportsBF16(GetComputeCapability())) {
     GTEST_SKIP();
   }
 
@@ -237,7 +249,7 @@ ENTRY e {
 
   const bool is_supported_instruction =
       legacy_triton::IsTritonSupportedInstruction(ti.Instruction(),
-                                                  GetCudaComputeCapability())
+                                                  GetComputeCapability())
           .CanFuse();
   const bool is_supported_dynamic_slice =
       legacy_triton::IsTritonSupportedDynamicSlice(
@@ -246,7 +258,8 @@ ENTRY e {
   EXPECT_EQ(is_supported_instruction, is_supported_dynamic_slice);
 
   if (is_supported_instruction) {
-    TF_EXPECT_OK(ApplyFloatNormalization(ti.Module().get()));
+    TF_EXPECT_OK(
+        ApplyFloatNormalization(ti.Module().get(), GetComputeCapability()));
     EXPECT_TRUE(RunAndCompareNoHloPasses(
         std::move(ti.Module()), ErrorSpec{/*aabs=*/2e-4, /*arel=*/2e-4}));
   } else {
@@ -262,7 +275,8 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::Bool()),
     DynamicSliceTestParamToString);
 
-TEST_F(TritonSupportTest, UnsupportedDotOutputTypeFailsGracefullyWithTriton) {
+TEST_F(TritonSupportTestBase,
+       UnsupportedDotOutputTypeFailsGracefullyWithTriton) {
   const std::string kHloTest = R"(
 triton_computation {
   parameter_0 = f32[92,11]{1,0} parameter(0)
@@ -286,9 +300,9 @@ ENTRY e {
                           ParseTemplateAndGetInstruction(
                               kHloTest, /*data_type=*/{}, HloOpcode::kDot));
   const se::DeviceDescription dev_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(GetComputeCapability());
   EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
-                  ti.Instruction(), GetCudaComputeCapability())
+                  ti.Instruction(), GetComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("Unsupported output data type for Dot op."));
   BlockLevelParameters block_level_parameters;
@@ -296,7 +310,7 @@ ENTRY e {
   block_level_parameters.num_stages = 4;
   block_level_parameters.num_warps = 8;
   EXPECT_THAT(
-      TritonWrapper("test_fn", &ti.TritonFusion(), GetCudaComputeCapability(),
+      TritonWrapper("test_fn", &ti.TritonFusion(), GetComputeCapability(),
                     dev_info, block_level_parameters, &llvm_module_,
                     mlir_context_),
       tsl::testing::StatusIs(
@@ -304,7 +318,7 @@ ENTRY e {
           ::testing::HasSubstr("pm.run(triton_module.get()).succeeded()")));
 }
 
-TEST_F(TritonSupportTest,
+TEST_F(TritonSupportTestBase,
        UnsupportedDotWithMultipleBatchDimensionsFailsGracefullyWithTriton) {
   const std::string kHloTest = R"(
 triton_computation {
@@ -330,9 +344,9 @@ ENTRY e {
                           ParseTemplateAndGetInstruction(
                               kHloTest, /*data_type=*/{}, HloOpcode::kDot));
   const se::DeviceDescription dev_info =
-      TestGpuDeviceInfo::RTXA6000DeviceInfo(GetCudaComputeCapability());
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(GetComputeCapability());
   EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
-                  ti.Instruction(), GetCudaComputeCapability())
+                  ti.Instruction(), GetComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("Multiple batch dimensions"));
   BlockLevelParameters block_level_parameters;
@@ -340,14 +354,14 @@ ENTRY e {
   block_level_parameters.num_stages = 4;
   block_level_parameters.num_warps = 8;
   EXPECT_THAT(
-      TritonWrapper("test_fn", &ti.TritonFusion(), GetCudaComputeCapability(),
+      TritonWrapper("test_fn", &ti.TritonFusion(), GetComputeCapability(),
                     dev_info, block_level_parameters, &llvm_module_,
                     mlir_context_),
       tsl::testing::StatusIs(absl::StatusCode::kInternal,
                              ::testing::HasSubstr("num_batch_dims <= 1")));
 }
 
-TEST_F(TritonSupportTest,
+TEST_F(TritonSupportTestBase,
        UnsupportedDotWithNoNonContractingDimensionsFailsGracefullyWithTriton) {
   const std::string kHloTest = R"(
 triton_computation {
@@ -368,7 +382,7 @@ ENTRY e {
                           ParseTemplateAndGetInstruction(
                               kHloTest, /*data_type=*/{}, HloOpcode::kDot));
   EXPECT_THAT(legacy_triton::IsTritonSupportedInstruction(
-                  ti.Instruction(), GetCudaComputeCapability())
+                  ti.Instruction(), GetComputeCapability())
                   .Explain(),
               ::testing::HasSubstr("No non-contracting dimensions."));
   EXPECT_THAT(TritonFusionAnalysis::Execute(ti.TritonComputation()),

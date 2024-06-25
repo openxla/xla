@@ -63,6 +63,7 @@ cc_library(
         ":nccl_collective_broadcast_thunk",
         ":nccl_collective_thunk",
         ":thunk",
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:types",
         "//xla:util",
@@ -422,6 +423,7 @@ cc_library(
         ":thunk",
         "//xla/service:buffer_assignment",  # build_cleaner: keep
         "//xla/service/gpu:buffer_allocations",  # build_cleaner: keep
+        "//xla/service/gpu/runtime:sequential_thunk",  # build_cleaner: keep
         "//xla/stream_executor",
         "//xla/stream_executor:command_buffer",
         "@com_google_absl//absl/base:core_headers",

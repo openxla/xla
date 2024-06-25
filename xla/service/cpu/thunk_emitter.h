@@ -67,13 +67,13 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitHloInstruction(
       const HloInstruction* instruction);
 
-  absl::StatusOr<ThunkSequence> EmitAllReduceThunk(
-      const HloInstruction* instruction);
-
   absl::StatusOr<ThunkSequence> EmitCallThunk(
       const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitConcatenateThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitConvolutionThunk(
       const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitCopyThunk(
@@ -106,6 +106,30 @@ class ThunkEmitter {
       const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitDotThunk(const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitReplicaIdThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitAllGatherThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitAllReduceThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitAllToAllThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitCollectivePermuteThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitReduceScatterThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitCustomCallThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitSelectAndScatterThunk(
+      const HloInstruction* instruction);
 
   // Returns the list of buffer allocation slices assigned to the given
   // instruction that will be passed to the host kernel as arguments: a

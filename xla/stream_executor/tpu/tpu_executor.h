@@ -97,17 +97,6 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
   bool HostCallback(Stream* stream,
                     absl::AnyInvocable<absl::Status() &&> callback) override;
 
-  absl::Status Memcpy(Stream* stream, void* host_dst,
-                      const DeviceMemoryBase& device_src,
-                      uint64_t size) override;
-
-  absl::Status Memcpy(Stream* stream, DeviceMemoryBase* device_dst,
-                      const void* host_src, uint64_t size) override;
-
-  bool MemcpyDeviceToDevice(Stream* stream, DeviceMemoryBase* gpu_dst,
-                            const DeviceMemoryBase& host_src,
-                            uint64_t size) override;
-
   bool SynchronizeAllActivity() override;
 
   absl::Status SynchronousMemcpy(DeviceMemoryBase* device_dst,
@@ -115,7 +104,6 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
   absl::Status SynchronousMemcpy(void* host_dst,
                                  const DeviceMemoryBase& device_src,
                                  uint64_t size) override;
-
   absl::Status UnloadAllPrograms() override;
 
   absl::Status EnqueueCompactionOnStreamForHbm(
@@ -140,10 +128,6 @@ class TpuExecutor : public tensorflow::tpu::TpuExecutorInterface {
 
   // -- Unimplemented (stubbed out) methods.
 
-  absl::Status Memset32(Stream* stream, DeviceMemoryBase* location,
-                        uint32_t pattern, uint64_t size) override {
-    LOG(FATAL) << "not yet implemented";
-  }
   absl::Status EnablePeerAccessTo(StreamExecutor* other) override {
     LOG(FATAL) << "not yet implemented";
   }
