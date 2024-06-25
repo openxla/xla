@@ -3266,18 +3266,18 @@ absl::StatusOr<absl::string_view> MemoryKindFromSimpleShape(
 
 absl::StatusOr<std::vector<absl::string_view>> MemoryKindsFromShape(
     const Shape& shape, absl::string_view default_memory_kind) {
-  std::vector<absl::string_view> result;
-  if (shape.IsTuple()) {
-    for (auto element_shape : shape.tuple_shapes()) {
-      TF_ASSIGN_OR_RETURN(
-          absl::string_view element_memory_kind,
-          MemoryKindFromSimpleShape(element_shape, default_memory_kind));
-      result.push_back(element_memory_kind);
-    }
-  } else {
+  if (!shape.IsTuple()) {
     TF_ASSIGN_OR_RETURN(absl::string_view memory_kind,
                         MemoryKindFromSimpleShape(shape, default_memory_kind));
-    result.push_back(memory_kind);
+    return {{memory_kind}};
+  }
+  std::vector<absl::string_view> result;
+  result.reserve(shape.tuple_shapes_size());
+  for (auto element_shape : shape.tuple_shapes()) {
+    TF_ASSIGN_OR_RETURN(
+        absl::string_view element_memory_kind,
+        MemoryKindFromSimpleShape(element_shape, default_memory_kind));
+    result.push_back(element_memory_kind);
   }
   return result;
 }
@@ -3290,6 +3290,7 @@ PjRtStreamExecutorLoadedExecutable::GetOutputMemoryKinds() const {
   TF_ASSIGN_OR_RETURN(PjRtMemorySpace * default_memory_space,
                       addressable_devices()[0]->default_memory_space());
   std::vector<std::vector<absl::string_view>> out;
+  out.reserve(shapes.size());
   for (auto shape : shapes) {
     TF_ASSIGN_OR_RETURN(
         std::vector<absl::string_view> memory_kind,
