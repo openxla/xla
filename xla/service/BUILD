@@ -51,7 +51,9 @@ tf_proto_library(
     srcs = ["hlo.proto"],
     cc_api_version = 2,
     make_default_target_header_only = True,
-    protodeps = ["//xla:xla_data_proto"],
+    protodeps = [
+        "//xla:xla_data_proto",
+    ] + if_google(["@com_google_protobuf//:any"]),
     visibility = ["//visibility:public"],
 )
 
@@ -79,6 +81,11 @@ tf_proto_library(
     name = "metrics_proto",
     srcs = ["metrics.proto"],
     cc_api_version = 2,
+    protodeps = if_google([
+        "@com_google_protobuf//:any",
+        "@com_google_protobuf//:duration",
+        "@com_google_protobuf//:timestamp",
+    ]),
     visibility = ["//visibility:public"],
 )
 
@@ -7567,7 +7574,7 @@ cc_library(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ],
+    ] + if_google(["@com_google_protobuf//:any_cc_proto"]),
 )
 
 cc_library(
@@ -8155,7 +8162,7 @@ tf_proto_library(
     protodeps = [
         ":hlo_proto",
         "@tsl//tsl/protobuf:status_proto",
-    ],
+    ] + if_google(["@com_google_protobuf//:duration"]),
     visibility = ["//visibility:public"],
 )
 
