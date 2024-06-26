@@ -14,10 +14,17 @@ namespace xla {
 
 namespace {
 
-  // clones a parameter instruction specifically for single-instruction HloComputations
-  std::unique_ptr<HloInstruction> CloneParameterInstruction(HloParameterInstruction* instruction) {
+  std::string LOG_HEADER(int x) {
+    return ((x == 0) ? ("AutoParallel: ") : ((LOG_HEADER(x - 1)) + "\t"));
+  }
 
-    // create parameter-retrieving instruction with same shape, cloned name, param_no of 0
+  // clones a parameter instruction specifically 
+  // for single-instruction HloComputations
+  std::unique_ptr<HloInstruction> 
+  CloneParameterInstruction(HloParameterInstruction* instruction) {
+
+    // create parameter-retrieving instruction 
+    // with same shape, cloned name, param_no of 0
     Shape s = instruction->shape();
     absl::string_view name = instruction->name();
 
@@ -25,14 +32,16 @@ namespace {
   }
 
   // fixes instructions so that it can be the only one inside of a computation
-  std::unique_ptr<HloInstruction> CloneSingleInstruction(HloInstruction* instruction) {
+  std::unique_ptr<HloInstruction> 
+  CloneSingleInstruction(HloInstruction* instruction) {
 
     std::unique_ptr<HloInstruction> result;
 
     // choose appropriate correction based on instruction type
     switch (instruction->opcode()) {
       case HloOpcode::kParameter: {
-        result = CloneParameterInstruction(Cast<HloParameterInstruction>(instruction));
+        result = CloneParameterInstruction(
+          Cast<HloParameterInstruction>(instruction));
         break;
       }
       default: {
@@ -48,7 +57,8 @@ namespace {
   HloModule* CreateModuleFromInstruction(HloInstruction* instruction) {
 
     // copy the instruction so as not to modify the HloModule
-    std::unique_ptr<HloInstruction> instr_clone = std::move(CloneSingleInstruction(instruction));
+    std::unique_ptr<HloInstruction> instr_clone 
+      = std::move(CloneSingleInstruction(instruction));
     
     // create entry computation from the single instruction
     HloComputation::Builder builder{"single-instr"};
@@ -76,18 +86,21 @@ namespace {
 
     // create a clone of the module, then run off of that 
     std::unique_ptr<HloModule> module_clone = module->Clone();
-    VLOG(5) << "AutoParallel: " << "module: " << module_clone->name();
+    VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
     // iterate through HloModule computations
     for (HloComputation* computation : module_clone->computations()) {
       
-      VLOG(5) << "AutoParallel: " << "\t" << "computation: " << computation->name();
+      VLOG(5) << LOG_HEADER(1) << "computation: " << computation->name();
 
       for (HloInstruction* instr : computation->instructions()) {
 
-        VLOG(5) << "AutoParallel: " << "\t\t" << "instruction: " << instr->name();
+        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name();
 
         CreateModuleFromInstruction(instr);
+
+        // now enuemrate through various module shardings
+
       }
     }
     
