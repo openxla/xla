@@ -4456,10 +4456,9 @@ cc_library(
     deps = [
         ":hlo_proto_cc",
         "//xla:shape_util",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/base:core_headers",
         "@tsl//tsl/platform:logging",
     ],
 )
