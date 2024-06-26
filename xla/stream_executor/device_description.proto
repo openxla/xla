@@ -44,9 +44,11 @@ message GpuDeviceInfoProto {
   float clock_rate_ghz = 13;
   int64 device_memory_size = 14;
   int32 shared_memory_per_block_optin = 15;
+  int64 registers_per_core_limit = 16;
+  int64 registers_per_block_limit = 17;
   oneof compute_capability {
-    CudaComputeCapabilityProto cuda_compute_capability = 16;
-    RocmComputeCapabilityProto rocm_compute_capability = 17;
+    CudaComputeCapabilityProto cuda_compute_capability = 18;
+    RocmComputeCapabilityProto rocm_compute_capability = 19;
   }
 }
 
