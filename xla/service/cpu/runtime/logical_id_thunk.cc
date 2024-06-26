@@ -107,10 +107,7 @@ LogicalIdThunk<type>::Execute(const ExecuteParams& params) {
 }
 
 template <LogicalIdKind type>
-using BufferUses = typename LogicalIdThunk<type>::BufferUses;
-
-template <LogicalIdKind type>
-BufferUses<type> LogicalIdThunk<type>::buffer_uses() const {
+typename LogicalIdThunk<type>::BufferUses LogicalIdThunk<type>::buffer_uses() const {
   return {BufferUse::Write(logical_id_buffer_)};
 }
 
