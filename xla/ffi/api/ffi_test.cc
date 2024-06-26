@@ -91,6 +91,13 @@ TEST(FfiTest, DataTypeEnumValue) {
   EXPECT_EQ(encoded(PrimitiveType::C128), encoded(DataType::C128));
 
   EXPECT_EQ(encoded(PrimitiveType::TOKEN), encoded(DataType::TOKEN));
+
+  EXPECT_EQ(encoded(PrimitiveType::F8E5M2), encoded(DataType::F8E5M2));
+  EXPECT_EQ(encoded(PrimitiveType::F8E4M3FN), encoded(DataType::F8E4M3FN));
+  EXPECT_EQ(encoded(PrimitiveType::F8E4M3B11FNUZ),
+            encoded(DataType::F8E4M3B11FNUZ));
+  EXPECT_EQ(encoded(PrimitiveType::F8E5M2FNUZ), encoded(DataType::F8E5M2FNUZ));
+  EXPECT_EQ(encoded(PrimitiveType::F8E4M3FNUZ), encoded(DataType::F8E4M3FNUZ));
 }
 
 TEST(FfiTest, ErrorEnumValue) {
@@ -444,27 +451,40 @@ TEST(FfiTest, EnumAttr) {
 }
 
 TEST(FfiTest, WrongEnumAttrType) {
+  CallFrameBuilder::FlatAttributesMap dict;
+  dict.try_emplace("i32", 42);
+
   CallFrameBuilder::AttributesBuilder attrs;
-  attrs.Insert("i32_enum", 42u);
+  attrs.Insert("i32_enum1", dict);
+  attrs.Insert("i32_enum0", 42u);
 
   CallFrameBuilder builder;
   builder.AddAttributes(attrs.Build());
   auto call_frame = builder.Build();
 
-  auto fn = [](Int32BasedEnum) { return Error::Success(); };
+  auto fn = [](Int32BasedEnum, Int32BasedEnum) { return Error::Success(); };
 
-  auto handler = Ffi::Bind().Attr<Int32BasedEnum>("i32_enum").To(fn);
+  auto handler = Ffi::Bind()
+                     .Attr<Int32BasedEnum>("i32_enum0")
+                     .Attr<Int32BasedEnum>("i32_enum1")
+                     .To(fn);
 
   auto status = Call(*handler, call_frame);
 
   EXPECT_TRUE(absl::StrContains(
       status.message(),
-      "Failed to decode all FFI handler operands (bad operands at: 0)"))
+      "Failed to decode all FFI handler operands (bad operands at: 0, 1)"))
       << "status.message():\n"
       << status.message() << "\n";
 
   EXPECT_TRUE(absl::StrContains(status.message(),
-                                "Wrong scalar data type: expected 4 but got"))
+                                "Wrong scalar data type: expected S32 but got"))
+      << "status.message():\n"
+      << status.message() << "\n";
+
+  EXPECT_TRUE(absl::StrContains(
+      status.message(),
+      "Wrong attribute type: expected scalar but got dictionary"))
       << "status.message():\n"
       << status.message() << "\n";
 }

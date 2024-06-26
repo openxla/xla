@@ -23,7 +23,7 @@ package(
         "@xla//xla/hlo/experimental:__subpackages__",
         "//tensorflow/core/lib/monitoring:__subpackages__",
         "@xla//xla/service:__subpackages__",
-        "//tsl/framework:__subpackages__",
+        "@xla//xla/tsl/framework:__subpackages__",
         "@xla//xla/tsl/distributed_runtime:__subpackages__",
         "//tensorflow/compiler/mlir/tf2xla:__subpackages__",
         "//tensorflow_serving/model_servers:__subpackages__",
@@ -95,9 +95,7 @@ cc_library(
 cc_library(
     name = "metric_def",
     hdrs = ["metric_def.h"],
-    visibility = internal_visibility([
-        "//tensorflow/core:__subpackages__",
-    ]),
+    visibility = ["//visibility:public"],
     deps = [
         ":types",
         "//tsl/platform:stringpiece",
@@ -110,10 +108,7 @@ cc_library(
     name = "collection_registry",
     srcs = ["collection_registry.cc"],
     hdrs = ["collection_registry.h"],
-    visibility = internal_visibility([
-        "//tensorflow/core:__subpackages__",
-        "//tensorflow_serving/model_servers:__pkg__",
-    ]),
+    visibility = ["//visibility:public"],
     deps = [
         ":collected_metrics",
         ":metric_def",

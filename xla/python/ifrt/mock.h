@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/python/ifrt/value.h"
 #include "xla/test.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/framework/allocator.h"
 
 namespace xla {
 namespace ifrt {
@@ -87,10 +88,6 @@ class MockArray : public llvm::RTTIExtends<MockArray, Array> {
                std::optional<absl::Span<const int64_t>> byte_strides,
                ArrayCopySemantics semantics),
               (final));
-  MOCK_METHOD(absl::StatusOr<tsl::RCReference<Array>>, Reshard,
-              (std::shared_ptr<const Sharding> new_sharding,
-               ArrayCopySemantics semantics),
-              (final));
   // LINT.ThenChange(mock.cc:MockArrayDelegation)
 
   tsl::RCReference<xla::ifrt::Array> delegated() const { return delegated_; }
@@ -120,6 +117,12 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
               AssembleArrayFromSingleDeviceArrays,
               (Shape shape, std::shared_ptr<const Sharding> sharding,
                absl::Span<tsl::RCReference<Array>> arrays,
+               ArrayCopySemantics semantics),
+              (final));
+  MOCK_METHOD(absl::StatusOr<std::vector<tsl::RCReference<Array>>>, CopyArrays,
+              (absl::Span<tsl::RCReference<Array>> arrays,
+               std::optional<DeviceList> devices,
+               std::optional<MemoryKind> memory_kind,
                ArrayCopySemantics semantics),
               (final));
   MOCK_METHOD(absl::StatusOr<std::vector<tsl::RCReference<Array>>>, RemapArrays,

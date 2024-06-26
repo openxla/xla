@@ -359,9 +359,9 @@ int64_t EvaluateAffineExpr(AffineExpr expr,
 // For example, for the following indexing map:
 //   (d0)[s0] -> (d0 + s0)
 //   domain:
-//   d0 in [0, 3]
+//   d0 in [0, 4)
 //   s0 in [0, 1, 2]
-//   s0 mod 2 in [0, 0]
+//   s0 mod 2 in [0, 1)
 // The function will compute the following indices [0, 2, 1, 3, 2, 4, 3, 5].
 void FindAllIndices(AffineExpr expr, int dim_id, int symbol_id,
                     const std::vector<Interval>& dimension_ranges,
@@ -397,8 +397,8 @@ void FindAllIndices(AffineExpr expr, int dim_id, int symbol_id,
 // Computes contiguous intervals of accessed elements.
 // For example, for an indexing map
 //   (thread_x) -> (thread_x * 4 + s0 + (thread_x floordiv 16) * 1984)
-//   d0 in [0, 31]
-//   s0 in [0, 3]
+//   d0 in [0, 32)
+//   s0 in [0, 4)
 // The intervals are [0, 63] and [2047, 2111].
 std::vector<Interval> FindIntervals(
     AffineExpr expr, const std::vector<Interval>& dimension_ranges,
@@ -472,7 +472,7 @@ std::vector<Interval> FindContiguousIntervals(
       // Case 1.3: |multiplier| != 1 and g(s) = s.
       if (partitioned_expr.func_of_s0 == range) {
         Interval range_interval = indexing_map.GetSymbolBound(0);
-        int64_t num_elems = range_interval.NumElements();
+        int64_t num_elems = range_interval.GetLoopTripCount();
         // In this case we get a single interval, because the ranges that every
         // thread is reading overlap.
         if (num_elems >= std::abs(multiplier.getValue())) {
@@ -505,7 +505,7 @@ std::vector<Interval> FindContiguousIntervals(
   }
   // Case 2.2: g(s) = s.
   Interval range_interval = indexing_map.GetSymbolBound(0);
-  return ExtendIntervals(intervals, range_interval.NumElements() - 1);
+  return ExtendIntervals(intervals, range_interval.GetLoopTripCount() - 1);
 }
 
 bool IsIndexingCoalesced(IndexingMap& thread_x_to_linearized_input,

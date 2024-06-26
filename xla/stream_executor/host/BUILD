@@ -51,6 +51,7 @@ cc_library(
         ":host_executor",
         ":host_platform_id",
         "//xla/stream_executor",
+        "//xla/stream_executor:executor_cache",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/platform",
         "@com_google_absl//absl/status",
@@ -62,6 +63,15 @@ cc_library(
 )
 
 cc_library(
+    name = "host_event",
+    hdrs = ["host_event.h"],
+    deps = [
+        "//xla/stream_executor:event",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
     name = "host_stream",
     srcs = [
         "host_stream.cc",
@@ -70,6 +80,10 @@ cc_library(
         "host_stream.h",
     ],
     deps = [
+        ":host_event",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_common",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
@@ -96,12 +110,20 @@ cc_library(
         ":host_kernel_c_api",
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
-        "@com_google_absl//absl/log",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -117,7 +139,11 @@ xla_cc_test(
         "//xla/stream_executor",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:kernel_factory",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
@@ -138,9 +164,14 @@ cc_library(
         "host_executor.h",
     ],
     deps = [
+        ":host_event",
         ":host_kernel",
         ":host_stream",
         "//xla/stream_executor",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:host_memory_allocation",
+        "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/functional:any_invocable",
@@ -170,6 +201,7 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

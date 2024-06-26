@@ -17,7 +17,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <utility>
 
+#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -33,12 +36,18 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<std::unique_ptr<OutfeedThunk>> OutfeedThunk::Create(
+    Info info, absl::Span<const OutfeedBuffer> outfeed_buffers) {
+  return absl::WrapUnique(new OutfeedThunk(std::move(info), outfeed_buffers));
+}
+
 OutfeedThunk::OutfeedThunk(Info info,
                            absl::Span<const OutfeedBuffer> outfeed_buffers)
     : Thunk(Kind::kOutfeed, info),
       outfeed_buffers_(outfeed_buffers.begin(), outfeed_buffers.end()) {}
 
-absl::Status OutfeedThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> OutfeedThunk::Execute(
+    const ExecuteParams& params) {
   tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   VLOG(3) << absl::StreamFormat("Outfeed %d buffers", outfeed_buffers_.size());
@@ -80,7 +89,7 @@ absl::Status OutfeedThunk::Execute(const ExecuteParams& params) {
                                            outfeed_buffer.shape);
   }
 
-  return absl::OkStatus();
+  return OkExecuteEvent();
 }
 
 OutfeedThunk::BufferUses OutfeedThunk::buffer_uses() const {
@@ -88,6 +97,15 @@ OutfeedThunk::BufferUses OutfeedThunk::buffer_uses() const {
   for (const OutfeedBuffer& outfeed_buffer : outfeed_buffers_) {
     buffer_uses.emplace_back(outfeed_buffer.slice, BufferUse::kRead);
   }
+
+  // TODO(ezhulenev): It is a hack to make sure that we execute all xfeed
+  // operations in the same order as in HLO schedule, because otherwise racing
+  // xfeeds lead to undefined behavior. Instead we should correctly model
+  // side effects of Thunks.
+  static auto* fake_alloc = new BufferAllocation(0, 1, 0);
+  buffer_uses.push_back(
+      BufferUse::Write(BufferAllocation::Slice(fake_alloc, 0, 1)));
+
   return buffer_uses;
 }
 

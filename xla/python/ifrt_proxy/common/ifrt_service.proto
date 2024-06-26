@@ -54,7 +54,8 @@ message IfrtRequest {
     DisassembleIntoSingleDeviceArraysRequest
         disassemble_into_single_device_arrays_request = 7;
     DeleteArrayRequest delete_array_request = 9;
-    ReshardRequest reshard_request = 10;
+    CopyArraysRequest copy_arrays_request = 24;
+    ReshardRequest reshard_request = 10 [deprecated = true];
     FullyReplicatedShardRequest fully_replicated_shard_request = 20;
     IsArrayDeletedRequest is_array_deleted_request = 11;
     DestructArrayRequest destruct_array_request = 12;
@@ -100,7 +101,8 @@ message IfrtResponse {
     DisassembleIntoSingleDeviceArraysResponse
         disassemble_into_single_device_arrays_response = 7;
     DeleteArrayResponse delete_array_response = 9;
-    ReshardResponse reshard_response = 10;
+    CopyArraysResponse copy_arrays_response = 24;
+    ReshardResponse reshard_response = 10 [deprecated = true];
     FullyReplicatedShardResponse fully_replicated_shard_response = 20;
     IsArrayDeletedResponse is_array_deleted_response = 11;
     DestructArrayResponse destruct_array_response = 12;
@@ -311,6 +313,16 @@ message DisassembleIntoSingleDeviceArraysRequest {
 }
 message DisassembleIntoSingleDeviceArraysResponse {
   repeated fixed64 single_device_array_handles = 1;
+}
+
+message CopyArraysRequest {
+  repeated fixed64 array_handles = 1;
+  repeated int32 device_ids = 2;
+  optional string memory_kind = 3;
+  proto.ArrayCopySemantics copy_semantics = 4;
+}
+message CopyArraysResponse {
+  repeated fixed64 array_handles = 1;
 }
 
 message ReshardRequest {

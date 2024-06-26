@@ -2430,7 +2430,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/ChloRecomposeOps.cpp b/
 +    // Do a single traversal to recompose CustomCallOp to CHLO ops.
 +    GreedyRewriteConfig config;
 +    config.useTopDownTraversal = true;
-+    config.enableRegionSimplification = true;
++    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
 +    config.maxIterations = 1;
 +    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
 +    config.strictMode = GreedyRewriteStrictness::ExistingOps;
@@ -2742,7 +2742,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloCanonicalizeDy
 +  void runOnOperation() override {
 +    GreedyRewriteConfig config;
 +    config.useTopDownTraversal = true;
-+    config.enableRegionSimplification = true;
++    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
 +    config.maxIterations = 2;
 +    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
 +    config.strictMode = GreedyRewriteStrictness::AnyOp;
@@ -2918,7 +2918,7 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +    // upstream, and that might be the reason.
 +    GreedyRewriteConfig config;
 +    config.useTopDownTraversal = true;
-+    config.enableRegionSimplification = true;
++    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
 +    config.maxIterations = 3;
 +    config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
 +    config.strictMode = GreedyRewriteStrictness::AnyOp;

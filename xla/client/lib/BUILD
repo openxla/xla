@@ -30,10 +30,10 @@ cc_library(
     deps = [
         ":constants",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -65,9 +65,11 @@ cc_library(
         ":constants",
         "//xla:shape_util",
         "//xla:types",
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -81,13 +83,17 @@ xla_test(
         ":constants",
         "//xla:shape_util",
         "//xla:test",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "//xla/client:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_proto_cc",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
@@ -145,6 +151,7 @@ cc_library(
         "//xla:status_macros",
         "//xla/client:padding",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -173,9 +180,9 @@ cc_library(
         ":constants",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
@@ -230,7 +237,6 @@ cc_library(
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -239,6 +245,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
@@ -252,7 +259,6 @@ xla_test(
         ":constants",
         ":matrix",
         ":slicing",
-        "//xla:statusor",
         "//xla:test",
         "//xla:types",
         "//xla/client:xla_builder",
@@ -260,6 +266,7 @@ xla_test(
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
 )
@@ -297,10 +304,10 @@ cc_library(
     deps = [
         ":constants",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -311,7 +318,6 @@ xla_test(
         ":constants",
         ":prng",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
@@ -319,6 +325,7 @@ xla_test(
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -336,9 +343,9 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -354,7 +361,6 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
-        "//xla:statusor",
         "//xla:test",
         "//xla:types",
         "//xla:xla_data_proto_cc",
@@ -363,6 +369,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -373,10 +380,10 @@ cc_library(
     hdrs = ["lu_decomposition.h"],
     deps = [
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -387,11 +394,11 @@ cc_library(
     deps = [
         ":approx_topk_shape",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
     ],
 )
@@ -401,8 +408,8 @@ cc_library(
     srcs = ["approx_topk_shape.cc"],
     hdrs = ["approx_topk_shape.h"],
     deps = [
-        "//xla:statusor",
         "//xla:util",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -415,10 +422,10 @@ cc_library(
         ":constants",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -512,7 +519,6 @@ cc_library(
         "//xla:execution_options_util",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -521,6 +527,7 @@ cc_library(
         "//xla/client:xla_builder",
         "//xla/client:xla_computation",
         "//xla/tests:test_utils",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:protobuf",
     ],
@@ -541,10 +548,10 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -565,7 +572,6 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
-        "//xla:statusor",
         "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
@@ -573,6 +579,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -592,9 +599,9 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -615,7 +622,6 @@ xla_test(
         "//xla:array3d",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
@@ -623,6 +629,7 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -637,10 +644,10 @@ cc_library(
         ":slicing",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/client:xla_builder",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -680,8 +687,8 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla/client:xla_builder",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -698,13 +705,13 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:literal",
-        "//xla:statusor",
         "//xla:test",
         "//xla/client:xla_builder",
         "//xla/tests:client_library_test_base",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/lib/core:status_test_util",
     ],
 )
@@ -716,9 +723,9 @@ cc_library(
     deps = [
         "//xla:shape_tree",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla/client:xla_builder",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
 )

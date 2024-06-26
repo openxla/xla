@@ -17,8 +17,10 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
-#include "absl/status/status.h"
+#include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/runtime/buffer_use.h"
@@ -33,12 +35,18 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<std::unique_ptr<InfeedThunk>> InfeedThunk::Create(
+    Info info, absl::Span<const InfeedBuffer> infeed_buffers) {
+  return absl::WrapUnique(new InfeedThunk(info, infeed_buffers));
+}
+
 InfeedThunk::InfeedThunk(Info info,
                          absl::Span<const InfeedBuffer> infeed_buffers)
     : Thunk(Kind::kInfeed, info),
       infeed_buffers_(infeed_buffers.begin(), infeed_buffers.end()) {}
 
-absl::Status InfeedThunk::Execute(const ExecuteParams& params) {
+tsl::AsyncValueRef<Thunk::ExecuteEvent> InfeedThunk::Execute(
+    const ExecuteParams& params) {
   tsl::profiler::TraceMe trace([&] { return TraceMeEncode(); });
 
   VLOG(3) << absl::StreamFormat("Infeed %d buffers", infeed_buffers_.size());
@@ -80,7 +88,7 @@ absl::Status InfeedThunk::Execute(const ExecuteParams& params) {
                                           infeed_buffer.shape);
   }
 
-  return absl::OkStatus();
+  return OkExecuteEvent();
 }
 
 InfeedThunk::BufferUses InfeedThunk::buffer_uses() const {
@@ -88,6 +96,15 @@ InfeedThunk::BufferUses InfeedThunk::buffer_uses() const {
   for (const InfeedBuffer& infeed_buffer : infeed_buffers_) {
     buffer_uses.emplace_back(infeed_buffer.slice, BufferUse::kWrite);
   }
+
+  // TODO(ezhulenev): It is a hack to make sure that we execute all xfeed
+  // operations in the same order as in HLO schedule, because otherwise racing
+  // xfeeds lead to undefined behavior. Instead we should correctly model
+  // side effects of Thunks.
+  static auto* fake_alloc = new BufferAllocation(0, 1, 0);
+  buffer_uses.push_back(
+      BufferUse::Write(BufferAllocation::Slice(fake_alloc, 0, 1)));
+
   return buffer_uses;
 }
 

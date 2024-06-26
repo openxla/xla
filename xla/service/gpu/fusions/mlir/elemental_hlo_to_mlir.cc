@@ -74,6 +74,7 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
+#include "xla/service/gpu/fusions/mlir/type_util.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
@@ -173,8 +174,12 @@ bool IsUnsupportedGather(const HloInstruction* instr) {
 
   auto* gather = Cast<HloGatherInstruction>(instr);
   const auto& dims = gather->gather_dimension_numbers();
+  // We allow XLA:GPU's "canonical" gather (2D indices). And the form preferred
+  // by the algebraic simplifier if the second index dimension is degenerate (1D
+  // indices with implicit second dimension).
+  int indices_rank = gather->operand(1)->shape().rank();
   if (dims.index_vector_dim() != 1 || !dims.collapsed_slice_dims().empty() ||
-      gather->operand(1)->shape().rank() != 2) {
+      indices_rank == 0 || indices_rank > 2) {
     return true;
   }
 
@@ -209,12 +214,6 @@ absl::StatusOr<SmallVector<Value>> EmitReduce(
   for (int i = instr->operand_count() / 2; i < instr->operand_count(); ++i) {
     TF_ASSIGN_OR_RETURN(init_values.emplace_back(),
                         GetSingleOperandValue(operand_provider, instr, i, {}));
-    // Convert back to signed type.
-    TF_ASSIGN_OR_RETURN(auto element_mlir_type,
-                        ConvertPrimitiveTypeToMlirType(
-                            instr->operand(i)->shape().element_type(), b));
-    init_values.back() =
-        UnrealizedConversionCast(element_mlir_type, init_values.back(), b);
   }
 
   auto body =
@@ -226,22 +225,13 @@ absl::StatusOr<SmallVector<Value>> EmitReduce(
       TF_ASSIGN_OR_RETURN(
           args.emplace_back(),
           GetSingleOperandValue(operand_provider, instr, i, indices));
-      // Convert back to signed type.
-      TF_ASSIGN_OR_RETURN(auto element_mlir_type,
-                          ConvertPrimitiveTypeToMlirType(
-                              instr->operand(i)->shape().element_type(), b));
-      args.back() = UnrealizedConversionCast(element_mlir_type, args.back(), b);
     }
     auto reducer = call_target_provider(
         instr->called_computations().front()->root_instruction());
     return b.create<mlir::func::CallOp>(reducer, args).getResults();
   };
 
-  TF_ASSIGN_OR_RETURN(
-      auto result,
-      EmitLoopNestWithStatus(b, indices, init_values, indexing_map, body));
-
-  return ConvertToSignless(result, b);
+  return EmitLoopNestWithStatus(b, indices, init_values, indexing_map, body);
 }
 
 absl::StatusOr<SmallVector<Value>> EmitReduceWindow(
@@ -264,12 +254,6 @@ absl::StatusOr<SmallVector<Value>> EmitReduceWindow(
         init_values.emplace_back(),
         GetSingleOperandValue(operand_provider, instr,
                               reduce_window->input_count() + index, {}));
-    // Convert back to signed type.
-    TF_ASSIGN_OR_RETURN(
-        auto element_mlir_type,
-        ConvertPrimitiveTypeToMlirType(init_value->shape().element_type(), b));
-    init_values.back() =
-        UnrealizedConversionCast(element_mlir_type, init_values.back(), b);
   }
 
   auto body =
@@ -281,12 +265,6 @@ absl::StatusOr<SmallVector<Value>> EmitReduceWindow(
       TF_ASSIGN_OR_RETURN(
           args.emplace_back(),
           GetSingleOperandValue(operand_provider, instr, index, indices));
-
-      // Convert back to signed type.
-      TF_ASSIGN_OR_RETURN(
-          auto element_mlir_type,
-          ConvertPrimitiveTypeToMlirType(input->shape().element_type(), b));
-      args.back() = UnrealizedConversionCast(element_mlir_type, args.back(), b);
     }
 
     auto reducer = call_target_provider(
@@ -294,11 +272,7 @@ absl::StatusOr<SmallVector<Value>> EmitReduceWindow(
     return b.create<mlir::func::CallOp>(reducer, args).getResults();
   };
 
-  TF_ASSIGN_OR_RETURN(
-      auto result,
-      EmitLoopNestWithStatus(b, indices, init_values, indexing_map, body));
-
-  return ConvertToSignless(result, b);
+  return EmitLoopNestWithStatus(b, indices, init_values, indexing_map, body);
 }
 
 absl::StatusOr<SmallVector<Value>> EmitConcat(
@@ -425,14 +399,21 @@ absl::StatusOr<llvm::SmallVector<Value>> EmitGather(
   SmallVector<Value> operand_indices(instr->operand(0)->shape().rank(), zero);
 
   // Produce start indices.
-  int num_indices = instr->operand(1)->shape().dimensions(1);
+  // HLO allows the index vector dimension to be implicit, and the algebraic
+  // simplifier prefers this form. Therefore, we need to check the rank of the
+  // indices here and do the implicit reshape in place.
+  const auto& indices_shape = instr->operand(1)->shape();
+  int num_indices = indices_shape.rank() == 1 ? 1 : indices_shape.dimensions(1);
   for (int i = 0; i < num_indices; ++i) {
     auto i_val = i == 0 ? zero : b.create<ConstantIndexOp>(i);
     int64_t slice_size = instr->gather_slice_sizes()[i];
     int64_t input_size = instr->operand(0)->shape().dimensions()[i];
     // Read and clamp index.
-    TF_ASSIGN_OR_RETURN(auto input_index,
-                        operand_provider(instr, 1, {row, i_val}));
+    TF_ASSIGN_OR_RETURN(
+        auto input_index,
+        operand_provider(instr, 1,
+                         indices_shape.rank() == 1 ? ValueRange{row}
+                                                   : ValueRange{row, i_val}));
     TF_RET_CHECK(input_index.size() == 1)
         << "Expected operand to be a single value.";
     operand_indices[i] =
@@ -662,19 +643,6 @@ SmallVector<Value> UnrealizedConversionCast(mlir::TypeRange types,
   return converted;
 }
 
-SmallVector<Value> ConvertToSignless(mlir::ValueRange values,
-                                     ImplicitLocOpBuilder& b) {
-  mlir::mhlo::RemoveSignTypeConverter sign_converter;
-  SmallVector<Value> results;
-  results.reserve(values.size());
-  for (Value value : values) {
-    CHECK(value != nullptr);
-    auto signless_type = sign_converter.convertType(value.getType());
-    results.push_back(UnrealizedConversionCast(signless_type, value, b));
-  }
-  return results;
-}
-
 Value ApplyAffineExpr(mlir::AffineExpr expr, ValueRange dims,
                       ValueRange symbols, ImplicitLocOpBuilder& b) {
   // For unknown (but undoubtedly good) reasons, affine.apply removes unused
@@ -751,21 +719,13 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
   CHECK(!kUnsupportedOps.contains(instr->opcode())) << instr->ToShortString();
 
   auto element_type = instr->shape().element_type();
-  mlir::Type element_mlir_type;
+  mlir::Type result_type_with_sign;
   mlir::Type result_element_type;
   if (!instr->shape().IsTuple()) {
-    TF_ASSIGN_OR_RETURN(element_mlir_type,
+    TF_ASSIGN_OR_RETURN(result_type_with_sign,
                         ConvertPrimitiveTypeToMlirType(element_type, builder));
-
-    // During mapping to the arith dialect, we need to convert from signed
-    // integer types to signless integer types. Most mappings can infer the
-    // signless integer type from the already converted operand, but e.g. for
-    // Convert this is not possible, so we need to have the signless result
-    // element type as well. But we also still need to pass the signed integer
-    // element type, as that is needed to select the correct arith ops for
-    // unsigned element types.
-    mlir::mhlo::RemoveSignTypeConverter sign_converter;
-    result_element_type = sign_converter.convertType(element_mlir_type);
+    result_element_type =
+        PrimitiveTypeToMlirType(instr->shape().element_type(), builder);
   }
 
   auto* mlir_context = builder.getContext();
@@ -779,7 +739,8 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
       TF_ASSIGN_OR_RETURN(auto value_attr, CreateDenseElementsAttrFromLiteral(
                                                instr->literal(), builder));
       // Convert to signless if needed.
-      if (result_element_type != element_mlir_type) {
+      if (primitive_util::IsUnsignedIntegralType(
+              instr->shape().element_type())) {
         value_attr = value_attr.mapValues(
             result_element_type, [](const llvm::APInt& i) { return i; });
       }
@@ -787,7 +748,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
       if (ShapeUtil::IsEffectiveScalar(instr->shape())) {
         if (primitive_util::IsComplexType(element_type)) {
           return {{builder.create<mlir::complex::ConstantOp>(
-              element_mlir_type,
+              result_element_type,
               mlir::cast<mlir::ArrayAttr>(
                   value_attr.getValues<mlir::Attribute>()[0]))}};
         }
@@ -815,7 +776,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
               .getTypeSizeInBits(index.getType()));
       index = builder.create<arith::IndexCastUIOp>(index_type, index);
       return {{mhlo::MhloOpToStdScalarOp::mapConvertOpToStdScalarOp(
-          builder.getLoc(), element_mlir_type, result_element_type,
+          builder.getLoc(), result_type_with_sign, result_element_type,
           {index_type}, {index}, &builder)}};
     }
     case HloOpcode::kPad:
@@ -900,7 +861,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
 
   switch (instr->opcode()) {
     case HloOpcode::kAbs:
-      return {MapHloOp<mhlo::AbsOp>(element_mlir_type, arg_types, operands,
+      return {MapHloOp<mhlo::AbsOp>(result_element_type, arg_types, operands,
                                     builder)};
     case HloOpcode::kAdd:
       if (element_type == PRED) {
@@ -933,7 +894,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
           mhlo::CompareOp::Adaptor(operands, nullptr, properties), &builder)}};
     }
     case HloOpcode::kComplex:
-      return MapHloOp<mhlo::ComplexOp>(element_mlir_type, arg_types, operands,
+      return MapHloOp<mhlo::ComplexOp>(result_element_type, arg_types, operands,
                                        builder);
     case HloOpcode::kCos:
       return MapElementwiseOp<mhlo::CosineOp>(arg_types, operands, builder);
@@ -951,7 +912,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
       return MapHloOp<mhlo::IsFiniteOp>(builder.getI1Type(), arg_types,
                                         operands, builder);
     case HloOpcode::kImag:
-      return MapHloOp<mhlo::ImagOp>(element_mlir_type, arg_types, operands,
+      return MapHloOp<mhlo::ImagOp>(result_element_type, arg_types, operands,
                                     builder);
     case HloOpcode::kLog:
       return MapElementwiseOp<mhlo::LogOp>(arg_types, operands, builder);
@@ -982,7 +943,7 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
     case HloOpcode::kPower:
       return MapElementwiseOp<mhlo::PowOp>(arg_types, operands, builder);
     case HloOpcode::kReal:
-      return MapHloOp<mhlo::RealOp>(element_mlir_type, arg_types, operands,
+      return MapHloOp<mhlo::RealOp>(result_element_type, arg_types, operands,
                                     builder);
     case HloOpcode::kReducePrecision: {
       mhlo::ReducePrecisionOp::Properties properties;
@@ -1041,19 +1002,19 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
                     ->getResults()};
       }
       auto out = mhlo::MhloOpToStdScalarOp::mapConvertOpToStdScalarOp(
-          builder.getLoc(), element_mlir_type, result_element_type, arg_types,
-          operands, &builder);
+          builder.getLoc(), result_type_with_sign, result_element_type,
+          arg_types, operands, &builder);
       if (auto int_ty = out.getType().dyn_cast<mlir::IntegerType>()) {
         auto in = operands[0];
         if (auto float_ty = in.getType().dyn_cast<mlir::FloatType>()) {
           auto cst_int = [&](int64_t x) {
             return builder.create<arith::ConstantIntOp>(x, int_ty);
           };
-          auto cst_float = [&](int64_t x) {
-            return builder.create<ConstantOp>(
-                builder.getFloatAttr(float_ty, x));
-          };
-          if (element_mlir_type.isUnsignedInteger()) {
+          if (primitive_util::IsUnsignedIntegralType(element_type)) {
+            auto cst_float = [&](uint64_t x) {
+              return builder.create<ConstantOp>(
+                  builder.getFloatAttr(float_ty, x));
+            };
             int64_t min = 0;
             int64_t max = llvm::maxUIntN(int_ty.getWidth());
             // x <= 0 || isnan(x) ? 0 : ...
@@ -1067,6 +1028,10 @@ absl::StatusOr<SmallVector<Value>> HloToMlir(
                     mlir::arith::CmpFPredicate::OGE, in, cst_float(max)),
                 cst_int(max), out);
           } else {
+            auto cst_float = [&](int64_t x) {
+              return builder.create<ConstantOp>(
+                  builder.getFloatAttr(float_ty, x));
+            };
             int64_t min = llvm::minIntN(int_ty.getWidth());
             int64_t max = llvm::maxIntN(int_ty.getWidth());
             // x <= static_cast<float>(INT_MIN) ? INT_MIN : ...
@@ -1239,10 +1204,8 @@ absl::StatusOr<SmallVector<Value>> SubgraphToMlir(
     if (subgraph.instructions.contains(operand)) {
       return emit_instr(operand, operand_indices);
     }
-    return ConvertToSignless(
-        ProvideParameter(computation, instr, index, operand_indices,
-                         call_target_provider, this_fn, builder, &subgraph),
-        builder);
+    return ProvideParameter(computation, instr, index, operand_indices,
+                            call_target_provider, this_fn, builder, &subgraph);
   };
 
   emit_instr = [&](const HloInstruction* instr,
@@ -1278,7 +1241,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphToMlir(
     CHECK(!absl::c_linear_search(lowered_instr, nullptr))
         << "Failed to lower " << instr->name();
 
-    entry = ConvertToSignless(lowered_instr, builder);
+    entry = lowered_instr;
     TF_RET_CHECK(!absl::c_any_of(
         entry, [](const auto& entry) { return entry == nullptr; }))
         << "null result for " << instr->ToShortString();
@@ -1343,14 +1306,7 @@ absl::Status SubgraphToMlirFunction(
       auto results,
       SubgraphToMlir(computation, subgraph, func, call_target_provider,
                      parameters, indices, builder));
-
   CHECK_EQ(results.size(), func.getResultTypes().size());
-  // We have been converting signed types to signless types. To match the
-  // function signature, we have to convert back to signed types.
-  for (auto [index, function_result] : llvm::enumerate(func.getResultTypes())) {
-    results[index] =
-        UnrealizedConversionCast(function_result, results[index], builder);
-  }
 
   builder.create<mlir::func::ReturnOp>(results);
   return absl::OkStatus();
@@ -1461,7 +1417,7 @@ SmallVector<Value> EmitLoopNest(
   for (int sym_index = indexing_map.GetSymbolCount() - 1;
        sym_index >= 0 && cumulative_loop_size < 64; --sym_index) {
     auto& bound = indexing_map.GetSymbolBound(sym_index);
-    cumulative_loop_size *= bound.NumElements();
+    cumulative_loop_size *= bound.GetLoopTripCount();
     if (!IsSymbolConstrained(indexing_map, sym_index)) continue;
 
     IndexingMap peeled_map = indexing_map;
@@ -1527,9 +1483,6 @@ mlir::Value ClampIndex(mlir::Value index, bool is_unsigned, int64_t high,
   }
 
   if (is_unsigned) {
-    if (index.getType().isUnsignedInteger()) {
-      index = ConvertToSignless({index}, b).front();
-    }
     if (index.getType() != b.getIndexType()) {
       index = b.create<arith::IndexCastUIOp>(b.getIndexType(), index);
     }

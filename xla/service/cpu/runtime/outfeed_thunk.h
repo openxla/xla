@@ -16,13 +16,15 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_RUNTIME_OUTFEED_THUNK_H_
 #define XLA_SERVICE_CPU_RUNTIME_OUTFEED_THUNK_H_
 
+#include <memory>
 #include <vector>
 
-#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime/thunk.h"
 #include "xla/shape.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 
 namespace xla::cpu {
 
@@ -33,13 +35,16 @@ class OutfeedThunk final : public Thunk {
     Shape shape;
   };
 
-  OutfeedThunk(Info info, absl::Span<const OutfeedBuffer> outfeed_buffers);
+  static absl::StatusOr<std::unique_ptr<OutfeedThunk>> Create(
+      Info info, absl::Span<const OutfeedBuffer> outfeed_buffers);
 
-  absl::Status Execute(const ExecuteParams& params) final;
+  tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;
 
  private:
+  OutfeedThunk(Info info, absl::Span<const OutfeedBuffer> outfeed_buffers);
+
   std::vector<OutfeedBuffer> outfeed_buffers_;
 };
 

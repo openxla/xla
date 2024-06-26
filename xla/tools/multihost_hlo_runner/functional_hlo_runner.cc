@@ -20,6 +20,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -75,11 +76,12 @@ limitations under the License.
 
 namespace xla {
 
-absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
+static absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
     absl::string_view device_type, absl::string_view address, int node_id,
-    int num_nodes, bool enable_mock_nccl,
+    int num_nodes, bool enable_mock_nccl, absl::Duration init_timeout,
     std::unique_ptr<xla::DistributedRuntimeService>& service,
-    std::shared_ptr<xla::KeyValueStoreInterface>& kv_store) {
+    std::shared_ptr<xla::KeyValueStoreInterface>& kv_store,
+    std::shared_ptr<xla::DistributedRuntimeClient>& distributed_client) {
   if (device_type == "host") {
     CHECK_EQ(num_nodes, 1);
     return xla::FunctionalHloRunner::CreateHostClient();
@@ -94,8 +96,14 @@ absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
     return xla::FunctionalHloRunner::CreateMockGpuClient(num_nodes);
   } else {
     if (num_nodes == 1) {
-      return xla::FunctionalHloRunner::CreateGpuClient();
+      return xla::FunctionalHloRunner::CreateGpuClient({});
     } else {
+      TF_RET_CHECK(!address.empty());
+      TF_RET_CHECK(node_id >= 0)
+          << "Node id is expected to be in range [0, num_nodes)";
+      TF_RET_CHECK(node_id < num_nodes)
+          << "Node id is expected to be in range [0, num_nodes)";
+
       CHECK_GT(address.length(), 0);
       // Multinode. Start service on task 0.
       if (node_id == 0) {
@@ -110,16 +118,34 @@ absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
       }
       xla::DistributedRuntimeClient::Options options;
       options.node_id = node_id;
-      options.init_timeout = absl::Seconds(300);
-      auto distributed_client =
+      options.init_timeout = init_timeout;
+      distributed_client =
           GetDistributedRuntimeClient(std::string(address), options);
       TF_QCHECK_OK(distributed_client->Connect());
       kv_store = GetDistributedKeyValueStore(distributed_client,
                                              /*key_prefix=*/"gpu:");
-      return xla::FunctionalHloRunner::CreateGpuClient(kv_store, node_id,
-                                                       num_nodes);
+      GpuClientOptions gpu_client_options;
+      gpu_client_options.node_id = node_id;
+      gpu_client_options.num_nodes = num_nodes;
+      gpu_client_options.kv_store = kv_store;
+      return xla::FunctionalHloRunner::CreateGpuClient(
+          std::move(gpu_client_options));
     }
   }
+}
+
+absl::StatusOr<PjRtEnvironment> GetPjRtClient(absl::string_view device_type,
+                                              absl::string_view address,
+                                              int node_id, int num_nodes,
+                                              bool enable_mock_nccl,
+
+                                              absl::Duration init_timeout) {
+  PjRtEnvironment env;
+  TF_ASSIGN_OR_RETURN(env.client,
+                      GetPjRtClient(device_type, address, node_id, num_nodes,
+                                    enable_mock_nccl, init_timeout, env.service,
+                                    env.kv_store, env.distributed_client));
+  return env;
 }
 
 namespace {
@@ -330,8 +356,12 @@ FunctionalHloRunner::CreateHostClient() {
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient>>
-FunctionalHloRunner::CreateGpuClient() {
-  return GetStreamExecutorGpuClient(GpuClientOptions());
+FunctionalHloRunner::CreateGpuClient(GpuClientOptions options) {
+  if (options.node_id < 0 || options.node_id >= options.num_nodes) {
+    return absl::InvalidArgumentError(
+        "Node id is expected to be in range [0, num_nodes)");
+  }
+  return GetStreamExecutorGpuClient(options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtClient>>
@@ -339,24 +369,6 @@ FunctionalHloRunner::CreateMockGpuClient(int num_nodes) {
   GpuClientOptions options;
   options.num_nodes = num_nodes;
   options.enable_mock_nccl = true;
-  return GetStreamExecutorGpuClient(options);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtClient>>
-FunctionalHloRunner::CreateGpuClient(
-    std::shared_ptr<xla::KeyValueStoreInterface> kv_store, int node_id,
-    int num_nodes) {
-  if (node_id < 0 || node_id >= num_nodes) {
-    return absl::InvalidArgumentError(
-        "Node id is expected to be in range [0, num_nodes)");
-  }
-
-  TF_RET_CHECK(kv_store != nullptr);
-
-  GpuClientOptions options;
-  options.node_id = node_id;
-  options.num_nodes = num_nodes;
-  options.kv_store = kv_store;
   return GetStreamExecutorGpuClient(options);
 }
 
@@ -879,15 +891,15 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> FunctionalHloRunner::Compile(
 // Runs the executable and may repeat for multiple times.
 absl::StatusOr<FunctionalHloRunner::PerDeviceLiteralVecType>
 FunctionalHloRunner::Run(PjRtClient& client, PjRtLoadedExecutable* executable,
-
                          const PerDeviceLiteralVecType& arguments,
-                         const RunningOptions& running_options) {
+                         const RunningOptions& running_options,
+                         std::minstd_rand0* engine) {
   auto create_argument_buffers_on_device = [&client, &executable, &arguments,
-                                            &running_options](
+                                            &running_options, engine](
                                                bool flatten_tupled_arguments) {
     if (arguments.empty()) {
       return CreateArgumentsOnDevice(client, executable, running_options,
-                                     flatten_tupled_arguments);
+                                     flatten_tupled_arguments, engine);
     }
 
     if (flatten_tupled_arguments && arguments.begin()->second.size() == 1 &&
@@ -1149,7 +1161,8 @@ FunctionalHloRunner::RunInternal(
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 FunctionalHloRunner::CreateArgumentsOnDevice(
     PjRtClient& client, const PjRtLoadedExecutable* executable,
-    const RunningOptions& running_options, bool flatten_arguments) {
+    const RunningOptions& running_options, bool flatten_arguments,
+    std::minstd_rand0* engine) {
   if (running_options.module_argument_mode ==
       ModuleArgumentMode::kUninitialized) {
     return CreateUninitializedArgumentsOnDevice(
@@ -1218,14 +1231,22 @@ FunctionalHloRunner::CreateArgumentsOnDevice(
       }
     } else {
       if (flatten_arguments) {
-        TF_ASSIGN_OR_RETURN(LiteralVec tupled_argument_literals,
-                            MakeFakeArguments(my_hlo_module, kUseRandomInputs));
+        TF_ASSIGN_OR_RETURN(
+            LiteralVec tupled_argument_literals,
+            MakeFakeArguments(my_hlo_module, kUseRandomInputs,
+                              /*use_large_range=*/false,
+                              /*treat_gte_as_data_formatting=*/false,
+                              /*max_bits_of_precision=*/std::nullopt, engine));
         CHECK_EQ(tupled_argument_literals.size(), 1);
         CHECK(tupled_argument_literals.front().shape().IsTuple());
         argument_literals = tupled_argument_literals.front().DecomposeTuple();
       } else {
-        TF_ASSIGN_OR_RETURN(argument_literals,
-                            MakeFakeArguments(my_hlo_module, kUseRandomInputs));
+        TF_ASSIGN_OR_RETURN(
+            argument_literals,
+            MakeFakeArguments(my_hlo_module, kUseRandomInputs,
+                              /*use_large_range=*/false,
+                              /*treat_gte_as_data_formatting=*/false,
+                              /*max_bits_of_precision=*/std::nullopt, engine));
       }
       if (kUseSharedInputs) {
         break;

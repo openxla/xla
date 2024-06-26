@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/mlir_to_hlo.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -36,26 +37,32 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/MLProgram/IR/MLProgram.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
+#include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
 #include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "mlir/IR/OwningOpRef.h"  // from @llvm-project
+#include "mlir/IR/Visitors.h"  // from @llvm-project
 #include "mlir/Parser/Parser.h"  // from @llvm-project
 #include "mlir/Pass/PassManager.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
+#include "stablehlo/dialect/ChloOps.h"  // from @stablehlo
 #include "stablehlo/dialect/Register.h"  // from @stablehlo
 #include "stablehlo/dialect/Serialization.h"  // from @stablehlo
 #include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
 #include "stablehlo/transforms/Passes.h"  // from @stablehlo
+#include "xla/debug_options_flags.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
-#include "xla/statusor.h"
+#include "xla/service/spmd/shardonnay/constants.h"
+#include "xla/service/spmd/shardonnay/utils.h"
 #include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/util.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -199,9 +206,10 @@ void UpgradeStablehlo(mlir::ModuleOp module) {
 absl::Status MlirToXlaComputation(mlir::ModuleOp module,
                                   XlaComputation& xla_computation,
                                   bool use_tuple_args, bool return_tuple) {
-  mlir::BaseScopedDiagnosticHandler diagnostic_handler(module->getContext());
+  mlir::MLIRContext* context = module->getContext();
+  mlir::BaseScopedDiagnosticHandler diagnostic_handler(context);
   {
-    mlir::PassManager pm(module->getContext());
+    mlir::PassManager pm(context);
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
     pm.addNestedPass<mlir::func::FuncOp>(
         mlir::mhlo::createChloLegalizeToHloPass());
@@ -222,11 +230,25 @@ absl::Status MlirToXlaComputation(mlir::ModuleOp module,
     }
   }
 
-  HloProto proto;
-  TF_RETURN_IF_ERROR(
-      ConvertMlirHloToHlo(module, &proto, use_tuple_args, return_tuple));
+  // TODO(b/345414638): Delete when we move Shardonnay as the first pass in the
+  // XLA pipeline.
+  if (use_tuple_args && GetDebugOptionsFromFlags().xla_use_shardonnay()) {
+    // Shardonnay can't handle tuple args when round-tripping. So delay using
+    // tuples until after Shardonnay is run.
+    sdy::addFrontendAttribute(module, sdy::kUseTupleArgs,
+                              mlir::StringAttr::get(context, "t"));
+    use_tuple_args = false;
+  }
 
-  xla_computation = XlaComputation(std::move(*proto.mutable_hlo_module()));
+  // create config options use use_tuple_args, return_tuple set:
+  mlir::MlirToHloConversionOptions options;
+  options.use_tuple_args = use_tuple_args;
+  options.return_tuple = return_tuple;
+
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
+                      mlir::ConvertMlirHloToHloModule(module, options));
+
+  xla_computation = XlaComputation(hlo_module->ToProto());
   return absl::OkStatus();
 }
 
@@ -370,9 +392,26 @@ std::string GetDefaultStablehloVersion() {
 absl::StatusOr<std::string> Serialize(mlir::ModuleOp module,
                                       std::optional<int64_t> plugin_version,
                                       absl::string_view target, bool inplace) {
-  // Current PJRT users expect 12 weeks forward compat
-  // VHLO support added in PJRT API v41, flip to send VHLO in near future.
-  return SerializeUsingNativeBytecode(module, plugin_version);
+  // Current PJRT users expect 12 weeks forward compat, VHLO provides this
+  // compat. VHLO support was added in PJRT API v41, and is sent for plugins
+  // v47+ allowing plugins a chance to make any required integration changes.
+  // TODO (b/344930098): Allow VHLO interop and remove the all_stablehlo check
+  bool all_stablehlo = true;
+  module->walk([&](mlir::Operation* op) {
+    if (!llvm::isa<mlir::ModuleOp>(op) &&
+        !llvm::isa<mlir::stablehlo::StablehloDialect, mlir::func::FuncDialect,
+                   mlir::chlo::ChloDialect>(op->getDialect())) {
+      std::cout << op->getDialect()->getNamespace().str() << "\n";
+      all_stablehlo = false;
+      return mlir::WalkResult::interrupt();
+    }
+    return mlir::WalkResult::advance();
+  });
+  if (!all_stablehlo ||
+      (plugin_version.has_value() && plugin_version.value() < 47)) {
+    return SerializeUsingNativeBytecode(module, plugin_version);
+  }
+  return SerializeUsingVersionedStablehlo(module, target, inplace);
 }
 
 }  // namespace xla

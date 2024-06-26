@@ -167,7 +167,6 @@ class RocmComputeCapability {
       : gcn_arch_name_(proto.gcn_arch_name()) {}
 
   RocmComputeCapability() = default;
-  ~RocmComputeCapability() = default;
 
   std::string gcn_arch_name() const { return gcn_arch_name_; }
 
@@ -218,6 +217,11 @@ class RocmComputeCapability {
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
+
+  bool has_amd_matrix_core() const {
+    return (gfx9_mi100_or_later() || gfx_version().find("gfx11") ||
+            gfx_version().find("gfx12"));
+  }
 
   bool has_fp16_atomics_support() const {
     // TODO(rocm): Check. This should be the same as has_fast_fp16_support().
