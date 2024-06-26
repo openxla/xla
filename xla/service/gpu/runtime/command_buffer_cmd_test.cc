@@ -65,8 +65,8 @@ static constexpr auto s1 = ExecutionStreamId(1);
 struct TestOnlyCommandBufferCmd : public CommandBufferCmd {
   TestOnlyCommandBufferCmd(ExecutionStreamId execution_stream_id,
                            BufferUsageVector buffer_usage)
-      : CommandBufferCmd(execution_stream_id,
-                         CommandBufferCmdType::kUnknownCmd),
+      : CommandBufferCmd(CommandBufferCmdType::kUnknownCmd,
+                         execution_stream_id),
         buffer_usage(buffer_usage) {}
 
   absl::Status Record(const Thunk::ExecuteParams&, const RecordParams&,

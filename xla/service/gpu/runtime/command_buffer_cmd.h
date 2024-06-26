@@ -83,7 +83,7 @@ namespace xla::gpu {
   V(kUnknownCmd, "UnknownCmd")                           \
 // clang-format on
 
-enum class CommandBufferCmdType : int {
+enum class CommandBufferCmdType : int32_t {
 #define DECLARE_ENUM(enum_name, cmd_name, ...) enum_name,
   COMMAND_BUFFER_CMD_LIST(DECLARE_ENUM)
 #undef DECLARE_ENUM
@@ -106,9 +106,9 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 // buffers concurrently on different stream executors.
 class CommandBufferCmd {
  public:
-  explicit CommandBufferCmd(ExecutionStreamId execution_stream_id,
-                            CommandBufferCmdType cmd_type)
-      : execution_stream_id_(execution_stream_id), cmd_type_(cmd_type) {}
+  CommandBufferCmd(CommandBufferCmdType cmd_type,
+                   ExecutionStreamId execution_stream_id)
+      : cmd_type_(cmd_type), execution_stream_id_(execution_stream_id) {}
   virtual ~CommandBufferCmd() = default;
 
   enum class MemoryAccess { kRead, kWrite };
@@ -258,7 +258,7 @@ class CommandBufferCmd {
     profile_annotation_ = profile_annotation;
   }
 
-  CommandBufferCmdType CommandType() const {
+  CommandBufferCmdType command_type() const {
     return cmd_type_;
   }
 
@@ -272,8 +272,8 @@ class CommandBufferCmd {
 
  private:
   std::string profile_annotation_;
-  ExecutionStreamId execution_stream_id_;
   CommandBufferCmdType cmd_type_;
+  ExecutionStreamId execution_stream_id_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -442,8 +442,8 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
 // A base class for commands implemented as tracing of stream activities.
 class TracedCommandBufferCmd : public CommandBufferCmd {
  protected:
-  explicit TracedCommandBufferCmd(ExecutionStreamId execution_stream_id,
-                                  CommandBufferCmdType cmd_type);
+  explicit TracedCommandBufferCmd(CommandBufferCmdType cmd_type,
+                                  ExecutionStreamId execution_stream_id);
 
   // Creates a command buffer by calling a user-provided `trace` function and
   // adds it as a nested command to `command_buffer`. Traced command buffers
@@ -896,8 +896,8 @@ class CustomCallCmd : public CommandBufferCmd {
                 std::vector<std::optional<Slice>> operands,
                 std::vector<std::optional<Slice>> results,
                 absl::string_view opaque)
-      : CommandBufferCmd(execution_stream_id,
-                         CommandBufferCmdType::kCustomCallCmd),
+      : CommandBufferCmd(CommandBufferCmdType::kCustomCallCmd,
+                         execution_stream_id),
         call_target_(std::move(call_target)),
         opaque_(opaque),
         operands_(std::move(operands)),
@@ -908,8 +908,8 @@ class CustomCallCmd : public CommandBufferCmd {
                 std::vector<std::optional<Slice>> results,
                 AttributesMap attributes,
                 const HloComputation* called_computation)
-      : CommandBufferCmd(execution_stream_id,
-                         CommandBufferCmdType::kCustomCallCmd),
+      : CommandBufferCmd(CommandBufferCmdType::kCustomCallCmd,
+                         execution_stream_id),
         handler_(handler),
         attributes_(std::move(attributes)),
         called_computation_(called_computation),
@@ -979,9 +979,9 @@ class BarrierCmd : public CommandBufferCmd {
 
 class CollectiveCmd : public CommandBufferCmd {
  public:
-  CollectiveCmd(ExecutionStreamId execution_stream_id,
+  CollectiveCmd(CommandBufferCmdType cmd_type, ExecutionStreamId execution_stream_id,
                 ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
-                NcclCollectiveConfig config, CommandBufferCmdType cmd_type);
+                NcclCollectiveConfig config);
 
   absl::Status Prepare(const Thunk::PrepareParams& params,
                        Thunk::ResourceRequests& resource_requests) final;
