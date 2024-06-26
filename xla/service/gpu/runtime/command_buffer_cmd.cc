@@ -90,6 +90,19 @@ namespace xla::gpu {
 using ExecutionScopeId = se::CommandBuffer::ExecutionScopeId;
 using MemoryAccess = CommandBufferCmd::MemoryAccess;
 
+std::string CommandBufferCmdString(
+    CommandBufferCmdType type) {
+  switch (type) {
+#define CASE_CMD_STRING(enum_name, cmd_name, ...) \
+  case CommandBufferCmdType::enum_name:           \
+    return cmd_name;
+    COMMAND_BUFFER_CMD_LIST(CASE_CMD_STRING)
+#undef CASE_CMD_STRING
+    default:
+        return "UnknownCmd";
+  }
+}
+
 static std::string_view ReductionKindString(ReductionKind kind) {
   switch (kind) {
     case ReductionKind::MAX:
@@ -426,8 +439,8 @@ absl::StatusOr<se::CommandBuffer*> TracedCommandBuffer::GetOrTraceCommandBuffer(
 //===----------------------------------------------------------------------===//
 
 TracedCommandBufferCmd::TracedCommandBufferCmd(
-    ExecutionStreamId execution_stream_id)
-    : CommandBufferCmd(execution_stream_id) {}
+    ExecutionStreamId execution_stream_id, CommandBufferCmdType cmd_type)
+    : CommandBufferCmd(execution_stream_id, cmd_type) {}
 
 absl::Status TracedCommandBufferCmd::AddTracedCommandBuffer(
     const Thunk::ExecuteParams& execute_params,
@@ -514,7 +527,10 @@ $L__BB0_2:
 
 ComputationIdCmd::ComputationIdCmd(ExecutionStreamId execution_stream_id,
                                    BufferAllocation::Slice dest, Kind kind)
-    : CommandBufferCmd(execution_stream_id), dest_(dest), kind_(kind) {}
+    : CommandBufferCmd(execution_stream_id,
+                       CommandBufferCmdType::kComputationIdCmd),
+      dest_(dest),
+      kind_(kind) {}
 
 CommandBufferCmd::BufferUsageVector ComputationIdCmd::buffers() {
   return {{dest_, MemoryAccess::kWrite}};
@@ -591,7 +607,7 @@ LaunchCmd::LaunchCmd(ExecutionStreamId execution_stream_id,
                      absl::Span<const BufferAllocation::Slice> args,
                      absl::Span<const MemoryAccess> args_access,
                      LaunchDimensions dims, int64_t shmem_bytes)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kLaunchCmd),
       kernel_name_(std::move(kernel_name)),
       args_(args.begin(), args.end()),
       args_access_(args_access.begin(), args_access.end()),
@@ -665,7 +681,8 @@ CustomKernelLaunchCmd::CustomKernelLaunchCmd(
     ExecutionStreamId execution_stream_id,
     absl::Span<const BufferAllocation::Slice> args,
     absl::Span<const MemoryAccess> args_access, CustomKernel custom_kernel)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id,
+                       CommandBufferCmdType::kCustomKernelLaunchCmd),
       args_(args.begin(), args.end()),
       args_access_(args_access.begin(), args_access.end()),
       custom_kernel_(std::move(custom_kernel)) {}
@@ -735,7 +752,8 @@ CommandBufferCmd::BufferUsageVector CustomKernelLaunchCmd::buffers() {
 MemcpyDeviceToDeviceCmd::MemcpyDeviceToDeviceCmd(
     ExecutionStreamId execution_stream_id, BufferAllocation::Slice dst,
     BufferAllocation::Slice src, int64_t num_bytes)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id,
+                       CommandBufferCmdType::kMemcpyDeviceToDeviceCmd),
       dst_(dst),
       src_(src),
       num_bytes_(num_bytes) {}
@@ -773,7 +791,8 @@ CommandBufferCmd::BufferUsageVector MemcpyDeviceToDeviceCmd::buffers() {
 
 MemzeroCmd::MemzeroCmd(ExecutionStreamId execution_stream_id,
                        BufferAllocation::Slice dst)
-    : CommandBufferCmd(execution_stream_id), dst_(dst) {}
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kMemzeroCmd),
+      dst_(dst) {}
 
 absl::Status MemzeroCmd::Record(const Thunk::ExecuteParams& execute_params,
                                 const RecordParams& record_params,
@@ -804,7 +823,7 @@ CommandBufferCmd::BufferUsageVector MemzeroCmd::buffers() {
 
 Memset32Cmd::Memset32Cmd(ExecutionStreamId execution_stream_id,
                          BufferAllocation::Slice dst, uint32_t bit_pattern)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kMemset32Cmd),
       dst_(dst),
       bit_pattern_(bit_pattern) {}
 
@@ -840,7 +859,7 @@ CommandBufferCmd::BufferUsageVector Memset32Cmd::buffers() {
 IfCmd::IfCmd(ExecutionStreamId execution_stream_id,
              BufferAllocation::Slice pred,
              CommandBufferCmdSequence then_commands)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kIfCmd),
       pred_(pred),
       then_commands_(std::move(then_commands)) {}
 
@@ -882,7 +901,7 @@ IfElseCmd::IfElseCmd(ExecutionStreamId execution_stream_id,
                      BufferAllocation::Slice pred,
                      CommandBufferCmdSequence then_commands,
                      CommandBufferCmdSequence else_commands)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kIfElseCmd),
       pred_(pred),
       then_commands_(std::move(then_commands)),
       else_commands_(std::move(else_commands)) {}
@@ -931,7 +950,7 @@ CommandBufferCmd::BufferUsageVector IfElseCmd::buffers() {
 CaseCmd::CaseCmd(ExecutionStreamId execution_stream_id,
                  BufferAllocation::Slice index,
                  std::vector<CommandBufferCmdSequence> branches_commands)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kCaseCmd),
       index_(index),
       branches_commands_(std::move(branches_commands)) {}
 
@@ -980,7 +999,7 @@ CommandBufferCmd::BufferUsageVector CaseCmd::buffers() {
 ForCmd::ForCmd(ExecutionStreamId execution_stream_id, int32_t num_iterations,
                BufferAllocation::Slice loop_counter,
                CommandBufferCmdSequence body_commands)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kForCmd),
       num_iterations_(num_iterations),
       loop_counter_(loop_counter),
       body_commands_(std::move(body_commands)) {}
@@ -1027,7 +1046,7 @@ WhileCmd::WhileCmd(ExecutionStreamId execution_stream_id,
                    BufferAllocation::Slice pred,
                    CommandBufferCmdSequence cond_commands,
                    CommandBufferCmdSequence body_commands)
-    : CommandBufferCmd(execution_stream_id),
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kWhileCmd),
       pred_(pred),
       cond_commands_(std::move(cond_commands)),
       body_commands_(std::move(body_commands)) {}
@@ -1080,7 +1099,7 @@ GemmCmd::GemmCmd(ExecutionStreamId execution_stream_id, GemmConfig config,
                  const BufferAllocation::Slice& rhs_buffer,
                  const BufferAllocation::Slice& output_buffer,
                  const BufferAllocation::Slice& workspace, bool deterministic)
-    : TracedCommandBufferCmd(execution_stream_id),
+    : TracedCommandBufferCmd(execution_stream_id, CommandBufferCmdType::kGemmCmd),
       config_(std::move(config)),
       lhs_buffer_(lhs_buffer),
       rhs_buffer_(rhs_buffer),
@@ -1147,7 +1166,7 @@ CublasLtCmd::CublasLtCmd(
     BufferAllocation::Slice d_scale_buffer /* may be null */,
     BufferAllocation::Slice d_amax_buffer /* may be null */,
     BufferAllocation::Slice workspace_buffer)
-    : TracedCommandBufferCmd(execution_stream_id),
+    : TracedCommandBufferCmd(execution_stream_id, CommandBufferCmdType::kCublasLtCmd),
       gemm_config_(std::move(gemm_config)),
       epilogue_(epilogue),
       algorithm_idx_(algorithm_idx),
@@ -1302,7 +1321,8 @@ CommandBufferCmd::BufferUsageVector CublasLtCmd::buffers() {
 CuDnnCmd::CuDnnCmd(ExecutionStreamId execution_stream_id,
                    absl::Span<const BufferAllocation::Slice> args,
                    const std::shared_ptr<se::dnn::LazyDnnGraph> graph)
-    : TracedCommandBufferCmd(execution_stream_id),
+    : TracedCommandBufferCmd(execution_stream_id,
+                             CommandBufferCmdType::kCuDnnCmd),
       args_(args.cbegin(), args.cend()),
       graph_(graph) {}
 
@@ -1521,7 +1541,8 @@ CommandBufferCmd::BufferUsageVector CustomCallCmd::buffers() {
 
 BarrierCmd::BarrierCmd(ExecutionStreamId execution_stream_id,
                        ExecutionStreamId from_stream_id)
-    : CommandBufferCmd(execution_stream_id), from_stream_id_(from_stream_id) {}
+    : CommandBufferCmd(execution_stream_id, CommandBufferCmdType::kBarrierCmd),
+      from_stream_id_(from_stream_id) {}
 
 absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
                                 const RecordParams& record_params,
@@ -1545,8 +1566,10 @@ BarrierCmd::BufferUsageVector BarrierCmd::buffers() { return {}; }
 
 CollectiveCmd::CollectiveCmd(ExecutionStreamId execution_stream_id,
                              ExecutionStreamId async_from_stream_id,
-                             NcclApi* nccl_api, NcclCollectiveConfig config)
-    : CommandBufferCmd(execution_stream_id),
+                             NcclApi* nccl_api, NcclCollectiveConfig config,
+                             CommandBufferCmdType cmd_type)
+    : CommandBufferCmd(execution_stream_id,
+                       cmd_type),
       async_from_stream_id_(async_from_stream_id),
       nccl_api_(nccl_api),
       config_(std::move(config)) {}
@@ -1620,7 +1643,7 @@ AllReduceCmd::AllReduceCmd(
     NcclCollectiveConfig config, ReductionKind reduction_kind,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(execution_stream_id, async_from_stream_id, nccl_api,
-                    std::move(config)),
+                    std::move(config), CommandBufferCmdType::kAllReduceCmd),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1690,7 +1713,7 @@ ReduceScatterCmd::ReduceScatterCmd(
     NcclCollectiveConfig config, ReductionKind reduction_kind,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(execution_stream_id, async_from_stream_id, nccl_api,
-                    std::move(config)),
+                    std::move(config), CommandBufferCmdType::kReduceScatter),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1761,7 +1784,7 @@ AllGatherCmd::AllGatherCmd(
     NcclCollectiveConfig config,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(execution_stream_id, async_from_stream_id, nccl_api,
-                    std::move(config)),
+                    std::move(config), CommandBufferCmdType::kAllGatherCmd),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
@@ -1828,7 +1851,8 @@ CollectiveBroadcastCmd::CollectiveBroadcastCmd(
     NcclCollectiveConfig config,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(execution_stream_id, async_from_stream_id, nccl_api,
-                    std::move(config)),
+                    std::move(config),
+                    CommandBufferCmdType::kCollectiveBroadcastCmd),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::Status CollectiveBroadcastCmd::Record(
