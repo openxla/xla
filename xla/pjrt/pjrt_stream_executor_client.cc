@@ -826,7 +826,7 @@ PjRtStreamExecutorBuffer::DonateWithControlDependency(PjRtFuture<> dependency) {
 // for both cases, either from the unpinned host memory to device, or from
 // the unpinned host memory to the pinned host memory.
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
-PjRtStreamExecutorClient::BufferFromHostBuffer(
+PjRtStreamExecutorClient::BufferFromHostBufferInternal(
     const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
     std::optional<absl::Span<int64_t const>> byte_strides,
     HostBufferSemantics host_buffer_semantics,
@@ -1041,7 +1041,7 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer, PjRtDevice* device,
     const Layout* device_layout) {
-  return BufferFromHostBuffer(
+  return BufferFromHostBufferInternal(
       data, type, dims, byte_strides, host_buffer_semantics,
       std::move(on_done_with_host_buffer), device, device_layout,
       /*memory_space=*/nullptr);
@@ -1054,7 +1054,7 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
     PjRtDevice* device) {
-  return BufferFromHostBuffer(
+  return BufferFromHostBufferInternal(
       data, type, dims, byte_strides, host_buffer_semantics,
       std::move(on_done_with_host_buffer), device, /*device_layout=*/nullptr,
       /*memory_space=*/nullptr);
@@ -1067,7 +1067,7 @@ PjRtStreamExecutorClient::BufferFromHostBuffer(
     HostBufferSemantics host_buffer_semantics,
     absl::AnyInvocable<void() &&> on_done_with_host_buffer,
     PjRtMemorySpace* memory_space, const Layout* device_layout) {
-  return BufferFromHostBuffer(
+  return BufferFromHostBufferInternal(
       data, type, dims, byte_strides, host_buffer_semantics,
       std::move(on_done_with_host_buffer), memory_space->devices()[0],
       device_layout, memory_space);
