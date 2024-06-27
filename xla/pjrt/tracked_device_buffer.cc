@@ -175,13 +175,15 @@ TrackedDeviceBuffer::FromScopedShapedBuffer(
   CHECK(iterator == shaped_buffer->buffers().end());
   return std::make_shared<TrackedDeviceBuffer>(
       shaped_buffer->memory_allocator(), shaped_buffer->device_ordinal(),
+      shaped_buffer->physical_device_ordinal(),
       absl::Span<se::DeviceMemoryBase>(buffers), definition_events,
       /*on_delete_callback=*/nullptr);
 }
 
 ShapedBuffer TrackedDeviceBuffer::AsShapedBuffer(
     const Shape& on_device_shape) const {
-  ShapedBuffer shaped_buffer(on_device_shape, device_ordinal_);
+  ShapedBuffer shaped_buffer(on_device_shape, device_ordinal_,
+                             physical_device_ordinal_);
   ShapeTree<se::DeviceMemoryBase>::iterator iterator =
       shaped_buffer.buffers().begin();
   for (const se::DeviceMemoryBase& buf : device_memory_) {
@@ -224,11 +226,13 @@ void TrackedDeviceBuffer::AddToInputAsDonated(
 
 TrackedDeviceBuffer::TrackedDeviceBuffer(
     se::DeviceMemoryAllocator* allocator, int device_ordinal,
+    int physical_device_ordinal,
     absl::Span<se::DeviceMemoryBase const> device_memory,
     absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events,
     absl::AnyInvocable<void() &&> on_delete_callback)
     : allocator_(allocator),
       device_ordinal_(device_ordinal),
+      physical_device_ordinal_(physical_device_ordinal),
       device_memory_(device_memory.begin(), device_memory.end()),
       definition_events_(std::make_move_iterator(definition_events.begin()),
                          std::make_move_iterator(definition_events.end())),

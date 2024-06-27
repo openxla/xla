@@ -443,7 +443,8 @@ AllocateDestinationBuffer(
   TF_ASSIGN_OR_RETURN(ScopedShapedBuffer dst_buffer,
                       transfer_manager->AllocateScopedShapedBuffer(
                           on_host_shape, se_client->allocator(),
-                          local_device->local_device_id().value()));
+                          local_device->local_device_id().value(),
+                          local_device->local_hardware_id().value()));
   if (local_device->allocation_model() ==
       LocalDeviceState::kComputeSynchronized) {
     if (copy_stream == nullptr) {
@@ -760,7 +761,8 @@ PjRtStreamExecutorBuffer::DonateWithControlDependency(PjRtFuture<> dependency) {
 
   auto new_device_buffer = std::make_shared<TrackedDeviceBuffer>(
       tracked_buffer->allocator(), device()->local_device_id().value(),
-      std::move(buffers), std::move(definition_events),
+      device()->local_hardware_id_typed().value(), std::move(buffers),
+      std::move(definition_events),
       /*on_delete_callback=*/nullptr);
 
   // Make the new buffer which is identical to the old, except for the new
@@ -1084,7 +1086,8 @@ PjRtStreamExecutorClient::CreateErrorBuffer(absl::Status error,
                           ->GetLocalDeviceState());
   absl::Span<se::DeviceMemoryBase> buffers;
   auto dummy_device_buffer = std::make_shared<TrackedDeviceBuffer>(
-      se_client->allocator(), local_device->local_device_id().value(), buffers,
+      se_client->allocator(), local_device->local_device_id().value(),
+      local_device->local_hardware_id().value(), buffers,
       absl::MakeSpan(&definition_event, 1),
       /*on_delete_callback=*/nullptr);
 
@@ -1274,6 +1277,7 @@ PjRtStreamExecutorClient::CreateViewOfDeviceBuffer(
 
   auto device_buffer = std::make_shared<TrackedDeviceBuffer>(
       /*allocator=*/nullptr, device->local_device_id().value(),
+      device->local_hardware_id_typed().value(),
       std::initializer_list<se::DeviceMemoryBase>{buffer}, definition_events,
       std::move(on_delete_callback));
   return std::unique_ptr<PjRtBuffer>(std::make_unique<PjRtStreamExecutorBuffer>(
