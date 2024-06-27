@@ -22,6 +22,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
@@ -29,7 +30,6 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/statusor.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "tsl/lib/core/status_test_util.h"
@@ -288,35 +288,62 @@ TEST_F(FunctionalHloRunnerTest, ShardedAutotuningWorks) {
 absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
   tsl::setenv("CUDA_VISIBLE_DEVICES", std::to_string(node_id).data(),
               /*overwrite=*/true);
-  std::unique_ptr<xla::DistributedRuntimeService> service = nullptr;
-  std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr;
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtClient> client,
-                      GetPjRtClient("gpu", "127.0.0.1:12345", node_id,
-                                    kNumNodes, false, service, kv_store));
-  CHECK(kv_store != nullptr);
+  TF_ASSIGN_OR_RETURN(
+      PjRtEnvironment env,
+      xla::GetPjRtClient("gpu", "127.0.0.1:12345", node_id, kNumNodes,
+                         /*enable_mock_nccl=*/false,
+                         /*init_timeout=*/absl::Seconds(120)));
+  CHECK(env.kv_store != nullptr);
   TF_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
-      *client, GetDebugOptionsFromFlags(),
+      *env.client, GetDebugOptionsFromFlags(),
       FunctionalHloRunner::PreprocessingOptions{},
       FunctionalHloRunner::RawCompileOptions{},
       GetHloPath("multiple_gemm_fusions.hlo"), InputFormat::kText));
   if (node_id == 0) {
-    TF_ASSIGN_OR_RETURN(
-        std::string results0,
-        kv_store->Get("gemm_fusion_autotuning_results_1_0", absl::Seconds(1)));
+    TF_ASSIGN_OR_RETURN(std::string results0,
+                        env.kv_store->Get("gemm_fusion_autotuning_results_1_0",
+                                          absl::Seconds(1)));
     CHECK(absl::StrContains(results0, "run_time"));
-    TF_ASSIGN_OR_RETURN(
-        std::string results1,
-        kv_store->Get("gemm_fusion_autotuning_results_1_1", absl::Seconds(1)));
+    TF_ASSIGN_OR_RETURN(std::string results1,
+                        env.kv_store->Get("gemm_fusion_autotuning_results_1_1",
+                                          absl::Seconds(1)));
     CHECK(absl::StrContains(results1, "run_time"));
     // First two nodes autotune two different fusions.
     CHECK_NE(results0, results1);
-    TF_ASSIGN_OR_RETURN(
-        std::string results2,
-        kv_store->Get("gemm_fusion_autotuning_results_1_2", absl::Seconds(1)));
+    TF_ASSIGN_OR_RETURN(std::string results2,
+                        env.kv_store->Get("gemm_fusion_autotuning_results_1_2",
+                                          absl::Seconds(1)));
     // Third node has nothing to autotune.
     CHECK(!absl::StrContains(results2, "run_time"));
   }
   return absl::OkStatus();
+}
+
+TEST_F(FunctionalHloRunnerTest, CanRunWithMockCollectives) {
+  // This test corresponds to:
+  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=16
+  if (IsTestingCpu()) {
+    GTEST_SKIP() << "GPU-only test";
+  }
+  xla::DebugOptions debug_options;
+  FunctionalHloRunner::PreprocessingOptions preproc_options;
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.spmd_mode =
+      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
+  raw_compile_options.num_replicas = 1;
+  raw_compile_options.num_partitions = 16;
+
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseZerosAsInput;
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          FunctionalHloRunner::CreateMockGpuClient(16));
+
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
+      *client, debug_options, preproc_options, raw_compile_options,
+      running_options, {GetHloPath("sharded_16_devices.hlo")},
+      InputFormat::kText));
 }
 
 }  // namespace

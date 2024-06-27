@@ -231,33 +231,6 @@ class StreamExecutor {
     return absl::InternalError("Not implemented");
   }
 
-  // Enqueues an operation onto stream to set 32-bit patterns starting at
-  // location, for byte count given by size. size must be 32-bit quantified
-  // (i.e. evenly divisible by 4). Returns whether the operation was
-  // successfully enqueued onto the stream.
-  virtual absl::Status Memset32(Stream* stream, DeviceMemoryBase* location,
-                                uint32_t pattern, uint64_t size) = 0;
-
-  // Enqueues a memcpy operation onto stream, with a host destination location
-  // host_dst and a device memory source, with target size size.
-  virtual absl::Status Memcpy(Stream* stream, void* host_dst,
-                              const DeviceMemoryBase& device_src,
-                              uint64_t size) = 0;
-
-  // Enqueues a memcpy operation onto stream, with a device destination location
-  // and a host memory source, with target size size.
-  virtual absl::Status Memcpy(Stream* stream, DeviceMemoryBase* device_dst,
-                              const void* host_src, uint64_t size) = 0;
-
-  // Enqueues a memcpy operation onto stream, with a device destination location
-  // and a device source location, with target size size. Peer access should
-  // have been enabled between the StreamExecutors owning the device memory
-  // regions.
-  virtual bool MemcpyDeviceToDevice(Stream* stream,
-                                    DeviceMemoryBase* device_dst,
-                                    const DeviceMemoryBase& device_src,
-                                    uint64_t size) = 0;
-
   // Enqueues on a stream a user-specified function to be run on the host.
   virtual bool HostCallback(Stream* stream,
                             absl::AnyInvocable<absl::Status() &&> callback) = 0;

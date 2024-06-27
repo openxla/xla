@@ -63,6 +63,7 @@ cc_library(
         ":nccl_collective_broadcast_thunk",
         ":nccl_collective_thunk",
         ":thunk",
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:types",
         "//xla:util",
@@ -422,6 +423,7 @@ cc_library(
         ":thunk",
         "//xla/service:buffer_assignment",  # build_cleaner: keep
         "//xla/service/gpu:buffer_allocations",  # build_cleaner: keep
+        "//xla/service/gpu/runtime:sequential_thunk",  # build_cleaner: keep
         "//xla/stream_executor",
         "//xla/stream_executor:command_buffer",
         "@com_google_absl//absl/base:core_headers",
@@ -1081,7 +1083,6 @@ cc_library(
     deps = [
         ":thunk",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:global_device_id",
@@ -1092,6 +1093,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",

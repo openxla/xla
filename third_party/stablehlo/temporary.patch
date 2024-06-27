@@ -175,18 +175,6 @@ diff --ruN a/stablehlo/stablehlo/CMakeLists.txt b/stablehlo/stablehlo/CMakeLists
  add_subdirectory(integrations)
  add_subdirectory(reference)
  add_subdirectory(tests)
-diff --ruN a/stablehlo/stablehlo/api/PortableApi.h b/stablehlo/stablehlo/api/PortableApi.h
---- stablehlo/stablehlo/api/PortableApi.h
-+++ stablehlo/stablehlo/api/PortableApi.h
-@@ -27,7 +27,7 @@
- 
- /// Return the current version for portable API.
- /// Increments on all meaningful changes to this file.
--inline int64_t getApiVersion() { return 6; }
-+inline int64_t getApiVersion() { return 7; }
- 
- // Get the current StableHLO version.
- //
 diff --ruN a/stablehlo/stablehlo/experimental/BUILD.bazel b/stablehlo/stablehlo/experimental/BUILD.bazel
 --- stablehlo/stablehlo/experimental/BUILD.bazel
 +++ stablehlo/stablehlo/experimental/BUILD.bazel
@@ -2955,41 +2943,4 @@ diff --ruN a/stablehlo/stablehlo/experimental/transforms/StablehloRefineShapes.c
 +}  // namespace experimental
 +}  // namespace stablehlo
 +}  // namespace mlir
-diff --ruN a/stablehlo/stablehlo/tests/TestUtils.cpp b/stablehlo/stablehlo/tests/TestUtils.cpp
---- stablehlo/stablehlo/tests/TestUtils.cpp
-+++ stablehlo/stablehlo/tests/TestUtils.cpp
-@@ -176,7 +176,8 @@
-     GreedyRewriteConfig config;
-     config.maxIterations = 1;
-     config.useTopDownTraversal = true;
--    config.enableRegionSimplification = false;
-+    config.enableRegionSimplification =
-+        mlir::GreedySimplifyRegionLevel::Disabled;
-     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns));
-   }
- 
-diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
---- stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
-+++ stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp
-@@ -300,7 +300,7 @@
- 
-   LogicalResult initialize(MLIRContext* context) override {
-     config.useTopDownTraversal = true;
--    config.enableRegionSimplification = true;
-+    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
-     config.maxIterations = 2;
-     config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
-     config.strictMode = GreedyRewriteStrictness::AnyOp;
-diff --ruN a/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp b/stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
---- stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
-+++ stablehlo/stablehlo/transforms/StablehloRefineShapes.cpp
-@@ -728,7 +728,7 @@
-     // There have been recent refactors to applyPatternsAndFoldGreedily
-     // upstream, and that might be the reason.
-     config.useTopDownTraversal = true;
--    config.enableRegionSimplification = true;
-+    config.enableRegionSimplification = GreedySimplifyRegionLevel::Aggressive;
-     config.maxIterations = 2;
-     config.maxNumRewrites = GreedyRewriteConfig::kNoLimit;
-     config.strictMode = GreedyRewriteStrictness::AnyOp;
 

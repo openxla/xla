@@ -11,11 +11,8 @@ load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load("//xla:package_groups.bzl", "xla_tests_package_groups")
 load("//xla:xla.bzl", "tests_build_defs_bzl_deps", "xla_cc_binary", "xla_cc_test")
-load(
-    "//xla/stream_executor:build_defs.bzl",
-    "if_gpu_is_configured",
-)
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -26,14 +23,6 @@ package(
     licenses = ["notice"],
 )
 
-package_group(
-    name = "friends",
-    includes = [
-        "//xla:friends",
-    ],
-    packages = ["//platforms/testing/tests/..."],
-)
-
 # Filegroup used to collect source files for dependency checking.
 filegroup(
     name = "c_srcs",
@@ -42,6 +31,8 @@ filegroup(
         "**/*.h",
     ]),
 )
+
+xla_tests_package_groups()
 
 # Generate test_suites for all backends, named "${backend}_tests".
 generate_backend_suites()
@@ -1045,6 +1036,7 @@ xla_test(
         "//xla:status_macros",
         "//xla:test",
         "//xla/client:xla_builder",
+        "//xla/service",
     ],
 )
 
@@ -1180,6 +1172,7 @@ xla_test(
         "optonly",
         # Timed out on 2020-07-18
         "nozapfhahn",
+        "test_xla_cpu_thunks",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
         "@com_google_absl//absl/memory",
@@ -1720,6 +1713,7 @@ xla_test(
         "nomac",  # b/194731834
         "nozapfhahn",
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -1831,6 +1825,7 @@ xla_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
     backends = ["cpu"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2170,6 +2165,7 @@ xla_test(
         "gpu",
         "cpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2177,7 +2173,10 @@ xla_test(
         ":test_utils",
         ":xla_internal_test_main",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
+        "//xla/service:computation_placer",
+        "//xla/service:hlo_module_config",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/lib/core:status_test_util",
@@ -2187,8 +2186,8 @@ xla_test(
 )
 
 xla_test(
-    name = "collective_ops_test_e2e",
-    srcs = ["collective_ops_test_e2e.cc"],
+    name = "collective_ops_e2e_test",
+    srcs = ["collective_ops_e2e_test.cc"],
     backend_tags = {
         # This test is tagged "manual" because it requires multiple GPUs, and
         # Forge only supports single-GPU tests.  Guitar skips "manual" tests
@@ -2214,6 +2213,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/stream_executor",
     ],
 )
 
@@ -2223,12 +2223,15 @@ xla_test(
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
+        "//xla:error_spec",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:collective_pipeliner",
         "//xla/service:hlo_dce",
         "//xla/service:hlo_parser",
         "//xla/service:hlo_pass_pipeline",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -2461,32 +2464,30 @@ xla_test(
 xla_test(
     name = "llvm_compiler_test",
     srcs = ["llvm_compiler_test.cc"],
-    backends = ["gpu"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM",
-    ]),
-    # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
-    tags = ["gpu"],
-    deps = if_gpu_is_configured([
-        ":verified_hlo_module",
+    backend_tags = {
+        # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly.
+        "gpu": ["gpu"],
+    },
+    backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        ":hlo_test_base",
         "//xla:literal_util",
         "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/status",
+        "//xla/hlo/ir:hlo_module_group",
         "//xla/service:backend",
-        "//xla/service:cpu_plugin",
         "//xla/service:llvm_compiler",
-        "//xla/service:platform_util",
-        "//xla/service/cpu:cpu_compiler",
-        "//xla/service/gpu:gpu_compiler",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_main",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor/cuda:cuda_platform_id",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor/rocm:rocm_platform_id",
-    ]),
+    ],
 )
 
 xla_test(
@@ -2980,6 +2981,26 @@ xla_test(
         "//xla:test_helpers",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service/cpu:onednn_util",
+        "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_test(
+    name = "onednn_convolution_test",
+    srcs = ["onednn_convolution_test.cc"],
+    backends = [
+        "cpu",
+    ],
+    copts = tsl_copts(),
+    deps = [
+        ":hlo_test_base",
+        ":test_macros_header",
+        ":xla_internal_test_main",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:test",
+        "//xla:test_helpers",
+        "//xla/hlo/utils:hlo_matchers",
         "@tsl//tsl/platform:platform_port",
     ],
 )

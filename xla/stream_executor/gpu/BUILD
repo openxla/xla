@@ -491,7 +491,7 @@ gpu_only_cc_library(
     ]),
 )
 
-gpu_kernel_library(
+cc_library(
     name = "redzone_allocator_kernel_cuda",
     srcs = [
         "redzone_allocator_kernel.h",
@@ -674,7 +674,6 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",

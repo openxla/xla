@@ -28,6 +28,7 @@ limitations under the License.
 
 // placeholder for index annotation headers
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"  // from @nanobind
@@ -44,7 +45,6 @@ limitations under the License.
 #include "xla/python/py_client.h"
 #include "xla/python/traceback.h"
 #include "xla/shape.h"
-#include "xla/statusor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 

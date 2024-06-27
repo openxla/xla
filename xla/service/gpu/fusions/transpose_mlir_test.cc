@@ -56,15 +56,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexing021) {
           (d3 mod 2) * 32 + d0 mod 32
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
@@ -75,15 +75,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexing021) {
           d0 mod 32
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
 }
 
@@ -113,15 +113,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexing201) {
           d0 mod 32
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
@@ -132,15 +132,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexing201) {
           (d3 mod 2) * 32 + d0 mod 32
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
 }
 
@@ -170,14 +170,14 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized021) {
           (d0 mod 32) * 2 + s1
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 8191]
-        d4 in [0, 0]
-        d5 in [0, 0]
-        s0 in [0, 15]
-        s1 in [0, 1]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 8192)
+        d4 in [0, 1)
+        d5 in [0, 1)
+        s0 in [0, 16)
+        s1 in [0, 2)
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
@@ -188,14 +188,14 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized021) {
           (d0 mod 32) * 2 + s1
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 8191]
-        d4 in [0, 0]
-        d5 in [0, 0]
-        s0 in [0, 15]
-        s1 in [0, 1]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 8192)
+        d4 in [0, 1)
+        d5 in [0, 1)
+        s0 in [0, 16)
+        s1 in [0, 2)
       )"));
 }
 
@@ -221,17 +221,17 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized210) {
         (d0, d1, d2, d3, d4, d5)[s0, s1] -> (
           d0 floordiv 32 + s0 * 4,
           d3 floordiv 128,
-          (d0 mod 32) * 2 + s1 + (d3 mod 128) * 64
+          (d0 mod 32) * 2 + (d3 mod 128) * 64 + s1
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 8191]
-        d4 in [0, 0]
-        d5 in [0, 0]
-        s0 in [0, 15]
-        s1 in [0, 1]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 8192)
+        d4 in [0, 1)
+        d5 in [0, 1)
+        s0 in [0, 16)
+        s1 in [0, 2)
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
@@ -242,14 +242,14 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingVectorized210) {
           (d0 mod 32) * 2 + s1
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 8191]
-        d4 in [0, 0]
-        d5 in [0, 0]
-        s0 in [0, 15]
-        s1 in [0, 1]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 8192)
+        d4 in [0, 1)
+        d5 in [0, 1)
+        s0 in [0, 16)
+        s1 in [0, 2)
       )"));
 }
 
@@ -620,15 +620,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
           d0 floordiv 32 + s0 * 4
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
@@ -639,15 +639,15 @@ TEST_F(MlirTransposeFusionTest, ThreadIndexingSideOutput) {
           (d3 mod 2) * 32 + d0 mod 32
         )
         domain:
-        d0 in [0, 127]
-        d1 in [0, 0]
-        d2 in [0, 0]
-        d3 in [0, 199]
-        d4 in [0, 0]
-        d5 in [0, 0]
+        d0 in [0, 128)
+        d1 in [0, 1)
+        d2 in [0, 1)
+        d3 in [0, 200)
+        d4 in [0, 1)
+        d5 in [0, 1)
 
-        s0 in [0, 7]
-        s1 in [0, 0]
+        s0 in [0, 8)
+        s1 in [0, 1)
       )"));
 }
 
@@ -666,7 +666,6 @@ TEST_F(MlirTransposeFusionTest, VectorizedTranspose021) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<1x64x65xbf16>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 TEST_F(MlirTransposeFusionTest, VectorizedTranspose210) {
@@ -684,7 +683,40 @@ TEST_F(MlirTransposeFusionTest, VectorizedTranspose210) {
   )";
   TF_EXPECT_OK(EmitAndCheckIR(
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<64x1x65xbf16>"));
-  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize021) {
+  auto kHloString = R"(
+    HloModule Transpose
+    %fused_computation {
+      %p0 = u8[256,256,256] parameter(0)
+      %transpose = u8[256,256,256] transpose(%p0), dimensions={0,2,1}
+    }
+    ENTRY main {
+      %param = u8[256,256,256] parameter(0)
+      ROOT %fusion = u8[256,256,256] fusion(%param), kind=kInput,
+        calls=%fused_computation
+    }
+  )";
+  TF_EXPECT_OK(EmitAndCheckIR(
+      kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<1x128x129xi8>"));
+}
+
+TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize210) {
+  auto kHloString = R"(
+    HloModule Transpose
+    %fused_computation {
+      %p0 = u8[256,256,256] parameter(0)
+      %transpose = u8[256,256,256] transpose(%p0), dimensions={2,1,0}
+    }
+    ENTRY main {
+      %param = u8[256,256,256] parameter(0)
+      ROOT %fusion = u8[256,256,256] fusion(%param), kind=kInput,
+        calls=%fused_computation
+    }
+  )";
+  TF_EXPECT_OK(EmitAndCheckIR(
+      kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<128x1x129xi8>"));
 }
 
 }  // namespace

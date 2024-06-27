@@ -12,7 +12,7 @@ module @donate_call_output_to_call_and_reshard {
         : (!array0) -> !array0
     %1, %ctrl_1 = ifrt.Call @identity(%0) on devices [0,1]
         {io_aliases=[array<i32: 0, 0>]} : (!array0) -> !array0
-    %2 = ifrt.Reshard(%1) {donated=true} : (!array0) -> !array1
+    %2, %ctrl_2 = ifrt.Reshard(%1) {donated=true} : (!array0) -> !array1
     return %2 : !array1
   }
 
@@ -49,7 +49,7 @@ module @donate_to_two_calls_error {
 module @program_arg_not_donated_error {
   func.func @main(%arg0: !array0) -> (!array1) attributes {ifrt.function} {
     // expected-error @+1 {{'ifrt.Reshard' op input has not been donated to the program.}}
-    %0 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
+    %0, %ctrl_0 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
     return %0 : !array1
   }
 }
@@ -63,9 +63,9 @@ module @program_arg_not_donated_error {
 module @donate_to_two_reshards_error {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> (!array1, !array1)
       attributes {ifrt.function} {
-    %0 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
-    // expected-error @+1 {{'ifrt.Reshard' op input already donated.}}
-    %1 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
+    %0, %ctrl_0 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
+    // expected-error @+1 {{'ifrt.Reshard' op input #0 already donated.}}
+    %1, %ctrl_1 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
     return %0, %1 : !array1, !array1
   }
 }
@@ -81,13 +81,29 @@ module @donate_to_reshard_and_call_error {
         attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @identity(%arg0) on devices [0,1]
         {io_aliases=[array<i32: 0, 0>]} : (!array0) -> !array0
-    // expected-error @+1 {{'ifrt.Reshard' op input already donated.}}
-    %1 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
+    // expected-error @+1 {{'ifrt.Reshard' op input #0 already donated.}}
+    %1, %ctrl_1 = ifrt.Reshard(%arg0) {donated=true} : (!array0) -> !array1
     return %0, %1 : !array0, !array1
   }
 
   func.func private @identity(%arg0: tensor<2xi32>) -> tensor<2xi32> {
     return %arg0 : tensor<2xi32>
+  }
+}
+
+// -----
+
+!array0 = !ifrt.array<tensor<2xi32>,
+                      #ifrt.sharding_param<2 to [0] on 2>, [0, 1]>
+!array1 = !ifrt.array<tensor<2xi32>,
+                      #ifrt.sharding_param<2 to [0] on 2>, [2, 3]>
+module @donate_to_two_copy_arrays_error {
+  func.func @main(%arg0: !array0 {ifrt.donated}) -> (!array1, !array1)
+      attributes {ifrt.function} {
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {donated=true} : (!array0) -> !array1
+    // expected-error @+1 {{'ifrt.CopyArrays' op input #0 already donated.}}
+    %1, %ctrl_1 = ifrt.CopyArrays(%arg0) {donated=true} : (!array0) -> !array1
+    return %0, %1 : !array1, !array1
   }
 }
 

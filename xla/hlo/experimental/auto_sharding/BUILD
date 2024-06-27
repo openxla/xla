@@ -3,6 +3,7 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
+load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable")
 
 package(
@@ -44,10 +45,10 @@ cc_library(
         "//xla:array",
         "//xla:shape_tree",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_constant_splitter",
         "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:buffer_value",
@@ -58,6 +59,7 @@ cc_library(
         "//xla/service:hlo_alias_analysis",
         "//xla/service:hlo_buffer",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service:hlo_dce",
         "//xla/service:hlo_memory_scheduler",
         "//xla/service:hlo_pass",
         "//xla/service:hlo_value",
@@ -71,6 +73,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
@@ -92,8 +95,10 @@ cc_library(
         ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
         "@com_google_absl//absl/log:check",
-        "@com_google_ortools//ortools/linear_solver",
-    ],
+    ] + if_google(
+        ["@com_google_ortools//ortools/linear_solver:linear_solver_wrapper"],
+        ["@com_google_ortools//ortools/linear_solver"],
+    ),
 )
 
 cc_library(
@@ -108,7 +113,6 @@ cc_library(
         ":auto_sharding_proto_cc",
         ":auto_sharding_strategy",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:util",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -116,9 +120,9 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@com_google_ortools//ortools/linear_solver",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:hash",
@@ -127,6 +131,12 @@ cc_library(
     ] + xla_internal(
         ["experimental/auto_sharding:auto_sharding_solver_impl_internal"],
         otherwise = ["//xla/hlo/experimental/auto_sharding:auto_sharding_solver_impl"],
+    ) + if_google(
+        [
+            "@com_google_ortools//ortools/linear_solver:linear_solver_sat",
+            "@com_google_ortools//ortools/linear_solver:linear_solver_wrapper",
+        ],
+        ["@com_google_ortools//ortools/linear_solver:linear_solver"],
     ),
 )
 
@@ -147,8 +157,10 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_ortools//ortools/linear_solver",
-    ],
+    ] + if_google(
+        ["@com_google_ortools//ortools/linear_solver:linear_solver_wrapper"],
+        ["@com_google_ortools//ortools/linear_solver"],
+    ),
 )
 
 cc_library(
@@ -262,7 +274,6 @@ cc_library(
         "//xla:array",
         "//xla:shape_tree",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:ptrvec",
@@ -334,7 +345,6 @@ xla_cc_test(
         ":auto_sharding_option",
         ":auto_sharding_strategy",
         ":auto_sharding_util",
-        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_matchers",
@@ -349,6 +359,7 @@ xla_cc_test(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
@@ -377,5 +388,5 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
-    ],
+    ] + if_google(["@com_google_ortools//ortools/linear_solver:linear_solver_scip"]),
 )

@@ -80,6 +80,8 @@ class HostKernel : public Kernel {
   // `thread_dims` and calling the kernel function.
   absl::Status Launch(const ThreadDim& thread_dims,
                       absl::Span<const DeviceMemoryBase> buffers) const;
+  absl::Status Launch(const ThreadDim& thread_dims,
+                      absl::Span<const SE_HOST_KernelArg> args) const;
 
   // Launches the kernel by iterating over all threads in `thread_dims` and
   // calling `task_runner` to run individual task (implementation might decide
@@ -92,6 +94,9 @@ class HostKernel : public Kernel {
   // get the number of tasks that are expected to be completed.
   tsl::AsyncValueRef<LaunchEvent> Launch(
       const ThreadDim& thread_dims, absl::Span<const DeviceMemoryBase> buffers,
+      TaskRunner task_runner) const;
+  tsl::AsyncValueRef<LaunchEvent> Launch(
+      const ThreadDim& thread_dims, absl::Span<const SE_HOST_KernelArg> args,
       TaskRunner task_runner) const;
 
   // For host platform, we assume that a core is a thread, and we can run at
@@ -108,10 +113,12 @@ class HostKernel : public Kernel {
             std::enable_if_t<std::is_base_of_v<KernelFunction, T>>* = nullptr>
   void SetKernelFunction(std::unique_ptr<T> function) {
     function_ = std::move(function);
+    kernel_ = function_->kernel();
   }
 
  private:
   std::unique_ptr<KernelFunction> function_;
+  SE_HOST_Kernel* kernel_;  // pointer to the kernel owned by `function_`
 
   unsigned arity_;
   std::shared_ptr<tsl::thread::ThreadPool> thread_pool_;

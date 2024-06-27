@@ -196,6 +196,7 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:protobuf",

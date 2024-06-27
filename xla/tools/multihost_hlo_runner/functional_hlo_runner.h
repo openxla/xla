@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -33,18 +34,24 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/statusor.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
 
-absl::StatusOr<std::unique_ptr<xla::PjRtClient>> GetPjRtClient(
-    absl::string_view device_type, absl::string_view address, int node_id,
-    int num_nodes, bool enable_mock_nccl,
-    std::unique_ptr<xla::DistributedRuntimeService>& service,
-    std::shared_ptr<xla::KeyValueStoreInterface>& kv_store);
+struct PjRtEnvironment {
+  std::unique_ptr<xla::PjRtClient> client;
+  std::unique_ptr<xla::DistributedRuntimeService> service;
+  std::shared_ptr<xla::KeyValueStoreInterface> kv_store;
+  std::shared_ptr<xla::DistributedRuntimeClient> distributed_client;
+};
+
+absl::StatusOr<PjRtEnvironment> GetPjRtClient(absl::string_view device_type,
+                                              absl::string_view address,
+                                              int node_id, int num_nodes,
+                                              bool enable_mock_nccl,
+                                              absl::Duration init_timeout);
 
 // Supported input formats for the input HLO module.
 enum class InputFormat {

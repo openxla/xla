@@ -67,9 +67,8 @@ class HostKernelExecuteState
     : public tsl::ReferenceCounted<HostKernelExecuteState> {
  public:
   HostKernelExecuteState(HostKernel::TaskRunner task_runner,
-                         HostKernel::KernelFunction* function,
-                         ThreadDim thread_dims,
-                         absl::Span<const DeviceMemoryBase> buffers);
+                         SE_HOST_Kernel* kernel, ThreadDim thread_dims,
+                         absl::Span<const SE_HOST_KernelArg> args);
 
   // Notify of a completion of a host kernel task.
   void Notify(absl::Status status);
@@ -112,17 +111,24 @@ HostKernel::HostKernel(std::shared_ptr<tsl::thread::ThreadPool> thread_pool)
 HostKernel::HostKernel(unsigned arity, SE_HOST_Kernel* kernel,
                        std::shared_ptr<tsl::thread::ThreadPool> thread_pool)
     : function_(std::make_unique<KernelFunctionPtr>(kernel)),
+      kernel_(function_->kernel()),
       arity_(arity),
       thread_pool_(thread_pool) {}
 
 absl::Status HostKernel::Launch(
     const ThreadDim& thread_dims,
     absl::Span<const DeviceMemoryBase> buffers) const {
-  SE_HOST_KernelThreadDim kernel_thread_dims = {thread_dims.x, thread_dims.y,
-                                                thread_dims.z};
+  return Launch(thread_dims, ConvertBuffersToKernelArgs(buffers));
+}
 
-  SE_HOST_Kernel* kernel = function_->kernel();
-  auto args = ConvertBuffersToKernelArgs(buffers);
+absl::Status HostKernel::Launch(
+    const ThreadDim& thread_dims,
+    absl::Span<const SE_HOST_KernelArg> args) const {
+  SE_HOST_KernelThreadDim kernel_thread_dims = {
+      thread_dims.x,
+      thread_dims.y,
+      thread_dims.z,
+  };
 
   for (uint64_t z = 0; z < thread_dims.z; ++z) {
     for (uint64_t y = 0; y < thread_dims.y; ++y) {
@@ -132,9 +138,9 @@ absl::Status HostKernel::Launch(
         SE_HOST_KernelCallFrame call_frame = {
             &kernel_thread_dims, &kernel_thread, args.size(), args.data()};
 
-        SE_HOST_KernelError* error = (*kernel)(&call_frame);
+        SE_HOST_KernelError* error = (*kernel_)(&call_frame);
 
-        if (error != nullptr) {
+        if (ABSL_PREDICT_FALSE(error != nullptr)) {
           return absl::InternalError("Failed to call host kernel");
         }
       }
@@ -147,20 +153,27 @@ absl::Status HostKernel::Launch(
 tsl::AsyncValueRef<LaunchEvent> HostKernel::Launch(
     const ThreadDim& thread_dims, absl::Span<const DeviceMemoryBase> buffers,
     TaskRunner task_runner) const {
+  return Launch(thread_dims, ConvertBuffersToKernelArgs(buffers),
+                std::move(task_runner));
+}
+
+tsl::AsyncValueRef<LaunchEvent> HostKernel::Launch(
+    const ThreadDim& thread_dims, absl::Span<const SE_HOST_KernelArg> args,
+    TaskRunner task_runner) const {
   size_t num_tasks = thread_dims.x * thread_dims.y * thread_dims.z;
   CHECK_GT(num_tasks, 0) << "Number of tasks must be positive";  // Crash Ok
 
   // Short-circuit launch with a single task and run it in the caller thread.
   if (ABSL_PREDICT_TRUE(num_tasks == 1)) {
-    absl::Status launched = Launch(thread_dims, buffers);
+    absl::Status launched = Launch(thread_dims, args);
     return ABSL_PREDICT_TRUE(launched.ok())
                ? OkLaunchEvent()
                : tsl::MakeErrorAsyncValueRef(std::move(launched));
   }
 
   // Allocate a control structure that will orchestrate kernel execution.
-  auto state = tsl::MakeRef<HostKernelExecuteState>(
-      std::move(task_runner), function_.get(), thread_dims, buffers);
+  auto state = tsl::MakeRef<HostKernelExecuteState>(std::move(task_runner),
+                                                    kernel_, thread_dims, args);
 
   state->CallAsync(/*start_index=*/0, /*end_index=*/num_tasks);
 
@@ -168,13 +181,13 @@ tsl::AsyncValueRef<LaunchEvent> HostKernel::Launch(
 }
 
 HostKernelExecuteState::HostKernelExecuteState(
-    HostKernel::TaskRunner task_runner, HostKernel::KernelFunction* function,
-    ThreadDim thread_dims, absl::Span<const DeviceMemoryBase> buffers)
+    HostKernel::TaskRunner task_runner, SE_HOST_Kernel kernel,
+    ThreadDim thread_dims, absl::Span<const SE_HOST_KernelArg> args)
     : task_runner_(std::move(task_runner)),
       num_tasks_(thread_dims.x * thread_dims.y * thread_dims.z),
-      kernel_(function->kernel()),
+      kernel_(kernel),
       thread_dims_({thread_dims.x, thread_dims.y, thread_dims.z}),
-      args_(ConvertBuffersToKernelArgs(buffers)),
+      args_(args.begin(), args.end()),
       abort_(false),
       counter_(num_tasks_),
       event_(tsl::MakeConstructedAsyncValueRef<LaunchEvent>()) {}

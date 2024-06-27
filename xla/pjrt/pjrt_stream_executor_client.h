@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/service/shaped_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/util.h"
@@ -478,6 +478,14 @@ class PjRtStreamExecutorClient : public PjRtClient {
   };
   absl::StatusOr<ExecutableExtras> GetExecutableExtras(CompileOptions* options);
 
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternal(
+      const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
+      std::optional<absl::Span<int64_t const>> byte_strides,
+      HostBufferSemantics host_buffer_semantics,
+      absl::AnyInvocable<void() &&> on_done_with_host_buffer,
+      PjRtDevice* device, const Layout* device_layout,
+      PjRtMemorySpace* memory_space);
+
   const PjRtPlatformId platform_id_;
   const std::string platform_name_;
   LocalClient* client_;
@@ -888,7 +896,8 @@ AllocateDestinationBuffer(
     const Shape& on_host_shape, PjRtDevice* device,
     LocalDeviceState* local_device, se::Stream* copy_stream,
     bool is_uninitialized_create, PjRtStreamExecutorClient* client,
-    std::shared_ptr<BufferSequencingEvent> definition_event = nullptr);
+    std::shared_ptr<BufferSequencingEvent> definition_event = nullptr,
+    PjRtMemorySpace* memory_space = nullptr);
 
 // Wraps one or more XLA LocalExecutables (one per partition, as specified by
 // the build options).
@@ -998,7 +1007,9 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
     return compile_options_;
   }
 
-  absl::StatusOr<std::string> FingerprintExecutable() const override;
+  absl::StatusOr<std::string> FingerprintExecutable() const override {
+    return fingerprint_;
+  };
 
  protected:
   bool parameter_is_tupled_arguments() const {
@@ -1077,6 +1088,7 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
   // addressable_device_logical_ids_[i] is assigned. shared_ptrs instead of
   // unique_ptrs to play well with the Python bindings (see xla.cc).
   std::vector<PjRtDevice*> addressable_devices_;
+  std::string fingerprint_;
 };
 
 }  // namespace xla

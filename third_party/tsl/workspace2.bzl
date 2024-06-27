@@ -327,10 +327,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "816e41809c043ff285e8c0f06a75a1fa250211bbfb2dc0a037eeef39f1a9e427",
-        strip_prefix = "curl-8.4.0",
+        sha256 = "9c6db808160015f30f3c656c0dec125feb9dc00753596bf858a272b5dd8dc398",
+        strip_prefix = "curl-8.6.0",
         system_build_file = "//third_party/systemlibs:curl.BUILD",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.4.0.tar.gz"),
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.6.0.tar.gz"),
     )
 
     # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
@@ -397,9 +397,9 @@ def _tf_repositories():
         name = "nccl_archive",
         build_file = "//third_party:nccl/archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
-        sha256 = "1c5474553afedb88e878c772f13d6f90b9226b3f2971dfa6f873adb9443100c2",
-        strip_prefix = "nccl-2.19.3-1",
-        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.19.3-1.tar.gz"),
+        sha256 = "1923596984d85e310b5b6c52b2c72a1b93da57218f2bc5a5c7ac3d59297a3303",
+        strip_prefix = "nccl-2.21.5-1",
+        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.21.5-1.tar.gz"),
     )
 
     # Note that we are currently taking NVTX headers from a NCCL release to get nvToolsExtPayload.h

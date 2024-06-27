@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <array>
 #include <climits>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -96,12 +95,14 @@ limitations under the License.
 #include "mlir/Transforms/Passes.h"  // from @llvm-project
 #include "xla/autotuning.pb.h"
 #include "xla/comparison_util.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
@@ -2493,8 +2494,23 @@ MakeTensorPtrOpAndBoundaryChecks CreateMakeTensorPtrOp(
   llvm::SmallVector<int32_t> order;
   llvm::SmallVector<int32_t> boundary_checks;
 
+  const std::vector<int64_t>& tile_strides = tiled_hlo.tile_strides();
+  const Shape& shape = tiled_hlo.hlo()->shape();
+
+  // Compute physical strides of the tile. `tile_strides` contains strides for
+  // individual dimensions. We need to convert them to strides in the buffer
+  // taking into account physical layout.
+  // TODO(b/331332678): Compute indexing maps to physical layout indexing in
+  // SymbolicTileAnalysis.
+  llvm::SmallVector<int64_t> physical_strides(tile_strides.size(), 1);
+  int64_t current_stride = 1;
+  for (int64_t cur_dim : LayoutUtil::MinorToMajor(shape)) {
+    physical_strides[cur_dim] = tile_strides[cur_dim] * current_stride;
+    current_stride *= shape.dimensions(cur_dim);
+  }
+
   for (auto [size, stride] :
-       llvm::zip(tiled_hlo.tile_sizes(), tiled_hlo.tile_strides())) {
+       llvm::zip(tiled_hlo.tile_sizes(), physical_strides)) {
     if (size == 1) continue;
 
     int dimension_index = sizes.size();
@@ -2583,155 +2599,6 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
   b.create<mt::StoreOp>(make_tensor.op, result, make_tensor.boundary_checks,
                         mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
 
-  return absl::OkStatus();
-}
-
-absl::Status EmitSoftMax(mlir::OpBuilder builder,
-                         absl::string_view libdevice_path,
-                         const se::DeviceDescription& device_info,
-                         const HloFusionInstruction* fusion,
-                         mlir::triton::FuncOp fn, const BlockLevelParameters&) {
-  const HloComputation* computation = fusion->fused_instructions_computation();
-  // TODO(b/332649307): Remove the fallback on the legacy triton analysis once
-  //  the symbolic tile analysis can handle all cases.
-  TF_ASSIGN_OR_RETURN(TritonFusionAnalysis analysis,
-                      TritonFusionAnalysis::Execute(*computation));
-
-  const HloInstruction* root = computation->root_instruction();
-  auto loc = mlir::NameLoc::get(builder.getStringAttr(root->name()));
-  ImplicitLocOpBuilder b(loc, builder);
-
-  // Assumptions we make about the matcher:
-  //   * matches Softmax "diamonds" on the last axis, along with any number of
-  //     elementwise operations/bitcasts on any edge
-  //   * within a given fusion, every argument to a Softmax diamond has the same
-  //     shape
-  //   * every reduction is on the last axis
-  //   * the last axis of every reduction parameter has the same length
-  //   * reductions only reduce a single operand
-  //   * all the shapes have canonical layout (logical layout = physical layout)
-  //   * the computation has a single output
-  //   * we tile along a single dimension
-
-  // TODO(bchetioui): allow doing several rows per block (e.g. for when rows
-  // are smaller than the minimum transaction size)
-
-  const HloInstruction* reduce = hlo_query::GetFirstInstructionWithOpcode(
-      *computation, HloOpcode::kReduce);
-
-  TF_RET_CHECK(reduce != nullptr);
-
-  Shape reduce_input_shape = reduce->operand(0)->shape();
-
-  TF_RET_CHECK(reduce->opcode() == HloOpcode::kReduce);
-  TF_RET_CHECK(reduce->dimensions().size() == 1);
-  TF_RET_CHECK(reduce->dimensions()[0] == reduce_input_shape.rank() - 1);
-
-  int row_len = reduce_input_shape.dimensions_minor(0);
-
-  Value pid = b.create<ma::ExtSIOp>(
-      b.getI64Type(), b.create<mt::GetProgramIdOp>(mt::ProgramIDDim::X));
-  Value row_stride = CreateConst(b, b.getI32Type(), row_len);
-
-  Value row_offset = b.create<ma::MulIOp>(
-      pid, b.create<ma::ExtSIOp>(b.getI64Type(), row_stride));
-  Value zero_offset = CreateConst(b, b.getI64Type(), 0);
-
-  absl::flat_hash_map<const HloInstruction*, Value> values_out;
-  std::vector<int32_t> boundary_checks;
-
-  // block_size must be a power of two.
-  int result_block_size = pow(2, ceil(log(row_len) / log(2)));
-
-  if (result_block_size != row_len) {
-    boundary_checks.push_back(0);
-  }
-
-  // Emits load instructions
-  for (int param_idx = 0; param_idx < computation->num_parameters();
-       ++param_idx) {
-    HloInstruction* param = computation->parameter_instruction(param_idx);
-    // Current tiling derivation assigns index 0 to the reduction dimension and
-    // index 1 to the batch dimension.
-    auto reduce_iterspec = analysis.IterSpec(
-        TritonFusionAnalysis::Scope::OUTPUT, param, /*dimension=*/0);
-    auto batch_iterspec = analysis.IterSpec(TritonFusionAnalysis::Scope::OUTPUT,
-                                            param, /*dimension=*/1);
-
-    // Make sure only batch and reduce dims are present in tiling
-    TF_RET_CHECK(analysis.IterSpec(TritonFusionAnalysis::Scope::OUTPUT, param,
-                                   /*dimension=*/2) == nullptr);
-
-    if (!reduce_iterspec) {
-      // This parameter's broadcast is along the reduce dimension, and so
-      // each pid uses and broadcasts its own index.
-
-      // If batchDimIterSpec is also not present, then this parameter is a
-      // scalar, in which case we reuse this for each pid with offset.
-      Value batch_offset = batch_iterspec ? pid : zero_offset;
-
-      values_out[param] = EmitParameterLoad(
-          b, AddPtr(b, fn.getArgument(param_idx), batch_offset),
-          boundary_checks);
-      continue;
-    }
-
-    TF_RET_CHECK(reduce_iterspec != nullptr);
-    TF_RET_CHECK(reduce_iterspec->size() == 1);
-
-    // TODO(b/310721908): The below assumes that we tile along a single dim.
-    int reduce_dim_len = reduce_iterspec->front().count;
-    int reduce_dim_stride = reduce_iterspec->front().stride;
-    int slice_offset = reduce_iterspec->front().slice_start;
-
-    // If the batch dimension is present in this parameter's tile, we must make
-    // sure each batch idx is offset by the correct number of rows. If it is not
-    // present, then the reduce dim data is reused without any offset.
-    Value base_offset = batch_iterspec ? row_offset : zero_offset;
-
-    // We assume that the reduced axis of this parameter has length row_len.
-    // TODO(b/316637896): Relax assumption that param reduce_dim_len == row_len.
-    TF_RET_CHECK(reduce_dim_len == row_len);
-
-    // block_size must be a power of two.
-    int block_size = pow(2, ceil(log(reduce_dim_len) / log(2)));
-
-    // Verify that this param contains a single contiguous fragment.
-    TF_RET_CHECK(reduce_iterspec->front().subfragments.size() == 1);
-
-    Value emitted_tensor = b.create<mt::MakeTensorPtrOp>(
-        /*base=*/AddPtr(b, fn.getArgument(param_idx), base_offset),
-        /*shape=*/ValueRange{CreateConst(b, b.getI64Type(), reduce_dim_len)},
-        /*strides=*/
-        ValueRange{CreateConst(b, b.getI64Type(), reduce_dim_stride)},
-        /*offsets=*/ValueRange{CreateConst(b, b.getI32Type(), slice_offset)},
-        /*tensorShape=*/std::vector<int32_t>{block_size},
-        /*order=*/std::vector<int32_t>{0});
-
-    values_out[param] = EmitParameterLoad(b, emitted_tensor, boundary_checks);
-  }
-
-  // Dimension 0 is the reduced one by construction and it's the only one
-  // present in the tile shapes.
-  std::vector<DimProperties> tiled_dims = {DimProperties(
-      /*index=*/0, pid, result_block_size, /*split_value=*/1)};
-  TF_ASSIGN_OR_RETURN(
-      Value result,
-      EmitScope(b, libdevice_path, device_info, &analysis,
-                TritonFusionAnalysis::Scope::OUTPUT, tiled_dims,
-                computation->MakeInstructionPostOrder(), values_out));
-
-  Value store_tensor = b.create<mt::MakeTensorPtrOp>(
-      /*base=*/AddPtr(b, fn.getArgument(computation->num_parameters()),
-                      row_offset),
-      /*shape=*/ValueRange{CreateConst(b, b.getI64Type(), row_len)},
-      /*strides=*/ValueRange{CreateConst(b, b.getI64Type(), 1)},
-      /*offsets=*/ValueRange{CreateConst(b, b.getI32Type(), 0)},
-      /*tensorShape=*/std::vector<int32_t>{result_block_size},
-      /*order=*/std::vector<int32_t>{0});
-
-  b.create<mt::StoreOp>(store_tensor, result, std::vector<int32_t>{0},
-                        mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
   return absl::OkStatus();
 }
 
@@ -2833,11 +2700,6 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
   if (fusion_kind == kTritonGemmFusionKind) {
     TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
                                   block_level_parameters));
-  } else if (fusion_kind == kTritonSoftmaxFusionKind) {
-    TF_ASSIGN_OR_RETURN(TritonFusionAnalysis analysis,
-                        TritonFusionAnalysis::Execute(*hlo_computation));
-    TF_RETURN_IF_ERROR(EmitSoftMax(b, libdevice_path, device_info, fusion, fn,
-                                   block_level_parameters));
   } else if (fusion_kind == kTritonFusionKind) {
     TF_RETURN_IF_ERROR(EmitGeneric(b, libdevice_path, device_info, fusion, fn,
                                    block_level_parameters));
@@ -2876,6 +2738,14 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
           "capability 8.0) and up, but got compute capability ", ccCuda.major,
           ".", ccCuda.minor, "."));
     }
+  }
+
+  // TODO(b/344841434): Remove this once we fixed compile-time regressions on
+  // multiple benchmarks. We need to disable this for now, since it is
+  // significantly slowing down folks that are trying to run them.
+  auto debug_options = GetDebugOptionsFromFlags();
+  if (!debug_options.xla_gpu_enable_triton_hopper()) {
+    tsl::setenv("DISABLE_MMA_V3", "true", true /*overwrite*/);
   }
 
   TF_ASSIGN_OR_RETURN(auto triton_module,

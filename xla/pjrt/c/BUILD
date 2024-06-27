@@ -13,6 +13,10 @@ load(
     "xla_cc_test",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_google",
+)
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -269,6 +273,7 @@ cc_library(
         "//xla/pjrt:pjrt_device_description",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt/gpu:gpu_helpers",
+        "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # To register GPU AOT compiler
         "//xla/python:custom_partition_callback",
@@ -349,6 +354,9 @@ xla_test(
     name = "pjrt_c_api_gpu_test",
     srcs = ["pjrt_c_api_gpu_test.cc"],
     backends = ["gpu"],
+    tags = if_google([
+        "config-cuda-only",
+    ]),
     deps = [
         ":pjrt_c_api_ffi_extension_hdrs",
         ":pjrt_c_api_gpu",
@@ -388,7 +396,6 @@ xla_cc_test(
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_wrapper_impl",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt/distributed:in_memory_key_value_store",

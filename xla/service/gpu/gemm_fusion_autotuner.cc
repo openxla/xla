@@ -312,11 +312,6 @@ absl::StatusOr<TileSizeLimit> GetLimits(const HloDotInstruction& dot) {
   const int max_k = tsl::NextPowerOfTwoS64(
       dot.operand(1)->shape().dimensions(contracting_index));
 
-  // TODO(b/337839570): block_k = 16 is bugged in Triton for dots with 8-bit
-  // input. Setting minimum to 32 instead of 16 for these cases.
-  // TODO(b/337838200): Write the restriction on the minimum tile size to be
-  // generic. Currently we only handle the 8-bit case as this was the bug we
-  // ran into.
   return TileSizeLimit{
       /*block_m=*/std::max(max_m, kMinTileSize),
       /*block_n=*/std::max(max_n, kMinTileSize),
@@ -421,12 +416,18 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
   return new_module;
 }
 
-absl::StatusOr<std::unique_ptr<HloModule>> CudnnGemmAutotuneExtractor(
-    const AutotuneConfig& autotune_config, const HloFusionInstruction* fusion,
-    const DebugOptions& debug_opts, const int plan_id) {
-  std::unique_ptr<HloModule> new_module =
-      ExtractInstructionIntoNewModule(*fusion);
-  new_module->mutable_config().set_debug_options(debug_opts);
+absl::StatusOr<std::unique_ptr<HloModule>> FusionExtractor(
+    const HloFusionInstruction& fusion, const DebugOptions& debug_opts) {
+  std::unique_ptr<HloModule> module = ExtractInstructionIntoNewModule(fusion);
+  module->mutable_config().set_debug_options(debug_opts);
+  return module;
+}
+
+absl::StatusOr<std::unique_ptr<HloModule>> CuDnnFusionExtractor(
+    const HloFusionInstruction& fusion, const DebugOptions& debug_opts,
+    const int plan_id) {
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                      FusionExtractor(fusion, debug_opts));
 
   GpuBackendConfig gpu_config;
   FusionBackendConfig& backend_config =
@@ -435,10 +436,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> CudnnGemmAutotuneExtractor(
   // Provided a plan ID the autotuner just compiles one plan.
   backend_config.mutable_cudnn_fusion_config()->set_plan_id(plan_id);
   TF_RETURN_IF_ERROR(
-      new_module->entry_computation()->root_instruction()->set_backend_config(
+      module->entry_computation()->root_instruction()->set_backend_config(
           gpu_config));
-
-  return new_module;
+  return module;
 }
 
 bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind) {
@@ -476,6 +476,26 @@ AutotuneResult FromConfig(const Config& config) {
   return res;
 }
 
+absl::Status DumpOriginalFusion(AutotunerCompileUtil& util,
+                                const HloFusionInstruction& fusion,
+                                int fusion_id) {
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                      util.ExtractModule([&](const DebugOptions& debug_opts) {
+                        return FusionExtractor(fusion, debug_opts);
+                      }));
+  module->set_name(std::string(fusion.name()));
+  // Using the original module for its debug info and name in the first
+  // parameter. It's better to include the name of both the original module
+  // and the extracted module, to avoid name clashes.
+  DumpToFileInDirOrStdout(
+      /*module=*/*fusion.GetModule(),
+      /*file_prefix=*/"",
+      /*file_suffix=*/
+      absl::StrCat("gemm_fusion_", fusion_id, ".", module->name(), ".txt"),
+      /*contents=*/module->ToString());
+  return absl::OkStatus();
+}
+
 absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
                                  const int32_t toolkit_version,
                                  AutotunerCompileUtil& util,
@@ -483,12 +503,7 @@ absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
                                  const HloFusionInstruction* fusion,
                                  int fusion_id) {
   TritonGemmConfig triton_gemm_config;
-  if (!result.has_triton()) {
-    LOG(WARNING) << "Using empty triton GEMM config for op " << fusion->name();
-    // Empty TritonGemmConfig has all zero values which is good enough to keep
-    // fused computation in the dump but illustrate that Triton is not used for
-    // it after autotuning.
-  } else {
+  if (result.has_triton()) {
     TF_ASSIGN_OR_RETURN(triton_gemm_config,
                         TritonGemmConfig::FromProto(result.triton()));
   }
@@ -498,8 +513,8 @@ absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
       std::unique_ptr<HloModule> module,
       util.ExtractModule([&](const DebugOptions& debug_opts) {
         if (result.has_algorithm()) {
-          return CudnnGemmAutotuneExtractor(autotune_config, fusion, debug_opts,
-                                            result.algorithm().algo_id());
+          return CuDnnFusionExtractor(*fusion, debug_opts,
+                                      result.algorithm().algo_id());
         } else if (result.has_triton()) {
           return TritonGemmAutotuneExtractor(
               triton_gemm_config, device_desc, fusion, debug_opts,
@@ -519,7 +534,7 @@ absl::Status DumpAutotunedFusion(const AutotuneConfig& autotune_config,
       /*module=*/*fusion->GetModule(),
       /*file_prefix=*/"",
       /*file_suffix=*/
-      absl::StrCat("triton_fusion_", fusion_id, ".", module->name(),
+      absl::StrCat("gemm_fusion_", fusion_id, ".", module->name(),
                    ".optimized.txt"),
       /*contents=*/module->ToString());
   return absl::OkStatus();
@@ -614,13 +629,20 @@ absl::StatusOr<std::vector<Config>> GemmFusionAutotunerImpl::GenerateConfigs(
 
 absl::StatusOr<std::vector<TritonGemmConfig>>
 GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
-  bool has_8_bit_operand = HloAnyOf({&dot}, [&](const HloInstruction* node) {
-    if (node->opcode() != HloOpcode::kConvert) {
-      return false;
-    }
-    auto in_type = node->operand(0)->shape().element_type();
-    return primitive_util::BitWidth(in_type) == 8;
-  });
+  // Retrieve the minimum bit-width participating in the dot. This is needed
+  // to avoid autotuning configurations that are not supported by Triton. This
+  // is used to restrict the values for tile_k.
+  std::vector<const HloInstruction*> converts =
+      HloFindAll({&dot}, [&](const HloInstruction* node) {
+        return node->opcode() == HloOpcode::kConvert;
+      });
+  int minBitWidth = primitive_util::BitWidth(dot.shape().element_type());
+  for (auto convert : converts) {
+    auto in_type = convert->operand(0)->shape().element_type();
+    auto out_type = convert->shape().element_type();
+    minBitWidth = std::min({minBitWidth, primitive_util::BitWidth(in_type),
+                            primitive_util::BitWidth(out_type)});
+  }
 
   std::vector<TritonGemmConfig> result_configs;
   TF_ASSIGN_OR_RETURN(TileSizeLimit limits, GetLimits(dot));
@@ -670,14 +692,12 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
     }
     config.split_k = std::min(config.split_k, max_split_k);
 
-    // TODO(b/337839570): block_k = 16 is bugged in Triton for dots with 8-bit
-    // input. Setting minimum to 32 instead of 16 for these cases.
-    // TODO(b/337838200): Write the restriction on the minimum tile size to be
-    // generic. Currently we only handle the 8-bit case as this was the bug we
-    // ran into.
-    if (has_8_bit_operand && config.block_k == kMinTileSize) {
-      config.block_k *= 2;
-    }
+    // TODO(b/337839570): Triton currently has a limitation where it crashes
+    // on small block_k values depending on the bit-width of the inputs to the
+    // dot. The logic below accounts for this limitation.
+    constexpr int kLdmatrixGranularity = 256;
+    config.block_k =
+        std::max(config.block_k, kLdmatrixGranularity / minBitWidth);
 
     // Sparse meta should have at least one element per thread.
     // Note: only 2:4 structured sparsity is currently supported.
@@ -686,8 +706,9 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
         config.block_m = std::max(config.block_m, 64);
         config.num_warps = std::max(config.num_warps, 4);
       }
-      config.block_k =
-          std::max(config.block_k, kMinTileSize * (has_8_bit_operand ? 4 : 2));
+      config.block_k = std::max(
+          config.block_k,
+          2 * std::max(kMinTileSize, kLdmatrixGranularity / minBitWidth));
       int meta_elements = config.block_m * config.block_k / 16;
       config.num_warps =
           std::min<int>(config.num_warps, meta_elements / WarpSize());
@@ -745,13 +766,13 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
                 allow_filtering_kernels_spilling_registers);
           }));
     } else if (std::holds_alternative<CuDnnConfig>(config)) {
-      executable = compile_util
-                       .Compile([&](const DebugOptions& opts) {
-                         return CudnnGemmAutotuneExtractor(
-                             config_, fusion, opts,
-                             std::get<CuDnnConfig>(config).plan_id);
-                       })
-                       .value_or(nullptr);
+      executable =
+          compile_util
+              .Compile([&](const DebugOptions& opts) {
+                return CuDnnFusionExtractor(
+                    *fusion, opts, std::get<CuDnnConfig>(config).plan_id);
+              })
+              .value_or(nullptr);
     } else if (std::holds_alternative<CuBlasConfig>(config)) {
       TF_ASSIGN_OR_RETURN(executable,
                           compile_util.Compile([&](const DebugOptions& opts) {
@@ -1094,6 +1115,7 @@ absl::Status GemmFusionAutotunerImpl::Autotune(
             << tsl::proto_utils::FromDurationProto(best.run_time());
 
     if (debug_options_.xla_gpu_dump_autotuned_gemm_fusions()) {
+      TF_RETURN_IF_ERROR(DumpOriginalFusion(compile_util, *fusion, fusion_id));
       TF_RETURN_IF_ERROR(DumpAutotunedFusion(
           config_, toolkit_version_, compile_util, best, fusion, fusion_id++));
     }
