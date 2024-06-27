@@ -1,0 +1,28 @@
+diff --git a/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp b/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
+index 83f24d711..82aad06c5 100644
+--- a/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
++++ b/third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
+@@ -599,12 +599,23 @@ struct AtomicRMWOpConversion
+       auto maybeKind = matchAtomicOp(atomicRmwAttr);
+       // TODO: use rocdl.raw.buffer.atomic from ROCDL dialect to use efficient
+       // atomics for MI-* series of AMD GPU.
++      if(isa<FloatType>(valElements[i].getType()) &&
++         (*maybeKind != mlir::LLVM::AtomicBinOp::fadd)) {
++        valElem = bitcast(valElements[i],
++          int_ty(valElements[i].getType().getIntOrFloatBitWidth()));
++      }
++
+       Value atom = rewriter
+                        .create<LLVM::AtomicRMWOp>(
+                            loc, *maybeKind, rmwPtr, valElements[i],
+                            atomicMemOrdering, StringRef("agent"))
+                        .getResult();
+
++      if(isa<FloatType>(valElements[i].getType()) &&
++         (*maybeKind != mlir::LLVM::AtomicBinOp::fadd)) {
++        atom = bitcast(atom, valElements[i].getType());
++      }
++
+       // NV for the f16v2 case generates one packed instruction. We have to
+       // create two separate instructions since LLVM::AtomicRMWOp doesn't
+       // support this. Can be optimized out with rocdl.raw.buffer.atomic.
