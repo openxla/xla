@@ -104,6 +104,7 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 //
 // Commands must be thread safe as they can be recorded into multiple command
 // buffers concurrently on different stream executors.
+class CommandBufferCmdSequence;
 class CommandBufferCmd {
  public:
   CommandBufferCmd(CommandBufferCmdType cmd_type,
@@ -266,10 +267,18 @@ class CommandBufferCmd {
 
   ExecutionStreamId execution_stream_id() const { return execution_stream_id_; }
 
+  void set_require_update(bool flag) { require_update_ = flag; }
+  bool require_update() { return require_update_; }
+
+  virtual std::vector<CommandBufferCmdSequence*> get_sub_sequences() {
+    return std::vector<CommandBufferCmdSequence*>{};
+  }
+
  private:
   std::string profile_annotation_;
   CommandBufferCmdType cmd_type_;
   ExecutionStreamId execution_stream_id_;
+  bool require_update_ = true;
 };
 
 //===----------------------------------------------------------------------===//
@@ -350,6 +359,9 @@ class CommandBufferCmdSequence {
   // Returns buffers referenced by commands in this sequence.
   const absl::flat_hash_set<CommandBufferCmd::BufferUsage>& buffers() const;
 
+  void SetBufferCmdRequireUpdate(int64_t idx);
+  void ResetRequireUpdate();
+
   // Returns buffer allocations indices referenced by commands in this sequence.
   const absl::flat_hash_set<BufferAllocation::Index>& allocs_indices() const;
 
@@ -370,6 +382,13 @@ class CommandBufferCmdSequence {
   struct CommandInfo {
     std::unique_ptr<CommandBufferCmd> cmd;
     bool requires_barrier;
+  };
+
+  struct AllocationCmdMap {
+    void InsertBufferUse(int64_t idx, CommandBufferCmd* cmd);
+    void SetBufferCmdRequireUpdate(int64_t idx);
+    absl::flat_hash_map<int64_t, absl::flat_hash_set<CommandBufferCmd*>>
+        alloc_to_cmd_;
   };
 
   // Functions for tracking buffer usage of recorded commands and figuring out
@@ -398,6 +417,10 @@ class CommandBufferCmdSequence {
   };
 
   absl::flat_hash_map<ExecutionStreamId, ReadWriteSet> read_write_sets_;
+
+  // track the set of commands that consumes a certain buffer allocation, key by
+  // allocation index.
+  AllocationCmdMap alloc_cmd_map_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -634,6 +657,8 @@ class IfCmd : public CommandBufferCmd {
 
   BufferUsageVector buffers() override;
 
+  std::vector<CommandBufferCmdSequence*> get_sub_sequences() override;
+
  private:
   BufferAllocation::Slice pred_;
   CommandBufferCmdSequence then_commands_;
@@ -659,6 +684,8 @@ class IfElseCmd : public CommandBufferCmd {
   bool force_update() override;
 
   BufferUsageVector buffers() override;
+
+  std::vector<CommandBufferCmdSequence*> get_sub_sequences() override;
 
  private:
   BufferAllocation::Slice pred_;
@@ -686,6 +713,8 @@ class CaseCmd : public CommandBufferCmd {
 
   BufferUsageVector buffers() override;
 
+  std::vector<CommandBufferCmdSequence*> get_sub_sequences() override;
+
  private:
   BufferAllocation::Slice index_;
   std::vector<CommandBufferCmdSequence> branches_commands_;
@@ -711,6 +740,8 @@ class ForCmd : public CommandBufferCmd {
   bool force_update() override;
 
   BufferUsageVector buffers() override;
+
+  std::vector<CommandBufferCmdSequence*> get_sub_sequences() override;
 
  private:
   int32_t num_iterations_;
@@ -738,6 +769,8 @@ class WhileCmd : public CommandBufferCmd {
   bool force_update() override;
 
   BufferUsageVector buffers() override;
+
+  std::vector<CommandBufferCmdSequence*> get_sub_sequences() override;
 
  private:
   BufferAllocation::Slice pred_;

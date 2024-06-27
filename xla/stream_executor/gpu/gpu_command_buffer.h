@@ -130,6 +130,9 @@ class GpuCommandBuffer : public CommandBuffer {
   Mode mode() const override { return mode_; }
   State state() const override { return state_; }
 
+  absl::Status SwitchToSkipState() override;
+  absl::Status SwitchToUpdateState() override;
+
   static GpuCommandBuffer* Cast(CommandBuffer* command_buffer) {
     return static_cast<GpuCommandBuffer*>(command_buffer);
   }
