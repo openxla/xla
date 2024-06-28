@@ -110,15 +110,14 @@ ENTRY test_main {
   HloInstruction* ag_loop =
       module->entry_computation()->root_instruction()->mutable_operand(0);
   HloComputation* ag_loop_body = ag_loop->while_body();
-  HloInstruction* inst = FindInstructionByName(ag_loop_body, "dot.2");
-  EXPECT_GT(inst->backend_config<GpuBackendConfig>()->operation_queue_id(), 0);
-  EXPECT_TRUE(
-      inst->backend_config<GpuBackendConfig>()->force_earliest_schedule());
-
-  HloInstruction* cp1 =
-      FindInstructionByName(ag_loop_body, "collective-permute");
-  EXPECT_TRUE(
-      cp1->backend_config<GpuBackendConfig>()->force_earliest_schedule());
+  int64_t dot_count = 0;
+  for(HloInstruction* inst : ag_loop_body->MakeInstructionPostOrder()) {
+    if(inst->opcode() == HloOpcode::kDot) {
+      dot_count++;
+      EXPECT_GT(inst->backend_config<GpuBackendConfig>()->operation_queue_id(), 0);
+    }
+  }
+  EXPECT_EQ(dot_count, 4);
 }
 
 TEST_F(WindowedEinsumHandlerTest, RsLoopsHaveStreamIds) {
@@ -188,14 +187,14 @@ ENTRY main.9_spmd {
   HloInstruction* rs_loop =
       module->entry_computation()->root_instruction()->mutable_operand(0);
   HloComputation* rs_loop_body = rs_loop->while_body();
-  HloInstruction* inst = FindInstructionByName(rs_loop_body, "dot.7");
-  EXPECT_TRUE(inst->backend_config<GpuBackendConfig>()->operation_queue_id() >
-              0);
-
-  HloInstruction* cp1 =
-      FindInstructionByName(rs_loop_body, "collective-permute.1");
-  EXPECT_TRUE(
-      cp1->backend_config<GpuBackendConfig>()->force_earliest_schedule());
+  int64_t dot_count = 0;
+  for(HloInstruction* inst : rs_loop_body->MakeInstructionPostOrder()) {
+    if(inst->opcode() == HloOpcode::kDot) {
+      dot_count++;
+      EXPECT_GT(inst->backend_config<GpuBackendConfig>()->operation_queue_id(), 0);
+    }
+  }
+  EXPECT_EQ(dot_count, 4);
 }
 
 TEST_F(WindowedEinsumHandlerTest, AgLoopsMultipleConsumersAreChained) {
@@ -263,28 +262,22 @@ ENTRY main.12_spmd {
   bool changed;
   TF_ASSERT_OK_AND_ASSIGN(changed, gpu_handler.Run(module.get()));
   EXPECT_TRUE(changed);
-  HloInstruction* ag_loop =
-      FindInstructionByName(module->entry_computation(), "while");
   HloInstruction* inst =
       FindInstructionByName(module->entry_computation(), "dot.7");
   // dot.7 should now consume output of the windowed einsum while loop.
   EXPECT_EQ(inst->operand(0)->opcode(), HloOpcode::kGetTupleElement);
   EXPECT_EQ(inst->operand(0)->tuple_index(), 5);
-  EXPECT_EQ(inst->operand(0)->operand(0), ag_loop);
-
-  // while loop's root should now have a chain of DUS.
-  HloInstruction* ag_while_root = ag_loop->while_body()->root_instruction();
-  EXPECT_THAT(ag_while_root,
-              GmockMatch(m::Tuple(
-                  m::Op(), m::Op(), m::Op(), m::Op(), m::Op(),
-                  m::DynamicUpdateSlice(
-                      m::DynamicUpdateSlice(
-                          m::GetTupleElement(m::Parameter())
-                              .WithPredicate([](const HloInstruction* instr) {
-                                return instr->tuple_index() == 5;
-                              }),
-                          m::Op(), m::Op(), m::Op(), m::Op()),
-                      m::Op(), m::Op(), m::Op(), m::Op()))));
+  const HloInstruction* while_loop = inst->operand(0)->operand(0);
+  EXPECT_EQ(while_loop->opcode(), HloOpcode::kWhile);
+  HloComputation* while_body = while_loop->while_body();
+  int64_t dot_count = 0;
+  for(HloInstruction* ins : while_body->MakeInstructionPostOrder()) {
+    if(ins->opcode() == HloOpcode::kDot) {
+      dot_count++;
+      EXPECT_GT(ins->backend_config<GpuBackendConfig>()->operation_queue_id(), 0);
+    }
+  }
+  EXPECT_EQ(dot_count, 4);
 }
 TEST_F(WindowedEinsumHandlerTest, A2aGemmHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(

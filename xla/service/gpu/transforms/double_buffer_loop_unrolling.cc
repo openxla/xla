@@ -535,7 +535,7 @@ absl::StatusOr<bool> DoubleBufferLoopUnrolling::Run(
                         while_instr->backend_config<WhileLoopBackendConfig>());
     if (!config.has_known_trip_count() || config.known_trip_count().n() == 1) {
       VLOG(2) << while_instr->ToString()
-              << " doesn't have exact trip count, skipping loop unrolling "
+              << " doesn't have exact trip count or trip count is 1, skipping loop unrolling "
                  "for now";
       continue;
     }
