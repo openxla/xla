@@ -51,14 +51,8 @@ cache](./persisted_autotuning) is used.
 ## Single process, multiple GPU example
 ### Setup and get the HLO
 
-```{note}
-You can use a container with the following instructions:
-
-  docker run -it --shm-size=1g --gpus all ghcr.io/nvidia/jax:pax-2024-06-03
-  cd /opt/xla/
-
-Note, those instructions can be outdated more quickly. Adjust as needed.
-```
+The following instructions assume the working directory is the XLA Git.
+See [Containers](./containers) for quicker setup.
 
 ```
 # The 8 below is the number of GPUs you have.
@@ -99,10 +93,10 @@ bazel run -c opt --config=cuda --dynamic_mode=off //xla/tools/multihost_hlo_runn
 
 ### Launch container
 
-Also install some missing librairies. (Note, that can be outdated more quickly. Adjust as needed.)
+See [Containers](./containers) for quicker setup.
+Add some librairies that are probably missing.
 
 ```
-docker run -it --shm-size=1g --gpus all ghcr.io/nvidia/jax:pax-2024-06-03
 apt-get update && apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 ```
 
