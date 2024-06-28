@@ -3470,6 +3470,8 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
                       GetOutputMemoryKinds(module));
 
+  // This call will update result_layout in options.executable_build_options
+  // (in addition to returning the argument layouts).
   TF_ASSIGN_OR_RETURN(auto arg_layouts_and_pointers,
                       LayoutModesToXla(
                           xla_computation, arg_layout_modes, out_layout_modes,
