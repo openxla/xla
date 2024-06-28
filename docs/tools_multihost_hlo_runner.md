@@ -51,9 +51,16 @@ cache](./persisted_autotuning) is used.
 ## Single process, multiple GPU example
 ### Setup and get the HLO
 
+```{note}
+You can use a container with the following instructions:
+
+  docker run -it --shm-size=1g --gpus all ghcr.io/nvidia/jax:pax-2024-06-03
+  cd /opt/xla/
+
+Note, those instructions can be outdated more quickly. Adjust as needed.
 ```
-docker run -it --shm-size=1g --gpus all ghcr.io/nvidia/jax:pax-2024-06-03
-cd /opt/xla/
+
+```
 # The 8 below is the number of GPUs you have.
 # test-pax.sh --help for more details on the parallelization options
 (export XLA_FLAGS="--xla_dump_to=/tmp/dump --xla_dump_hlo_as_text"; test-pax.sh --fsdp 8 --batch-per-gpu 1)
@@ -92,7 +99,7 @@ bazel run -c opt --config=cuda --dynamic_mode=off //xla/tools/multihost_hlo_runn
 
 ### Launch container
 
-Also install some missing librairies.
+Also install some missing librairies. (Note, that can be outdated more quickly. Adjust as needed.)
 
 ```
 docker run -it --shm-size=1g --gpus all ghcr.io/nvidia/jax:pax-2024-06-03
