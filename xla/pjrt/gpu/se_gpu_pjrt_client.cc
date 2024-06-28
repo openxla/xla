@@ -963,6 +963,26 @@ GetStreamExecutorGpuDeviceAllocator(
                                                   std::move(allocators));
 }
 
+// Name the devices and threads that launch work on them. Note: the launcher
+// thread is only used if there are multiple devices driven by a single process.
+void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
+                                 const DeviceProto& device_proto,
+                                 WorkerThread* launcher_thread) {
+  auto suffix = absl::StrFormat(":#global=%d,local=%d,process=%d,slice=%d#",
+                                device_proto.global_device_id(),
+                                device_proto.local_device_ordinal(),
+                                node.node_id(), device_proto.slice_index());
+  // Name the device.
+  tsl::profiler::NameDevice(device_proto.local_device_ordinal(),
+                            absl::StrCat("Xla", suffix));
+  // Name the thread that launches work on this device. This is deferred
+  // until after ExchangeTopologies has been called so the global device
+  // id and slice index are known. These are not available when the thread
+  // is created.
+  launcher_thread->Schedule([name = absl::StrCat("XlaLauncher", suffix)] {
+    tsl::profiler::NameCurrentThread(name);
+  });
+}
 }  // namespace
 
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
@@ -1032,22 +1052,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
         local_device = std::move(it->second);
         gpu_device_ids[device_proto.local_device_ordinal()] = global_device_id;
         // Assign some descriptive names for profiling tools.
-        auto suffix =
-            absl::StrFormat(":#global=%d,local=%d,process=%d,slice=%d#",
-                            device_proto.global_device_id(),
-                            device_proto.local_device_ordinal(), node.node_id(),
-                            device_proto.slice_index());
-        // Name the device.
-        tsl::profiler::NameDevice(device_proto.local_device_ordinal(),
-                                  absl::StrCat("Xla", suffix));
-        // Name the thread that launches work on this device. This is deferred
-        // until after ExchangeTopologies has been called so the global device
-        // id and slice index are known. These are not available when the thread
-        // is created.
-        local_device->execute_thread()->Schedule(
-            [name = absl::StrCat("XlaLauncher", suffix)] {
-              tsl::profiler::NameCurrentThread(name);
-            });
+        NameDeviceAndLauncherThread(node, device_proto,
+                                    local_device->execute_thread());
       }
       auto device = std::make_unique<StreamExecutorGpuDevice>(
           device_proto.global_device_id(), std::move(local_device),
