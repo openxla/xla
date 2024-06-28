@@ -494,6 +494,7 @@ cc_library(
         "//xla/pjrt:host_callback",
         "//xla/service:custom_call_status",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@nanobind",
         "@tsl//tsl/platform:errors",
