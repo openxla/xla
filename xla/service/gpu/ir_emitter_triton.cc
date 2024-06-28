@@ -2830,7 +2830,16 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(CreateSimplifyAffinePass());
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
-  if (!CreateTritonPipeline(pm, cc, block_level_parameters, cluster_info)
+
+  // When the Triton compiler doesn't know about new hardware, use CC 9.0.
+  const int32_t max_major_version_supported_by_triton = 9;
+  const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&cc);
+  se::GpuComputeCapability new_cc = cc;
+  if (cuda_cc && cuda_cc->major > max_major_version_supported_by_triton) {
+    new_cc = se::CudaComputeCapability(9, 0);
+  }
+
+  if (!CreateTritonPipeline(pm, new_cc, block_level_parameters, cluster_info)
            .ok()) {
     return Internal("Failed to create Triton pipeline.");
   }
@@ -2858,7 +2867,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       triton_module->getAttrOfType<mlir::IntegerAttr>("triton_gpu.shared")
           .getInt();
   VLOG(2) << "Shared memory usage: " << shared_mem_bytes << " B";
-  if (std::holds_alternative<se::CudaComputeCapability>(cc) &&
+  if (std::holds_alternative<se::CudaComputeCapability>(new_cc) &&
       shared_mem_bytes > device_info.shared_memory_per_block_optin()) {
     return absl::ResourceExhaustedError(absl::StrFormat(
         "Shared memory size limit exceeded: requested %d, available: %d",
