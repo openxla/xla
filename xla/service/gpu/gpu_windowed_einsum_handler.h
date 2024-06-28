@@ -42,8 +42,10 @@ class GpuWindowedEinsumHandler : public HloModulePass {
   }
 
   struct WindowedEinsumAgLoops {
-    explicit WindowedEinsumAgLoops(HloInstruction* loop) : loop(loop) {}
+    explicit WindowedEinsumAgLoops(HloInstruction* loop, bool is_f8)
+        : loop(loop), is_f8(is_f8) {}
     HloInstruction* loop;
+    bool is_f8;
     bool consumed = false;
   };
 
