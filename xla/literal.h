@@ -367,8 +367,8 @@ class LiteralBase {
                   "insensitive. Instead, provide an external hash function "
                   "that uses Literal::Hash which allows you to specify layout "
                   "sensitivity.");
-#else // gcc
-    return LiteralBase::Hash(std::move(state), value);
+#else // gcc(https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2593r0.html)
+    static_assert(sizeof(H) == 0);
 #endif
   }
 
