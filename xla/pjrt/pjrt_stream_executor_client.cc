@@ -3439,7 +3439,6 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
                                   CompileOptions options) {
-  auto input_options = options;
   std::vector<const Shape*> argument_layout_pointers;
   TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
       computation,
@@ -3450,50 +3449,7 @@ PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
       },
       options.argument_layouts, &options.executable_build_options,
       &argument_layout_pointers));
-  return Compile(computation, argument_layout_pointers,
-                 *(options.executable_build_options.result_layout()),
-                 input_options);
-}
-
-absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
-PjRtStreamExecutorClient::Compile(
-    const XlaComputation& computation,
-    const std::vector<const Shape*>& argument_layout_pointers,
-    const Shape& result_layout, CompileOptions options) {
-  tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Compile");
-  VLOG(1) << "PjRtStreamExecutorClient::Compile";
-  options.executable_build_options.set_process_index(process_index());
-  TF_RET_CHECK(device_count() % addressable_device_count() == 0)
-      << "Each process is expected to have the same number of devices";
-  options.executable_build_options.set_process_count(
-      device_count() / addressable_device_count());
-  auto input_options = options;
-
-  TF_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
-
-  TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&options));
-  std::shared_ptr<DeviceAssignment>& device_assignment =
-      extras.device_assignment;
-  std::vector<PjRtStreamExecutorLoadedExecutable::LogicalDeviceIds>&
-      addressable_device_logical_ids = extras.addressable_device_logical_ids;
-  std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
-
-  options.executable_build_options.set_result_layout(result_layout);
-
-  TF_ASSIGN_OR_RETURN(
-      std::vector<std::unique_ptr<LocalExecutable>> local_executables,
-      client()->Compile(computation, argument_layout_pointers,
-                        options.executable_build_options));
-
-  auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
-      std::move(local_executables), options.parameter_is_tupled_arguments,
-      std::move(device_assignment), std::move(input_options),
-      std::move(addressable_device_logical_ids), std::move(addressable_devices),
-      this);
-
-  TF_RETURN_IF_ERROR(
-      executable->SetUpDonation(options.parameter_is_tupled_arguments));
-  return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));
+  return CompileInternal(computation, argument_layout_pointers, options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -3514,8 +3470,6 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
   TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
                       GetOutputMemoryKinds(module));
 
-  Shape result_layout;
-  ExecutableBuildOptions build_options = options.executable_build_options;
   TF_ASSIGN_OR_RETURN(auto arg_layouts_and_pointers,
                       LayoutModesToXla(
                           xla_computation, arg_layout_modes, out_layout_modes,
@@ -3526,10 +3480,49 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
                                 .transfer_manager()
                                 ->ChooseCompactLayoutForShape(shape);
                           },
-                          build_options));
+                          options.executable_build_options));
 
-  return Compile(xla_computation, arg_layouts_and_pointers.second,
-                 *(build_options.result_layout()), options);
+  return CompileInternal(xla_computation, arg_layouts_and_pointers.second,
+                         options);
+}
+
+absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
+PjRtStreamExecutorClient::CompileInternal(
+    const XlaComputation& computation,
+    const std::vector<const Shape*>& argument_layout_pointers,
+    CompileOptions options) {
+  tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Compile");
+  VLOG(1) << "PjRtStreamExecutorClient::Compile";
+  options.executable_build_options.set_process_index(process_index());
+  TF_RET_CHECK(device_count() % addressable_device_count() == 0)
+      << "Each process is expected to have the same number of devices";
+  options.executable_build_options.set_process_count(
+      device_count() / addressable_device_count());
+  auto input_options = options;
+
+  TF_RETURN_IF_ERROR(options.ApplyAllOptionOverrides());
+
+  TF_ASSIGN_OR_RETURN(ExecutableExtras extras, GetExecutableExtras(&options));
+  std::shared_ptr<DeviceAssignment>& device_assignment =
+      extras.device_assignment;
+  std::vector<PjRtStreamExecutorLoadedExecutable::LogicalDeviceIds>&
+      addressable_device_logical_ids = extras.addressable_device_logical_ids;
+  std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
+
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<LocalExecutable>> local_executables,
+      client()->Compile(computation, argument_layout_pointers,
+                        options.executable_build_options));
+
+  auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
+      std::move(local_executables), options.parameter_is_tupled_arguments,
+      std::move(device_assignment), std::move(input_options),
+      std::move(addressable_device_logical_ids), std::move(addressable_devices),
+      this);
+
+  TF_RETURN_IF_ERROR(
+      executable->SetUpDonation(options.parameter_is_tupled_arguments));
+  return std::unique_ptr<PjRtLoadedExecutable>(std::move(executable));
 }
 
 absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
