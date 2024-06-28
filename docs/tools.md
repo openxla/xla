@@ -36,7 +36,7 @@ As with all the tools, `--help` can be used to obtain the full list of options.
 
 Multihost HLO runner is a very similar tool, with the caveat that it
 supports SPMD, including cross host communication. See
-https://openxla.org/xla/tools_multihost_hlo_runner for details.
+[Multi-Host HLO Runner](./tools_multihost_hlo_runner) for details.
 
 ## Multi-HLO replay
 
