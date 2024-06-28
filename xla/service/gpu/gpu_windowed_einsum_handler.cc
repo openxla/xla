@@ -28,10 +28,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
+#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/hlo_constant_folding.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
+#include "xla/service/while_loop_unroller.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -292,8 +295,7 @@ absl::Status SetForceDelayForInstruction(HloInstruction* instr,
   return absl::OkStatus();
 }
 
-absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp,
-                                                int64_t stream_id) {
+absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp) {
   bool changed = false;
   // If we have a einsum loop with only 1 dot, this means either
   // the loop is not unrolled or only 1 partition is available.
@@ -315,28 +317,13 @@ absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp,
       // while loop to allow gemm_rewriter.cc to rewrite into an FP8 Custom
       // Call.
       TF_RETURN_IF_ERROR(ShiftDequantizationF8(comp, gte));
-
-      // Dispatch the dot to additional compute stream.
-      TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(matched_dot, stream_id));
-      ++stream_id;
-      changed = true;
-    }
-
-    // We need to enforce the first collective-permute to be always scheduled
-    // at the beginning of the loop.
-    HloInstruction* matched_cp;
-    if (Match(inst, m::CollectivePermute(
-                        &matched_cp, m::GetTupleElement(m::Parameter(), 2)))) {
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
       changed = true;
     }
   }
   return changed;
 }
 
-absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp,
-                                                int64_t stream_id) {
+absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp) {
   bool changed = false;
   // If we have a einsum loop with only 1 dot, this means either
   // the loop is not unrolled or only 1 partition is available.
@@ -356,22 +343,6 @@ absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp,
       // while loop to allow gemm_rewriter.cc to rewrite into an FP8 Custom
       // Call.
       TF_RETURN_IF_ERROR(ShiftDequantizationF8(comp, gte));
-
-      // Dispatch the dot to additional compute stream.
-      TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(matched_dot, stream_id));
-      ++stream_id;
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(matched_dot, /*force_delay=*/true));
-      changed = true;
-    }
-
-    // We need to enforce the first collective-permute to be always scheduled
-    // at the beginning of the loop.
-    HloInstruction* matched_cp;
-    if (Match(inst, m::CollectivePermute(
-                        &matched_cp, m::GetTupleElement(m::Parameter(), 0)))) {
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
       changed = true;
     }
   }
@@ -567,6 +538,34 @@ bool ShouldAddToChain(const HloInstruction* inst) {
       return false;
   }
 }
+absl::Status PostProcessUnrolledLoop(HloInstruction* loop, int64_t stream_id) {
+  HloComputation* while_body = loop->while_body();
+  // This is to set force delay for the first collective permute so it can
+  // be scheduled always at the top of computation. The GTE index it's consuming
+  // is 2 for RS loop; 0 for AG loop.
+  int64_t force_delay_cp_gte_index =
+      while_body->name().find(
+          GpuWindowedEinsumHandler::kWindowedEinsumRsLoopName) == 0
+          ? 2
+          : 0;
+  for (HloInstruction* inst : while_body->MakeInstructionPostOrder()) {
+    HloInstruction* matched_cp;
+    if (Match(inst,
+              m::CollectivePermute(
+                  &matched_cp, m::GetTupleElement(m::Parameter(),
+                                                  force_delay_cp_gte_index)))) {
+      TF_RETURN_IF_ERROR(
+          SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
+    }
+
+    if (inst->opcode() == HloOpcode::kDot) {
+      // Dispatch the dot to additional compute stream.
+      TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(inst, stream_id));
+      ++stream_id;
+    }
+  }
+  return absl::OkStatus();
+}
 
 struct MatchedGemmA2aResult {
   HloInstruction* producer_gemm;
@@ -731,7 +730,9 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
                 loop, GetAgActivationCacheIndex(loop) - 1));
         TF_RETURN_IF_ERROR(
             dot->ReplaceOperandWith(cache_output_index, new_gte));
-        TF_RETURN_IF_ERROR(comp->RemoveInstruction(ag_with_shared_operand));
+        if (ag_with_shared_operand->IsDead()) {
+          TF_RETURN_IF_ERROR(comp->RemoveInstruction(ag_with_shared_operand));
+        }
       }
     }
     // Rewrites an all-to-all+gemm into multiple independent partial a2a+gemms
@@ -1118,21 +1119,21 @@ absl::StatusOr<bool> GpuWindowedEinsumHandler::Run(
       5, "GpuWindowedEinsumHandler::Run(), before:\n" + module->ToString());
   bool changed = false;
   int64_t stream_id = hlo_query::NextChannelId(*module);
-
+  std::vector<HloInstruction*> all_windowed_einsum_loops;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     if (comp->name().find(kWindowedEinsumRsLoopName) == 0) {
       VLOG(5) << "Processing computation: " << comp->name();
-      TF_ASSIGN_OR_RETURN(bool comp_result,
-                          HandleRsWindowedEinsumLoop(comp, stream_id));
+      TF_ASSIGN_OR_RETURN(bool comp_result, HandleRsWindowedEinsumLoop(comp));
       changed = comp_result;
+      all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
     } else if (comp->name().find(kWindowedEinsumAgLoopName) == 0) {
       VLOG(5) << "Processing computation: " << comp->name();
-      TF_ASSIGN_OR_RETURN(bool comp_result,
-                          HandleAgWindowedEinsumLoop(comp, stream_id));
+      TF_ASSIGN_OR_RETURN(bool comp_result, HandleAgWindowedEinsumLoop(comp));
       all_ag_loops_.push_back(
           WindowedEinsumAgLoops(comp->WhileCallInstruction()));
       changed = comp_result;
+      all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
     }
   }
   for (HloComputation* comp :
@@ -1142,6 +1143,44 @@ absl::StatusOr<bool> GpuWindowedEinsumHandler::Run(
     changed |= visitor.changed();
   }
 
+  if (all_windowed_einsum_loops.size() > 0) {
+    TF_ASSIGN_OR_RETURN(bool applied_algsimp,
+                        AlgebraicSimplifier(AlgebraicSimplifierOptions())
+                            .Run(module, execution_threads));
+    changed |= applied_algsimp;
+    TF_ASSIGN_OR_RETURN(bool applied_cf,
+                        HloConstantFolding().Run(module, execution_threads));
+    changed |= applied_cf;
+  }
+  for (HloInstruction* loop : all_windowed_einsum_loops) {
+    VLOG(5) << "Processing " << loop->ToString() << " for unrolling.";
+    std::string original_body_name = std::string(loop->while_body()->name());
+    std::string original_cond_name =
+        std::string(loop->while_condition()->name());
+
+    TF_ASSIGN_OR_RETURN(
+        UnrollResult result,
+        WhileLoopUnroller::UnrollAndReturnReplacement(
+            loop, /*unroll_factor=*/-1, /*wrap_in_trivial_loop=*/true,
+            /*force_unroll=*/false));
+
+    if (result.unrolled) {
+      result.new_while_op->while_body()->SetAndSanitizeName(
+          absl::StrCat("unrolled_", original_body_name));
+      result.new_while_op->while_condition()->SetAndSanitizeName(
+          absl::StrCat("unrolled_", original_cond_name));
+      // The loop is fully unrolled but has a trip count of 1
+      // To prevent it from being inlined by while loop simplifier,
+      // we add this attribute to it.
+      xla::FrontendAttributes attributes;
+      (*attributes.mutable_map())["skip-simplify-while-loops/trip-count-one"] =
+          "true";
+      result.new_while_op->add_frontend_attributes(attributes);
+      TF_RETURN_IF_ERROR(
+          PostProcessUnrolledLoop(result.new_while_op, stream_id));
+    }
+    changed |= result.unrolled;
+  }
   XLA_VLOG_LINES(
       5, "GpuWindowedEinsumHandler::Run(), after:\n" + module->ToString());
   return changed;
