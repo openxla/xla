@@ -34,7 +34,7 @@ namespace {
 
 namespace m = ::xla::match;
 
-using GpuWindowedEinsumHanlderTest = HloTestBase;
+using GpuWindowedEinsumHandlerTest = HloTestBase;
 
 HloInstruction* FindInstructionByName(HloComputation* comp, std::string name) {
   for (auto inst : comp->instructions()) {
@@ -45,7 +45,7 @@ HloInstruction* FindInstructionByName(HloComputation* comp, std::string name) {
   return nullptr;
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, AgLoopsHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, AgLoopsHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,512,24576]{2,1,0}, bf16[24576,24576]{1,0})->bf16[2048,24576]{1,0}}, num_partitions=4
 
@@ -121,7 +121,7 @@ ENTRY test_main {
       cp1->backend_config<GpuBackendConfig>()->force_earliest_schedule());
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, RsLoopsHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, RsLoopsHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[24576,24576]{1,0}, bf16[512,24576]{1,0}, bf16[2048,24576]{1,0})->bf16[512,24576]{1,0}}, num_partitions=4
 
@@ -198,7 +198,7 @@ ENTRY main.9_spmd {
       cp1->backend_config<GpuBackendConfig>()->force_earliest_schedule());
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, AgLoopsMultipleConsumersAreChained) {
+TEST_F(GpuWindowedEinsumHandlerTest, AgLoopsMultipleConsumersAreChained) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,512,24576]{2,1,0}, bf16[24576,24576]{1,0}, bf16[24576,24576]{1,0})->bf16[2,2048,24576]{2,1,0}}, num_partitions=4
 
@@ -286,7 +286,7 @@ ENTRY main.12_spmd {
                           m::Op(), m::Op(), m::Op(), m::Op()),
                       m::Op(), m::Op(), m::Op(), m::Op()))));
 }
-TEST_F(GpuWindowedEinsumHanlderTest, A2aGemmHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, A2aGemmHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,8192,32768]{2,1,0}, bf16[1,4,2048,8192]{3,2,1,0})->bf16[1,4,2048,32768]{3,2,1,0}}, num_partitions=8
 
@@ -358,7 +358,7 @@ CHECK: ROOT {{.*}} = bf16[1,4,2048,32768]{3,2,1,0} add(bf16[1,4,2048,32768]{3,2,
   EXPECT_TRUE(filecheck_matched);
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, GemmA2aHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, GemmA2aHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,8192,32768]{2,1,0}, bf16[1,4,2048,32768]{3,2,1,0})->bf16[1,4,2048,8192]{3,2,1,0}}, num_partitions=4
 
@@ -430,7 +430,7 @@ CHECK: ROOT {{.*}} = bf16[1,4,2048,8192]{3,2,1,0} add(bf16[1,4,2048,8192]{3,2,1,
   EXPECT_TRUE(filecheck_matched);
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, A2aTransposeLoopsHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, A2aTransposeLoopsHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,8192,32768]{2,1,0}, bf16[1,1,8192,4,1,2048]{5,4,3,2,1,0})->bf16[1,4,2048,32768]{3,2,1,0}}, num_partitions=4
 
@@ -513,7 +513,7 @@ CHECK: ROOT {{.*}} = bf16[1,4,2048,32768]{3,2,1,0} add(bf16[1,4,2048,32768]{3,2,
   EXPECT_TRUE(filecheck_matched);
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, GemmA2aTransposeLoopsHaveStreamIds) {
+TEST_F(GpuWindowedEinsumHandlerTest, GemmA2aTransposeLoopsHaveStreamIds) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,4,2048,32768]{3,2,1,0}, bf16[1,32768,8192]{2,1,0})->bf16[1,4,1,1,2048,8192]{5,4,3,2,1,0}}, num_partitions=4
 
@@ -597,7 +597,7 @@ CHECK: ROOT {{.*}} = bf16[1,4,1,1,2048,8192]{5,4,3,2,1,0} reshape(bf16[1,4,1,204
   EXPECT_TRUE(filecheck_matched);
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, AllGatherF8) {
+TEST_F(GpuWindowedEinsumHandlerTest, AllGatherF8) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[2,512,24576]{2,1,0}, f8e4m3fn[24576,24576]{1,0}, f32[], f32[])->f32[2,2048,24576]{2,1,0}}, num_partitions=4
 
@@ -681,7 +681,7 @@ ENTRY test_main {
 ; CHECK-DAG:       lhs_contracting_dims={2},
 ; CHECK-DAG:       rhs_contracting_dims={0},
 ; CHECK-DAG:       backend_config={
-; CHECK-DAG:         "operation_queue_id":"[[OPQUEUEID:[0-9]+]]",
+; CHECK-DAG:         "operation_queue_id":"[[OPQUEUEID:[1-9][0-9]*]]",
 ; CHECK-DAG:         "wait_on_operation_queues":[],
 ; CHECK-DAG:         "force_earliest_schedule":true}
 ; CHECK-NEXT:    [[C0:%[^ ]+]] = s32[] constant(0)
@@ -716,7 +716,7 @@ ENTRY test_main {
 )");
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest, ReduceScatterF8) {
+TEST_F(GpuWindowedEinsumHandlerTest, ReduceScatterF8) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[24576,24576]{1,0}, f32[2,512,24576]{2,1,0}, f8e4m3fn[2,2048,24576]{2,1,0}, f32[], f32[])->f32[2,512,24576]{2,1,0}}, num_partitions=4
 
@@ -814,13 +814,13 @@ ENTRY main.9_spmd {
 ; CHECK-DAG:       lhs_contracting_dims={2},
 ; CHECK-DAG:       rhs_contracting_dims={0},
 ; CHECK-DAG:       backend_config={
-; CHECK-DAG:         "operation_queue_id":"[[OPQUEUEID:[0-9]+]]",
+; CHECK-DAG:         "operation_queue_id":"[[OPQUEUEID0:[1-9][0-9]*]]",
 ; CHECK-DAG:         "wait_on_operation_queues":[],
 ; CHECK-DAG:         "force_earliest_schedule":false}
 ; CHECK-NEXT:    [[ADD3:%[^ ]+]] = f32[2,512,24576]{2,1,0} add([[CP0]], [[DOT0]]),
 ; CHECK-DAG:       backend_config={"
 ; CHECK-DAG:         operation_queue_id":"0",
-; CHECK-DAG:         "wait_on_operation_queues":["[[OPQUEUEID]]"],
+; CHECK-DAG:         "wait_on_operation_queues":["[[OPQUEUEID0]]"],
 ; CHECK-DAG:         "force_earliest_schedule":false}
 ; CHECK-NEXT:    [[GTE6:[^ ]+]] = f32[2,512,24576]{2,1,0} get-tuple-element([[P0]]), index=3
 ; CHECK-NEXT:    [[ADD4:%[^ ]+]] = u32[] add([[GTE4]], [[PID]])
@@ -830,14 +830,113 @@ ENTRY main.9_spmd {
 ; CHECK-NEXT:    [[DSLICE3:%[^ ]+]] = f32[2,512,24576]{2,1,0} dynamic-slice([[MUL0]], [[C0]], [[RESHAPE1]], [[C0]]), dynamic_slice_sizes={2,512,24576}
 ; CHECK-NEXT:    [[DOT1:%[^ ]+]] = f32[2,512,24576]{2,1,0} dot([[DSLICE3]], [[MUL1]]),
 ; CHECK-DAG:       lhs_contracting_dims={2},
-; CHECK-DAG:       rhs_contracting_dims={0}
+; CHECK-DAG:       rhs_contracting_dims={0},
+; CHECK-DAG:       backend_config={
+; CHECK-DAG:         "operation_queue_id":"[[OPQUEUEID1:[1-9][0-9]*]]",
+; CHECK-DAG:         "wait_on_operation_queues":[],
+; CHECK-DAG:         "force_earliest_schedule":false}
 ; CHECK-NEXT:    [[ADD5:%[^ ]+]] = f32[2,512,24576]{2,1,0} add([[GTE6]], [[DOT1]])
+; CHECK-DAG:       backend_config={"
+; CHECK-DAG:         operation_queue_id":"0",
+; CHECK-DAG:         "wait_on_operation_queues":["[[OPQUEUEID1]]"],
+; CHECK-DAG:         "force_earliest_schedule":false}
 ; CHECK-NEXT:    [[CP1:[^ ]+]] = f32[2,512,24576]{2,1,0} collective-permute([[ADD5]]), channel_id=10
 ; CHECK-NEXT:  ROOT [[OUT:[^ ]+]] = (f8e4m3fn[2,2048,24576]{2,1,0}, f8e4m3fn[24576,24576]{1,0}, f32[2,512,24576]{2,1,0}, f32[2,512,24576]{2,1,0}, u32[], /*index=5*/f32[], f32[]) tuple([[GTE0]], [[GTE1]], [[ADD3]], [[CP1]], [[ADD0]], /*index=5*/[[GTE3]], [[GTE5]])
 )");
 }
 
-TEST_F(GpuWindowedEinsumHanlderTest,
+TEST_F(GpuWindowedEinsumHandlerTest, AllGatherMultipleConsumersF8) {
+  constexpr absl::string_view kHloString = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[2,512,24576]{2,1,0}, f8e4m3fn[24576,24576]{1,0}, f8e4m3fn[24576,24576]{1,0}, f32[], f32[], f32[])->f32[2,2048,24576]{2,1,0}}, num_partitions=4
+windowed_dot_general_body_ag {
+  param.1 = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element.1 = f32[2,512,24576]{2,1,0} get-tuple-element(param.1), index=0
+  collective-permute = f32[2,512,24576]{2,1,0} collective-permute(get-tuple-element.1), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.1 = f32[2,512,24576]{2,1,0} collective-permute(collective-permute), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  get-tuple-element.2 = f32[24576,24576]{1,0} get-tuple-element(param.1), index=1
+  get-tuple-element.3 = f32[2,2048,24576]{2,1,0} get-tuple-element(param.1), index=2
+  dot = f32[2,512,24576]{2,1,0} dot(get-tuple-element.1, get-tuple-element.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  constant.2 = s32[] constant(0)
+  constant.3 = s32[4]{0} constant({0, 512, 1024, 1536})
+  get-tuple-element.5 = u32[] get-tuple-element(param.1), index=4
+  partition-id = u32[] partition-id()
+  add = u32[] add(get-tuple-element.5, partition-id)
+  constant.1 = u32[] constant(4)
+  remainder = u32[] remainder(add, constant.1)
+  dynamic-slice = s32[1]{0} dynamic-slice(constant.3, remainder), dynamic_slice_sizes={1}
+  reshape = s32[] reshape(dynamic-slice)
+  dynamic-update-slice = f32[2,2048,24576]{2,1,0} dynamic-update-slice(get-tuple-element.3, dot, constant.2, reshape, constant.2)
+  dot.1 = f32[2,512,24576]{2,1,0} dot(collective-permute, get-tuple-element.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  constant.5 = u32[] constant(1)
+  add.1 = u32[] add(get-tuple-element.5, constant.5)
+  add.2 = u32[] add(add.1, partition-id)
+  remainder.1 = u32[] remainder(add.2, constant.1)
+  dynamic-slice.1 = s32[1]{0} dynamic-slice(constant.3, remainder.1), dynamic_slice_sizes={1}
+  reshape.1 = s32[] reshape(dynamic-slice.1)
+  dynamic-update-slice.1 = f32[2,2048,24576]{2,1,0} dynamic-update-slice(dynamic-update-slice, dot.1, constant.2, reshape.1, constant.2)
+  get-tuple-element.4 = f32[2,2048,24576]{2,1,0} get-tuple-element(param.1), index=3
+  add.3 = u32[] add(add.1, constant.5)
+  ROOT tuple = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) tuple(collective-permute.1, get-tuple-element.2, dynamic-update-slice.1, get-tuple-element.4, add.3)
+} // windowed_dot_general_body_ag
+windowed_dot_general_cond_ag {
+  param = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) parameter(0)
+  get-tuple-element = u32[] get-tuple-element(param), index=4
+  constant = u32[] constant(4)
+  ROOT compare = pred[] compare(get-tuple-element, constant), direction=LT
+}
+ENTRY main.12_spmd {
+  param.4 = f8e4m3fn[2,512,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
+  reshape.8 = f8e4m3fn[2,512,24576]{2,1,0} reshape(param.4)
+  param.5 = f8e4m3fn[24576,24576]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
+  constant.18 = f32[] constant(0)
+  broadcast = f32[2,2048,24576]{2,1,0} broadcast(constant.18), dimensions={}
+  constant.20 = u32[] constant(0)
+  scale_lhs = f32[] parameter(3)
+  scale_lhs_bcast = f32[2,512,24576]{2,1,0} broadcast(scale_lhs), dimensions={}
+  lhs_bf32 = f32[2,512,24576]{2,1,0} convert(reshape.8)  
+  lhs_scaled = f32[2,512,24576]{2,1,0} multiply(lhs_bf32, scale_lhs_bcast)
+  scale_rhs = f32[] parameter(4)
+  scale_rhs_bcast = f32[24576,24576]{1,0} broadcast(scale_rhs), dimensions={}
+  rhs_bf32 = f32[24576,24576]{1,0} convert(param.5)  
+  rhs_scaled = f32[24576,24576]{1,0} multiply(rhs_bf32, scale_rhs_bcast)
+  tuple.2 = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) tuple(lhs_scaled, rhs_scaled, broadcast, broadcast, constant.20)
+  while = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) while(tuple.2), condition=windowed_dot_general_cond_ag, body=windowed_dot_general_body_ag
+  get-tuple-element.13 = f32[2,2048,24576]{2,1,0} get-tuple-element(while), index=2
+  all-gather = f32[2,2048,24576]{2,1,0} all-gather(lhs_scaled), channel_id=1, replica_groups={{0,1,2,3}}, dimensions={1}, use_global_device_ids=true
+  param.6 = f8e4m3fn[24576,24576]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
+  scale_rhs1 = f32[] parameter(5)
+  scale_rhs1_bcast = f32[24576,24576]{1,0} broadcast(scale_rhs1), dimensions={}
+  rhs1_bf32 = f32[24576,24576]{1,0} convert(param.6)  
+  rhs1_scaled = f32[24576,24576]{1,0} multiply(rhs1_bf32, scale_rhs1_bcast)
+  ROOT dot.7 = f32[2,2048,24576]{2,1,0} dot(all-gather, rhs1_scaled), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+
+  RunAndFilecheckHloRewrite(kHloString, GpuWindowedEinsumHandler(),
+                            R"(
+; CHECK-LABEL: %main
+; CHECK:         [[WHILE0:%[^ ]+]] = (f8e4m3fn[2,512,24576]{2,1,0}, f8e4m3fn[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[], /*index=5*/f32[], f32[], f8e4m3fn[2,2048,24576]{2,1,0}) while([[TUPLE0:%[^ ]+]]),
+; CHECK-DAG:       condition=%windowed_dot_general_cond_ag,
+; CHECK-DAG:       body=%windowed_dot_general_body_ag
+; CHECK:         [[GTE1:%[^ ]+]] = f8e4m3fn[2,2048,24576]{2,1,0} get-tuple-element([[WHILE0]]), index=7
+; CHECK-NEXT:    [[CONVERT2:%[^ ]+]] = f32[2,2048,24576]{2,1,0} convert([[GTE1]])
+; CHECK-NEXT:    [[BCAST4:%[^ ]+]] = f32[2,2048,24576]{2,1,0} broadcast([[P1:%[^ ]+]]), dimensions={}
+; CHECK-NEXT:    [[MUL2:%[^ ]+]] = f32[2,2048,24576]{2,1,0} multiply([[CONVERT2]], [[BCAST4]])
+; CHECK-NEXT:    [[P4:%[^ ]+]] = f8e4m3fn[24576,24576]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
+; CHECK-NEXT:    [[CONVERT2:%[^ ]+]] = f32[24576,24576]{1,0} convert([[P4]])
+; CHECK-NEXT:    [[P5:%[^ ]+]] = f32[] parameter(5)
+; CHECK-NEXT:    [[BCAST5:%[^ ]+]] = f32[24576,24576]{1,0} broadcast([[P5]]), dimensions={}
+; CHECK-NEXT:    [[MUL3:%[^ ]+]] = f32[24576,24576]{1,0} multiply([[CONVERT2]], [[BCAST5]])
+; CHECK-NEXT: ROOT [[OUT:%[^ ]+]] = f32[2,2048,24576]{2,1,0} dot([[MUL2]], [[MUL3]]),
+; CHECK-DAG:       lhs_contracting_dims={2},
+; CHECK-DAG:       rhs_contracting_dims={0}
+)");
+}
+
+TEST_F(GpuWindowedEinsumHandlerTest,
        AgLoopsMultipleConsumersAreChainedWithShardedContratingDim) {
   constexpr absl::string_view kHloString = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[16,2048,512]{2,1,0}, bf16[4096,6288]{1,0}, bf16[16,2048,6288]{2,1,0})->bf16[4096,6288]{1,0}}, num_partitions=8
@@ -914,5 +1013,6 @@ ENTRY main.12_spmd {
   EXPECT_EQ(inst->operand(0)->tuple_index(), 5);
   EXPECT_EQ(inst->operand(0)->operand(0), ag_loop);
 }
+
 }  // namespace
 }  // namespace xla::gpu

@@ -844,6 +844,37 @@ ENTRY main.9_spmd {
 }
 
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
+       WindowedEinsumE2EAllgatherMultiConsumerF8) {
+  absl::string_view kModuleReplicatedStr = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[2,16,48]{2,1,0}, f8e4m3fn[48,192]{1,0}, f8e4m3fn[48,192]{1,0}, bf16[], bf16[], bf16[])->bf16[2,16,192]{2,1,0}}, allow_spmd_sharding_propagation_to_parameters={false,false,false,false}, num_partitions=4
+
+ENTRY main.12 {
+  Arg_0.1 = f8e4m3fn[2,16,48]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
+  Arg_1.2 = f8e4m3fn[48,192]{1,0} parameter(1), sharding={devices=[1,4]<=[4]}
+  Arg_2.3 = bf16[] parameter(3)
+  Arg_3.4 = bf16[] parameter(4)
+  broadcast = bf16[2,16,48]{2,1,0} broadcast(Arg_2.3), dimensions={}
+  broadcast.1 = bf16[48,192]{1,0} broadcast(Arg_3.4), dimensions={}
+  convert = bf16[2,16,48]{2,1,0} convert(Arg_0.1)
+  convert.1 = bf16[48,192]{1,0} convert(Arg_1.2)
+  multiply = bf16[2,16,48]{2,1,0} multiply(broadcast, convert)
+  multiply.1 = bf16[48,192]{1,0} multiply(broadcast.1, convert.1)
+  dot.5 = bf16[2,16,192]{2,1,0} dot(multiply, multiply.1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  custom-call.7 = bf16[2,16,192]{2,1,0} custom-call(dot.5), custom_call_target="Sharding", sharding={devices=[1,1,4]<=[4]}
+  Arg_5.6 = f8e4m3fn[48,192]{1,0} parameter(2), sharding={devices=[1,4]<=[4]}
+  Arg_6.7 = bf16[] parameter(5)
+  broadcast.5 = bf16[48,192]{1,0} broadcast(Arg_6.7), dimensions={}
+  convert.3 = bf16[48,192]{1,0} convert(Arg_5.6)
+  multiply.2 = bf16[48,192]{1,0} multiply(broadcast.5, convert.3)
+  dot.6 = bf16[2,16,192]{2,1,0} dot(multiply, multiply.2), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  ROOT add.8 = bf16[2,16,192]{2,1,0} add(custom-call.7, dot.6)
+} // main.12
+)";
+
+  CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr);
+}
+
+TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
        WindowedEinsumE2EAllToAllTransposeDecompose) {
   absl::string_view kModuleReplicatedStr = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,64,128]{2,1,0}, bf16[1,1,64,4,1,32]{5,4,3,2,1,0})->bf16[1,4,32,128]{3,2,1,0}}, num_partitions=4
