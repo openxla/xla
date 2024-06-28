@@ -410,8 +410,9 @@ class CommandBufferCmdSequence {
 // subsequent calls to XLA executable tend to reuse the same allocations.
 class TracedCommandBuffer : public CommandBufferCmd::State {
  public:
-  explicit TracedCommandBuffer(CommandBufferCmd::BufferUsageVector buffers,
-                               int64_t capacity = 16);
+  explicit TracedCommandBuffer(
+      CommandBufferCmd::BufferUsageVector buffers, int64_t capacity = 16,
+      std::optional<const CommandBufferCmd*> trace_cmd = std::nullopt);
 
   // Returns cached command buffer traced using the same buffer addresses or
   // traces and caches a new command buffer using user provided callback.
@@ -426,9 +427,9 @@ class TracedCommandBuffer : public CommandBufferCmd::State {
     std::vector<se::DeviceMemoryBase> recorded_allocs;
     std::unique_ptr<se::CommandBuffer> command_buffer;
   };
-
   int64_t capacity_;
   std::vector<Entry> entries_;
+  std::optional<const CommandBufferCmd*> trace_cmd_;
 };
 
 //===----------------------------------------------------------------------===//
