@@ -1,6 +1,6 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
-# Import third party config rules.
+# Import third party config rules. Testing.
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
 # Import external repository rules.
