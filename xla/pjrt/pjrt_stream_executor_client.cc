@@ -3461,6 +3461,12 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
       /*return_tuple=*/false));
 
+  // If the compile options specify argument layout, then let's
+  // fall back to using the options to determine layouts.
+  if (options.argument_layouts) {
+    return Compile(xla_computation, options);
+  }
+
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
                       GetArgLayoutModes(module));
   TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
