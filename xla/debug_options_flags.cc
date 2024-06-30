@@ -395,7 +395,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
         return true;
       };
 
-  // Custom "sub-parser" lambda for xla_disable_hlo_passes.
+  // Custom "sub-parser" lambda for legacy_command_buffer_custom_call_targets.
   auto setter_for_legacy_command_buffer_custom_call_targets =
       [debug_options](std::string comma_separated_values) {
         for (const auto& target : std::vector<std::string>(

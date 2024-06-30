@@ -497,8 +497,8 @@ message DebugOptions {
 
   // Commands are categorized into 5 types:
   // FUSION represents regular fusion kernels.
-  // CUBLAS/CUBLASLT, CUDNN, COLLECTIVES, and TE(Transformer Engine) 
-  // represent library calls. CONDITIONALS represents control flow.
+  // CUBLAS/CUBLASLT, CUDNN, and COLLECTIVES represent library calls.
+  // CONDITIONALS represents control flow.
   enum CommandBufferCmdType {
     INVALID = 0;
     FUSION = 1;
@@ -840,7 +840,7 @@ message DebugOptions {
   bool xla_gpu_temp_buffer_use_separate_color = 312;
 
   // Custom call targets with legacy registry API (non FFI API), 
-  // that support lowering to command buffer custom command, 
+  // that support recording to command buffer custom command, 
   // i.e, custom call target supports cuda-graph capturing for CUDA devices.
   // This flag is read if CUSTOM_CALL command type is recorded into 
   // command buffer.
