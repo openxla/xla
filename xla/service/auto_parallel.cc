@@ -18,10 +18,14 @@ namespace {
     return ((x == 0) ? ("AutoParallel: ") : ((LOG_HEADER(x - 1)) + "\t"));
   }
 
+  /*********************************************************/
+  /* Convert instructions to modules                       */
+  /*********************************************************/
+
   // clones a parameter instruction specifically 
   // for single-instruction HloComputations
-  std::unique_ptr<HloInstruction> 
-  CloneParameterInstruction(HloParameterInstruction* instruction) {
+  std::unique_ptr<HloInstruction> CloneParameterInstruction(
+      HloParameterInstruction* instruction) {
 
     // create parameter-retrieving instruction 
     // with same shape, cloned name, param_no of 0
@@ -32,8 +36,8 @@ namespace {
   }
 
   // fixes instructions so that it can be the only one inside of a computation
-  std::unique_ptr<HloInstruction> 
-  CloneSingleInstruction(HloInstruction* instruction) {
+  std::unique_ptr<HloInstruction> CloneSingleInstruction(
+      HloInstruction* instruction) {
 
     std::unique_ptr<HloInstruction> result;
 
@@ -75,7 +79,39 @@ namespace {
     return module;
   }
 
+  /*********************************************************/
+  /* Sharding enumeration                                  */
+  /*********************************************************/
+
+  // // creates a list of potential sharding strategies for the instruction
+  // std::vector<std::unique_ptr<HloSharding>> GenerateShardingStrats(
+  //     HloInstruction* instruction) {
+
+  //   // figure things out here
+
+  //   return nullptr; 
+  // }
+
+  void PrintInfo(HloInstruction* instruction) {
+
+    int64_t num_operands = instruction->operand_count();
+
+    VLOG(5) << LOG_HEADER(3) << "num-operands" << num_operands;
+
+    HloInstruction::InstructionVector operands = instruction->operands();
+    for (int i = 0; i < num_operands; i++) {
+      VLOG(5) << LOG_HEADER(3) << i << ": " << operands[i]->name() << " " << operands[i]->shape().ToString();
+    }
+
+    return;
+  }
+
 }   // namespace
+
+
+  /*********************************************************/
+  /* AutoParallelizer Pass Implementation                  */
+  /*********************************************************/
 
   // overriden functions from class
   absl::StatusOr<bool> AutoParallelizer::Run(
@@ -95,11 +131,17 @@ namespace {
 
       for (HloInstruction* instr : computation->instructions()) {
 
-        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name();
+        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString();
+        PrintInfo(instr);
 
-        CreateModuleFromInstruction(instr);
+        if (!instr->has_sharding()) {
+          // avoid overwriting user-suggested shardings
+          HloModule* single_inst_module = CreateModuleFromInstruction(instr);
+        } else {
+          VLOG(5) << LOG_HEADER(2) << "instruction has sharding: " << instr->name();
+        }
 
-        // now enuemrate through various module shardings
+        // now enumerate through various module shardings
 
       }
     }
