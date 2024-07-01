@@ -62,7 +62,7 @@ class CuDnnFusionTest : public GpuCodegenTest {
     // Let this group of tests just use first available plan skipping
     // autotuning.
     debug_options.set_xla_gpu_autotune_level(0);
-    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(1);
+    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(3);
     return debug_options;
   }
   bool IsAtLeastHopperWithCuDnn9() {
@@ -161,11 +161,31 @@ CHECK:   }
 )"));
 }
 
-using CuDnnFusionExecutionTest = CuDnnFusionTest;
+using CuDnnFusionLevel3Test = CuDnnFusionTest;
+
+class CuDnnFusionLevel1Test : public CuDnnFusionLevel3Test {
+ public:
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options =
+        CuDnnFusionLevel3Test::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(1);
+    return debug_options;
+  }
+};
+
+class CuDnnFusionLevel2Test : public CuDnnFusionLevel3Test {
+ public:
+  DebugOptions GetDebugOptionsForTest() override {
+    DebugOptions debug_options =
+        CuDnnFusionLevel3Test::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(2);
+    return debug_options;
+  }
+};
 
 namespace m = ::xla::match;
 
-TEST_F(CuDnnFusionExecutionTest, WorkspaceAllocationWorks) {
+TEST_F(CuDnnFusionLevel3Test, WorkspaceAllocationWorks) {
   if (!IsAtLeastCuDnn91()) {
     GTEST_SKIP() << "This test case requests a workspace only with cuDNN 9.1+.";
   }
@@ -201,8 +221,7 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest,
-       NoTritonConfigIsAssignedAtZeroAutotuningLevel) {
+TEST_F(CuDnnFusionLevel3Test, NoTritonConfigIsAssignedAtZeroAutotuningLevel) {
   EXPECT_EQ(GetDebugOptionsForTest().xla_gpu_autotune_level(), 0);
   MatchOptimizedHlo(R"(
 fusion1 {
@@ -223,7 +242,24 @@ CHECK-NOT: triton_gemm_config
   )");
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotF32ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel2Test, Level2SkipsDotF32) {
+  EXPECT_FALSE(Run(R"(
+fusion1 {
+  p0 = f32[32,96] parameter(0)
+  p1 = f32[96,64] parameter(1)
+  ROOT r = f32[32,64] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[32,96] parameter(0)
+  p1 = f32[96,64] parameter(1)
+  ROOT _ = f32[32,64] fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})"));
+}
+
+TEST_F(CuDnnFusionLevel3Test, DotF32ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f32[32,96] parameter(0)
@@ -241,7 +277,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotBF16WithCopyExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel1Test, DotBF16WithCopyExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = bf16[96,512,64]{1,2,0} parameter(0)
@@ -262,7 +298,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-2, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotBF16BF16F32ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, DotBF16BF16F32ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = bf16[16,32,128] parameter(0)
@@ -281,7 +317,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-6, /*arel=*/1e-6}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotF32WithOutputSubtractionExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, DotF32WithOutputSubtractionExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f32[9,32,96] parameter(0)
@@ -303,7 +339,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotWithNonDefaultLayoutsExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel1Test, DotWithNonDefaultLayoutsExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = bf16[32,32]{0,1} parameter(0)
@@ -321,7 +357,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, RHSFusionExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel2Test, RHSFusionExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = bf16[5,32,96] parameter(0)
@@ -341,7 +377,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, SkipNonDefaultPrecision) {
+TEST_F(CuDnnFusionLevel3Test, SkipNonDefaultPrecision) {
   EXPECT_FALSE(Run(R"(
 t {
   p0 = f32[27,23] parameter(0)
@@ -361,7 +397,7 @@ ENTRY e {
 })"));
 }
 
-TEST_F(CuDnnFusionExecutionTest,
+TEST_F(CuDnnFusionLevel3Test,
        DotF16NegateNonDefaultDimensionsExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
@@ -382,7 +418,26 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, DotS8BF16ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel1Test, Level1SkipsS8BF16) {
+  EXPECT_FALSE(Run(R"(
+fusion1 {
+  p0 = s8[5,32,96] parameter(0)
+  p0c = bf16[5,32,96] convert(p0)
+  p1 = bf16[5,96,16] parameter(1)
+  ROOT r = bf16[5,32,16] dot(p0c, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  p0 = s8[5,32,96] parameter(0)
+  p1 = bf16[5,96,16] parameter(1)
+  ROOT _ = bf16[5,32,16] fusion(p0, p1), kind=kCustom, calls=fusion1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})"));
+}
+
+TEST_F(CuDnnFusionLevel2Test, DotS8BF16ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = s8[5,32,96] parameter(0)
@@ -402,7 +457,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-5, /*arel=*/1e-5}));
 }
 
-TEST_F(CuDnnFusionExecutionTest, IntegerMathExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, IntegerMathExecutesCorrectly) {
   if (!IsAtLeastCuDnn91()) {
     GTEST_SKIP() << "Integer math requires cuDNN 9.1+.";
   }
@@ -483,17 +538,7 @@ ENTRY e {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-class CuDnnFusionLevel2Test : public CuDnnFusionExecutionTest {
- public:
-  DebugOptions GetDebugOptionsForTest() override {
-    DebugOptions debug_options =
-        CuDnnFusionExecutionTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(2);
-    return debug_options;
-  }
-};
-
-TEST_F(CuDnnFusionLevel2Test, BroadcastToDim2ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, BroadcastToDim2ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f16[16,32,128] parameter(0)
@@ -516,7 +561,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, BroadcastToDim1ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, BroadcastToDim1ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f16[16,32,128] parameter(0)
@@ -539,7 +584,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, BroadcastToDim0ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, BroadcastToDim0ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = bf16[32,128] parameter(0)
@@ -559,7 +604,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, BroadcastTo2DimsExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, BroadcastTo2DimsExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f16[16,32,128] parameter(0)
@@ -582,7 +627,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, BroadcastTo3DimsExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, BroadcastTo3DimsExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {
   p0 = f16[16,32,128] parameter(0)
@@ -605,7 +650,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, ConstantExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, ConstantExecutesCorrectly) {
   if (!IsAtLeastCuDnn91()) {
     GTEST_SKIP() << "Fused scalar constants require cuDNN 9.1+.";
   }
@@ -634,7 +679,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, ClampExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, ClampExecutesCorrectly) {
   if (!IsAtLeastCuDnn91()) {
     GTEST_SKIP() << "Clamp test requires cuDNN 9.1+.";
   }
@@ -663,7 +708,7 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_F(CuDnnFusionLevel2Test, DotF8ExecutesCorrectly) {
+TEST_F(CuDnnFusionLevel3Test, DotF8ExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 
 fusion1 {
@@ -687,16 +732,6 @@ ENTRY e {
 })",
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
-
-class CuDnnFusionLevel3Test : public CuDnnFusionExecutionTest {
- public:
-  DebugOptions GetDebugOptionsForTest() override {
-    DebugOptions debug_options =
-        CuDnnFusionExecutionTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(3);
-    return debug_options;
-  }
-};
 
 TEST_F(CuDnnFusionLevel3Test,
        DotWithSplitNonContractingInputExecutesCorrectly) {
@@ -745,7 +780,7 @@ ENTRY r {
                             ErrorSpec{/*aabs=*/1, /*arel=*/1e-3}));
 }
 
-class ElementwiseTest : public CuDnnFusionExecutionTest,
+class ElementwiseTest : public CuDnnFusionLevel3Test,
                         public ::testing::WithParamInterface<
                             std::tuple<PrimitiveType, HloOpcode, float>> {};
 
@@ -852,7 +887,7 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::Values(3e-3)),
     ElementwiseTestParamsToString);
 
-class CompareTest : public CuDnnFusionExecutionTest,
+class CompareTest : public CuDnnFusionLevel3Test,
                     public ::testing::WithParamInterface<
                         std::tuple<PrimitiveType, Comparison::Direction>> {};
 
@@ -906,7 +941,7 @@ INSTANTIATE_TEST_SUITE_P(
                                          cd::kLe, cd::kLt)),
     CompareTestParamsToString);
 
-class SelectTest : public CuDnnFusionExecutionTest,
+class SelectTest : public CuDnnFusionLevel3Test,
                    public ::testing::WithParamInterface<PrimitiveType> {};
 
 TEST_P(SelectTest, SelectFusionExecutesCorrectly) {
@@ -952,7 +987,7 @@ class CuDnnFusionRewriteTest : public CuDnnFusionTest {
     // Reset autotuning level to default.
     debug_options.set_xla_gpu_autotune_level(
         GetDebugOptionsFromFlags().xla_gpu_autotune_level());
-    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(1);
+    debug_options.set_xla_gpu_cudnn_gemm_fusion_level(2);
     debug_options.set_xla_gpu_cublas_fallback(false);
     return debug_options;
   }
