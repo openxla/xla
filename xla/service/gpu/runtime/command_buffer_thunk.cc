@@ -81,6 +81,7 @@ bool CommandBufferThunk::ExecutorCommandBuffer::ShouldUpdateCommandBuffer(
     const CommandBufferCmdSequence& commands,
     const Thunk::ExecuteParams& params) {
   if (commands.force_update()) {
+    VLOG(2) << "force update";
     return true;
   }
 
