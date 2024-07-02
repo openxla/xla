@@ -265,10 +265,10 @@ cc_library(
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ],
 )
@@ -366,7 +366,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:shape_util",
@@ -422,6 +421,7 @@ cc_library(
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ] + if_cuda([
         "@local_config_cuda//cuda:cuda_headers",
@@ -575,11 +575,11 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # build_cleaner: keep
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:status_casters",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
+        "@local_config_python//:python_headers",  # build_cleaner: keep
         "@nanobind",
     ],
 )
@@ -750,7 +750,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:util",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:lru_cache",
@@ -763,6 +762,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ],
 )
@@ -798,7 +798,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -811,6 +810,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ],
 )
@@ -913,9 +913,9 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform:logging",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ],
 )
@@ -1356,7 +1356,6 @@ tsl_pybind_extension(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla:literal",
         "//xla:shape_util",
         "//xla:types",
@@ -1396,6 +1395,7 @@ tsl_pybind_extension(
         "@tsl//tsl/platform/cloud:gcs_file_system",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
     ] + select({
         # gloo transport only builds on linux
