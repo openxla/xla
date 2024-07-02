@@ -1,5 +1,7 @@
 """Utility functions for generating protobuf code."""
 
+load("//third_party/protobuf/bazel/common:proto_info.bzl", "ProtoInfo")
+
 _PROTO_EXTENSION = ".proto"
 _VIRTUAL_IMPORTS = "/_virtual_imports/"
 
