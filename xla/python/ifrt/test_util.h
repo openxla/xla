@@ -37,6 +37,8 @@ namespace xla {
 namespace ifrt {
 namespace test_util {
 
+inline constexpr int kDefaultCpuCoreCount = 4;
+
 // Registers an IFRT client factory function. Must be called only once.
 void RegisterClientFactory(
     std::function<absl::StatusOr<std::shared_ptr<Client>>()> factory);
