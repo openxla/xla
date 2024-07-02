@@ -19,12 +19,15 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "absl/container/node_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
 
 namespace xla {
 namespace gpu {
@@ -37,9 +40,56 @@ struct NcclAllToAllConfig {
 // Thunk that performs a NCCL-based All-to-All among CUDA GPU-based replicas.
 class NcclAllToAllStartThunk : public NcclCollectiveThunk {
  public:
+  class RecvPtrMap {
+   public:
+    bool IsInitialized(int64_t send_id, int64_t recv_id) {
+      absl::MutexLock lock(&mutex_);
+      return recv_ptrs_.find(send_id) != recv_ptrs_.end() && recv_ptrs_.at(send_id).find(recv_id) != recv_ptrs_.at(send_id).end();
+    }
+
+    absl::Status InitializeId(int64_t send_id, int64_t recv_id) {
+      absl::MutexLock lock(&mutex_);
+      if (recv_ptrs_.find(send_id) == recv_ptrs_.end()) {
+        recv_ptrs_[send_id] = absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>();
+      }
+      if (recv_ptrs_.at(send_id).find(recv_id) == recv_ptrs_.at(send_id).end()) {
+        recv_ptrs_.at(send_id)[recv_id] = tsl::MakeUnconstructedAsyncValueRef<void*>();
+      }
+      return absl::OkStatus();
+    }
+
+    absl::Status PutRecvPtr(int64_t send_id, int64_t recv_id, void* ptr) {
+      if (!IsInitialized(send_id, recv_id)) {
+        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id, ", ", recv_id,
+                                                " has not been initialized!"));
+      }
+      absl::MutexLock lock(&mutex_);
+      if (recv_ptrs_.at(send_id).at(recv_id).IsUnavailable()) {
+        VLOG(3) << "Putting pointer: " << ptr << " for send_id " << send_id << ", and recv_id " << recv_id;
+        recv_ptrs_.at(send_id).at(recv_id).emplace(ptr);
+      }
+      return absl::OkStatus();
+    }
+
+    absl::StatusOr<tsl::AsyncValueRef<void*>> GetRecvPtr(int64_t send_id, int64_t recv_id) {
+      if (!IsInitialized(send_id, recv_id)) {
+        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id, ", ", recv_id,
+                                                " has not been initialized!"));
+      }
+      absl::MutexLock lock(&mutex_);
+      return recv_ptrs_.at(send_id).at(recv_id);
+    }
+
+   private:
+    absl::Mutex mutex_;
+    absl::node_hash_map<int64_t, absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>> recv_ptrs_
+        ABSL_GUARDED_BY(mutex_);
+  };
+
   NcclAllToAllStartThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
                          const HloAllToAllInstruction* instr,
-                         std::vector<Buffer> buffers);
+                         std::vector<Buffer> buffers, bool p2p_memcpy_enabled);
+  absl::Status Initialize(const InitializeParams& params) override;
 
   // Returns whether the given instruction can be lowered to a nccl all-to-all
   // call.
@@ -61,11 +111,14 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
  private:
   const NcclAllToAllConfig config_;
   const std::vector<Buffer> buffers_;
+  RecvPtrMap recv_ptr_map_;
+  bool p2p_memcpy_enabled_ = false;
 };
 
 absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
-                         se::Stream& stream, NcclApi::NcclCommHandle comm);
+                         se::Stream& stream, NcclApi::NcclCommHandle comm, int64_t current_id,
+                         bool use_memcpy, NcclAllToAllStartThunk::RecvPtrMap& recv_ptr_map);
 
 }  // namespace gpu
 }  // namespace xla
