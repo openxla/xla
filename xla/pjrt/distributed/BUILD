@@ -23,6 +23,7 @@ cc_library(
     deps = [
         ":topology_util",
         ":util",
+        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla/tsl/distributed_runtime/coordination:coordination_service",
@@ -31,7 +32,6 @@ cc_library(
         "//xla/tsl/distributed_runtime/rpc/coordination:grpc_coordination_service_impl",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -102,7 +102,7 @@ cc_library(
     deps = [
         ":client",
         ":service",
-        "@com_google_absl//absl/status:statusor",
+        "//xla:statusor",
         "@tsl//tsl/platform:grpc_credentials",
     ] + tsl_grpc_cc_dependencies(),
 )
@@ -114,13 +114,13 @@ cc_library(
     deps = [
         ":key_value_store_interface",
         ":protocol_proto_cc",
+        "//xla:statusor",
         "//xla:util",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:utils",
         "//xla/pjrt/gpu:gpu_topology_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
