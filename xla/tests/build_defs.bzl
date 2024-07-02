@@ -17,11 +17,7 @@ NVIDIA_GPU_BACKENDS = [
 ]
 
 # The generic "gpu" backend includes the actual backends in this list.
-NVIDIA_GPU_DEFAULT_BACKENDS = [
-    "gpu_any",
-    "gpu_a100",
-    "gpu_h100",
-]
+NVIDIA_GPU_DEFAULT_BACKENDS = ["gpu_any"]
 
 AMD_GPU_DEFAULT_BACKENDS = ["gpu_amd_any"]
 
