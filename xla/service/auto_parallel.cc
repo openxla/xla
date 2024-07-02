@@ -14,9 +14,41 @@ namespace xla {
 
 namespace {
 
-  std::string LOG_HEADER(int x) {
-    return ((x == 0) ? ("AutoParallel: ") : ((LOG_HEADER(x - 1)) + "\t"));
+  std::string LOG_HEADER(int x, const char c[]="AutoParallel: ") {
+    return ((x == 0) ? (c) : ((LOG_HEADER(x - 1, c)) + "\t"));
   }
+
+  /*********************************************************/
+  /* Helper classes                                        */
+  /*********************************************************/
+
+  class ProgramShape;
+
+  class InstructionShardingInfo {
+
+  public:
+    InstructionShardingInfo(HloInstruction* orig_instr);
+    ~InstructionShardingInfo() = default;
+
+  private:
+
+    // Points to the original instruction that will have its
+    // sharding strategies enumerated. Eventually, this instruction
+    // will be modified with a sharding strategy provided by the solvers
+    HloInstruction* orig_instr;
+
+    // Module containing a single computation of a single instruction that
+    // is a clone of the orig_instr. Created on construction of class.
+    // After enumerating various incomplete sharding strategies,
+    // each incomplete strategy will be applied to this module, be completed
+    // by GSPMD, and evaluated for it's computational and communication cost
+    // by inspecting the completed module's resulting operations
+    HloModule* single_instr_module;    
+
+
+  };
+
+
 
   /*********************************************************/
   /* Convert instructions to modules                       */
@@ -58,7 +90,7 @@ namespace {
   }
   
   // Creates a module from a single instruction for running a simple pass on
-  HloModule* CreateModuleFromInstruction(HloInstruction* instruction) {
+  std::unique_ptr<HloModule> CreateModuleFromInstruction(HloInstruction* instruction) {
 
     // copy the instruction so as not to modify the HloModule
     std::unique_ptr<HloInstruction> instr_clone 
@@ -72,11 +104,14 @@ namespace {
     // construct the module's configuration
     HloModuleConfig config{computation->ComputeProgramShape()};
 
-    // construct the module from the computation
-    HloModule* module = new HloModule(std::string(instruction->name()), config);
-    module->AddEmbeddedComputation(std::move(computation));
+    // construct the module from the computation (unique ptr so cleared out of memory)
+    std::unique_ptr<HloModule> module = std::make_unique<HloModule>(std::string(instruction->name()), config);
+    module->AddEntryComputation(std::move(computation));
 
-    return module;
+    // create a copy so it is completely separate from original module
+    std::unique_ptr<HloModule> module_clone = module->Clone(); 
+
+    return module_clone;
   }
 
   /*********************************************************/
@@ -92,18 +127,39 @@ namespace {
   //   return nullptr; 
   // }
 
-  void PrintInfo(HloInstruction* instruction) {
+  void PrintInstructionInfo(HloInstruction* instruction, int depth=3) {
 
     int64_t num_operands = instruction->operand_count();
-
-    VLOG(5) << LOG_HEADER(3) << "num-operands" << num_operands;
+    VLOG(5) << LOG_HEADER(depth, "InstInfo: ") << "Name: " << instruction->name() << " " << instruction;
+    VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "num operands: " << num_operands;
+    VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "sharded: " << instruction->has_sharding();
 
     HloInstruction::InstructionVector operands = instruction->operands();
     for (int i = 0; i < num_operands; i++) {
-      VLOG(5) << LOG_HEADER(3) << i << ": " << operands[i]->name() << " " << operands[i]->shape().ToString();
+      VLOG(5) << LOG_HEADER(depth, "InstInfo: ") << i << ": " << operands[i]->name() << " " << operands[i]->shape().ToString() << " " << operands[i];
     }
 
     return;
+  }
+
+  void PrintComputationInfo(HloComputation* computation, int depth=3) {
+    VLOG(5) << LOG_HEADER(depth, "CompInfo: ") << "Name: " << computation->name() << " " << computation;
+    VLOG(5) << LOG_HEADER(depth, "CompInfo: ") << "Instruction Count: " << computation->instruction_count();
+
+    for (HloInstruction* instr : computation->instructions()) {
+      PrintInstructionInfo(instr, depth + 1);
+    }
+  }
+
+  void PrintModuleInfo(HloModule* module, int depth=1) {
+
+    VLOG(5) << LOG_HEADER(depth, "ModuInfo: ") << "Name: " << module->name() << " " << module;
+    VLOG(5) << LOG_HEADER(depth, "ModuInfo: ") << "Computation count: " << module->computation_count();
+
+    for (HloComputation* computation : module->computations()) {
+      PrintComputationInfo(computation, depth + 1);
+    }
+
   }
 
 }   // namespace
@@ -114,15 +170,22 @@ namespace {
   /*********************************************************/
 
   // overriden functions from class
+  // modifies the sharding specification of the instructions in the module
   absl::StatusOr<bool> AutoParallelizer::Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
 
     VLOG(5) << "Testing run for AutoParallelizer";
 
+    PrintModuleInfo(module);
+
     // create a clone of the module, then run off of that 
     std::unique_ptr<HloModule> module_clone = module->Clone();
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
+
+
+    PrintModuleInfo(module_clone.get());
+
 
     // iterate through HloModule computations
     for (HloComputation* computation : module_clone->computations()) {
@@ -131,15 +194,12 @@ namespace {
 
       for (HloInstruction* instr : computation->instructions()) {
 
-        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString();
-        PrintInfo(instr);
+        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString() << " " << instr;
+        // PrintInstructionInfo(instr);
 
-        if (!instr->has_sharding()) {
-          // avoid overwriting user-suggested shardings
-          HloModule* single_inst_module = CreateModuleFromInstruction(instr);
-        } else {
-          VLOG(5) << LOG_HEADER(2) << "instruction has sharding: " << instr->name();
-        }
+        // regardless of whether it has sharding
+        // include in problem but with fewer options
+        std::unique_ptr<HloModule> single_inst_module = CreateModuleFromInstruction(instr);
 
         // now enumerate through various module shardings
 
