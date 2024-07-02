@@ -15,14 +15,11 @@ cc_library(
         ":compiler_trace_proto_cc",
         ":compiler_trace_proto_cc_impl",
         "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
