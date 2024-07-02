@@ -1273,7 +1273,7 @@ absl::Status ROCMBlas::GetVersion(std::string *version) {
     return absl::InternalError(
         absl::StrCat("GetVersion failed with: ", ToString(res)));
   }
-  *version = string(buf.begin(), buf.end());
+  *version = std::string(buf.begin(), buf.end());
   return absl::OkStatus();
 #else
   return absl::UnimplementedError("");

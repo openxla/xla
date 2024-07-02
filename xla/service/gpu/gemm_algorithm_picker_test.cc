@@ -35,6 +35,10 @@ limitations under the License.
 #include "tsl/platform/test.h"
 #include "tsl/protobuf/dnn.pb.h"
 
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#endif
+
 namespace xla::gpu {
 namespace {
 
@@ -66,6 +70,18 @@ class GemmAlgorithmPickerTest : public HloTestBase,
     }
   }
 };
+
+TEST_P(GemmAlgorithmPickerTest, BlasGetVersion) {
+#if TENSORFLOW_USE_ROCM && TF_ROCM_VERSION < 60200
+  GTEST_SKIP() << "This API is not available on ROCM 6.1 and below.";
+#endif
+  auto *blas = backend().default_stream_executor()->AsBlas();
+  ASSERT_TRUE(blas != nullptr);
+  std::string version;
+  ASSERT_TRUE(blas->GetVersion(&version).ok());
+  VLOG(0) << "Blas version: " << version;
+  ASSERT_TRUE(!version.empty());
+}
 
 TEST_P(GemmAlgorithmPickerTest, SetAlgorithm) {
   auto comp = backend()

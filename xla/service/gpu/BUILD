@@ -1737,6 +1737,9 @@ xla_test(
 xla_test(
     name = "gemm_algorithm_picker_test",
     srcs = if_gpu_is_configured(["gemm_algorithm_picker_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
     backends = [
         "gpu_v100",
         "gpu_amd_any",
