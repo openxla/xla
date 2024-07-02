@@ -2034,6 +2034,7 @@ cc_library(
 xla_test(
     name = "conv_algorithm_picker_test",
     srcs = if_gpu_is_configured(["conv_algorithm_picker_test.cc"]),
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     backends = [
         "gpu_v100",
         "gpu_amd_any",

@@ -96,6 +96,16 @@ using se::DeviceMemoryBase;
 using se::dnn::AlgorithmDesc;
 using std::optional;
 
+// Returns the shape of the element with index tuple_idx from shape when shape
+// is a tuple shape. Returns shape when shape is not a tuple shape.
+Shape MaybeTupleElementShape(Shape shape, int64_t tuple_idx) {
+  if (shape.IsTuple()) {
+    return shape.tuple_shapes(tuple_idx);
+  } else {
+    return shape;
+  }
+}
+
 class ScratchAllocator : public se::ScratchAllocator {
  public:
   ScratchAllocator(int device_ordinal,
@@ -731,10 +741,12 @@ absl::StatusOr<AutotuneResult> GpuConvAlgorithmPicker::AutotuneOneConvRunner(
   }
 
   if (reference_result->has_value()) {
-    XLA_SCOPED_LOGGING_TIMER_LEVEL("BufferComparator::CompareEqual", 2);
-    BufferComparator comparator(runtime_arguments.rz_buffers.output_shape(),
-                                runtime_arguments.hlo_module_config);
     for (int i = 0; i < result_buffers.size(); ++i) {
+      Shape output_shape = MaybeTupleElementShape(
+          runtime_arguments.rz_buffers.output_shape(), i);
+      XLA_SCOPED_LOGGING_TIMER_LEVEL("BufferComparator::CompareEqual", 2);
+      BufferComparator comparator(output_shape,
+                                  runtime_arguments.hlo_module_config);
       absl::StatusOr<bool> compare_result = comparator.CompareEqual(
           stream, (*reference_result)->buffers[i], result_buffers[i]);
       if (!compare_result.ok()) {
