@@ -22,10 +22,31 @@ namespace {
   /* Helper classes                                        */
   /*********************************************************/
 
-  class ProgramShape;
+  class InstructionSharding {
+  public:
+    InstructionSharding() = default;
+    ~InstructionSharding() = default;
+
+
+  private:
+    // The sharding of each operand of an instruction. Using shared_ptr
+    // as noted by HloInstruction due to large size for many element tuples
+    // This vector will be filled by enumerating incomplete sharding strategies
+    std::vector<std::shared_ptr<const HloSharding>> operand_shardings_;
+
+    // Sharding of result of computing instruction. This will be completed
+    // by GSPMD when given the input shardings and determining the output
+    // shardings.
+    std::shared_ptr<const HloSharding> result_sharding_;
+
+    // Cost of this specific instruction sharding. This will be assigned
+    // after evaluating the cost of the complete HloModule after performing
+    // sharding propagation through SPMD.
+    uint64_t cost_;
+
+  };
 
   class InstructionShardingInfo {
-
   public:
     InstructionShardingInfo(HloInstruction* orig_instr);
     ~InstructionShardingInfo() = default;
@@ -35,7 +56,7 @@ namespace {
     // Points to the original instruction that will have its
     // sharding strategies enumerated. Eventually, this instruction
     // will be modified with a sharding strategy provided by the solvers
-    HloInstruction* orig_instr;
+    HloInstruction* orig_instr_;
 
     // Module containing a single computation of a single instruction that
     // is a clone of the orig_instr. Created on construction of class.
@@ -43,10 +64,19 @@ namespace {
     // each incomplete strategy will be applied to this module, be completed
     // by GSPMD, and evaluated for it's computational and communication cost
     // by inspecting the completed module's resulting operations
-    HloModule* single_instr_module;    
+    std::unique_ptr<HloModule> single_instr_module_;    
 
+    // vector of sharding strategies for the given instruction
+    std::vector<InstructionSharding> sharding_strats_;
 
   };
+
+  InstructionShardingInfo::InstructionShardingInfo(HloInstruction* orig_instr) 
+      : orig_instr_(orig_instr),
+        single_instr_module_(CreateModuleFromInstruction(orig_instr)),
+        sharding_strats_() {
+    return;
+  }
 
 
 
@@ -86,7 +116,7 @@ namespace {
       }
     }
 
-    return std::move(result); 
+    return result; 
   }
   
   // Creates a module from a single instruction for running a simple pass on
@@ -118,14 +148,19 @@ namespace {
   /* Sharding enumeration                                  */
   /*********************************************************/
 
-  // // creates a list of potential sharding strategies for the instruction
-  // std::vector<std::unique_ptr<HloSharding>> GenerateShardingStrats(
-  //     HloInstruction* instruction) {
+  std::vector<InstructionSharding> CreateShardingStrategies(
+      HloInstruction* instruction) {
 
-  //   // figure things out here
+    std::vector<InstructionSharding> strats;
 
-  //   return nullptr; 
-  // }
+    // get a list of possible sharding strategies for each operand
+
+    return strats;
+  } 
+
+  /*********************************************************/
+  /* Debugging                                             */
+  /*********************************************************/
 
   void PrintInstructionInfo(HloInstruction* instruction, int depth=3) {
 
@@ -197,11 +232,8 @@ namespace {
         VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString() << " " << instr;
         // PrintInstructionInfo(instr);
 
-        // regardless of whether it has sharding
-        // include in problem but with fewer options
-        std::unique_ptr<HloModule> single_inst_module = CreateModuleFromInstruction(instr);
-
-        // now enumerate through various module shardings
+        // create the relevant sharding information for this instruction
+        InstructionShardingInfo i(instr);
 
       }
     }
