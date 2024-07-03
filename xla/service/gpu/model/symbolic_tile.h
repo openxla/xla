@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/AffineExpr.h"  // from @llvm-project
 #include "mlir/IR/AffineMap.h"  // from @llvm-project
 #include "xla/service/gpu/model/affine_map_printer.h"
@@ -49,7 +49,11 @@ namespace gpu {
 // `ConstraintExpression` to be empty (bottom).
 class ConstraintExpression {
  public:
-  using ConjointConstraints = llvm::DenseMap<mlir::AffineExpr, Interval>;
+  struct Constraint {
+    mlir::AffineExpr expr;
+    Interval interval;
+  };
+  using ConjointConstraints = llvm::SmallVector<Constraint, 2>;
   // Takes the conjunction of the constraints of `first` and `second`.
   static ConstraintExpression And(ConstraintExpression first,
                                   ConstraintExpression second);
@@ -95,11 +99,23 @@ class ConstraintExpression {
 
   void Print(std::ostream& out, const AffineMapPrinter& printer) const;
 
+  // Simplifies the constraint expression.
+  //
+  // We remove conjunctions that are always satisfied, and we remove
+  // disjunctions that are unsatisfiable. If we can deduce that the whole
+  // expression is unsatisfiable or always satisfied, than we change the whole
+  // expression to the canonical form.
+  //
+  // E.g., if we find that one of the conjunctions is always satisfied, we don't
+  // just throw away that part---we throw away everything and make the
+  // ConstraintExpression canonically always satisfied.
+  void Simplify();
+
   // TODO(bchetioui): add a util to verify constraints here later.
   // TODO(bchetioui): is canonicalization of disjunctions necessary?
  private:
   bool is_satisfiable_ = true;
-  std::vector<ConjointConstraints> disjoint_conjoint_constraints_;
+  llvm::SmallVector<ConjointConstraints, 2> disjoint_conjoint_constraints_;
 };
 
 // Tiling in the simpler case, when we don't have dynamic offsets (see the

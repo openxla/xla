@@ -155,8 +155,6 @@ TEST_F(SymbolicTileTest,
 
 TEST_F(SymbolicTileTest,
        CanPropagateTileThroughNonTrivialSplitReshapeFromOutputToInput) {
-  // TODO(b/334043867): we need disjunctions here to derive the proper
-  // constraints for the tile sizes.
   auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
     HloModule m
     ENTRY e {
@@ -180,6 +178,12 @@ TEST_F(SymbolicTileTest,
           (((-s2 + 7) floordiv 6) * (((-s1 + 9) floordiv 8) *
           ((-((-s0 + 5) floordiv 4) + 1) * 48) +
           (-((-s1 + 9) floordiv 8) + 1) * 6) + -((-s2 + 7) floordiv 6) + 1, 1)
+        constraints: s0 in [1, 2) && s1 in [1, 2) ||
+                     s0 in [1, 2) && s2 in [1, 2) ||
+                     s0 in [1, 2) && s2 in [6, 7) ||
+                     s1 in [1, 2) && s2 in [1, 2) ||
+                     s1 in [8, 9) && s2 in [1, 2) ||
+                     s1 in [8, 9) && s2 in [6, 7)
       )")));
 
   // Capturing elements along dimensions 0, 1, and 2 makes the stride equal to
@@ -575,7 +579,7 @@ TEST_F(SymbolicTileTest, CanPropagateTileThroughSplitReshapeOfReverse) {
 
 TEST_F(SymbolicTileTest,
        FailsGracefullyAtPropagatingTileThroughSliceOfSplitReshape) {
-  // TODO(b/326998704): constraints should allow us to unblock this use case.
+  // TODO(b/349487906): constraints should allow us to unblock this use case.
   // A slice of a split reshape creates a non-unit stride atop a floordiv.
   auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
     HloModule m
@@ -598,8 +602,6 @@ TEST_F(SymbolicTileTest,
 
 TEST_F(SymbolicTileTest,
        FailsGracefullyAtPropagatingTileThroughMisalignedSliceOfSplitReshape) {
-  // TODO(b/326998704): constraints should allow us to unblock part of this use
-  // case.
   // TODO(b/331257678): handling correctly cases where offsets don't get
   // simplified away perfectly will allow us to unblock part of this use case.
   auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
@@ -623,7 +625,7 @@ TEST_F(SymbolicTileTest,
 
 TEST_F(SymbolicTileTest,
        FailsGracefullyAtPropagatingTileThroughSliceOfSplitReshapeOnTranspose) {
-  // TODO(b/326998704): constraints should allow us to unblock this use case.
+  // TODO(b/349487906): constraints should allow us to unblock this use case.
   // A slice of a split reshape creates a non-unit stride atop a floordiv.
   auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
     HloModule m
@@ -647,7 +649,7 @@ TEST_F(SymbolicTileTest,
 
 TEST_F(SymbolicTileTest,
        FailsGracefullyAtPropagatingTileThroughSliceOfSplitReshapeOfReverse) {
-  // TODO(b/326998704): constraints should allow us to unblock this use case.
+  // TODO(b/349487906): constraints should allow us to unblock this use case.
   // A slice of a split reshape of a reverse creates a negative non-unit stride
   // atop a floordiv.
   auto input_indexing = GetOutputToInputIndexing(ParseAndGetRoot(R"(
@@ -746,10 +748,28 @@ TEST_F(SymbolicTileTest,
         offset_map: ()[s0, s1, s2] -> (0, 0)
         size_map: ()[s0, s1, s2] -> (s0 * s1, 50304)
         stride_map: ()[s0, s1, s2] -> (((-s1 + 2049) floordiv 2048) * ((-((-s0 + 5) floordiv 4) + 1) * 2048) + -((-s1 + 2049) floordiv 2048) + 1, 1)
+        constraints: s0 in [1, 2) || s1 in [1, 2) || s1 in [2048, 2049)
       )")));
 }
 
 TEST_F(SymbolicTileTest, CanDeriveTileWhenTheIndexingMapHasSymbolsInASum) {
+  // The example is from
+  // https://github.com/google/paxml/blob/91893818862645f5e9f23b84f530e611551745f6/paxml/contrib/gpu/scripts_gpu/configs.py#L107-L120.
+  IndexingMap indexing_map = IndexingMap::FromTensorSizes(
+      ParseAffineMap("(d0, d1, d2)[s0] -> (d0, d1, d2 * 128 + s0)",
+                     &mlir_context_),
+      {4, 2048, 393}, {128});
+
+  EXPECT_THAT(SymbolicTile::FromIndexingMap(indexing_map),
+              Optional(MatchSymbolicTileString(R"(
+      Symbolic tile with
+        offset_map: ()[s0, s1, s2] -> (0, 0, 0)
+        size_map: ()[s0, s1, s2] -> (s0, s1, s2 * 128)
+        stride_map: ()[s0, s1, s2] -> (1, 1, 1)
+      )")));
+}
+
+TEST_F(SymbolicTileTest, ResultingConstraintsAreSimplifiedAway) {
   // The example is from
   // https://github.com/google/paxml/blob/91893818862645f5e9f23b84f530e611551745f6/paxml/contrib/gpu/scripts_gpu/configs.py#L107-L120.
   IndexingMap indexing_map = IndexingMap::FromTensorSizes(
@@ -776,7 +796,7 @@ class ConstraintExpressionTest : public IndexingTestBase {
       ConstraintVector&& expr_and_interval_pairs) {
     ConjointConstraints conjunction;
     for (auto& [string_expr, interval] : expr_and_interval_pairs) {
-      conjunction.insert(
+      conjunction.push_back(
           {ParseAffineExpr(string_expr, &mlir_context_), interval});
     }
     return conjunction;
@@ -1056,6 +1076,89 @@ TEST_F(
 
   EXPECT_FALSE(
       ConstraintExpression::And(constraints_1, constraints_2).is_satisfiable());
+}
+
+TEST_F(ConstraintExpressionTest,
+       CanSimplifyAlwaysSatisfiedContraintExpression) {
+  ConstraintExpression constraints;
+  constraints.Or(GetConjointConstraints({
+      {"d0", Interval{0, 1}},
+  }));
+  constraints.Or(GetConjointConstraints({
+      {"25", Interval{0, 100}},
+      {"1", Interval{1, 1}},
+  }));
+  constraints.Or(GetConjointConstraints({
+      {"d0", Interval{0, -1}},
+  }));
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints, MatchConstraintExpressionString("always satisfied"));
+}
+
+TEST_F(ConstraintExpressionTest, CanSimplifyUnsatisfiableContraintExpression) {
+  ConstraintExpression constraints;
+  constraints.Or(GetConjointConstraints({
+      {"d0", Interval{0, -1}},
+  }));
+  constraints.Or(GetConjointConstraints({
+      {"1", Interval{2, 3}},
+  }));
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints, MatchConstraintExpressionString("unsatisfiable"));
+}
+
+TEST_F(ConstraintExpressionTest,
+       CanSimplifyAwayAlwaysSatisfiedPartOfConjunction) {
+  ConstraintExpression constraints;
+  constraints.Or(GetConjointConstraints({
+      {"d0", Interval{0, 1}},
+      {"1", Interval{1, 1}},
+      {"d1", Interval{0, 1}},
+      {"2", Interval{2, 3}},
+  }));
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints,
+              MatchConstraintExpressionString("d0 in [0, 2) && d1 in [0, 2)"));
+}
+
+TEST_F(ConstraintExpressionTest,
+       CanSimplifyAwayUnsatisfiablePartOfDisjunction) {
+  ConstraintExpression constraints;
+  constraints.Or(GetConjointConstraints({
+      {"d0", Interval{0, 1}},
+  }));
+  constraints.Or(GetConjointConstraints({
+      {"d1", Interval{0, 1}},
+      {"1", Interval{0, 0}},
+      {"d2", Interval{0, 1}},
+  }));
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints, MatchConstraintExpressionString("d0 in [0, 2)"));
+}
+
+TEST_F(ConstraintExpressionTest, SimplifyKeepsAlwaysSatisfiedUnchanged) {
+  ConstraintExpression constraints;
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints, MatchConstraintExpressionString("always satisfied"));
+}
+
+TEST_F(ConstraintExpressionTest, SimplifyKeepsUnsatisfiableUnchanged) {
+  auto constraints =
+      ConstraintExpression::GetUnsatisfiableConstraintExpression();
+
+  constraints.Simplify();
+
+  EXPECT_THAT(constraints, MatchConstraintExpressionString("unsatisfiable"));
 }
 
 }  // namespace

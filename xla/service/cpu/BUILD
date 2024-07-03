@@ -72,7 +72,6 @@ filegroup(
     srcs = [
         # Single-threaded support.
         "runtime_custom_call_status.cc",
-        "runtime_conv_impl.cc",
         "runtime_fp16.cc",
         "runtime_key_value_sort.cc",
         "runtime_pow.cc",
@@ -86,6 +85,7 @@ filegroup(
         "runtime_single_threaded_matmul_f32.cc",
         "runtime_single_threaded_matmul_f64.cc",
         "runtime_single_threaded_matmul_s32.cc",
+        "runtime_single_threaded_matmul_u8.cc",
         "runtime_topk.cc",
         # Multi-threaded support.
         "runtime_conv2d.cc",
@@ -99,6 +99,7 @@ filegroup(
         "runtime_matmul_f64.cc",
         "runtime_matmul_s32.cc",
         "runtime_fork_join.cc",
+        "//xla/service/cpu/runtime:runtime_srcs",
         #"runtime_handle_ffi_call.cc", # TODO(b/338344732): Add  "runtime_handle_ffi_call.cc".
     ],
     visibility = internal_visibility([":friends"]),
@@ -111,7 +112,6 @@ filegroup(
         "buffer_desc.h",
         # Single-threaded support.
         "runtime_custom_call_status.h",
-        "runtime_conv_impl.h",
         "runtime_fp16.h",
         "runtime_key_value_sort.h",
         "runtime_pow.h",
@@ -127,6 +127,7 @@ filegroup(
         "runtime_fork_join.h",
         "runtime_lightweight_check.h",
         "runtime_matmul.h",
+        "//xla/service/cpu/runtime:runtime_hdrs",
         #"runtime_handle_ffi_call.h", # TODO(b/338344732): Add  "runtime_handle_ffi_call.h"
     ],
     visibility = internal_visibility([":friends"]),
@@ -631,6 +632,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
         "//xla/service/cpu:dot_op_emitter",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
@@ -641,9 +643,12 @@ cc_library(
         "//xla/service/llvm_ir:tuple_ops",
         "//xla/stream_executor:launch_dim",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
@@ -658,12 +663,18 @@ xla_cc_test(
     name = "ir_emitter2_test",
     srcs = ["ir_emitter2_test.cc"],
     deps = [
+        ":ir_emitter",
         ":ir_emitter2",
+        ":target_machine_features_fake",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_ordering",
         "//xla/service:hlo_parser",
+        "//xla/service:logical_buffer",
+        "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
@@ -696,6 +707,7 @@ cc_library(
         ":onednn_memory_util",
         ":parallel_loop_emitter",
         ":target_machine_features",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -1019,29 +1031,15 @@ cc_library(
 )
 
 cc_library(
-    name = "runtime_conv_impl",
-    srcs = ["runtime_conv_impl.cc"],
-    hdrs = ["runtime_conv_impl.h"],
-    copts = runtime_copts(),
-    visibility = internal_visibility([":friends"]),
-    deps = [
-        "//xla/tsl/framework/contraction:eigen_contraction_kernel",
-        "//xla/tsl/framework/convolution:eigen_helpers",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:mutex",  # build_cleaner: keep
-    ],
-)
-
-cc_library(
     name = "runtime_conv2d",
     srcs = ["runtime_conv2d.cc"],
     hdrs = ["runtime_conv2d.h"],
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":runtime_conv_impl",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
+        "//xla/service/cpu/runtime:conv_impl",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -1057,9 +1055,9 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":runtime_conv_impl",
         ":runtime_lightweight_check",
         "//xla:executable_run_options",
+        "//xla/service/cpu/runtime:conv_impl",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -1187,7 +1185,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":runtime_conv_impl",
+        "//xla/service/cpu/runtime:conv_impl",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -1203,7 +1201,7 @@ cc_library(
     copts = runtime_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":runtime_conv_impl",
+        "//xla/service/cpu/runtime:conv_impl",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
         "//xla/tsl/framework/convolution:eigen_helpers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -1236,6 +1234,7 @@ cc_library(
         "runtime_single_threaded_matmul_f32.cc",
         "runtime_single_threaded_matmul_f64.cc",
         "runtime_single_threaded_matmul_s32.cc",
+        "runtime_single_threaded_matmul_u8.cc",
     ],
     hdrs = ["runtime_single_threaded_matmul.h"],
     compatible_with = get_compatible_with_portable(),

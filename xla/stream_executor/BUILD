@@ -4,7 +4,7 @@ load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_build_defs_bzl_deps", "stream_executor_friends", "stream_executor_internal")
-load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -658,32 +658,17 @@ cc_library(
     srcs = ["stream_executor_common.cc"],
     hdrs = ["stream_executor_common.h"],
     deps = [
-        ":blas",
-        ":command_buffer",
         ":device_description",
-        ":dnn",
-        ":event",
-        ":fft",
         ":kernel",
-        ":module_spec",
         ":platform",
-        ":stream",
         ":stream_executor_h",
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -707,12 +692,10 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:thread_annotations",
     ],
@@ -778,8 +761,7 @@ cc_library(
         ":platform_manager",
         ":scratch_allocator",
         ":stream_executor_pimpl",
-        "@tsl//tsl/protobuf:dnn_proto_cc_impl",
-    ],
+    ] + if_oss(["@tsl//tsl/protobuf:dnn_proto_cc_impl"]),
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -860,6 +842,16 @@ xla_cc_test(
         ":device_memory",
         ":device_memory_handle",
         ":mock_stream_executor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "device_description_test",
+    srcs = ["device_description_test.cc"],
+    deps = [
+        ":device_description",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

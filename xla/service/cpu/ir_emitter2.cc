@@ -25,11 +25,15 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/CallingConv.h"
@@ -38,6 +42,8 @@ limitations under the License.
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
@@ -48,6 +54,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/elemental_math_emitter.h"
@@ -71,28 +78,6 @@ limitations under the License.
 
 namespace xla::cpu {
 namespace {
-
-// We do not materialize buffers for tuples at run time, and work only with leaf
-// arrays. These are the helper functions to flatten HLO instruction parameters
-// and results into a list of leaf shapes.
-
-static std::vector<Shape> FlattenedParameters(const HloInstruction* instr) {
-  std::vector<Shape> parameters;
-  for (auto* operand : instr->operands()) {
-    for (auto& indexed : ShapeUtil::GetLeafShapes(operand->shape())) {
-      parameters.push_back(indexed.shape);
-    }
-  }
-  return parameters;
-}
-
-static std::vector<Shape> FlattenedResults(const HloInstruction* instr) {
-  std::vector<Shape> results;
-  for (auto& indexed : ShapeUtil::GetLeafShapes(instr->shape())) {
-    results.push_back(indexed.shape);
-  }
-  return results;
-}
 
 // Following struct types correspond to HostKernel C API.
 // See: xla/stream_executor/host/host_kernel_c_api.h
@@ -239,7 +224,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitElementalHostKernel(
     const HloInstruction* instr) {
   VLOG(2) << "Emit elemental host kernel: " << instr->name();
 
-  KernelPrototype kernel_prototype = EmitKernelPrototype(instr);
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(instr));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -279,7 +265,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
                     fusion->ToString());
   }
 
-  KernelPrototype kernel_prototype = EmitKernelPrototype(fusion);
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(fusion));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -355,7 +342,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotHostKernel(
     return Internal("Unsupported dot implementation strategy");
   }
 
-  KernelPrototype kernel_prototype = EmitKernelPrototype(instr);
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(instr));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -411,7 +399,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
   int64_t dot_rhs_pnum = dot->operand(1)->parameter_number();
   int64_t addend_pnum = add->operand(addend_op_index)->parameter_number();
 
-  KernelPrototype kernel_prototype = EmitKernelPrototype(fusion);
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(fusion));
 
   llvm::IRBuilder<> b(module_->getContext());
   b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
@@ -435,7 +424,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
 // Emits a host kernel for the given select-and-scatter instruction.
 absl::StatusOr<IrEmitter2::KernelInfo>
 IrEmitter2::EmitSelectAndScatterHostKernel(const HloInstruction* instr) {
-  KernelPrototype kernel_prototype = EmitKernelPrototype(instr);
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(instr));
 
   llvm_ir::IrArray operand_array = kernel_prototype.arguments[0];
   llvm_ir::IrArray source_array = kernel_prototype.arguments[1];
@@ -453,6 +443,102 @@ IrEmitter2::EmitSelectAndScatterHostKernel(const HloInstruction* instr) {
 //===----------------------------------------------------------------------===//
 // Building HostKernel prototypes.
 //===----------------------------------------------------------------------===//
+
+absl::StatusOr<BufferAllocation::Slice> IrEmitter2::GetAllocationSlice(
+    const HloInstruction* instruction, const ShapeIndex& index) {
+  return nested_ir_emitter_->assignment().GetUniqueSlice(instruction, index);
+}
+
+absl::StatusOr<std::vector<IrEmitter2::KernelParameter>>
+IrEmitter2::GetKernelArgumentsParameters(const HloInstruction* instruction) {
+  std::vector<KernelParameter> arguments;
+
+  for (HloInstruction* operand : instruction->operands()) {
+    for (auto& indexed : ShapeUtil::GetLeafShapes(operand->shape())) {
+      TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                          GetAllocationSlice(operand, indexed.index));
+      arguments.push_back(KernelParameter{indexed.shape, slice});
+    }
+  }
+  return arguments;
+}
+
+absl::StatusOr<std::vector<IrEmitter2::KernelParameter>>
+IrEmitter2::GetKernelResultsParameters(const HloInstruction* instruction) {
+  std::vector<KernelParameter> results;
+  for (auto& indexed : ShapeUtil::GetLeafShapes(instruction->shape())) {
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                        GetAllocationSlice(instruction, indexed.index));
+    results.push_back(KernelParameter{indexed.shape, slice});
+  }
+  return results;
+}
+
+absl::Status IrEmitter2::VerifyKernelParameters(
+    absl::Span<const KernelParameter> arguments,
+    absl::Span<const KernelParameter> results) {
+  // IMPORTANT: Buffer slice non-overlapping property checked below does not
+  // necessarily mean that the buffers do not alias. Parameter allocations
+  // might have different index but at run time might be backed by the same
+  // memory (or aliased memory). We conservatively do not emit noalias metadata
+  // for buffers coming from parameter allocations.
+
+  // Check that all kernel arguments are coming from non-overlapping slices. It
+  // is fine to pass same slice as different arguments. This property is not
+  // used anywhere during the codegen, it acts mostly as a sanity check for
+  // the buffer assignment. In the future we might emit better aliasing metadata
+  // based on this property.
+  for (size_t i = 0; i < arguments.size(); ++i) {
+    for (size_t j = i + 1; j < arguments.size(); ++j) {
+      const KernelParameter& a = arguments[i];
+      const KernelParameter& b = arguments[j];
+
+      if (a.slice != b.slice && a.slice.OverlapsWith(b.slice)) {
+        return Internal(
+            "Kernel arguments must not overlap: result #%d (%s) overlaps "
+            "with result #%d (%s)",
+            i, a.slice.ToString(), j, b.slice.ToString());
+      }
+    }
+  }
+
+  // Check that all kernel results are unique and coming from non-overlapping
+  // slices. We rely on this property to create LLVM `!alias.scope` for each
+  // kernel result buffer and to construct `!noalias` metadata for arguments.
+  for (size_t i = 0; i < results.size(); ++i) {
+    for (size_t j = i + 1; j < results.size(); ++j) {
+      const KernelParameter& a = results[i];
+      const KernelParameter& b = results[j];
+
+      if (a.slice.OverlapsWith(b.slice)) {
+        return Internal(
+            "Kernel results must not overlap: result #%d (%s) overlaps "
+            "with result #%d (%s)",
+            i, a.slice.ToString(), j, b.slice.ToString());
+      }
+    }
+  }
+
+  // Check that results do not overlap with arguments, or if they do, they must
+  // be the same as one of the arguments, which can happen for inplace kernels.
+  for (size_t i = 0; i < results.size(); ++i) {
+    for (size_t j = 0; j < arguments.size(); ++j) {
+      const KernelParameter& result = results[i];
+      const KernelParameter& argument = arguments[j];
+
+      if (result.slice.OverlapsWith(argument.slice) &&
+          result.slice != argument.slice) {
+        return Internal(
+            "Kernel results must not partially overlap with arguments: result "
+            "#%d (%s) overlaps with argument #%d (%s)",
+            i, result.slice.ToString(), j, argument.slice.ToString());
+        break;
+      }
+    }
+  }
+
+  return absl::OkStatus();
+}
 
 IrEmitter2::KernelThreadDims IrEmitter2::EmitKernelThreadDims(
     llvm::IRBuilder<>& b, llvm::Value* call_frame) {
@@ -499,21 +585,82 @@ llvm_ir::IrArray IrEmitter2::EmitKernelArgument(llvm::IRBuilder<>& b,
   return llvm_ir::IrArray(data, llvm_ir::ShapeToIrType(shape, module_), shape);
 }
 
-IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
-    std::string_view name, absl::Span<const Shape> arguments,
-    absl::Span<const Shape> results) {
+absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
+    std::string_view name, absl::Span<const KernelParameter> arguments,
+    absl::Span<const KernelParameter> results) {
   VLOG(3) << "Emit kernel prototype: " << name
           << ", #arguments=" << arguments.size()
           << ", #results=" << results.size();
-  for (const Shape& argument : arguments) {
-    VLOG(3) << "  argument: " << argument.ToString(true);
+  for (const KernelParameter& argument : arguments) {
+    VLOG(3) << "  argument: " << argument.shape.ToString(true) << " in "
+            << argument.slice.ToString();
   }
-  for (const Shape& result : results) {
-    VLOG(3) << "  result: " << result.ToString(true);
+  for (const KernelParameter& result : results) {
+    VLOG(3) << "  result: " << result.shape.ToString(true) << " in "
+            << result.slice.ToString();
   }
 
+  TF_RETURN_IF_ERROR(VerifyKernelParameters(arguments, results));
+
   llvm::LLVMContext& ctx = module_->getContext();
+  llvm::MDBuilder mb(ctx);
   llvm::IRBuilder<> b(ctx);
+
+  // Create an alias domain for the host kernel function.
+  llvm::MDNode* domain = mb.createAliasScopeDomain(
+      absl::StrFormat("XLA host kernel %s AA domain", name));
+
+  // Emit alias scopes for all kernel result buffers. We do not emit alias
+  // scopes for kernel arguments, because it's usually not profitable, and we
+  // mostly care about avoiding reloading data from read-only buffers.
+  absl::flat_hash_map<BufferAllocation::Slice, llvm::MDNode*> alias_scopes;
+  for (const KernelParameter& result : results) {
+    // Skip result buffers that are aliased with entry parameters as we don't
+    // know if they can alias with any other buffers.
+    if (result.slice.allocation()->is_parameter_aliased_with_output()) {
+      continue;
+    }
+    alias_scopes[result.slice] = mb.createAliasScope(
+        absl::StrFormat("result slice: %s", result.slice.ToString()), domain);
+  }
+
+  // Returns alias scope for the given buffer slice.
+  auto get_alias_scope = [&](BufferAllocation::Slice slice) -> llvm::MDNode* {
+    auto it = alias_scopes.find(slice);
+    return it == alias_scopes.end() ? nullptr
+                                    : llvm::MDNode::get(ctx, it->second);
+  };
+
+  // Construct !noalias metadata for buffer slice.
+  auto get_noalias = [&](BufferAllocation::Slice slice) -> llvm::MDNode* {
+    llvm::SmallVector<llvm::Metadata*> scopes;
+    for (const auto& [alias_slice, alias_scope] : alias_scopes) {
+      if (!slice.OverlapsWith(alias_slice)) {
+        scopes.push_back(alias_scope);
+      }
+    }
+    return scopes.empty() ? nullptr : llvm::MDNode::get(ctx, scopes);
+  };
+
+  // Collect all buffer slices that the kernel writes to.
+  absl::flat_hash_set<BufferAllocation::Slice> result_slices;
+  result_slices.reserve(results.size());
+  for (const KernelParameter& result : results) {
+    result_slices.insert(result.slice);
+  }
+
+  // Collect a set of invariant (read-only) buffer slices. If a buffer slice is
+  // not a part of result set, then it must be a read-only buffer.
+  //
+  // TODO(ezhulenev): Pass this information to KernelThunk and add an extra run
+  // time check to verify that this property holds, as otherwise it can lead to
+  // hard to debug errors.
+  absl::flat_hash_set<BufferAllocation::Slice> invariant_slices;
+  for (const KernelParameter& argument : arguments) {
+    if (!result_slices.contains(argument.slice)) {
+      invariant_slices.insert(argument.slice);
+    }
+  }
 
   // Create a kernel function with HostKernel API.
   llvm::Function* function = llvm::dyn_cast<llvm::Function>(
@@ -544,14 +691,28 @@ IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
 
   // IrArrays for the parameters.
   std::vector<llvm_ir::IrArray> ir_arguments;
-  for (const Shape& argument : arguments) {
-    ir_arguments.push_back(EmitKernelArgument(b, call_frame, idx++, argument));
+  for (const KernelParameter& argument : arguments) {
+    auto ir_argument = EmitKernelArgument(b, call_frame, idx++, argument.shape);
+    if (auto* noalias = get_noalias(argument.slice)) {
+      ir_argument.AddNoaliasMetadata(noalias);
+    }
+    if (invariant_slices.contains(argument.slice)) {
+      ir_argument.MarkInvariantOverWholeProgram(&ctx);
+    }
+    ir_arguments.push_back(std::move(ir_argument));
   }
 
   // IrArrays for the results.
   std::vector<llvm_ir::IrArray> ir_results;
-  for (const Shape& result : results) {
-    ir_results.push_back(EmitKernelArgument(b, call_frame, idx++, result));
+  for (const KernelParameter& result : results) {
+    auto ir_result = EmitKernelArgument(b, call_frame, idx++, result.shape);
+    if (auto* noalias = get_noalias(result.slice)) {
+      ir_result.AddNoaliasMetadata(noalias);
+    }
+    if (auto* alias_scope = get_alias_scope(result.slice)) {
+      ir_result.AddAliasScopeMetadata(alias_scope);
+    }
+    ir_results.push_back(std::move(ir_result));
   }
 
   // Return null pointer to signal success as we do not support error handling
@@ -563,10 +724,14 @@ IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
                          std::move(ir_arguments), std::move(ir_results)};
 }
 
-IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
+absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
     const HloInstruction* instr) {
-  return EmitKernelPrototype(instr->name(), FlattenedParameters(instr),
-                             FlattenedResults(instr));
+  TF_ASSIGN_OR_RETURN(std::vector<KernelParameter> arguments,
+                      GetKernelArgumentsParameters(instr));
+  TF_ASSIGN_OR_RETURN(std::vector<KernelParameter> results,
+                      GetKernelResultsParameters(instr));
+  return EmitKernelPrototype(instr->name(), std::move(arguments),
+                             std::move(results));
 }
 
 std::optional<IrEmitter2::ParallelConfig> IrEmitter2::GetParallelConfig(

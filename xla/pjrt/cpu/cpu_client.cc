@@ -282,8 +282,8 @@ absl::string_view TfrtCpuDeviceDescription::ToString() const {
   std::vector<CpuTopology::CpuDevice> cpu_devices;
   cpu_devices.reserve(devices.size());
   for (auto& device : devices) {
-    cpu_devices.push_back(CpuTopology::CpuDevice{device->process_index(),
-                                                 device->local_hardware_id()});
+    cpu_devices.push_back(CpuTopology::CpuDevice{
+        device->process_index(), device->local_hardware_id().value()});
   }
   return TfrtCpuTopologyDescription(platform_id, platform_name,
                                     platform_version, cpu_devices,
@@ -322,12 +322,12 @@ TfrtCpuDevice::TfrtCpuDevice(int process_id, int local_device_id,
           /*capacity=*/max_inflight_computations) {}
 
 absl::Status TfrtCpuDevice::TransferToInfeed(const LiteralSlice& literal) {
-  return TransferLiteralToInfeedOnCpu(local_hardware_id(), literal);
+  return TransferLiteralToInfeedOnCpu(local_hardware_id().value(), literal);
 }
 
 absl::Status TfrtCpuDevice::TransferFromOutfeed(
     MutableBorrowingLiteral literal) {
-  return TransferLiteralFromOutfeedOnCpu(local_hardware_id(), literal);
+  return TransferLiteralFromOutfeedOnCpu(local_hardware_id().value(), literal);
 }
 
 void TfrtCpuDevice::AttachMemorySpace(PjRtMemorySpace* memory_space) {
@@ -442,7 +442,7 @@ TfrtCpuClient::TfrtCpuClient(
 
     device->SetClient(this);
     if (device->IsAddressable()) {
-      int idx = device->local_hardware_id();
+      int idx = device->local_hardware_id().value();
       if (idx >= addressable_devices_.size()) {
         addressable_devices_.resize(idx + 1);
       }
@@ -678,7 +678,7 @@ TfrtCpuClient::DeserializeExecutable(absl::string_view serialized,
 
     if (build_options.device_ordinal() < 0) {
       build_options.set_device_ordinal(
-          addressable_devices.front()->local_hardware_id());
+          addressable_devices.front()->local_hardware_id().value());
     }
   }
 
@@ -800,7 +800,7 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
 
     if (build_options.device_ordinal() < 0) {
       build_options.set_device_ordinal(
-          addressable_devices.front()->local_hardware_id());
+          addressable_devices.front()->local_hardware_id().value());
     }
   }
 
@@ -1588,10 +1588,18 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
           cpu::Thunk::CollectiveExecuteParams collective_params,
           cpu::Thunk::CollectiveExecuteParams::Create(&run_options));
 
+      // TODO(penporn): Consolidate with other thunk parameter set up calls.
+      TF_ASSIGN_OR_RETURN(
+          cpu::Thunk::CustomCallExecuteParams custom_call_execute_params,
+          cpu::Thunk::CustomCallExecuteParams::Create(&run_options));
+
       cpu::Thunk::ExecuteParams execute_params = {
-          &cpu_executable->host_kernels(), &allocations,
+          &cpu_executable->host_kernels(),
+          &allocations,
           cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
-          run_options.intra_op_thread_pool(), &collective_params};
+          run_options.intra_op_thread_pool(),
+          &collective_params,
+          &custom_call_execute_params};
 
       auto execute_event = cpu_executable->thunks().Execute(
           execute_params, [&](cpu::ThunkExecutor::Task task) {
@@ -1714,11 +1722,18 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
                 collective_params =
                     cpu::Thunk::CollectiveExecuteParams::Create(&run_options);
 
+            absl::StatusOr<cpu::Thunk::CustomCallExecuteParams>
+                custom_call_params =
+                    cpu::Thunk::CustomCallExecuteParams::Create(&run_options);
+
             if (collective_params.ok()) {
               cpu::Thunk::ExecuteParams execute_params = {
-                  &cpu_executable->host_kernels(), &allocations,
+                  &cpu_executable->host_kernels(),
+                  &allocations,
                   cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
-                  run_options.intra_op_thread_pool(), &*collective_params};
+                  run_options.intra_op_thread_pool(),
+                  &*collective_params,
+                  &*custom_call_params};
 
               auto execute_event = cpu_executable->thunks().Execute(
                   execute_params, [&](cpu::ThunkExecutor::Task task) {

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/cpu/thunk_emitter.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -206,6 +207,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kPopulationCount:
     case HloOpcode::kPower:
     case HloOpcode::kReal:
+    case HloOpcode::kReducePrecision:
     case HloOpcode::kRemainder:
     case HloOpcode::kReverse:
     case HloOpcode::kRoundNearestAfz:
@@ -266,6 +268,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kReduce:
     case HloOpcode::kReduceWindow:
       return EmitReductionKernelThunk(instruction);
+
+    case HloOpcode::kRng:
+      return EmitRngThunk(instruction);
 
     case HloOpcode::kRngGetAndUpdateState:
       return EmitRngGetAndUpdateStateThunk(instruction);
@@ -577,6 +582,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReductionKernelThunk(
       kernel.thread_dims, /*min_alignment=*/cpu_function_runtime::MinAlign());
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("Rng should be expanded for CPU.");
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateStateThunk(
     const HloInstruction* instruction) {
   TF_ASSIGN_OR_RETURN(auto state_buffer, GetAllocationSlice(instruction));
@@ -831,7 +841,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
         CustomCallApiVersion_Name(version));
   }
 
-  // Get backend config and buffer assignments.ß
+  // Get backend config and buffer assignments.
   auto backend_config = custom_call->opaque();
   TF_ASSIGN_OR_RETURN(auto op_buffers,
                       GetCustomCallOpBuffers(instruction, buffer_assignment_));

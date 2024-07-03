@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/service/call_graph.h"
 #include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/status.h"
 
@@ -155,11 +154,6 @@ std::string ToString(const std::vector<std::vector<T>>& vector) {
 template <typename T>
 std::string ToString(absl::Span<T> span) {
   return absl::StrCat("[", absl::StrJoin(span, ", "), "]");
-}
-
-// Get the number of bytes of a shape.
-inline double GetBytes(const Shape& shape) {
-  return ShapeUtil::ByteSizeOf(shape, /*pointer_size=*/8);
 }
 
 // Return whether two shapes are equal in dimension.
@@ -593,7 +587,12 @@ inline int64_t ByteSizeOfShape(const Shape& shape) {
   return ByteSizeOfShapeWithSharding(shape, /*sharding=*/std::nullopt);
 }
 
-int64_t GetShardedInstructionSize(
+// Compute the byte size of a shape recursively if it is sharded across a given
+// number of devices per an optionally provided sharding. If the sharding is
+// provided, this function behaves the same as ByteSizeOfShapeWithSharding
+// above. If not, it will give a lower bound on the bytes size of the shape if
+// sharded across `num_devices` devices.
+int64_t ByteSizeOfShapeIfShardedAcrossDevices(
     const Shape& shape, int64_t num_devices,
     std::optional<HloSharding> sharding = std::nullopt);
 

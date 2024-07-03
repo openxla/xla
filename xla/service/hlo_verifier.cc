@@ -114,9 +114,10 @@ absl::Status CheckNestedComputationThreadNameEqual(
     for (const HloComputation* called_cmp : instr->called_computations()) {
       if (called_cmp->execution_thread() != comp->execution_thread()) {
         return Internal(
-            "Nested computations expects same computation's thread name (%s vs "
-            "%s).",
-            called_cmp->execution_thread(), comp->execution_thread());
+            "Nested computations expects same computation's thread name: %s vs "
+            "%s, in called computation `%s` vs caller computation `%s`",
+            called_cmp->execution_thread(), comp->execution_thread(),
+            called_cmp->name(), comp->name());
       }
       TF_RETURN_IF_ERROR(CheckNestedComputationThreadNameEqual(
           called_cmp, skip_nested_async_op_check));
@@ -1573,12 +1574,6 @@ absl::Status ShapeVerifier::CheckAsyncOpComputationShapes(
         "The %s expects the async shape to be a tuple of at least two "
         "elements, found %s.",
         HloOpcodeString(async_op->opcode()), async_shape.ToString());
-  }
-
-  // The semantics of an async custom call are defined by the custom call
-  // implementation, so we stop checking here.
-  if (async_op->async_wrapped_opcode() == HloOpcode::kCustomCall) {
-    return absl::OkStatus();
   }
 
   ProgramShape computation_shape =

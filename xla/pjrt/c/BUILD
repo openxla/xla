@@ -259,7 +259,8 @@ cc_library(
         ":pjrt_c_api_profiler_extension_hdrs",
         ":pjrt_c_api_stream_extension_hdrs",
         ":pjrt_c_api_wrapper_impl",
-        "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin".
+        "//xla/backends/profiler:profiler_backends",  # To register the Host Tracers for GPU Plugin.
+        "//xla/backends/profiler/gpu:device_tracer",  # To register the GPU Tracers with the GPU Plugin.
         "//xla/backends/profiler/plugin:plugin_tracer_impl",
         "//xla/backends/profiler/plugin:profiler_c_api_hdrs",
         "//xla/backends/profiler/plugin:profiler_error",
@@ -361,6 +362,7 @@ xla_test(
         ":pjrt_c_api_ffi_extension_hdrs",
         ":pjrt_c_api_gpu",
         ":pjrt_c_api_gpu_extension_hdrs",
+        ":pjrt_c_api_gpu_internal",
         ":pjrt_c_api_hdrs",
         ":pjrt_c_api_helpers",
         ":pjrt_c_api_test_base",

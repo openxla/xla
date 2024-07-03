@@ -136,22 +136,22 @@ CHECK:  ],
 CHECK:  "tensors": {
 CHECK:   "d": {
 CHECK:    "data_type": "FLOAT",
-CHECK:    "dim": [1,64,64],
-CHECK:    "stride": [1,64,1],
+CHECK:    "dim": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*64[[:space:]]*}}],
+CHECK:    "stride": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*1[[:space:]]*}}],
 CHECK:    "uid": 3,
 CHECK:    "uid_assigned": true
 CHECK:   },
 CHECK:   "p0": {
 CHECK:    "data_type": "FLOAT",
-CHECK:    "dim": [1,64,64],
-CHECK:    "stride": [1,64,1],
+CHECK:    "dim": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*64[[:space:]]*}}],
+CHECK:    "stride": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*1[[:space:]]*}}],
 CHECK:    "uid": 1,
 CHECK:    "uid_assigned": true
 CHECK:   },
 CHECK:   "p1": {
 CHECK:    "data_type": "FLOAT",
-CHECK:    "dim": [1,64,64],
-CHECK:    "stride": [1,64,1],
+CHECK:    "dim": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*64[[:space:]]*}}],
+CHECK:    "stride": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*1[[:space:]]*}}],
 CHECK:    "uid": 2,
 CHECK:    "uid_assigned": true
 CHECK:   }

@@ -224,6 +224,7 @@ NB_MODULE(xla_extension, m_nb) {
            [](const PjRtLayout& layout) { return absl::HashOf(layout); });
 
   nb::class_<PjRtXlaLayout, PjRtLayout>(m_nb, "PjRtXlaLayout")
+      .def("_xla_layout", &PjRtXlaLayout::xla_layout)
       .def("__getstate__",
            [](const PjRtXlaLayout& layout) -> nb::tuple {
              absl::StatusOr<std::string> serialized = layout.Serialize();
@@ -839,10 +840,10 @@ NB_MODULE(xla_extension, m_nb) {
            })
       .def("__getattr__",
            [](ifrt::Topology& topology, std::string_view name) -> nb::object {
-             const auto& attrs = topology.Attributes();
+             const auto& attrs = topology.Attributes().map();
              auto it = attrs.find(name);
              if (it != attrs.end()) {
-               return std::visit([](auto&& v) { return nb::cast(v); },
+               return std::visit([](auto&& v) { return nb::cast(v.value); },
                                  it->second);
              }
              throw nb::attribute_error(

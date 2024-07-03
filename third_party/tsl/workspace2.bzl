@@ -297,10 +297,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "nsync",
         patch_file = ["//third_party:nsync.patch"],
-        sha256 = "e8e552a358f4a28e844207a7c5cb51767e4aeb0b29e22d23ac2a09924130f761",
-        strip_prefix = "nsync-1.27.0",
+        sha256 = "1d63e967973733d2c97e841e3c05fac4d3fa299f01d14c86f2695594c7a4a2ec",
+        strip_prefix = "nsync-1.29.2",
         system_build_file = "//third_party/systemlibs:nsync.BUILD",
-        urls = tf_mirror_urls("https://github.com/google/nsync/archive/1.27.0.tar.gz"),
+        urls = tf_mirror_urls("https://github.com/google/nsync/archive/1.29.2.tar.gz"),
     )
 
     tf_http_archive(
@@ -312,9 +312,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "com_google_fuzztest",
-        sha256 = "c75f224b34c3c62ee901381fb743f6326f7b91caae0ceb8fe62f3fd36f187627",
-        strip_prefix = "fuzztest-58b4e7065924f1a284952b84ea827ce35a87e4dc",
-        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/58b4e7065924f1a284952b84ea827ce35a87e4dc.zip"),
+        sha256 = "d922940bde8904937b9e13298f06b1d59388ab4a965122860358b00535438f63",
+        strip_prefix = "fuzztest-e576caaece16bd1f8dcd196736743c36474f3c16",
+        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/e576caaece16bd1f8dcd196736743c36474f3c16.zip"),
     )
 
     tf_http_archive(
@@ -378,10 +378,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "zlib",
         build_file = "//third_party:zlib.BUILD",
-        sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
-        strip_prefix = "zlib-1.3.1",
+        sha256 = "b3a24de97a8fdbc835b9833169501030b8977031bcb54b3b3ac13740f846ab30",
+        strip_prefix = "zlib-1.2.13",
         system_build_file = "//third_party/systemlibs:zlib.BUILD",
-        urls = tf_mirror_urls("https://zlib.net/zlib-1.3.1.tar.gz"),
+        urls = tf_mirror_urls("https://zlib.net/fossils/zlib-1.2.13.tar.gz"),
     )
 
     tf_http_archive(

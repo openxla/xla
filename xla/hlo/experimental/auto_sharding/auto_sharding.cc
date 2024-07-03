@@ -125,11 +125,9 @@ double ComputeMemoryReshardingCost(const Shape& shape,
   int64_t src_n_dim = NumTileDimensions(src_sharding);
   int64_t dst_n_dim = NumTileDimensions(dst_sharding);
 
-  int64_t src_sharded_bytes = GetShardedInstructionSize(
-      shape, device_mesh.num_elements(), src_sharding);
-  double result = std::max(
-      src_sharded_bytes, GetShardedInstructionSize(
-                             shape, device_mesh.num_elements(), dst_sharding));
+  int64_t src_sharded_bytes = ByteSizeOfShapeWithSharding(shape, src_sharding);
+  double result = std::max(src_sharded_bytes,
+                           ByteSizeOfShapeWithSharding(shape, dst_sharding));
 
   if (src_n_dim != dst_n_dim && src_n_dim != -1 && dst_n_dim != -1) {
     absl::StatusOr<Shape> inter_shape = ComputeIntermediateShape(
@@ -147,11 +145,8 @@ double ComputeMemoryReshardingCost(const Shape& shape,
       result = std::max(
           result,
           static_cast<double>(std::max(
-              GetShardedInstructionSize(
-                  *inter_shape, device_mesh.num_elements(), src_inter_sharding),
-              GetShardedInstructionSize(*inter_shape,
-                                        device_mesh.num_elements(),
-                                        dst_inter_sharding))));
+              ByteSizeOfShapeWithSharding(*inter_shape, src_inter_sharding),
+              ByteSizeOfShapeWithSharding(*inter_shape, dst_inter_sharding))));
     }
   }
   return result - src_sharded_bytes;
@@ -345,7 +340,7 @@ void FollowArrayOrTokenStrategyGroup(
     const std::string name = ToStringSimple(*output_spec);
     double compute_cost = 0, communication_cost = 0;
     double memory_cost =
-        have_memory_cost ? GetBytes(shape) / output_spec->NumTiles() : 0;
+        have_memory_cost ? ByteSizeOfShapeWithSharding(shape, *output_spec) : 0;
     size_t num_in_nodes = strategy_group.in_nodes.size();
     std::vector<std::optional<HloSharding>> input_shardings(num_in_nodes,
                                                             *output_spec);
@@ -412,8 +407,8 @@ std::unique_ptr<StrategyGroup> HandlePartialReduce(
 
       std::string name = ToStringSimple(output_spec);
       double compute_cost = 0, communication_cost = 0;
-      double memory_cost =
-          GetBytes(ins->shape().tuple_shapes(i)) / output_spec.NumTiles();
+      double memory_cost = ByteSizeOfShapeWithSharding(
+          ins->shape().tuple_shapes(i), output_spec);
       std::pair<ReshardingCosts, ReshardingCosts> resharding_costs =
           GenerateReshardingCostsAndMissingShardingsForAllOperands(
               ins, output_spec, strategy_map, cluster_env, call_graph,
@@ -547,7 +542,8 @@ absl::StatusOr<std::unique_ptr<StrategyGroup>> FollowReduceStrategy(
       const std::string name = ToStringSimple(output_spec);
 
       double compute_cost = 0, communication_cost = 0;
-      double memory_cost = GetBytes(output_shape) / output_spec.NumTiles();
+      double memory_cost =
+          ByteSizeOfShapeWithSharding(output_shape, output_spec);
       for (int64_t mesh_dim : all_reduce_dims) {
         communication_cost += cluster_env.AllReduceCost(memory_cost, mesh_dim);
       }
@@ -723,7 +719,7 @@ void GenerateOutfeedStrategy(const HloInstruction* ins, const Shape& shape,
   }
   communication_resharding_costs.push_back({});
   memory_resharding_costs.push_back({});
-  double memory_cost = GetBytes(shape) / output_spec.NumTiles();
+  double memory_cost = ByteSizeOfShapeWithSharding(shape, output_spec);
   strategy_group->strategies.push_back(
       ShardingStrategy({"R", HloSharding::Replicate(), replicated_penalty, 0,
                         memory_cost, std::move(communication_resharding_costs),
@@ -750,7 +746,8 @@ double ComputeCommunicationCost(
         // here.
         // TODO(pratikf) Model gather communication costs in a more principled
         // and exhaustive manner.
-        return cluster_env.AllReduceCost(GetBytes(ins->shape()), mesh_dim);
+        return cluster_env.AllReduceCost(ByteSizeOfShape(ins->shape()),
+                                         mesh_dim);
       }
       return 0;
     }
@@ -776,7 +773,7 @@ void AddReplicatedStrategy(
     absl::flat_hash_set<int64_t> operands_to_consider_all_strategies_for) {
   HloSharding replicated_strategy = HloSharding::Replicate();
   HloSharding output_spec = replicated_strategy;
-  double memory_cost = GetBytes(shape) / output_spec.NumTiles();
+  double memory_cost = ByteSizeOfShapeWithSharding(shape, output_spec);
 
   CHECK_LE(operands_to_consider_all_strategies_for.size(), 1);
   if (!operands_to_consider_all_strategies_for.empty()) {
@@ -887,7 +884,7 @@ double ComputeSortCommunicationCost(const int64_t sort_dim,
                                     const Shape& shape,
                                     const ClusterEnvironment& cluster_env) {
   if (sort_dim == operand_sharded_dim) {
-    return cluster_env.AllToAllCost(GetBytes(shape), mesh_sharding_dim);
+    return cluster_env.AllToAllCost(ByteSizeOfShape(shape), mesh_sharding_dim);
   }
   return 0;
 }
@@ -912,7 +909,7 @@ void EnumerateAll1DPartition(const HloInstruction* ins, const Shape& shape,
       const std::string name = absl::StrFormat("S%d @ %d", i, j) + suffix;
       HloSharding output_spec = Tile(shape, {i}, {j}, device_mesh);
       double compute_cost = 0, communication_cost = 0;
-      double memory_cost = GetBytes(shape) / output_spec.NumTiles();
+      double memory_cost = ByteSizeOfShapeWithSharding(shape, output_spec);
 
       ReshardingCosts communication_resharding_costs;
       ReshardingCosts memory_resharding_costs;
@@ -1030,7 +1027,7 @@ void BuildStrategyAndCostForOp(const HloInstruction* ins, const Shape& shape,
                       absl::StrJoin(mesh_dims, ","));
   HloSharding output_spec = Tile(shape, tensor_dims, mesh_dims, device_mesh);
   double compute_cost = 0, communication_cost = 0;
-  double memory_cost = GetBytes(shape) / output_spec.NumTiles();
+  double memory_cost = ByteSizeOfShapeWithSharding(shape, output_spec);
   std::vector<std::optional<HloSharding>> input_shardings;
   ReshardingCosts communication_resharding_costs;
   ReshardingCosts memory_resharding_costs;
@@ -1110,7 +1107,8 @@ void EnumerateAll1DPartitionReshape(
 
       const std::string name = absl::StrFormat("S%d @ %d", i, j) + suffix;
       double compute_cost = 0, communication_cost = 0;
-      double memory_cost = GetBytes(ins->shape()) / output_spec.NumTiles();
+      double memory_cost =
+          ByteSizeOfShapeWithSharding(ins->shape(), output_spec);
 
       ReshardingCosts communication_resharding_costs{
           CommunicationReshardingCostVector(strategy_map.at(operand).get(),
@@ -1203,7 +1201,8 @@ void BuildStrategyAndCostForReshape(
       absl::StrFormat("S%s @ {%s}", absl::StrJoin(tensor_dims, ""),
                       absl::StrJoin(mesh_dims, ","));
   double compute_cost = 0, communication_cost = 0;
-  double memory_cost = GetBytes(ins->shape()) / output_spec.NumTiles();
+  double memory_cost = ByteSizeOfShapeWithSharding(ins->shape(), output_spec);
+  ;
 
   ReshardingCosts communication_resharding_costs{
       CommunicationReshardingCostVector(strategy_map.at(operand).get(),
@@ -1563,7 +1562,7 @@ void TrimOrGenerateStrategiesBasedOnExistingSharding(
           }
         }
         double memory_cost =
-            GetBytes(output_shape) / existing_sharding.NumTiles();
+            ByteSizeOfShapeWithSharding(output_shape, existing_sharding);
         if (!strategy_group->strategies.empty()) {
           pretrimmed_strategy_map[strategy_group->node_idx] =
               strategy_group->strategies;
@@ -1636,7 +1635,7 @@ void CheckMemoryCosts(StrategyGroup* strategy_group, const Shape& shape) {
     }
     for (const auto& strategy : strategy_group->strategies) {
       if (!strategy.output_sharding.IsReplicated() && full_mem > 0.0) {
-        CHECK_EQ(strategy.memory_cost * strategy.output_sharding.NumTiles(),
+        CHECK_GE(strategy.memory_cost * strategy.output_sharding.NumTiles(),
                  full_mem);
       }
     }
@@ -1914,7 +1913,8 @@ std::unique_ptr<StrategyGroup> CreateReshapeStrategies(
       }
       const std::string name = ToStringSimple(*output_spec);
       double compute_cost = 0, communication_cost = 0;
-      double memory_cost = GetBytes(ins->shape()) / output_spec->NumTiles();
+      double memory_cost =
+          ByteSizeOfShapeWithSharding(ins->shape(), output_spec);
       std::vector<double> communication_resharding_costs =
           CommunicationReshardingCostVector(
               src_strategy_group, operand->shape(),
@@ -2911,8 +2911,8 @@ int64_t MemoryBudgetLowerBound(
 
       const Shape& shape =
           ShapeUtil::GetSubshape(value->instruction()->shape(), value->index());
-      int64_t value_memory_usage =
-          GetShardedInstructionSize(shape, num_devices, optional_sharding);
+      int64_t value_memory_usage = ByteSizeOfShapeIfShardedAcrossDevices(
+          shape, num_devices, optional_sharding);
       value_to_memory_size_mapping[value] = value_memory_usage;
       memory_usage += value_memory_usage;
     }
@@ -3903,7 +3903,7 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
 
   // ----- Get a sequential schedule and do liveness analysis -----
   auto size_fn = [](const BufferValue& buffer) {
-    return spmd::GetBytes(buffer.shape());
+    return spmd::ByteSizeOfShape(buffer.shape());
   };
   TF_ASSIGN_OR_RETURN(
       HloSchedule schedule,
@@ -3981,7 +3981,9 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
 
   HloCostAnalysis::Options hlo_cost_analysis_options{
-      .shape_size = [](const Shape& shape) { return spmd::GetBytes(shape); }};
+      .shape_size = [](const Shape& shape) {
+        return spmd::ByteSizeOfShape(shape);
+      }};
   HloCostAnalysis hlo_cost_analysis(hlo_cost_analysis_options);
   CHECK_OK(module->entry_computation()->Accept(&hlo_cost_analysis));
   for (size_t mesh_idx = 0; mesh_idx < partial_mesh_shapes.size(); ++mesh_idx) {

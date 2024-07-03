@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <random>
@@ -26,12 +27,17 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/types/span.h"
+#include "xla/client/lib/constants.h"
 #include "xla/client/lib/math.h"
 #include "xla/client/xla_builder.h"
-#include "xla/tests/client_library_test_base.h"
+#include "xla/literal.h"
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
+#include "xla/tests/test_macros.h"
 #include "xla/types.h"
-#include "xla/util.h"
+#include "tsl/platform/test.h"
 
 #ifdef __FAST_MATH__
 #error "Can't be compiled with fast math on"
@@ -403,7 +409,7 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Logistic, {
   Run(Logistic, fn, error_spec_gen, range_checker);
 })
 
-// It feels a litt<le overkill to exhaustively test sqrt and pow(x, 0.5), but
+// It feels a little overkill to exhaustively test sqrt and pow(x, 0.5), but
 // this *did* find a bug, namely that some backends were assuming sqrt(x) ==
 // pow(x, 0.5), but this is not true for x == -inf.
 UNARY_TEST_FLOAT_32_BITS_OR_LESS(PowOneHalf, {
@@ -526,9 +532,6 @@ UNARY_TEST_FLOAT_32_BITS_OR_LESS(Cosh, {
     };
   }
   auto range_checker = +[](NativeT actual) { return !(actual < 1); };
-  if (IsPreV6Tpu(platform_)) {
-    range_checker = +[](NativeT actual) { return !(actual < 0.9999); };
-  }
   Run(Cosh, std::cosh, error_spec_gen, range_checker);
 })
 

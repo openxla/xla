@@ -13,8 +13,8 @@
 # limitations under the License.
 
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 
+# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla/python/ifrt_proxy/common:ifrt_proxy.bzl", "default_ifrt_proxy_visibility", "ifrt_proxy_cc_test")
 load("//xla/tsl:tsl.bzl", "if_google")
 
@@ -70,6 +70,7 @@ tf_proto_library(
         # copybara:uncomment "@com_google_protobuf//:any",
         "//xla:xla_data_proto",
         "//xla/pjrt:execute_options_proto",
+        "//xla/python/ifrt:attribute_map_proto",
         "//xla/python/ifrt:dtype_proto",
         "//xla/python/ifrt:remap_plan_proto",
         "//xla/python/ifrt:serdes_proto",

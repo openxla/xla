@@ -17,7 +17,8 @@ limitations under the License.
 #define XLA_FFI_API_FFI_H_
 
 #ifdef XLA_FFI_FFI_H_
-#error Two different XLA FFI implementations cannot be included together
+#error Two different XLA FFI implementations cannot be included together. \
+       See README.md for more details.
 #endif  // XLA_FFI_FFI_H_
 
 #include <algorithm>
@@ -286,14 +287,15 @@ using Token = BufferR0<DataType::TOKEN>;
 
 namespace internal {
 
-inline AnyBuffer DecodeBuffer(XLA_FFI_Buffer* buf) {
+inline XLA_FFI_ATTRIBUTE_ALWAYS_INLINE AnyBuffer
+DecodeBuffer(XLA_FFI_Buffer* buf) {
   return AnyBuffer{static_cast<DataType>(buf->dtype), buf->data,
                    Span<const int64_t>(buf->dims, buf->rank)};
 }
 
 template <DataType dtype, size_t rank>
-std::optional<Buffer<dtype, rank>> DecodeBuffer(XLA_FFI_Buffer* buf,
-                                                DiagnosticEngine& diagnostic) {
+XLA_FFI_ATTRIBUTE_ALWAYS_INLINE std::optional<Buffer<dtype, rank>> DecodeBuffer(
+    XLA_FFI_Buffer* buf, DiagnosticEngine& diagnostic) {
   if (auto buf_dtype = static_cast<DataType>(buf->dtype);
       XLA_FFI_PREDICT_FALSE(buf_dtype != dtype)) {
     return diagnostic.Emit("Wrong buffer dtype: expected ")

@@ -16,13 +16,17 @@ limitations under the License.
 #include "xla/ffi/ffi.h"
 
 #include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/types/span.h"
@@ -35,7 +39,9 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status_matchers.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
+#include "tsl/platform/test_benchmark.h"
 
 namespace xla::ffi {
 
@@ -98,6 +104,29 @@ TEST(FfiTest, ForwardError) {
   auto handler = Ffi::Bind().To([] { return absl::AbortedError("Ooops!"); });
   auto status = Call(*handler, call_frame);
   ASSERT_EQ(status.message(), "Ooops!");
+}
+
+TEST(FfiTest, CatchException) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  XLA_FFI_DEFINE_HANDLER(
+      handler,
+      []() {
+        throw std::runtime_error("Ooops!");
+        return absl::OkStatus();
+      },
+      Ffi::Bind());
+  auto status = Call(*handler, call_frame);
+  ASSERT_EQ(status.message(), "XLA FFI call failed: Ooops!");
+}
+
+TEST(FfiTest, CatchExceptionExplicit) {
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  auto handler = Ffi::Bind().To([]() {
+    throw std::runtime_error("Ooops!");
+    return absl::OkStatus();
+  });
+  auto status = Call(*handler, call_frame);
+  ASSERT_EQ(status.message(), "XLA FFI call failed: Ooops!");
 }
 
 TEST(FfiTest, WrongNumArgs) {
@@ -465,9 +494,12 @@ TEST(FfiTest, AnyBufferArgument) {
   auto call_frame = builder.Build();
 
   auto fn = [&](AnyBuffer buffer) {
-    EXPECT_EQ(buffer.dtype, PrimitiveType::F32);
-    EXPECT_EQ(buffer.data.opaque(), storage.data());
-    EXPECT_EQ(buffer.dimensions.size(), 2);
+    EXPECT_EQ(buffer.element_type(), PrimitiveType::F32);
+    EXPECT_EQ(buffer.untyped_data(), storage.data());
+    AnyBuffer::Dimensions dimensions = buffer.dimensions();
+    EXPECT_EQ(dimensions.size(), 2);
+    EXPECT_EQ(dimensions[0], 2);
+    EXPECT_EQ(dimensions[1], 2);
     return absl::OkStatus();
   };
 
@@ -670,5 +702,325 @@ TEST(FfiTest, UserData) {
 
   TF_ASSERT_OK(status);
 }
+
+TEST(FfiTest, UpdateBufferArgumentsAndResults) {
+  std::vector<float> storage0(4, 0.0f);
+  std::vector<float> storage1(4, 0.0f);
+
+  se::DeviceMemoryBase memory0(storage0.data(), 4 * sizeof(float));
+  se::DeviceMemoryBase memory1(storage1.data(), 4 * sizeof(float));
+
+  std::vector<int64_t> dims = {2, 2};
+
+  auto bind = Ffi::Bind()
+                  .Arg<BufferR2<PrimitiveType::F32>>()
+                  .Ret<BufferR2<PrimitiveType::F32>>()
+                  .Attr<int32_t>("n");
+
+  // `fn0` expects argument to be `memory0` and result to be `memory1`.
+  auto fn0 = [&](BufferR2<PrimitiveType::F32> arg,
+                 Result<BufferR2<PrimitiveType::F32>> ret, int32_t n) {
+    EXPECT_EQ(arg.data.opaque(), storage0.data());
+    EXPECT_EQ(ret->data.opaque(), storage1.data());
+    EXPECT_EQ(arg.dimensions, dims);
+    EXPECT_EQ(ret->dimensions, dims);
+    EXPECT_EQ(n, 42);
+    return absl::OkStatus();
+  };
+
+  // `fn1` expects argument to be `memory1` and result to be `memory0`.
+  auto fn1 = [&](BufferR2<PrimitiveType::F32> arg,
+                 Result<BufferR2<PrimitiveType::F32>> ret, int32_t n) {
+    EXPECT_EQ(arg.data.opaque(), storage1.data());
+    EXPECT_EQ(ret->data.opaque(), storage0.data());
+    EXPECT_EQ(arg.dimensions, dims);
+    EXPECT_EQ(ret->dimensions, dims);
+    EXPECT_EQ(n, 42);
+    return absl::OkStatus();
+  };
+
+  CallFrameBuilder::AttributesBuilder attrs;
+  attrs.Insert("n", 42);
+
+  CallFrameBuilder builder(/*num_args=*/1, /*num_rets=*/1);
+  builder.AddBufferArg(memory0, PrimitiveType::F32, dims);
+  builder.AddBufferRet(memory1, PrimitiveType::F32, dims);
+  builder.AddAttributes(attrs.Build());
+
+  // Keep call frame wrapped in optional to be able to destroy it and test that
+  // updated call frame does not reference any destroyed memory.
+  std::optional<CallFrame> call_frame(builder.Build());
+
+  {  // Call `fn0` with an original call frame.
+    auto handler = bind.To(fn0);
+    auto status = Call(*handler, *call_frame);
+    TF_ASSERT_OK(status);
+  }
+
+  {  // Call `fn1` with swapped buffers for argument and result.
+    auto handler = bind.To(fn1);
+    TF_ASSERT_OK_AND_ASSIGN(
+        CallFrame updated_call_frame,
+        std::move(call_frame)->CopyWithBuffers({memory1}, {memory0}));
+    auto status = Call(*handler, updated_call_frame);
+    TF_ASSERT_OK(status);
+  }
+}
+
+TEST(FfiTest, DuplicateHandlerTraits) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind());
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "duplicate-traits", "Host", NoOp,
+                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  auto status = TakeStatus(Ffi::RegisterStaticHandler(
+      GetXlaFfiApi(), "duplicate-traits", "Host", NoOp));
+  EXPECT_TRUE(
+      absl::StrContains(status.message(), "Duplicate FFI handler registration"))
+      << "status.message():\n"
+      << status.message() << "\n";
+}
+
+TEST(FfiTest, DuplicateHandlerAddress) {
+  static constexpr auto* noop1 = +[] { return absl::OkStatus(); };
+  static constexpr auto* noop2 = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(NoOp1, noop1, Ffi::Bind());
+  XLA_FFI_DEFINE_HANDLER(NoOp2, noop2, Ffi::Bind());
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "duplicate-address", "Host", NoOp1);
+  auto status = TakeStatus(Ffi::RegisterStaticHandler(
+      GetXlaFfiApi(), "duplicate-address", "Host", NoOp2));
+  EXPECT_TRUE(
+      absl::StrContains(status.message(), "Duplicate FFI handler registration"))
+      << "status.message():\n"
+      << status.message() << "\n";
+}
+
+TEST(FfiTest, AllowRegisterDuplicateWhenEqual) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind());
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "duplicate-when-equal", "Host",
+                           NoOp);
+  auto status = TakeStatus(Ffi::RegisterStaticHandler(
+      GetXlaFfiApi(), "duplicate-when-equal", "Host", NoOp));
+  TF_ASSERT_OK(status);
+}
+
+//===----------------------------------------------------------------------===//
+// Performance benchmarks are below.
+//===----------------------------------------------------------------------===//
+
+static CallFrameBuilder WithBufferArgs(size_t num_args, size_t rank = 4) {
+  se::DeviceMemoryBase memory;
+  std::vector<int64_t> dims(4, 1);
+
+  CallFrameBuilder builder(/*num_args=*/num_args, /*num_rets=*/0);
+  for (size_t i = 0; i < num_args; ++i) {
+    builder.AddBufferArg(memory, PrimitiveType::F32, dims);
+  }
+  return builder;
+}
+
+//===----------------------------------------------------------------------===//
+// BM_AnyBufferArgX1
+//===----------------------------------------------------------------------===//
+
+void BM_AnyBufferArgX1(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(1).Build();
+
+  auto handler = Ffi::Bind().Arg<AnyBuffer>().To([](auto buffer) {
+    benchmark::DoNotOptimize(buffer);
+    return absl::OkStatus();
+  });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_AnyBufferArgX1);
+
+//===----------------------------------------------------------------------===//
+// BM_AnyBufferArgX4
+//===----------------------------------------------------------------------===//
+
+void BM_AnyBufferArgX4(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(4).Build();
+
+  auto handler = Ffi::Bind()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .To([](auto b0, auto b1, auto b2, auto b3) {
+                       benchmark::DoNotOptimize(b0);
+                       benchmark::DoNotOptimize(b1);
+                       benchmark::DoNotOptimize(b2);
+                       benchmark::DoNotOptimize(b3);
+                       return absl::OkStatus();
+                     });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_AnyBufferArgX4);
+
+//===----------------------------------------------------------------------===//
+// BM_AnyBufferArgX8
+//===----------------------------------------------------------------------===//
+
+void BM_AnyBufferArgX8(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(8).Build();
+
+  auto handler = Ffi::Bind()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .Arg<AnyBuffer>()
+                     .To([](auto b0, auto b1, auto b2, auto b3, auto b4,
+                            auto b5, auto b6, auto b7) {
+                       benchmark::DoNotOptimize(b0);
+                       benchmark::DoNotOptimize(b1);
+                       benchmark::DoNotOptimize(b2);
+                       benchmark::DoNotOptimize(b3);
+                       benchmark::DoNotOptimize(b4);
+                       benchmark::DoNotOptimize(b5);
+                       benchmark::DoNotOptimize(b6);
+                       benchmark::DoNotOptimize(b7);
+                       return absl::OkStatus();
+                     });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_AnyBufferArgX8);
+
+//===----------------------------------------------------------------------===//
+// BM_BufferArgX1
+//===----------------------------------------------------------------------===//
+
+void BM_BufferArgX1(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(1).Build();
+
+  auto handler = Ffi::Bind().Arg<BufferR4<F32>>().To([](auto buffer) {
+    benchmark::DoNotOptimize(buffer);
+    return absl::OkStatus();
+  });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_BufferArgX1);
+
+//===----------------------------------------------------------------------===//
+// BM_BufferArgX4
+//===----------------------------------------------------------------------===//
+
+void BM_BufferArgX4(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(4).Build();
+
+  auto handler = Ffi::Bind()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .To([](auto b0, auto b1, auto b2, auto b3) {
+                       benchmark::DoNotOptimize(b0);
+                       benchmark::DoNotOptimize(b1);
+                       benchmark::DoNotOptimize(b2);
+                       benchmark::DoNotOptimize(b3);
+                       return absl::OkStatus();
+                     });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_BufferArgX4);
+
+//===----------------------------------------------------------------------===//
+// BM_BufferArgX8
+//===----------------------------------------------------------------------===//
+
+void BM_BufferArgX8(benchmark::State& state) {
+  auto call_frame = WithBufferArgs(8).Build();
+
+  auto handler = Ffi::Bind()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .Arg<BufferR4<F32>>()
+                     .To([](auto b0, auto b1, auto b2, auto b3, auto b4,
+                            auto b5, auto b6, auto b7) {
+                       benchmark::DoNotOptimize(b0);
+                       benchmark::DoNotOptimize(b1);
+                       benchmark::DoNotOptimize(b2);
+                       benchmark::DoNotOptimize(b3);
+                       benchmark::DoNotOptimize(b4);
+                       benchmark::DoNotOptimize(b5);
+                       benchmark::DoNotOptimize(b6);
+                       benchmark::DoNotOptimize(b7);
+                       return absl::OkStatus();
+                     });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_BufferArgX8);
+
+//===----------------------------------------------------------------------===//
+// BM_TupleOfI32Attrs
+//===----------------------------------------------------------------------===//
+
+struct TupleOfI32 {
+  int64_t i32_0;
+  int64_t i32_1;
+  int64_t i32_2;
+  int64_t i32_3;
+};
+
+XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(TupleOfI32,
+                                      StructMember<int32_t>("i32_0"),
+                                      StructMember<int32_t>("i32_1"),
+                                      StructMember<int32_t>("i32_2"),
+                                      StructMember<int32_t>("i32_3"));
+
+void BM_TupleOfI32Attrs(benchmark::State& state) {
+  CallFrameBuilder::AttributesBuilder attrs;
+  attrs.Insert("i32_0", 1);
+  attrs.Insert("i32_1", 2);
+  attrs.Insert("i32_2", 3);
+  attrs.Insert("i32_3", 4);
+
+  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
+  builder.AddAttributes(attrs.Build());
+  auto call_frame = builder.Build();
+
+  auto handler = Ffi::Bind().Attrs<TupleOfI32>().To([](auto tuple) {
+    benchmark::DoNotOptimize(tuple);
+    return absl::OkStatus();
+  });
+
+  for (auto _ : state) {
+    CHECK_OK(Call(*handler, call_frame));
+  }
+}
+
+BENCHMARK(BM_TupleOfI32Attrs);
 
 }  // namespace xla::ffi

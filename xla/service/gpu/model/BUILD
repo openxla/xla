@@ -1,7 +1,7 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
-load("//xla:xla.bzl", "xla_cc_test", "xla_nvml_deps")
+load("//xla:xla.bzl", "xla_cc_test")
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -322,7 +322,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status",
-    ] + if_cuda_is_configured(xla_nvml_deps()),
+    ] + if_cuda_is_configured(["@local_config_cuda//cuda:nvml_headers"]),
 )
 
 xla_cc_test(
@@ -490,18 +490,25 @@ cc_library(
     hdrs = ["indexing_test_utils.h"],
     deps = [
         ":indexing_analysis",
+        "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:errors",
     ],
 )
 
