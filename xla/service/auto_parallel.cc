@@ -19,68 +19,6 @@ namespace {
   }
 
   /*********************************************************/
-  /* Helper classes                                        */
-  /*********************************************************/
-
-  class InstructionSharding {
-  public:
-    InstructionSharding() = default;
-    ~InstructionSharding() = default;
-
-
-  private:
-    // The sharding of each operand of an instruction. Using shared_ptr
-    // as noted by HloInstruction due to large size for many element tuples
-    // This vector will be filled by enumerating incomplete sharding strategies
-    std::vector<std::shared_ptr<const HloSharding>> operand_shardings_;
-
-    // Sharding of result of computing instruction. This will be completed
-    // by GSPMD when given the input shardings and determining the output
-    // shardings.
-    std::shared_ptr<const HloSharding> result_sharding_;
-
-    // Cost of this specific instruction sharding. This will be assigned
-    // after evaluating the cost of the complete HloModule after performing
-    // sharding propagation through SPMD.
-    uint64_t cost_;
-
-  };
-
-  class InstructionShardingInfo {
-  public:
-    InstructionShardingInfo(HloInstruction* orig_instr);
-    ~InstructionShardingInfo() = default;
-
-  private:
-
-    // Points to the original instruction that will have its
-    // sharding strategies enumerated. Eventually, this instruction
-    // will be modified with a sharding strategy provided by the solvers
-    HloInstruction* orig_instr_;
-
-    // Module containing a single computation of a single instruction that
-    // is a clone of the orig_instr. Created on construction of class.
-    // After enumerating various incomplete sharding strategies,
-    // each incomplete strategy will be applied to this module, be completed
-    // by GSPMD, and evaluated for it's computational and communication cost
-    // by inspecting the completed module's resulting operations
-    std::unique_ptr<HloModule> single_instr_module_;    
-
-    // vector of sharding strategies for the given instruction
-    std::vector<InstructionSharding> sharding_strats_;
-
-  };
-
-  InstructionShardingInfo::InstructionShardingInfo(HloInstruction* orig_instr) 
-      : orig_instr_(orig_instr),
-        single_instr_module_(CreateModuleFromInstruction(orig_instr)),
-        sharding_strats_() {
-    return;
-  }
-
-
-
-  /*********************************************************/
   /* Convert instructions to modules                       */
   /*********************************************************/
 
@@ -148,15 +86,115 @@ namespace {
   /* Sharding enumeration                                  */
   /*********************************************************/
 
-  std::vector<InstructionSharding> CreateShardingStrategies(
+  // need to declare
+  class InstructionSharding;
+
+  std::vector<HloSharding> EnumerateGeneralOpSharding(HloInstruction* operand, 
       HloInstruction* instruction) {
 
-    std::vector<InstructionSharding> strats;
+    // ???
 
-    // get a list of possible sharding strategies for each operand
+    return;
+  }
+
+  // Enumerates the shardings of an operand instruction
+  // depending on what the instruction and whether it is already sharded or not.
+  // This is a general function for iterating through shardings of a single
+  std::vector<HloSharding> EnumerateOpSharding(
+      HloInstruction* operand, HloInstruction* instruction) {
+    
+    // if sharding already exists for the instruction, only have that sharding
+    if (operand->has_sharding()) {
+      return { operand->sharding() };
+    }
+
+    // otherwise, perform sharding based on type of instruction
+    // we are sharding operations for (may want to case on Dot product)
+    switch (instruction->opcode()) {
+    default:
+      return EnumerateGeneralOpSharding(operand, instruction);
+    }
+
+  }
+
+  // Enumerates all possible sharding strategies on the inputs of the current
+  // instruction
+  std::vector<InstructionSharding> EnumerateInstructionShardings(
+      HloInstruction* instruction) {
+
+    // enumerate through the shardings for each operator of the instruction
+    std::vector<std::vector<HloSharding>> all_op_shardings;
+
+    HloInstruction::InstructionVector operands = instruction->operands();
+    for (HloInstruction* op : operands) {
+      all_op_shardings.push_back(EnumerateSingleSharding(op, instruction));
+    }
+
+    // combine them to form strategies
+    std::vector<InstructionSharding> strats;
 
     return strats;
   } 
+
+  /*********************************************************/
+  /* Helper classes                                        */
+  /*********************************************************/
+
+  class InstructionSharding {
+  public:
+    InstructionSharding() = default;
+    ~InstructionSharding() = default;
+
+
+  private:
+    // The sharding of each operand of an instruction. Using shared_ptr
+    // as noted by HloInstruction due to large size for many element tuples
+    // This vector will be filled by enumerating incomplete sharding strategies
+    std::vector<std::shared_ptr<const HloSharding>> operand_shardings_;
+
+    // Sharding of result of computing instruction. This will be completed
+    // by GSPMD when given the input shardings and determining the output
+    // shardings.
+    std::shared_ptr<const HloSharding> result_sharding_;
+
+    // Cost of this specific instruction sharding. This will be assigned
+    // after evaluating the cost of the complete HloModule after performing
+    // sharding propagation through SPMD.
+    uint64_t cost_;
+
+  };
+
+  class InstructionShardingInfo {
+  public:
+    InstructionShardingInfo(HloInstruction* orig_instr);
+    ~InstructionShardingInfo() = default;
+
+  private:
+
+    // Points to the original instruction that will have its
+    // sharding strategies enumerated. Eventually, this instruction
+    // will be modified with a sharding strategy provided by the solvers
+    HloInstruction* orig_instr_;
+
+    // Module containing a single computation of a single instruction that
+    // is a clone of the orig_instr. Created on construction of class.
+    // After enumerating various incomplete sharding strategies,
+    // each incomplete strategy will be applied to this module, be completed
+    // by GSPMD, and evaluated for it's computational and communication cost
+    // by inspecting the completed module's resulting operations
+    std::unique_ptr<HloModule> single_instr_module_;    
+
+    // vector of sharding strategies for the given instruction
+    std::vector<InstructionSharding> sharding_strats_;
+
+  };
+
+  InstructionShardingInfo::InstructionShardingInfo(HloInstruction* orig_instr) 
+      : orig_instr_(orig_instr),
+        single_instr_module_(CreateModuleFromInstruction(orig_instr)),
+        sharding_strats_(EnumerateInstructionShardings(orig_instr)) {
+    return;
+  }
 
   /*********************************************************/
   /* Debugging                                             */
