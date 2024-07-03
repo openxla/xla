@@ -81,22 +81,6 @@ NcclAllToAllStartThunk::NcclAllToAllStartThunk(
   CHECK_EQ(config_.config.operand_count, buffers_.size());
 }
 
-absl::Status NcclAllToAllStartThunk::Initialize(const InitializeParams& params) {
-  if (p2p_memcpy_enabled_) {
-    TF_ASSIGN_OR_RETURN(const int64_t current_id,
-                        GetCurrentId(params.collective_params, config_));
-
-    // TODO any smarter way to do the initialization here?
-    for (int64_t send_id = 0; send_id <= current_id; ++send_id) {
-      for (int64_t recv_id = 0; recv_id <= current_id; ++recv_id) {
-        TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(send_id, recv_id));
-      }
-    }
-  }
-
-  return absl::OkStatus();
-}
-
 /*static*/ absl::Status NcclAllToAllStartThunk::CheckImplementable(
     const HloAllToAllInstruction* instr, int64_t replica_count,
     int64_t partition_count) {
@@ -134,20 +118,13 @@ absl::Status NcclAllToAllStartThunk::RunNcclCollective(
   TF_ASSIGN_OR_RETURN(const int64_t current_id,
                       GetCurrentId(params.collective_params, config_));
 
-  bool recv_prt_initialized = true;
-  // TODO any smarter way to do the verification here?
-  for (int64_t send_id = 0; send_id <= current_id; ++send_id) {
-    for (int64_t recv_id = 0; recv_id <= current_id; ++recv_id) {
-      if (!recv_ptr_map_.IsInitialized(send_id, recv_id)) {
-        recv_prt_initialized = false;
-        break;
-      }
-    }
+  TF_ASSIGN_OR_RETURN(int32_t num_participants, nccl_api()->CommCount(comm_wrapper.comm_handle));
+  for (int64_t id = 0; id < num_participants; ++id) {
+    TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(id, current_id));
+    TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(current_id, id));
   }
 
-  bool use_memcpy = comm_wrapper.is_local &&
-                    recv_prt_initialized &&
-                    p2p_memcpy_enabled_;
+  bool use_memcpy = comm_wrapper.is_local && p2p_memcpy_enabled_;
   
   return xla::gpu::RunAllToAll(nccl_api(), config_.has_split_dimension,
                                device_buffers, stream,
