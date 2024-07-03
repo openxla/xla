@@ -202,7 +202,6 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
           se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptr.get());
           TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, send_slice, send_slice.size()));
         } else {
-          VLOG(ERROR) << "initiating NCCL from " << current_id << " to " << peer;
           TF_RETURN_IF_ERROR(nccl_api->Send(send_slice, buffer.element_type,
                                           chunk_elements, peer, comm, &stream));
 
