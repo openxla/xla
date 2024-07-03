@@ -10,6 +10,9 @@
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/hlo_pass_interface.h"
 
+#define MESH_X_DIM 4 /* number of nodes */
+#define MESH_Y_DIM 8 /* number of gpus per node */
+
 namespace xla {
 
 namespace {
@@ -92,13 +95,13 @@ namespace {
   std::vector<HloSharding> EnumerateGeneralOpSharding(HloInstruction* operand, 
       HloInstruction* instruction) {
 
-    // ???
+    // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
 
     return;
   }
 
-  // Enumerates the shardings of an operand instruction
-  // depending on what the instruction and whether it is already sharded or not.
+  // Enumerates the shardings of a single operand instruction
+  // depending on the user instruction of the operand and whether it is sharded.
   // This is a general function for iterating through shardings of a single
   std::vector<HloSharding> EnumerateOpSharding(
       HloInstruction* operand, HloInstruction* instruction) {
@@ -127,7 +130,7 @@ namespace {
 
     HloInstruction::InstructionVector operands = instruction->operands();
     for (HloInstruction* op : operands) {
-      all_op_shardings.push_back(EnumerateSingleSharding(op, instruction));
+      all_op_shardings.push_back(EnumerateOpSharding(op, instruction));
     }
 
     // combine them to form strategies
