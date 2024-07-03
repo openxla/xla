@@ -202,6 +202,16 @@ struct AutoShardingOption {
   // once it is fully implemented.
   bool generate_windowed_einsum_strategies = false;
 
+  // Whether or not to allow shardings where a tensor dim is shared across a
+  // number of devices larger than the size of the tensor dimension
+  bool allow_shardings_small_dims_across_many_devices = false;
+
+  // Split constant expressions as well when invoking HloConstantSplitter.
+  bool enable_expression_constant_splitter = false;
+
+  // Whether to post-process the solution by reshaping / resharding tensors.
+  bool post_process = true;
+
   // Prints a debug string.
   std::string ToString() const;
 

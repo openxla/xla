@@ -48,6 +48,8 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/dot_as_convolution_util.h"
+#include "xla/service/hlo_cse.h"
+#include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/spmd/shard_barrier_partitioner.h"
 #include "xla/shape.h"
@@ -172,8 +174,7 @@ bool IsConvolutionKernelSmall(const HloInstruction* instruction) {
 }
 
 bool IsPassthroughCustomOps(const HloInstruction* hlo) {
-  if (hlo->IsCustomCall(
-          absl::Span<const absl::string_view>{"Sharding", "X64Combine"})) {
+  if (hlo->IsCustomCall({"Sharding", "X64Combine", "LayoutConstraint"})) {
     return true;
   }
   if (hlo->operand_count() != 1 || !hlo->shape().IsArray() ||
@@ -586,83 +587,6 @@ bool CanPropagateThroughAtAggressiveLevel(const HloInstruction& inst,
     return false;
   }
   return true;
-}
-
-HloSharding InferDotOperandSharding(
-    const HloInstruction* instruction,
-    const dot_as_convolution_util::DotConvolutionDimsInfo& dnums,
-    int64_t operand_index, bool may_combine_partial_sharding) {
-  auto operand = instruction->operand(operand_index);
-  auto other = instruction->operand(1 - operand_index);
-  std::vector<int64_t> output_dims_to_replicate;
-  std::vector<int64_t> other_operand_dims_to_replicate;
-  for (const auto& dim : operand_index == 0 ? dnums.rhs_non_contracting_dims
-                                            : dnums.lhs_non_contracting_dims) {
-    output_dims_to_replicate.push_back(dim.output);
-    other_operand_dims_to_replicate.push_back(operand_index == 0 ? dim.rhs
-                                                                 : dim.lhs);
-  }
-  // If this dot is interpreted from a conv, then contracting dims may have
-  // corresponding spatial dimensions in the output, and this operand's
-  // non-contracting dims may have corresponding spatial dims in the other
-  // operand.
-  for (const auto& dim : dnums.contracting_dims) {
-    if (dim.output >= 0) {
-      output_dims_to_replicate.push_back(dim.output);
-    }
-  }
-  for (const auto& dim : operand_index == 0 ? dnums.lhs_non_contracting_dims
-                                            : dnums.rhs_non_contracting_dims) {
-    int64_t other_dim = operand_index == 0 ? dim.rhs : dim.lhs;
-    if (other_dim >= 0) {
-      other_operand_dims_to_replicate.push_back(other_dim);
-    }
-  }
-  auto output_other_dims_replicated =
-      hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
-          instruction->sharding(), output_dims_to_replicate);
-  std::vector<int64_t> output_to_operand_dims(instruction->shape().rank(), -1);
-  std::vector<int64_t> operand_to_output_dims(operand->shape().rank(), -1);
-  for (const auto& dim : dnums.batch_dims) {
-    output_to_operand_dims[dim.output] = operand_index == 0 ? dim.lhs : dim.rhs;
-    operand_to_output_dims[operand_index == 0 ? dim.lhs : dim.rhs] = dim.output;
-  }
-  for (const auto& dim : operand_index == 0 ? dnums.lhs_non_contracting_dims
-                                            : dnums.rhs_non_contracting_dims) {
-    output_to_operand_dims[dim.output] = operand_index == 0 ? dim.lhs : dim.rhs;
-    operand_to_output_dims[operand_index == 0 ? dim.lhs : dim.rhs] = dim.output;
-  }
-  auto sharding = *hlo_sharding_util::TransposeShardingWithCollapsedDims(
-      output_other_dims_replicated, output_to_operand_dims,
-      operand_to_output_dims);
-  if (hlo_sharding_util::IsSpatiallyPartitioned(other)) {
-    auto other_operand_dims_replicated =
-        hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
-            other->sharding(), other_operand_dims_to_replicate);
-    std::vector<int64_t> other_to_operand_dims(other->shape().rank(), -1);
-    std::vector<int64_t> operand_to_other_dims(operand->shape().rank(), -1);
-    for (const auto& dim : dnums.batch_dims) {
-      other_to_operand_dims[operand_index == 0 ? dim.rhs : dim.lhs] =
-          operand_index == 0 ? dim.lhs : dim.rhs;
-      operand_to_other_dims[operand_index == 0 ? dim.lhs : dim.rhs] =
-          operand_index == 0 ? dim.rhs : dim.lhs;
-    }
-    for (const auto& dim : dnums.contracting_dims) {
-      other_to_operand_dims[operand_index == 0 ? dim.rhs : dim.lhs] =
-          operand_index == 0 ? dim.lhs : dim.rhs;
-      operand_to_other_dims[operand_index == 0 ? dim.lhs : dim.rhs] =
-          operand_index == 0 ? dim.rhs : dim.lhs;
-    }
-    HloSharding sharding_from_other =
-        *hlo_sharding_util::TransposeShardingWithCollapsedDims(
-            other_operand_dims_replicated, other_to_operand_dims,
-            operand_to_other_dims);
-    if (hlo_sharding_util::MergeSharding(sharding, &sharding_from_other,
-                                         may_combine_partial_sharding)) {
-      sharding = std::move(sharding_from_other);
-    }
-  }
-  return sharding;
 }
 
 // Checks if two HloShardings have the same metadata attached.
@@ -1731,8 +1655,9 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
       auto dot_dims = dot_as_convolution_util::ParseConvolutionDimsInfo(&user);
       if (dot_dims.conv_spatial_dims.empty()) {
         int64_t op_idx = user.operand_index(&instruction);
-        return InferDotOperandSharding(&user, dot_dims, op_idx,
-                                       may_combine_partial_sharding);
+        return hlo_sharding_util::InferDotOperandSharding(
+            &user, op_idx, dot_dims, /*consider_other_operand=*/true,
+            may_combine_partial_sharding);
       }
       return std::nullopt;
     }
@@ -1868,8 +1793,9 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
     case HloOpcode::kDot: {
       int64_t op_idx = user.operand_index(&instruction);
       auto dnums = dot_as_convolution_util::ParseDotGeneralFromDot(&user);
-      return InferDotOperandSharding(&user, dnums, op_idx,
-                                     may_combine_partial_sharding);
+      return hlo_sharding_util::InferDotOperandSharding(
+          &user, op_idx, dnums, /*consider_other_operand=*/true,
+          may_combine_partial_sharding);
     }
     case HloOpcode::kReduce: {
       if (instruction.shape().rank() == 0) {
@@ -2939,7 +2865,8 @@ absl::StatusOr<bool> ShardingPropagation::Run(
 
   // Instructions that are related through a computation and need to share the
   // same sharding.
-  auto get_related_instructions = [this](HloInstruction* inst) {
+  auto get_related_instructions = [this,
+                                   &computation_map](HloInstruction* inst) {
     if (inst->opcode() == HloOpcode::kWhile) {
       return std::vector<HloInstruction*>{
           inst, inst->while_body()->root_instruction(),
@@ -2963,6 +2890,18 @@ absl::StatusOr<bool> ShardingPropagation::Run(
     } else if (inst->opcode() == HloOpcode::kCall) {
       HloComputation* callee = inst->called_computations().front();
       return std::vector<HloInstruction*>{inst, callee->root_instruction()};
+    } else if (inst->opcode() == HloOpcode::kParameter) {
+      auto it = computation_map.find(inst->parent());
+      if (it != computation_map.end() &&
+          it->second->opcode() == HloOpcode::kConditional) {
+        HloInstruction* cond = it->second;
+        for (int64_t i = 1; i < cond->operand_count(); ++i) {
+          if (cond->called_computations()[i - 1] == inst->parent()) {
+            return std::vector<HloInstruction*>{inst, cond->mutable_operand(i)};
+          }
+        }
+      }
+      return std::vector<HloInstruction*>{};
     } else {
       CHECK(false);
     }
@@ -3003,6 +2942,11 @@ absl::StatusOr<bool> ShardingPropagation::Run(
               auto it = computation_map.find(instruction->parent());
               if (it != computation_map.end()) {
                 propagate_to_instruction(it->second);
+                // Propagate parameter shardings back to conditional's operands.
+                if (instruction->opcode() == HloOpcode::kParameter &&
+                    it->second->opcode() == HloOpcode::kConditional) {
+                  propagate_to_instruction(instruction);
+                }
               }
             }
           };
@@ -3323,6 +3267,23 @@ absl::StatusOr<bool> ShardingPropagation::Run(
   for (int64_t aggressiveness = 0; aggressiveness < 4; ++aggressiveness) {
     TF_RETURN_IF_ERROR(
         run_to_fix_point(aggressiveness, /*propagate_shard_group=*/true));
+  }
+
+  if (changed) {
+    // Run CSE again to remove any duplicate ops with the same sharding or
+    // compatible shardings.
+    HloPassPipeline pass("sharding-propation-cse");
+    pass.AddPass<HloCSE>(
+        /*is_layout_sensitive=*/false,
+        /*only_fusion_computations=*/false,
+        /*ignore_control_dependencies=*/false,
+        /*only_scalars=*/false,
+        /*is_sharding_sensitive=*/true,
+        /*allow_compatible_sharding=*/true);
+    TF_RETURN_IF_ERROR(pass.Run(module, execution_threads).status());
+    // propagate sharding again to update the sharding of the CSE'd ops.
+    TF_RETURN_IF_ERROR(run_to_fix_point(/*aggressiveness=*/3,
+                                        /*propagate_shard_group=*/false));
   }
 
   // Align the shardings from the same shard_as group so that they will adopt

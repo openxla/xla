@@ -1,8 +1,8 @@
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "if_static",
-)
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "//xla/tsl:tsl.bzl",
+    "if_google",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -31,7 +31,6 @@ cc_library(
         ":platform_id",
         "//xla:literal",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:util",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
@@ -56,6 +55,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
@@ -68,8 +68,8 @@ cc_library(
     name = "platform_id",
     srcs = ["platform_id.cc"],
     hdrs = ["platform_id.h"],
-    deps = ["//xla/stream_executor"] + if_static(
-        ["@com_google_protobuf//:protobuf"],
+    deps = ["//xla/stream_executor"] + if_google(
+        ["@com_google_protobuf//:any_cc_proto"],
         ["@com_google_protobuf//:protobuf_headers"],
     ),
 )
@@ -82,7 +82,6 @@ cc_library(
         "//xla:literal",
         "//xla:shape_tree",
         "//xla:shape_util",
-        "//xla:statusor",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:dynamic_dimension_inference",
@@ -92,6 +91,7 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -106,7 +106,6 @@ cc_library(
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/evaluator:hlo_evaluator",
@@ -119,6 +118,7 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:transfer_manager",
         "//xla/stream_executor",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",

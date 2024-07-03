@@ -27,6 +27,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/IR/Attributes.h"
@@ -38,6 +40,8 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/literal.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/ir_function.h"
 #include "xla/service/cpu/target_machine_features.h"
@@ -48,14 +52,20 @@ limitations under the License.
 #include "xla/service/llvm_ir/ir_builder_mixin.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/service/name_uniquer.h"
-#include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
+
+// Forward declare emitter for XLA:CPU thunks.
+class IrEmitter2;
+
 // This class is the top-level API for the XLA HLO --> LLVM IR compiler.  It
 // implements the DfsHloVisitor interface and emits HLO computations as LLVM IR
 // functions.
+// NOTE: A lot of functionality in this class (e.g. ElementTypesSameAndSupported
+// helper function) is duplicated by ThunkEmitter and IrEmitter2. These two
+// classes are part of the new runtime and will eventually replace IrEmitter.
 class IrEmitter : public DfsHloVisitorWithDefault,
                   public IrBuilderMixin<IrEmitter> {
   class CpuElementalIrEmitter;
@@ -152,7 +162,15 @@ class IrEmitter : public DfsHloVisitorWithDefault,
     return emitted_functions_.contains({&callee, allow_reassociation});
   }
 
+  const TargetMachineFeatures& target_machine_features() const {
+    return target_machine_features_;
+  }
+
+  const BufferAssignment& assignment() const { return assignment_; }
+
  protected:
+  friend class IrEmitter2;
+
   //
   // The following methods implement the DfsHloVisitor interface.
   //
@@ -210,6 +228,11 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   absl::Status Preprocess(HloInstruction* hlo) override;
   absl::Status Postprocess(HloInstruction* hlo) override;
 
+  absl::Status HandleSelectAndScatter(HloInstruction* select_and_scatter,
+                                      const llvm_ir::IrArray& operand_array,
+                                      const llvm_ir::IrArray& source_array,
+                                      const llvm_ir::IrArray& output_array);
+
   // A convenient helper for calling BufferAssignment::GetUniqueSlice.
   BufferAllocation::Slice GetAllocationSlice(
       const HloInstruction& hlo, const ShapeIndex& index = {}) const {
@@ -227,6 +250,7 @@ class IrEmitter : public DfsHloVisitorWithDefault,
                                        std::string runtime_symbol_name);
   absl::Status HandleOneDnnSoftmax(HloInstruction* hlo);
   absl::Status HandleOneDnnLayerNorm(HloInstruction* hlo);
+  absl::Status HandleOneDnnConvolution(HloInstruction* hlo);
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
   // Private helper to initialize an IR function for the computation.
   void InitializeIrFunction(const std::string& function_name);
@@ -467,14 +491,9 @@ class IrEmitter : public DfsHloVisitorWithDefault,
       bool only_accesses_arg_memory = false,
       bool only_accesses_inaccessible_mem_or_arg_mem = false);
 
-  template <typename T>
-  llvm::AllocaInst* StoreTypes(std::string_view alloca_name, T&& args);
-  template <typename T>
-  llvm::Value* StoreShapes(std::string_view alloca_name, T&& args);
-
   // Emits a call to a proxy that builds an FFI call frame for `custom_call`
   llvm::Value* EmitCallToFfi(HloCustomCallInstruction* custom_call,
-                             llvm::Value* output_address,
+                             llvm::AllocaInst* results_alloca,
                              llvm::AllocaInst* operands_alloca);
 
   // Assignment of the buffers needed by the computation and their shape
@@ -681,20 +700,27 @@ class IrEmitter : public DfsHloVisitorWithDefault,
 
   const TargetMachineFeatures& target_machine_features_;
 
-  struct LiteralPtrHashFunctor {
-    size_t operator()(const Literal* literal) const {
-      return absl::HashOf(*literal);
+  struct LayoutSensitiveLiteralWrapper {
+    const Literal& literal;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const LayoutSensitiveLiteralWrapper& wrapper) {
+      return Literal::Hash<H, /*layout_sensitive=*/true>(std::move(h),
+                                                         wrapper.literal);
+    }
+
+    bool operator==(const LayoutSensitiveLiteralWrapper& other) const {
+      return literal.Equal(other.literal, /*layout_sensitive=*/true);
+    }
+
+    // This is needed for InsertOrDie to work.
+    friend std::ostream& operator<<(
+        std::ostream& out, const LayoutSensitiveLiteralWrapper& wrapper) {
+      return out << wrapper.literal;
     }
   };
 
-  struct LiteralPtrEqualityFunctor {
-    bool operator()(const Literal* lhs, const Literal* rhs) const {
-      return *lhs == *rhs && lhs->shape().layout() == rhs->shape().layout();
-    }
-  };
-
-  absl::flat_hash_map<const Literal*, llvm::Constant*, LiteralPtrHashFunctor,
-                      LiteralPtrEqualityFunctor>
+  absl::flat_hash_map<LayoutSensitiveLiteralWrapper, llvm::Constant*>
       emitted_literals_;
 
   absl::flat_hash_map<BufferAllocation::Index, llvm::Constant*>

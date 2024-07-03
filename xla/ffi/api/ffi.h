@@ -17,7 +17,8 @@ limitations under the License.
 #define XLA_FFI_API_FFI_H_
 
 #ifdef XLA_FFI_FFI_H_
-#error Two different XLA FFI implementations cannot be included together
+#error Two different XLA FFI implementations cannot be included together. \
+       See README.md for more details.
 #endif  // XLA_FFI_FFI_H_
 
 #include <algorithm>
@@ -60,6 +61,11 @@ enum class DataType : uint8_t {
   C64 = XLA_FFI_DataType_C64,
   C128 = XLA_FFI_DataType_C128,
   TOKEN = XLA_FFI_DataType_TOKEN,
+  F8E5M2 = XLA_FFI_DataType_F8E5M2,
+  F8E4M3FN = XLA_FFI_DataType_F8E4M3FN,
+  F8E4M3B11FNUZ = XLA_FFI_DataType_F8E4M3B11FNUZ,
+  F8E5M2FNUZ = XLA_FFI_DataType_F8E5M2FNUZ,
+  F8E4M3FNUZ = XLA_FFI_DataType_F8E4M3FNUZ,
 };
 
 inline std::ostream& operator<<(std::ostream& os, const DataType dtype) {
@@ -281,14 +287,15 @@ using Token = BufferR0<DataType::TOKEN>;
 
 namespace internal {
 
-inline AnyBuffer DecodeBuffer(XLA_FFI_Buffer* buf) {
+inline XLA_FFI_ATTRIBUTE_ALWAYS_INLINE AnyBuffer
+DecodeBuffer(XLA_FFI_Buffer* buf) {
   return AnyBuffer{static_cast<DataType>(buf->dtype), buf->data,
                    Span<const int64_t>(buf->dims, buf->rank)};
 }
 
 template <DataType dtype, size_t rank>
-std::optional<Buffer<dtype, rank>> DecodeBuffer(XLA_FFI_Buffer* buf,
-                                                DiagnosticEngine& diagnostic) {
+XLA_FFI_ATTRIBUTE_ALWAYS_INLINE std::optional<Buffer<dtype, rank>> DecodeBuffer(
+    XLA_FFI_Buffer* buf, DiagnosticEngine& diagnostic) {
   if (auto buf_dtype = static_cast<DataType>(buf->dtype);
       XLA_FFI_PREDICT_FALSE(buf_dtype != dtype)) {
     return diagnostic.Emit("Wrong buffer dtype: expected ")

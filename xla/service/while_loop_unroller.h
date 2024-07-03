@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/statusor.h"
 
 namespace xla {
 
@@ -53,7 +52,7 @@ struct WhileLoopConfig {
 // 3. And, the size of that dimension must match the loop trip count.
 // If so, it returns the dynamic index.
 std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
-    HloInstruction* instr, HloInstruction* input, HloOpcode opcode,
+    const HloInstruction* instr, const HloInstruction* input, HloOpcode opcode,
     const WhileLoopConfig& config);
 
 // This pass unrolls while loops with the given unrolling factor. The value of

@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
 #include "tsl/platform/threadpool.h"
 
 namespace stream_executor::host {
@@ -44,9 +45,7 @@ class HostKernel : public Kernel {
   using TaskRunner = absl::AnyInvocable<void(Task)>;
 
   // A struct to report completion of the kernel execution.
-  struct CompletionEvent {
-    size_t num_tasks;
-  };
+  using LaunchEvent = tsl::Chain;
 
   // Virtual base class that owns the function behind the host kernel. It can be
   // a function in a jit-compiled LLVM module or simply a pointer to the
@@ -81,6 +80,8 @@ class HostKernel : public Kernel {
   // `thread_dims` and calling the kernel function.
   absl::Status Launch(const ThreadDim& thread_dims,
                       absl::Span<const DeviceMemoryBase> buffers) const;
+  absl::Status Launch(const ThreadDim& thread_dims,
+                      absl::Span<const SE_HOST_KernelArg> args) const;
 
   // Launches the kernel by iterating over all threads in `thread_dims` and
   // calling `task_runner` to run individual task (implementation might decide
@@ -91,8 +92,11 @@ class HostKernel : public Kernel {
   // The returned async value becomes available after all tasks are completed.
   // Async value returned in constructed state and the caller can access it to
   // get the number of tasks that are expected to be completed.
-  tsl::AsyncValueRef<CompletionEvent> Launch(
+  tsl::AsyncValueRef<LaunchEvent> Launch(
       const ThreadDim& thread_dims, absl::Span<const DeviceMemoryBase> buffers,
+      TaskRunner task_runner) const;
+  tsl::AsyncValueRef<LaunchEvent> Launch(
+      const ThreadDim& thread_dims, absl::Span<const SE_HOST_KernelArg> args,
       TaskRunner task_runner) const;
 
   // For host platform, we assume that a core is a thread, and we can run at
@@ -109,10 +113,12 @@ class HostKernel : public Kernel {
             std::enable_if_t<std::is_base_of_v<KernelFunction, T>>* = nullptr>
   void SetKernelFunction(std::unique_ptr<T> function) {
     function_ = std::move(function);
+    kernel_ = function_->kernel();
   }
 
  private:
   std::unique_ptr<KernelFunction> function_;
+  SE_HOST_Kernel* kernel_;  // pointer to the kernel owned by `function_`
 
   unsigned arity_;
   std::shared_ptr<tsl::thread::ThreadPool> thread_pool_;

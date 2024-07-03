@@ -247,6 +247,12 @@ class AlgebraicSimplifierOptions {
         enable_unconditional_reduce_of_concat_replacement;
   }
 
+  // Indicates whether running on CPU
+  bool executing_on_cpu() const { return executing_on_cpu_; }
+  void set_executing_on_cpu(bool executing_on_cpu) {
+    executing_on_cpu_ = executing_on_cpu;
+  }
+
  private:
   // Metadata struct can be used to store any metadata information encapsulated
   // with the AlgebraicSimplierOptions that can be later used in an
@@ -280,6 +286,7 @@ class AlgebraicSimplifierOptions {
   bool minmax_propagate_nan_{true};
   bool enable_unconditional_reduce_of_concat_replacement_{true};
   bool use_associative_reordering_{false};
+  bool executing_on_cpu_{false};
   double associative_reordering_threshold_{2.0};
   Metadata metadata_;
 };
@@ -438,6 +445,11 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
       const Shape& original_shape, const Shape& bitcast_shape,
       const std::vector<std::vector<int64_t>>& original_map);
 
+  // Checks if the output of a given instruction is guaranteed to be
+  // non-negative. e.g. abs
+  static bool IsNonNegative(const HloInstruction* hlo,
+                            const AlgebraicSimplifierOptions& options);
+
   // Modify the layout dimensions of result_shape, so that it becomes the
   // re-shaped result of applying bitcast to the original_shape, by using
   // dim_map to re-shape layout dimensions of original_shape. Returns the
@@ -589,6 +601,10 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   // Tries to swap convolution operands if they would result in a more efficient
   // convolution.
   absl::StatusOr<bool> SwapConvOperands(HloInstruction* convolution);
+
+  // Checks if the given convolution is in BF16 and is oneDNN rewritable, if not
+  // then it promotes the data type of the convolution to F32
+  absl::StatusOr<bool> IsOneDnnRewritableBF16Conv(HloInstruction** convolution);
 
   // Tries to use a kDot in place of the given convolution.
   absl::StatusOr<bool> SimplifyConvToDot(HloInstruction* convolution);

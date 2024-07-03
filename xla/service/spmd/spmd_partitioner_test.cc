@@ -4466,6 +4466,39 @@ ENTRY entry {
   EXPECT_THAT(root, AllOf(op::While(zero), op::Shape("s32[]")));
 }
 
+TEST_P(SpmdPartitioningTest, TestWhileFrontendAttributes) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+LoopCond {
+  x = s32[] parameter(0), sharding={manual}
+  const = s32[] constant(5), sharding={manual}
+  ROOT lt = pred[] compare(x, const), direction=LT, sharding={manual}
+}
+
+Inc {
+  x = s32[] parameter(0), sharding={manual}
+  const = s32[] constant(1), sharding={manual}
+  ROOT add = s32[] add(x, const), sharding={manual}
+}
+
+ENTRY entry {
+  zero = s32[] parameter(0), sharding={manual}
+  ROOT while = s32[] while(zero), body=Inc, condition=LoopCond,
+    sharding={manual}, frontend_attributes={_xla_other_attribute="xyz"}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+
+  auto zero = AllOf(op::Parameter(0), op::Shape("s32[]"));
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->frontend_attributes().map().at("_xla_other_attribute"),
+            "xyz");
+  EXPECT_THAT(root, AllOf(op::While(zero), op::Shape("s32[]")));
+}
+
 TEST_P(SpmdPartitioningTest, SelectAndScatter_RetinaNet) {
   absl::string_view hlo_string = R"(
 HloModule module
@@ -9044,6 +9077,33 @@ ENTRY entry {
                          op::AllReduce(op::DynamicUpdateSlice(_, rhs, _, _)))));
   const auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, dot) << module->ToString();
+}
+
+TEST_P(SpmdPartitioningTest, ReshardLHSRHSToMatchDotSharding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY %main.7 {
+  %p0 = bf16[32,97] parameter(0), sharding={devices=[32,1]<=[8,4]T(1,0)}
+  %p1 = bf16[48,64,97] parameter(1), sharding={devices=[8,4,1]<=[32]}
+  %dot.0 = bf16[32,48,64] dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={2}, sharding={devices=[4,8,1]<=[8,4]T(1,0)}
+  %dot.1 = bf16[32,48,64] dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={2}, sharding={devices=[4,4,1,2]<=[8,4]T(1,0) last_tile_dim_replicate}
+  ROOT %tuple = tuple(%dot.0, %dot.1), sharding={{devices=[4,8,1]<=[8,4]T(1,0)}, {devices=[4,4,1,2]<=[8,4]T(1,0) last_tile_dim_replicate}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/32));
+  VLOG(1) << module->ToString();
+
+  const auto lhs = AllOf(op::Shape("bf16[8,97]"));
+  const auto rhs0 = AllOf(op::Shape("bf16[6,64,97]"));
+  const auto rhs1 = AllOf(op::Shape("bf16[12,64,97]"));
+  auto dot0 = AllOf(op::Shape("bf16[8,6,64]"), op::Dot(lhs, rhs0));
+  auto dot1 = AllOf(op::Shape("bf16[8,12,64]"), op::Dot(lhs, rhs1));
+  auto tuple =
+      AllOf(op::Shape("(bf16[8,6,64], bf16[8,12,64])"), op::Tuple(dot0, dot1));
+  const auto root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, tuple);
 }
 
 TEST_P(SpmdPartitioningTest, ElementwiseTest_SubgroupSharding_TileToReplicate) {

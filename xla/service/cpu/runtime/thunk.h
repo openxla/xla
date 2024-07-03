@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_RUNTIME_THUNK_H_
 #define XLA_SERVICE_CPU_RUNTIME_THUNK_H_
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ostream>
@@ -27,13 +26,19 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/executable_run_options.h"
+#include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/cpu/runtime/buffer_allocations.h"
+#include "xla/service/cpu/runtime/resource_use.h"
 #include "xla/service/cpu/xfeed_manager.h"
+#include "xla/service/global_device_id.h"
 #include "xla/stream_executor/host/host_kernel_c_api.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
 #include "tsl/platform/statusor.h"
 
 namespace Eigen {
@@ -59,12 +64,23 @@ namespace xla::cpu {
 class Thunk {
  public:
   enum class Kind {
+    kAllGather,
+    kAllReduce,
+    kAllToAll,
     kCall,
+    kCollectivePermute,
     kCopy,
     kConditional,
+    kConvolution,
+    kCustomCall,
+    kDot,
+    kFft,
     kInfeed,
     kKernel,
     kOutfeed,
+    kPartitionId,
+    kReduceScatter,
+    kReplicaId,
     kRngGetAndUpdateState,
     kWhile,
   };
@@ -92,6 +108,14 @@ class Thunk {
   using BufferUses = absl::InlinedVector<BufferUse, 4>;
   virtual BufferUses buffer_uses() const = 0;
 
+  // Returns the list of resources used by a thunk. Thunk executor relies on
+  // this information to execute thunks concurrently and to avoid data races. In
+  // contrast to buffer uses, only a handful of thunks are expected to use
+  // resources, so we define a default implementation for `resource_uses()`
+  // that returns an empty vector.
+  using ResourceUses = absl::InlinedVector<ResourceUse, 4>;
+  virtual ResourceUses resource_uses() const { return {}; }
+
   //===--------------------------------------------------------------------===//
   // HostKernels
   //===--------------------------------------------------------------------===//
@@ -107,6 +131,53 @@ class Thunk {
   };
 
   //===--------------------------------------------------------------------===//
+  // CollectiveExecuteParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for collective execution of
+  // XLA executables (multiple partitions and replicas).
+  struct CollectiveExecuteParams {
+    static absl::StatusOr<CollectiveExecuteParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    RunId run_id;
+
+    int64_t local_device_ordinal;
+    GlobalDeviceId global_device_id;
+
+    const DeviceAssignment* device_assignment = nullptr;
+    CollectivesInterface* collectives = nullptr;
+
+   private:
+    CollectiveExecuteParams(RunId run_id, int64_t local_device_ordinal,
+                            GlobalDeviceId global_device_id,
+                            const DeviceAssignment* device_assignment,
+                            CollectivesInterface* collectives);
+  };
+
+  //===--------------------------------------------------------------------===//
+  // CustomCallExecuteParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters capturing all the details required for custom call execution of
+  // XLA executables.
+  struct CustomCallExecuteParams {
+    static absl::StatusOr<CustomCallExecuteParams> Create(
+        const ExecutableRunOptions* run_options);
+
+    int32_t device_ordinal;
+    stream_executor::Stream* stream = nullptr;
+    stream_executor::DeviceMemoryAllocator* allocator = nullptr;
+    const ffi::ExecutionContext* ffi_execution_context = nullptr;
+
+   private:
+    CustomCallExecuteParams(int32_t device_ordinal,
+                            stream_executor::Stream* stream,
+                            stream_executor::DeviceMemoryAllocator* allocator,
+                            const ffi::ExecutionContext* ffi_execution_context);
+  };
+
+  //===--------------------------------------------------------------------===//
   // ExecuteParams
   //===--------------------------------------------------------------------===//
 
@@ -117,23 +188,24 @@ class Thunk {
     const BufferAllocations* buffer_allocations = nullptr;
     runtime::XfeedManager* xfeed = nullptr;
     const Eigen::ThreadPoolDevice* intra_op_threadpool = nullptr;
+    CollectiveExecuteParams* collective_params = nullptr;
+    CustomCallExecuteParams* custom_call_params = nullptr;
   };
 
-  // A completion event that becomes ready when all tasks are completed.
-  struct CompletionEvent {
-    size_t num_tasks;
-  };
+  // An execute event that becomes ready when all tasks are completed.
+  using ExecuteEvent = tsl::Chain;
+
+  // Returns non-reference-counted async value ref for thunks executed in the
+  // caller thread to avoid reference counting overhead.
+  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent();
 
   // Thunk execution must be asynchronous and never block the caller thread,
   // especially waiting for work submitted into the `intra_op_threadpool`,
   // because thunks themselves are executed on the same thread pool.
   //
-  // Thunk execution completion must be reported via the `CompletionEvent`.
-  virtual absl::Status Execute(const ExecuteParams& params) = 0;
-
-  // Returns available completion event with `num_tasks` set to 1. This is an
-  // optimization for the case when a thunk executed in the caller thread.
-  static tsl::AsyncValueRef<CompletionEvent> ReadyCompletionEvent();
+  // Thunk execution completion must be reported via the `ExecuteEvent`.
+  virtual tsl::AsyncValueRef<ExecuteEvent> Execute(
+      const ExecuteParams& params) = 0;
 
  protected:
   // Encodes thunk info into the TraceMe compatible format.
@@ -150,7 +222,9 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);
 class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
  public:
   ThunkSequence() = default;
-  explicit ThunkSequence(std::unique_ptr<Thunk> thunk);
+
+  // Returns an empty thunk sequence.
+  static ThunkSequence Empty() { return ThunkSequence(); }
 
   // Returns a thunk sequence that contains a single thunk of type `T`. Uses
   // factory constructor `T::Create()` to create the thunk.
@@ -162,15 +236,16 @@ class ThunkSequence : public std::vector<std::unique_ptr<Thunk>> {
     return ThunkSequence(std::move(thunk));
   }
 
-  // Returns an empty thunk sequence.
-  static ThunkSequence Empty() { return ThunkSequence(); }
-
-  absl::Status Execute(const Thunk::ExecuteParams& params);
-
   using BufferUses = Thunk::BufferUses;
   BufferUses buffer_uses() const;
 
+  using ResourceUses = Thunk::ResourceUses;
+  ResourceUses resource_uses() const;
+
   void Append(ThunkSequence other);
+
+ private:
+  explicit ThunkSequence(std::unique_ptr<Thunk> thunk);
 };
 
 }  // namespace xla::cpu

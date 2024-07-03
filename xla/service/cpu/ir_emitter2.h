@@ -114,6 +114,19 @@ class IrEmitter2 {
   absl::StatusOr<KernelInfo> EmitReductionHostKernel(
       const HloInstruction* instr);
 
+  // Emits a host kernel for the given dot instruction. Small dot operations
+  // are emitted as LLVM IR directly, while larger ones are emitted as a dot
+  // thunk that calls into libraries.
+  absl::StatusOr<KernelInfo> EmitDotHostKernel(const HloInstruction* instr);
+
+  // Emits a host kernel for the given dot fusion instruction (output fusion).
+  absl::StatusOr<KernelInfo> EmitDotFusionHostKernel(
+      const HloFusionInstruction* fusion);
+
+  // Emits a host kernel for the given select-and-scatter instruction.
+  absl::StatusOr<KernelInfo> EmitSelectAndScatterHostKernel(
+      const HloInstruction* instr);
+
   // Emits a host kernel prototype and prepares function for emitting kernel
   // body into it.
   KernelPrototype EmitKernelPrototype(std::string_view name,

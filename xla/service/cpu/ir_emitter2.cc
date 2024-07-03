@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/cpu/ir_emitter2.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -23,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -39,6 +41,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
+#include "xla/cpu_function_runtime.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -46,11 +49,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/elemental_math_emitter.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_loop_emitter.h"
 #include "xla/service/cpu/shape_partition.h"
 #include "xla/service/elemental_ir_emitter.h"
+#include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
@@ -59,6 +64,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -263,9 +269,14 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
     const HloFusionInstruction* fusion) {
   VLOG(2) << "Emit fusion host kernel: " << fusion->name();
 
+  // In XLA:CPU output fusion can only be a fusion into dot operation.
+  if (fusion->fusion_kind() == HloInstruction::FusionKind::kOutput) {
+    return EmitDotFusionHostKernel(fusion);
+  }
+
   if (fusion->fusion_kind() != HloInstruction::FusionKind::kLoop) {
-    return absl::InternalError(absl::StrCat(
-        "Unsupported loop fusion kind for instruction: ", fusion->ToString()));
+    return Internal("Unsupported loop fusion kind for instruction: %s",
+                    fusion->ToString());
   }
 
   KernelPrototype kernel_prototype = EmitKernelPrototype(fusion);
@@ -275,8 +286,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
 
   ElementalIrEmitter elemental_emitter(module_, &b, &hlo_module_,
                                        nested_ir_emitter_, fast_min_max());
-  FusedIrEmitter fused_emitter(elemental_emitter);
 
+  FusedIrEmitter fused_emitter(elemental_emitter);
   for (int i = 0; i < fusion->operand_count(); i++) {
     fused_emitter.BindGenerator(
         *fusion->fused_parameter(i), [&, i](llvm_ir::IrArray::Index idx) {
@@ -284,6 +295,22 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
         });
   }
 
+  // Check if the fusion can be emitted in-place and skip expensive loop for
+  // all elements in the output array.
+  if (llvm_ir::CanEmitFusedDynamicUpdateSliceInPlace(
+          const_cast<HloFusionInstruction*>(fusion),
+          nested_ir_emitter_->assignment())) {
+    // Delegate to common implementation of fused in-place dynamic-update-slice.
+    TF_RETURN_IF_ERROR(llvm_ir::EmitFusedDynamicUpdateSliceInPlace(
+        const_cast<HloFusionInstruction*>(fusion), kernel_prototype.results[0],
+        &fused_emitter, &b));
+
+    return kernels_.emplace_back(
+        KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                   se::ThreadDim()});
+  }
+
+  // Emit plain elemental loops for the fusion operation.
   TF_ASSIGN_OR_RETURN(
       auto element_generator,
       fused_emitter.GetGenerator(*fusion->fused_expression_root()));
@@ -302,6 +329,125 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitReductionHostKernel(
 
   // TODO(ezhulenev): Port vectorized reduction emitter from IrEmitter.
   return EmitElementalHostKernel(instr);
+}
+
+// Dot (fusion) host kernel only supports strategies that emit LLVM IR.
+static bool IsDotCodegenStrategy(DotImplementationStrategy strategy) {
+  static std::array<DotImplementationStrategy, 3> kDotCodegenStrategies = {
+      DotImplementationStrategy::kNaiveLlvmIr,
+      DotImplementationStrategy::kTiledLlvmIrGemm,
+      DotImplementationStrategy::kTiledLlvmIrGemv,
+  };
+
+  return absl::c_find(kDotCodegenStrategies, strategy) !=
+         kDotCodegenStrategies.end();
+}
+
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotHostKernel(
+    const HloInstruction* instr) {
+  VLOG(2) << "Emit dot host kernel: " << instr->name();
+
+  DotImplementationStrategy strategy = GetDotImplementationStrategy(
+      hlo_module_.config(), *instr,
+      nested_ir_emitter_->target_machine_features());
+
+  if (!IsDotCodegenStrategy(strategy)) {
+    return Internal("Unsupported dot implementation strategy");
+  }
+
+  KernelPrototype kernel_prototype = EmitKernelPrototype(instr);
+
+  llvm::IRBuilder<> b(module_->getContext());
+  b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
+
+  llvm_ir::IrArray lhs_array = kernel_prototype.arguments[0];
+  llvm_ir::IrArray rhs_array = kernel_prototype.arguments[1];
+  llvm_ir::IrArray target_array = kernel_prototype.results[0];
+
+  TF_RETURN_IF_ERROR(EmitDotOperation(
+      *instr, target_array, lhs_array, rhs_array,
+      /*addend_array=*/nullptr, /*executable_run_options_value=*/nullptr, &b,
+      hlo_module_.config(), nested_ir_emitter_->target_machine_features(),
+      /*allow_runtime_calls=*/false));
+
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
+}
+
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
+    const HloFusionInstruction* fusion) {
+  VLOG(2) << "Emit dot fusion host kernel: " << fusion->name();
+
+  // Dot fusion only supports adding a side input to the dot product.
+  const HloInstruction* add = fusion->fused_expression_root();
+  if (add->opcode() != HloOpcode::kAdd) {
+    return Internal("Dot fusion supports only `add` root instruction");
+  }
+
+  // Check that fusion root has a single dot operand.
+  bool is_dot_operand0 = add->operand(0)->opcode() == HloOpcode::kDot;
+  bool is_dot_operand1 = add->operand(1)->opcode() == HloOpcode::kDot;
+  if (is_dot_operand0 == is_dot_operand1) {
+    return Internal("Dot fusion root instruction must have single dot operand");
+  }
+
+  int64_t dot_op_index = is_dot_operand0 ? 0 : 1;
+  int64_t addend_op_index = 1 - dot_op_index;
+
+  const HloInstruction* dot = add->operand(dot_op_index);
+
+  // Check that we can emit LLVM IR for this dot operation.
+  DotImplementationStrategy strategy = GetDotImplementationStrategy(
+      hlo_module_.config(), *dot,
+      nested_ir_emitter_->target_machine_features());
+
+  if (!IsDotCodegenStrategy(strategy)) {
+    return Internal("Unsupported dot implementation strategy");
+  }
+
+  // Indices of fusion parameters that are used as dot operands and result.
+  int64_t dot_lhs_pnum = dot->operand(0)->parameter_number();
+  int64_t dot_rhs_pnum = dot->operand(1)->parameter_number();
+  int64_t addend_pnum = add->operand(addend_op_index)->parameter_number();
+
+  KernelPrototype kernel_prototype = EmitKernelPrototype(fusion);
+
+  llvm::IRBuilder<> b(module_->getContext());
+  b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
+
+  llvm_ir::IrArray lhs_array = kernel_prototype.arguments[dot_lhs_pnum];
+  llvm_ir::IrArray rhs_array = kernel_prototype.arguments[dot_rhs_pnum];
+  llvm_ir::IrArray addend_array = kernel_prototype.arguments[addend_pnum];
+  llvm_ir::IrArray target_array = kernel_prototype.results[0];
+
+  TF_RETURN_IF_ERROR(EmitDotOperation(
+      *dot, target_array, lhs_array, rhs_array, &addend_array,
+      /*executable_run_options_value=*/nullptr, &b, hlo_module_.config(),
+      nested_ir_emitter_->target_machine_features(),
+      /*allow_runtime_calls=*/false));
+
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
+}
+
+// Emits a host kernel for the given select-and-scatter instruction.
+absl::StatusOr<IrEmitter2::KernelInfo>
+IrEmitter2::EmitSelectAndScatterHostKernel(const HloInstruction* instr) {
+  KernelPrototype kernel_prototype = EmitKernelPrototype(instr);
+
+  llvm_ir::IrArray operand_array = kernel_prototype.arguments[0];
+  llvm_ir::IrArray source_array = kernel_prototype.arguments[1];
+  llvm_ir::IrArray output_array = kernel_prototype.results[0];
+
+  TF_RETURN_IF_ERROR(nested_ir_emitter_->HandleSelectAndScatter(
+      const_cast<HloInstruction*>(instr), operand_array, source_array,
+      output_array));
+
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
 }
 
 //===----------------------------------------------------------------------===//
@@ -346,6 +492,10 @@ llvm_ir::IrArray IrEmitter2::EmitKernelArgument(llvm::IRBuilder<>& b,
   auto* data_gep = b.CreateConstGEP2_32(arg_ty_, args, index, 0, name + "_gep");
   auto* data = b.CreateLoad(ptr, data_gep, name);
 
+  // All buffers passed to host kernels are expected to be properly aligned,
+  // emit metadata to allow LLVM to use that information for optimization.
+  llvm_ir::SetAlignmentMetadataForLoad(data, cpu_function_runtime::MinAlign());
+
   return llvm_ir::IrArray(data, llvm_ir::ShapeToIrType(shape, module_), shape);
 }
 
@@ -370,6 +520,13 @@ IrEmitter2::KernelPrototype IrEmitter2::EmitKernelPrototype(
       module_->getOrInsertFunction(name, KernelFunctionTy(ctx)).getCallee());
   function->setCallingConv(llvm::CallingConv::C);
   function->setDoesNotThrow();
+
+  // Set prefer-vector-width attribute to allow LLVM to use wider vector
+  // registers (by default LLVM uses at most 256-bit registers).
+  const DebugOptions& debug_options = hlo_module_.config().debug_options();
+  function->addFnAttr(
+      "prefer-vector-width",
+      absl::StrCat(debug_options.xla_cpu_prefer_vector_width()));
 
   // Always keep a frame pointer for the host kernel so we can see them in all
   // performance profiling tools.

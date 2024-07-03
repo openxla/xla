@@ -363,6 +363,14 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
                  << ": " << ToString(ret);
     }
   }
+#if TF_ROCM_VERSION >= 60000
+  if (auto *workspace = GetWorkspace(); workspace != nullptr &&
+                                        workspace->opaque() != nullptr &&
+                                        workspace->size() > 0) {
+    (void)wrap::rocblas_set_workspace(blas_, workspace->opaque(),
+                                      workspace->size());
+  }
+#endif
 
   ret = rocblas_func(blas_, std::forward<Args>(args)...);
   if (ret != rocblas_status_success) {
@@ -692,17 +700,17 @@ bool ROCMBlas::GetBlasGemmAlgorithms(
   auto blas_lambda = [this, out_algorithms](auto handle, auto &&blas_func,
                                             auto &&...rest) {
     rocblas_int num_sols = 0;
-
+    // If get_solutions call fails, we still can use the default (fallback)
+    // algorithm which is available for almost all number types.
     if (auto ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
                              nullptr, &num_sols);
-        ret != rocblas_status_success) {
-      return ret;
-    }
-    solutions_.resize(num_sols);
-    if (auto ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
-                             solutions_.data(), &num_sols);
-        ret != rocblas_status_success) {
-      return ret;
+        ret == rocblas_status_success) {
+      solutions_.resize(num_sols);
+      if (ret = blas_func(handle, std::forward<decltype(rest)>(rest)...,
+                          solutions_.data(), &num_sols);
+          ret != rocblas_status_success) {
+        num_sols = 0;
+      }
     }
     out_algorithms->resize(num_sols + 1);
     (*out_algorithms)[0] = blas::kDefaultAlgorithm;
@@ -1251,16 +1259,16 @@ IMPL_DoBlasGemmBatched(float, wrap::rocblas_sgemm_strided_batched)
 }
 
 absl::Status ROCMBlas::GetVersion(std::string *version) {
-#if TF_ROCM_VERSION >= 60300  // Not yet available in ROCM-6.1
+#if TF_ROCM_VERSION > 60100  // Not available in ROCM-6.1
   absl::MutexLock lock{&mu_};
   size_t len = 0;
-  if (auto res = rocblas_get_version_string_size(&len);
+  if (auto res = wrap::rocblas_get_version_string_size(&len);
       res != rocblas_status_success) {
     return absl::InternalError(
         absl::StrCat("GetVersion failed with: ", ToString(res)));
   }
   std::vector<char> buf(len + 1);
-  if (auto res = rocblas_get_version_string(buf.data(), len);
+  if (auto res = wrap::rocblas_get_version_string(buf.data(), len);
       res != rocblas_status_success) {
     return absl::InternalError(
         absl::StrCat("GetVersion failed with: ", ToString(res)));

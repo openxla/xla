@@ -74,8 +74,8 @@ class NVPTXCompiler : public GpuCompiler {
 
   absl::Status AddGemmFusionAutotuningPasses(
       HloPassPipeline* pipeline, HloModule* hlo_module,
-      AutotuneConfig& autotune_config,
-      tsl::thread::ThreadPool* thread_pool) override;
+      AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
+      const MultiProcessKeyValueStore& key_value_store) override;
 
   absl::Status AddCustomKernelReplacementPasses(
       HloPassPipeline* pipeline, const DebugOptions& debug_options) override;
@@ -97,10 +97,10 @@ class NVPTXCompiler : public GpuCompiler {
     kDriver,
   };
 
- private:
   absl::StatusOr<bool> CanUseLinkModules(
       const HloModuleConfig& module_config) override;
 
+ private:
   absl::StatusOr<std::vector<uint8_t>> LinkModules(
       se::StreamExecutor* stream_exec,
       std::vector<std::vector<uint8_t>> modules,

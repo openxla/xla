@@ -17,11 +17,13 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
@@ -90,7 +92,13 @@ absl::Status Call(Ffi& handler, CallFrame& call_frame,
   XLA_FFI_ExecutionContext ctx = CreateExecutionContext(options);
   XLA_FFI_CallFrame ffi_call_frame =
       call_frame.Build(GetXlaFfiApi(), &ctx, stage);
-  return TakeStatus(handler.Call(&ffi_call_frame));
+  XLA_FFI_Error* status = nullptr;
+  try {
+    status = handler.Call(&ffi_call_frame);
+  } catch (std::exception& e) {
+    return absl::UnknownError(absl::StrCat("XLA FFI call failed: ", e.what()));
+  }
+  return TakeStatus(status);
 }
 
 absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
@@ -98,7 +106,13 @@ absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
   XLA_FFI_ExecutionContext ctx = CreateExecutionContext(options);
   XLA_FFI_CallFrame ffi_call_frame =
       call_frame.Build(GetXlaFfiApi(), &ctx, stage);
-  return TakeStatus((*handler)(&ffi_call_frame));
+  XLA_FFI_Error* status = nullptr;
+  try {
+    status = (*handler)(&ffi_call_frame);
+  } catch (std::exception& e) {
+    return absl::UnknownError(absl::StrCat("XLA FFI call failed: ", e.what()));
+  }
+  return TakeStatus(status);
 }
 
 namespace internal {
@@ -409,7 +423,11 @@ static XLA_FFI_Error* XLA_FFI_DeviceMemory_Free(
 //===----------------------------------------------------------------------===//
 
 static XLA_FFI_Error* XLA_FFI_INTERNAL_Error_Forward(void* status) {
-  return new XLA_FFI_Error{std::move(*reinterpret_cast<absl::Status*>(status))};
+  auto* absl_status = reinterpret_cast<absl::Status*>(status);
+  if (ABSL_PREDICT_TRUE(absl_status->ok())) {
+    return nullptr;
+  }
+  return new XLA_FFI_Error{std::move(*absl_status)};
 }
 
 static void* XLA_FFI_INTERNAL_Stream_Get(XLA_FFI_ExecutionContext* ctx) {

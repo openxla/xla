@@ -297,10 +297,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "nsync",
         patch_file = ["//third_party:nsync.patch"],
-        sha256 = "e8e552a358f4a28e844207a7c5cb51767e4aeb0b29e22d23ac2a09924130f761",
-        strip_prefix = "nsync-1.27.0",
+        sha256 = "1d63e967973733d2c97e841e3c05fac4d3fa299f01d14c86f2695594c7a4a2ec",
+        strip_prefix = "nsync-1.29.2",
         system_build_file = "//third_party/systemlibs:nsync.BUILD",
-        urls = tf_mirror_urls("https://github.com/google/nsync/archive/1.27.0.tar.gz"),
+        urls = tf_mirror_urls("https://github.com/google/nsync/archive/1.29.2.tar.gz"),
     )
 
     tf_http_archive(
@@ -312,9 +312,9 @@ def _tf_repositories():
 
     tf_http_archive(
         name = "com_google_fuzztest",
-        sha256 = "c75f224b34c3c62ee901381fb743f6326f7b91caae0ceb8fe62f3fd36f187627",
-        strip_prefix = "fuzztest-58b4e7065924f1a284952b84ea827ce35a87e4dc",
-        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/58b4e7065924f1a284952b84ea827ce35a87e4dc.zip"),
+        sha256 = "d922940bde8904937b9e13298f06b1d59388ab4a965122860358b00535438f63",
+        strip_prefix = "fuzztest-e576caaece16bd1f8dcd196736743c36474f3c16",
+        urls = tf_mirror_urls("https://github.com/google/fuzztest/archive/e576caaece16bd1f8dcd196736743c36474f3c16.zip"),
     )
 
     tf_http_archive(
@@ -327,10 +327,10 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "816e41809c043ff285e8c0f06a75a1fa250211bbfb2dc0a037eeef39f1a9e427",
-        strip_prefix = "curl-8.4.0",
+        sha256 = "9c6db808160015f30f3c656c0dec125feb9dc00753596bf858a272b5dd8dc398",
+        strip_prefix = "curl-8.6.0",
         system_build_file = "//third_party/systemlibs:curl.BUILD",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.4.0.tar.gz"),
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.6.0.tar.gz"),
     )
 
     # WARNING: make sure ncteisen@ and vpai@ are cc-ed on any CL to change the below rule
@@ -397,9 +397,9 @@ def _tf_repositories():
         name = "nccl_archive",
         build_file = "//third_party:nccl/archive.BUILD",
         patch_file = ["//third_party/nccl:archive.patch"],
-        sha256 = "1c5474553afedb88e878c772f13d6f90b9226b3f2971dfa6f873adb9443100c2",
-        strip_prefix = "nccl-2.19.3-1",
-        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.19.3-1.tar.gz"),
+        sha256 = "1923596984d85e310b5b6c52b2c72a1b93da57218f2bc5a5c7ac3d59297a3303",
+        strip_prefix = "nccl-2.21.5-1",
+        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.21.5-1.tar.gz"),
     )
 
     # Note that we are currently taking NVTX headers from a NCCL release to get nvToolsExtPayload.h

@@ -71,18 +71,6 @@ class StreamCommon : public Stream {
   absl::StatusOr<Stream *> GetOrCreateSubStream() override
       TF_LOCKS_EXCLUDED(mu_);
   void ReturnSubStream(Stream *sub_stream) override TF_LOCKS_EXCLUDED(mu_);
-  absl::Status WaitFor(Stream *other) override;
-  absl::Status WaitFor(Event *event) override;
-  absl::Status RecordEvent(Event *event) override;
-  absl::Status Memcpy(void *host_dst, const DeviceMemoryBase &gpu_src,
-                      uint64_t size) override;
-  absl::Status Memcpy(DeviceMemoryBase *gpu_dst, const void *host_src,
-                      uint64_t size) override;
-  absl::Status Memcpy(DeviceMemoryBase *gpu_dst,
-                      const DeviceMemoryBase &gpu_src, uint64_t size) override;
-  absl::Status MemZero(DeviceMemoryBase *location, uint64_t size) override;
-  absl::Status Memset32(DeviceMemoryBase *location, uint32_t pattern,
-                        uint64_t size) override;
   absl::Status BlockHostUntilDone() override TF_LOCKS_EXCLUDED(mu_);
   absl::Status DoHostCallback(absl::AnyInvocable<void() &&> callback) override;
   absl::Status DoHostCallbackWithStatus(
@@ -104,6 +92,9 @@ class StreamCommon : public Stream {
   }
   absl::Status Launch(const ThreadDim &thread_dims, const BlockDim &block_dims,
                       const Kernel &k, const KernelArgs &args) override;
+  absl::Status Launch(const ThreadDim &thread_dims, const BlockDim &block_dims,
+                      const ClusterDim &cluster_dims, const Kernel &k,
+                      const KernelArgs &args) override;
 
  protected:
   bool InErrorState() const TF_LOCKS_EXCLUDED(mu_) {

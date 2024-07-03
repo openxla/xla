@@ -10198,6 +10198,31 @@ ENTRY %reshape {
   EXPECT_THAT(instruction, op::Sharding("{devices=[1,2,2]0,1,2,3}"));
 }
 
+TEST_F(ShardingPropagationTest, LayoutConstraint) {
+  const char* const hlo_string = R"(
+HloModule module
+ENTRY %reshape {
+  %param0 = f32[102,192,192] parameter(0),
+    sharding={devices=[1,2,2]0,1,2,3}
+  %custom-call = f32[102,192,192]{0,1,2} custom-call(f32[102,192,192] %param0), custom_call_target="LayoutConstraint"
+  ROOT %copy = f32[102,192,192] copy(%custom-call),
+    sharding={devices=[1,2,1,2]0,1,2,3 last_tile_dim_replicate}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  auto* instruction = FindInstruction(module.get(), "custom-call");
+  EXPECT_THAT(instruction->shape(), ShapeUtil::MakeShapeWithDenseLayout(
+                                        F32, {102, 192, 192}, {0, 1, 2}));
+  ASSERT_NE(instruction, nullptr);
+  EXPECT_THAT(instruction, op::Sharding("{devices=[1,2,2]0,1,2,3}"));
+}
+
 TEST_F(ShardingPropagationTest, OffloadingPropagation) {
   const char* const hlo_string = R"(
 HloModule module
@@ -10705,6 +10730,58 @@ ENTRY entry {
       FindInstruction(module.get(), "sort.0"),
       op::Sharding(
           "{{devices=[1,8]0,1,2,3,4,5,6,7}, {devices=[1,8]0,1,2,3,4,5,6,7}}"));
+}
+
+TEST_F(ShardingPropagationTest, ConditionalManual) {
+  const char* const hlo_string = R"(
+HloModule module
+
+%true_comp {
+  %tp = (f32[3,5], f32[]) parameter(0)
+  %tgte.0 = f32[3,5] get-tuple-element(%tp), index=0
+  %tgte.1 = f32[] get-tuple-element(%tp), index=1
+  %ttr = f32[5,3] transpose(%tgte.0), dimensions={1,0}
+
+  %broadcast.1 = f32[5,3] broadcast(%tgte.1), dimensions={}
+  %add.1 = f32[5,3] add(%broadcast.1, %ttr)
+
+  ROOT %tr = (f32[5,3], f32[]) tuple(%add.1, %tgte.1)
+}
+
+%false_comp {
+  %fp = (f32[5,3], f32[5,3], f32[]) parameter(0)
+  %fgte.0 = f32[5,3] get-tuple-element(%fp), index=0
+  %fgte.1 = f32[] get-tuple-element(%fp), index=2
+  ROOT %fr = (f32[5,3], f32[]) tuple(%fgte.0, %fgte.1)
+}
+
+ENTRY entry {
+  %cond = pred[] parameter(0), sharding={devices=[2,2]<=[4] last_tile_dims={manual, replicated}}
+  %tp.0 = f32[3,5] parameter(1), sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual, replicated}}
+  %fp.0 = f32[5,3] parameter(2), sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual, replicated}}
+  %const0 = f32[] constant(0)
+  %const1 = f32[] constant(1)
+  %true_param = (f32[3,5], f32[]) tuple(%tp.0, %const0)
+  %false_param = (f32[5,3], f32[5,3], f32[]) tuple(%fp.0, fp.0, %const1)
+  ROOT %conditional = (f32[5,3], f32[]) conditional(
+      %cond, %true_param, %false_param),
+    true_computation=%true_comp,
+    false_computation=%false_comp
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(/*is_spmd=*/true, /*propagate_metadata=*/true)
+          .Run(module.get()));
+  XLA_VLOG_LINES(1, module->ToString());
+  EXPECT_TRUE(changed);
+  auto* tp = FindInstruction(module.get(), "tp");
+  auto* true_param = FindInstruction(module.get(), "true_param");
+  EXPECT_EQ(tp->sharding(), true_param->sharding());
+  auto* fp = FindInstruction(module.get(), "fp");
+  auto* false_param = FindInstruction(module.get(), "false_param");
+  EXPECT_EQ(fp->sharding(), false_param->sharding());
 }
 
 TEST_F(ShardingPropagationTest, PropagateToOutput) {
@@ -11832,9 +11909,10 @@ HloModule pjit_f
 
 ENTRY main.11 {
   Arg_0.1 = bf16[384,1408]{1,0} parameter(0), sharding={devices=[1,16,512]<=[8,16,64]T(1,0,2) last_tile_dim_replicate}
+  Arg_0.2 = bf16[384,1408]{1,0} parameter(1), sharding={devices=[1,16,512]<=[8,16,64]T(1,0,2) last_tile_dim_replicate}
   broadcast.4 = bf16[8,384,1408]{2,1,0} broadcast(Arg_0.1), dimensions={1,2}
   custom-call.5 = bf16[8,384,1408]{2,1,0} custom-call(broadcast.4), custom_call_target="Sharding", custom_call_has_side_effect=true, sharding={unknown shard_as 1}
-  broadcast.2 = bf16[8,384,1408]{2,1,0} broadcast(Arg_0.1), dimensions={1,2}
+  broadcast.2 = bf16[8,384,1408]{2,1,0} broadcast(Arg_0.2), dimensions={1,2}
   custom-call.3 = bf16[8,384,1408]{2,1,0} custom-call(broadcast.2), custom_call_target="Sharding", sharding={devices=[8,1,1,1024]<=[8192] last_tile_dim_replicate}, backend_config="unspecified_dims=[1,2]"
   custom-call.6 = bf16[8,384,1408]{2,1,0} custom-call(custom-call.3), custom_call_target="Sharding", custom_call_has_side_effect=true, sharding={unknown shard_as 1}
   %shard-barrier-to = bf16[8,384,1408]{2,1,0} custom-call(%custom-call.6), custom_call_target="ShardBarrierTo", custom_call_has_side_effect=true

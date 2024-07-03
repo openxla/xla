@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
+#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "third_party/triton/include/triton/Dialect/Triton/IR/Dialect.h"
 #include "third_party/triton/include/triton/Dialect/Triton/IR/Types.h"
@@ -91,7 +92,7 @@ CreateAndTileParameterHloInstruction(std::vector<int64_t> shape_sizes,
 
   auto tiled_hlo = TiledHloInstruction::Create(
       hlo.get(), tile_sizes, tile_strides, CreateAffineMap(tile_sizes, ctx));
-  EXPECT_OK(tiled_hlo);
+  TF_EXPECT_OK(tiled_hlo);
   return std::make_pair(std::move(hlo), std::move(tiled_hlo.value()));
 }
 
@@ -160,7 +161,7 @@ TEST_F(TritonMakeTensorPtrTest, BlockProperties) {
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getShape()), ElementsAre(3, 4));
     EXPECT_THAT(TensorShape(ptr.op), ElementsAre(4, 4));
     EXPECT_THAT(ptr.boundary_checks, ElementsAre(0));
-    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(1, 1));
+    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(20, 1));
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getOffsets()), ElementsAre(0, 0));
     EXPECT_THAT(ptr.op.getOrder(), ElementsAre(1, 0));
   }
@@ -169,7 +170,7 @@ TEST_F(TritonMakeTensorPtrTest, BlockProperties) {
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getShape()), ElementsAre(4, 4));
     EXPECT_THAT(TensorShape(ptr.op), ElementsAre(4, 4));
     EXPECT_TRUE(ptr.boundary_checks.empty());
-    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(1, 1));
+    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(20, 1));
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getOffsets()), ElementsAre(0, 0));
     EXPECT_THAT(ptr.op.getOrder(), ElementsAre(1, 0));
   }
@@ -198,7 +199,7 @@ TEST_F(TritonMakeTensorPtrTest, BlockProperties) {
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getShape()), ElementsAre(3, 4));
     EXPECT_THAT(TensorShape(ptr.op), ElementsAre(4, 4));
     EXPECT_THAT(ptr.boundary_checks, ElementsAre(0));
-    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(1, 1));
+    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(20, 1));
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getOffsets()), ElementsAre(0, 0));
     EXPECT_THAT(ptr.op.getOrder(), ElementsAre(1, 0));
   }
@@ -211,7 +212,8 @@ TEST_F(TritonMakeTensorPtrTest, BlockProperties) {
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getShape()), ElementsAre(3, 4, 6));
     EXPECT_THAT(TensorShape(ptr.op), ElementsAre(4, 4, 8));
     EXPECT_THAT(ptr.boundary_checks, ElementsAre(0, 2));
-    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()), ElementsAre(1, 1, 1));
+    EXPECT_THAT(ConstOpValuesToInt(ptr.op.getStrides()),
+                ElementsAre(3000, 150, 1));
     EXPECT_THAT(ConstOpValuesToInt(ptr.op.getOffsets()), ElementsAre(0, 0, 0));
     EXPECT_THAT(ptr.op.getOrder(), ElementsAre(2, 1, 0));
   }

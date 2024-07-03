@@ -13,14 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <limits>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 #include "absl/strings/str_cat.h"
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#endif
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/client/lib/arithmetic.h"
@@ -38,6 +35,10 @@ limitations under the License.
 #include "xla/tests/test_utils.h"
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
+
+#if TENSORFLOW_USE_ROCM
+#include "rocm/rocm_config.h"
+#endif
 
 namespace xla {
 namespace {
@@ -357,6 +358,13 @@ void ParametricDotTest::ComputeAndCompareR2WithError<int32_t>(
   ComputeAndCompareR2(builder, expected, arguments);
 }
 
+template <>
+void ParametricDotTest::ComputeAndCompareR2WithError<uint8_t>(
+    XlaBuilder* builder, const Array2D<uint8_t>& expected,
+    absl::Span<GlobalData* const> arguments) {
+  ComputeAndCompareR2(builder, expected, arguments);
+}
+
 template <typename NativeT>
 void ParametricDotTest::TestImpl() {
   DotTestParam param = GetParam();
@@ -479,6 +487,8 @@ XLA_TEST_P(ParametricDotTest, TestC64) { TestImpl<std::complex<float>>(); }
 XLA_TEST_P(ParametricDotTest, TestC128) { TestImpl<std::complex<double>>(); }
 #endif
 XLA_TEST_P(ParametricDotTest, TestS32) { TestImpl<int32_t>(); }
+
+XLA_TEST_P(ParametricDotTest, TestU8) { TestImpl<uint8_t>(); }
 
 INSTANTIATE_TEST_CASE_P(DotTests, ParametricDotTest,
                         ::testing::ValuesIn(CreateDotTestParameters()),

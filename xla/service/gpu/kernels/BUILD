@@ -47,7 +47,6 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -206,7 +205,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":custom_kernel",
-        "//xla:statusor",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
@@ -261,7 +259,6 @@ cc_library(
         ":custom_kernel",
         ":cutlass_gemm",
         ":cutlass_gemm_kernels",  # build_cleaner: keep
-        "//xla:statusor",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
         "//xla/stream_executor:kernel_spec",
