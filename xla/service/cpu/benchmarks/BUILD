@@ -94,6 +94,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test_benchmark",
