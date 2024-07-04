@@ -138,6 +138,7 @@ cc_library(
         "//xla/stream_executor",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
