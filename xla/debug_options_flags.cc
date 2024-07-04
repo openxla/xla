@@ -270,7 +270,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_host_memory_offloading(false);
 
-  opts.set_xla_gpu_nccl_terminate_on_error(false);
+  opts.set_xla_gpu_nccl_terminate_on_error(true);
 
   opts.set_xla_use_shardonnay(false);
 
