@@ -10,8 +10,12 @@
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/hlo_pass_interface.h"
 
+#include <stdint.h>
+
+// assuming two dimensional mesh heirarchy of nodes and GPUs within nodes
 #define MESH_X_DIM 4 /* number of nodes */
 #define MESH_Y_DIM 8 /* number of gpus per node */
+#define DEVICE_COUNT (MESH_X_DIM * MESH_Y_DIM) /* total number of devices */
 
 namespace xla {
 
@@ -61,7 +65,8 @@ namespace {
   }
   
   // Creates a module from a single instruction for running a simple pass on
-  std::unique_ptr<HloModule> CreateModuleFromInstruction(HloInstruction* instruction) {
+  std::unique_ptr<HloModule> CreateModuleFromInstruction(
+      HloInstruction* instruction) {
 
     // copy the instruction so as not to modify the HloModule
     std::unique_ptr<HloInstruction> instr_clone 
@@ -75,8 +80,10 @@ namespace {
     // construct the module's configuration
     HloModuleConfig config{computation->ComputeProgramShape()};
 
-    // construct the module from the computation (unique ptr so cleared out of memory)
-    std::unique_ptr<HloModule> module = std::make_unique<HloModule>(std::string(instruction->name()), config);
+    // construct the module from the computation 
+    // (unique ptr so cleared out of memory)
+    std::unique_ptr<HloModule> module = 
+      std::make_unique<HloModule>(std::string(instruction->name()), config);
     module->AddEntryComputation(std::move(computation));
 
     // create a copy so it is completely separate from original module
@@ -92,12 +99,23 @@ namespace {
   // need to declare
   class InstructionSharding;
 
+  // assuming a 2D mesh grid, enumerates all choice 2 shardings of data
+  // TODO: determine if tuples of data will need to be considered for sharding
   std::vector<HloSharding> EnumerateGeneralOpSharding(HloInstruction* operand, 
       HloInstruction* instruction) {
 
     // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
+    std::vector<HloSharding> shardings;
 
-    return;
+    // only sharding array types of data, otherwise no sharding options
+    const Shape op_shape = operand->shape();
+    if (!op_shape.IsArray()) {
+      return shardings;
+    }
+
+    int num_dim = op_shape.rank();
+
+    return shardings;
   }
 
   // Enumerates the shardings of a single operand instruction
@@ -128,6 +146,8 @@ namespace {
     // enumerate through the shardings for each operator of the instruction
     std::vector<std::vector<HloSharding>> all_op_shardings;
 
+    // TODO: pass index of operand to distinguish from other operands
+    // if necessary
     HloInstruction::InstructionVector operands = instruction->operands();
     for (HloInstruction* op : operands) {
       all_op_shardings.push_back(EnumerateOpSharding(op, instruction));
@@ -203,12 +223,77 @@ namespace {
   /* Debugging                                             */
   /*********************************************************/
 
+  void PrintProtoList(std::function<int()> length_fn, std::function<int64_t(int)> getter, int depth=3, std::string list_name="array") {
+    int n = length_fn();
+
+    std::string s = "";
+
+    for (int i = 0; i < n; i++) {
+      s += std::to_string(getter(i)) + " ";
+    }
+
+    VLOG(5) << LOG_HEADER(depth, "InstInfo: ") << list_name << s;
+
+    return; 
+  }
+
+  void PrintShardingInfo(OpSharding sharding, int depth=3) {
+
+    VLOG(5) << LOG_HEADER(depth + 1, "SharInfo: ") << "sharding: ";
+
+    std::function<int64_t(int)> getter = [&sharding](int index) {
+      return (sharding.*static_cast<int64_t (OpSharding::*)(int) const>(&OpSharding::tile_assignment_dimensions))(index);
+    };
+
+    PrintProtoList(
+      std::bind(&OpSharding::tile_assignment_dimensions_size, &sharding),
+      getter,
+      depth + 1, "tile_assignment_dimensions:"
+    );
+
+    getter = [&sharding](int index) {
+      return (sharding.*static_cast<int64_t (OpSharding::*)(int) const>(&OpSharding::tile_assignment_devices))(index);
+    };
+
+    PrintProtoList(
+      std::bind(&OpSharding::tile_assignment_devices_size, &sharding),
+      getter,
+      depth + 1, "tile_assignment_devices:"
+    );
+
+    getter = [&sharding](int index) {
+      return (sharding.*static_cast<int64_t (OpSharding::*)(int) const>(&OpSharding::iota_reshape_dims))(index);
+    };
+
+    PrintProtoList(
+      std::bind(&OpSharding::iota_reshape_dims_size, &sharding),
+      getter,
+      depth + 1, "iota_reshape_dims:"
+    );
+
+    getter = [&sharding](int index) {
+      return (sharding.*static_cast<int32_t (OpSharding::*)(int) const>(&OpSharding::iota_transpose_perm))(index);
+    };
+
+    PrintProtoList(
+      std::bind(&OpSharding::iota_transpose_perm_size, &sharding),
+      getter,
+      depth + 1, "iota_reshape_dims:"
+    );
+  }
+
   void PrintInstructionInfo(HloInstruction* instruction, int depth=3) {
 
     int64_t num_operands = instruction->operand_count();
     VLOG(5) << LOG_HEADER(depth, "InstInfo: ") << "Name: " << instruction->name() << " " << instruction;
     VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "num operands: " << num_operands;
     VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "sharded: " << instruction->has_sharding();
+    VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "shape: " << instruction->shape().ToString();
+
+    if (instruction->has_sharding()) {
+      // convert to Proto and print out proto elements
+      PrintShardingInfo(instruction->sharding_ptr()->ToProto(), depth + 1);
+    }
 
     HloInstruction::InstructionVector operands = instruction->operands();
     for (int i = 0; i < num_operands; i++) {
@@ -271,10 +356,10 @@ namespace {
       for (HloInstruction* instr : computation->instructions()) {
 
         VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString() << " " << instr;
-        // PrintInstructionInfo(instr);
+        PrintInstructionInfo(instr);
 
         // create the relevant sharding information for this instruction
-        InstructionShardingInfo i(instr);
+        // InstructionShardingInfo i(instr);
 
       }
     }
