@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 // assuming two dimensional mesh heirarchy of nodes and GPUs within nodes
+#define NUM_MESH_DIM 2  /* number of dimensions in the mesh grid */
 #define MESH_X_DIM 4 /* number of nodes */
 #define MESH_Y_DIM 8 /* number of gpus per node */
 #define DEVICE_COUNT (MESH_X_DIM * MESH_Y_DIM) /* total number of devices */
@@ -99,23 +100,69 @@ namespace {
   // need to declare
   class InstructionSharding;
 
-  // assuming a 2D mesh grid, enumerates all choice 2 shardings of data
-  // TODO: determine if tuples of data will need to be considered for sharding
-  std::vector<HloSharding> EnumerateGeneralOpSharding(HloInstruction* operand, 
-      HloInstruction* instruction) {
+  // enumerate sharding from the number of dimensions in the data
+  // TODO: could be cached
+  std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
 
     // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
     std::vector<HloSharding> shardings;
 
+    // note: this code is only acceptable for a 2D mesh grid,
+    // would require more complicated solution for higher-dimensional grids
+    for (int x_idx = 0; x_idx < rank; x_idx++) {
+      for (int y_idx = 0; y_idx < rank; y_idx++) {
+        // TODO: have a simple boolean for whether we would like to shard
+        // both mesh grid dimensions on the same data dimension
+
+        // construct tile_assignment_dims
+        std::vector<int64_t> tile_assignment_dims(rank, 1);
+        tile_assignment_dims[x_idx] *= MESH_X_DIM;
+        tile_assignment_dims[y_idx] *= MESH_Y_DIM;
+
+        // NOTE: intentionally may add two shardings if x_idx == y_idx
+        // (i.e. when sharding a single data dimension on all devices)
+        // because ordering of machines may influence resulting communication
+        // costs and overall problem. Adding both shardings to be complete
+        // construct the iota_reshape_dims and iota_tranpose_perm
+        if (x_idx <= y_idx) {
+          std::vector<int64_t> iota_reshape_dims = { MESH_X_DIM };
+          std::vector<int64_t> iota_transpose_perm = { 0 };
+          shardings.push_back(HloSharding::IotaTile(
+            tile_assignment_dims,
+            { MESH_X_DIM },
+            { 0 }
+          ));
+        }
+        if (y_idx <= x_idx) {
+          std::vector<int64_t> iota_reshape_dims = { MESH_X_DIM, MESH_Y_DIM };
+          std::vector<int64_t> iota_transpose_perm = { 1, 0 };
+          shardings.push_back(HloSharding::IotaTile(
+            tile_assignment_dims,
+            { MESH_X_DIM, MESH_Y_DIM },
+            { 1, 0 }
+          ));
+        }
+      }
+    }
+
+    return shardings;
+  }
+
+  // assuming a 2D mesh grid, enumerates all choice 2 shardings of data
+  // TODO: determine if tuples of data will need to be considered for sharding
+  std::vector<HloSharding> EnumerateGeneralOpSharding(HloInstruction* operand, 
+      HloInstruction* instruction) {
+    
+    // operand requires sharding
+    assert(operand->has_sharding());
+
     // only sharding array types of data, otherwise no sharding options
     const Shape op_shape = operand->shape();
     if (!op_shape.IsArray()) {
-      return shardings;
+      return {};
     }
 
-    int num_dim = op_shape.rank();
-
-    return shardings;
+    return EnumerateShardingsFromRank(op_shape.rank());
   }
 
   // Enumerates the shardings of a single operand instruction
