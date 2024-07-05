@@ -276,6 +276,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_shard_autotuning(false);
 
+  opts.set_xla_syntax_sugar_async_ops(false);
+
   opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
   return opts;
