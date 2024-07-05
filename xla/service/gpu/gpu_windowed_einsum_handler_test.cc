@@ -878,12 +878,14 @@ windowed_dot_general_body_ag {
   add.3 = u32[] add(add.1, constant.5)
   ROOT tuple = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) tuple(collective-permute.1, get-tuple-element.2, dynamic-update-slice.1, get-tuple-element.4, add.3)
 } // windowed_dot_general_body_ag
+
 windowed_dot_general_cond_ag {
   param = (f32[2,512,24576]{2,1,0}, f32[24576,24576]{1,0}, f32[2,2048,24576]{2,1,0}, f32[2,2048,24576]{2,1,0}, u32[]) parameter(0)
   get-tuple-element = u32[] get-tuple-element(param), index=4
   constant = u32[] constant(4)
   ROOT compare = pred[] compare(get-tuple-element, constant), direction=LT
 }
+
 ENTRY main.12_spmd {
   param.4 = f8e4m3fn[2,512,24576]{2,1,0} parameter(0), sharding={devices=[1,4,1]<=[4]}
   reshape.8 = f8e4m3fn[2,512,24576]{2,1,0} reshape(param.4)

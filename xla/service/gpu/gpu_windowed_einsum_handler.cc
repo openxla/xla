@@ -48,11 +48,11 @@ namespace m = match;
 // and type conversions of FP8 operands into the bodies of their while loops,
 // i.e. rewrites
 //
-//   inputs --> dequant --> while loop {dynamic-slice/collective-permute/dot}
+//   inputs --> dequant --> while loop {...}
 //
 // into
 //
-//   inputs --> while loop {dequant --> dynamic-slice/collective-permute/dot}.
+//   inputs --> while loop {dequant --> ...}.
 absl::StatusOr<bool> ShiftDequantizationF8(HloInstruction* instr) {
   HloComputation* comp = instr->parent();
   HloInstruction* while_instr = comp->WhileCallInstruction();
