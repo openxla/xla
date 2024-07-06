@@ -102,6 +102,7 @@ namespace {
 
   // enumerate sharding from the number of dimensions in the data
   // TODO: could be cached
+  // Constructs a vector of rank * (rank + 1) shardings
   std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
 
     // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
@@ -168,6 +169,7 @@ namespace {
   // Enumerates the shardings of a single operand instruction
   // depending on the user instruction of the operand and whether it is sharded.
   // This is a general function for iterating through shardings of a single
+  // TODO: should give integer argument here and in EnumerateGeneralOpSharding
   std::vector<HloSharding> EnumerateOpSharding(
       HloInstruction* operand, HloInstruction* instruction) {
     
@@ -406,7 +408,7 @@ namespace {
         PrintInstructionInfo(instr);
 
         // create the relevant sharding information for this instruction
-        // InstructionShardingInfo i(instr);
+        InstructionShardingInfo i(instr);
 
       }
     }
