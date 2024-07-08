@@ -416,7 +416,7 @@ cuda_only_cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@cudnn_frontend_archive//:cudnn_frontend",
+        "@cudnn_frontend_archive//",
         "@eigen_archive//:eigen3",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
