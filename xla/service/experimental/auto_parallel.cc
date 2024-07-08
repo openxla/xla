@@ -405,11 +405,6 @@ namespace {
       all_op_shardings.push_back(EnumerateOpSharding(op, instruction));
     }
 
-    VLOG(5) << LOG_HEADER(2, "Enumerate: ") << "num-ops: " << all_op_shardings.size();
-    for (int i = 0; i < all_op_shardings.size(); i++) {
-      VLOG(5) << LOG_HEADER(2, "Size: ") << i << "/" << all_op_shardings.size() << " " << all_op_shardings[i].size() << "options";
-    }
-
     return CombineShardingVectors(all_op_shardings);
   } 
 
@@ -498,13 +493,10 @@ namespace {
   // output sharding
   void EvaluateShardingStrat(HloModule* module, InstructionSharding* strat) {
 
-    VLOG(5) << LOG_HEADER(2) << "Evaluating sharding strategy";
-
     // apply GSPMD to the module with the sharding strategy
     ClearHloShardings(module);
     ApplyModuleStrategy(module, strat);
     RunGSPMD(module);
-    VLOG(5) << LOG_HEADER(2) << "Done evaluating sharding strategy";
 
     // now evaluate cost
     
@@ -562,8 +554,8 @@ namespace {
 
     for (int i = 0; i < sharding_strats_.size(); i++) {
       EvaluateShardingStrat(single_instr_module_.get(), &sharding_strats_[i]);
-      VLOG(5) << LOG_HEADER(0) << "Done: " << i + 1 << "/" << sharding_strats_.size();
     }
+
     return;
   }
 
@@ -589,10 +581,6 @@ namespace {
     std::unique_ptr<HloModule> module_clone = module->Clone();
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
-    if (module_clone->name() == "jit__multi_slice-clone") {
-      PrintModuleInfo(module_clone.get());
-    }
-
     int num_computations = module_clone->computation_count();
     int comp_idx = 0;
 
@@ -605,14 +593,9 @@ namespace {
       for (HloInstruction* instr : computation->instructions()) {
 
         // create the relevant sharding information for this instruction
-        VLOG(5) << "Creating ISI for " << instr->name();
         InstructionShardingInfo i(instr);
-        VLOG(5) << "Done creating instruction sharding info";
-        VLOG(5) << "Number of instructions in computation: " << computation->instruction_count();
 
       }
-
-      VLOG(5) << "Done iterating through instructions";
     }
 
     VLOG(5) << "Done Testing AutoParallelizer Run";
