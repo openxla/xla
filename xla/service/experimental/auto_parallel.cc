@@ -13,6 +13,7 @@
 #include "xla/service/hlo_pass_interface.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/sharding_propagation.h"
+#include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 
 #include <stdint.h>
 
@@ -463,6 +464,8 @@ namespace {
     // Should not propagate sharding to parameters because parameters should
     // already have shardings
     HloPassPipeline spmd_pipeline("spmd-partitioner");
+
+    // automatically complete the shardings
     spmd_pipeline.AddPass<ShardingPropagation>(
       /* is_spmd */ true,
       /* propagate_metadata */ false,
@@ -470,8 +473,22 @@ namespace {
       /* sharding propagation to parameters */ absl::Span<const bool>({ false })
     );
 
+    // produce an SPMD program
+    spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
+      module->config().num_partitions(),
+      module->config().replica_count()
+    );
+
     // run pipeline
+    VLOG(5) << "BEFOR ==============================";
+    PrintModuleInfo(module);
+    VLOG(5) << "BEFOR ==============================";
+
     spmd_pipeline.Run(module);
+
+    VLOG(5) << "AFTER ==============================";
+    PrintModuleInfo(module);
+    VLOG(5) << "AFTER ==============================";
 
     return;
   }
@@ -493,10 +510,14 @@ namespace {
   // output sharding
   void EvaluateShardingStrat(HloModule* module, InstructionSharding* strat) {
 
+    // clone the module to avoid clobbering future evaluations
+    std::unique_ptr<HloModule> eval_module = module->Clone();
+
     // apply GSPMD to the module with the sharding strategy
-    ClearHloShardings(module);
-    ApplyModuleStrategy(module, strat);
-    RunGSPMD(module);
+    // TODO: should these take in unique pointers or is regulard pointer ok?
+    ClearHloShardings(eval_module.get());
+    ApplyModuleStrategy(eval_module.get(), strat);
+    RunGSPMD(eval_module.get());
 
     // now evaluate cost
     

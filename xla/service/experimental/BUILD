@@ -34,6 +34,7 @@ cc_library(
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:sharding_propagation",
+        "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/status:status",
