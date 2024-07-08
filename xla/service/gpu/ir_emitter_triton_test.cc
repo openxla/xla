@@ -3282,6 +3282,10 @@ TEST_F(TritonGemmLevel2Test, SplitLHSInputOutputIsFused) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
   }
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Skipped until corresponding issue on ROCm is not fixed.";
+  }
+
   const std::string kHloText = R"(
 ENTRY e {
   p0t = (s8[5,18,20,150]) parameter(0)
