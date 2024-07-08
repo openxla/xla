@@ -71,8 +71,12 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":tsl_status_internal",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:cord",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:stringpiece",
     ],
 )
 
@@ -80,10 +84,7 @@ tsl_cc_test(
     name = "tsl_status_test",
     srcs = ["tsl_status_test.cc"],
     deps = [
-        ":tsl_status",
         ":tsl_status_internal",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -101,9 +102,8 @@ tsl_gpu_library(
     hdrs = ["tsl_status_helper.h"],
     visibility = ["//visibility:public"],
     deps = [
-        ":tsl_status",
         ":tsl_status_internal",
-        "@tsl//tsl/platform:errors",
+        "@com_google_absl//absl/status",
         "@tsl//tsl/platform:status",
     ],
 )
