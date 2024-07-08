@@ -7,6 +7,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -320,6 +321,12 @@ namespace {
     return EnumerateShardingsFromRank(op_shape.rank());
   }
 
+  // TODO: figure out a better way to deal with tuples for data
+  std::vector<HloSharding> EnumerateTupleOpSharding(HloInstruction* operand,
+      HloInstruction* instruction) {
+    return {};
+  }
+
   // Enumerates the shardings of a single operand instruction
   // depending on the user instruction of the operand and whether it is sharded.
   // This is a general function for iterating through shardings of a single
@@ -335,6 +342,8 @@ namespace {
     // otherwise, perform sharding based on type of instruction
     // we are sharding operations for (may want to case on Dot product)
     switch (instruction->opcode()) {
+    case HloOpcode::kTuple:
+      return EnumerateTupleOpSharding(operand, instruction);
     default:
       return EnumerateGeneralOpSharding(operand, instruction);
     }
@@ -362,7 +371,8 @@ namespace {
     // otherwise recurse
     std::vector<HloSharding> shardings = sharding_vecs[num_vecs - 1];
     std::vector<InstructionSharding> sub_strats = CombineShardingVectors(
-      std::vector<std::vector<HloSharding>>(sharding_vecs.begin(), sharding_vecs.end() - 1)
+      std::vector<std::vector<HloSharding>>(sharding_vecs.begin(), 
+        sharding_vecs.end() - 1)
     );
 
     std::vector<InstructionSharding> strats;
@@ -395,6 +405,11 @@ namespace {
       all_op_shardings.push_back(EnumerateOpSharding(op, instruction));
     }
 
+    VLOG(5) << LOG_HEADER(2, "Enumerate: ") << "num-ops: " << all_op_shardings.size();
+    for (int i = 0; i < all_op_shardings.size(); i++) {
+      VLOG(5) << LOG_HEADER(2, "Size: ") << i << "/" << all_op_shardings.size() << " " << all_op_shardings[i].size() << "options";
+    }
+
     return CombineShardingVectors(all_op_shardings);
   } 
 
@@ -404,7 +419,7 @@ namespace {
 
   // Major steps prior to evaluating the cost
   //  0. clone the original module?
-  //  1. clear the module of any shardings (does GSPMD insert any other metadata?)
+  //  1. clear the module of shardings (does GSPMD insert any other metadata?)
   //  2. apply the shardings from a strategy
   //  3. run GSPMD
   //  4. evaluate the cost of the resulting module
@@ -460,17 +475,8 @@ namespace {
       /* sharding propagation to parameters */ absl::Span<const bool>({ false })
     );
 
-    VLOG(5) << "BEFORE ============================";
-    PrintModuleInfo(module);
-    VLOG(5) << "BEFORE ============================";
-
     // run pipeline
     spmd_pipeline.Run(module);
-
-
-    VLOG(5) << "AFTER =============================";
-    PrintModuleInfo(module);
-    VLOG(5) << "AFTER =============================";
 
     return;
   }
@@ -492,10 +498,13 @@ namespace {
   // output sharding
   void EvaluateShardingStrat(HloModule* module, InstructionSharding* strat) {
 
+    VLOG(5) << LOG_HEADER(2) << "Evaluating sharding strategy";
+
     // apply GSPMD to the module with the sharding strategy
     ClearHloShardings(module);
     ApplyModuleStrategy(module, strat);
     RunGSPMD(module);
+    VLOG(5) << LOG_HEADER(2) << "Done evaluating sharding strategy";
 
     // now evaluate cost
     
@@ -553,8 +562,8 @@ namespace {
 
     for (int i = 0; i < sharding_strats_.size(); i++) {
       EvaluateShardingStrat(single_instr_module_.get(), &sharding_strats_[i]);
+      VLOG(5) << LOG_HEADER(0) << "Done: " << i + 1 << "/" << sharding_strats_.size();
     }
-
     return;
   }
 
@@ -567,37 +576,46 @@ namespace {
 
   // overriden functions from class
   // modifies the sharding specification of the instructions in the module
+  // TODO: need to ignore the default modules that are not the core computation
+  //  e.g. jit_convert_element_type, jit_broadcast_in_dim, jit__multi_slice
+  // otherwise, just too much time spent on these things
   absl::StatusOr<bool> AutoParallelizer::Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
 
-    VLOG(5) << "Testing run for AutoParallelizer";
-
-    PrintModuleInfo(module);
+    VLOG(5) << "Testing AutoParallelizer Run";
 
     // create a clone of the module, then run off of that 
     std::unique_ptr<HloModule> module_clone = module->Clone();
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
+    if (module_clone->name() == "jit__multi_slice-clone") {
+      PrintModuleInfo(module_clone.get());
+    }
 
-    PrintModuleInfo(module_clone.get());
-
+    int num_computations = module_clone->computation_count();
+    int comp_idx = 0;
 
     // iterate through HloModule computations
     for (HloComputation* computation : module_clone->computations()) {
-      
-      VLOG(5) << LOG_HEADER(1) << "computation: " << computation->name();
 
+      int num_instructions = computation->instruction_count();
+      int instr_idx = 0;
+      
       for (HloInstruction* instr : computation->instructions()) {
 
-        VLOG(5) << LOG_HEADER(2) << "instruction: " << instr->name() << " " << instr->shape().ToString() << " " << instr;
-        PrintInstructionInfo(instr);
-
         // create the relevant sharding information for this instruction
+        VLOG(5) << "Creating ISI for " << instr->name();
         InstructionShardingInfo i(instr);
+        VLOG(5) << "Done creating instruction sharding info";
+        VLOG(5) << "Number of instructions in computation: " << computation->instruction_count();
 
       }
+
+      VLOG(5) << "Done iterating through instructions";
     }
+
+    VLOG(5) << "Done Testing AutoParallelizer Run";
     
     return true;
   }
