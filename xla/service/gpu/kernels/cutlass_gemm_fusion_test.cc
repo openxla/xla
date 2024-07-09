@@ -32,7 +32,15 @@ limitations under the License.
 
 namespace xla::gpu {
 
-class CutlassFusionTest : public HloTestBase {};
+class CutlassFusionTest : public HloTestBase {
+ public:
+  int SharedMemorySize() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .shared_memory_per_block_optin();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // Pattern matching tests
@@ -351,7 +359,13 @@ TEST_F(CutlassFusionTest, RowMajorGemmWithUpcastKernel) {
                                       error_spec, /*run_hlo_passes=*/false));
 }
 
+constexpr int kRequiredSharedMemorySize = 147456;
+
 TEST_F(CutlassFusionTest, RowMajorGemmWithDynamicUpdateSliceKernel) {
+  if (SharedMemorySize() < kRequiredSharedMemorySize) {
+    GTEST_SKIP_("The GPU does not have sufficient shared memory");
+  }
+
   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
 
   const char* hlo_text_cublas = R"(
@@ -421,6 +435,10 @@ TEST_F(CutlassFusionTest, RowMajorGemmWithDynamicUpdateSliceKernel) {
 
 TEST_F(CutlassFusionTest,
        RowMajorGemmWithDynamicUpdateSliceKernelWithoutBitcast) {
+  if (SharedMemorySize() < kRequiredSharedMemorySize) {
+    GTEST_SKIP_("The GPU does not have sufficient shared memory");
+  }
+
   ErrorSpec error_spec{/*aabs=*/1e-3, /*arel=*/1e-3};
 
   const char* hlo_text_cublas = R"(
