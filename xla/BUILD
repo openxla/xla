@@ -10,7 +10,7 @@ load(
 )
 
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
-load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
+load("@tsl//third_party/compute_library:build_defs.bzl", "if_enable_acl")
 load("//xla:package_groups.bzl", "xla_package_groups")
 load("//xla:xla.bzl", "xla_bzl_library", "xla_cc_test", "xla_py_proto_library")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")

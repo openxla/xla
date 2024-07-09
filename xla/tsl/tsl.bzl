@@ -12,7 +12,7 @@ load(
     "onednn_v3_define",
 )
 load(
-    "//third_party/compute_library:build_defs.bzl",
+    "@tsl//third_party/compute_library:build_defs.bzl",
     "if_enable_acl",
 )
 load(

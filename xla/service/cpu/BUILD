@@ -12,7 +12,7 @@ load(
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
-    "//third_party/compute_library:build_defs.bzl",
+    "@tsl//third_party/compute_library:build_defs.bzl",
     "acl_deps",
     "if_enable_acl",
 )
