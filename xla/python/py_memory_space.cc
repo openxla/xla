@@ -22,7 +22,6 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"  // from @nanobind
 #include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
-#include "xla/pjrt/pjrt_client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/py_client.h"
