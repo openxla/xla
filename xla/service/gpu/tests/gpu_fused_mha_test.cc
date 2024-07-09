@@ -107,7 +107,7 @@ class MultiHeadedAttentionTest : public GpuCodegenTest {
   }
 
   void ExecuteAndCompare(absl::string_view hlo_string,
-                         const std::vector<Literal *> &literals,
+                         const std::vector<Literal*>& literals,
                          int expected_num_fmha_calls = 1) {
     TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> reference_module,
                             ParseAndReturnVerifiedModule(hlo_string));
@@ -134,7 +134,7 @@ class MultiHeadedAttentionTest : public GpuCodegenTest {
     EXPECT_TRUE(
         LiteralTestUtil::Near(expected_result, actual_result, mha_error_spec_));
 
-    // Run FusedMHA through command buffer
+    // Run FusedMHA/FuseMHABackward thunk through command buffer
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
     debug_options.set_xla_gpu_graph_min_graph_size(1);

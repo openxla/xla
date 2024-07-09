@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/memset_thunk.h"
+#include "xla/service/gpu/runtime/fused_mha_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
@@ -151,6 +152,18 @@ static absl::StatusOr<Command> Convert(const FusedMHAThunk& thunk) {
       thunk.seqlen_k_buffer());
 }
 
+static absl::StatusOr<Command> Convert(const FusedMHABackwardThunk& thunk) {
+  return std::make_unique<FusedMHABackwardCmd>(
+      thunk.execution_stream_id(), thunk.config(),
+      thunk.bmm1_grad_gemm1_rhs_buffer(), thunk.bmm1_grad_gemm2_rhs_buffer(),
+      thunk.bmm2_grad_gemm1_lhs_buffer(), thunk.bmm2_grad_gemm2_rhs_buffer(),
+      thunk.d_output_buffer(), thunk.scratch_buffer(),
+      thunk.d_bmm1_lhs_buffer(), thunk.d_bmm1_rhs_buffer(),
+      thunk.d_bmm2_rhs_buffer(), thunk.d_s_buffer(), thunk.d_bias_buffer(),
+      thunk.fwd_output_buffer(), thunk.bias_buffer(), thunk.seqlen_q_buffer(),
+      thunk.seqlen_k_buffer());
+}
+
 static absl::StatusOr<Command> Convert(
     const ConditionalThunk& thunk,
     CommandBufferCmdSequence::SynchronizationMode synchronization_mode) {
@@ -265,6 +278,8 @@ static absl::Status AppendCommands(
       return append(Convert<CustomKernelThunk>(thunk));
     case Thunk::Kind::kFusedMHA:
       return append(Convert<FusedMHAThunk>(thunk));
+    case Thunk::Kind::kFusedMHABackward:
+      return append(Convert<FusedMHABackwardThunk>(thunk));
     case Thunk::Kind::kKernel:
       return append(Convert<KernelThunk>(thunk));
     case Thunk::Kind::kGemm:
