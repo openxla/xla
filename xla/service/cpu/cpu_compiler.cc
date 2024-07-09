@@ -443,7 +443,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   const DebugOptions& debug_options = module->config().debug_options();
   const int64_t num_partitions = module->config().num_partitions();
 
-  VLOG(2) << "num_partitions=" << num_partitions << " use_spmd_partitioning=" << module->config().use_spmd_partitioning();
+  VLOG(2) << "module_name=" << module->name();
+  VLOG(2) << "num_partitions=" << module->config().num_partitions();
+  VLOG(2) << "replica_count=" << module->config().replica_count();
+  VLOG(2) << "use_spmd_partitioning=" << module->config().use_spmd_partitioning();
 
   RunDummyPipeline(module);
 

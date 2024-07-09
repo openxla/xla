@@ -460,6 +460,16 @@ namespace {
   // This function runs the sharding propagation pipeline pass on the module
   void RunGSPMD(HloModule* module) {
 
+    HloModuleConfig& config = module->mutable_config();
+    config.set_num_partitions(DEVICE_COUNT);
+    config.set_replica_count(1);
+    config.set_use_spmd_partitioning(true);
+
+    VLOG(2) << "module_name=" << module->name();
+    VLOG(2) << LOG_HEADER(1) << "num_partitions=" << module->config().num_partitions();
+    VLOG(2) << LOG_HEADER(1) << "replica_count=" << module->config().replica_count();
+    VLOG(2) << LOG_HEADER(1) << "use_spmd_partitioning=" << module->config().use_spmd_partitioning();
+
     // Setup HloPass for sharding propagation
     // Should not propagate sharding to parameters because parameters should
     // already have shardings
@@ -478,6 +488,8 @@ namespace {
       module->config().num_partitions(),
       module->config().replica_count()
     );
+
+    VLOG(5) << "Added spmd partitioner pass";
 
     // run pipeline
     VLOG(5) << "BEFOR ==============================";
@@ -580,6 +592,16 @@ namespace {
     return;
   }
 
+  // TODO: determine if this is a valid approach to determine 
+  // if the module is the main module for the computations
+  bool ShardableModule(HloModule* module) {
+
+    std::string name = module->name();
+    return name.find("convert_element_type") == std::string::npos &&
+      name.find("broadcast_in_dim") == std::string::npos &&
+      name.find("_multi_slice") == std::string::npos;
+  }
+
 }   // namespace
 
 
@@ -595,6 +617,12 @@ namespace {
   absl::StatusOr<bool> AutoParallelizer::Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
+
+    if (!ShardableModule(module)) {
+      VLOG(5) << LOG_HEADER(0) << "module = " 
+        << module->name() << " not shardable";
+      return false;
+    }
 
     VLOG(5) << "Testing AutoParallelizer Run";
 
