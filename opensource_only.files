@@ -9,15 +9,9 @@ compiler/xla/tsl/mkl/build_defs.bzl:
 compiler/xla/tsl/package_groups.bzl:
 third_party/BUILD:
 third_party/__init__:.py
-third_party/compute_library/BUILD:
-third_party/compute_library/build_defs.bzl:
 third_party/implib_so/BUILD:
 third_party/implib_so/get_symbols.py:
 third_party/implib_so/make_stub.py:
-third_party/llvm_openmp/BUILD:
-third_party/llvm_openmp/cmake_vars.bzl:
-third_party/llvm_openmp/expand_cmake_vars:.py
-third_party/llvm_openmp/openmp.bzl:
 third_party/ortools/BUILD:
 third_party/ortools/glpk.BUILD:
 third_party/ortools/ortools.patch:
@@ -32,7 +26,6 @@ third_party/py/python_init_repositories.bzl:
 third_party/py/python_init_rules.bzl:
 third_party/py/python_init_toolchains.bzl:
 third_party/py/python_repo.bzl:
-third_party/python_runtime/BUILD:
 third_party/repo.bzl:
 third_party/stablehlo/BUILD:
 tools/toolchains/BUILD:

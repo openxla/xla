@@ -7,47 +7,6 @@ load("@build_bazel_rules_apple//apple:repositories.bzl", "apple_rules_dependenci
 load("@build_bazel_rules_swift//swift:repositories.bzl", "swift_rules_dependencies")
 load("@tsl//:workspace0.bzl", "tsl_workspace0")
 
-def _tf_bind():
-    """Bind targets for some external repositories"""
-    ##############################################################################
-    # BIND DEFINITIONS
-    #
-    # Please do not add bind() definitions unless we have no other choice.
-    # If that ends up being the case, please leave a comment explaining
-    # why we can't depend on the canonical build target.
-
-    # Needed by Protobuf
-    native.bind(
-        name = "grpc_cpp_plugin",
-        actual = "@com_github_grpc_grpc//src/compiler:grpc_cpp_plugin",
-    )
-    native.bind(
-        name = "grpc_python_plugin",
-        actual = "@com_github_grpc_grpc//src/compiler:grpc_python_plugin",
-    )
-
-    native.bind(
-        name = "grpc_lib",
-        actual = "@com_github_grpc_grpc//:grpc++",
-    )
-
-    native.bind(
-        name = "grpc_lib_unsecure",
-        actual = "@com_github_grpc_grpc//:grpc++_unsecure",
-    )
-
-    # Needed by Protobuf
-    native.bind(
-        name = "python_headers",
-        actual = str(Label("//third_party/python_runtime:headers")),
-    )
-
-    # Needed by Protobuf
-    native.bind(
-        name = "six",
-        actual = "@six_archive//:six",
-    )
-
 def workspace():
     tsl_workspace0()
 
@@ -124,10 +83,6 @@ def workspace():
     apple_rules_dependencies()
     swift_rules_dependencies()
     apple_support_dependencies()
-
-    # If a target is bound twice, the later one wins, so we have to do tf bindings
-    # at the end of the WORKSPACE file.
-    _tf_bind()
 
 # Alias so it can be loaded without assigning to a different symbol to prevent
 # shadowing previous loads and trigger a buildifier warning.
