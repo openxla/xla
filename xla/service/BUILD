@@ -682,6 +682,7 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
