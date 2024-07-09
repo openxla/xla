@@ -17,7 +17,6 @@ limitations under the License.
 
 #include "nanobind/nanobind.h"  // from @nanobind
 #include "xla/python/gpu_support.h"
-#include "xla/python/logging.h"
 #include "xla/python/py_client.h"  // IWYU pragma: keep
 
 namespace xla {

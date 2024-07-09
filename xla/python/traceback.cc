@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "nanobind/nanobind.h"  // from @nanobind
