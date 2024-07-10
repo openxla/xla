@@ -109,7 +109,7 @@ namespace {
 
     HloInstruction::InstructionVector operands = instruction->operands();
     for (int i = 0; i < num_operands; i++) {
-      VLOG(5) << LOG_HEADER(depth, "InstInfo: ") << i << ": " << operands[i]->name() << " " << operands[i]->shape().ToString() << " " << operands[i];
+      VLOG(5) << LOG_HEADER(depth + 1, "InstInfo: ") << "op " << i << ": " << operands[i]->name() << " " << operands[i]->shape().ToString() << " " << operands[i];
     }
 
     return;
@@ -503,15 +503,11 @@ namespace {
   // This function runs the sharding propagation pipeline pass on the module
   void RunGSPMD(HloModule* module) {
 
+    // TODO: will need to remove manual setting of this eventually
     HloModuleConfig& config = module->mutable_config();
     config.set_num_partitions(DEVICE_COUNT);
     config.set_replica_count(1);
     config.set_use_spmd_partitioning(true);
-
-    VLOG(2) << "module_name=" << module->name();
-    VLOG(2) << LOG_HEADER(1) << "num_partitions=" << module->config().num_partitions();
-    VLOG(2) << LOG_HEADER(1) << "replica_count=" << module->config().replica_count();
-    VLOG(2) << LOG_HEADER(1) << "use_spmd_partitioning=" << module->config().use_spmd_partitioning();
 
     // Setup HloPass for sharding propagation
     // Should not propagate sharding to parameters because parameters should
@@ -532,18 +528,8 @@ namespace {
       module->config().replica_count()
     );
 
-    VLOG(5) << "Added spmd partitioner pass";
-
     // run pipeline
-    VLOG(5) << "BEFOR ==============================";
-    PrintModuleInfo(module);
-    VLOG(5) << "BEFOR ==============================";
-
     spmd_pipeline.Run(module);
-
-    VLOG(5) << "AFTER ==============================";
-    PrintModuleInfo(module);
-    VLOG(5) << "AFTER ==============================";
 
     return;
   }
