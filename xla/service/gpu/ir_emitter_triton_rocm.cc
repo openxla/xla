@@ -85,7 +85,7 @@ absl::Status CreateTritonPipeline(
   // TODO ROCm Check if we want to compare MI100 and greater
   pm.addPass(mlir::createTritonAMDGPUOptimizeEpiloguePass());
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
-  if(block_level_parameters.num_stages == 0 &&
+  if (block_level_parameters.num_stages == 0 &&
      ccRocm.has_amd_matrix_core()) {
     pm.addPass(mlir::createTritonAMDGPUStreamPipelinePass());
     pm.addPass(mlir::createCanonicalizerPass());
@@ -93,7 +93,7 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
   pm.addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mt::gpu::createTritonGPUReduceDataDuplication());
-  if(block_level_parameters.num_stages == 0) {
+  if (block_level_parameters.num_stages != 0) {
     pm.addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
   pm.addPass(mlir::createCSEPass());

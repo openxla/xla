@@ -635,8 +635,9 @@ absl::Status EnsureTritonSupportsComputeCapability(
 
   if (cuda_compute_capability && !cuda_compute_capability->IsAtLeastAmpere()) {
     return absl::FailedPreconditionError(
-        absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
-                     "capability 8.0) and up, but got compute capability ",
+        absl::StrCat("CUDA Triton support is only enabled for Ampere GPUs ",
+                     "(compute  capability 8.0) and up, but got compute ",
+                     "capability ",
                      cuda_compute_capability->major, ".",
                      cuda_compute_capability->minor, "."));
   }
