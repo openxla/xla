@@ -455,9 +455,9 @@ std::optional<HloBytesUsageDesc> GetHloBytesUsageDesc(
       if (ref_desc.tile_size >= max_tile_size) {
         bool reuse_operand =
             ref_desc.ref_count == 0 && output_bytes <= ref_desc.elem_bytes;
-        if (ref_desc.tile_size > max_tile_size) {
-          can_reuse = reuse_operand;
-        }
+        can_reuse = ref_desc.tile_size > max_tile_size
+                        ? reuse_operand
+                        : can_reuse || reuse_operand;
         if (reuse_operand) {
           reuse_desc_id = operand_desc.ref_id;
         }
