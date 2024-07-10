@@ -719,6 +719,80 @@ TEST_F(MlirTransposeFusionTest, PreferLargeVectorSize210) {
       kHloString, "// CHECK: xla_gpu.allocate_shared : tensor<128x1x129xi8>"));
 }
 
+TEST_F(MlirTransposeFusionTest, SetThreadsPerBlockTo256) {
+  auto kHloString = R"(
+    HloModule Transpose
+    %fused_computation {
+      %p0 = u8[256,256,256] parameter(0)
+      ROOT %transpose = u8[256,256,256] transpose(%p0), dimensions={2,1,0}
+    }
+    ENTRY main {
+      %param = u8[256,256,256] parameter(0)
+      ROOT %fusion = u8[256,256,256] fusion(%param), kind=kInput,
+        calls=%fused_computation
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto fusion_emitter = GetEmitter(analysis);
+  EXPECT_TRUE(fusion_emitter->launch_dimensions().num_threads_per_block() ==
+              256);
+}
+
+TEST_F(MlirTransposeFusionTest, SetThreadsPerBlockTo512) {
+  auto kHloString = R"(
+    HloModule Transpose
+    %fused_computation {
+      %p0 = u8[256,256,256] parameter(0)
+      %transpose = u8[256,256,256] transpose(%p0), dimensions={2,1,0}
+      ROOT %convert = bf16[256,256,256] convert(%transpose)
+    }
+    ENTRY main {
+      %param0 = u8[256,256,256] parameter(0)
+      ROOT %fusion = bf16[256,256,256] fusion(%param0), kind=kInput,
+        calls=%fused_computation
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto fusion_emitter = GetEmitter(analysis);
+  EXPECT_TRUE(fusion_emitter->launch_dimensions().num_threads_per_block() ==
+              512);
+}
+
+TEST_F(MlirTransposeFusionTest, SetThreadsPerBlockTo1024) {
+  auto kHloString = R"(
+    HloModule Transpose
+    %fused_computation {
+      %p0 = u8[256,256,256] parameter(0)
+      %neg = u8[256,256,256] negate(%p0)
+      %transpose0 = u8[256,256,256] transpose(%p0), dimensions={2,1,0}
+      %transpose1 = u8[256,256,256] transpose(%neg), dimensions={2,1,0}
+      %convert0 = bf16[256,256,256] convert(%transpose0)
+      %convert1 = bf16[256,256,256] convert(%transpose1)
+      ROOT %tuple = (bf16[256,256,256], bf16[256,256,256]) tuple(%convert0, %convert1)
+    }
+    ENTRY main {
+      %param0 = u8[256,256,256] parameter(0)
+      ROOT %fusion = (bf16[256,256,256], bf16[256,256,256]) fusion(%param0), kind=kInput,
+        calls=%fused_computation
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloString));
+  auto* root = module->entry_computation()->root_instruction();
+  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto fusion_emitter = GetEmitter(analysis);
+  EXPECT_TRUE(fusion_emitter->launch_dimensions().num_threads_per_block() ==
+              1024);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

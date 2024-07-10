@@ -99,6 +99,19 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   llvm::SmallVector<mlir::AffineExpr, 4> GetThreadOffsets(
       mlir::MLIRContext* ctx) const;
 
+  int ChooseSuitableThreadsNumber(
+      const stream_executor::DeviceDescription& device_info);
+  std::optional<int> ComputeRegNumBeforeShmemWrite(
+      absl::InlinedVector<HloInstructionAdaptor, 2>& post_order,
+      absl::flat_hash_map<const HloInstruction*, int>& instr_to_ids,
+      absl::InlinedVector<int, 2>& live_range,
+      const HloFusionAdaptor& fusion_adaptor, mlir::MLIRContext* mlir_context);
+  std::optional<int> ComputeRegNumAfterShmemRead(
+      absl::InlinedVector<HloInstructionAdaptor, 2>& post_order,
+      absl::flat_hash_map<const HloInstruction*, int>& instr_to_ids,
+      absl::InlinedVector<int, 2>& live_range,
+      const HloFusionAdaptor& fusion_adaptor, mlir::MLIRContext* mlir_context);
+
   TransposeDescription transpose_;
   Vector3 permutation_;
   std::vector<int64_t> input_shape_;
@@ -106,6 +119,9 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
   std::vector<int64_t> block_counts_;
   int vector_size_;
   int block_size_;
+  int threads_per_block_;
+  int num_rows_;
+  int64_t shmem_usage_per_block_;
 
   std::vector<const HloInstruction*> shmem_transposes_;
   std::vector<const HloInstruction*> shmem_transpose_roots_;
