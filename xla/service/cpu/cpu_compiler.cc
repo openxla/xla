@@ -101,7 +101,6 @@ limitations under the License.
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/convolution_group_converter.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/auto_parallel.h"
 #include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/compiler_functor.h"
 #include "xla/service/cpu/conv_canonicalization.h"
@@ -126,6 +125,7 @@ limitations under the License.
 #include "xla/service/dynamic_padder.h"
 #include "xla/service/eigh_expander.h"
 #include "xla/service/executable.h"
+#include "xla/service/experimental/auto_parallel.h"
 #include "xla/service/flatten_call_graph.h"
 #include "xla/service/float_normalization.h"
 #include "xla/service/float_support.h"
@@ -443,7 +443,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   const DebugOptions& debug_options = module->config().debug_options();
   const int64_t num_partitions = module->config().num_partitions();
 
-  VLOG(2) << "num_partitions=" << num_partitions << " use_spmd_partitioning=" << module->config().use_spmd_partitioning();
+  VLOG(2) << "module_name=" << module->name();
+  VLOG(2) << "num_partitions=" << module->config().num_partitions();
+  VLOG(2) << "replica_count=" << module->config().replica_count();
+  VLOG(2) << "use_spmd_partitioning=" << module->config().use_spmd_partitioning();
 
   RunDummyPipeline(module);
 
