@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/gpu_fused_mha_runner.h"
 #include "xla/service/gpu/runtime/custom_call_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_clique_key.h"

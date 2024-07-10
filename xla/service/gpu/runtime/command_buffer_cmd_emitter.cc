@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/memset_thunk.h"
-#include "xla/service/gpu/runtime/fused_mha_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"

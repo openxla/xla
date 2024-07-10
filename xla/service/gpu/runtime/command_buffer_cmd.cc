@@ -70,7 +70,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
-#include "xla/stream_executor/lazy_op_runner.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/types.h"  // IWYU pragma: keep
 #include "xla/util.h"
