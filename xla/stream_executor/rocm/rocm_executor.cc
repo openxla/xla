@@ -856,6 +856,7 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
       GpuDriver::GetMaxRegistersPerBlock(device).value());
   builder.set_threads_per_warp(GpuDriver::GetThreadsPerWarp(device).value());
   builder.set_registers_per_core_limit(64 * 1024);
+  builder.set_runtime_version(std::to_string(TF_ROCM_VERSION));
 
   int cc_major = 0;
   int cc_minor = 0;
