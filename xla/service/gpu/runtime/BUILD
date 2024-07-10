@@ -127,7 +127,6 @@ cc_library(
         ":gpublas_lt_matmul_thunk",
         ":kernel_thunk",
         ":memset_thunk",
-        ":fused_mha_thunk",
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
         ":nccl_collective_thunk",
