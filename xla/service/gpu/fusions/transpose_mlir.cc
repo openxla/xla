@@ -426,6 +426,8 @@ std::optional<HloBytesUsageDesc> GetHloBytesUsageDesc(
     absl::InlinedVector<HloBytesUsageDesc, 2>* instr_bytes_desc,
     absl::flat_hash_map<const HloInstruction*, int>& instr_to_ids) {
   auto* instr = &instr_adaptor.instruction();
+  // These Hlo which only involve index computation don't need to
+  // allocate new registers.
   if (instr->opcode() == HloOpcode::kBroadcast ||
       instr->opcode() == HloOpcode::kBitcast) {
     auto* input = &(instr_adaptor.GetOperand(0).instruction());
@@ -453,6 +455,8 @@ std::optional<HloBytesUsageDesc> GetHloBytesUsageDesc(
         }
       }
       if (ref_desc.tile_size >= max_tile_size) {
+        // Dest can reuse src registers iff src has no next user and
+        // owned bytes is larger than needed bytes.
         bool reuse_operand =
             ref_desc.ref_count == 0 && output_bytes <= ref_desc.elem_bytes;
         can_reuse = ref_desc.tile_size > max_tile_size
