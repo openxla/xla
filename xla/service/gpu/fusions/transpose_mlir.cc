@@ -687,7 +687,7 @@ std::optional<int> MlirTransposeFusion::ComputeRegNumAfterShmemRead(
     absl::InlinedVector<HloInstructionAdaptor, 2>& post_order,
     absl::flat_hash_map<const HloInstruction*, int>& instr_to_ids,
     absl::InlinedVector<int, 2>& live_range,
-    const HloFusionAdaptor& fusion_adaptor, MLIRContext* mlir_context) {
+    const HloFusionAdaptor& fusion_adaptor) {
   // Due to the second stage of emitter read all of the elements in shmem, we
   // aggregate the bytes usage of transpose heroes firstly.
   int instrs_size = post_order.size();
@@ -747,9 +747,8 @@ int MlirTransposeFusion::ChooseSuitableThreadsNumber(
   std::optional<int> regs_before_write =
       ComputeRegNumBeforeShmemWrite(post_order_with_params, instr_to_ids,
                                     live_range, fusion_adaptor, &mlir_context);
-  std::optional<int> regs_after_read =
-      ComputeRegNumAfterShmemRead(post_order_with_params, instr_to_ids,
-                                  live_range, fusion_adaptor, &mlir_context);
+  std::optional<int> regs_after_read = ComputeRegNumAfterShmemRead(
+      post_order_with_params, instr_to_ids, live_range, fusion_adaptor);
   if (regs_before_write.has_value() && regs_after_read.has_value()) {
     registers_per_block =
         std::max(regs_before_write.value(), regs_after_read.value());

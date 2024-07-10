@@ -110,7 +110,7 @@ class MlirTransposeFusion : public MlirFusionEmitterBase {
       absl::InlinedVector<HloInstructionAdaptor, 2>& post_order,
       absl::flat_hash_map<const HloInstruction*, int>& instr_to_ids,
       absl::InlinedVector<int, 2>& live_range,
-      const HloFusionAdaptor& fusion_adaptor, mlir::MLIRContext* mlir_context);
+      const HloFusionAdaptor& fusion_adaptor);
 
   TransposeDescription transpose_;
   Vector3 permutation_;
