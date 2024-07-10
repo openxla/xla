@@ -21,10 +21,12 @@ limitations under the License.
 #include <utility>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"  // from @llvm-project
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
@@ -771,11 +773,14 @@ class RewriteAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
     bool is_supported_f16_atomic =
         element_type.isF16() &&
         cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::VOLTA);
+    bool is_supported_bf16_atomic =
+        element_type.isBF16() &&
+        cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::HOPPER);
     bool is_supported_f64_atomic =
         element_type.isF64() &&
         cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::PASCAL_);
     if (!element_type.isF32() && !is_supported_f16_atomic &&
-        !is_supported_f64_atomic) {
+        !is_supported_bf16_atomic && !is_supported_f64_atomic) {
       return failure();
     }
     b.create<ml::AtomicRMWOp>(loc, ml::AtomicBinOp::fadd, addr, modifier_arg,

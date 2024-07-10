@@ -13,25 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_CPU_RUNTIME_TASK_H_
-#define XLA_SERVICE_CPU_RUNTIME_TASK_H_
+#ifndef XLA_SERVICE_GPU_PREVENT_MMAV3_LOOP_UNROLLING_H_
+#define XLA_SERVICE_GPU_PREVENT_MMAV3_LOOP_UNROLLING_H_
 
 #include <memory>
-#include <utility>
 
-#include "absl/functional/any_invocable.h"
+#include "mlir/Pass/Pass.h"  // from @llvm-project
 
-namespace xla::cpu {
+namespace xla::gpu {
 
-// Converts absl::AnyInvocable to a std::function. absl::AnyInvocable is not
-// copyable, and we need to wrap it into a std::shared_ptr to be able to pass
-// to thread pools (i.e. Eigen) that expect copyable std::function task type.
-inline auto ToCopyableTask(absl::AnyInvocable<void()> task) {
-  return [shared_task = std::make_shared<decltype(task)>(std::move(task))] {
-    (*shared_task)();
-  };
-}
+// This pass is a result of b/344841434:
+// PTX sometimes unrolls wgmma loops that can cause a 1000x slow down in
+// compilation time. Most unrolling has already been done before PTX,
+// this pragma prevents ptxas from doing more.
+std::unique_ptr<mlir::Pass> CreatePreventMmaV3LoopUnrollingPass();
 
-}  // namespace xla::cpu
+void RegisterPreventMmaV3LoopUnrollingPass();
 
-#endif  // XLA_SERVICE_CPU_RUNTIME_TASK_H_
+}  // namespace xla::gpu
+
+#endif  // XLA_SERVICE_GPU_PREVENT_MMAV3_LOOP_UNROLLING_H_

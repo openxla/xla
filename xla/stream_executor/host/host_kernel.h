@@ -18,10 +18,13 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <type_traits>
 #include <utility>
 
+#include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -41,7 +44,7 @@ class HostExecutor;
 
 class HostKernel : public Kernel {
  public:
-  using Task = absl::AnyInvocable<void()>;
+  using Task = std::function<void()>;
   using TaskRunner = absl::AnyInvocable<void(Task)>;
 
   // A struct to report completion of the kernel execution.
@@ -75,6 +78,10 @@ class HostKernel : public Kernel {
   // TODO(tsilytskyi): make this implementation detail private
   HostKernel(unsigned arity, SE_HOST_Kernel* kernel,
              std::shared_ptr<tsl::thread::ThreadPool> thread_pool = nullptr);
+
+  // Calls the kernel once in the caller thread for a thread dim (0,0,0).
+  // This is a fast path for small host kernels that have just one thread.
+  absl::Status CallOnce(absl::Span<const SE_HOST_KernelArg> args) const;
 
   // Launches the kernel on the current thread by iterating over all threads in
   // `thread_dims` and calling the kernel function.
@@ -123,6 +130,23 @@ class HostKernel : public Kernel {
   unsigned arity_;
   std::shared_ptr<tsl::thread::ThreadPool> thread_pool_;
 };
+
+inline ABSL_ATTRIBUTE_ALWAYS_INLINE absl::Status HostKernel::CallOnce(
+    absl::Span<const SE_HOST_KernelArg> args) const {
+  constexpr SE_HOST_KernelThreadDim kernel_thread_dims = {1, 1, 1};
+  constexpr SE_HOST_KernelThread kernel_thread = {1, 1, 1};
+
+  SE_HOST_KernelCallFrame call_frame = {&kernel_thread_dims, &kernel_thread,
+                                        args.size(), args.data()};
+
+  SE_HOST_KernelError* error = (*kernel_)(&call_frame);
+
+  if (ABSL_PREDICT_FALSE(error != nullptr)) {
+    return absl::InternalError("Failed to call host kernel");
+  }
+
+  return absl::OkStatus();
+}
 
 inline const HostKernel* AsHostKernel(const Kernel* kernel) {
   return static_cast<const HostKernel*>(kernel);

@@ -56,7 +56,6 @@ xla_cc_binary(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:MlirOptLib",
-        "@llvm-project//mlir:Support",
         "@stablehlo//:register",
         "@tsl//tsl/platform:platform_port",
     ],

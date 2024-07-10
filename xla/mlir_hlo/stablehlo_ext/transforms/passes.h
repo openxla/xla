@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2023 The StableHLO Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "mlir/InitAllExtensions.h"
-#include "mlir/Tools/mlir-opt/MlirOptMain.h"
-#include "xla/service/gpu/triton_sparse_extensions.h"
-#include "third_party/triton/bin/RegisterTritonDialects.h"
+#ifndef STABLEHLO_EXT_TRANSFORMS_PASSES_H
+#define STABLEHLO_EXT_TRANSFORMS_PASSES_H
 
-int main(int argc, char **argv) {
-  mlir::DialectRegistry registry;
-  mlir::registerAllExtensions(registry);
-  registerTritonDialects(registry);  // This registers all passes as well.
-  xla::gpu::registerSparsePasses();
+#include <memory>
 
-  return mlir::asMainReturnCode(mlir::MlirOptMain(
-      argc, argv, "sparse-opt modular optimizer driver\n", registry));
-}
+#include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/DialectConversion.h"
+
+namespace mlir {
+namespace stablehlo_ext {
+
+#define GEN_PASS_DECL
+#define GEN_PASS_REGISTRATION
+#include "stablehlo_ext/transforms/passes.h.inc"
+
+void createChloLegalizeToStablehloPipeline(OpPassManager &pm);
+
+}  // namespace stablehlo_ext
+}  // namespace mlir
+
+#endif  // STABLEHLO_EXT_TRANSFORMS_PASSES_H

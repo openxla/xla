@@ -102,14 +102,9 @@ class AsyncValueRef {
   // Support implicit construction from nullptr to empty async value ref.
   AsyncValueRef(std::nullptr_t) {}  // NOLINT
 
-  // Support implicit construction from immediate value.
-  AsyncValueRef(T value)  // NOLINT
-      : AsyncValueRef(MakeAvailableAsyncValueRef<T>(std::move(value))) {}
-
-  // Support implicit construction from immediate Status error convertible to
-  // absl::Status (only if payload type is not absl::Status, otherwise we
-  // always pass absl::Status to payload constructor for consistency with
-  // absl::StatusOr<absl::Status>).
+  // Support implicit construction from immediate `Status` error convertible to
+  // `absl::Status` (only if payload type is not `absl::Status`, because
+  // otherwise it is ambiguous, is it an error or a concrete payload).
   template <typename Status,
             std::enable_if_t<std::is_convertible_v<Status, absl::Status> &&
                              !std::is_same_v<T, absl::Status>>* = nullptr>

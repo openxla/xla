@@ -170,6 +170,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kWhile:
       return EmitWhileThunk(instruction);
 
+    // Dimension size operations.
+    case HloOpcode::kGetDimensionSize:
+      return EmitGetDimensionSizeThunk(instruction);
+    case HloOpcode::kSetDimensionSize:
+      return EmitSetDimensionSizeThunk(instruction);
+
     // Simple HLO instructions lowered to elemental host kernels (plain loops
     // behind the HostKernel API).
     case HloOpcode::kAbs:
@@ -260,7 +266,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
       return EmitElementalKernelThunk(instruction);
 
     case HloOpcode::kConcatenate:
-      return EmitConcatenateThunk(instruction);
+      return EmitConcatenateKernelThunk(instruction);
 
     case HloOpcode::kFusion:
       return EmitFusionKernelThunk(instruction);
@@ -271,6 +277,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
 
     case HloOpcode::kRng:
       return EmitRngThunk(instruction);
+
+    case HloOpcode::kRngBitGenerator:
+      return EmitRngBitGeneratorThunk(instruction);
 
     case HloOpcode::kRngGetAndUpdateState:
       return EmitRngGetAndUpdateStateThunk(instruction);
@@ -481,10 +490,26 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCallThunk(
                                       std::move(called_sequence));
 }
 
-absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateThunk(
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
     const HloInstruction* instruction) {
-  // TODO(ezhulenev): Port optimized concat implementation from IrEmitter.
-  return EmitElementalKernelThunk(instruction);
+  auto* concatenate = Cast<HloConcatenateInstruction>(instruction);
+  TF_ASSIGN_OR_RETURN(auto kernel,
+                      ir_emitter_.EmitConcatenateHostKernel(concatenate));
+  TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
+
+  return ThunkSequence::Of<KernelThunk>(
+      ThunkInfo(instruction), buffers.arguments, buffers.results, kernel.name,
+      kernel.thread_dims, /*min_alignment=*/cpu_function_runtime::MinAlign());
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGetDimensionSizeThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("GetDimensionSize should be rewritten for CPU.");
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSetDimensionSizeThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("SetDimensionSize should be rewritten for CPU.");
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
@@ -585,6 +610,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReductionKernelThunk(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngThunk(
     const HloInstruction* instruction) {
   return Unimplemented("Rng should be expanded for CPU.");
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngBitGeneratorThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("RngBitGenerator should be expanded for CPU.");
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateStateThunk(

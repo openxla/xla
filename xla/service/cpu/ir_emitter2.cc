@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -54,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/layout_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
@@ -363,6 +365,32 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotHostKernel(
                  se::ThreadDim()});
 }
 
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitConcatenateHostKernel(
+    const HloInstruction* instr) {
+  VLOG(2) << "Emit concatenate host kernel: " << instr->name();
+
+  auto fast_impl_reason = CanDoFastConcatenate(instr);
+  if (fast_impl_reason.ok()) {
+    VLOG(1) << "Emitting fast concatenate for " << instr->ToString() << ": "
+            << fast_impl_reason.message();
+    TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                        EmitKernelPrototype(instr));
+    llvm::IRBuilder<> ir_builder(module_->getContext());
+    ir_builder.SetInsertPoint(
+        kernel_prototype.function->getEntryBlock().getTerminator());
+
+    llvm_ir::IrArray output_array = kernel_prototype.results[0];
+    TF_RETURN_IF_ERROR(::xla::cpu::EmitFastConcatenate(
+        instr, kernel_prototype.arguments, output_array, module_, ir_builder));
+    return kernels_.emplace_back(
+        KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                   se::ThreadDim()});
+  }
+  VLOG(1) << "Could not emit fast concatenate for " << instr->ToString() << ": "
+          << fast_impl_reason.message();
+  return EmitElementalHostKernel(instr);
+}
+
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
     const HloFusionInstruction* fusion) {
   VLOG(2) << "Emit dot fusion host kernel: " << fusion->name();
@@ -612,8 +640,9 @@ absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
 
   // Emit alias scopes for all kernel result buffers. We do not emit alias
   // scopes for kernel arguments, because it's usually not profitable, and we
-  // mostly care about avoiding reloading data from read-only buffers.
-  absl::flat_hash_map<BufferAllocation::Slice, llvm::MDNode*> alias_scopes;
+  // mostly care about avoiding reloading data from read-only buffers. We use
+  // sorted container to make sure that emitted metadata is deterministic.
+  absl::btree_map<BufferAllocation::Slice, llvm::MDNode*> alias_scopes;
   for (const KernelParameter& result : results) {
     // Skip result buffers that are aliased with entry parameters as we don't
     // know if they can alias with any other buffers.
@@ -750,6 +779,27 @@ std::optional<IrEmitter2::ParallelConfig> IrEmitter2::GetParallelConfig(
 
   return config;
 }
+
+absl::Status IrEmitter2::CanDoFastConcatenate(
+    const HloInstruction* concatenate) const {
+  if (!concatenate->parent()
+           ->root_instruction()
+           ->template backend_config<BackendConfig>()
+           ->outer_dimension_partitions()
+           .empty()) {
+    return absl::Status(
+        absl::StatusCode::kFailedPrecondition,
+        "Cannot generate memcpy-based concat for the parallel CPU backend");
+  }
+  const Shape& output_shape = concatenate->shape();
+  for (auto* op : concatenate->operands()) {
+    if (!LayoutUtil::Equal(op->shape().layout(), output_shape.layout())) {
+      return absl::Status(absl::StatusCode::kFailedPrecondition,
+                          "Operand has mismatching layouts");
+    }
+  }
+  return absl::OkStatus();
+};
 
 IrEmitter2::ParallelPartitionBounds IrEmitter2::EmitParallelPartitionBounds(
     llvm::IRBuilder<>& b, const KernelPrototype& kernel_prototype,

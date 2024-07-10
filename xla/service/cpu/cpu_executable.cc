@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_executable.h"
 
+#define EIGEN_USE_THREADS
+
 #include <stdint.h>
 
 #include <algorithm>
@@ -34,6 +36,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
 #include "llvm/Support/Error.h"
 #include "xla/executable_run_options.h"
@@ -359,15 +362,20 @@ absl::Status CpuExecutable::ExecuteThunks(
                       Thunk::CollectiveExecuteParams::Create(run_options));
 
   // Prepare for executing XLA custom calls.
-  // TODO(penporn): Consolidate with other thunk parameter set up calls.
   TF_ASSIGN_OR_RETURN(Thunk::CustomCallExecuteParams custom_call_execute_params,
                       Thunk::CustomCallExecuteParams::Create(run_options));
+
+  // Use the intra-op thread pool to offload thunk executor tasks.
+  Thunk::TaskRunner task_runner = [run_options](Thunk::Task task) {
+    run_options->intra_op_thread_pool()->getPool()->Schedule(std::move(task));
+  };
 
   Thunk::ExecuteParams execute_params = {
       &*host_kernels_,
       &allocations,
       runtime::GetXfeedManager(run_options->device_ordinal()),
       run_options->intra_op_thread_pool(),
+      &task_runner,
       &collective_execute_params,
       &custom_call_execute_params};
 

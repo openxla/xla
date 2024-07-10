@@ -123,6 +123,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/fft_thunk.h"
 #include "xla/service/gpu/runtime/fused_mha_thunk.h"
 #include "xla/service/gpu/runtime/gemm_thunk.h"
+#include "xla/service/gpu/runtime/gpublas_lt_matmul_thunk.h"
 #include "xla/service/gpu/runtime/infeed_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
@@ -166,10 +167,6 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/protobuf/dnn.pb.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
-
-#if GOOGLE_CUDA || TF_HIPBLASLT
-#include "xla/service/gpu/runtime/gpublas_lt_matmul_thunk.h"
-#endif  // GOOGLE_CUDA || TF_HIPBLASLT
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 #include "xla/service/gpu/ir_emitter_triton.h"
@@ -2325,9 +2322,11 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
   }
 
   if (should_use_nccl_thunk) {
+    auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(inst);
+    // The wrapper name is used when an op is wrapped by syntactic sugar.
+    thunk_info.profile_annotation = async_start->name();
     auto thunk = std::make_unique<NcclThunkType>(
-        Thunk::ThunkInfo::WithProfileAnnotation(inst), NcclApi::Default(), inst,
-        /*buffers=*/std::move(buffers));
+        thunk_info, NcclApi::Default(), inst, /*buffers=*/std::move(buffers));
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();

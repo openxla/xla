@@ -17,15 +17,16 @@ limitations under the License.
 #define XLA_SERVICE_CPU_RUNTIME_THUNK_EXECUTOR_H_
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <string>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/fixed_array.h"
 #include "absl/container/inlined_vector.h"
-#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -43,12 +44,6 @@ class ThunkExecutor {
   using BufferUses = Thunk::BufferUses;
   using ResourceUses = Thunk::ResourceUses;
   using ExecuteEvent = Thunk::ExecuteEvent;
-
-  // It's up to the caller to provide the task runner that will execute tasks
-  // produced by the executor. It can be a simple inline executor that runs
-  // tasks on the same thread, or a runner backed by a thread pool.
-  using Task = absl::AnyInvocable<void()>;
-  using TaskRunner = absl::AnyInvocable<void(Task)>;
 
   // Nodes identified by their index in the captured ThunkSequence.
   using NodeId = int64_t;
@@ -73,8 +68,7 @@ class ThunkExecutor {
   //
   // Returned execute event becomes ready when all thunks completed execution.
   // If any of the thunks failed, the event will be in error state.
-  tsl::AsyncValueRef<ExecuteEvent> Execute(const Thunk::ExecuteParams& params,
-                                           TaskRunner runner = nullptr);
+  tsl::AsyncValueRef<ExecuteEvent> Execute(const Thunk::ExecuteParams& params);
 
   absl::Span<const NodeDef> nodes_defs() const { return nodes_defs_; }
   const NodeDef& node_def(NodeId id) const { return nodes_defs_[id]; }
@@ -90,7 +84,7 @@ class ThunkExecutor {
   bool is_sequential() const { return is_sequential_; }
 
  private:
-  using ReadyQueue = absl::InlinedVector<NodeId, 8>;
+  using ReadyQueue = std::vector<NodeId>;
 
   ThunkExecutor(ThunkSequence thunk_sequence, std::vector<NodeDef> nodes_defs);
 
@@ -104,24 +98,38 @@ class ThunkExecutor {
 
   // A struct to keep the state of a running executor.
   struct ExecuteState {
-    ExecuteState(ThunkExecutor* executor, TaskRunner runner);
+    // Align all atomic counters to a cache line boundary to avoid false
+    // sharing between multiple worker threads.
+    static constexpr size_t kAtomicAlignment =
+#if defined(__cpp_lib_hardware_interference_size)
+        std::hardware_destructive_interference_size;
+#else
+        64;
+#endif
+
+    struct Counter {
+      alignas(kAtomicAlignment) std::atomic<int64_t> value;
+    };
+
+    ExecuteState(ThunkExecutor* executor, Thunk::TaskRunner* runner);
 
     ThunkExecutor* executor;
-    TaskRunner runner;
+    Thunk::TaskRunner* runner;
 
     // Containers for nodes' pending counters and nodes themselves.
-    absl::FixedArray<std::atomic<int64_t>> counters;
+    absl::FixedArray<Counter> counters;
     absl::InlinedVector<Node, 32> nodes;
-
-    // We store the first error from failed thunks in `abort_status` and at the
-    // end of execution the executor forwards it via the `execute_event`.
-    std::atomic<bool> abort;
-    absl::Mutex abort_mutex;
-    absl::Status abort_status ABSL_GUARDED_BY(abort_mutex);
 
     // Once the number of pending sink nodes drops to zero, the execution is
     // completed and we set `execute_event` as concrete or error.
-    std::atomic<int64_t> pending_sink_nodes;
+    alignas(kAtomicAlignment) std::atomic<int64_t> pending_sink_nodes;
+
+    // We store the first error from failed thunks in `abort_status` and at the
+    // end of execution the executor forwards it via the `execute_event`.
+    alignas(kAtomicAlignment) std::atomic<bool> abort;
+    absl::Mutex abort_mutex;
+    absl::Status abort_status ABSL_GUARDED_BY(abort_mutex);
+
     tsl::AsyncValueRef<ExecuteEvent> execute_event;
   };
 
@@ -136,7 +144,12 @@ class ThunkExecutor {
 
   // Executes nodes in the ready queue with given thunk parameters.
   void Execute(ExecuteState* state, const Thunk::ExecuteParams& params,
-               ReadyQueue ready_queue);
+               ReadyQueue ready_queue, Thunk::ExecuteSession::Lock lock);
+
+  // Splits ready queue starting from `start_index` into ThunkExecutor tasks and
+  // offloads them to the task runner.
+  void SplitReadyQueue(ExecuteState* state, const Thunk::ExecuteParams& params,
+                       int64_t start_index, ReadyQueue& ready_queue);
 
   // Processes out edges of a completed `node` and updates `ready_queue` with
   // nodes that are ready to execute. If `event` is in error state, aborts the

@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime/buffer_allocations.h"
 #include "xla/service/cpu/runtime/resource_use.h"
-#include "xla/service/cpu/runtime/task.h"
 #include "xla/service/cpu/runtime/thunk.h"
 #include "xla/service/maybe_owning_device_memory.h"
 #include "xla/stream_executor/device_memory.h"
@@ -313,11 +312,17 @@ TEST(ThunkExecutorTest, Execute) {
   auto buffers = AddI32Thunk::AsDeviceMemory({&data});
   BufferAllocations allocations(buffers);
 
-  Thunk::ExecuteParams params = {nullptr, &allocations};
-  auto execute_event = executor.Execute(params, [&](ThunkExecutor::Task task) {
+  Thunk::TaskRunner task_runner = [&](Thunk::Task task) {
     trace.push_back("<TaskRunner>");
     task();
-  });
+  };
+
+  Thunk::ExecuteParams params = {nullptr, &allocations};
+  params.task_runner = &task_runner;
+  params.session =
+      Thunk::ExecuteSession(/*max_workers=*/8, /*split_threshold=*/1);
+
+  auto execute_event = executor.Execute(params);
 
   tsl::BlockUntilReady(execute_event);
   ASSERT_TRUE(execute_event.IsConcrete());
@@ -433,14 +438,15 @@ class ThunkExecutorStressTest
       thread_pool_.emplace(tsl::Env::Default(), "thunk-executor", 8);
       device_.emplace(thread_pool_->AsEigenThreadPool(),
                       thread_pool_->NumThreads());
+      task_runner_.emplace([this](Thunk::Task task) {
+        thread_pool_->Schedule(std::move(task));
+      });
     }
   }
 
-  ThunkExecutor::TaskRunner task_runner() {
+  Thunk::TaskRunner* task_runner() {
     if (!use_task_runner_) return nullptr;
-    return [&](ThunkExecutor::Task task) {
-      thread_pool_->Schedule(ToCopyableTask(std::move(task)));
-    };
+    return &*task_runner_;
   }
 
   Eigen::ThreadPoolDevice* device() {
@@ -453,6 +459,7 @@ class ThunkExecutorStressTest
   bool use_device_;
   std::optional<tsl::thread::ThreadPool> thread_pool_;
   std::optional<Eigen::ThreadPoolDevice> device_;
+  std::optional<Thunk::TaskRunner> task_runner_;
 };
 
 TEST_P(ThunkExecutorStressTest, Execute) {
@@ -468,11 +475,12 @@ TEST_P(ThunkExecutorStressTest, Execute) {
                           ThunkExecutor::Create(std::move(g->sequence)));
 
   BufferAllocations allocations(g->buffers);
-  Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, device()};
+  Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, device(),
+                                 task_runner()};
 
   shared_resource = 0;
 
-  auto execute_event = executor.Execute(params, task_runner());
+  auto execute_event = executor.Execute(params);
   tsl::BlockUntilReady(execute_event);
 
   if (inject_errors) {
@@ -500,6 +508,26 @@ INSTANTIATE_TEST_SUITE_P(
 // Performance benchmarks below
 //===----------------------------------------------------------------------===//
 
+static void BM_SequentialThunkExecutor(benchmark::State& state) {
+  const size_t num_thunks = state.range(0);
+
+  auto g =
+      GenerateThunkSequence(/*num_elements=*/1024, num_thunks,
+                            /*shared_resource_use=*/SharedResourceUse::kAll,
+                            /*inject_errors=*/false)
+          .value();
+  auto e = ThunkExecutor::Create(std::move(g->sequence)).value();
+
+  BufferAllocations allocations(g->buffers);
+  Thunk::ExecuteParams params = {nullptr, &allocations};
+
+  for (auto _ : state) {
+    auto execute_event = e.Execute(params);
+    tsl::BlockUntilReady(execute_event);
+    CHECK(execute_event.IsConcrete());
+  }
+}
+
 static void BM_SyncThunkExecutor(benchmark::State& state) {
   const size_t num_thunks = state.range(0);
 
@@ -513,7 +541,7 @@ static void BM_SyncThunkExecutor(benchmark::State& state) {
   Thunk::ExecuteParams params = {nullptr, &allocations};
 
   for (auto _ : state) {
-    auto execute_event = e.Execute(params, nullptr);
+    auto execute_event = e.Execute(params);
     tsl::BlockUntilReady(execute_event);
     CHECK(execute_event.IsConcrete());
   }
@@ -533,34 +561,34 @@ static void BM_AsyncThunkExecutor(benchmark::State& state) {
   auto e = ThunkExecutor::Create(std::move(g->sequence)).value();
 
   BufferAllocations allocations(g->buffers);
-  Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, &device};
+
+  Thunk::TaskRunner task_runner = [&](Thunk::Task task) {
+    thread_pool.Schedule(std::move(task));
+  };
+
+  Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, &device,
+                                 &task_runner};
 
   for (auto _ : state) {
-    auto execute_event = e.Execute(params, [&](ThunkExecutor::Task task) {
-      thread_pool.Schedule(ToCopyableTask(std::move(task)));
-    });
+    auto execute_event = e.Execute(params);
     tsl::BlockUntilReady(execute_event);
     CHECK(execute_event.IsConcrete());
   }
 }
 
-BENCHMARK(BM_SyncThunkExecutor)
-    ->MeasureProcessCPUTime()
-    ->Arg(1)
-    ->Arg(16)
-    ->Arg(64)
-    ->Arg(128)
-    ->Arg(258)
-    ->Arg(512);
+#define BENCHMARK_THUNK_EXECUTOR(name) \
+  BENCHMARK(name)                      \
+      ->MeasureProcessCPUTime()        \
+      ->Arg(1)                         \
+      ->Arg(16)                        \
+      ->Arg(64)                        \
+      ->Arg(128)                       \
+      ->Arg(256)                       \
+      ->Arg(512)
 
-BENCHMARK(BM_AsyncThunkExecutor)
-    ->MeasureProcessCPUTime()
-    ->Arg(1)
-    ->Arg(16)
-    ->Arg(64)
-    ->Arg(128)
-    ->Arg(258)
-    ->Arg(512);
+BENCHMARK_THUNK_EXECUTOR(BM_SequentialThunkExecutor);
+BENCHMARK_THUNK_EXECUTOR(BM_SyncThunkExecutor);
+BENCHMARK_THUNK_EXECUTOR(BM_AsyncThunkExecutor);
 
 }  // namespace
 }  // namespace xla::cpu

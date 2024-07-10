@@ -474,11 +474,6 @@ class PjRtStreamExecutorClient : public PjRtClient {
   };
   absl::StatusOr<ExecutableExtras> GetExecutableExtras(CompileOptions* options);
 
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileInternal(
-      const XlaComputation& computation,
-      const std::vector<const Shape*>& argument_layout_pointers,
-      CompileOptions options);
-
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternal(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
       std::optional<absl::Span<int64_t const>> byte_strides,
@@ -1050,13 +1045,14 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
       std::shared_ptr<DeviceAssignment> device_assignment,
       std::vector<std::function<void()>>& compute_callbacks) const;
 
-  virtual std::vector<std::unique_ptr<PjRtBuffer>> MakeOutputBuffers(
-      int device_ordinal, const ExecuteOptions& options,
-      ScopedShapedBuffer result_buffer,
-      std::shared_ptr<BufferSequencingEvent> definition_event,
-      PjRtDevice* device, std::vector<std::function<void()>>& compute_callbacks,
-      std::vector<std::shared_ptr<TrackedDeviceBuffer>>& buffers_to_release)
-      const;
+  virtual absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeOutputBuffers(int device_ordinal, const ExecuteOptions& options,
+                    ScopedShapedBuffer result_buffer,
+                    std::shared_ptr<BufferSequencingEvent> definition_event,
+                    PjRtDevice* device,
+                    std::vector<std::function<void()>>& compute_callbacks,
+                    std::vector<std::shared_ptr<TrackedDeviceBuffer>>&
+                        buffers_to_release) const;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,

@@ -18,6 +18,7 @@ load(
     "//xla:xla.bzl",
     "xla_cc_test",
 )
+load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
@@ -68,21 +69,25 @@ cc_library(
 
 xla_test(
     name = "dynamic_slice_fusion_test",
-    srcs = ["dynamic_slice_fusion_test.cc"],
+    srcs = if_gpu_is_configured(["dynamic_slice_fusion_test.cc"]),
     backends = ["gpu"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     tags = ["notsan"],  # TODO(b/345034145): Fix tsan error.
-    deps = [
-        "//xla:error_spec",
-        "//xla:shape_util",
-        "//xla/ffi",
-        "//xla/ffi:ffi_api",
-        "//xla/stream_executor",
-        "//xla/tests:hlo_test_base",
+    deps = if_gpu_is_configured(
+        #keep sorted
+        [
+            "//xla:error_spec",
+            "//xla:shape_util",
+            "//xla/ffi",
+            "//xla/ffi:ffi_api",
+            "//xla/stream_executor",
+            "//xla/tests:hlo_test_base",
+            "@com_google_absl//absl/algorithm:container",
+            "@com_google_absl//absl/status",
+            "@tsl//tsl/platform:test",
+        ],
+    ) + [
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -840,16 +845,17 @@ lit_test_suite(
 #     srcs = glob(["*.mlir"]),
 #     cfg = "//xla:lit.cfg.py",
 #     tools = [
-#         ":sparse-opt",
+#         ":xla-opt",
 #         "@llvm-project//llvm:FileCheck",
 #         "@triton//:triton-opt",
 #     ],
 # )
 #
 # cc_binary(
-#     name = "sparse-opt",
-#     srcs = ["sparse-opt.cc"],
+#     name = "xla-opt",
+#     srcs = ["xla-opt.cc"],
 #     deps = [
+#         "//xla/service/gpu:prevent_mmav3_loop_unrolling",
 #         "//xla/service/gpu:triton_sparse_extensions",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",

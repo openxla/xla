@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime/thunk.h"
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -145,6 +147,23 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> Thunk::OkExecuteEvent() {
   }();
   return event->AsRef();
 }
+
+Thunk::ExecuteState::ExecuteState(int64_t parallel_tasks)
+    : pending_tasks(parallel_tasks),
+      event(tsl::MakeConstructedAsyncValueRef<Thunk::ExecuteEvent>()) {}
+
+void Thunk::ExecuteState::Notify() {
+  if (pending_tasks.load(std::memory_order_relaxed) == 1 ||
+      pending_tasks.fetch_sub(1, std::memory_order_relaxed) == 1) {
+    event.SetStateConcrete();
+  }
+}
+
+Thunk::ExecuteSession::ExecuteSession(int64_t max_workers,
+                                      int64_t split_threshold)
+    : lock_(std::make_shared<std::nullopt_t>(std::nullopt)),
+      max_workers_(max_workers),
+      split_threshold_(split_threshold) {}
 
 // Encodes thunk info into the TraceMe compatible format.
 std::string Thunk::TraceMeEncode() const {

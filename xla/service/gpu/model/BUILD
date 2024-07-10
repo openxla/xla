@@ -392,10 +392,12 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -427,6 +429,30 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "affine_map_evaluator",
+    srcs = ["affine_map_evaluator.cc"],
+    hdrs = ["affine_map_evaluator.h"],
+    deps = [
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "affine_map_evaluator_test",
+    srcs = ["affine_map_evaluator_test.cc"],
+    deps = [
+        ":affine_map_evaluator",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
     name = "indexing_analysis",
     srcs = [
         "indexing_analysis.cc",
@@ -437,6 +463,7 @@ cc_library(
         "indexing_map.h",
     ],
     deps = [
+        ":affine_map_evaluator",
         ":affine_map_printer",
         "//xla:permutation_util",
         "//xla:shape_util",
@@ -538,6 +565,7 @@ cc_library(
         ":affine_map_printer",
         ":indexing_analysis",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -552,16 +580,15 @@ xla_cc_test(
     name = "symbolic_tile_test",
     srcs = ["symbolic_tile_test.cc"],
     deps = [
+        ":affine_map_evaluator",
         ":indexing_analysis",
         ":indexing_test_utils",
         ":symbolic_tile",
         "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -571,13 +598,12 @@ cc_library(
     srcs = ["symbolic_tiled_hlo_instruction.cc"],
     hdrs = ["symbolic_tiled_hlo_instruction.h"],
     deps = [
+        ":affine_map_evaluator",
         ":indexing_analysis",
         ":symbolic_tile",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
     ],
 )
 
@@ -663,6 +689,7 @@ cc_library(
     srcs = ["symbolic_tile_analysis.cc"],
     hdrs = ["symbolic_tile_analysis.h"],
     deps = [
+        ":affine_map_evaluator",
         ":affine_map_printer",
         ":indexing_analysis",
         ":symbolic_tile",
@@ -688,7 +715,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -725,6 +751,7 @@ cc_library(
     srcs = ["coalescing_analysis.cc"],
     hdrs = ["coalescing_analysis.h"],
     deps = [
+        ":affine_map_evaluator",
         ":indexing_analysis",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
