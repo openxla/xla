@@ -15,6 +15,20 @@
 #
 # ==============================================================================
 
+# This is a rocm specific script housed under `build_tools/rocm`
+# It runs following distributed tests which require more >= 4 gpus and these tests
+# are skipped currently in the CI due to tag selection. These tests are tagged either as manual or with oss
+# ```
+# //xla/tests:collective_ops_e2e_test_gpu_amd_any
+# //xla/tests:collective_ops_test_gpu_amd_any
+# //xla/tests:replicated_io_feed_test_gpu_amd_any
+# //xla/tools/multihost_hlo_runner:functional_hlo_runner_test_gpu_amd_any
+# //xla/pjrt/distributed:topology_util_test
+# //xla/pjrt/distributed:client_server_test
+# ```
+# Also these tests do not use `--run_under=//tools/ci_build/gpu_build:parallel_gpu_execute` with bazel which
+# locks down individual gpus thus making multi gpu tests impossible to run
+
 set -e
 set -x
 
