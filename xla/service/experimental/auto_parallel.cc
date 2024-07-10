@@ -142,7 +142,8 @@ namespace {
   // clones a parameter instruction specifically 
   // for single-instruction HloComputations
   std::unique_ptr<HloInstruction> CloneParameterInstruction(
-      HloParameterInstruction* instruction) {
+      const HloParameterInstruction* instruction,
+      absl::Span<HloInstruction* const> operands) {
 
     // create parameter-retrieving instruction 
     // with same shape, cloned name, param_no of 0
@@ -154,7 +155,8 @@ namespace {
 
   // fixes instructions so that it can be the only one inside of a computation
   std::unique_ptr<HloInstruction> CloneSingleInstruction(
-      HloInstruction* instruction) {
+      const HloInstruction* instruction,
+      absl::Span<HloInstruction* const> operands) {
 
     std::unique_ptr<HloInstruction> result;
 
@@ -162,33 +164,74 @@ namespace {
     switch (instruction->opcode()) {
       case HloOpcode::kParameter: {
         result = CloneParameterInstruction(
-          Cast<HloParameterInstruction>(instruction));
+          static_cast<const HloParameterInstruction*>(instruction), 
+          operands
+        );
         break;
       }
       default: {
-        result = instruction->Clone();
+        result = instruction->CloneWithNewOperands(
+          instruction->shape(), 
+          operands
+        );
         break;
       }
     }
 
     return result; 
   }
+
+  // Takes any instruction in a module and converts it into an entry
+  // computation where it's operands are turned into HloParameterInstructions
+  std::unique_ptr<HloComputation> CreateComputationFromInstruction(
+      const HloInstruction* instruction) {
+
+    // build operands of instruction as parameters
+    std::vector<std::unique_ptr<HloInstruction>> params;
+    for (int i = 0; i < instruction->operand_count(); i++) {
+      const HloInstruction *operand = instruction->operand(i);
+      HloParameterInstruction p(i, operand->shape(), operand->name());
+      params.push_back(HloInstruction::CreateParameter(
+        i, operand->shape(), operand->name()
+      ));
+    }
+
+    // copy the instruction so as not to modify the HloModule
+    // and with the parameter instructions as parameters
+    std::vector<HloInstruction*> param_ptrs;
+    param_ptrs.reserve(params.size());
+    for (int i = 0; i < params.size(); i++) {
+      param_ptrs.push_back(params[i].get());
+    }
+
+    std::unique_ptr<HloInstruction> instr_clone 
+      = std::move(CloneSingleInstruction(instruction, param_ptrs));
+
+    // construct the computation builder
+    HloComputation::Builder builder("single-instr");
+    HloInstruction* root_instr = builder.AddInstruction(std::move(instr_clone)); 
+
+    // add operands
+    for (int i = 0; i < params.size(); i++) {
+      builder.AddParameter(std::move(params[i]));
+    }
+    
+    // build the resulting computation and return
+    return builder.Build(root_instr);
+
+  }
   
   // Creates a module from a single instruction for running a simple pass on
   std::unique_ptr<HloModule> CreateModuleFromInstruction(
-      HloInstruction* instruction) {
+      const HloInstruction* instruction) {
 
-    // copy the instruction so as not to modify the HloModule
-    std::unique_ptr<HloInstruction> instr_clone 
-      = std::move(CloneSingleInstruction(instruction));
-    
-    // create entry computation from the single instruction
-    HloComputation::Builder builder{"single-instr"};
-    HloInstruction* instrp = builder.AddInstruction(std::move(instr_clone));
-    std::unique_ptr<HloComputation> computation = builder.Build(instrp);
+    // create a computation
+    std::unique_ptr<HloComputation> computation
+      = CreateComputationFromInstruction(instruction);
 
     // construct the module's configuration
     HloModuleConfig config{computation->ComputeProgramShape()};
+    ProgramShape ps = computation->ComputeProgramShape();
 
     // construct the module from the computation 
     // (unique ptr so cleared out of memory)
