@@ -993,6 +993,21 @@ using FusedMatmulRunner = OpRunner<FusedMatmulSignature>;
 using NormSignature = void(std::vector<DeviceMemoryBase>);
 using NormRunner = OpRunner<NormSignature>;
 
+using FusedMHAF8Signature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
+                               DeviceMemoryBase /* BMM1_inputB_data */,
+                               DeviceMemoryBase /* BMM2_inputA_data */,
+                               DeviceMemoryBase /* descale_q_data */,
+                               DeviceMemoryBase /* descale_k_data */,
+                               DeviceMemoryBase /* descale_v_data */,
+                               DeviceMemoryBase /* descale_s_data */,
+                               DeviceMemoryBase /* scale_s_data */,
+                               DeviceMemoryBase /* scale_o_data */,
+                               DeviceMemoryBase /* amax_s_data */,
+                               DeviceMemoryBase /* amax_o_data */,
+                               DeviceMemoryBase /* output_data */,
+                               DeviceMemoryBase /* activation_data */);
+using FusedMHAF8Runner = OpRunner<FusedMHAF8Signature>;
+
 using FusedMHASignature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
                                DeviceMemoryBase /* BMM1_inputB_data */,
                                DeviceMemoryBase /* BMM2_inputA_data */,
@@ -1734,6 +1749,32 @@ class DnnSupport {
       absl::string_view) const {
     return absl::UnimplementedError("Graph support requires cuDNN >= 8.1.");
   };
+
+  virtual absl::StatusOr<std::unique_ptr<const FusedMHAF8Runner>>
+  FusedMHAF8RunnerFromDesc(
+      Stream* stream, const AlgorithmDesc& algorithm_desc,
+      const MatmulTensorDescriptor& bmm1_lhs_descriptor,
+      const MatmulTensorDescriptor& bmm1_rhs_descriptor,
+      const MatmulTensorDescriptor& bmm2_rhs_descriptor,
+      const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+      // const TensorDescriptor& descale_q_descriptor,
+      // const TensorDescriptor& descale_k_descriptor,
+      // const TensorDescriptor& descale_v_descriptor,
+      // const TensorDescriptor& descale_s_descriptor,
+      // const TensorDescriptor& scale_s_descriptor,
+      // const TensorDescriptor& scale_o_descriptor,
+      // const TensorDescriptor& amax_s_descriptor,
+      // const TensorDescriptor& amax_o_descriptor,
+      const TensorDescriptor& output_descriptor,
+      const TensorDescriptor& amax_s_descriptor,
+      const TensorDescriptor& amax_o_descriptor,
+      std::optional<TensorDescriptor> activation_descriptor,
+       float descale_q, float descale_k,
+      float descale_v,
+      float descale_s,
+      float scale_s,
+      float scale_o,    double scale,   
+      dnn::FMHAMaskKind mask_type);
 
   virtual absl::StatusOr<std::unique_ptr<const FusedMHARunner>>
   FusedMHARunnerFromDesc(

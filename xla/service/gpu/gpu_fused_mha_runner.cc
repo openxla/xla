@@ -56,6 +56,7 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                          DeviceMemoryBase scratch_memory,
                          DeviceMemoryBase activation_output,
                          DeviceMemoryBase seqlen_q, DeviceMemoryBase seqlen_k) {
+std::cout << "gpu_fused_mha_runner:RunFusedMHA\n";                             
   se::dnn::LazyOpRunner<se::dnn::FusedMHAOp> *lazy_runner =
       options.runner_cache->AsFusedMHARunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAOp>> local_runner;
@@ -81,6 +82,99 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                    lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
                    output_buffer, bias_buffer, activation_output, seqlen_q,
                    seqlen_k);
+}
+
+template <typename ElementType, typename OutputType>
+absl::Status RunFusedMHAF8(GpufMHAF8Params params, se::Stream *stream,
+                         RunFusedMHAF8Options options,
+                         DeviceMemory<ElementType> lhs_bmm1_buffer,
+                         DeviceMemory<ElementType> rhs_bmm1_buffer,
+                         DeviceMemory<ElementType> rhs_bmm2_buffer,
+                         DeviceMemory<float> descale_q_buffer,
+                         DeviceMemory<float> descale_k_buffer,
+                         DeviceMemory<float> descale_v_buffer,
+                         DeviceMemory<float> descale_s_buffer,
+                         DeviceMemory<float> scale_s_buffer,
+                         DeviceMemory<float> scale_o_buffer,
+                         DeviceMemory<float> amax_s_buffer,
+                         DeviceMemory<float> amax_o_buffer,
+                         DeviceMemory<OutputType> output_buffer,
+                         DeviceMemoryBase scratch_memory,
+                         DeviceMemoryBase activation_output) {
+  std::cout << "gpu_fused_mha_runner:RunFusedMHAF8\n";
+  se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op> *lazy_runner =
+      options.runner_cache->AsFusedMHAF8Runner();
+  std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>> local_runner;
+  if (!lazy_runner) {
+    local_runner.emplace(params.config->algorithm);
+    lazy_runner = &*local_runner;
+  }
+ 
+  TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAF8Op::Config config,
+                      params.config->AsDnnFusedMHAF8OpConfig());
+  TF_ASSIGN_OR_RETURN(auto *runner,
+                      lazy_runner->GetOrCreateRunner(config, stream));
+  // return absl::OkStatus();
+  return (*runner)(stream, options.profile_result, scratch_memory,
+                   lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
+                   descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer,
+                   scale_s_buffer, scale_o_buffer, 
+                   amax_s_buffer, amax_o_buffer,
+                   output_buffer, activation_output);
+}
+
+template <typename ElementType, typename OutputType>
+absl::Status RunGpuFMHAF8Impl(const GpufMHAF8Params &params, se::Stream *stream,
+                            se::DeviceMemoryBase scratch_memory,
+                            RunFusedMHAF8Options options) {
+  auto lhs_bmm1_buffer = se::DeviceMemory<ElementType>(params.lhs_bmm1_buffer);
+  auto rhs_bmm1_buffer = se::DeviceMemory<ElementType>(params.rhs_bmm1_buffer);
+  auto rhs_bmm2_buffer = se::DeviceMemory<ElementType>(params.rhs_bmm2_buffer);
+  auto descale_q_buffer = se::DeviceMemory<float>(params.descale_q_buffer);
+  auto descale_k_buffer = se::DeviceMemory<float>(params.descale_k_buffer);
+  auto descale_v_buffer = se::DeviceMemory<float>(params.descale_v_buffer);
+  auto descale_s_buffer = se::DeviceMemory<float>(params.descale_s_buffer);
+  auto scale_s_buffer = se::DeviceMemory<float>(params.scale_s_buffer);
+  auto scale_o_buffer = se::DeviceMemory<float>(params.scale_o_buffer);
+  auto amax_s_buffer = se::DeviceMemory<float>(params.amax_s_buffer);
+  auto amax_o_buffer = se::DeviceMemory<float>(params.amax_o_buffer);
+  auto output_buffer = se::DeviceMemory<OutputType>(params.output_buffer);
+
+  auto activation_buffer =
+      params.activation_buffer.has_value()
+          ? se::DeviceMemory<OutputType>(*params.activation_buffer)
+          : se::DeviceMemoryBase();
+
+  se::dnn::AlgorithmDesc algorithm = params.config->algorithm;
+  if (options.runner_cache) {
+    algorithm = options.runner_cache->ToAlgorithmDesc();
+  }
+
+  absl::Status run_status = absl::OkStatus();
+  switch (params.config->kind) {
+    case CudnnfMHAKind::kSoftmaxf8:
+      run_status = RunFusedMHAF8<ElementType, OutputType>(
+          params, stream, options, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer, 
+          descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer,
+          scale_s_buffer, scale_o_buffer,
+          amax_s_buffer, amax_o_buffer,
+          output_buffer, scratch_memory, activation_buffer);
+      break;
+    default:
+      return Internal("Invalid cuDNN fMHA f8 kind");
+  }
+
+  if (!run_status.ok()) {
+    return run_status;
+  }
+
+  if (!stream->ok()) {
+    return Internal("Unable to launch FMHA F8 with type %s and algorithm %s",
+                    CudnnfMHAKindToString(params.config->kind),
+                    algorithm.ToString());
+  }
+
+  return absl::OkStatus();
 }
 
 template <typename ElementType, typename BiasType, typename OutputType>
@@ -272,6 +366,84 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
 }
 }  // namespace
 
+// F8
+/*static*/ absl::StatusOr<GpufMHAF8Config> GpufMHAF8Config::For(
+    const GpufMHAF8Descriptor &desc) {
+  // Get shapes from desc.
+  const Shape &lhs_bmm1_shape = desc.lhs_bmm1_shape;
+  const Shape &rhs_bmm1_shape = desc.rhs_bmm1_shape;
+  const Shape &rhs_bmm2_shape = desc.rhs_bmm2_shape;
+  const Shape &intermediate_lhs_bmm2_shape = desc.intermediate_lhs_bmm2_shape;
+  const Shape &output_shape = desc.output_shapes[0];
+
+  // Get DNN dtype from primtive types
+  TF_ASSIGN_OR_RETURN(
+      DataType lhs_bmm1_type,
+      GetDNNDataTypeFromPrimitiveType(lhs_bmm1_shape.element_type()));
+  TF_ASSIGN_OR_RETURN(
+      DataType rhs_bmm1_type,
+      GetDNNDataTypeFromPrimitiveType(rhs_bmm1_shape.element_type()));
+
+  TF_ASSIGN_OR_RETURN(
+      DataType rhs_bmm2_type,
+      GetDNNDataTypeFromPrimitiveType(rhs_bmm2_shape.element_type()));
+  TF_ASSIGN_OR_RETURN(DataType lhs_bmm2_type,
+                      GetDNNDataTypeFromPrimitiveType(
+                          intermediate_lhs_bmm2_shape.element_type()));
+  TF_ASSIGN_OR_RETURN(DataType output_type, GetDNNDataTypeFromPrimitiveType(
+                                                output_shape.element_type()));
+  GpufMHAF8Config config;
+  config.input_type = lhs_bmm1_shape.element_type();
+  config.output_type = output_shape.element_type();
+
+  // Get MatmulTensorDescriptors for BMM1
+  config.lhs_bmm1 =
+      MatmulTensorDescriptor::For(lhs_bmm1_type, lhs_bmm1_shape.dimensions(),
+                                  desc.lhs_bmm1_shape.layout().minor_to_major(),
+                                  desc.bmm1_dnums.lhs_batch_dimensions(),
+                                  desc.bmm1_dnums.lhs_contracting_dimensions());
+  config.rhs_bmm1 =
+      MatmulTensorDescriptor::For(rhs_bmm1_type, rhs_bmm1_shape.dimensions(),
+                                  desc.rhs_bmm1_shape.layout().minor_to_major(),
+                                  desc.bmm1_dnums.rhs_batch_dimensions(),
+                                  desc.bmm1_dnums.rhs_contracting_dimensions());
+
+  // Get MatmulTensorDescriptors for BMM2
+  config.rhs_bmm2 =
+      MatmulTensorDescriptor::For(rhs_bmm2_type, rhs_bmm2_shape.dimensions(),
+                                  desc.rhs_bmm2_shape.layout().minor_to_major(),
+                                  desc.bmm2_dnums.rhs_batch_dimensions(),
+                                  desc.bmm2_dnums.rhs_contracting_dimensions());
+
+  config.intermediate_lhs_bmm2 = MatmulTensorDescriptor::For(
+      lhs_bmm2_type, intermediate_lhs_bmm2_shape.dimensions(),
+      desc.intermediate_lhs_bmm2_shape.layout().minor_to_major(),
+      desc.bmm2_dnums.lhs_batch_dimensions(),
+      desc.bmm2_dnums.lhs_contracting_dimensions());
+
+  config.output = TensorDescriptor::For(output_type, output_shape.dimensions(),
+                                        output_shape.layout().minor_to_major());
+
+  if (desc.output_shapes.size() > 3) {
+    const Shape &activation_shape = desc.output_shapes.back();
+    // Generally, activation should have same type as output, but set it
+    // explicityly just to be safe.
+    TF_ASSIGN_OR_RETURN(
+        DataType activation_type,
+        GetDNNDataTypeFromPrimitiveType(activation_shape.element_type()));
+    config.activation =
+        TensorDescriptor::For(activation_type, activation_shape.dimensions(),
+                              activation_shape.layout().minor_to_major());
+  }
+
+  config.kind = desc.kind;
+  config.mask_type = desc.mask_type;
+  const CudnnfMHAF8BackendConfig &backend_config = desc.backend_config;
+  config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
+  config.fmha_scale.emplace(backend_config.fmha_scale());
+  return config;
+}
+
 /*static*/ absl::StatusOr<GpufMHAConfig> GpufMHAConfig::For(
     const GpufMHADescriptor &desc) {
   // Get shapes from desc.
@@ -364,21 +536,6 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
   config.dropout_rate.emplace(backend_config.dropout_rate());
   config.seed.emplace(backend_config.seed());
   return config;
-}
-
-absl::StatusOr<se::dnn::FusedMHAOp::Config>
-GpufMHAConfig::AsDnnFusedMHAOpConfig() const {
-  double scale = 1.0;
-  if (fmha_scale.has_value()) {
-    scale = *fmha_scale;
-  }
-  TF_ASSIGN_OR_RETURN(se::dnn::FMHAMaskKind mask_type,
-                      GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(mask_type));
-
-  return se::dnn::FusedMHAOp::Config{
-      scale,    lhs_bmm1, rhs_bmm1,   rhs_bmm2,     intermediate_lhs_bmm2,
-      output,   bias,     activation, dropout_rate, seed,
-      mask_type};
 }
 
 /*static*/ absl::StatusOr<GpufMHABackwardConfig> GpufMHABackwardConfig::For(
@@ -524,6 +681,37 @@ GpufMHAConfig::AsDnnFusedMHAOpConfig() const {
   return config;
 }
 
+absl::StatusOr<se::dnn::FusedMHAOp::Config>
+GpufMHAConfig::AsDnnFusedMHAOpConfig() const {
+  double scale = 1.0;
+  if (fmha_scale.has_value()) {
+    scale = *fmha_scale;
+  }
+  TF_ASSIGN_OR_RETURN(se::dnn::FMHAMaskKind mask_type,
+                      GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(mask_type));
+
+  return se::dnn::FusedMHAOp::Config{
+      scale,    lhs_bmm1, rhs_bmm1,   rhs_bmm2,     intermediate_lhs_bmm2,
+      output,   bias,     activation, dropout_rate, seed,
+      mask_type};
+}
+
+absl::StatusOr<se::dnn::FusedMHAF8Op::Config>
+GpufMHAF8Config::AsDnnFusedMHAF8OpConfig() const {
+  double scale = 1.0;
+  if (fmha_scale.has_value()) {
+    scale = *fmha_scale;
+  }
+  TF_ASSIGN_OR_RETURN(se::dnn::FMHAMaskKind mask_type,
+                      GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(mask_type));
+
+  return se::dnn::FusedMHAF8Op::Config{
+      scale, descale_q, descale_k, descale_v, descale_s, scale_s, scale_o, lhs_bmm1, rhs_bmm1,   rhs_bmm2,   
+      intermediate_lhs_bmm2,
+      output,  amax_s, amax_o, activation,   mask_type};
+}
+
+
 absl::StatusOr<se::dnn::FusedMHABackwardOp::Config>
 GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
   double scale = 1.0;
@@ -551,6 +739,34 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
                                              mask_type,
                                              force_deterministic};
 }
+
+/*static*/ absl::StatusOr<GpufMHAF8Params> GpufMHAF8Params::For(
+    const GpufMHAF8Config& config, se::DeviceMemoryBase lhs_bmm1_buffer,
+      se::DeviceMemoryBase rhs_bmm1_buffer,
+      se::DeviceMemoryBase rhs_bmm2_buffer, 
+      se::DeviceMemoryBase descale_q_buffer, se::DeviceMemoryBase descale_k_buffer, se::DeviceMemoryBase descale_v_buffer, se::DeviceMemoryBase descale_s_buffer,
+      se::DeviceMemoryBase scale_s_buffer, se::DeviceMemoryBase scale_o_buffer,
+      se::DeviceMemoryBase amax_s_buffer, se::DeviceMemoryBase amax_o_buffer,
+      se::DeviceMemoryBase output_buffer,
+      std::optional<se::DeviceMemoryBase> activation_buffer) {
+  GpufMHAF8Params params;
+  params.config = &config;
+  params.lhs_bmm1_buffer = lhs_bmm1_buffer;
+  params.rhs_bmm1_buffer = rhs_bmm1_buffer;
+  params.rhs_bmm2_buffer = rhs_bmm2_buffer;
+  params.output_buffer = output_buffer;
+  params.activation_buffer = activation_buffer;
+  params.descale_q_buffer = descale_q_buffer;
+  params.descale_k_buffer = descale_k_buffer;
+  params.descale_v_buffer = descale_v_buffer;
+  params.descale_s_buffer = descale_s_buffer;
+  params.scale_s_buffer = scale_s_buffer;
+  params.scale_o_buffer = scale_o_buffer;
+  params.amax_s_buffer = amax_s_buffer;
+  params.amax_o_buffer = amax_o_buffer;
+  return params;
+}
+
 
 /*static*/ absl::StatusOr<GpufMHAParams> GpufMHAParams::For(
     const GpufMHAConfig &config, se::DeviceMemoryBase lhs_bmm1_buffer,
@@ -606,6 +822,43 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
   params.seqlen_q_buffer = seqlen_q_buffer;
   params.seqlen_k_buffer = seqlen_k_buffer;
   return params;
+}
+
+absl::Status RunGpuFMHAF8(const GpufMHAF8Config& fmha_config,
+                        se::DeviceMemoryBase lhs_bmm1_buffer,
+                        se::DeviceMemoryBase rhs_bmm1_buffer,
+                        se::DeviceMemoryBase rhs_bmm2_buffer,
+                        se::DeviceMemoryBase descale_q_buffer,
+                        se::DeviceMemoryBase descale_k_buffer,
+                        se::DeviceMemoryBase descale_v_buffer,
+                        se::DeviceMemoryBase descale_s_buffer,
+                        se::DeviceMemoryBase scale_s_buffer,
+                        se::DeviceMemoryBase scale_o_buffer,
+                        se::DeviceMemoryBase amax_s_buffer,
+                        se::DeviceMemoryBase amax_o_buffer,
+                        se::DeviceMemoryBase output_buffer,
+                        se::DeviceMemoryBase scratch_buffer,
+                        std::optional<se::DeviceMemoryBase> activation_buffer,
+                        se::Stream* stream, RunFusedMHAF8Options options) {
+  TF_ASSIGN_OR_RETURN(
+      GpufMHAF8Params params,
+      GpufMHAF8Params::For(fmha_config, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
+                           descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer, scale_s_buffer, scale_o_buffer,
+                           amax_s_buffer, amax_o_buffer,
+                           output_buffer, activation_buffer));
+  PrimitiveType input_primitive_type = fmha_config.input_type;
+  switch (input_primitive_type) {
+    case F8E4M3FN:
+      return RunGpuFMHAF8Impl<tsl::float8_e4m3fn, tsl::float8_e4m3fn>(
+          params, stream, scratch_buffer, options);
+    case F8E5M2:
+      return RunGpuFMHAF8Impl<tsl::float8_e5m2, tsl::float8_e5m2>(
+          params, stream, scratch_buffer, options);
+    default:
+      return absl::UnimplementedError(absl::StrFormat(
+          "Unimplemented fused MHA with %s", ToString(fmha_config)));
+  }
+  return absl::OkStatus();
 }
 
 absl::Status RunGpuFMHA(const GpufMHAConfig &fmha_config,
@@ -712,6 +965,45 @@ std::string ToString(const GpufMHAConfig &config) {
     absl::StrAppend(&result, "bias: ", (*config.bias).ToString(), "\n");
   }
 
+  return result;
+}
+
+std::string ToString(const GpufMHAF8Config &config) {
+  std::string result = "GpufMHAF8Config:\n";
+  absl::StrAppend(&result,
+                  "input_type: ", PrimitiveType_Name(config.input_type), ", ");
+  absl::StrAppend(
+      &result, "output_type: ", PrimitiveType_Name(config.output_type), ", ");
+  absl::StrAppend(&result, "Kind: ", CudnnfMHAKindToString(config.kind), ", ");
+  if (config.fmha_scale) {
+    absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
+  }
+  // if (config.descale_q) {
+    absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
+  // }
+  // if (config.descale_k) {
+    absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
+  // }
+  // if (config.descale_v) {
+    absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
+  // }
+  // if (config.descale_s) {
+    absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
+  // }
+  // if (config.scale_s) {
+    absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
+  // }
+  // if (config.scale_o) {
+    absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
+  // }
+  absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),
+                  "\n");
+  absl::StrAppend(&result, "lhs_bmm1: ", config.lhs_bmm1.ToString(), "\n");
+  absl::StrAppend(&result, "rhs_bmm1: ", config.rhs_bmm1.ToString(), "\n");
+  absl::StrAppend(&result, "rhs_bmm2: ", config.rhs_bmm2.ToString(), "\n");
+  absl::StrAppend(&result, "intermediate_lhs_bmm2: ",
+                  config.intermediate_lhs_bmm2.ToString(), "\n");
+  absl::StrAppend(&result, "output: ", config.output.ToString(), "\n");
   return result;
 }
 

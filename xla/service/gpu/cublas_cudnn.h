@@ -67,6 +67,8 @@ enum class CudnnfMHAKind {
   kBackwardSoftmax,
   kBackwardScaleBiasSoftmax,
   kBackwardScaleBiasSoftmaxDropout,
+  kSoftmaxf8,
+  kBackwardSoftmaxf8,
 };
 
 enum class CudnnfMHAMaskKind {
@@ -190,6 +192,9 @@ extern const absl::string_view kCudnnfMHASoftmaxDropoutBackwardCallTarget;
 extern const absl::string_view
     kCudnnfMHAScaleBiasSoftmaxDropoutBackwardCallTarget;
 extern const absl::string_view kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget;
+
+bool IsFwdCustomCallTofMHAF8(const HloInstruction& hlo);
+bool IsCustomCallTofMHAF8(const HloInstruction& hlo);
 
 bool IsFwdCustomCallTofMHA(const HloInstruction& hlo);
 bool IsBwdCustomCallTofMHA(const HloInstruction& hlo);

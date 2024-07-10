@@ -115,7 +115,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             fmha_config.dropout_rate && *fmha_config.dropout_rate > 0.0,
             fmha_config.dropout_rate, dnn_mask_type));
     return std::move(graph);
-  } else {
+  } else if(IsBwdCustomCallTofMHA(*custom_call)) {
     TF_ASSIGN_OR_RETURN(
         auto gpu_config,
         custom_call->backend_config<xla::gpu::GpuBackendConfig>());
@@ -225,6 +225,56 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             fmha_config.bias != std::nullopt, dnn_mask_type,
             force_deterministic));
     return std::move(graph);
+  } else if(IsFwdCustomCallTofMHAF8(*custom_call)) {
+    TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnfMHAKind kind,
+                        xla::gpu::GetCudnnfMHAKind(custom_call));
+
+    TF_ASSIGN_OR_RETURN(
+        const auto gpu_config,
+        custom_call->backend_config<xla::gpu::GpuBackendConfig>());
+    const xla::gpu::CudnnfMHAF8BackendConfig& config =
+        gpu_config.cudnn_fmha_f8_backend_config();
+    Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
+    absl::InlinedVector<Shape, 4> output_shapes = {
+        ShapeUtil::GetSubshape(custom_call->shape(), {0})};
+
+    bool has_activation =
+        xla::ShapeUtil::TupleElementCount(custom_call->shape()) == 5;
+    if (has_activation) {
+      output_shapes.push_back(
+          ShapeUtil::GetSubshape(custom_call->shape(), {3}));
+    }
+
+    Shape q_shape = custom_call->operand(0)->shape();
+    Shape k_shape = custom_call->operand(1)->shape();
+    Shape v_shape = custom_call->operand(2)->shape();
+    TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
+                        AsCudnnFmhaF8MaskKind(config.mask_type()));
+    GpufMHAF8Descriptor descriptor = {kind,
+                                    config,
+                                    cudnn_mask_type,
+                                    q_shape,
+                                    k_shape,
+                                    v_shape,
+                                    intermediate_tensor_shape,
+                                    output_shapes,
+                                    config.bmm1_dot_dimension_numbers(),
+                                    config.bmm2_dot_dimension_numbers()};
+
+    TF_ASSIGN_OR_RETURN(GpufMHAF8Config fmha_config,
+                        GpufMHAF8Config::For(descriptor));
+    TF_ASSIGN_OR_RETURN(
+        se::dnn::FMHAMaskKind dnn_mask_type,
+        GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(fmha_config.mask_type));
+    TF_ASSIGN_OR_RETURN(
+        se::gpu::CudnnGraph graph,
+        se::gpu::GetCudnnFlashAttentionF8OperationGraph(
+            dnn_support, fmha_config.lhs_bmm1, fmha_config.rhs_bmm1,
+            fmha_config.rhs_bmm2, fmha_config.output, fmha_config.activation,
+            static_cast<float>(*fmha_config.fmha_scale), dnn_mask_type));
+    return std::move(graph);
+  } else {
+    return absl::OkStatus();
   }
 }
 
@@ -234,7 +284,7 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
       : dnn_support_(dnn_support) {}
 
   absl::Status HandleCustomCall(HloInstruction* hlo) override {
-    if (!IsCustomCallTofMHA(*hlo)) {
+    if (!IsCustomCallTofMHA(*hlo) && !IsCustomCallTofMHAF8(*hlo)) {
       // don't do anything about other cuDNN custom calls
       return absl::OkStatus();
     }
@@ -252,6 +302,7 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
       Shape* shape = hlo->mutable_shape();
       shape->mutable_tuple_shapes(shape->tuple_shapes_size() - 1)
           ->set_dimensions(0, workspace);
+      VLOG(4) << "After Rewriting: " << hlo->ToString();          
       MarkAsChanged();
     }
     return absl::OkStatus();

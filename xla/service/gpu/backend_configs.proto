@@ -258,6 +258,53 @@ message CudnnfMHABackendConfig {
   bool force_deterministic = 23;
 }
 
+// Backend config for a fused Multi-Headed Attention (fMHA) that runs through
+// cudnn.
+message CudnnfMHAF8BackendConfig {
+  // Opaque algorithm number and tuning knobs chosen for this fMHA F8.
+  stream_executor.dnn.AlgorithmProto algorithm = 8;
+
+  // The scaling factor multiplied with the BMM1 result. fmha_scale is 1 if the
+  // MHA pattern has no scaling.
+  double fmha_scale = 10;
+  double descale_q = 24;
+  double descale_k = 25;
+  double descale_v = 26;
+  double descale_s = 27;
+  double scale_s = 28;
+  double scale_o = 29;
+
+  // Configs for mha bmms in the forward graph
+  xla.DotDimensionNumbers bmm1_dot_dimension_numbers = 11;
+  xla.DotDimensionNumbers bmm2_dot_dimension_numbers = 12;
+
+  xla.ShapeProto intermediate_tensor_shape = 14;
+
+  // Configs for mha bmms in the backward graph
+  xla.DotDimensionNumbers bmm1_grad_gemm1_dot_dimension_numbers = 16;
+  xla.DotDimensionNumbers bmm1_grad_gemm2_dot_dimension_numbers = 17;
+  xla.DotDimensionNumbers bmm2_grad_gemm1_dot_dimension_numbers = 18;
+  xla.DotDimensionNumbers bmm2_grad_gemm2_dot_dimension_numbers = 19;
+
+  // Random seed used by dropout
+
+  // Is flash attention
+  bool is_flash_attention = 20;
+
+  // Is causal mask
+  bool is_causal_mask = 21;
+
+  // mask type
+  enum MaskType {
+    NO_MASK = 0;
+    CAUSAL = 1;
+  }
+  MaskType mask_type = 22;
+
+  // Whether force deterministic for bwd
+  bool force_deterministic = 23;
+}
+
 // Generic backend config for XLA:GPU
 message GpuBackendConfig {
   // Specifies which operation queue the current instruction will run on.
@@ -286,6 +333,8 @@ message GpuBackendConfig {
     CudnnNormBackendConfig cudnn_norm_backend_config = 8;
 
     CudnnfMHABackendConfig cudnn_fmha_backend_config = 9;
+
+    CudnnfMHAF8BackendConfig cudnn_fmha_f8_backend_config = 11;
   }
 
   // This attribute instructs the latency-hiding scheduler to

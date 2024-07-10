@@ -335,6 +335,31 @@ class CudnnSupport : public dnn::DnnSupport {
       std::optional<dnn::TensorDescriptor> dscale_descriptor,
       std::optional<dnn::TensorDescriptor> dbias_descriptor) override;
 
+  absl::StatusOr<std::unique_ptr<const dnn::FusedMHAF8Runner>>
+  FusedMHAF8RunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      const dnn::MatmulTensorDescriptor& bmm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+    //   const dnn::TensorDescriptor& descale_q_descriptor,
+    //   const dnn::TensorDescriptor& descale_k_descriptor,
+    //   const dnn::TensorDescriptor& descale_v_descriptor,
+    //   const dnn::TensorDescriptor& descale_s_descriptor,
+    //   const dnn::TensorDescriptor& scale_s_descriptor,
+    //   const dnn::TensorDescriptor& scale_o_descriptor,
+    //   const dnn::TensorDescriptor& amax_s_descriptor,
+    //   const dnn::TensorDescriptor& amax_o_descriptor,
+      const dnn::TensorDescriptor& output_descriptor,
+     const dnn::TensorDescriptor& amax_s_descriptor,
+      const dnn::TensorDescriptor& amax_o_descriptor,
+      std::optional<dnn::TensorDescriptor> activation_descriptor,
+       float descale_q, float descale_k,
+      float descale_v,
+      float descale_s,
+      float scale_s,
+      float scale_o, double scale, dnn::FMHAMaskKind mask_type) override;
+
   absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
   FusedMHARunnerFromDesc(
       Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
@@ -715,6 +740,15 @@ class CudnnSupport : public dnn::DnnSupport {
   CudnnSupport(const CudnnSupport&) = delete;
   void operator=(const CudnnSupport&) = delete;
 };
+
+absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
+    dnn::DnnSupport& dnn_support,
+    const dnn::MatmulTensorDescriptor& q_descriptor,
+    const dnn::MatmulTensorDescriptor& k_descriptor,
+    const dnn::MatmulTensorDescriptor& v_descriptor,
+    const dnn::TensorDescriptor& o_descriptor,
+    const std::optional<dnn::TensorDescriptor> stats_descriptor,
+    const float scale, const dnn::FMHAMaskKind mask_type);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,
