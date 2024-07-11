@@ -252,7 +252,7 @@ absl::StatusOr<std::string> GetBackendConfigFingerprint(
   return GetProtoFingerprint(proto);
 }
 
-// Returs concatenated fingerprint of an HLO instruction without its backend
+// Returns concatenated fingerprint of an HLO instruction without its backend
 // config and its backend config's deterministic fingerprint.
 template <typename ConfigType>
 absl::StatusOr<std::string> FingerprintWithBackendConfig(

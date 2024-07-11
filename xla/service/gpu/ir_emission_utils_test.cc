@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/literal.h"
@@ -1035,29 +1036,33 @@ ENTRY main {
               IsOkAndHolds(true));
 }
 
-TEST_F(IrEmissionUtilsTest, ProtoFingerprintIsDeterministic) {
+gpu::GpuBackendConfig CreateTestProto() {
   gpu::GpuBackendConfig proto;
   auto& knobs = *proto.mutable_cudnn_fmha_backend_config()
                      ->mutable_algorithm()
                      ->mutable_tuning_knobs();
-  knobs[0] = 1;
-  knobs[2] = 3;
-  TF_ASSERT_OK_AND_ASSIGN(std::string fingerprint, GetProtoFingerprint(proto));
-  EXPECT_EQ(fingerprint, "Sg5CDCIECAAQASIECAIQAw");
+  for (int i = 0; i < 10; ++i) {
+    knobs[i] = i;
+  }
+  return proto;
+}
+
+constexpr absl::string_view kTestProtoFingerprint =
+    "Sj5CPCIECAAQACIECAEQASIECAIQAiIECAMQAyIECAQQBCIECAUQBSIECAYQBiIECAcQByIECA"
+    "gQCCIECAkQCQ";
+
+TEST_F(IrEmissionUtilsTest, ProtoFingerprintIsDeterministic) {
+  TF_ASSERT_OK_AND_ASSIGN(std::string fingerprint,
+                          GetProtoFingerprint(CreateTestProto()));
+  EXPECT_EQ(fingerprint, kTestProtoFingerprint);
 }
 
 TEST_F(IrEmissionUtilsTest, BackendConfigFingerprintIsDeterministic) {
-  gpu::GpuBackendConfig proto;
-  auto& knobs = *proto.mutable_cudnn_fmha_backend_config()
-                     ->mutable_algorithm()
-                     ->mutable_tuning_knobs();
-  knobs[0] = 1;
-  knobs[2] = 3;
-  BackendConfigWrapper wrapper(proto);
+  BackendConfigWrapper wrapper(CreateTestProto());
   TF_ASSERT_OK_AND_ASSIGN(
       std::string fingerprint,
       GetBackendConfigFingerprint<GpuBackendConfig>(wrapper));
-  EXPECT_EQ(fingerprint, "Sg5CDCIECAAQASIECAIQAw");
+  EXPECT_EQ(fingerprint, kTestProtoFingerprint);
 }
 
 TEST_F(IrEmissionUtilsTest,
@@ -1065,14 +1070,15 @@ TEST_F(IrEmissionUtilsTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(R"(
 ENTRY e {
-  ROOT _ = u8[0] custom-call(), custom_call_target="", backend_config={"cudnn_fmha_backend_config": {"algorithm": {"tuning_knobs": {"0": "1", "2": "3"}}}}
+  ROOT _ = u8[0] custom-call(), custom_call_target="", backend_config={"cudnn_fmha_backend_config": {"algorithm": {"tuning_knobs": {"0": "0", "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9"}}}}
 })"));
   const HloInstruction& hlo = *module->entry_computation()->root_instruction();
   TF_ASSERT_OK_AND_ASSIGN(std::string fingerprint,
                           FingerprintWithBackendConfig<GpuBackendConfig>(hlo));
   EXPECT_EQ(fingerprint,
-            "u8[0]{0} custom-call(), custom_call_target=\"\", "
-            "backend_config_fingerprint=Sg5CDCIECAAQASIECAIQAw");
+            absl::StrCat("u8[0]{0} custom-call(), custom_call_target=\"\", "
+                         "backend_config_fingerprint=",
+                         kTestProtoFingerprint));
 }
 
 }  // namespace gpu
