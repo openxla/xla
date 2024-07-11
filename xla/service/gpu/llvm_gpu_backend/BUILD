@@ -8,7 +8,10 @@ load(
 )
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
-
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([":friends"]),
@@ -95,6 +98,7 @@ xla_cc_test(
     name = "utils_test",
     size = "small",
     srcs = ["utils_test.cc"],
+    tags = tf_cuda_tests_tags(),
     data = [
         "tests_data/saxpy.ll",
     ],
