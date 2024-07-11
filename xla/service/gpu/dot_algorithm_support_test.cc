@@ -115,10 +115,6 @@ class DotAlgorithmSupportTest
         .gpu_compute_capability();
   }
 
-  bool IsCUDA() {
-      return std::holds_alternative<se::CudaComputeCapability>(GetGpuComputeCapability());
-  }
-
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     // Setting this explicitly to make sure that we also test the case when the
@@ -154,13 +150,13 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
       params.sizes.contracting_size, params.sizes.non_contracting_size);
 
   bool is_algorithm_supported = false;
-  if (IsCUDA()) {
-    auto ccc = std::get<se::CudaComputeCapability>(GetGpuComputeCapability());
-    is_algorithm_supported = ccc.IsAtLeast(params.min_cuda_capability.major,
-                                           params.min_cuda_capability.minor);
-  } else {
-    auto rcc = std::get<se::RocmComputeCapability>(GetGpuComputeCapability());
-    is_algorithm_supported = rcc.gfx9_mi100_or_later();
+  auto gpu_cc = GetGpuComputeCapability();
+
+  if (const auto *ccc = std::get_if<se::CudaComputeCapability>(&gpu_cc)) {
+    is_algorithm_supported = ccc->IsAtLeast(params.min_cuda_capability.major,
+                                            params.min_cuda_capability.minor);
+  } else if (const auto *rcc = std::get_if<se::RocmComputeCapability>(&gpu_cc)) {
+    is_algorithm_supported = rcc->gfx9_mi100_or_later();
     auto version = std::stol(GetDeviceDescription().runtime_version());
     if (version < params.min_rocm_version &&
         (params.input_storage_type == F8E5M2 || params.input_storage_type == F8E4M3FN) &&
