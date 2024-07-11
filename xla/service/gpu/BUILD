@@ -16,9 +16,6 @@ load(
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "tf_cuda_tests_tags",
-)
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
