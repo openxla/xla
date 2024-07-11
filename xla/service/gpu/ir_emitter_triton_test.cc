@@ -5657,6 +5657,27 @@ CHECK: wgmma
 )");
 }
 
+// Test usage of default matmul config information.
+TEST_F(TritonGemmTest, TestNoAutotuner) {
+  const std::string kHloText = R"(
+ENTRY e {
+  p0 = f16[30,30] parameter(0)
+  p1 = s8[30,30] parameter(1)
+  cp1 = f16[30,30] convert(p1)
+  ROOT _ = f16[30,30] dot(p0, cp1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> verified_module,
+                          ParseAndReturnVerifiedModule(kHloText));
+  DebugOptions debug_options = verified_module->config().debug_options();
+  debug_options.set_xla_gpu_autotune_level(0);
+  verified_module->mutable_config().set_debug_options(debug_options);
+
+  EXPECT_TRUE(RunAndCompare(std::move(verified_module),
+                            ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+
+}
+
 TEST_F(TritonTest, TestGenericEmitterWithSoftMaxSingleParameter) {
   const std::string kHloText = R"(
 HloModule t
@@ -5790,6 +5811,8 @@ ENTRY entry_computation {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-6,
                                                 /*arel=*/1e-6}));
 }
+
+
 
 }  // namespace
 }  // namespace gpu

@@ -38,6 +38,10 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// Value 0 for num_stages is used to represent AMD specific register
+// file double buffering.
+constexpr int kAmdDoubleBuffering = 0;
+
 namespace ma = ::mlir::arith;
 namespace mm = ::mlir::math;
 namespace ml = ::mlir::LLVM;
@@ -85,7 +89,7 @@ absl::Status CreateTritonPipeline(
   // TODO ROCm Check if we want to compare MI100 and greater
   pm.addPass(mlir::createTritonAMDGPUOptimizeEpiloguePass());
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
-  if (block_level_parameters.num_stages == 0 &&
+  if (block_level_parameters.num_stages == kAmdDoubleBuffering &&
      ccRocm.has_amd_matrix_core()) {
     pm.addPass(mlir::createTritonAMDGPUStreamPipelinePass());
     pm.addPass(mlir::createCanonicalizerPass());
@@ -93,7 +97,7 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
   pm.addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mt::gpu::createTritonGPUReduceDataDuplication());
-  if (block_level_parameters.num_stages != 0) {
+  if (block_level_parameters.num_stages != kAmdDoubleBuffering) {
     pm.addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
   pm.addPass(mlir::createCSEPass());
