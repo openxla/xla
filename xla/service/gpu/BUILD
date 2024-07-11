@@ -15,6 +15,10 @@ load(
 )
 load(
     "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
@@ -80,6 +84,7 @@ tf_proto_library(
 xla_cc_test(
     name = "backend_configs_test",
     srcs = ["backend_configs_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         "//xla/hlo/ir:hlo",
@@ -187,6 +192,7 @@ xla_test(
 xla_cc_test(
     name = "gpu_copy_insertion_test",
     srcs = ["gpu_copy_insertion_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":buffer_sharing",
         "//xla:test",
@@ -251,6 +257,7 @@ cc_library(
 xla_cc_test(
     name = "target_util_test",
     srcs = ["target_util_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":target_util",
         "//xla/tests:xla_internal_test_main",
@@ -723,6 +730,7 @@ cc_library(
 xla_cc_test(
     name = "ir_emitter_triton_mem_utils_test",
     srcs = if_cuda_is_configured(["ir_emitter_triton_mem_utils_test.cc"]),
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_traversal",
         ":ir_emitter_triton",
@@ -1126,6 +1134,7 @@ cc_library(
 xla_cc_test(
     name = "ir_emission_utils_test",
     srcs = ["ir_emission_utils_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_traversal",
         ":ir_emission_utils",
@@ -1168,6 +1177,7 @@ cc_library(
 xla_cc_test(
     name = "reduction_utils_test",
     srcs = ["reduction_utils_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":reduction_utils",
         "//xla/hlo/ir:hlo",
@@ -1288,6 +1298,7 @@ cc_library(
 xla_cc_test(
     name = "triton_support_test",
     srcs = ["triton_support_test.cc"],
+    tags = tf_cuda_tests_tags(),
     shard_count = 20,
     deps = [
         ":gpu_device_info_for_tests",
@@ -1368,6 +1379,7 @@ cc_library(
 xla_cc_test(
     name = "triton_tiling_propagation_test",
     srcs = ["triton_tiling_propagation_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":triton_tiling_propagation",
         "//xla/tests:hlo_test_base",
@@ -1407,6 +1419,7 @@ cc_library(
 xla_cc_test(
     name = "triton_fusion_analysis_test",
     srcs = ["triton_fusion_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gemm_fusion",
         ":triton_fusion_analysis",
@@ -1457,6 +1470,7 @@ cc_library(
 xla_cc_test(
     name = "gemm_fusion_test",
     srcs = ["gemm_fusion_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cublas_padding_requirements",
         ":gemm_fusion",
@@ -1504,6 +1518,7 @@ cc_library(
 xla_cc_test(
     name = "gemv_rewriter_test",
     srcs = ["gemv_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gemv_rewriter",
         "//xla/hlo/ir:hlo",
@@ -1549,6 +1564,7 @@ cc_library(
 xla_cc_test(
     name = "split_k_gemm_rewriter_test",
     srcs = ["split_k_gemm_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":matmul_utils",
         ":split_k_gemm_rewriter",
@@ -1840,6 +1856,7 @@ cc_library(
 xla_cc_test(
     name = "matmul_utils_test",
     srcs = ["matmul_utils_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":matmul_utils",
         "//xla:shape_util",
@@ -1912,6 +1929,7 @@ cc_library(
 xla_cc_test(
     name = "dot_sparsity_rewriter_test",
     srcs = ["dot_sparsity_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":dot_sparsity_rewriter",
         "//xla:xla_data_proto_cc",
@@ -1944,6 +1962,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_async_collective_annotator_test",
     srcs = ["gpu_async_collective_annotator_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_async_collective_annotator",
@@ -1980,6 +1999,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_convert_async_collectives_to_sync_test",
     srcs = ["gpu_convert_async_collectives_to_sync_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_convert_async_collectives_to_sync",
@@ -2243,6 +2263,7 @@ cc_library(
 xla_cc_test(
     name = "move_copy_to_users_test",
     srcs = ["move_copy_to_users_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":move_copy_to_users",
         "//xla/service:layout_assignment",
@@ -2256,6 +2277,7 @@ xla_cc_test(
 xla_cc_test(
     name = "gpu_conv_rewriter_test",
     srcs = ["gpu_conv_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cublas_cudnn",
         ":gpu_conv_rewriter",
@@ -2386,10 +2408,7 @@ cc_library(
 xla_cc_test(
     name = "instruction_fusion_test",
     srcs = ["instruction_fusion_test.cc"],
-    tags = [
-        "nomsan",
-        "not_run:arm",
-    ],
+    tags = ["nomsan", "not_run:arm"] + tf_cuda_tests_tags(),
     deps = [
         ":gpu_device_info_for_tests",
         ":gpu_fusible",
@@ -2446,6 +2465,7 @@ cc_library(
 xla_cc_test(
     name = "fusion_process_dump_test",
     srcs = ["fusion_process_dump_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":fusion_process_dump",
         ":fusion_process_dump_proto_cc",
@@ -2513,7 +2533,7 @@ xla_cc_test(
     name = "priority_fusion_test",
     srcs = ["priority_fusion_test.cc"],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
-    tags = ["no_pip"],
+    tags = ["no_pip"] + tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_device_info_for_tests",
@@ -2570,9 +2590,7 @@ cc_library(
 xla_cc_test(
     name = "multi_output_fusion_test",
     srcs = ["multi_output_fusion_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":gpu_device_info_for_tests",
         ":gpu_fusible",
@@ -2607,6 +2625,7 @@ cc_library(
 xla_cc_test(
     name = "rename_fusions_test",
     srcs = ["rename_fusions_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":rename_fusions",
         "//xla/tests:hlo_test_base",
@@ -2619,6 +2638,7 @@ xla_cc_test(
 xla_cc_test(
     name = "softmax_rewriter_triton_test",
     srcs = ["softmax_rewriter_triton_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_device_info_for_tests",
@@ -2662,6 +2682,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_sanitize_constant_names_test",
     srcs = ["gpu_sanitize_constant_names_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_sanitize_constant_names",
         "//xla:literal_util",
@@ -2706,9 +2727,7 @@ cc_library(
 xla_cc_test(
     name = "fusion_merger_test",
     srcs = ["fusion_merger_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":fusion_merger",
         ":gpu_device_info_for_tests",
@@ -2754,6 +2773,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_conv_padding_legalization_test",
     srcs = ["gpu_conv_padding_legalization_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cublas_cudnn",
         ":gpu_conv_padding_legalization",
@@ -2789,6 +2809,7 @@ cc_library(
 xla_cc_test(
     name = "cudnn_support_utils_test",
     srcs = ["cudnn_support_utils_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cudnn_support_utils",
         "//xla:shape_util",
@@ -2839,6 +2860,7 @@ cc_library(
 xla_cc_test(
     name = "cudnn_pad_for_convolutions_test",
     srcs = ["cudnn_pad_for_convolutions_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cublas_cudnn",
         ":cudnn_pad_for_convolutions",
@@ -2885,6 +2907,7 @@ cc_library(
 xla_cc_test(
     name = "cudnn_vectorize_convolutions_test",
     srcs = ["cudnn_vectorize_convolutions_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":cublas_cudnn",
@@ -2934,6 +2957,7 @@ cc_library(
 xla_cc_test(
     name = "cudnn_simplify_padding_test",
     srcs = ["cudnn_simplify_padding_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":cudnn_pad_for_convolutions",
         ":cudnn_simplify_padding",
@@ -3003,9 +3027,7 @@ cc_library(
 xla_cc_test(
     name = "cublas_pad_for_gemms_test",
     srcs = ["cublas_pad_for_gemms_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":cublas_pad_for_gemms",
         "//xla/hlo/ir:hlo",
@@ -3280,6 +3302,7 @@ cc_library(
 xla_cc_test(
     name = "command_buffer_scheduling_test",
     srcs = ["command_buffer_scheduling_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":command_buffer_scheduling",
         "//xla/hlo/ir:hlo",
@@ -3322,6 +3345,7 @@ cc_library(
 xla_cc_test(
     name = "custom_kernel_fusion_rewriter_test",
     srcs = ["custom_kernel_fusion_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":custom_kernel_fusion_rewriter",
         ":gpu_device_info_for_tests",
@@ -3368,6 +3392,7 @@ cc_library(
 xla_cc_test(
     name = "dynamic_slice_fusion_rewriter_test",
     srcs = if_cuda_is_configured(["dynamic_slice_fusion_rewriter_test.cc"]),
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":dynamic_slice_fusion_rewriter",
         ":gpu_device_info_for_tests",
@@ -4027,6 +4052,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_algebraic_simplifier_test",
     srcs = ["gpu_algebraic_simplifier_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_algebraic_simplifier",
         "//xla/hlo/ir:hlo",
@@ -4125,6 +4151,7 @@ cc_library(
 xla_cc_test(
     name = "all_reduce_blueconnect_test",
     srcs = ["all_reduce_blueconnect_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":all_reduce_blueconnect",
         "//xla:shape_util",
@@ -4223,6 +4250,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_layout_assignment_test",
     srcs = ["gpu_layout_assignment_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_layout_assignment",
         ":stream_executor_util",
@@ -4267,6 +4295,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_schedule_postprocessing_test",
     srcs = ["gpu_schedule_postprocessing_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_schedule_postprocessing",
@@ -4373,6 +4402,7 @@ xla_cc_test(
     srcs = [
         "gpu_p2p_pipeliner_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_p2p_pipeliner",
         "//xla:util",
@@ -4426,6 +4456,7 @@ xla_cc_test(
     srcs = [
         "gpu_spmd_pipeline_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_spmd_pipeline",
         "//xla:shape_util",
@@ -4450,9 +4481,7 @@ xla_cc_test(
 xla_cc_test(
     name = "while_transformer_test",
     srcs = ["while_transformer_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         "//xla:comparison_util",
         "//xla:literal_util",
@@ -4517,6 +4546,7 @@ cc_library(
 xla_cc_test(
     name = "stream_executor_util_test",
     srcs = ["stream_executor_util_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":stream_executor_util",
         "//xla:autotuning_proto_cc",
@@ -4567,6 +4597,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_fusion_analysis_test",
     srcs = ["hlo_fusion_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_device_info_for_tests",
@@ -5047,9 +5078,7 @@ cc_library(
 xla_cc_test(
     name = "variadic_op_splitter_test",
     srcs = ["variadic_op_splitter_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":variadic_op_splitter",
         "//xla:literal_util",
@@ -5101,6 +5130,7 @@ xla_cc_test(
     name = "hlo_algorithm_denylist_test",
     srcs = ["hlo_algorithm_denylist_test.cc"],
     data = ["data/hlo_algorithm_denylist.pbtxt"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_algorithm_denylist",
         "//xla/stream_executor:dnn",
@@ -5132,9 +5162,7 @@ cc_library(
 xla_cc_test(
     name = "alias_passthrough_params_test",
     srcs = ["alias_passthrough_params_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":alias_passthrough_params",
         "//xla/tests:hlo_test_base",
@@ -5243,6 +5271,7 @@ xla_test(
 xla_cc_test(
     name = "gpu_float_support_test",
     srcs = ["gpu_float_support_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_float_support",
         "//xla:shape_util",
@@ -5318,6 +5347,7 @@ cc_library(
 xla_cc_test(
     name = "reduction_splitter_test",
     srcs = ["reduction_splitter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":reduction_splitter",
         "//xla:shape_util",
@@ -5557,9 +5587,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_fusion_stats_test",
     srcs = ["hlo_fusion_stats_test.cc"],
-    tags = [
-        "nomsan",
-    ],
+    tags = ["nomsan"] + tf_cuda_tests_tags(),
     deps = [
         ":hlo_fusion_stats",
         "//xla/service:hlo_parser",
@@ -5597,6 +5625,7 @@ cc_library(
 xla_cc_test(
     name = "scatter_slice_simplifier_test",
     srcs = ["scatter_slice_simplifier_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":scatter_slice_simplifier",
         "//xla:shape_util",
@@ -5672,6 +5701,7 @@ cc_library(
 xla_cc_test(
     name = "topk_splitter_test",
     srcs = ["topk_splitter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":topk_splitter",
         "//xla/hlo/ir:hlo",
@@ -5799,6 +5829,7 @@ cc_library(
 xla_cc_test(
     name = "kernel_reuse_cache_test",
     srcs = ["kernel_reuse_cache_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":kernel_reuse_cache",
         "//xla/tests:xla_internal_test_main",
@@ -5848,6 +5879,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_traversal_test",
     srcs = ["hlo_traversal_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_traversal",
         "//xla/hlo/ir:hlo",
@@ -5879,6 +5911,7 @@ cc_library(
 xla_cc_test(
     name = "fusion_wrapper_test",
     srcs = ["fusion_wrapper_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":fusion_wrapper",
         "//xla/tests:hlo_test_base",
@@ -5889,6 +5922,7 @@ xla_cc_test(
 xla_cc_test(
     name = "copy_fusion_test",
     srcs = ["copy_fusion_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":copy_fusion",
         "//xla/hlo/ir:hlo",
@@ -5904,6 +5938,7 @@ xla_cc_test(
 xla_cc_test(
     name = "autotuner_util_test",
     srcs = if_cuda_is_configured(["autotuner_util_test.cc"]),
+    tags = tf_cuda_tests_tags(),
     deps = if_cuda_is_configured([
         # keep sorted
         ":autotuner_util",
@@ -5967,6 +6002,7 @@ cc_library(
 xla_cc_test(
     name = "double_buffer_loop_unrolling_test",
     srcs = ["double_buffer_loop_unrolling_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":double_buffer_loop_unrolling",
         "//xla:test",
@@ -6053,6 +6089,7 @@ cc_library(
 xla_cc_test(
     name = "collective_permute_cycle_decomposer_test",
     srcs = ["collective_permute_cycle_decomposer_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":collective_permute_cycle_decomposer",
         "//xla/hlo/ir:hlo",
@@ -6082,6 +6119,7 @@ cc_library(
 xla_cc_test(
     name = "collective_permute_valid_iteration_annotator_test",
     srcs = ["collective_permute_valid_iteration_annotator_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":collective_permute_valid_iteration_annotator",
         "//xla/hlo/ir:hlo",
@@ -6119,6 +6157,7 @@ cc_library(
 xla_cc_test(
     name = "stream_attribute_annotator_test",
     srcs = ["stream_attribute_annotator_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":stream_attribute_annotator",
@@ -6153,6 +6192,7 @@ cc_library(
 xla_cc_test(
     name = "stream_attribute_async_wrapper_test",
     srcs = ["stream_attribute_async_wrapper_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":stream_attribute_async_wrapper",
@@ -6193,6 +6233,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_windowed_einsum_handler_test",
     srcs = ["gpu_windowed_einsum_handler_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":backend_configs_cc",
         ":gpu_windowed_einsum_handler",
@@ -6288,6 +6329,7 @@ cc_library(
 xla_cc_test(
     name = "pipelined_p2p_rewriter_test",
     srcs = ["pipelined_p2p_rewriter_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":pipelined_p2p_rewriter",
         "//xla/hlo/ir:hlo",
@@ -6319,6 +6361,7 @@ cc_library(
 xla_cc_test(
     name = "execution_stream_assignment_test",
     srcs = ["execution_stream_assignment_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":execution_stream_assignment",
         "//xla/hlo/ir:hlo",
@@ -6353,5 +6396,6 @@ cc_library(
 xla_cc_test(
     name = "gpu_latency_hiding_scheduler_test",
     srcs = ["gpu_latency_hiding_scheduler_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = ["//xla/tests:xla_internal_test_main"],
 )
