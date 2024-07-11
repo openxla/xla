@@ -27,10 +27,6 @@ limitations under the License.
 #include "xla/tests/hlo_test_base.h"
 #include "xla/xla_data.pb.h"
 
-#ifdef TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#endif
-
 namespace xla {
 namespace gpu {
 namespace {
@@ -109,10 +105,13 @@ class DotAlgorithmSupportTest
     : public HloTestBase,
       public WithParamInterface<TestParams::TupleType> {
  public:
+   se::DeviceDescription GetDeviceDescription() {
+     return backend()
+          .default_stream_executor()
+          ->GetDeviceDescription();
+  }
   se::GpuComputeCapability GetGpuComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
+    return GetDeviceDescription()
         .gpu_compute_capability();
   }
 
@@ -162,8 +161,8 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
   } else {
     auto rcc = std::get<se::RocmComputeCapability>(GetGpuComputeCapability());
     is_algorithm_supported = rcc.gfx9_mi100_or_later();
-#ifdef TENSORFLOW_USE_ROCM
-    if (TF_ROCM_VERSION < params.min_rocm_version &&
+    auto version = std::stol(GetDeviceDescription().runtime_version());
+    if (version < params.min_rocm_version &&
         (params.input_storage_type == F8E5M2 || params.input_storage_type == F8E4M3FN) &&
         params.output_storage_type == BF16) {
        GTEST_SKIP() << "TODO: Unsupported F8 to BF16 in ROCm version < 6.3";
@@ -171,7 +170,6 @@ TEST_P(DotAlgorithmSupportTest, AlgorithmIsSupportedFromCudaCapability) {
     if (params.backend_restriction == BackendRestriction::kTritonOnly) {
         GTEST_SKIP() << "TODO: Triton unsupported in ROCm";
     }
-#endif //TENSORFLOW_USE_ROCM
   }
   if (is_algorithm_supported) {
     EXPECT_TRUE(Run(hlo_text));
