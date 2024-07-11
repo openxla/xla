@@ -165,6 +165,7 @@ xla_test(
 xla_cc_test(
     name = "gpu_reduce_scatter_creator_test",
     srcs = ["gpu_reduce_scatter_creator_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -302,6 +303,7 @@ xla_cc_test(
     srcs = [
         "reduction_degenerate_dim_remover_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla/service/gpu:reduction_degenerate_dim_remover",
         "//xla/tests:hlo_test_base",
@@ -332,6 +334,7 @@ xla_cc_test(
     srcs = [
         "tree_reduction_rewriter_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla/service/gpu:tree_reduction_rewriter",
         "//xla/stream_executor:device_description",
@@ -380,6 +383,7 @@ xla_cc_test(
     srcs = [
         "reduction_dimension_grouper_test.cc",
     ],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla/service/gpu:reduction_dimension_grouper",
         "//xla/tests:hlo_test_base",
