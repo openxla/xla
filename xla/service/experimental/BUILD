@@ -31,6 +31,7 @@ cc_library(
     hdrs = ["auto_parallel.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "module_cost_evaluator", 
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:sharding_propagation",
@@ -41,4 +42,14 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:logging",
     ],
+)
+
+cc_library(
+    name = "module_cost_evaluator",
+    srcs = ["module_cost_evaluator.cc"],
+    hdrs = ["module_cost_evaluator.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/hlo/ir:hlo"
+    ]
 )
