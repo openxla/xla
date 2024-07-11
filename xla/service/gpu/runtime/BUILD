@@ -6,6 +6,10 @@ load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "internal_visibility", "nvtx_headers")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -305,6 +309,7 @@ cc_library(
 xla_cc_test(
     name = "nccl_clique_key_test",
     srcs = ["nccl_clique_key_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":nccl_clique_key",
         "//xla/service:global_device_id",
@@ -1159,6 +1164,7 @@ cc_library(
 xla_cc_test(
     name = "for_all_thunks_test",
     srcs = ["for_all_thunks_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":command_buffer_cmd",
         ":command_buffer_thunk",
