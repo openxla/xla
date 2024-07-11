@@ -3402,6 +3402,8 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
       -> absl::StatusOr<std::pair<std::vector<Shape>, Shape>> {
     std::vector<const Shape*> argument_layout_pointers;
     std::optional<std::vector<Shape>> argument_layouts;
+    ExecutableBuildOptions options = build_options;
+
     TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
         XlaComputation(module.ToProto()),
         [local_client = local_client](Shape shape) {
@@ -3410,8 +3412,7 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
               ->ChooseCompactLayoutForShape(shape);
         },
         argument_layouts, &build_options, &argument_layout_pointers));
-    const Shape& result_layout = *build_options.result_layout();
-    return std::make_pair(*argument_layouts, result_layout);
+    return std::make_pair(*argument_layouts, *options.result_layout());
   };
 
   build_options.set_layout_canonicalization_callback(layout_callback);
