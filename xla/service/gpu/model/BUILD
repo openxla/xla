@@ -2,6 +2,10 @@ load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
+load(
+    "@tsl//tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
@@ -85,6 +89,7 @@ cc_library(
 xla_cc_test(
     name = "fusion_analysis_cache_test",
     srcs = ["fusion_analysis_cache_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":fusion_analysis_cache",
         "//xla/service:hlo_parser",
@@ -122,6 +127,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_cost_model_stats_collection_test",
     srcs = ["gpu_cost_model_stats_collection_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_cost_model_stats_collection",
         ":gpu_hlo_cost_analysis",
@@ -171,6 +177,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_hlo_cost_analysis_test",
     srcs = ["gpu_hlo_cost_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_hlo_cost_analysis",
         "//xla:shape_util",
@@ -216,6 +223,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_performance_model_base_test",
     srcs = ["gpu_performance_model_base_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":gpu_hlo_cost_analysis",
         ":gpu_performance_model_base",
@@ -260,6 +268,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_performance_model_test",
     srcs = ["gpu_performance_model_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":fusion_analysis_cache",
         ":gpu_hlo_cost_analysis",
@@ -328,6 +337,7 @@ cc_library(
 xla_cc_test(
     name = "gpu_collective_performance_model_test",
     srcs = ["gpu_collective_performance_model_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tests:hlo_test_base",
@@ -418,6 +428,7 @@ cc_library(
 xla_cc_test(
     name = "affine_map_printer_test",
     srcs = ["affine_map_printer_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":affine_map_printer",
         "//xla/tests:hlo_test_base",
@@ -443,6 +454,7 @@ cc_library(
 xla_cc_test(
     name = "affine_map_evaluator_test",
     srcs = ["affine_map_evaluator_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":affine_map_evaluator",
         "//xla/tests:hlo_test_base",
@@ -492,6 +504,7 @@ cc_library(
 xla_cc_test(
     name = "indexing_map_test",
     srcs = ["indexing_map_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":affine_map_printer",
         ":indexing_analysis",
@@ -542,6 +555,7 @@ cc_library(
 xla_cc_test(
     name = "indexing_analysis_test",
     srcs = ["indexing_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":indexing_analysis",
         ":indexing_test_utils",
@@ -579,6 +593,7 @@ cc_library(
 xla_cc_test(
     name = "symbolic_tile_test",
     srcs = ["symbolic_tile_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":affine_map_evaluator",
         ":indexing_analysis",
@@ -610,6 +625,7 @@ cc_library(
 xla_cc_test(
     name = "symbolic_tiled_hlo_instruction_test",
     srcs = ["symbolic_tiled_hlo_instruction_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":indexing_analysis",
         ":symbolic_tile",
@@ -643,6 +659,7 @@ cc_library(
 xla_cc_test(
     name = "tiled_hlo_instruction_test",
     srcs = ["tiled_hlo_instruction_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":indexing_analysis",
         ":indexing_test_utils",
@@ -677,6 +694,7 @@ cc_library(
 xla_cc_test(
     name = "tiled_hlo_computation_test",
     srcs = ["tiled_hlo_computation_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":tiled_hlo_computation",
         "//xla/service/gpu:backend_configs_cc",
@@ -722,6 +740,7 @@ cc_library(
 xla_cc_test(
     name = "symbolic_tile_analysis_test",
     srcs = ["symbolic_tile_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":indexing_test_utils",
         ":symbolic_tile",
@@ -773,6 +792,7 @@ cc_library(
 xla_cc_test(
     name = "coalescing_analysis_test",
     srcs = ["coalescing_analysis_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":coalescing_analysis",
         "//xla:shape_util",
@@ -828,6 +848,7 @@ cc_library(
 xla_cc_test(
     name = "hlo_op_profiles_test",
     srcs = ["hlo_op_profiles_test.cc"],
+    tags = tf_cuda_tests_tags(),
     deps = [
         ":hlo_op_profiles",
         "//xla:xla_data_proto_cc",
