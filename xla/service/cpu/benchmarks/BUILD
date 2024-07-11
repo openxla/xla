@@ -235,3 +235,17 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_cc_test(
+    name = "topk_benchmark_test",
+    srcs = ["topk_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
