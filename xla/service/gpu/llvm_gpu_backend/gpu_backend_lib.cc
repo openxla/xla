@@ -854,7 +854,13 @@ absl::StatusOr<std::vector<uint8_t>> EmitModuleToHsaco(
     ir_fs->flush();
   }
   // Locate lld.
-  std::string lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  std::string lld_path;
+  if (std::getenv("LLVM_PATH")) {
+    lld_path = tsl::io::JoinPath(std::getenv("LLVM_PATH"), "bin");
+  }
+  else{
+    lld_path = tsl::io::JoinPath(tsl::RocmRoot(), "llvm/bin");
+  }
   auto lld_program = llvm::sys::findProgramByName("ld.lld", {lld_path});
   if (!lld_program) {
     return xla::Internal("unable to find ld.lld in PATH: %s",
