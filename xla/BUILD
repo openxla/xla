@@ -1141,6 +1141,17 @@ cc_library(
         ],
 )
 
+xla_cc_test(
+    name = "debug_options_test",
+    srcs = ["debug_options_test.cc"],
+    deps = [
+        ":xla_proto_cc",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 cc_library(
     name = "cpu_function_runtime",
     srcs = ["cpu_function_runtime.cc"],
