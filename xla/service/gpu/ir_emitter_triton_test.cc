@@ -5657,8 +5657,13 @@ CHECK: wgmma
 )");
 }
 
-// Test usage of default matmul config information.
+// Test presence of default matmul config information
+// when gemm autotuner is not present in pipeline,
+// (which is currently the case on rocm).
 TEST_F(TritonGemmTest, TestNoAutotuner) {
+  if (std::holds_alternative<se::CudaComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Autotuner is always in pipeline on Cuda.";
+  }
   const std::string kHloText = R"(
 ENTRY e {
   p0 = f16[30,30] parameter(0)
@@ -5672,6 +5677,15 @@ ENTRY e {
   DebugOptions debug_options = verified_module->config().debug_options();
   debug_options.set_xla_gpu_autotune_level(0);
   verified_module->mutable_config().set_debug_options(debug_options);
+
+  MatchOptimizedHlo(kHloText, R"(
+; CHECK: ENTRY
+; CHECK-NEXT: parameter
+; CHECK-NEXT: parameter
+; CHECK-NEXT: fusion(
+; CHECK-SAME: kind=kCustom
+; CHECK-SAME: __triton_gemm
+  )");
 
   EXPECT_TRUE(RunAndCompare(std::move(verified_module),
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
