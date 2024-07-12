@@ -1702,14 +1702,13 @@ xla_test(
         "//xla:autotune_results_proto_cc",
         "//xla/stream_executor",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor/gpu:gpu_init",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
-    ] + if_gpu_is_configured([
-        "//xla/stream_executor/gpu:gpu_init",
-    ]),
+    ],
 )
 
 cc_library(
