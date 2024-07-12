@@ -15,6 +15,9 @@
 #
 # ==============================================================================
 
+# This script runs XLA unit tests on ROCm platform by selecting tests that are
+# tagged with requires-gpu-amd
+
 set -e
 set -x
 

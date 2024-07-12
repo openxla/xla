@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/cpu/thunk_emitter.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,6 +61,7 @@ limitations under the License.
 #include "xla/service/cpu/runtime/resource_use.h"
 #include "xla/service/cpu/runtime/rng_state_thunk.h"
 #include "xla/service/cpu/runtime/thunk.h"
+#include "xla/service/cpu/runtime/topk_thunk.h"
 #include "xla/service/cpu/runtime/while_thunk.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/hlo_module_config.h"
@@ -170,6 +172,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kWhile:
       return EmitWhileThunk(instruction);
 
+    // Dimension size operations.
+    case HloOpcode::kGetDimensionSize:
+      return EmitGetDimensionSizeThunk(instruction);
+    case HloOpcode::kSetDimensionSize:
+      return EmitSetDimensionSizeThunk(instruction);
+
     // Simple HLO instructions lowered to elemental host kernels (plain loops
     // behind the HostKernel API).
     case HloOpcode::kAbs:
@@ -251,16 +259,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kPad:
       return EmitElementalKernelThunk(instruction);
 
-    // TODO(ezhulenev): Implement slice operations as separate Thunks because
-    // it's much easier to get peak performance from hand written code.
     case HloOpcode::kSlice:
     case HloOpcode::kDynamicSlice:
-    // TODO(ezhulenev): Port dynamic update slice optimizations from IrEmitter.
-    case HloOpcode::kDynamicUpdateSlice:
-      return EmitElementalKernelThunk(instruction);
+      return EmitSliceThunk(instruction);
 
-    case HloOpcode::kGetDimensionSize:
-      return EmitGetDimensionSizeThunk(instruction);
+    case HloOpcode::kDynamicUpdateSlice:
+      return EmitDynamicUpdateSliceThunk(instruction);
 
     case HloOpcode::kConcatenate:
       return EmitConcatenateKernelThunk(instruction);
@@ -298,6 +302,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
 
     case HloOpcode::kFft:
       return EmitFftThunk(instruction);
+
+    case HloOpcode::kTopK:
+      return Unimplemented("TopK is not yet supported by XLA:CPU ThunkEmitter");
 
     case HloOpcode::kCustomCall:
       return EmitCustomCallThunk(instruction);
@@ -502,6 +509,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitGetDimensionSizeThunk(
     const HloInstruction* instruction) {
   return Unimplemented("GetDimensionSize should be rewritten for CPU.");
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSetDimensionSizeThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("SetDimensionSize should be rewritten for CPU.");
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
@@ -757,6 +769,39 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
   }
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKThunk(
+    const HloCustomCallInstruction* custom_call) {
+  const auto& result_shape = custom_call->shape();
+  const HloInstruction* input = custom_call->operand(0);
+  TF_RET_CHECK(input->shape().element_type() == F32)
+      << "TopK expects F32 data type for input";
+  TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(
+      result_shape.tuple_shapes(0).layout()))
+      << custom_call->ToString();
+  TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(
+      result_shape.tuple_shapes(1).layout()))
+      << custom_call->ToString();
+  TF_RET_CHECK(LayoutUtil::IsMonotonicWithDim0Major(input->shape().layout()))
+      << custom_call->ToString();
+
+  // Deduce parameters from the result shape and operand shape
+  const int64_t input_size = input->shape().dimensions().back();
+  const bool has_batch = result_shape.tuple_shapes(0).dimensions_size() == 2;
+  const int64_t batch_size =
+      has_batch ? result_shape.tuple_shapes(0).dimensions(0) : 1;
+  const int64_t k = result_shape.tuple_shapes(0).dimensions().back();
+
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice values_slice,
+                      GetAllocationSlice(input));
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice indices_slice,
+                      GetAllocationSlice(custom_call, {0}));
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
+                      GetAllocationSlice(custom_call, {1}));
+  return ThunkSequence::Of<TopKThunk>(ThunkInfo(custom_call), values_slice,
+                                      indices_slice, output_slice, batch_size,
+                                      input_size, k);
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReplicaIdThunk(
     const HloInstruction* instruction) {
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice replica_id_buffer,
@@ -846,13 +891,16 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
   // TODO(penporn): Support these existing targets.
   auto custom_call_target = custom_call->custom_call_target();
   if (custom_call_target == "PadToStatic" ||
-      custom_call_target == "SliceToDynamic" || custom_call_target == "TopK" ||
+      custom_call_target == "SliceToDynamic" ||
       custom_call_target == "__onednn$matmul" ||
       custom_call_target == "__onednn$softmax" ||
       custom_call_target == "__onednn$layernorm" ||
       custom_call_target == "__onednn$matmul_reorder") {
     return Unimplemented("Custom call target %s is not implemented.",
                          custom_call_target);
+  }
+  if (custom_call_target == "TopK") {
+    return EmitTopKThunk(custom_call);
   }
 
   // Check the API version.
@@ -877,6 +925,25 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSelectAndScatterThunk(
     const HloInstruction* instruction) {
   TF_ASSIGN_OR_RETURN(auto kernel,
                       ir_emitter_.EmitSelectAndScatterHostKernel(instruction));
+  TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
+
+  return ThunkSequence::Of<KernelThunk>(ThunkInfo(instruction),
+                                        buffers.arguments, buffers.results,
+                                        kernel.name, kernel.thread_dims);
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceThunk(
+    const HloInstruction* instruction) {
+  // TODO(ezhulenev): Consider implementing slice operations as separate
+  // Thunks because it might be easier to get peak performance from hand
+  // written code (Eigen slice expression for example).
+  return EmitElementalKernelThunk(instruction);
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDynamicUpdateSliceThunk(
+    const HloInstruction* instruction) {
+  TF_ASSIGN_OR_RETURN(
+      auto kernel, ir_emitter_.EmitDynamicUpdateSliceHostKernel(instruction));
   TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
 
   return ThunkSequence::Of<KernelThunk>(ThunkInfo(instruction),

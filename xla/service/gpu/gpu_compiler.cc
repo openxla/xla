@@ -605,6 +605,7 @@ absl::Status RunSPMDPasses(
     if (hlo_module->config()
             .debug_options()
             .xla_gpu_unsafe_pipelined_loop_annotator()) {
+      spmd_pipeline.AddPass<WhileLoopTripCountAnnotator>();
       spmd_pipeline.AddPass<CollectivePermuteValidIterationAnnotator>();
     }
     return spmd_pipeline.Run(hlo_module).status();
@@ -643,8 +644,8 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DotDimensionSorter>();
   pipeline.AddPass<DotDecomposer>();
 
-  pipeline.AddPass<OperandUpcaster>(upcaster_filter);
   pipeline.AddPass<ResultCaster>(upcaster_filter);
+  pipeline.AddPass<OperandUpcaster>(upcaster_filter);
 
   // Add the DotOperandConverter after any potential upcasts done as part of
   // the OperandUpcaster, so that the DotOperandConverter becomes a no-op.
