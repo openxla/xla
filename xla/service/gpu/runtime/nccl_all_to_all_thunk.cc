@@ -207,6 +207,7 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
         // double buffer, exchange data with peer
         se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptr.get());
         se::DeviceMemoryBase cur_addr = se::DeviceMemoryBase(buffer.destination_buffer);
+        // TODO parallelize below copies on to two streams
         TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, buffer.source_buffer, buffer.source_buffer.size()));
         TF_RETURN_IF_ERROR(stream.MemcpyD2D(&cur_addr, buffers[peer].source_buffer, buffers[peer].source_buffer.size()));
       } else {
