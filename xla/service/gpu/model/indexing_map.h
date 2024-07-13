@@ -58,6 +58,9 @@ struct Interval {
     return value >= lower && value <= upper;
   }
 
+  // Returns true if this interval contains the entire other interval.
+  bool Contains(Interval other) const { return Intersect(other) == other; }
+
   // The result of a range comparison. We wrap std::optional in a struct to
   // avoid accidental implicit conversion to bool:
   // if (range < 42) {
@@ -115,6 +118,11 @@ struct Interval {
   // Computes the range of the product of the two intervals. Implements
   // saturating semantics.
   Interval operator*(const Interval& rhs) const;
+  // Computes the range of the difference of the two intervals. Implements
+  // saturating semantics.
+  Interval operator-(const Interval& rhs) const { return *this + (-rhs); }
+  Interval operator-() const;
+  Interval FloorDiv(int64_t rhs) const;
 
   Interval min(const Interval& rhs) const {
     return {std::min(lower, rhs.lower), std::min(upper, rhs.upper)};
@@ -147,12 +155,13 @@ inline size_t hash_value(const Interval& range) {
   return llvm::hash_combine(range.lower, range.upper);
 }
 
+class IndexingMap;
+
 // Evaluates lower and upper bounds for expressions given the domain.
-// Not thread safe.
+// Not thread safe. Lifetime is tied to the owning IndexingMap's lifetime.
 class RangeEvaluator {
  public:
-  RangeEvaluator(absl::Span<const Interval> dim_ranges,
-                 absl::Span<const Interval> symbol_ranges,
+  RangeEvaluator(const IndexingMap& indexing_map,
                  mlir::MLIRContext* mlir_context);
 
   // Checks whether an `AffineExpr` always describes a non-negative value.
@@ -169,6 +178,7 @@ class RangeEvaluator {
 
  private:
   mlir::MLIRContext* mlir_context_;
+  const IndexingMap& indexing_map_;
   llvm::DenseMap<mlir::AffineExpr, Interval> expression_ranges_cache_;
 };
 
@@ -331,6 +341,8 @@ class IndexingMap {
   // bounds for the `expr`, then computes intersection of the current and new
   // ranges.
   void AddConstraint(mlir::AffineExpr expr, Interval range);
+  void ClearConstraints() { constraints_.clear(); }
+  void EraseConstraint(mlir::AffineExpr expr);
 
   // Evaluates the constraints at a given point and returns `true` if all
   // constraints are satisfied.
@@ -384,14 +396,6 @@ class IndexingMap {
 
  private:
   IndexingMap() = default;
-
-  // Performs AffineExpr simplification for all constraints.
-  // Returns true if simplification was performed.
-  bool SimplifyConstraintExprs();
-
-  // Performs range simplification for all constraints.
-  // Returns true if simplification was performed.
-  bool SimplifyConstraintRanges();
 
   // Merges "mod" constraints for the same AffineExpr.
   // Returns true if simplification was performed.
@@ -471,9 +475,6 @@ H AbslHashValue(H h, const IndexingMap& indexing_map) {
                            constraint_hashes.end());
   return h;
 }
-
-int64_t FloorDiv(int64_t dividend, int64_t divisor);
-int64_t CeilDiv(int64_t dividend, int64_t divisor);
 
 }  // namespace gpu
 }  // namespace xla

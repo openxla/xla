@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/transpose.h"
+#include "xla/pjrt/utils.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
@@ -147,8 +148,11 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
     client_ = client;
     // We have to define debug_string_ and to_string_ here, because
     // platform_name() requires client_ to be set.
+    std::string device_name =
+        absl::StrCat(MakeAsciiTitlecase(platform_name()), "Device");
+
     description().SetDebugString(absl::StrCat(platform_name(), ":", id()));
-    description().SetToString(absl::StrCat(platform_name(), "(id=", id(), ")"));
+    description().SetToString(absl::StrCat(device_name, "(id=", id(), ")"));
   }
 
   PjRtStreamExecutorDeviceDescription& description() { return description_; }
@@ -473,11 +477,6 @@ class PjRtStreamExecutorClient : public PjRtClient {
     std::vector<PjRtDevice*> addressable_devices;
   };
   absl::StatusOr<ExecutableExtras> GetExecutableExtras(CompileOptions* options);
-
-  absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileInternal(
-      const XlaComputation& computation,
-      const std::vector<const Shape*>& argument_layout_pointers,
-      CompileOptions options);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternal(
       const void* data, PrimitiveType type, absl::Span<int64_t const> dims,
@@ -1050,13 +1049,14 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
       std::shared_ptr<DeviceAssignment> device_assignment,
       std::vector<std::function<void()>>& compute_callbacks) const;
 
-  virtual std::vector<std::unique_ptr<PjRtBuffer>> MakeOutputBuffers(
-      int device_ordinal, const ExecuteOptions& options,
-      ScopedShapedBuffer result_buffer,
-      std::shared_ptr<BufferSequencingEvent> definition_event,
-      PjRtDevice* device, std::vector<std::function<void()>>& compute_callbacks,
-      std::vector<std::shared_ptr<TrackedDeviceBuffer>>& buffers_to_release)
-      const;
+  virtual absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
+  MakeOutputBuffers(int device_ordinal, const ExecuteOptions& options,
+                    ScopedShapedBuffer result_buffer,
+                    std::shared_ptr<BufferSequencingEvent> definition_event,
+                    PjRtDevice* device,
+                    std::vector<std::function<void()>>& compute_callbacks,
+                    std::vector<std::shared_ptr<TrackedDeviceBuffer>>&
+                        buffers_to_release) const;
 
   absl::StatusOr<Result> ExecuteHelper(
       absl::Span<PjRtBuffer* const> argument_handles, int replica,

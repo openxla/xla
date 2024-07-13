@@ -218,10 +218,13 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   absl::Status HandleConditional(HloInstruction* conditional) override;
   absl::Status HandleScatter(HloInstruction* scatter) override;
   absl::Status HandleAfterAll(HloInstruction* after_all) override;
+  absl::Status HandleGetDimensionSize(HloInstruction* get_size) override;
+  absl::Status HandleSetDimensionSize(HloInstruction* get_size) override;
   absl::Status HandleAddDependency(HloInstruction* add_dependency) override;
   absl::Status HandlePartitionId(HloInstruction* hlo) override;
   absl::Status HandleReplicaId(HloInstruction* hlo) override;
   absl::Status HandleRng(HloInstruction* rng) override;
+  absl::Status HandleRngBitGenerator(HloInstruction* rng) override;
   absl::Status HandleRngGetAndUpdateState(HloInstruction* rng_state) override;
   absl::Status FinishVisit(HloInstruction* root) override;
 
@@ -463,12 +466,16 @@ class IrEmitter : public DfsHloVisitorWithDefault,
       HloInstruction* arg, absl::Span<const int64_t> dimensions,
       llvm::Align element_alignment);
 
-  // Tries to emit a fast concatenate operation using memcpy.  Returns true if
-  // successful, and false on failure.  On failure, sets "failure_reason" to a
-  // string describing why it could not emit a fast concatenate.
-  absl::StatusOr<bool> EmitFastConcatenate(
-      HloInstruction* concatenate, absl::Span<HloInstruction* const> operands,
-      std::string* failure_reason);
+  // Checks if the given concatenate instruction can use a fast (memcpy)
+  // implementation.
+  absl::Status CanDoFastConcatenate(const HloInstruction* instr) const;
+
+  // Emits a fast concatenate operation using memcpy. Assumes all preconditions
+  // are met prior to calling this function (see CanDoFastConcatenate).
+  absl::Status EmitFastConcatenate(
+      const HloInstruction* instr,
+      absl::Span<const llvm_ir::IrArray> source_arrays,
+      const llvm_ir::IrArray& target_array);
 
   // Emits LLVM IR to transfer "element_count" elements of type "primitive_type"
   // from the address "source" to the address "target".
@@ -734,6 +741,20 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   IrEmitter(const IrEmitter&) = delete;
   IrEmitter& operator=(const IrEmitter&) = delete;
 };
+
+// Decoupled implementation of IrEmitter::EmitTransferElements.
+void EmitTransferElements(llvm::Value* target, llvm::Value* source,
+                          int64_t element_count, PrimitiveType primitive_type,
+                          const llvm_ir::IrArray& target_array,
+                          const llvm_ir::IrArray& source_array,
+                          llvm::Module* module, llvm::IRBuilder<>& b);
+
+// Decoupled implementation of IrEmitter::EmitFastConcatenate.
+absl::Status EmitFastConcatenate(
+    const HloInstruction* instr,
+    absl::Span<const llvm_ir::IrArray> source_arrays,
+    const llvm_ir::IrArray& target_array, llvm::Module* module,
+    llvm::IRBuilder<>& b);
 
 }  // namespace cpu
 }  // namespace xla

@@ -62,12 +62,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "task",
-    hdrs = ["task.h"],
-    deps = ["@com_google_absl//absl/functional:any_invocable"],
-)
-
-cc_library(
     name = "thunk",
     srcs = ["thunk.cc"],
     hdrs = ["thunk.h"],
@@ -86,6 +80,7 @@ cc_library(
         "//xla/stream_executor/host:host_kernel_c_api",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
@@ -152,7 +147,6 @@ xla_cc_test(
     deps = [
         ":buffer_allocations",
         ":resource_use",
-        ":task",
         ":thunk",
         ":thunk_executor",
         "//xla/runtime:buffer_use",
@@ -505,6 +499,7 @@ cc_library(
     srcs = ["copy_thunk.cc"],
     hdrs = ["copy_thunk.h"],
     deps = [
+        ":buffer_allocations",
         ":thunk",
         "//xla:shape_util",
         "//xla:util",
@@ -514,6 +509,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
@@ -765,7 +761,7 @@ cc_library(
     srcs = ["kernel_thunk.cc"],
     hdrs = ["kernel_thunk.h"],
     deps = [
-        ":task",
+        ":buffer_allocations",
         ":thunk",
         "//xla:util",
         "//xla/runtime:buffer_use",
@@ -925,5 +921,22 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
+    name = "topk_thunk",
+    srcs = ["topk_thunk.cc"],
+    hdrs = ["topk_thunk.h"],
+    deps = [
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/service/cpu:runtime_topk",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )

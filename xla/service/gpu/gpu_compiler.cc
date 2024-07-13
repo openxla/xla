@@ -605,6 +605,7 @@ absl::Status RunSPMDPasses(
     if (hlo_module->config()
             .debug_options()
             .xla_gpu_unsafe_pipelined_loop_annotator()) {
+      spmd_pipeline.AddPass<WhileLoopTripCountAnnotator>();
       spmd_pipeline.AddPass<CollectivePermuteValidIterationAnnotator>();
     }
     return spmd_pipeline.Run(hlo_module).status();
@@ -643,8 +644,8 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<DotDimensionSorter>();
   pipeline.AddPass<DotDecomposer>();
 
-  pipeline.AddPass<OperandUpcaster>(upcaster_filter);
   pipeline.AddPass<ResultCaster>(upcaster_filter);
+  pipeline.AddPass<OperandUpcaster>(upcaster_filter);
 
   // Add the DotOperandConverter after any potential upcasts done as part of
   // the OperandUpcaster, so that the DotOperandConverter becomes a no-op.
@@ -883,9 +884,7 @@ absl::Status RunCollectiveOptimizationPasses(
 
   HloPassPipeline collectives_pipeline("collective-optimizations");
   collectives_pipeline.AddPass<AllReduceFolder>();
-  if (debug_options.xla_gpu_enable_all_reduce_splitter()) {
-    collectives_pipeline.AddPass<AllReduceSplitter>();
-  }
+  collectives_pipeline.AddPass<AllReduceSplitter>();
   collectives_pipeline.AddPass<ReduceScatterCreator>();
   collectives_pipeline.AddPass<AllGatherOptimizer>();
   collectives_pipeline.AddPass<AllReduceReassociate>(
@@ -1271,7 +1270,15 @@ absl::Status GpuCompiler::OptimizeHloModule(
   TF_RETURN_IF_ERROR(RunPostFusionVerificationPasses(
       hlo_module, stream_exec, options, gpu_target_config));
 
-  return RunPreSchedulingPasses(hlo_module, stream_exec);
+  {
+    HloPassPipeline pipeline("collective-schedule-linearizer");
+    pipeline.AddPass<CollectivesScheduleLinearizer>(
+        [this, stream_exec](const HloModule* module) {
+          return RequiresCollectiveScheduleLinearizer(module, stream_exec);
+        });
+    TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
+  }
+  return absl::OkStatus();
 }  // NOLINT(readability/fn_size)
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
@@ -1371,16 +1378,14 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
 
-    // Rewrite FP8 GEMMs ahead of Triton which currently lacks support for FP8
-    // and may rewrite quantized FP8 GEMMs as higher-precision GEMMs.
-    pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
-                                   /*f8_rewrite=*/true);
     if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
     }
-    // Rewrite non-FP8 GEMMs.
+
+    pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
+                                   /*f8_rewrite=*/true);
     pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
                                    /*f8_rewrite=*/false);
 
@@ -1406,8 +1411,14 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     if (debug_options.xla_gpu_enable_triton_softmax_fusion() &&
         cuda_cc != nullptr &&
         cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
+      // Triton compilation needs normalized operations on bf16 (i.e. converted
+      // to f32).
+      add_float_normalization(pipeline);
       pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options,
                                                            gpu_version);
+      pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
+      pipeline.AddPass<HloConstantFolding>();
+      pipeline.AddPass<HloDCE>();
       pipeline.AddPass<SoftmaxRewriterTriton>(
           gpu_target_config.device_description, ShapeSizeBytesFunction());
     }
@@ -1443,7 +1454,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   pipeline.AddPass<CallInliner>();
   // TODO(tdanyluk): Apply CublasPadForGemms to the cuBLAS GEMMs generated
   // here for possibly better cuBLAS performance.
-  pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion());
+  pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
+                                 /*f8_rewrite=*/true);
+  pipeline.AddPass<GemmRewriter>(gpu_version, GetToolkitVersion(),
+                                 /*f8_rewrite=*/false);
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
@@ -1909,7 +1923,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
         }
         llvm_modules.push_back({name, std::move(module)});
       },
-      /*PreserveLocals=*/true);
+      /*PreserveLocals=*/true, /*RoundRobin=*/true);
   VLOG(2) << "Single-function cacheable modules: "
           << single_function_module_count << " / " << llvm_modules.size();
 
@@ -2031,6 +2045,7 @@ GpuCompiler::CompileToBackendResult(
     HloModule* module, llvm::LLVMContext* llvm_context,
     se::StreamExecutor* executor, const CompileOptions& options,
     const se::DeviceDescription& gpu_device_info) {
+  TF_RETURN_IF_ERROR(RunPreSchedulingPasses(module, executor));
   TF_ASSIGN_OR_RETURN(
       ScheduleMetadata schedule_metadata,
       ScheduleGpuModule(module, pointer_size_, gpu_device_info));
@@ -2326,10 +2341,7 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> GpuCompiler::Export(
 absl::Status GpuCompiler::RunPreSchedulingPasses(
     HloModule* module, se::StreamExecutor* stream_exec) {
   HloPassPipeline pipeline("pre-scheduling-passes");
-  pipeline.AddPass<CollectivesScheduleLinearizer>(
-      [this, stream_exec](const HloModule* module) {
-        return RequiresCollectiveScheduleLinearizer(module, stream_exec);
-      });
+  pipeline.AddPass<FusionWrapper>();
   return pipeline.Run(module).status();
 }
 

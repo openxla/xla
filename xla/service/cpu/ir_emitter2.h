@@ -129,12 +129,20 @@ class IrEmitter2 {
   // thunk that calls into libraries.
   absl::StatusOr<KernelInfo> EmitDotHostKernel(const HloInstruction* instr);
 
+  // Emits a host kernel for the given concatenate instruction.
+  absl::StatusOr<KernelInfo> EmitConcatenateHostKernel(
+      const HloInstruction* instr);
+
   // Emits a host kernel for the given dot fusion instruction (output fusion).
   absl::StatusOr<KernelInfo> EmitDotFusionHostKernel(
       const HloFusionInstruction* fusion);
 
   // Emits a host kernel for the given select-and-scatter instruction.
   absl::StatusOr<KernelInfo> EmitSelectAndScatterHostKernel(
+      const HloInstruction* instr);
+
+  // Emits a host kernel for the given dynamic-update-slice instruction.
+  absl::StatusOr<KernelInfo> EmitDynamicUpdateSliceHostKernel(
       const HloInstruction* instr);
 
   // Emits a host kernel prototype and prepares function for emitting kernel
@@ -192,6 +200,8 @@ class IrEmitter2 {
   // Returns parallel config for the given instruction or std::nullopt if
   // the instruction has to be compiled to a single threaded loop.
   std::optional<ParallelConfig> GetParallelConfig(const HloInstruction* instr);
+
+  absl::Status CanDoFastConcatenate(const HloInstruction* concatenate) const;
 
   // Emits LLVM IR that computes parallel partition bounds from the call frame's
   // block and thread dimensions and parallel execution config.

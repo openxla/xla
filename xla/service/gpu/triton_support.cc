@@ -396,10 +396,6 @@ CodegenDecision IsTritonSupportedInstruction(
       }
       return CanTritonHandleGEMM(*dot, gpu_version);
     }
-    case HloOpcode::kReduce: {
-      return CanTritonHandleReduce(*Cast<HloReduceInstruction>(&instr),
-                                   gpu_version);
-    }
     case HloOpcode::kTuple: {
       if (instr.IsRoot()) {
         return CodegenDecision{};
@@ -572,24 +568,7 @@ bool IsTritonSupportedElementwise(HloOpcode opcode, PrimitiveType element_type,
              .contains(opcode);
 }
 
-}  // namespace
-
-absl::Status EnsureTritonSupportsComputeCapability(
-    const se::GpuComputeCapability& gpu_compute_capability) {
-  auto cuda_compute_capability =
-      std::get_if<se::CudaComputeCapability>(&gpu_compute_capability);
-  if (cuda_compute_capability && !cuda_compute_capability->IsAtLeastAmpere()) {
-    return absl::FailedPreconditionError(
-        absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
-                     "capability 8.0) and up, but got compute capability ",
-                     cuda_compute_capability->major, ".",
-                     cuda_compute_capability->minor, "."));
-  }
-
-  return absl::OkStatus();
-}
-
-CodegenDecision IsTritonSupportedInstruction(
+CodegenDecision IsTritonSupportedInstructionImpl(
     const HloInstruction& instr, const se::GpuComputeCapability& gpu_version) {
   bool output_type_is_supported =
       IsTritonSupportedDataType(instr.shape().element_type(), gpu_version);
@@ -624,6 +603,8 @@ CodegenDecision IsTritonSupportedInstruction(
   // TODO(bchetioui): support kDot, kPad, and kDynamicSlice.
   switch (instr.opcode()) {
     case HloOpcode::kReduce: {
+      // TODO(bchetioui): upgrade `CanTritonHandleReduce` to correspond to
+      // the new implementation.
       return legacy_triton::CanTritonHandleReduce(
           *Cast<HloReduceInstruction>(&instr), gpu_version);
     }
@@ -633,10 +614,36 @@ CodegenDecision IsTritonSupportedInstruction(
     case HloOpcode::kBroadcast:
       return CodegenDecision{};
     default:
-      VLOG(1) << "Unsupported instruction: " << instr.ToString();
+      VLOG(2) << "Unsupported instruction: " << instr.ToString();
       break;
   }
   return "Unsupported opcode.";
+}
+
+}  // namespace
+
+absl::Status EnsureTritonSupportsComputeCapability(
+    const se::GpuComputeCapability& gpu_compute_capability) {
+  auto cuda_compute_capability =
+      std::get_if<se::CudaComputeCapability>(&gpu_compute_capability);
+  if (cuda_compute_capability && !cuda_compute_capability->IsAtLeastAmpere()) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
+                     "capability 8.0) and up, but got compute capability ",
+                     cuda_compute_capability->major, ".",
+                     cuda_compute_capability->minor, "."));
+  }
+
+  return absl::OkStatus();
+}
+
+CodegenDecision IsTritonSupportedInstruction(
+    const HloInstruction& instr, const se::GpuComputeCapability& gpu_version) {
+  CodegenDecision decision =
+      IsTritonSupportedInstructionImpl(instr, gpu_version);
+  VLOG(2) << "IsTritonSupportedInstruction: " << instr.ToString() << " "
+          << bool(decision);
+  return decision;
 }
 
 }  // namespace gpu

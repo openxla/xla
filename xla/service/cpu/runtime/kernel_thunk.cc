@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/base/optimization.h"
 #include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -34,7 +35,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/cpu/runtime/task.h"
+#include "xla/service/cpu/runtime/buffer_allocations.h"
 #include "xla/service/cpu/runtime/thunk.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/host/host_kernel.h"
@@ -76,7 +77,7 @@ KernelThunk::KernelThunk(
       kernel_name_(std::move(kernel_name)),
       thread_dim_(thread_dim),
       min_alignment_(min_alignment),
-      use_task_runner_(thread_dim != se::ThreadDim()),
+      call_once_(thread_dim_ == se::ThreadDim()),
       kernel_ptr_(nullptr) {}
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> KernelThunk::Execute(
@@ -94,40 +95,36 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> KernelThunk::Execute(
   llvm::SmallVector<SE_HOST_KernelArg, 8> kernel_args;
   kernel_args.resize_for_overwrite(num_kernel_args_);
 
-  int64_t kernel_arg_idx = 0;
+  SE_HOST_KernelArg* kernel_args_ptr = kernel_args.data();
+  const BufferAllocations* allocations = params.buffer_allocations;
 
   for (BufferAllocation::Slice& buffer : arguments_buffers_) {
-    TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase arg_data,
-                        params.buffer_allocations->GetDeviceAddress(buffer));
-    VLOG(3) << absl::StreamFormat("  arg #%d: %s (%p)", kernel_arg_idx,
-                                  buffer.ToString(), arg_data.opaque());
-    kernel_args[kernel_arg_idx++] =
-        SE_HOST_KernelArg{arg_data.opaque(), arg_data.size()};
+    if constexpr (ShouldCheckBufferSlices()) {
+      TF_ASSIGN_OR_RETURN(auto mem, allocations->GetDeviceAddress(buffer));
+      *kernel_args_ptr++ = SE_HOST_KernelArg{mem.opaque(), mem.size()};
+    } else {
+      auto mem = allocations->GetDeviceAddressUnchecked(buffer);
+      *kernel_args_ptr++ = SE_HOST_KernelArg{mem.opaque(), mem.size()};
+    }
   }
 
   for (BufferAllocation::Slice& buffer : results_buffers_) {
-    TF_ASSIGN_OR_RETURN(se::DeviceMemoryBase result_data,
-                        params.buffer_allocations->GetDeviceAddress(buffer));
-    VLOG(3) << absl::StreamFormat("  res #%d: %s (%p)",
-                                  kernel_arg_idx - arguments_buffers_.size(),
-                                  buffer.ToString(), result_data.opaque());
-    kernel_args[kernel_arg_idx++] =
-        SE_HOST_KernelArg{result_data.opaque(), result_data.size()};
+    if constexpr (ShouldCheckBufferSlices()) {
+      TF_ASSIGN_OR_RETURN(auto mem, allocations->GetDeviceAddress(buffer));
+      *kernel_args_ptr++ = SE_HOST_KernelArg{mem.opaque(), mem.size()};
+    } else {
+      auto mem = allocations->GetDeviceAddressUnchecked(buffer);
+      *kernel_args_ptr++ = SE_HOST_KernelArg{mem.opaque(), mem.size()};
+    }
   }
 
-  // Check that all buffers are aligned to the minimum alignment. We codegen
-  // with the assumption that all buffers are aligned, and if they are not, we
-  // will crash with a segmentation fault, or worse, produce incorrect results.
-  if (min_alignment_.has_value()) {
-    for (int64_t i = 0; i < num_kernel_args_; ++i) {
-      auto ptr = reinterpret_cast<uintptr_t>(kernel_args[i].data);
-      if (ABSL_PREDICT_FALSE((ptr & (*min_alignment_ - 1)) != 0)) {
-        return Internal(
-            "Host kernel %s buffer argument #%d (%p) is not aligned to a "
-            "required minimum alignment of %d bytes",
-            info().op_name, i, kernel_args[i].data, *min_alignment_);
-      }
-    }
+  if (ABSL_PREDICT_FALSE(VLOG_IS_ON(3))) {
+    VlogKernelArgs(kernel_args);
+  }
+
+  // Сheck that all resolved buffers are properly aligned.
+  if constexpr (ShouldCheckBufferSlices()) {
+    TF_RETURN_IF_ERROR(CheckBufferAlignment(kernel_args));
   }
 
   // TODO(ezhulenev): Kernel ptr should be loaded as a part of Thunk
@@ -145,19 +142,54 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> KernelThunk::Execute(
     kernel_ptr_.store(kernel = &kernel_.value());
   }
 
+  // Use a fast path if kernel called just once.
+  if (ABSL_PREDICT_TRUE(call_once_)) {
+    TF_RETURN_IF_ERROR(kernel->CallOnce(kernel_args));
+    return OkExecuteEvent();
+  }
+
   // If intra-op thread pool is not nullptr, we launch HostKernel in async mode
   // by scheduling tasks into it. HostKernel launch completion will
   // automatically signal KernelThunk execute completion.
-  if (ABSL_PREDICT_FALSE(params.intra_op_threadpool && use_task_runner_)) {
-    return kernel->Launch(thread_dim_, kernel_args,
-                          [&params](se::host::HostKernel::Task task) {
-                            params.intra_op_threadpool->getPool()->Schedule(
-                                ToCopyableTask(std::move(task)));
-                          });
+  if (ABSL_PREDICT_TRUE(params.intra_op_threadpool)) {
+    return kernel->Launch(
+        thread_dim_, kernel_args, [&params](se::host::HostKernel::Task task) {
+          params.intra_op_threadpool->getPool()->Schedule(std::move(task));
+        });
   }
 
   TF_RETURN_IF_ERROR(kernel->Launch(thread_dim_, kernel_args));
   return OkExecuteEvent();
+}
+
+absl::Status KernelThunk::CheckBufferAlignment(
+    absl::Span<const SE_HOST_KernelArg> kernel_args) {
+  if (min_alignment_.has_value()) {
+    for (int64_t i = 0; i < num_kernel_args_; ++i) {
+      auto ptr = reinterpret_cast<uintptr_t>(kernel_args[i].data);
+      if (ABSL_PREDICT_FALSE((ptr & (*min_alignment_ - 1)) != 0)) {
+        return Internal(
+            "Host kernel %s buffer argument #%d (%p) is not aligned to a "
+            "required minimum alignment of %d bytes",
+            info().op_name, i, kernel_args[i].data, *min_alignment_);
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+void KernelThunk::VlogKernelArgs(
+    absl::Span<const SE_HOST_KernelArg> kernel_args) {
+  for (int64_t i = 0; i < arguments_buffers_.size(); ++i) {
+    VLOG(3) << absl::StreamFormat("  arg #%d: %s (%p)", i,
+                                  arguments_buffers_[i].ToString(),
+                                  kernel_args[i].data);
+  }
+  for (int64_t i = 0; i < results_buffers_.size(); ++i) {
+    VLOG(3) << absl::StreamFormat(
+        "  res #%d: %s (%p)", i, results_buffers_[i].ToString(),
+        kernel_args[arguments_buffers_.size() + i].data);
+  }
 }
 
 KernelThunk::BufferUses KernelThunk::buffer_uses() const {

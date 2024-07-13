@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/attributes.h"
 #include "absl/base/optimization.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -109,23 +110,26 @@ absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
 }
 
 ThunkExecutor::ExecuteState::ExecuteState(ThunkExecutor* executor,
-                                          TaskRunner runner)
+                                          Thunk::TaskRunner* runner)
     : executor(executor),
-      runner(std::move(runner)),
-      counters(executor->nodes_defs().size()),
+      runner(runner),
       nodes(executor->nodes_defs().size()),
-      abort(false),
+      execute_event(tsl::MakeConstructedAsyncValueRef<ExecuteEvent>()),
       pending_sink_nodes(executor->sink().size()),
-      execute_event(tsl::MakeConstructedAsyncValueRef<ExecuteEvent>()) {
-  for (NodeId id = 0; id < nodes.size(); ++id) {
-    const NodeDef& node_def = executor->node_def(id);
-    counters[id].store(node_def.in_edges.size(), std::memory_order_release);
-    nodes[id] = Node{id, &counters[id], &node_def.out_edges};
+      abort(false) {
+  DCHECK(runner == nullptr || static_cast<bool>(*runner))
+      << "`runner` must be nullptr or a valid TaskRunner";
+
+  Node* node = nodes.data();
+  for (const NodeDef& node_def : executor->nodes_defs()) {
+    node->counter.store(node_def.in_edges.size(), std::memory_order_release);
+    node->out_edges = &node_def.out_edges;
+    ++node;
   }
 }
 
 tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
-    const Thunk::ExecuteParams& params, TaskRunner runner) {
+    const Thunk::ExecuteParams& params) {
   // Short-circuit execution of trivial thunk sequences.
   if (ABSL_PREDICT_FALSE(thunk_sequence_.empty())) {
     return Thunk::OkExecuteEvent();
@@ -141,8 +145,9 @@ tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
   }
 
   // Create async execution state on heap and kick-off execution.
-  auto state = std::make_unique<ExecuteState>(this, std::move(runner));
-  Execute(state.get(), params, ReadyQueue(source_.begin(), source_.end()));
+  auto state = std::make_unique<ExecuteState>(this, params.task_runner);
+  Execute(state.get(), params, ReadyQueue(source_.begin(), source_.end()),
+          /*lock=*/params.session.Join());
 
   // Move execute state to the execute event callback to ensure that it is kept
   // alive while thunk executor has pending tasks.
@@ -222,60 +227,109 @@ void ThunkExecutor::ResumeExecuteSequential(
 
 void ThunkExecutor::Execute(ExecuteState* state,
                             const Thunk::ExecuteParams& params,
-                            ReadyQueue ready_queue) {
+                            ReadyQueue ready_queue,
+                            Thunk::ExecuteSession::Lock lock) {
   tsl::profiler::TraceMe trace("ThunkExecutor::Execute");
-  if (ready_queue.empty()) return;  // Nothing to execute.
+
+  DCHECK(!ready_queue.empty()) << "Ready queue must not be empty";
+  DCHECK(lock) << "Execute session lock must be set";
 
   bool has_runner = state->runner != nullptr;
 
+  // Threshold for splitting ready queue into separate thunk executor tasks.
+  int64_t split_threshold = params.session.split_threshold();
+
   for (int64_t i = 0; i < ready_queue.size(); ++i) {
     NodeId id = ready_queue[i];
-    Node& node = state->nodes[id];
+    ExecuteState::Node& node = state->nodes[id];
 
-    int64_t cnt = node.counter->load(std::memory_order_acquire);
+    int64_t cnt = node.counter.load(std::memory_order_acquire);
     CHECK_EQ(cnt, 0) << "Node counter must be 0";  // Crash Ok
 
-    // TODO(ezhulenev): Benchmark other strategies of work distribution, i.e. we
-    // can offload only second half of the ready queue if it grows above some
-    // threshold. Also we might want to add a limit on the number of concurrent
-    // tasks processing the same execute session.
-
-    // Push the tail of the ready queue to the task runner.
-    if (has_runner && i < ready_queue.size() - 1) {
-      ReadyQueue tail(ready_queue.begin() + i + 1, ready_queue.end());
-      ready_queue.erase(ready_queue.begin() + i + 1, ready_queue.end());
-      state->runner([&params, state, tail = std::move(tail)]() mutable {
-        state->executor->Execute(state, params, std::move(tail));
-      });
+    // If we have multiple ready thunks, split the ready queue and offload
+    // thunks processing to the task runner.
+    int64_t num_ready_thunks = ready_queue.size() - i;
+    if (ABSL_PREDICT_FALSE(has_runner && num_ready_thunks > split_threshold)) {
+      SplitReadyQueue(state, params, /*start_index=*/i + 1, ready_queue);
     }
 
     // Execute thunk for the given node id. If execution is aborted, we keep
     // processing the nodes DAG without executing thunks.
     Thunk& thunk = *state->executor->thunk_sequence_[id];
-    auto execute_event = state->abort.load(std::memory_order_relaxed)
-                             ? Thunk::OkExecuteEvent()
-                             : thunk.Execute(params);
+    tsl::AsyncValueRef<ExecuteEvent> execute_event =
+        ABSL_PREDICT_FALSE(state->abort.load(std::memory_order_relaxed))
+            ? Thunk::OkExecuteEvent()
+            : thunk.Execute(params);
 
-    // If thunk execution is not completed yet, attach a continuation to the
-    // event and resume execution on the continuation thread (ready queue
-    // processing will continue on a thread that marked event completed).
-    if (ABSL_PREDICT_FALSE(!execute_event.IsAvailable())) {
-      execute_event.AndThen([&, state, execute_event = execute_event.AsPtr()] {
-        ReadyQueue ready_queue;
-        ProcessOutEdges(state, execute_event, node, ready_queue);
-        Execute(state, params, std::move(ready_queue));
-      });
-    } else {
+    if (ABSL_PREDICT_TRUE(execute_event.IsAvailable())) {
       // If thunk execution is completed, process out edges in the current
       // thread and keep working on the ready queue.
       ProcessOutEdges(state, execute_event.AsPtr(), node, ready_queue);
+
+    } else {
+      // If thunk execution is not completed yet, attach a continuation to the
+      // event and resume execution on the continuation thread (ready queue
+      // processing will continue on a thread that marked event completed).
+      //
+      // We unconditionally join the execute session, because having a pending
+      // execute event means that we have at least one thread that is processing
+      // the same execute session.
+      execute_event.AndThen([&params, &node, state,
+                             execute_event = execute_event.AsPtr(),
+                             lock = params.session.Join()]() mutable {
+        ReadyQueue ready_queue;
+        state->executor->ProcessOutEdges(state, execute_event, node,
+                                         ready_queue);
+        // If ready queue is empty it might mean that we have completed an
+        // execution and destroyed the `state`.
+        if (ABSL_PREDICT_TRUE(!ready_queue.empty())) {
+          state->executor->Execute(state, params, std::move(ready_queue),
+                                   std::move(lock));
+        }
+      });
     }
   }
 }
 
+inline ABSL_ATTRIBUTE_ALWAYS_INLINE void ThunkExecutor::SplitReadyQueue(
+    ExecuteState* state, const Thunk::ExecuteParams& params,
+    int64_t start_index, ReadyQueue& ready_queue) {
+  DCHECK(state->runner) << "TaskRunner must be set";
+  int64_t end_index = ready_queue.size();
+
+  // We use recursive work splitting to push the tail of the ready queue to
+  // the task runner. Recursive work splitting creates a more uniform work
+  // distribution across the task runner threads and avoids a situation when
+  // we have a long tail of work that is processed by a single thread.
+  while (end_index > start_index) {
+    // Try to acquire a lock to offload ready thunks to the task runner. If
+    // we can't get a lock, we will keep processing the ready queue in the
+    // current thread as it means that we have enough concurrent workers
+    // processing the same execute session.
+    Thunk::ExecuteSession::Lock task_runner_lock = params.session.TryJoin();
+    if (!task_runner_lock) {
+      break;
+    }
+
+    // Execute [mid_index, end_index) nodes in the task runner.
+    int64_t mid_index = (start_index + end_index) / 2;
+    (*state->runner)([&params, state,
+                      ready_queue = ReadyQueue(ready_queue.begin() + mid_index,
+                                               ready_queue.begin() + end_index),
+                      lock = std::move(task_runner_lock)]() mutable {
+      state->executor->Execute(state, params, std::move(ready_queue),
+                               std::move(lock));
+    });
+    end_index = mid_index;
+  }
+
+  // Erase ready nodes passed to the task runner.
+  ready_queue.erase(ready_queue.begin() + end_index, ready_queue.end());
+}
+
 void ThunkExecutor::ProcessOutEdges(
     ExecuteState* state, tsl::AsyncValuePtr<Thunk::ExecuteEvent> node_event,
-    Node& node, ReadyQueue& ready_queue) {
+    ExecuteState::Node& node, ReadyQueue& ready_queue) {
   // If thunk execution failed, mark execution as aborted and record the error.
   // We still continue processing the nodes DAG to eventually mark sink nodes
   // completed as it's easier than to add a special abort handling logic.
@@ -291,9 +345,9 @@ void ThunkExecutor::ProcessOutEdges(
 
   // Append ready nodes to the back of the ready queue.
   for (NodeId out_edge : *node.out_edges) {
-    Node& out_node = state->nodes[out_edge];
+    ExecuteState::Node& out_node = state->nodes[out_edge];
 
-    int64_t cnt = out_node.counter->fetch_sub(1, std::memory_order_release);
+    int64_t cnt = out_node.counter.fetch_sub(1, std::memory_order_release);
     CHECK_GE(cnt, 1) << "Node counter can't drop below 0";  // Crash Ok
     if (cnt == 1) ready_queue.push_back(out_edge);
   }
@@ -323,28 +377,31 @@ void ThunkExecutor::ProcessOutEdges(
   }
 }
 
+// Erases edge from `from` node to `to` node if it exists.
+//
+// TODO(ezhulenev): Out and In-edges are sorted in increasing and decreasing
+// order respectively. We can use binary search to speed up this function.
+static int64_t EraseEdge(ThunkExecutor::NodeDef& from,
+                         ThunkExecutor::NodeDef& to) {
+  auto out_edge_it = absl::c_find(from.out_edges, to.id);
+  auto in_edge_it = absl::c_find(to.in_edges, from.id);
+
+  bool has_out_edge = out_edge_it != from.out_edges.end();
+  bool has_in_edge = in_edge_it != to.in_edges.end();
+
+  DCHECK_EQ(has_out_edge, has_in_edge) << "Edges must be symmetric";
+
+  if (has_out_edge && has_in_edge) {
+    from.out_edges.erase(out_edge_it);
+    to.in_edges.erase(in_edge_it);
+    return 1;
+  }
+
+  return 0;
+}
+
 int64_t ThunkExecutor::TransitiveReduction() {
   int64_t num_erased_edges = 0;
-
-  // Erases edge from `from` node to `to` node if it exists.
-  //
-  // TODO(ezhulenev): Out and In-edges are sorted in increasing and decreasing
-  // order respectively. We can use binary search to speed up this function.
-  auto erase_edge = [&](NodeDef& from, NodeDef& to) {
-    auto out_edge_it = absl::c_find(from.out_edges, to.id);
-    auto in_edge_it = absl::c_find(to.in_edges, from.id);
-
-    bool has_out_edge = out_edge_it != from.out_edges.end();
-    bool has_in_edge = in_edge_it != to.in_edges.end();
-
-    DCHECK_EQ(has_out_edge, has_in_edge) << "Edges must be symmetric";
-
-    if (has_out_edge && has_in_edge) {
-      from.out_edges.erase(out_edge_it);
-      to.in_edges.erase(in_edge_it);
-      ++num_erased_edges;
-    }
-  };
 
   // Keep workspace for DFS traversal between iterations.
   std::vector<int64_t> stack;
@@ -380,7 +437,7 @@ int64_t ThunkExecutor::TransitiveReduction() {
       stack.pop_back();
 
       NodeDef& node = nodes_defs_[node_id];
-      erase_edge(source_node, node);
+      num_erased_edges += EraseEdge(source_node, node);
 
       for (int64_t out_id : node.out_edges) add_to_stack(out_id);
     }

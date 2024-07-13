@@ -1,5 +1,6 @@
 """Wrapper around proto libraries used inside the XLA codebase."""
 
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
@@ -58,7 +59,6 @@ _XLA_SHARED_OBJECT_SENSITIVE_DEPS = if_static(extra_deps = [], otherwise = [
     Label("//xla/stream_executor/cuda:all_runtime"),
     Label("//xla/stream_executor/cuda:cuda_stream"),
     Label("//xla/stream_executor/cuda:stream_executor_cuda"),
-    Label("//xla/stream_executor/gpu:gpu_cudamallocasync_allocator"),
 ]) + if_rocm_is_configured([
     Label("//xla/stream_executor/gpu:gpu_stream"),
     Label("//xla/stream_executor/rocm:all_runtime"),
@@ -83,3 +83,16 @@ def xla_internal(targets, otherwise = []):
 
 def tests_build_defs_bzl_deps():
     return []
+
+def xla_bzl_library(name = "xla_bzl_library"):
+    bzl_library(
+        name = "xla_bzl",
+        srcs = ["xla.bzl"],
+        deps = [
+            "//xla/tsl:tsl_bzl",
+            "@local_config_rocm//rocm:build_defs_bzl",
+            "@tsl//tsl/platform:build_config_root_bzl",
+            "@tsl//tsl/platform/default:cuda_build_defs_bzl",
+            "@bazel_skylib//:bzl_library",
+        ],
+    )

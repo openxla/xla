@@ -187,9 +187,15 @@ std::optional<int64_t> SafeEvaluateAffineExpr(mlir::AffineExpr expr,
                                               absl::Span<int64_t const> dims,
                                               absl::Span<int64_t const> syms) {
   if (auto sym = mlir::dyn_cast<mlir::AffineSymbolExpr>(expr)) {
+    if (sym.getPosition() < 0 || sym.getPosition() >= syms.size()) {
+      return std::nullopt;
+    }
     return syms[sym.getPosition()];
   }
   if (auto dim = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
+    if (dim.getPosition() < 0 || dim.getPosition() >= dims.size()) {
+      return std::nullopt;
+    }
     return dims[dim.getPosition()];
   }
   if (auto cst = mlir::dyn_cast<mlir::AffineConstantExpr>(expr)) {
@@ -333,6 +339,48 @@ std::vector<int64_t> GetLoopTripCounts(const IndexingMap& indexing_map) {
     trip_counts.push_back(indexing_map.GetSymbolBound(i).GetLoopTripCount());
   }
   return trip_counts;
+}
+
+absl::Status VerifyExprsAreIdentical(
+    mlir::AffineExpr reference, mlir::AffineExpr other,
+    absl::Span<Interval const> dimension_ranges,
+    absl::Span<Interval const> symbol_ranges) {
+  std::vector<DimVar> dims;
+  dims.reserve(dimension_ranges.size());
+  for (const auto& interval : dimension_ranges) {
+    dims.push_back({interval});
+  }
+
+  std::vector<RangeVar> symbols;
+  symbols.reserve(symbol_ranges.size());
+  for (const auto& interval : symbol_ranges) {
+    symbols.push_back({interval});
+  }
+
+  IndexingMap map(mlir::AffineMap::get(dimension_ranges.size(),
+                                       symbol_ranges.size(), reference),
+                  dims, symbols, {});
+  return EnumerateDomain(
+      map,
+      [&](absl::Span<int64_t const> dims,
+          absl::Span<int64_t const> syms) -> absl::Status {
+        auto reference_value = SafeEvaluateAffineExpr(reference, dims, syms);
+        // If the reference value is undefined, there is no meaningful way to
+        // compare it to the other value.
+        if (!reference_value.has_value()) {
+          return absl::OkStatus();
+        }
+        auto other_value = SafeEvaluateAffineExpr(other, dims, syms);
+        TF_RET_CHECK(other_value.has_value())
+            << "Domain point " << FormatDimsAndSyms(dims, syms)
+            << " triggers undefined behavior in `other`.";
+
+        TF_RET_CHECK(reference_value == other_value)
+            << "Domain point " << FormatDimsAndSyms(dims, syms)
+            << " maps to different values: " << *reference_value << " vs. "
+            << *other_value << ".";
+        return absl::OkStatus();
+      });
 }
 
 }  // namespace gpu

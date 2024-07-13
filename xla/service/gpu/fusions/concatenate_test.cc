@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -89,7 +88,7 @@ TEST_F(ConcatenateTest, ThreadIndexing) {
     bl_z in [0, 1)
     chunk_id in [0, 1)
     unroll_id in [0, 1)
-    th_x + bl_x * 128 in [0, 400)
+    bl_x * 128 + th_x in [0, 400)
   )";
   EXPECT_THAT(
       fusion

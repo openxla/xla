@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,11 +27,13 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_macros.h"
 #include "xla/tests/test_utils.h"
+#include "xla/tests/verified_hlo_module.h"
 #include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/env.h"
@@ -728,6 +731,74 @@ XLA_TEST_F(CollectiveOpsTest, CollectivePermute_Simple) {
   // Nothing writes to replica 3, so it is memzero'ed.
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<uint32_t>({0, 0}),
                                      results[3]));
+}
+
+// TODO: b/351064128 - add more complex test cases for circular pipelining
+XLA_TEST_F(CollectiveOpsTest,
+           CollectivePermute_CircularPipelinePreOptimization) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  while_cond {
+    param = (u32[], f32[]) parameter(0)
+    iter = u32[] get-tuple-element(param), index=0
+    max_iter = u32[] constant(3)
+    ROOT cmp = pred[] compare(iter, max_iter), direction=LT
+  }
+
+  while_body {
+    param = (u32[], f32[]) parameter(0)
+    iter = u32[] get-tuple-element(param), index=0
+    data = f32[] get-tuple-element(param), index=1
+    ten = f32[] constant(10)
+    sum = f32[] add(data, ten)
+    cp = f32[] collective-permute(sum), source_target_pairs={{0,1}, {1,2}, {2,3}, {3,0}}
+    iter_increment = u32[] constant(1)
+    next_iter = u32[] add(iter, iter_increment)
+    ROOT result = (u32[], f32[]) tuple(next_iter, cp)
+  }
+
+  ENTRY test_computation {
+    iter = u32[] constant(0)
+    data = f32[] parameter(0)
+    input = (u32[], f32[]) tuple(iter, data)
+    while_res = (u32[], f32[]) while(input), condition=while_cond, body=while_body
+    ROOT data_out = f32[] get-tuple-element(while_res), index=1
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  constexpr std::array<float, 4> input_values = {3, 1, 0, 4};
+  std::vector<Literal> replica_inputs;
+  for (float value : input_values) {
+    replica_inputs.push_back(LiteralUtil::CreateR0<float>(value));
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                          test_runner_.CreateExecutable(
+                              std::unique_ptr<HloModule>(std::move(module)),
+                              /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(
+          /*executable_provider=*/[&](int64_t) { return executable.get(); },
+          /*argument_count_provider=*/[](int64_t) { return 1; },
+          /*argument_provider=*/
+          [&](int64_t replica, int64_t) -> const Literal* {
+            return &replica_inputs[replica];
+          },
+          kNumReplicas, /*run_hlo_passes=*/true,
+          /*device_assignment=*/nullptr));
+  LiteralTestUtil::ExpectR0Equal<float>(31, results[0]);
+  LiteralTestUtil::ExpectR0Equal<float>(30, results[1]);
+  LiteralTestUtil::ExpectR0Equal<float>(34, results[2]);
+  LiteralTestUtil::ExpectR0Equal<float>(33, results[3]);
 }
 
 XLA_TEST_F(CollectiveOpsTest, CollectivePermute_Degenerate) {

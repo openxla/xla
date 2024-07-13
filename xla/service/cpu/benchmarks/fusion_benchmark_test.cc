@@ -280,11 +280,10 @@ BENCHMARK(BM_DynamicUpdateSliceFusionF32)
 
 BENCHMARK(BM_ChainOfAddF32)
     ->MeasureProcessCPUTime()
-    ->Arg(8)
-    ->Arg(16)
     ->Arg(64)
     ->Arg(128)
     ->Arg(256)
-    ->Arg(512);
+    ->Arg(512)
+    ->Arg(1024);
 
 }  // namespace xla::cpu

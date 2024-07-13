@@ -16,6 +16,8 @@ limitations under the License.
 #define XLA_FP_UTIL_H_
 
 #include <algorithm>
+#define _USE_MATH_DEFINES
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -260,7 +262,44 @@ constexpr DstT RoundToPrecision(
 // `kBitsToDrop` clear. Returns {high, low}.
 template <typename DstT>
 constexpr std::pair<DstT, DstT> Log2FloatPair(int num_high_trailing_zeros) {
-  return SplitToFpPair<DstT>(M_LN2l, num_high_trailing_zeros);
+  return SplitToFpPair<DstT>(M_LN2, num_high_trailing_zeros);
+}
+
+// There are many different definitions of ulp(x) in the literature. Here, we
+// are using the "GoldbergUlp" definition as found in: Jean-Michel Muller. On
+// the definition of ulp(x). [Research Report] RR-5504, LIP RR-2005-09, INRIA,
+// LIP. 2005, pp.16. ⟨inria-00070503⟩
+template <typename T>
+constexpr T GoldbergUlp(T x) {
+  if (IsZero(x) || IsSubnormal(x)) {
+    return GoldbergUlp(std::numeric_limits<T>::min());
+  }
+  std::optional<int> maybe_exponent = LogBase(x);
+  if (maybe_exponent.has_value(); const int exponent = *maybe_exponent) {
+    return ScaleBase(std::numeric_limits<T>::epsilon(), exponent);
+  }
+  if constexpr (std::numeric_limits<T>::has_quiet_NaN) {
+    return std::numeric_limits<T>::quiet_NaN();
+  } else if constexpr (std::numeric_limits<T>::has_infinity) {
+    return std::numeric_limits<T>::infinity();
+  } else {
+    return GoldbergUlp(std::numeric_limits<T>::max());
+  }
+}
+
+// Returns the number of FP values between two floating point values. Please
+// note that +/-0 are considered equivalent.
+template <typename T>
+int CalculateDistanceInFloats(T a, T b) {
+  auto a_sign_and_magnitude = SignAndMagnitude(a);
+  auto b_sign_and_magnitude = SignAndMagnitude(b);
+  auto a_distance_from_zero = a_sign_and_magnitude.first
+                                  ? -a_sign_and_magnitude.second
+                                  : a_sign_and_magnitude.second;
+  auto b_distance_from_zero = b_sign_and_magnitude.first
+                                  ? -b_sign_and_magnitude.second
+                                  : b_sign_and_magnitude.second;
+  return std::abs(a_distance_from_zero - b_distance_from_zero);
 }
 
 }  // namespace xla

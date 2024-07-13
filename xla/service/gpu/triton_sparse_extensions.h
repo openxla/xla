@@ -19,19 +19,18 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 
-namespace mlir {
-class Pass;
-}  // namespace mlir
+#include "mlir/Pass/Pass.h"  // from @llvm-project
 
 namespace xla::gpu {
 
-std::unique_ptr<mlir::Pass> createAddSparseDotEncodingPass(
+std::unique_ptr<mlir::Pass> CreateAddSparseDotEncodingPass(
     int32_t num_warps, int32_t threads_per_warp, int32_t num_ctas);
-std::unique_ptr<mlir::Pass> createSparseBlockedToMMAPass();
-std::unique_ptr<mlir::Pass> createSparseLocalLoadOpToLLVMPass();
-std::unique_ptr<mlir::Pass> createSparseDotOpToLLVMPass();
+std::unique_ptr<mlir::Pass> CreateSparseBlockedToMMAPass();
+std::unique_ptr<mlir::Pass> CreateSparseLocalLoadOpToLLVMPass();
+std::unique_ptr<mlir::Pass> CreateSparseDotOpToLLVMPass();
+std::unique_ptr<mlir::Pass> CreateSparseWGMMAOpToLLVMPass();
 
-void registerSparsePasses();
+void RegisterSparsePasses();
 
 }  // namespace xla::gpu
 

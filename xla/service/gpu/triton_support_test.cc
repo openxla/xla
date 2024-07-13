@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// TODO(b/343158720): Simplify the tests in this file after a generic emitter
-// has landed.
 #include "xla/service/gpu/triton_support.h"
 
 #include <cstdint>
@@ -27,6 +25,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -40,6 +39,7 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/status_matchers.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -418,6 +418,27 @@ ENTRY triton_computation {
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
+TEST_F(ReduceTest, IsTritonSupportedReductionWithMultidimensionalTile) {
+  const std::string kHloTestTemplate = R"(
+add {
+  Arg_0 = $0[] parameter(0)
+  Arg_1 = $0[] parameter(1)
+  ROOT add = $0[] add(Arg_0, Arg_1)
+}
+
+ENTRY triton_computation {
+  parameter_0 = $0[3,125,127]{2,1,0} parameter(0)
+  constant_0 = $0[] constant(0)
+  ROOT reduce = $0[3,125]{1,0} reduce(parameter_0, constant_0),
+    dimensions={2}, to_apply=add
+})";
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                          ParseTemplateAndGetInstruction(kHloTestTemplate, F32,
+                                                         HloOpcode::kReduce));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{3, 4},
+                 se::CudaComputeCapability::Ampere());
+}
+
 TEST_P(
     ReduceTest,
     UnsupportedReduceWithMoreThanOneReduceDimensionsFailsGracefullyWithTriton) {
@@ -502,9 +523,11 @@ ENTRY triton_computation {
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
 }
 
-TEST_P(ReduceTest,
-       UnsupportedReduceWithNonConstReduceValueFailsGracefullyWithTriton) {
-  auto [data_type, opcode, cc] = GetParam();
+// TODO(b/348565795): add support for non-const reduce values once that is
+// resolved.
+TEST_F(ReduceTest,
+       ReduceWithNonConstReduceValueIsUnsupportedAndFailsWithTriton) {
+  const se::GpuComputeCapability cc = se::CudaComputeCapability::Ampere();
   const std::string kHloTestTemplate = R"(
 add {
   Arg_0 = $0[] parameter(0)
@@ -517,11 +540,12 @@ ENTRY triton_computation {
   init = $0[] parameter(1)
   ROOT reduce = $0[125]{0} reduce(parameter_0, init), dimensions={1}, to_apply=add
 })";
-  TF_ASSERT_OK_AND_ASSIGN(
-      TestedInstruction ti,
-      ParseTemplateAndGetInstruction(kHloTestTemplate, data_type, opcode));
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                          ParseTemplateAndGetInstruction(kHloTestTemplate, F32,
+                                                         HloOpcode::kReduce));
   EXPECT_FALSE(IsTritonSupportedInstruction(ti.Instruction(), cc));
-  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc,
+                 /*skip_failure_branch_to_avoid_crash=*/true);
 }
 
 TEST_P(ReduceTest, UnsupportedReductionComputationFailsGracefullyWithTriton) {
@@ -552,6 +576,83 @@ ENTRY triton_computation {
 INSTANTIATE_TEST_SUITE_P(ReduceTestSuite, ReduceTest,
                          AllTestCombinationsForOpcodes({HloOpcode::kReduce}),
                          TritonSupportTestTypeOpcodeAndDeviceToString);
+
+using CollectiveTest = TritonSupportTestWithParam;
+
+TEST_P(CollectiveTest, UnsupportedCollectivesFailGracefullyWithTriton) {
+  auto [data_type, opcode, cc] = GetParam();
+  absl::flat_hash_map<HloOpcode, std::string> kHloCollectiveTestTemplates = {
+      {
+          HloOpcode::kAllGather,
+          R"(
+            ENTRY triton_computation {
+              input = $0[128,32]{0,1} parameter(0)
+              ROOT all-gather = $0[128,128]{0,1} all-gather(input),
+              replica_groups={}, dimensions={1}
+            }
+          )",
+      },
+      {
+          HloOpcode::kAllReduce,
+          R"(
+            apply_op {
+              x = $0[] parameter(0)
+              y = $0[] parameter(1)
+              ROOT apply_op = $0[] add(x, y)
+            }
+
+            ENTRY triton_computation {
+              input = $0[128,32] parameter(0)
+              ROOT all-reduce = $0[128,32] all-reduce(input), replica_groups={}, to_apply=apply_op
+            }
+          )",
+      },
+      {
+          HloOpcode::kAllToAll,
+          R"(
+             ENTRY triton_computation {
+               input = f32[128,32]{0,1} parameter(0)
+               ROOT a2a = (f32[128,32]{0,1}) all-to-all(input), replica_groups={}
+             }
+          )",
+      },
+      {HloOpcode::kCollectivePermute,
+       R"(
+          ENTRY triton_computation {
+            a = $0[] parameter(0)
+            ROOT collective-permute = $0[] collective-permute(a), source_target_pairs={{1,0}, {0,1}, {2,2}}
+          }
+        )"},
+      {HloOpcode::kReduceScatter,
+       R"(
+          apply_op {
+            lhs = $0[] parameter(0)
+            rhs = $0[] parameter(1)
+            ROOT apply_op = $0[] add(lhs, rhs)
+          }
+
+          ENTRY triton_computation {
+            input = $0[8] parameter(0)
+            ROOT result = $0[4] reduce-scatter(input), replica_groups={},
+                              dimensions={0}, to_apply=apply_op
+          }
+        )"}};
+
+  std::string hlo_template = kHloCollectiveTestTemplates.at(opcode);
+  TF_ASSERT_OK_AND_ASSIGN(
+      TestedInstruction ti,
+      ParseTemplateAndGetInstruction(hlo_template, data_type, opcode));
+  EXPECT_FALSE(IsTritonSupportedInstruction(ti.Instruction(), cc));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1}, cc);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CollectiveTestSuite, CollectiveTest,
+    AllTestCombinationsForOpcodes({HloOpcode::kAllGather, HloOpcode::kAllReduce,
+                                   HloOpcode::kAllToAll,
+                                   HloOpcode::kCollectivePermute,
+                                   HloOpcode::kReduceScatter}),
+    TritonSupportTestTypeOpcodeAndDeviceToString);
 
 }  // namespace
 }  // namespace gpu
