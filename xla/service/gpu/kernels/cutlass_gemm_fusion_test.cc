@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/service/gpu/custom_kernel_fusion_rewriter.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/kernels/custom_kernel_fusion_pattern.h"
+#include "xla/service/gpu/kernels/cutlass_gemm_custom_kernel.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/types.h"
 #include "tsl/platform/test.h"
@@ -34,12 +35,20 @@ namespace xla::gpu {
 
 class CutlassFusionTest : public HloTestBase {
  public:
-  int SharedMemorySize() {
+  int GpuSharedMemorySize() {
     return backend()
         .default_stream_executor()
         ->GetDeviceDescription()
         .shared_memory_per_block_optin();
   }
+  int CutlassGemmKernelSharedMemorySize(PrimitiveType dtype, int m, int n,
+                                        int k) {
+    return kernel::gemm_universal::GetCutlassGemmKernel(
+               "cutlass_gemm", dtype, m, n, k,
+               /*indices=*/{0, 1, 2}, /*slices=*/{},
+               backend().default_stream_executor()->GetDeviceDescription())
+        ->shared_memory_bytes();
+  };
 };
 
 //===----------------------------------------------------------------------===//
@@ -359,10 +368,9 @@ TEST_F(CutlassFusionTest, RowMajorGemmWithUpcastKernel) {
                                       error_spec, /*run_hlo_passes=*/false));
 }
 
-constexpr int kRequiredSharedMemorySize = 147456;
-
 TEST_F(CutlassFusionTest, RowMajorGemmWithDynamicUpdateSliceKernel) {
-  if (SharedMemorySize() < kRequiredSharedMemorySize) {
+  if (GpuSharedMemorySize() <
+      CutlassGemmKernelSharedMemorySize(BF16, 8, 8, 8)) {
     GTEST_SKIP_("The GPU does not have sufficient shared memory");
   }
 
@@ -435,7 +443,8 @@ TEST_F(CutlassFusionTest, RowMajorGemmWithDynamicUpdateSliceKernel) {
 
 TEST_F(CutlassFusionTest,
        RowMajorGemmWithDynamicUpdateSliceKernelWithoutBitcast) {
-  if (SharedMemorySize() < kRequiredSharedMemorySize) {
+  if (GpuSharedMemorySize() <
+      CutlassGemmKernelSharedMemorySize(BF16, 8, 8, 8)) {
     GTEST_SKIP_("The GPU does not have sufficient shared memory");
   }
 
