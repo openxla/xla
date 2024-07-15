@@ -183,13 +183,19 @@ static absl::Status CheckComm(NcclApi::NcclCommHandle comm) {
 
 // Runs async check on all communicators in a clique.
 static void CheckClique(const NcclCliqueKey& clique_key,
-                        NcclClique& lockable_clique) {
-  if (TerminateOnNcclError()) {
-    absl::Status status = lockable_clique.CheckAsyncErrors();
-    if (!status.ok()) {
+                        NcclClique& lockable_clique,
+                        absl::Status& async_status) {
+  absl::Status status = lockable_clique.CheckAsyncErrors();
+  if (!status.ok()) {
+    if (TerminateOnNcclError()) {
       LOG(FATAL) << "Terminating process due to async NCCL error: " << status;
+      return;
+    } else {
+      async_status = status;
+      async_status.SetPayload(kNcclAsyncErrorPrefix,
+                              absl::Cord(status.message()));
+      return;
     }
-    return;
   }
   if (NcclClique::Lock clique = lockable_clique.TryAcquire()) {
     VLOG(5) << "Checking NCCL clique " << clique_key.ToString()
@@ -205,24 +211,52 @@ static void CheckClique(const NcclCliqueKey& clique_key,
 
 // TODO(ezhulenev): We need a mechanism to destroy whole clique when one of the
 // communicators is aborted to be able to recover from errors.
-static void NcclCliqueHeartBeatMonitorThread() {
+static void NcclCliqueHeartBeatMonitorThread(
+    const std::vector<se::Event*> async_events_queue,
+    absl::Status& async_status) {
   VLOG(5) << "Starting NCCL clique heart beat monitor";
   while (true) {
     absl::SleepFor(absl::Seconds(30));
+    for (auto event : async_events_queue) {
+      auto start_timestamp = absl::Now();
+      while (event->PollForStatus() == se::Event::Status::kPending) {
+        if ((absl::Now() - start_timestamp) > WarnStuckTimeout()) {
+          LOG(ERROR) << "Nccl heart beat monitor detected an async event "
+                        "timeout. Setting async error status";
+          async_status = absl::DeadlineExceededError(kNcclAsyncTimeout);
+          async_status.SetPayload(kNcclAsyncErrorPrefix,
+                                  absl::Cord(kNcclAsyncTimeout));
+          return;
+        }
+      }
+
+      if (event->PollForStatus() == se::Event::Status::kError ||
+          event->PollForStatus() == se::Event::Status::kUnknown) {
+        LOG(ERROR) << "Nccl heart beat monitor detected unexpected async event "
+                      "status.";
+        async_status = absl::InternalError(kAsyncEventInvalidStatus);
+        async_status.SetPayload(kNcclAsyncErrorPrefix,
+                                absl::Cord(kAsyncEventInvalidStatus));
+        return;
+      }
+    }
     NcclCliques& cliques = GetNcclCliques();
     absl::MutexLock lock(&cliques.mu);
     VLOG(5) << "Checking NCCL communicators for async errors"
             << "; num_cliques=" << cliques.map.size();
     for (auto& [clique_key, lockable_clique] : cliques.map) {
-      CheckClique(clique_key, lockable_clique);
+      CheckClique(clique_key, lockable_clique, async_status);
     }
   }
 }
 
-static void StartNcclCliqueHeartBeatMonitor() {
+static void StartNcclCliqueHeartBeatMonitor(
+    const std::vector<se::Event*> async_events_queue,
+    absl::Status& async_status) {
   static auto* monitor_thread = tsl::Env::Default()->StartThread(
-      tsl::ThreadOptions(), "nccl_clique_heart_beat_monitor",
-      NcclCliqueHeartBeatMonitorThread);
+      tsl::ThreadOptions(), "nccl_clique_heart_beat_monitor", [&]() {
+        NcclCliqueHeartBeatMonitorThread(async_events_queue, async_status);
+      });
   (void)monitor_thread;  // suppress unused variable warning
 }
 
@@ -251,13 +285,15 @@ static auto DeviceRanksToString(absl::Span<const NcclApi::DeviceRank> ranks) {
 static absl::StatusOr<std::shared_ptr<NcclClique::Lock>> InitializeNcclClique(
     se::StreamExecutor* device, RunId run_id, NcclCliqueKey clique_key,
     const NcclCliqueIdCallback& clique_id_callback,
-    int32_t num_local_participants, int32_t rank, NcclApi::Config& config) {
+    int32_t num_local_participants, int32_t rank, NcclApi::Config& config,
+    const std::vector<se::Event*> async_events_queue,
+    absl::Status& async_status) {
   int nranks = clique_key.devices().size();
   VLOG(3) << "Initialize NCCL clique " << clique_key.ToString() << " rank #"
           << rank << "; num_local_participants=" << num_local_participants;
 
   // Start NCCL clique heart beat monitor when create a first clique.
-  StartNcclCliqueHeartBeatMonitor();
+  StartNcclCliqueHeartBeatMonitor(async_events_queue, async_status);
 
   using RendezvousArg = std::pair<NcclApi::DeviceRank, /*synchronized=*/bool>;
 
@@ -492,7 +528,8 @@ absl::StatusOr<std::shared_ptr<NcclClique::Lock>> AcquireNcclClique(
     se::StreamExecutor* device, RunId run_id, NcclCliqueKey clique_key,
     const NcclCliqueIdCallback& clique_id_callback, int32_t rank,
     size_t num_local_participants, const AcquiredCliquesMap& acquired_cliques,
-    int64_t max_nchannels) {
+    const std::vector<se::Event*> async_events_queue,
+    absl::Status& async_status, int64_t max_nchannels) {
   VLOG(2) << "Acquire NCCL clique " << clique_key.ToString() << "; run"
           << run_id.ToString() << "; rank " << rank
           << "; num_local_participants=" << num_local_participants
@@ -543,7 +580,8 @@ absl::StatusOr<std::shared_ptr<NcclClique::Lock>> AcquireNcclClique(
 
   // If we can't split any of the acquired cliques, create a new one.
   return InitializeNcclClique(device, run_id, clique_key, clique_id_callback,
-                              num_local_participants, rank, config);
+                              num_local_participants, rank, config,
+                              async_events_queue, async_status);
 }
 
 absl::Status NcclClique::CheckAsyncErrors() {

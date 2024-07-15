@@ -37,6 +37,13 @@ limitations under the License.
 
 namespace xla::gpu {
 
+inline constexpr absl::string_view kNcclAsyncErrorPrefix = "Nccl Async Error";
+
+inline constexpr absl::string_view kNcclAsyncTimeout = "Async event timeout";
+
+inline constexpr absl::string_view kAsyncEventInvalidStatus =
+    "Unexpected async event status";
+
 // NCCL clique (collective clique) is a set of devices that execute collective
 // operations (e.g. all-reduce). It is notoriously easy to misuse NCCL
 // communicators (see link below) and get a dead lock at run time, so in XLA we
@@ -169,7 +176,8 @@ absl::StatusOr<std::shared_ptr<NcclClique::Lock>> AcquireNcclClique(
     const NcclCliqueIdCallback& clique_id_callback, int32_t rank,
     size_t num_local_participants,
     const NcclClique::AcquiredCliquesMap& acquired_cliques,
-    int64_t max_nchannels = 0);
+    const std::vector<se::Event*> async_events_queue,
+    absl::Status& async_status, int64_t max_nchannels = 0);
 
 }  // namespace xla::gpu
 

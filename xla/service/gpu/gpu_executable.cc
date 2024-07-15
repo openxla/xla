@@ -266,11 +266,12 @@ class ResourceRequests : public Thunk::ResourceRequests {
       int64_t max_channels = r.key.stream_kind() == AsyncStreamKind::kCollective
                                  ? params.collective_max_nchannels
                                  : params.p2p_max_nchannels;
-      TF_ASSIGN_OR_RETURN(std::shared_ptr<NcclClique::Lock> clique,
-                          AcquireNcclClique(params.executor, params.run_id,
-                                            r.key, *clique_id_callback, *rank,
-                                            r.num_local_participants,
-                                            cliques_map, max_channels));
+      TF_ASSIGN_OR_RETURN(
+          std::shared_ptr<NcclClique::Lock> clique,
+          AcquireNcclClique(
+              params.executor, params.run_id, r.key, *clique_id_callback, *rank,
+              r.num_local_participants, cliques_map, params.async_events_queue,
+              const_cast<absl::Status&>(params.async_status), max_channels));
 
       cliques_map[r.key] = std::move(clique);
     }
@@ -476,6 +477,7 @@ absl::Status ExecuteThunks(
 
   TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
 
+  collective_params.async_events_queue.clear();
   return MaybeSyncAndProfile(run_options, execution_timer.get(),
                              block_host_until_done ? main_stream : nullptr);
 }

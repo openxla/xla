@@ -397,6 +397,9 @@ absl::Status NcclCollectiveThunk::Prepare(const PrepareParams& params,
 absl::Status NcclCollectiveThunk::Initialize(const InitializeParams& params) {
   if (async_events_) {
     TF_RETURN_IF_ERROR(async_events_->Initialize(params.executor));
+    TF_ASSIGN_OR_RETURN(se::Event * event,
+                        async_events_->GetEvent(params.executor));
+    params.collective_params->async_events_queue.push_back(event);
   }
   return absl::OkStatus();
 }
@@ -420,6 +423,11 @@ bool operator==(const FirstCallRendezvousKey& a,
 }  // namespace
 
 absl::Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
+  if (params.collective_params->async_status != absl::OkStatus()) {
+    LOG(ERROR) << "Async status is not ok. Returning status.";
+    return params.collective_params->async_status;
+  }
+
   VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",
                                 Thunk::KindToString(kind()));
   const NcclStreamId stream_id = nccl_stream_id();
