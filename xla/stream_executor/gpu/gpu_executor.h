@@ -111,7 +111,8 @@ class GpuExecutor : public StreamExecutorCommon {
         device_ordinal_(device_ordinal),
         cc_major_(0),
         cc_minor_(0),
-        version_(0) {}
+        version_(0),
+        numa_node_(-1) {}
 
   // See the corresponding StreamExecutor methods for method comments on the
   // following overrides.
@@ -169,23 +170,10 @@ class GpuExecutor : public StreamExecutorCommon {
     return GpuCollectives::CollectiveMemoryDeallocate(context_, location);
   }
 
-  // CUDA allocation/registration functions are necessary because the driver
-  // internally sets up buffers for DMA operations (and page locks them).
-  // There's no external interface for us to otherwise control these DMA
-  // settings.
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> HostMemoryAllocate(
-      uint64_t size) override {
-    auto* buffer = GpuDriver::HostAllocate(context_, size);
-    if (buffer == nullptr && size > 0) {
-      return absl::InternalError(
-          absl::StrFormat("Failed to allocate HostMemory of size %d", size));
-    }
-    return std::make_unique<HostMemoryAllocation>(buffer, size, this);
-  }
+      uint64_t size) override;
 
-  void HostMemoryDeallocate(void* location, uint64_t size) override {
-    return GpuDriver::HostDeallocate(context_, location);
-  }
+  void HostMemoryDeallocate(void* location, uint64_t size) override;
 
   absl::StatusOr<MemoryType> GetPointerMemorySpace(const void* ptr) override {
     return GpuDriver::GetPointerMemorySpace(
@@ -385,6 +373,9 @@ class GpuExecutor : public StreamExecutorCommon {
 
   // GPU ISA version for device_.
   int version_;
+
+  // NUMA node for device_.
+  int numa_node_;
 
   // Type erased XLA specific state attached to GpuExecutor.
   Object xla_state_;

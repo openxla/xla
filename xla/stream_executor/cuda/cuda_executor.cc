@@ -86,6 +86,7 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/numa.h"
 #include "tsl/platform/statusor.h"
 
 // LOG(ERROR) uses a const named ERROR, so a macro with the same name is
@@ -158,8 +159,12 @@ absl::Status GpuExecutor::Init() {
   TF_RETURN_IF_ERROR(GpuDriver::GetDevice(device_ordinal_, &device_));
   TF_RETURN_IF_ERROR(
       GpuDriver::CreateContext(device_ordinal_, device_, &context_));
-  TF_RETURN_IF_ERROR(
-      GpuDriver::GetComputeCapability(&cc_major_, &cc_minor_, device_));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<DeviceDescription> desc,
+                      CreateDeviceDescription());
+  CHECK(desc);
+  cc_major_ = desc->cuda_compute_capability().major;
+  cc_minor_ = desc->cuda_compute_capability().minor;
+  numa_node_ = desc->numa_node();
   return absl::OkStatus();
 }
 
@@ -586,6 +591,25 @@ void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
   GpuDriver::DeviceDeallocate(context_, mem->opaque());
 }
 
+// CUDA allocation/registration functions are necessary because the driver
+// internally sets up buffers for DMA operations (and page locks them). There's
+// no external interface for us to otherwise control these DMA settings.
+absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+GpuExecutor::HostMemoryAllocate(uint64_t size) {
+  auto* buffer =
+      tsl::port::NUMAMalloc(numa_node_, size, /* minimum_alignment=*/16);
+  if (!GpuDriver::HostRegister(context_, buffer, size) && size > 0) {
+    return absl::InternalError(
+        absl::StrFormat("Failed to allocate HostMemory of size %d", size));
+  }
+  return std::make_unique<HostMemoryAllocation>(buffer, size, this);
+}
+
+void GpuExecutor::HostMemoryDeallocate(void* location, uint64_t size) {
+  GpuDriver::HostUnregister(context_, location);
+  tsl::port::NUMAFree(location, size);
+}
+
 bool GpuExecutor::SynchronizeAllActivity() {
   return GpuDriver::SynchronizeContext(context_);
 }
@@ -813,7 +837,8 @@ GpuContext* GpuExecutor::gpu_context() { return context_; }
 // of SysFS. Returns -1 if it cannot.
 //
 // For anything more complicated/prod-focused than this, you'll likely want to
-// turn to gsys' topology modeling.
+// turn to gsys' topology modeling. nvmlDeviceGetMemoryAffinity could also be
+// used.
 static int TryToReadNumaNode(const std::string& pci_bus_id,
                              int device_ordinal) {
 #if defined(PLATFORM_WINDOWS)
