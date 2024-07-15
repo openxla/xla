@@ -183,7 +183,7 @@ class GpuExecutor : public StreamExecutorCommon {
     return std::make_unique<HostMemoryAllocation>(buffer, size, this);
   }
 
-  void HostMemoryDeallocate(void* location) override {
+  void HostMemoryDeallocate(void* location, uint64_t size) override {
     return GpuDriver::HostDeallocate(context_, location);
   }
 
