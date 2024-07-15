@@ -567,7 +567,6 @@ namespace {
     ModuleCostEvaluator evaluator;
     strat->set_cost(evaluator.Evaluate(eval_module.get()));
     VLOG(5) << LOG_HEADER(0) << "cost: " << strat->cost();
-
     PrintModuleInfo(eval_module.get());
     
     // update strat with cost and root instruction's output sharding

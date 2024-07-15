@@ -2,6 +2,8 @@
 
 #include "xla/service/experimental/module_cost_evaluator.h"
 
+#include "tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 
 namespace xla {
@@ -68,7 +70,8 @@ namespace {
 
         // base-case in a tuple-tree is an array
         if (shape.IsArray()) {
-            return NumElementsFromShape(shape) * NumBytesFromShape(shape);
+            return NumElementsFromShape(shape) 
+                * NumBytesFromType(shape.element_type());
         }
 
         assert(shape.IsTuple());
@@ -84,11 +87,37 @@ namespace {
     // This function evaluates an AllGather communication instruction
     uint64_t EvaluateAllGather(const HloAllGatherInstruction* instr) {
 
-        // get data type of operands
+        // TODO: assumptions, are there multiple operands, or just a
+        // single one that is being gathered?
+        assert(instr->operand_count() == 1);
+        assert(instr->operand(0)->shape().IsArray());
 
-        // 
+        int group_size;
+        uint64_t max_total_bytes = 0;
+        uint64_t total_bytes_per_device = 0;
+        uint64_t op_bytes = NumBytesFromShape(instr->operand(0)->shape());
 
-        return 1;
+        // get the maximum between replica groups
+        std::vector<ReplicaGroup> replica_groups = instr->replica_groups();
+        for (int i = 0; i < replica_groups.size(); i++) {
+            // each replica group transporting some amount of data
+            // each device sending some slice to (n - 1) other devices in group
+            group_size = replica_groups[i].replica_ids_size();
+            total_bytes_per_device = (group_size - 1) * op_bytes;
+            max_total_bytes = std::max(max_total_bytes, total_bytes_per_device);
+        }
+
+        // print statements to understand instruction operation
+        VLOG(5) << "All Gather Instruction";
+        VLOG(5) << "\tOperands:";
+        for (int i = 0; i < instr->operand_count(); i++) {
+            VLOG(5) << "\t\tShape " << i << ": " << instr->operand(i)->ToString();
+        }
+        VLOG(5) << "\tFinal Shape: " << instr->shape();
+        VLOG(5) << "Num replica groups: " << instr->replica_groups().size();
+
+
+        return max_total_bytes;
     }
 
     // This function evaluates an AllReduce communication instruction
