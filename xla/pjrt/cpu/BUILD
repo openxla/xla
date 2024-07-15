@@ -124,6 +124,7 @@ xla_cc_test(
     srcs = ["cpu_topology_test.cc"],
     deps = [
         ":cpu_topology",
+        ":cpu_topology_proto_cc",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
@@ -230,6 +231,7 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/client:xla_computation",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
@@ -237,6 +239,7 @@ xla_cc_test(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/service:hlo_parser",
+        "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
         "//xla/tests:test_utils",
         "@com_google_absl//absl/status",
@@ -303,6 +306,7 @@ cc_library(
 xla_cc_test(
     name = "gloo_collectives_test",
     srcs = ["gloo_collectives_test.cc"],
+    tags = ["nomac"],
     deps = [
         ":gloo_collectives",
         ":gloo_kv_store",

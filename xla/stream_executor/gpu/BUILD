@@ -11,6 +11,10 @@ load(
     "if_rocm_is_configured",
 )
 load(
+    "@local_config_sycl//sycl:build_defs.bzl",
+    "if_sycl_is_configured",
+)
+load(
     "@tsl//tsl/platform:build_config_root.bzl",
     "if_static",
 )
@@ -426,6 +430,8 @@ gpu_only_cc_library(
         "@local_config_cuda//cuda:cuda_headers",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
+    ]) + if_sycl_is_configured([
+        "@local_config_sycl//sycl:sycl_headers",
     ]),
 )
 
@@ -800,4 +806,36 @@ xla_test(
     ]) + if_rocm([
         "//xla/stream_executor/rocm:rocm_platform",
     ]),
+)
+
+xla_test(
+    name = "gpu_device_info_test",
+    srcs = ["gpu_device_info_test.cc"],
+    backends = ["gpu"],
+    data = [
+        "//xla/tools/hlo_opt:gpu_specs/a100_pcie_80.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_40.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/a100_sxm_80.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/h100_pcie.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
+    ],
+    deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
 )

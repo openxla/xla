@@ -173,6 +173,7 @@ xla_cc_test(
     srcs = ["gpu_hlo_cost_analysis_test.cc"],
     deps = [
         ":gpu_hlo_cost_analysis",
+        ":hlo_op_profiles",
         "//xla:shape_util",
         "//xla:test_helpers",
         "//xla/hlo/ir:hlo",
@@ -434,6 +435,7 @@ cc_library(
     hdrs = ["affine_map_evaluator.h"],
     deps = [
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:logging",
@@ -480,7 +482,6 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/numeric:int128",  # build-cleaner: keep
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -604,6 +605,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -632,11 +634,13 @@ cc_library(
         ":indexing_analysis",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -650,7 +654,6 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
@@ -662,6 +665,7 @@ cc_library(
     srcs = ["tiled_hlo_computation.cc"],
     hdrs = ["tiled_hlo_computation.h"],
     deps = [
+        ":indexing_analysis",
         ":tiled_hlo_instruction",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -670,6 +674,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
         "@tsl//tsl/lib/gtl:iterator_range",
     ],
 )

@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/topology.h"
 #include "xla/python/ifrt_proxy/client/py_module.h"
+#include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/py_client.h"
 #include "xla/python/py_program.h"
 #include "xla/service/cpu/collectives_interface.h"
@@ -478,17 +479,6 @@ NB_MODULE(xla_extension, m_nb) {
 
   nb::class_<PyLoadedExecutable>(m_nb, "LoadedExecutable")
       .def_prop_ro("client", &PyLoadedExecutable::client)
-      .def("local_logical_device_ids",
-           [](PyLoadedExecutable* exec) {
-             auto span = exec->addressable_device_logical_ids();
-             // Not on dispatch critical path, so ok to have heap allocation.
-             std::vector<std::pair<int, int>> addressable_device_logic_ids;
-             addressable_device_logic_ids.reserve(span.size());
-             for (const auto& logical_device_id : span) {
-               addressable_device_logic_ids.push_back(std::make_pair(
-                   logical_device_id.replica, logical_device_id.partition));
-             }
-           })
       .def("local_devices", &PyLoadedExecutable::AddressableDevices)
       .def("size_of_generated_code_in_bytes",
            &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
@@ -525,7 +515,10 @@ NB_MODULE(xla_extension, m_nb) {
                  self.pjrt_executable()->GetCompileOptions());
            })
       .def("cost_analysis",
-           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCostAnalysis))
+           [](const PyLoadedExecutable& self) {
+             auto map = ValueOrThrow(self.GetCostAnalysis());
+             return ifrt::ToPjRtAttributeMap(std::move(map));
+           })
       .def_prop_ro("traceback", &PyLoadedExecutable::traceback)
       .def_prop_ro("fingerprint", [](PyLoadedExecutable* exec) -> nb::object {
         if (exec->fingerprint().has_value()) {
@@ -868,8 +861,10 @@ NB_MODULE(xla_extension, m_nb) {
              std::string serialized = ValueOrThrow(exec.Serialize());
              return nb::bytes(serialized.data(), serialized.size());
            })
-      .def("cost_analysis",
-           xla::ValueOrThrowWrapper(&ifrt::Executable::GetCostAnalysis));
+      .def("cost_analysis", [](const ifrt::Executable& exec) {
+        auto attrs = ValueOrThrow(exec.GetCostAnalysis());
+        return ifrt::ToPjRtAttributeMap(std::move(attrs));
+      });
 
   m_nb.def("is_asan", IsAsan);
   m_nb.def("is_msan", IsMsan);

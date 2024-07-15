@@ -77,8 +77,8 @@ TEST_F(ConcatenateTest, ThreadIndexing) {
   ASSERT_NE(fusion, nullptr);
 
   constexpr auto kIndexing = R"(
-    (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
-    (bl_x * 128 + th_x) mod 400)
+    (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] ->
+      (bl_x * 128 + th_x)
     domain:
     th_x in [0, 128)
     th_y in [0, 1)
@@ -88,7 +88,7 @@ TEST_F(ConcatenateTest, ThreadIndexing) {
     bl_z in [0, 1)
     chunk_id in [0, 1)
     unroll_id in [0, 1)
-    th_x + bl_x * 128 in [0, 400)
+    bl_x * 128 + th_x in [0, 400)
   )";
   EXPECT_THAT(
       fusion

@@ -19,6 +19,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -56,6 +57,9 @@ struct Interval {
   bool Contains(int64_t value) const {
     return value >= lower && value <= upper;
   }
+
+  // Returns true if this interval contains the entire other interval.
+  bool Contains(Interval other) const { return Intersect(other) == other; }
 
   // The result of a range comparison. We wrap std::optional in a struct to
   // avoid accidental implicit conversion to bool:
@@ -114,6 +118,11 @@ struct Interval {
   // Computes the range of the product of the two intervals. Implements
   // saturating semantics.
   Interval operator*(const Interval& rhs) const;
+  // Computes the range of the difference of the two intervals. Implements
+  // saturating semantics.
+  Interval operator-(const Interval& rhs) const { return *this + (-rhs); }
+  Interval operator-() const;
+  Interval FloorDiv(int64_t rhs) const;
 
   Interval min(const Interval& rhs) const {
     return {std::min(lower, rhs.lower), std::min(upper, rhs.upper)};
@@ -146,13 +155,14 @@ inline size_t hash_value(const Interval& range) {
   return llvm::hash_combine(range.lower, range.upper);
 }
 
+class IndexingMap;
+
 // Evaluates lower and upper bounds for expressions given the domain.
-// Not thread safe.
+// Not thread safe. Lifetime is tied to the owning IndexingMap's lifetime.
 class RangeEvaluator {
  public:
-  RangeEvaluator(absl::Span<const Interval> dim_ranges,
-                 absl::Span<const Interval> symbol_ranges,
-                 mlir::MLIRContext* mlir_context);
+  RangeEvaluator(const IndexingMap& indexing_map,
+                 mlir::MLIRContext* mlir_context, bool use_constraints = true);
 
   // Checks whether an `AffineExpr` always describes a non-negative value.
   bool IsAlwaysPositiveOrZero(mlir::AffineExpr expr);
@@ -168,7 +178,8 @@ class RangeEvaluator {
 
  private:
   mlir::MLIRContext* mlir_context_;
-  llvm::DenseMap<mlir::AffineExpr, Interval> expression_ranges_cache_;
+  const IndexingMap& indexing_map_;
+  bool use_constraints_;
 };
 
 // Dimension variable represents a dimension of a tensor or a GPU grid.
@@ -331,6 +342,7 @@ class IndexingMap {
   // ranges.
   void AddConstraint(mlir::AffineExpr expr, Interval range);
   void ClearConstraints() { constraints_.clear(); }
+  void EraseConstraint(mlir::AffineExpr expr);
 
   // Evaluates the constraints at a given point and returns `true` if all
   // constraints are satisfied.
@@ -351,11 +363,6 @@ class IndexingMap {
   bool IsKnownEmpty() const { return is_known_empty_; }
 
   bool IsUndefined() const { return affine_map_ == mlir::AffineMap(); }
-
-  // Removes unused dimensions from the `affine_map_` and constraints.
-  // Returns a bit vector of dimensions that were removed. If none of the
-  // dimensions were removed, returns {}.
-  llvm::SmallBitVector RemoveUnusedDimensions();
 
   // Removes unused symbols from the `affine_map_` and constraints.
   // Returns a bit vector of symbols that were removed. If none of the symbols
@@ -384,14 +391,6 @@ class IndexingMap {
 
  private:
   IndexingMap() = default;
-
-  // Performs AffineExpr simplification for all constraints.
-  // Returns true if simplification was performed.
-  bool SimplifyConstraintExprs();
-
-  // Performs range simplification for all constraints.
-  // Returns true if simplification was performed.
-  bool SimplifyConstraintRanges();
 
   // Merges "mod" constraints for the same AffineExpr.
   // Returns true if simplification was performed.

@@ -1377,9 +1377,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         gpu_target_config.device_description.gpu_compute_capability();
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+    const auto* rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version);
 
-    if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
+    if (debug_options.xla_gpu_enable_triton_gemm() &&
+        ((cuda_cc != nullptr &&
+          cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) ||
+         rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
     }
@@ -2174,7 +2177,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     HloCostAnalysis::Options cost_analysis_options{ShapeSizeBytesFunction()};
     cost_analysis_options.set_bytes_per_second(
         gpu_device_info.memory_bandwidth());
-    GpuHloCostAnalysis cost_analysis(cost_analysis_options, &gpu_device_info);
+    GpuHloCostAnalysis cost_analysis(cost_analysis_options, gpu_device_info);
     TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&cost_analysis));
     if (!options.is_autotuning_compilation) {
       VLOG(1) << "HLO memory read+written: "

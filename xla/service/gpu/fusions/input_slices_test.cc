@@ -80,7 +80,7 @@ TEST_F(InputSlicesTest, ThreadIndexing) {
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (0,
       ((bl_x * 128 + th_x) floordiv 3) mod 2,
        (bl_x * 128 + th_x) mod 3,
-       ((bl_x * 128 + th_x) floordiv 6) mod 5)
+       (bl_x * 128 + th_x) floordiv 6)
     domain:
     th_x in [0, 128)
     th_y in [0, 1)
@@ -90,7 +90,7 @@ TEST_F(InputSlicesTest, ThreadIndexing) {
     bl_z in [0, 1)
     chunk_id in [0, 1)
     unroll_id in [0, 1)
-    th_x + bl_x * 128 in [0, 30)
+    bl_x * 128 + th_x in [0, 30)
   )"));
 }
 

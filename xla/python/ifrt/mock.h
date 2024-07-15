@@ -249,9 +249,8 @@ class MockExecutable : public llvm::RTTIExtends<MockExecutable, Executable> {
               GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>,
               GetHloModules, (), (const, final));
-  MOCK_METHOD(
-      (absl::StatusOr<absl::flat_hash_map<std::string, CostAnalysisValue>>),
-      GetCostAnalysis, (), (const, final));
+  MOCK_METHOD(absl::StatusOr<xla::ifrt::AttributeMap>, GetCostAnalysis, (),
+              (const, final));
 
   static char ID;  // NOLINT
 };
@@ -281,10 +280,8 @@ class MockLoadedExecutable
               GetOutputMemoryKinds, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>,
               GetHloModules, (), (const, final));
-  MOCK_METHOD(
-      (absl::StatusOr<
-          absl::flat_hash_map<std::string, Executable::CostAnalysisValue>>),
-      GetCostAnalysis, (), (const, final));
+  MOCK_METHOD(absl::StatusOr<xla::ifrt::AttributeMap>, GetCostAnalysis, (),
+              (const, final));
   MOCK_METHOD(absl::StatusOr<ExecuteResult>, Execute,
               (absl::Span<tsl::RCReference<Array>> args,
                const ExecuteOptions& options,
@@ -292,8 +289,6 @@ class MockLoadedExecutable
               (final));
   MOCK_METHOD(Future<>, Delete, (), (final));
   MOCK_METHOD(bool, IsDeleted, (), (const, final));
-  MOCK_METHOD(absl::Span<const LogicalDeviceIds>,
-              addressable_device_logical_ids, (), (const, final));
   MOCK_METHOD(absl::Span<Device* const>, addressable_devices, (),
               (const, final));
 

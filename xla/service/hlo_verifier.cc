@@ -153,6 +153,15 @@ absl::Status ShapeVerifier::Preprocess(HloInstruction* hlo) {
     return InvalidArgument("Unbounded dynamism is disabled for instruction: %s",
                            hlo->ToString());
   }
+  if (hlo->shape().has_layout()) {
+    if (hlo->shape().layout().minor_to_major_size() !=
+        hlo->shape().dimensions_size()) {
+      return InvalidArgument(
+          "Instruction has mismatched minor-to-major size and dimension size: "
+          "%s",
+          hlo->ToString());
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -1659,7 +1668,9 @@ absl::Status ShapeVerifier::HandleCopyDone(HloInstruction* copy_done) {
   const Shape& dest_shape = ShapeUtil::GetTupleElementShape(operand_shape, 0);
   const Shape& src_shape = ShapeUtil::GetTupleElementShape(operand_shape, 1);
   if (!ShapesSame(dest_shape, src_shape,
-                  Shape::Equal().IgnoreMemorySpaceInLayout())) {
+                  Shape::Equal()
+                      .IgnoreMemorySpaceInLayout()
+                      .IgnoreSplitConfigInLayout())) {
     return Internal(
         "Source and destination buffers in CopyDone arguments need to be the "
         "same shape found %s and %s\n%s",

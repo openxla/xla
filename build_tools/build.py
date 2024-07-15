@@ -333,7 +333,6 @@ _TENSORFLOW_CPU_BUILD = Build(
         "//tensorflow/python/...",
         "-//tensorflow/python/distribute/...",
         "-//tensorflow/python/compiler/tensorrt/...",
-        "-//tensorflow/python/integration_testing/...",
     ),
     options=dict(
         verbose_failures=True,
@@ -358,7 +357,6 @@ _TENSORFLOW_GPU_BUILD = Build(
         "//tensorflow/python/...",
         "-//tensorflow/python/distribute/...",
         "-//tensorflow/python/compiler/tensorrt/...",
-        "-//tensorflow/python/integration_testing/...",
     ),
     build_tag_filters=("-no_oss", "+gpu"),
     test_tag_filters=("-no_oss", "+gpu"),

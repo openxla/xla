@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/collective_pipeliner.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -324,7 +325,8 @@ CheckStoreIntoSliceIsCompatible(HloInstruction* instr,
                             HloOpcode::kAllReduce, HloOpcode::kTranspose,
                             HloOpcode::kBroadcast>(i) ||
            (multi_uses_pipelining && i->IsElementwise()) ||
-           i->IsCustomCall(CollectivePipeliner::kInsertedByPreviousStep);
+           i->IsCustomCall(CollectivePipeliner::kInsertedByPreviousStep) ||
+           i->IsCustomCall(CollectivePipeliner::kSunkByPreviousStep);
   };
   // Returns if this instruction is a dynamic-update-slice inserting the value
   // into a bigger buffer that we are going to pipeline to the next iteration.
@@ -1337,7 +1339,8 @@ absl::Status UpdateSendRecvValidation(
           intervals.push_back({1, 0});
         }
       } else {
-        intervals.push_back({std::max(0l, a - 1), std::max(0l, b - 1)});
+        intervals.push_back(
+            {std::max(int64_t{0}, a - 1), std::max(int64_t{0}, b - 1)});
       }
     }
   } else if (direction == CollectivePipeliner::kBackward) {
@@ -2263,6 +2266,17 @@ absl::Status TransformLoopForwardSink(const WhileLoopAnalysis& loop_analysis,
                 ComputeFullOutputShape(to_move, formatting_op->shape()),
                 collect_operands(formatting_op)[0], new_dims));
         pipelined_map[formatting_op] = expanded_transpose;
+        continue;
+      }
+      if (formatting_op->IsCustomCall(
+              CollectivePipeliner::kSunkByPreviousStep)) {
+        HloInstruction* expanded_custom_call =
+            loop_computation->AddInstruction(HloInstruction::CreateCustomCall(
+                ComputeFullOutputShape(to_move, formatting_op->shape()),
+                collect_operands(formatting_op),
+                /*custom_call_target=*/
+                CollectivePipeliner::kSunkByPreviousStep));
+        pipelined_map[formatting_op] = expanded_custom_call;
         continue;
       }
       CHECK(false) << "Unsupported instruction " << formatting_op->ToString();
