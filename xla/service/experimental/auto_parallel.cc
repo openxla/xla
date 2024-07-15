@@ -2,6 +2,8 @@
 
 #include "xla/service/experimental/auto_parallel.h"
 
+#include "xla/service/experimental/module_cost_evaluator.h"
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
@@ -549,7 +551,8 @@ namespace {
   // and evaluating the communication costs of the resulting module
   // The strat parameter will be updated with this cost and the resulting
   // output sharding
-  void EvaluateShardingStrat(HloModule* module, InstructionSharding* strat) {
+  void EvaluateShardingStrat(const HloModule* module, 
+      InstructionSharding* strat) {
 
     // clone the module to avoid clobbering future evaluations
     std::unique_ptr<HloModule> eval_module = module->Clone();
@@ -561,8 +564,16 @@ namespace {
     RunGSPMD(eval_module.get());
 
     // now evaluate cost
+    ModuleCostEvaluator evaluator;
+    strat->set_cost(evaluator.Evaluate(eval_module.get()));
+    VLOG(5) << LOG_HEADER(0) << "cost: " << strat->cost();
+
+    PrintModuleInfo(eval_module.get());
     
     // update strat with cost and root instruction's output sharding
+    // NOTE: the eval_module after GSPMD doesn't have it's sharding
+    // in the output (i.e. root computation of entry computation) which
+    // is unexpected, I thought that GSPMD would fill that in
 
   }
 
