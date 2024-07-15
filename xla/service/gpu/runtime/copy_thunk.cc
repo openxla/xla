@@ -125,6 +125,11 @@ absl::Status DeviceToHostCopyThunk::ExecuteOnStream(
   TF_ASSIGN_OR_RETURN(
       se::Stream * stream,
       GetStreamForExecution(Thunk::execution_stream_id(), params));
+  // Wait for the source to be ready on device unless it's an input parameter
+  if (instr_->operand(0)->opcode() != HloOpcode::kParameter) {
+    VLOG(5) << "Waiting for stream: " << params.stream;
+    TF_RETURN_IF_ERROR(stream->WaitFor(params.stream));
+  }
   TF_RETURN_IF_ERROR(stream->Memcpy(cpu_dst, source_data, size_bytes()));
   if (stream == params.stream) {
     VLOG(2) << "Memcpy D2H from the main stream";
