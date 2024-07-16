@@ -163,6 +163,10 @@ namespace {
           );
           break;
         case HloOpcode::kCollectiveBroadcast:
+          cost += EvaluateCollectiveBroadcast(
+              static_cast<const HloCollectiveBroadcastInstruction*>(instr)
+          );
+          break;       
         case HloOpcode::kReduce:
         case HloOpcode::kReduceScatter:
         case HloOpcode::kScatter:
