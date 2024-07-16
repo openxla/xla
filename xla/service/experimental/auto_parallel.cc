@@ -529,18 +529,26 @@ namespace {
   }
 
   // This function runs the sharding propagation pipeline pass on the module
-  void RunGSPMD(HloModule* module) {
+  HloSharding RunGSPMD(HloModule* module) {
 
     // TODO: will need to remove manual setting of this eventually
+    // TODO: is setting replica_count to 1 okay?
     HloModuleConfig& config = module->mutable_config();
     config.set_num_partitions(DEVICE_COUNT);
     config.set_replica_count(1);
     config.set_use_spmd_partitioning(true);
 
+    // complete the shardings to the output
     RunShardingPropagation(module);
+
+    // extract the output sharding
+    HloInstruction* instr = module->entry_computation()->root_instruction();
+    HloSharding out_sharding = instr->sharding();
+
+    // now replace shardings with communication operations
     RunSpmdPartitioner(module);
 
-    return;
+    return out_sharding;
   }
 
   // This function returns the sharding of the entry computation's 
