@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gemm_rewriter.h"
+#include "xla/service/gpu/variant_visitor.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/service/platform_util.h"
@@ -60,15 +61,32 @@ class GemmAlgorithmPickerTest : public HloTestBase,
     return backend().default_stream_executor()->GetDeviceDescription();
   }
 
-  void SetUp() override {
-    const auto& gpu_cc = device_desc().gpu_compute_capability();
+  se::StreamExecutor *stream_exec() {
+    return backend().default_stream_executor();
+  }
+  const se::DeviceDescription& gpu_device_desc() {
+    return stream_exec()->GetDeviceDescription();
+  }
+  const se::GpuComputeCapability& gpu_comp() {
+    return gpu_device_desc().gpu_compute_capability();
+  }
 
-    if (auto* procm = std::get_if<se::RocmComputeCapability>(&gpu_cc)) {
-      if (GetDebugOptionsForTest().xla_gpu_enable_cublaslt() &&
-          !procm->has_hipblaslt()) {
-        GTEST_SKIP() << "No gpublas-lt support on this architecture!";
-      }
-    }
+  void SetUp() override {
+    std::visit(VariantVisitor{
+      [](const se::CudaComputeCapability& cc) {
+        if(cc.IsAtLeastAmpere()) {
+          GTEST_SKIP() << "Skipping this test for Ampere+ as it is supported and "
+                    "recommended with "
+                    "the Nvidia Volta+ GPUs.";
+        }
+      },
+      [this](const se::RocmComputeCapability& cc) {
+        if(GetDebugOptionsForTest().xla_gpu_enable_cublaslt() &&
+          !cc.has_hipblaslt()) {
+          GTEST_SKIP() << "No gpublas-lt support on this architecture!";
+        }
+      }},
+      gpu_comp());
   }
 };
 
@@ -90,16 +108,6 @@ TEST_P(GemmAlgorithmPickerTest, BlasGetVersion) {
 }
 
 TEST_P(GemmAlgorithmPickerTest, SetAlgorithm) {
-  auto comp = backend()
-                  .default_stream_executor()
-                  ->GetDeviceDescription()
-                  .cuda_compute_capability();
-  if (comp.IsAtLeast(se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Skipping this test for Ampere+ as it is supported and "
-                    "recommended with "
-                    "the Nvidia Volta+ GPUs.";
-  }
-
   constexpr absl::string_view kHlo = R"(
 HloModule module
 
@@ -113,22 +121,15 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(auto m,
                           ParseAndReturnVerifiedModule(kHlo, module_cfg));
 
-  se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
-                          PlatformUtil::GetStreamExecutors(platform));
-  ASSERT_GT(executors.size(), 0);
-  se::StreamExecutor* stream_exec = executors[0];
   bool changed = false;
   TF_ASSERT_OK_AND_ASSIGN(
       changed,
       RunHloPass(
-          GemmRewriter(
-              stream_exec->GetDeviceDescription().gpu_compute_capability(),
-              /*toolkit_version=*/12040),
+          GemmRewriter(gpu_comp(), /*toolkit_version=*/12040),
           m.get()));
   changed = false;
   DebugOptions opts;
-  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr}, opts};
+  AutotuneConfig cfg{DeviceConfig{stream_exec(), nullptr}, opts};
   TF_ASSERT_OK_AND_ASSIGN(changed,
                           RunHloPass(GemmAlgorithmPicker(cfg), m.get()));
   ASSERT_TRUE(changed);
@@ -151,9 +152,7 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(
       changed,
       RunHloPass(
-          GemmRewriter(
-              stream_exec->GetDeviceDescription().gpu_compute_capability(),
-              /*toolkit_version=*/12040),
+          GemmRewriter(gpu_comp(), /*toolkit_version=*/12040),
           m.get()));
   changed = false;
   TF_ASSERT_OK_AND_ASSIGN(changed,
@@ -172,16 +171,6 @@ ENTRY main {
 }
 
 TEST_P(GemmAlgorithmPickerTest, GetAlgorithmWithoutDevice) {
-  auto comp = backend()
-                  .default_stream_executor()
-                  ->GetDeviceDescription()
-                  .cuda_compute_capability();
-  if (comp.IsAtLeast(se::CudaComputeCapability::AMPERE)) {
-    GTEST_SKIP() << "Skipping this test for Ampere+ as it is supported and "
-                    "recommended with "
-                    "the Nvidia Volta+ GPUs.";
-  }
-
   constexpr absl::string_view kHlo = R"(
 HloModule module
 
@@ -193,24 +182,16 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(
       auto m, ParseAndReturnVerifiedModule(kHlo, GetModuleConfigForTest()));
 
-  se::Platform* platform = PlatformUtil::GetDefaultPlatform().value();
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
-                          PlatformUtil::GetStreamExecutors(platform));
-  ASSERT_GT(executors.size(), 0);
-  se::StreamExecutor* stream_exec = executors[0];
-
   bool changed = false;
   TF_ASSERT_OK_AND_ASSIGN(
       changed,
       RunHloPass(
-          GemmRewriter(
-              stream_exec->GetDeviceDescription().gpu_compute_capability(),
-              /*toolkit_version=*/12040),
+          GemmRewriter(gpu_comp(), /*toolkit_version=*/12040),
           m.get()));
   changed = false;
 
   DebugOptions opts;
-  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr}, opts};
+  AutotuneConfig cfg{DeviceConfig{stream_exec(), nullptr}, opts};
 
   TF_ASSERT_OK_AND_ASSIGN(changed,
                           RunHloPass(GemmAlgorithmPicker(cfg), m.get()));
@@ -234,14 +215,12 @@ ENTRY main {
   changed = false;
 
   DevicelessConfig deviceless_config{
-      stream_exec->GetDeviceDescription().model_str(),
-      stream_exec->GetDeviceDescription().cuda_compute_capability()};
+      gpu_device_desc().model_str(), gpu_comp()};
   AutotuneConfig deviceless_cfg{deviceless_config, opts};
   TF_ASSERT_OK_AND_ASSIGN(
       changed,
       RunHloPass(
-          GemmRewriter(
-              stream_exec->GetDeviceDescription().gpu_compute_capability(),
+          GemmRewriter(gpu_comp(),
               /*toolkit_version=*/12040),
           m.get()));
   changed = false;
