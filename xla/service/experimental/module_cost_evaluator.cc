@@ -148,6 +148,7 @@ namespace {
 
     // iterate through computation and instructions
     // evaluate the cost of each
+    // shoudl be going through the main computation
     for (const HloComputation* comp: module->computations()) {
       for (const HloInstruction* instr: comp->instructions()) {
         VLOG(5) << "Evaluating instruction: " << instr->name();

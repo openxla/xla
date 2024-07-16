@@ -434,7 +434,7 @@ void RunDummyPipeline(HloModule* module) {
   pipeline.AddPass<AutoParallelizer>();
 
   VLOG(2) << "Running dummy HloModulePass";
-  pipeline.Run(module);
+  TF_CHECK_OK(pipeline.Run(module).status());
 }
 
 absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(

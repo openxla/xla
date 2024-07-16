@@ -215,7 +215,7 @@ namespace {
 
     // add operands
     for (int i = 0; i < params.size(); i++) {
-      builder.AddParameter(std::move(params[i]));
+      TF_CHECK_OK(builder.AddParameter(std::move(params[i])).status());
     }
     
     // build the resulting computation and return
@@ -502,6 +502,32 @@ namespace {
     return; 
   }
 
+  // This function runs the sharding propagation pass over an HloModule
+  void RunShardingPropagation(HloModule* module) {
+    // automatically complete the shardings
+    HloPassPipeline sharding_pipeline("sharding-propagation");
+    sharding_pipeline.AddPass<ShardingPropagation>(
+      /* is_spmd */ true,
+      /* propagate_metadata */ true,
+      /* sharding propagation to output */ absl::Span<const bool>({ true }),
+      /* sharding propagation to parameters */ absl::Span<const bool>({ false })
+    );
+
+    TF_CHECK_OK(sharding_pipeline.Run(module).status());
+  }
+
+  // This function runs the SpmdPartitioner over an HloModule
+  void RunSpmdPartitioner(HloModule* module) {
+    // fill in communications to produce SPMD program
+    HloPassPipeline spmd_pipeline("spmd-partitioner");
+    spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
+      module->config().num_partitions(),
+      module->config().replica_count()
+    );
+
+    TF_CHECK_OK(spmd_pipeline.Run(module).status());
+  }
+
   // This function runs the sharding propagation pipeline pass on the module
   void RunGSPMD(HloModule* module) {
 
@@ -511,27 +537,8 @@ namespace {
     config.set_replica_count(1);
     config.set_use_spmd_partitioning(true);
 
-    // Setup HloPass for sharding propagation
-    // Should not propagate sharding to parameters because parameters should
-    // already have shardings
-    HloPassPipeline spmd_pipeline("spmd-partitioner");
-
-    // automatically complete the shardings
-    spmd_pipeline.AddPass<ShardingPropagation>(
-      /* is_spmd */ true,
-      /* propagate_metadata */ false,
-      /* sharding propagation to output */ absl::Span<const bool>({ true }),
-      /* sharding propagation to parameters */ absl::Span<const bool>({ false })
-    );
-
-    // produce an SPMD program
-    spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
-      module->config().num_partitions(),
-      module->config().replica_count()
-    );
-
-    // run pipeline
-    spmd_pipeline.Run(module);
+    RunShardingPropagation(module);
+    RunSpmdPartitioner(module);
 
     return;
   }
@@ -567,7 +574,7 @@ namespace {
     ModuleCostEvaluator evaluator;
     strat->set_cost(evaluator.Evaluate(eval_module.get()));
     VLOG(5) << LOG_HEADER(0) << "cost: " << strat->cost();
-    PrintModuleInfo(eval_module.get());
+    // PrintModuleInfo(eval_module.get());
     
     // update strat with cost and root instruction's output sharding
     // NOTE: the eval_module after GSPMD doesn't have it's sharding
