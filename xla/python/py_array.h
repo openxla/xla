@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_future.h"

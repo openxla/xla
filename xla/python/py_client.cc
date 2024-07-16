@@ -37,18 +37,18 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/literal.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"

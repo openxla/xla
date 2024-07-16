@@ -19,7 +19,7 @@ limitations under the License.
 #include <Python.h>
 
 #include "absl/strings/str_format.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 namespace xla {
 
