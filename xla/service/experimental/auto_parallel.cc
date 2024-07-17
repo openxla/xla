@@ -273,6 +273,9 @@ namespace {
     // TODO: accept a shared pointer
     void set_result_sharding(HloSharding result_sharding);
 
+    void AddUserReshardingCosts(
+        std::unique_ptr<std::vector<uint64_t>> resharding_costs);
+
   private:
     // TODO: make these shared_ptr<const HloSharding>
     // The sharding of each operand of an instruction. Using shared_ptr
@@ -280,16 +283,21 @@ namespace {
     // This vector will be filled by enumerating incomplete sharding strategies
     std::vector<std::shared_ptr<HloSharding>> operand_shardings_;
 
+    // Cost of this specific instruction sharding. This will be assigned
+    // after evaluating the cost of the complete HloModule after performing
+    // sharding propagation through SPMD.
+    uint64_t cost_;
+
     // TODO: make these shared_ptr<const HloSharding>
     // Sharding of result of computing instruction. This will be completed
     // by GSPMD when given the input shardings and determining the output
     // shardings.
     std::shared_ptr<HloSharding> result_sharding_;
 
-    // Cost of this specific instruction sharding. This will be assigned
-    // after evaluating the cost of the complete HloModule after performing
-    // sharding propagation through SPMD.
-    uint64_t cost_;
+    // For each user of this instruction, have a resharding cost for
+    // each of the user's potential sharding strategies
+    // Cost vectors are added in user order
+    std::vector<std::unique_ptr<std::vector<uint64_t>>> resharding_costs_;
 
   };
 
@@ -299,6 +307,11 @@ namespace {
 
   void InstructionSharding::set_result_sharding(HloSharding result_sharding) {
     result_sharding_ = std::make_shared<HloSharding>(result_sharding);
+  }
+
+  void InstructionSharding::AddUserReshardingCosts(
+      std::unique_ptr<std::vector<uint64_t>> costs) {
+    resharding_costs_.push_back(std::move(costs));
   }
 
   /*********************************************************/
@@ -687,14 +700,11 @@ namespace {
     int num_computations = module_clone->computation_count();
     int comp_idx = 0;
 
+    // TODO: shouldn't I only be doing this for the main computation?
+
     // iterate through HloModule computations
     for (HloComputation* computation : module_clone->computations()) {
-
-      int num_instructions = computation->instruction_count();
-      int instr_idx = 0;
-      
       for (HloInstruction* instr : computation->instructions()) {
-
         // create the relevant sharding information for this instruction
         InstructionShardingInfo i(instr);
 
