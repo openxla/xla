@@ -7,9 +7,13 @@ cc_library(
     testonly = True,
     srcs = ["hlo_test_lib.cc"],
     deps = [
+        "//testing/base/public:gunit_for_library_testonly",
         "//xla:error_spec",
+        "//xla/service:hlo_module_config",
         "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
