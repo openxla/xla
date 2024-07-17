@@ -170,6 +170,7 @@ xla_test(
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
@@ -585,12 +586,14 @@ cc_library(
         "@triton//:TritonGPUToLLVM",
         "@triton//:TritonToTritonGPU",
         "@triton//:TritonGPUTransforms",
+        "@triton//:TritonLLVMIR",
     ]) + if_cuda_is_configured([
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
-        "@triton//:TritonLLVMIR",
     ]) + if_rocm_is_configured([
         "@tsl//tsl/platform:rocm_rocdl_path",
+        "@triton//third_party/amd:TritonAMDGPUToLLVM",
+        "@triton//third_party/amd:TritonAMDGPUTransforms",
     ]),
 )
 
@@ -1169,8 +1172,10 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
     ] + if_cuda_is_configured([

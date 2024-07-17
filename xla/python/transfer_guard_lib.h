@@ -22,7 +22,7 @@ limitations under the License.
 // placeholder for index annotation headers
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 namespace jax {
 

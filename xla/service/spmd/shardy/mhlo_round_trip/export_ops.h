@@ -18,13 +18,13 @@ limitations under the License.
 
 #include <memory>
 
-#include "mlir/Pass/Pass.h"  // from @llvm-project
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
+#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassRegistry.h"
 
 namespace xla {
 namespace sdy {
 
-// Creates a pass that converts Shardonnay ops to MHLO ops (except
+// Creates a pass that converts Shardy ops to MHLO ops (except
 // sdy::ManualComputationOp).
 std::unique_ptr<mlir::Pass> createExportOpsPass();
 

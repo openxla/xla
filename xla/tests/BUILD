@@ -886,6 +886,7 @@ xla_test(
         "//xla:error_spec",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -907,7 +908,7 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:error_spec",
         "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1451,7 +1452,6 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:test",
         "//xla/client:xla_builder",
-        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:ml_dtypes",
     ],
 )
@@ -2215,11 +2215,13 @@ xla_test(
         ":literal_test_util",
         ":test_macros_header",
         ":test_utils",
+        ":verified_hlo_module",
         ":xla_internal_test_main",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla/service:computation_placer",
+        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",

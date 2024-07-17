@@ -28,7 +28,9 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/execution_context.h"
+#include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/ffi/type_id_registry.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
@@ -39,10 +41,6 @@ limitations under the License.
 #include "tsl/platform/test_benchmark.h"
 
 namespace xla::ffi {
-namespace {
-
-using ::testing::HasSubstr;
-using ::tsl::testing::StatusIs;
 
 enum class Int32BasedEnum : int32_t {
   kOne = 1,
@@ -56,13 +54,15 @@ enum class Int64BasedEnum : int64_t {
   kTwo = kI32MaxValue + 2,
 };
 
-}  // namespace
 }  // namespace xla::ffi
 
 XLA_FFI_REGISTER_ENUM_ATTR_DECODING(::xla::ffi::Int32BasedEnum);
 XLA_FFI_REGISTER_ENUM_ATTR_DECODING(::xla::ffi::Int64BasedEnum);
 
 namespace xla::ffi {
+
+using ::testing::HasSubstr;
+using ::tsl::testing::StatusIs;
 
 TEST(FfiTest, DataTypeEnumValue) {
   // Verify that xla::PrimitiveType and xla::ffi::DataType use the same
@@ -186,6 +186,18 @@ TEST(FfiTest, ErrorEnumValue) {
             encoded(ErrorCode::kDataLoss));
   EXPECT_EQ(encoded(absl::StatusCode::kUnauthenticated),
             encoded(ErrorCode::kUnauthenticated));
+}
+
+TEST(FfiTest, Expected) {
+  ErrorOr<int32_t> value(42);
+  EXPECT_TRUE(value.has_value());
+  EXPECT_FALSE(value.has_error());
+  EXPECT_EQ(*value, 42);
+
+  ErrorOr<int32_t> error(Error(ErrorCode::kInternal, "Test error"));
+  EXPECT_FALSE(error.has_value());
+  EXPECT_TRUE(error.has_error());
+  EXPECT_THAT(error.error().message(), HasSubstr("Test error"));
 }
 
 TEST(FfiTest, ReturnError) {
@@ -565,7 +577,7 @@ TEST(FfiTest, UserData) {
 
   ExecutionContext execution_context;
   TF_ASSERT_OK(execution_context.Insert(
-      ExecutionContext::TypeId(MyData::id.type_id), &data));
+      TypeIdRegistry::TypeId(MyData::id.type_id), &data));
 
   CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
   auto call_frame = builder.Build();
@@ -583,6 +595,45 @@ TEST(FfiTest, UserData) {
   auto status = Call(*handler, call_frame, options);
 
   TF_ASSERT_OK(status);
+}
+
+struct MyState {
+  static TypeId id;
+
+  explicit MyState(int32_t value) : value(value) {}
+  int32_t value;
+};
+
+TypeId MyState::id = {};  // zero-initialize type id
+XLA_FFI_REGISTER_TYPE(GetXlaFfiApi(), "state", &MyState::id);
+
+TEST(FfiTest, StatefulHandler) {
+  ExecutionState execution_state;
+
+  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
+  auto call_frame = builder.Build();
+
+  CallOptions options;
+  options.execution_state = &execution_state;
+
+  // FFI instantiation handler that creates a state for FFI handler.
+  auto instantiate =
+      Ffi::BindInstantiate().To([]() -> ErrorOr<std::unique_ptr<MyState>> {
+        return std::make_unique<MyState>(42);
+      });
+
+  // FFI execute handler that uses state created by the instantiation handler.
+  auto execute = Ffi::Bind().Ctx<State<MyState>>().To([](MyState* state) {
+    EXPECT_EQ(state->value, 42);
+    return Error::Success();
+  });
+
+  // Create `State` and store it in the execution state.
+  TF_ASSERT_OK(
+      Call(*instantiate, call_frame, options, ExecutionStage::kInstantiate));
+
+  // Check that state was created and forwarded to the execute handler.
+  TF_ASSERT_OK(Call(*execute, call_frame, options));
 }
 
 TEST(FfiTest, ScratchAllocator) {

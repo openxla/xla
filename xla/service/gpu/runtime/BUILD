@@ -259,6 +259,7 @@ cc_library(
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:status_macros",
+        "//xla:util",
         "//xla/service:global_device_id",
         "//xla/service:lockable",
         "//xla/service:rendezvous",
@@ -607,6 +608,7 @@ cc_library(
         "//xla:util",
         "//xla/ffi:call_frame",
         "//xla/ffi:execution_context",
+        "//xla/ffi:execution_state",
         "//xla/ffi:ffi_api",
         "//xla/ffi/api:c_api",
         "//xla/hlo/ir:hlo",
@@ -618,9 +620,12 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor/gpu:gpu_stream_header",
         "//xla/stream_executor/gpu:gpu_types_header",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
     ],
 )
 

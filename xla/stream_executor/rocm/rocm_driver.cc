@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -181,17 +182,6 @@ tsl::thread::ThreadPool* GetDriverExecutor() {
 
 }  // namespace
 
-std::string MemorySpaceString(MemorySpace memory_space) {
-  switch (memory_space) {
-    case MemorySpace::kHost:
-      return "host";
-    case MemorySpace::kDevice:
-      return "device";
-    default:
-      LOG(FATAL) << "impossible memory space";
-  }
-}
-
 namespace {
 
 // Call hipDeviceSynchronize and crash if it doesn't succeed.
@@ -291,7 +281,7 @@ std::string ROCMPointerToDeviceString(hipDeviceptr_t pointer) {
 std::string ROCMPointerToMemorySpaceString(hipDeviceptr_t pointer) {
   auto value = GpuDriver::GetPointerMemorySpace(pointer);
   if (value.ok()) {
-    return MemorySpaceString(value.value());
+    return MemoryTypeString(value.value());
   }
   LOG(ERROR) << "could not query device: " << value.status();
   return "?";
@@ -1789,7 +1779,7 @@ struct BitPatternToValue {
       "failed to query context for device pointer: ", ToString(result)));
 }
 
-/* static */ absl::StatusOr<MemorySpace> GpuDriver::GetPointerMemorySpace(
+/* static */ absl::StatusOr<MemoryType> GpuDriver::GetPointerMemorySpace(
     hipDeviceptr_t pointer) {
   unsigned int value;
   hipError_t result = wrap::hipPointerGetAttribute(
@@ -1797,9 +1787,9 @@ struct BitPatternToValue {
   if (result == hipSuccess) {
     switch (value) {
       case hipMemoryTypeDevice:
-        return MemorySpace::kDevice;
+        return MemoryType::kDevice;
       case hipMemoryTypeHost:
-        return MemorySpace::kHost;
+        return MemoryType::kHost;
       default:
         return absl::Status{
             absl::StatusCode::kInternal,

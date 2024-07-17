@@ -45,7 +45,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"  // from @eigen_archive
+#include "Eigen/Core"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -918,6 +918,6 @@ using Vector3 = std::array<int64_t, 3>;
 #define XLA_VLOG_LINES(LEVEL, STRING)                   \
   do {                                                  \
     if (VLOG_IS_ON(LEVEL)) XLA_LOG_LINES(INFO, STRING); \
-  } while (false);
+  } while (false)
 
 #endif  // XLA_UTIL_H_

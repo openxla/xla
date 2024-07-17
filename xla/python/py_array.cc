@@ -44,12 +44,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/exceptions.h"
@@ -966,7 +966,17 @@ absl::Status PyArray::Delete() {
   }
   py_arrays().clear();
   if (ifrt_array() != nullptr) {
-    TF_RETURN_IF_ERROR(ifrt_array()->Delete().Await());
+    // We do not wait for the deletion to complete here.
+    //
+    // (1) Skipping blocking does not affect the correctness of deletion as long
+    // as the runtime preserves dispatch ordering of deletion w.r.t. other
+    // operations.
+    //
+    // (2) Synchronously waiting for the deletion to complete is very expensive
+    // when the deletion can return a status only after the underlying physical
+    // buffer has been deleted or a request must be processed via RPC,
+    // especially as this deletion is done per array.
+    ifrt_array()->Delete();
     SetIfrtArray(tsl::RCReference<ifrt::Array>());
   }
   return absl::OkStatus();
