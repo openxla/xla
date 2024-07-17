@@ -345,8 +345,12 @@ class GemmAutotuner {
     absl::StatusOr<AutotuneResult> best =
         PickBestResult(results, gemm->ToString(), hlo_module_config);
     if (best.ok()) {
-      // Return a real algorithm ID if return_algo_index is false: 
-      // e.g., in case of legacy cublas tuning.
+      // Note that, cublas-lt returns an opaque object as an algorithm ID,
+      // therefore we need to convert it to the index from the list algorithms' 
+      // list (otherwise, we cannot store this ID inside a gemm_backend_config).
+      // In contrast, legacy cublas returns a 32-bit integer algorithm ID which
+      // can be readily stored inside an HLO (hence return_algo_index is false
+      // for cublas case).
       if (!return_algo_index) return best; 
       // Otherwise, map a real algorithm ID to its index among the results.
       for (size_t i = 0; i < results.size(); ++i) {

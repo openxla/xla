@@ -72,33 +72,34 @@ class GemmAlgorithmPickerTest : public HloTestBase,
   }
 
   void SetUp() override {
+    std::string_view name = ::testing::UnitTest::GetInstance()->
+                                                  current_test_info()->name();
+    // We need special handling for BlasGetVersion test.
+    bool blas_get_version = name.rfind("BlasGetVersion") == 0;
+
     std::visit(VariantVisitor{
-      [](const se::CudaComputeCapability& cc) {
-        if(cc.IsAtLeastAmpere()) {
-          GTEST_SKIP() << "Skipping this test for Ampere+ as it is supported and "
-                    "recommended with "
-                    "the Nvidia Volta+ GPUs.";
+      [&](const se::CudaComputeCapability& cc) {
+        if (!blas_get_version && cc.IsAtLeastAmpere()) {
+          GTEST_SKIP() << "Skipping this test for Ampere+ as it is supported "
+                          "and recommended with the Nvidia Volta+ GPUs.";
         }
       },
-      [this](const se::RocmComputeCapability& cc) {
-        if(GetDebugOptionsForTest().xla_gpu_enable_cublaslt() &&
+      [&](const se::RocmComputeCapability& cc) {
+        if (blas_get_version) {
+          auto version = std::stol(device_desc().runtime_version());
+          if (version < 60200) {
+            GTEST_SKIP() << "This API is not available on ROCM 6.1 and below.";
+          }
+        } else if (GetDebugOptionsForTest().xla_gpu_enable_cublaslt() &&
           !cc.has_hipblaslt()) {
           GTEST_SKIP() << "No gpublas-lt support on this architecture!";
         }
       }},
-      gpu_comp());
+    gpu_comp());
   }
 };
 
 TEST_P(GemmAlgorithmPickerTest, BlasGetVersion) {
-  const auto& desc = device_desc();
-  const auto& gpu_cc = desc.gpu_compute_capability();
-  if (auto* procm = std::get_if<se::RocmComputeCapability>(&gpu_cc)) {
-    auto version = std::stol(desc.runtime_version());
-    if (version < 60200) {
-      GTEST_SKIP() << "This API is not available on ROCM 6.1 and below.";
-    }
-  }
   auto* blas = backend().default_stream_executor()->AsBlas();
   ASSERT_TRUE(blas != nullptr);
   std::string version;
