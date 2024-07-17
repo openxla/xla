@@ -6145,6 +6145,27 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "unique_channel_id_enforcer",
+    hdrs = ["unique_channel_id_enforcer.h"],
+    srcs = ["unique_channel_id_enforcer.cc"],
+    deps = [
+        ":hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+    ],
+)
+
+xla_cc_test(
+    name = "unique_channel_id_enforcer_test",
+    srcs = ["unique_channel_id_enforcer_test.cc"],
+    deps = [
+        ":unique_channel_id_enforcer",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+    ],
+)
+
+cc_library(
     name = "root_instruction_sinker",
     srcs = ["root_instruction_sinker.cc"],
     hdrs = ["root_instruction_sinker.h"],
