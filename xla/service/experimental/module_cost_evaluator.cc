@@ -107,7 +107,9 @@ namespace {
 
   // This function evaluates an AllReduce communication instruction
   uint64_t EvaluateAllReduce(const HloAllReduceInstruction* instr) {
-    return 1;
+
+    // TODO: approximating with the size of resulting shape
+    return NumBytesFromShape(instr->shape());
   }
 
   uint64_t EvaluateCollectiveBroadcast(
@@ -127,14 +129,6 @@ namespace {
     for (const ReplicaGroup& rg : replica_groups) {
         max_group_size = std::max(max_group_size, rg.replica_ids_size());
     }
-    
-    //   VLOG(5) << "All Gather Instruction";
-    //   VLOG(5) << "\tOperands:";
-    //   for (int i = 0; i < instr->operand_count(); i++) {
-    //       VLOG(5) << "\t\tShape " << i << ": " << instr->operand(i)->ToString();
-    //   }
-    //   VLOG(5) << "\tFinal Shape: " << instr->shape();
-    //   VLOG(5) << "Num replica groups: " << instr->replica_groups().size();
 
     return (max_group_size - 1) * op_bytes;
   }

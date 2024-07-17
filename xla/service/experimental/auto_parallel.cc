@@ -576,7 +576,7 @@ namespace {
     // TODO: should these take in unique pointers or is regulard pointer ok?
     ClearHloShardings(eval_module.get());
     ApplyModuleStrategy(eval_module.get(), strat);
-    RunGSPMD(eval_module.get());
+    strat->set_result_sharding(RunGSPMD(eval_module.get()));
 
     // now evaluate cost
     ModuleCostEvaluator evaluator;
