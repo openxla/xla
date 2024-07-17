@@ -1,6 +1,5 @@
 # Build file for OpenMP library that is part of llvm
 
-load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "@tsl//third_party/llvm_openmp:cmake_vars.bzl",
     "cmake_var_string",
@@ -17,6 +16,7 @@ load(
     "if_macos",
     "if_windows",
 )
+load("//tools/build_defs/testing:bzl_library.bzl", "bzl_library")
 
 package(
     default_visibility = [
