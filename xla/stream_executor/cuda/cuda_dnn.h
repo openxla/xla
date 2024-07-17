@@ -351,14 +351,15 @@ class CudnnSupport : public dnn::DnnSupport {
     //   const dnn::TensorDescriptor& amax_s_descriptor,
     //   const dnn::TensorDescriptor& amax_o_descriptor,
       const dnn::TensorDescriptor& output_descriptor,
-     const dnn::TensorDescriptor& amax_s_descriptor,
-      const dnn::TensorDescriptor& amax_o_descriptor,
+    //  const dnn::TensorDescriptor& amax_s_descriptor,
+    //   const dnn::TensorDescriptor& amax_o_descriptor,
       std::optional<dnn::TensorDescriptor> activation_descriptor,
-       float descale_q, float descale_k,
-      float descale_v,
-      float descale_s,
-      float scale_s,
-      float scale_o, double scale, dnn::FMHAMaskKind mask_type) override;
+    //    float descale_q, float descale_k,
+    //   float descale_v,
+    //   float descale_s,
+    //   float scale_s,
+    //   float scale_o, 
+      double scale, dnn::FMHAMaskKind mask_type) override;
 
   absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
   FusedMHARunnerFromDesc(

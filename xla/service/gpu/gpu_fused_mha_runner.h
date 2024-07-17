@@ -141,12 +141,12 @@ struct GpufMHAF8Config {
   input_type;  // Capture the primitive type of one of the inputs of BMM1
   PrimitiveType output_type;
   CudnnfMHAKind kind;
-  float descale_q;
-  float descale_k;
-  float descale_v;
-  float descale_s;
-  float scale_s;
-  float scale_o;
+  // float descale_q;
+  // float descale_k;
+  // float descale_v;
+  // float descale_s;
+  // float scale_s;
+  // float scale_o;
   std::optional<double> fmha_scale;
 
   se::dnn::AlgorithmDesc algorithm;
@@ -158,8 +158,8 @@ struct GpufMHAF8Config {
   se::dnn::MatmulTensorDescriptor rhs_bmm2;
   se::dnn::MatmulTensorDescriptor intermediate_lhs_bmm2;
   se::dnn::TensorDescriptor output;
-  se::dnn::TensorDescriptor amax_s;
-  se::dnn::TensorDescriptor amax_o;
+  // se::dnn::TensorDescriptor amax_s;
+  // se::dnn::TensorDescriptor amax_o;
 
   std::optional<se::dnn::TensorDescriptor> activation;
 };

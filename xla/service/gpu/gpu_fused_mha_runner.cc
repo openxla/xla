@@ -706,9 +706,11 @@ GpufMHAF8Config::AsDnnFusedMHAF8OpConfig() const {
                       GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(mask_type));
 
   return se::dnn::FusedMHAF8Op::Config{
-      scale, descale_q, descale_k, descale_v, descale_s, scale_s, scale_o, lhs_bmm1, rhs_bmm1,   rhs_bmm2,   
+      scale, 
+       lhs_bmm1, rhs_bmm1,   rhs_bmm2,   
       intermediate_lhs_bmm2,
-      output,  amax_s, amax_o, activation,   mask_type};
+      output, 
+      activation,   mask_type};
 }
 
 
@@ -979,22 +981,22 @@ std::string ToString(const GpufMHAF8Config &config) {
     absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
   }
   // if (config.descale_q) {
-    absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
+    // absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
   // }
   // if (config.descale_k) {
-    absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
+    // absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
   // }
   // if (config.descale_v) {
-    absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
+    // absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
   // }
   // if (config.descale_s) {
-    absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
+    // absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
   // }
   // if (config.scale_s) {
-    absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
+    // absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
   // }
   // if (config.scale_o) {
-    absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
+    // absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
   // }
   absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),
                   "\n");
