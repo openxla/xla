@@ -39,13 +39,10 @@ limitations under the License.
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/type_id_registry.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/util.h"
 #include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 //===----------------------------------------------------------------------===//
 // XLA FFI C structs definition
@@ -106,7 +103,7 @@ absl::Status Call(Ffi& handler, CallFrame& call_frame,
   try {
     status = handler.Call(&ffi_call_frame);
   } catch (std::exception& e) {
-    return Unknown("XLA FFI call failed: %s", e.what());
+    return absl::UnknownError(absl::StrCat("XLA FFI call failed: ", e.what()));
   }
   return TakeStatus(status);
 }
@@ -120,7 +117,7 @@ absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
   try {
     status = (*handler)(&ffi_call_frame);
   } catch (std::exception& e) {
-    return Unknown("XLA FFI call failed: %s", e.what());
+    return absl::UnknownError(absl::StrCat("XLA FFI call failed: ", e.what()));
   }
   return TakeStatus(status);
 }
@@ -177,40 +174,32 @@ static absl::Status RegisterHandler(std::string_view name,
                                     std::string_view platform,
                                     XLA_FFI_Handler_Bundle bundle,
                                     XLA_FFI_Handler_Traits traits) {
-  TF_ASSIGN_OR_RETURN(std::string canonical_platform,
-                      PlatformUtil::CanonicalPlatformName(platform));
-
   VLOG(2) << absl::StreamFormat(
-      "Register XLA FFI handler for '%s'; platform=%s (canonical=%s), "
-      "stages=[%s], command_buffer_compatible=%v",
-      name, platform, canonical_platform,
-      absl::StrJoin(GetHandlerStages(bundle), ", "),
+      "Register XLA FFI handler for '%s'; platform=%s, stages=[%s], "
+      "command_buffer_compatible=%v",
+      name, platform, absl::StrJoin(GetHandlerStages(bundle), ", "),
       IsCommandBufferCompatible(traits));
 
   if (bundle.execute == nullptr) {
-    return InvalidArgument(
-        "FFI handler for %s on a platform %s must provide an execute "
-        "implementation",
-        name, platform);
+    return absl::InvalidArgumentError(
+        absl::StrCat("FFI handler for ", name, "on a platform ", platform,
+                     " must provide an execute implementation"));
   }
 
   auto emplaced = GetHandlerRegistry().try_emplace(
       MakeHandlerKey(name, platform), HandlerRegistration{bundle, traits});
   if (!emplaced.second) {
     auto existing = emplaced.first->second;
-    if (existing.traits != traits) {
-      return InvalidArgument(
-          "Duplicate FFI handler registration for %s on a platform %s with "
-          "different traits",
-          name, platform);
-    }
+    if (existing.traits != traits)
+      return absl::InvalidArgumentError(
+          absl::StrCat("Duplicate FFI handler registration for ", name,
+                       " on a platform ", platform, " with different traits"));
     if (existing.bundle.prepare != bundle.prepare ||
         existing.bundle.initialize != bundle.initialize ||
         existing.bundle.execute != bundle.execute) {
-      return InvalidArgument(
-          "Duplicate FFI handler registration for %s on a platform %s with "
-          "different bundle addresses",
-          name, platform);
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Duplicate FFI handler registration for ", name, " on a platform ",
+          platform, " with different bundle addresses"));
     }
   }
   return absl::OkStatus();
@@ -218,26 +207,18 @@ static absl::Status RegisterHandler(std::string_view name,
 
 absl::StatusOr<HandlerRegistration> FindHandler(std::string_view name,
                                                 std::string_view platform) {
-  TF_ASSIGN_OR_RETURN(std::string canonical_platform,
-                      PlatformUtil::CanonicalPlatformName(platform));
-
-  auto it = GetHandlerRegistry().find(MakeHandlerKey(name, canonical_platform));
-  if (it == GetHandlerRegistry().end()) {
-    return NotFound(
-        "No FFI handler registered for %s on a platform %s (canonical %s)",
-        name, platform, canonical_platform);
-  }
+  auto it = GetHandlerRegistry().find(MakeHandlerKey(name, platform));
+  if (it == GetHandlerRegistry().end())
+    return absl::NotFoundError(absl::StrCat("No FFI handler registered for ",
+                                            name, " on a platform ", platform));
   return it->second;
 }
 
-absl::StatusOr<absl::flat_hash_map<std::string, HandlerRegistration>>
-StaticRegisteredHandlers(std::string_view platform) {
-  TF_ASSIGN_OR_RETURN(std::string canonical_platform,
-                      PlatformUtil::CanonicalPlatformName(platform));
-
+absl::flat_hash_map<std::string, HandlerRegistration> StaticRegisteredHandlers(
+    std::string_view platform) {
   absl::flat_hash_map<std::string, HandlerRegistration> calls;
   for (const auto& [metadata, handler] : GetHandlerRegistry()) {
-    if (canonical_platform == metadata.second) {
+    if (absl::AsciiStrToLower(platform) == metadata.second) {
       calls[metadata.first] = handler;
     }
   }
@@ -260,8 +241,8 @@ static std::string StructSizeErrorMsg(std::string_view struct_name,
 static absl::Status ActualStructSizeIsGreaterOrEqual(
     std::string_view struct_name, size_t expected, size_t actual) {
   if (actual < expected) {
-    return InvalidArgument("%s",
-                           StructSizeErrorMsg(struct_name, expected, actual));
+    return absl::InvalidArgumentError(
+        StructSizeErrorMsg(struct_name, expected, actual));
   }
   if (actual > expected) {
     VLOG(2) << StructSizeErrorMsg(struct_name, expected, actual);
@@ -371,7 +352,7 @@ static XLA_FFI_Error* XLA_FFI_Stream_Get(XLA_FFI_Stream_Get_Args* args) {
 
   if (args->ctx->stream == nullptr) {
     return new XLA_FFI_Error{
-        InvalidArgument("XLA FFI stream is not available")};
+        absl::InvalidArgumentError("XLA FFI stream is not available")};
   }
 
   auto handle = args->ctx->stream->platform_specific_handle();
@@ -459,8 +440,8 @@ static XLA_FFI_Error* XLA_FFI_DeviceMemory_Allocate(
 
   if (!absl::has_single_bit(args->alignment) ||
       args->alignment > kMaxAlignment) {
-    return new XLA_FFI_Error{
-        InvalidArgument("Unsupported alignment: %d", args->alignment)};
+    return new XLA_FFI_Error{absl::InvalidArgumentError(
+        absl::StrCat("Unsupported alignment: ", args->alignment))};
   }
 
   absl::StatusOr<stream_executor::OwningDeviceMemory> memory =
