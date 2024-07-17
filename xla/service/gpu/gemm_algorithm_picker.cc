@@ -346,8 +346,8 @@ class GemmAutotuner {
         PickBestResult(results, gemm->ToString(), hlo_module_config);
     if (best.ok()) {
       // Note that, cublas-lt returns an opaque object as an algorithm ID,
-      // therefore we need to convert it to the index from the list algorithms' 
-      // list (otherwise, we cannot store this ID inside a gemm_backend_config).
+      // therefore we need to convert it to the index from the algorithms list 
+      // (otherwise, we cannot store this ID inside a gemm_backend_config).
       // In contrast, legacy cublas returns a 32-bit integer algorithm ID which
       // can be readily stored inside an HLO (hence return_algo_index is false
       // for cublas case).
