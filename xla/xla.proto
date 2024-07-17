@@ -843,7 +843,9 @@ message DebugOptions {
   // command buffer.
   repeated string legacy_command_buffer_custom_call_targets = 314;
 
-  // This flag is used for controlling HLO dumping and NVTX marker. If turned on, both HLO dumping and NVTX marker will use syntactic sugar wrappers as op names, while the actual op names will be shown if turned off.
+  // This flag is used for controlling HLO dumping and NVTX marker. If turned
+  // on, both HLO dumping and NVTX marker will use syntactic sugar wrappers
+  // as op names, while the actual op names will be shown if turned off.
   bool xla_syntax_sugar_async_ops = 315;
 
   // Next id: 316
