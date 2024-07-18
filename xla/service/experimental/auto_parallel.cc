@@ -248,15 +248,15 @@ namespace {
   }
 
   /*********************************************************/
-  /* InstructionSharding Class                             */
+  /* ShardingStrategy Class                             */
   /*********************************************************/
 
-  class InstructionSharding {
+  class ShardingStrategy {
   public:
-    InstructionSharding() = default;
-    ~InstructionSharding() = default;
-    InstructionSharding(const InstructionSharding& s) = default;
-    InstructionSharding(InstructionSharding&& s) = default;
+    ShardingStrategy() = default;
+    ~ShardingStrategy() = default;
+    ShardingStrategy(const ShardingStrategy& s) = default;
+    ShardingStrategy(ShardingStrategy&& s) = default;
 
     // cost getters and setters
     uint64_t cost() const { return cost_; }
@@ -301,15 +301,15 @@ namespace {
 
   };
 
-  void InstructionSharding::AddOpSharding(HloSharding sharding) {
+  void ShardingStrategy::AddOpSharding(HloSharding sharding) {
     operand_shardings_.push_back(std::make_shared<HloSharding>(sharding));
   }
 
-  void InstructionSharding::set_result_sharding(HloSharding result_sharding) {
+  void ShardingStrategy::set_result_sharding(HloSharding result_sharding) {
     result_sharding_ = std::make_shared<HloSharding>(result_sharding);
   }
 
-  void InstructionSharding::AddUserReshardingCosts(
+  void ShardingStrategy::AddUserReshardingCosts(
       std::vector<uint64_t> costs) {
     resharding_costs_.push_back(std::move(costs));
   }
@@ -410,17 +410,17 @@ namespace {
   }
 
   // Combine shardings for each operator to form sharding strategies
-  std::vector<InstructionSharding> CombineShardingVectors(
+  std::vector<ShardingStrategy> CombineShardingVectors(
       std::vector<std::vector<HloSharding>> sharding_vecs) {
     int num_vecs = sharding_vecs.size();
 
     if (num_vecs == 0) {
       return {};
     } else if (num_vecs == 1) {
-      // only one operator, map each sharding to a separate InstructionSharding
-      std::vector<InstructionSharding> strats;
+      // only one operator, map each sharding to a separate ShardingStrategy
+      std::vector<ShardingStrategy> strats;
       for (HloSharding sharding : sharding_vecs[0]) {
-        InstructionSharding strat;
+        ShardingStrategy strat;
         strat.AddOpSharding(sharding);
         strats.push_back(strat);
       }
@@ -429,14 +429,14 @@ namespace {
 
     // otherwise recurse
     std::vector<HloSharding> shardings = sharding_vecs[num_vecs - 1];
-    std::vector<InstructionSharding> sub_strats = CombineShardingVectors(
+    std::vector<ShardingStrategy> sub_strats = CombineShardingVectors(
       std::vector<std::vector<HloSharding>>(sharding_vecs.begin(), 
         sharding_vecs.end() - 1)
     );
 
-    std::vector<InstructionSharding> strats;
+    std::vector<ShardingStrategy> strats;
     for (HloSharding sharding : shardings) {
-      for (InstructionSharding strat : sub_strats) {
+      for (ShardingStrategy strat : sub_strats) {
         // copy the existing sub_strat and add the new sharding
         strat.AddOpSharding(sharding);
         strats.push_back(strat);
@@ -451,7 +451,7 @@ namespace {
   // TODO: need to make instruction sharding use shared pointers
   // going to be many identical copies of the same sharding in memory
   // for larger problems
-  std::vector<InstructionSharding> EnumerateInstructionShardings(
+  std::vector<ShardingStrategy> EnumerateShardingStrategys(
       HloInstruction* instruction) {
 
     // enumerate through the shardings for each operator of the instruction
@@ -493,7 +493,7 @@ namespace {
 
   // This function inserts a sharding strategy into an HloModule
   // Assumes that this is a single instruction HloModule
-  void ApplyModuleStrategy(HloModule* module, InstructionSharding* strat) {
+  void ApplyModuleStrategy(HloModule* module, ShardingStrategy* strat) {
 
     std::shared_ptr<const HloSharding> sharding_ptr;
 
@@ -580,7 +580,7 @@ namespace {
   // The strat parameter will be updated with this cost and the resulting
   // output sharding
   void EvaluateShardingStrat(const HloModule* module, 
-      InstructionSharding* strat) {
+      ShardingStrategy* strat) {
 
     // clone the module to avoid clobbering future evaluations
     std::unique_ptr<HloModule> eval_module = module->Clone();
@@ -605,14 +605,14 @@ namespace {
   }
 
   /*********************************************************/
-  /* InstructionShardingInfo Class                         */
+  /* InstructionStrategies Class                         */
   /*********************************************************/
 
-  class InstructionShardingInfo {
+  class InstructionStrategies {
   public:
-    InstructionShardingInfo(HloInstruction* orig_instr);
-    ~InstructionShardingInfo() = default;
-    InstructionShardingInfo(const InstructionShardingInfo& info) = default;
+    InstructionStrategies(HloInstruction* orig_instr);
+    ~InstructionStrategies() = default;
+    InstructionStrategies(const InstructionStrategies& info) = default;
 
   private:
 
@@ -639,19 +639,19 @@ namespace {
     std::unique_ptr<HloModule> single_instr_module_;    
 
     // vector of sharding strategies for the given instruction
-    std::vector<InstructionSharding> sharding_strats_;
+    std::vector<ShardingStrategy> sharding_strats_;
 
   };
 
-  InstructionShardingInfo::InstructionShardingInfo(HloInstruction* orig_instr) 
+  InstructionStrategies::InstructionStrategies(HloInstruction* orig_instr) 
       : orig_instr_(orig_instr),
         single_instr_module_(CreateModuleFromInstruction(orig_instr)),
-        sharding_strats_(EnumerateInstructionShardings(orig_instr)) {
+        sharding_strats_(EnumerateShardingStrategys(orig_instr)) {
     EstimateStrategyCosts();
     return;
   }
 
-  void InstructionShardingInfo::EstimateStrategyCosts() {
+  void InstructionStrategies::EstimateStrategyCosts() {
 
     for (int i = 0; i < sharding_strats_.size(); i++) {
       EvaluateShardingStrat(single_instr_module_.get(), &sharding_strats_[i]);
@@ -665,10 +665,15 @@ namespace {
   /*********************************************************/
 
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
-      std::unique_ptr<InstructionShardingInfo>>& map) {
+      std::unique_ptr<InstructionStrategies>>& map) {
     
     // for each instruction, for each user of it, for each sharding strategy
     // recalculate resharding costs
+
+    for (auto& [instr, strat] : map) {
+      // iterate through users
+      // create a vector of costs
+    }
     
     return;
   }
@@ -716,14 +721,14 @@ namespace {
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
     std::unordered_map<HloInstruction*, 
-      std::unique_ptr<InstructionShardingInfo>> info_map;
+      std::unique_ptr<InstructionStrategies>> info_map;
 
     // TODO: shouldn't I only be doing this for the main computation?
     // construct relevant sharding information
     for (HloComputation* computation : module_clone->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
         assert(info_map.count(instr) == 0);
-        info_map[instr] = std::make_unique<InstructionShardingInfo>(instr);
+        info_map[instr] = std::make_unique<InstructionStrategies>(instr);
       }
     }
 
