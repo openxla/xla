@@ -689,11 +689,6 @@ namespace {
         continue;
       }
 
-      if (instr->user_count() > 1) {
-        // TODO: do we want to deal with this
-        continue;
-      }
-
       VLOG(5) << "\tNum sharding strats: " << instr_strats->sharding_strats().size();
 
       for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
