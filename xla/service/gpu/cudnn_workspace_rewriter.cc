@@ -232,8 +232,8 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     TF_ASSIGN_OR_RETURN(
         const auto gpu_config,
         custom_call->backend_config<xla::gpu::GpuBackendConfig>());
-    const xla::gpu::CudnnfMHAF8BackendConfig& config =
-        gpu_config.cudnn_fmha_f8_backend_config();
+    const xla::gpu::CudnnfMHABackendConfig& config =
+        gpu_config.cudnn_fmha_backend_config();
     Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
     absl::InlinedVector<Shape, 4> output_shapes = {
         ShapeUtil::GetSubshape(custom_call->shape(), {0})};
@@ -249,7 +249,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     Shape k_shape = custom_call->operand(1)->shape();
     Shape v_shape = custom_call->operand(2)->shape();
     TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
-                        AsCudnnFmhaF8MaskKind(config.mask_type()));
+                        AsCudnnFmhaMaskKind(config.mask_type()));
     GpufMHAF8Descriptor descriptor = {kind,
                                     config,
                                     cudnn_mask_type,

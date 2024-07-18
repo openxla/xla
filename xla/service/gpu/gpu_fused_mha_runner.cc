@@ -438,7 +438,7 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
 
   config.kind = desc.kind;
   config.mask_type = desc.mask_type;
-  const CudnnfMHAF8BackendConfig &backend_config = desc.backend_config;
+  const CudnnfMHABackendConfig &backend_config = desc.backend_config;
   config.algorithm = se::dnn::AlgorithmDesc(backend_config.algorithm());
   config.fmha_scale.emplace(backend_config.fmha_scale());
   return config;

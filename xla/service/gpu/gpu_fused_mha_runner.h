@@ -38,17 +38,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaF8MaskKind(
-    xla::gpu::CudnnfMHAF8BackendConfig_MaskType mask_type) {
-  switch (mask_type) {
-    case xla::gpu::CudnnfMHABackendConfig::NO_MASK:
-      return xla::gpu::CudnnfMHAMaskKind::kNoMask;
-    case xla::gpu::CudnnfMHABackendConfig::CAUSAL:
-      return xla::gpu::CudnnfMHAMaskKind::kCausal;
-    default:
-      return xla::Internal("Unknown fmha f8 mask kind.");
-  }
-}
+// inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
+//     xla::gpu::CudnnfMHABackendConfig_MaskType mask_type) {
+//   switch (mask_type) {
+//     case xla::gpu::CudnnfMHABackendConfig::NO_MASK:
+//       return xla::gpu::CudnnfMHAMaskKind::kNoMask;
+//     case xla::gpu::CudnnfMHABackendConfig::CAUSAL:
+//       return xla::gpu::CudnnfMHAMaskKind::kCausal;
+//     default:
+//       return xla::Internal("Unknown fmha f8 mask kind.");
+//   }
+// }
 
 inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
     xla::gpu::CudnnfMHABackendConfig_MaskType mask_type) {
@@ -92,7 +92,7 @@ struct GpufMHADescriptor {
 
 struct GpufMHAF8Descriptor {
   CudnnfMHAKind kind;
-  CudnnfMHAF8BackendConfig backend_config;
+  CudnnfMHABackendConfig backend_config;
   CudnnfMHAMaskKind mask_type;
   Shape lhs_bmm1_shape;
   Shape rhs_bmm1_shape;

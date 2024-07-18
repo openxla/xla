@@ -1236,8 +1236,8 @@ VLOG(3) << "EmitFusedMHAThunkF8: 33333\n";
   TF_ASSIGN_OR_RETURN(const auto gpu_config,
                       instr->backend_config<xla::gpu::GpuBackendConfig>());
 VLOG(3) << "EmitFusedMHAThunkF8: 3333333555555555\n";                      
-  const xla::gpu::CudnnfMHAF8BackendConfig& config =
-      gpu_config.cudnn_fmha_f8_backend_config();
+  const xla::gpu::CudnnfMHABackendConfig& config =
+      gpu_config.cudnn_fmha_backend_config();
       VLOG(3) << "EmitFusedMHAThunkF8: 333333336666666666\n";  
   Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
   
@@ -1250,7 +1250,7 @@ VLOG(3) << "EmitFusedMHAThunkF8: 3333333555555555\n";
   }
   VLOG(3) << "EmitFusedMHAThunkF8: 4444444444444\n";
   TF_ASSIGN_OR_RETURN(const auto mask_type,
-                      AsCudnnFmhaF8MaskKind(config.mask_type()));
+                      AsCudnnFmhaMaskKind(config.mask_type()));
   GpufMHAF8Descriptor descriptor = {kind,
                                   config,
                                   mask_type,

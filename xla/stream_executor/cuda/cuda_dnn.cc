@@ -5106,7 +5106,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                        .set_dim(q_descriptor.GetCudnnCompatibleDimensions(true))
                        .set_stride(q_descriptor.GetCudnnCompatibleStrides(true))
                        .set_uid(CudnnfMHAUid::Q_ID));
-  auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
+  // auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
 
   std::shared_ptr<Tensor_attributes> k_tensor =
       graph.tensor(Tensor_attributes()
@@ -7223,16 +7223,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\n bmm1_lhs(q): " << q_descriptor.ToString()
             << "\n bmm1_rhs(k): " << k_descriptor.ToString()
-            << "\n bmm2_rhs(v): "
-            << v_descriptor.ToString()
-            // << "\n descale_q: " << descale_q_descriptor.ToString()
-            // << "\n descale_k: " << descale_k_descriptor.ToString()
-            // << "\n descale_v: " << descale_v_descriptor.ToString()
-            // << "\n descale_s: " << descale_s_descriptor.ToString()
-            // << "\n scale_s: " << scale_s_descriptor.ToString()
-            // << "\n scale_o: " << scale_o_descriptor.ToString()
-            // << "\n amax_s: " << amax_s_descriptor.ToString()
-            // << "\n amax_o: " << amax_o_descriptor.ToString()
+            << "\n bmm2_rhs(v): " << v_descriptor.ToString()
             << "\n out(o): " << o_descriptor.ToString()
             << "\n scale: " << scale;
 
@@ -7255,15 +7246,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
       .set_io_data_type(ioDataType)
       .set_compute_data_type(cudnn_frontend::DataType_t::FLOAT);
 
-  int64_t b = 4;    // batch size
-  int64_t h = 4;    // head dim
-  int64_t s = 1024;  // q,k,v tensor is padded to this seq length
-  int64_t d = 64;  // hidden dim
-  auto Q_dQ_O_dO_dims = std::vector<int64_t>({b, h, s, d});
-  auto QKV_strides =
-      std::vector<int64_t>({s * 3 * h * d, d, 3 * h * d, 1});          // bs3hd
-  auto O_dO_strides = std::vector<int64_t>({s * h * d, d, h * d, 1});  // bhsd
-
   std::shared_ptr<Tensor_attributes> q_tensor =
       graph.tensor(Tensor_attributes()
                        .set_name("Q")
@@ -7281,7 +7263,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
   std::shared_ptr<Tensor_attributes> v_tensor = graph.tensor(
       Tensor_attributes()
           .set_name("V")
-          .set_dim(Q_dQ_O_dO_dims)
+          .set_dim(v_descriptor.GetCudnnCompatibleDimensions(false))
           .set_stride(v_descriptor.GetCudnnCompatibleStrides(false))
           .set_uid(CudnnfMHAUid::V_ID));
 
@@ -7320,8 +7302,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
   // Set output attributes.
   o_tensor->set_name("O")
       .set_output(true)
-      .set_dim(Q_dQ_O_dO_dims)
-      .set_stride(O_dO_strides)
+      .set_dim(o_descriptor.dimensions())
+      .set_stride(o_descriptor.GetLogicalStrides())
       .set_uid(CudnnfMHAUid::O_ID);
   amax_s->set_output(true)
       .set_dim({1, 1, 1, 1})
