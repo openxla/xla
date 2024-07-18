@@ -964,7 +964,6 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
   const HloInstruction* lhs_bmm1 = instr->operand(0);
   const HloInstruction* rhs_bmm1 = instr->operand(1);
   const HloInstruction* rhs_bmm2 = instr->operand(2);
-  VLOG(3) << "EmitFusedMHAThunk: ";
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice lhs_bmm1_slice,
                       GetAllocationSliceForHlo(lhs_bmm1));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice rhs_bmm1_slice,
@@ -1039,7 +1038,6 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunk(
       lhs_bmm1_slice, rhs_bmm1_slice, rhs_bmm2_slice, output_slice,
       scratch_slice, mask_slice, bias_slice, activation_slice, seqlen_q_slice,
       seqlen_k_slice));
-  VLOG(3) << "EmitFusedMHAThunk: exit\n";
   return absl::OkStatus();
 }
 
@@ -1180,25 +1178,21 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunk(
 
 absl::Status IrEmitterUnnested::EmitFusedMHAThunkF8(
     const HloCustomCallInstruction* instr) {
-  VLOG(3) << "EmitFusedMHAThunkF8: \n";
   const HloInstruction* lhs_bmm1 = instr->operand(0);
   const HloInstruction* rhs_bmm1 = instr->operand(1);
   const HloInstruction* rhs_bmm2 = instr->operand(2);
-  VLOG(3) << "EmitFusedMHAThunkF8: 1111\n";
   const HloInstruction* descale_q = instr->operand(3);
   const HloInstruction* descale_k = instr->operand(4);
   const HloInstruction* descale_v = instr->operand(5);
   const HloInstruction* descale_s = instr->operand(6);
   const HloInstruction* scale_s = instr->operand(7);
   const HloInstruction* scale_o = instr->operand(8);
-  VLOG(3) << "EmitFusedMHAThunkF8: 2222\n";
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice lhs_bmm1_slice,
                       GetAllocationSliceForHlo(lhs_bmm1));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice rhs_bmm1_slice,
                       GetAllocationSliceForHlo(rhs_bmm1));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice rhs_bmm2_slice,
                       GetAllocationSliceForHlo(rhs_bmm2));
-  VLOG(3) << "EmitFusedMHAThunkF8: 2222222555555555\n";
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice descale_q_slice,
                       GetAllocationSliceForHlo(descale_q));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice descale_k_slice,
@@ -1211,7 +1205,6 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunkF8(
                       GetAllocationSliceForHlo(scale_s));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice scale_o_slice,
                       GetAllocationSliceForHlo(scale_o));
-  VLOG(3) << "EmitFusedMHAThunkF8: 2222222666666666666\n";
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice output_slice,
                       GetAllocationSliceForHlo(instr, {0}));
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice amax_s_slice,
@@ -1232,13 +1225,10 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunkF8(
   assert(kind == CudnnfMHAKind::kScaleSoftmaxf8);
   // BufferAllocation::Slice mask_slice;
   // std::optional<Shape> mask_shape;
-  VLOG(3) << "EmitFusedMHAThunkF8: 33333\n";
   TF_ASSIGN_OR_RETURN(const auto gpu_config,
                       instr->backend_config<xla::gpu::GpuBackendConfig>());
-  VLOG(3) << "EmitFusedMHAThunkF8: 3333333555555555\n";
   const xla::gpu::CudnnfMHABackendConfig& config =
       gpu_config.cudnn_fmha_backend_config();
-  VLOG(3) << "EmitFusedMHAThunkF8: 333333336666666666\n";
   Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
 
   absl::InlinedVector<Shape, 4> output_shapes = {
@@ -1248,7 +1238,6 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunkF8(
   if (has_activation) {
     output_shapes.push_back(ShapeUtil::GetSubshape(instr->shape(), {3}));
   }
-  VLOG(3) << "EmitFusedMHAThunkF8: 4444444444444\n";
   TF_ASSIGN_OR_RETURN(const auto mask_type,
                       AsCudnnFmhaMaskKind(config.mask_type()));
   GpufMHAF8Descriptor descriptor = {kind,
@@ -1261,16 +1250,14 @@ absl::Status IrEmitterUnnested::EmitFusedMHAThunkF8(
                                     output_shapes,
                                     config.bmm1_dot_dimension_numbers(),
                                     config.bmm2_dot_dimension_numbers()};
-  VLOG(3) << "EmitFusedMHAThunkF8: 555555555555\n";
-  TF_ASSIGN_OR_RETURN(GpufMHAF8Config fmha_config,
-                      GpufMHAF8Config::For(descriptor));
+  TF_ASSIGN_OR_RETURN(GpufMHAConfig fmha_config,
+                      GpufMHAConfig::For(descriptor));
   AddThunkToThunkSequence(std::make_unique<FusedMHAThunkF8>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), std::move(fmha_config),
       lhs_bmm1_slice, rhs_bmm1_slice, rhs_bmm2_slice, descale_q_slice,
       descale_k_slice, descale_v_slice, descale_s_slice, scale_s_slice,
       scale_o_slice, output_slice, amax_s_slice, amax_o_slice, scratch_slice,
       activation_slice));
-  VLOG(3) << "EmitFusedMHAThunkF8: exit\n";
   return absl::OkStatus();
 }
 

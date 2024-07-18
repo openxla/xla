@@ -81,7 +81,7 @@ class FusedMHAThunk : public Thunk {
 class FusedMHAThunkF8 : public Thunk {
  public:
   // Constructs a thunk for launching a DNN FMHA.
-  FusedMHAThunkF8(ThunkInfo thunk_info, GpufMHAF8Config config,
+  FusedMHAThunkF8(ThunkInfo thunk_info, GpufMHAConfig config,
                   BufferAllocation::Slice lhs_bmm1_slice,
                   BufferAllocation::Slice rhs_bmm1_slice,
                   BufferAllocation::Slice rhs_bmm2_slice,
@@ -123,7 +123,7 @@ class FusedMHAThunkF8 : public Thunk {
       const stream_executor::Stream* stream);
 
   // FusedMHA config
-  const GpufMHAF8Config config_;
+  const GpufMHAConfig config_;
   absl::Mutex mu_;
   absl::flat_hash_map<const stream_executor::Stream*,
                       std::unique_ptr<FusedMultiHeadedAttentionF8Runner>>

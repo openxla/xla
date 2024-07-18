@@ -5106,8 +5106,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                        .set_dim(q_descriptor.GetCudnnCompatibleDimensions(true))
                        .set_stride(q_descriptor.GetCudnnCompatibleStrides(true))
                        .set_uid(CudnnfMHAUid::Q_ID));
-  // auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
-
   std::shared_ptr<Tensor_attributes> k_tensor =
       graph.tensor(Tensor_attributes()
                        .set_name("K")
@@ -6158,15 +6156,9 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
     std::vector<void*> vec = {inputs.opaque()...};
 
     // add device buffers to the variant pack
-    std::cout << "uids has" << uids_.size() << std::endl;
-    std::cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxx\n";
-    std::cout << "vec has" << vec.size() << std::endl;
     for (int i = 0; i < uids_.size(); ++i) {
       if (uids_[i].has_value()) {
         variant_pack[*uids_[i]] = vec[i];
-        std::cout << "hit " << i << " " << *uids_[i] << "with" << vec[i]
-                  << std::endl;
-        std::cout << "------------------\n";
       }
     }
     if (dropout_rng_offset_increment_ > 0) {
@@ -7354,26 +7346,9 @@ CudnnSupport::FusedMHAF8RunnerFromDesc(
     const dnn::MatmulTensorDescriptor& bmm1_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
-    // const dnn::TensorDescriptor& descale_q_descriptor,
-    // const dnn::TensorDescriptor& descale_k_descriptor,
-    // const dnn::TensorDescriptor& descale_v_descriptor,
-    // const dnn::TensorDescriptor& descale_s_descriptor,
-    // const dnn::TensorDescriptor& scale_s_descriptor,
-    // const dnn::TensorDescriptor& scale_o_descriptor,
-    // const dnn::TensorDescriptor& amax_s_descriptor,
-    // const dnn::TensorDescriptor& amax_o_descriptor,
     const dnn::TensorDescriptor& output_descriptor,
-    // const dnn::TensorDescriptor& amax_s_descriptor,
-    // const dnn::TensorDescriptor& amax_o_descriptor,
     std::optional<dnn::TensorDescriptor> activation_descriptor,
-    // float descale_q, float descale_k,
-    //   float descale_v,
-    //   float descale_s,
-    //   float scale_s,
-    //   float scale_o,
     double scale, dnn::FMHAMaskKind mask_type) {
-  VLOG(3) << "cuda_dnn.cc:FusedMHAF8RunnerFromDesc!\n";
-//  return absl::OkStatus();
 #if CUDNN_VERSION >= 8904
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   std::vector<int64_t> intermediate_shape;
@@ -7429,7 +7404,6 @@ CudnnSupport::FusedMHARunnerFromDesc(
     std::optional<dnn::TensorDescriptor> bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     dnn::FMHAMaskKind mask_type) {
-  std::cout << "cuda_dnn:FusedMHARunnerFromDesc\n";
 #if CUDNN_VERSION >= 8904
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   bool use_dropout = dropout_rate && *dropout_rate > 0.0;

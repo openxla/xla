@@ -56,7 +56,6 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                          DeviceMemoryBase scratch_memory,
                          DeviceMemoryBase activation_output,
                          DeviceMemoryBase seqlen_q, DeviceMemoryBase seqlen_k) {
-  std::cout << "gpu_fused_mha_runner:RunFusedMHA\n";
   se::dnn::LazyOpRunner<se::dnn::FusedMHAOp> *lazy_runner =
       options.runner_cache->AsFusedMHARunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAOp>> local_runner;
@@ -96,7 +95,6 @@ absl::Status RunFusedMHAF8(
     DeviceMemory<float> amax_s_buffer, DeviceMemory<float> amax_o_buffer,
     DeviceMemory<OutputType> output_buffer, DeviceMemoryBase scratch_memory,
     DeviceMemoryBase activation_output) {
-  std::cout << "gpu_fused_mha_runner:RunFusedMHAF8\n";
   se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op> *lazy_runner =
       options.runner_cache->AsFusedMHAF8Runner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>> local_runner;
@@ -109,7 +107,6 @@ absl::Status RunFusedMHAF8(
                       params.config->AsDnnFusedMHAF8OpConfig());
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
-  // return absl::OkStatus();
   return (*runner)(
       stream, options.profile_result, scratch_memory, lhs_bmm1_buffer,
       rhs_bmm1_buffer, rhs_bmm2_buffer, descale_q_buffer, descale_k_buffer,
@@ -360,7 +357,7 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
 }  // namespace
 
 // F8
-/*static*/ absl::StatusOr<GpufMHAF8Config> GpufMHAF8Config::For(
+/*static*/ absl::StatusOr<GpufMHAConfig> GpufMHAConfig::For(
     const GpufMHAF8Descriptor &desc) {
   // Get shapes from desc.
   const Shape &lhs_bmm1_shape = desc.lhs_bmm1_shape;
@@ -385,7 +382,7 @@ absl::Status RunGpuFMHABackwardImpl(const GpufMHABackwardParams &params,
                           intermediate_lhs_bmm2_shape.element_type()));
   TF_ASSIGN_OR_RETURN(DataType output_type, GetDNNDataTypeFromPrimitiveType(
                                                 output_shape.element_type()));
-  GpufMHAF8Config config;
+  GpufMHAConfig config;
   config.input_type = lhs_bmm1_shape.element_type();
   config.output_type = output_shape.element_type();
 
@@ -690,7 +687,7 @@ GpufMHAConfig::AsDnnFusedMHAOpConfig() const {
 }
 
 absl::StatusOr<se::dnn::FusedMHAF8Op::Config>
-GpufMHAF8Config::AsDnnFusedMHAF8OpConfig() const {
+GpufMHAConfig::AsDnnFusedMHAF8OpConfig() const {
   double scale = 1.0;
   if (fmha_scale.has_value()) {
     scale = *fmha_scale;
@@ -732,7 +729,7 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
 }
 
 /*static*/ absl::StatusOr<GpufMHAF8Params> GpufMHAF8Params::For(
-    const GpufMHAF8Config &config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    const GpufMHAConfig &config, se::DeviceMemoryBase lhs_bmm1_buffer,
     se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
@@ -816,7 +813,7 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
 }
 
 absl::Status RunGpuFMHAF8(
-    const GpufMHAF8Config &fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    const GpufMHAConfig &fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
     se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
@@ -956,44 +953,26 @@ std::string ToString(const GpufMHAConfig &config) {
   return result;
 }
 
-std::string ToString(const GpufMHAF8Config &config) {
-  std::string result = "GpufMHAF8Config:\n";
-  absl::StrAppend(&result,
-                  "input_type: ", PrimitiveType_Name(config.input_type), ", ");
-  absl::StrAppend(
-      &result, "output_type: ", PrimitiveType_Name(config.output_type), ", ");
-  absl::StrAppend(&result, "Kind: ", CudnnfMHAKindToString(config.kind), ", ");
-  if (config.fmha_scale) {
-    absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
-  }
-  // if (config.descale_q) {
-  // absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
-  // }
-  // if (config.descale_k) {
-  // absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
-  // }
-  // if (config.descale_v) {
-  // absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
-  // }
-  // if (config.descale_s) {
-  // absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
-  // }
-  // if (config.scale_s) {
-  // absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
-  // }
-  // if (config.scale_o) {
-  // absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
-  // }
-  absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),
-                  "\n");
-  absl::StrAppend(&result, "lhs_bmm1: ", config.lhs_bmm1.ToString(), "\n");
-  absl::StrAppend(&result, "rhs_bmm1: ", config.rhs_bmm1.ToString(), "\n");
-  absl::StrAppend(&result, "rhs_bmm2: ", config.rhs_bmm2.ToString(), "\n");
-  absl::StrAppend(&result, "intermediate_lhs_bmm2: ",
-                  config.intermediate_lhs_bmm2.ToString(), "\n");
-  absl::StrAppend(&result, "output: ", config.output.ToString(), "\n");
-  return result;
-}
+// std::string ToString(const GpufMHAConfig &config) {
+//   std::string result = "GpufMHAConfig:\n";
+//   absl::StrAppend(&result,
+//                   "input_type: ", PrimitiveType_Name(config.input_type), ", ");
+//   absl::StrAppend(
+//       &result, "output_type: ", PrimitiveType_Name(config.output_type), ", ");
+//   absl::StrAppend(&result, "Kind: ", CudnnfMHAKindToString(config.kind), ", ");
+//   if (config.fmha_scale) {
+//     absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
+//   }
+//   absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),
+//                   "\n");
+//   absl::StrAppend(&result, "lhs_bmm1: ", config.lhs_bmm1.ToString(), "\n");
+//   absl::StrAppend(&result, "rhs_bmm1: ", config.rhs_bmm1.ToString(), "\n");
+//   absl::StrAppend(&result, "rhs_bmm2: ", config.rhs_bmm2.ToString(), "\n");
+//   absl::StrAppend(&result, "intermediate_lhs_bmm2: ",
+//                   config.intermediate_lhs_bmm2.ToString(), "\n");
+//   absl::StrAppend(&result, "output: ", config.output.ToString(), "\n");
+//   return result;
+// }
 
 }  // namespace gpu
 }  // namespace xla

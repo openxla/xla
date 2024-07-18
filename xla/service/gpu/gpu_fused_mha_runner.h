@@ -38,18 +38,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
-//     xla::gpu::CudnnfMHABackendConfig_MaskType mask_type) {
-//   switch (mask_type) {
-//     case xla::gpu::CudnnfMHABackendConfig::NO_MASK:
-//       return xla::gpu::CudnnfMHAMaskKind::kNoMask;
-//     case xla::gpu::CudnnfMHABackendConfig::CAUSAL:
-//       return xla::gpu::CudnnfMHAMaskKind::kCausal;
-//     default:
-//       return xla::Internal("Unknown fmha f8 mask kind.");
-//   }
-// }
-
 inline absl::StatusOr<xla::gpu::CudnnfMHAMaskKind> AsCudnnFmhaMaskKind(
     xla::gpu::CudnnfMHABackendConfig_MaskType mask_type) {
   switch (mask_type) {
@@ -129,47 +117,39 @@ struct GpufMHABackwardDescriptor {
   bool force_deterministic;
 };
 
-// Structure to describe static properties of a GPU fused Multi-Headed
-// Attention.
-struct GpufMHAF8Config {
-  static absl::StatusOr<GpufMHAF8Config> For(
-      const GpufMHAF8Descriptor& fmha_desc);
+// // Structure to describe static properties of a GPU fused Multi-Headed
+// // Attention.
+// struct GpufMHAF8Config {
+//   static absl::StatusOr<GpufMHAF8Config> For(
+//       const GpufMHAF8Descriptor& fmha_desc);
 
-  absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
+//   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
 
-  PrimitiveType
-      input_type;  // Capture the primitive type of one of the inputs of BMM1
-  PrimitiveType output_type;
-  CudnnfMHAKind kind;
-  // float descale_q;
-  // float descale_k;
-  // float descale_v;
-  // float descale_s;
-  // float scale_s;
-  // float scale_o;
-  std::optional<double> fmha_scale;
+//   PrimitiveType
+//       input_type;  // Capture the primitive type of one of the inputs of BMM1
+//   PrimitiveType output_type;
+//   CudnnfMHAKind kind;
+//   std::optional<double> fmha_scale;
 
-  se::dnn::AlgorithmDesc algorithm;
-  CudnnfMHAMaskKind mask_type;
-  // bias -> [1, num_attn_heads, q_seq_len, kv_seq_len]
-  // mask -> [batch_size, 1, q_seq_len, kv_seq_len]
-  se::dnn::MatmulTensorDescriptor lhs_bmm1;
-  se::dnn::MatmulTensorDescriptor rhs_bmm1;
-  se::dnn::MatmulTensorDescriptor rhs_bmm2;
-  se::dnn::MatmulTensorDescriptor intermediate_lhs_bmm2;
-  se::dnn::TensorDescriptor output;
-  // se::dnn::TensorDescriptor amax_s;
-  // se::dnn::TensorDescriptor amax_o;
+//   se::dnn::AlgorithmDesc algorithm;
+//   CudnnfMHAMaskKind mask_type;
+//   se::dnn::MatmulTensorDescriptor lhs_bmm1;
+//   se::dnn::MatmulTensorDescriptor rhs_bmm1;
+//   se::dnn::MatmulTensorDescriptor rhs_bmm2;
+//   se::dnn::MatmulTensorDescriptor intermediate_lhs_bmm2;
+//   se::dnn::TensorDescriptor output;
 
-  std::optional<se::dnn::TensorDescriptor> activation;
-};
+//   std::optional<se::dnn::TensorDescriptor> activation;
+// };
 
 // Structure to describe static properties of a GPU fused Multi-Headed
 // Attention.
 struct GpufMHAConfig {
   static absl::StatusOr<GpufMHAConfig> For(const GpufMHADescriptor& fmha_desc);
+  static absl::StatusOr<GpufMHAConfig> For(const GpufMHAF8Descriptor& fmha_desc);
 
   absl::StatusOr<se::dnn::FusedMHAOp::Config> AsDnnFusedMHAOpConfig() const;
+  absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
 
   PrimitiveType
       input_type;  // Capture the primitive type of one of the inputs of BMM1
@@ -234,7 +214,7 @@ struct GpufMHABackwardConfig {
 // Implementation struct exposed for debugging and log analysis for Fp8.
 struct GpufMHAF8Params {
   static absl::StatusOr<GpufMHAF8Params> For(
-      const GpufMHAF8Config& config, se::DeviceMemoryBase lhs_bmm1_buffer,
+      const GpufMHAConfig& config, se::DeviceMemoryBase lhs_bmm1_buffer,
       se::DeviceMemoryBase rhs_bmm1_buffer,
       se::DeviceMemoryBase rhs_bmm2_buffer,
       se::DeviceMemoryBase descale_q_buffer,
@@ -246,7 +226,7 @@ struct GpufMHAF8Params {
       se::DeviceMemoryBase output_buffer,
       std::optional<se::DeviceMemoryBase> activation_buffer);
 
-  const GpufMHAF8Config* config;  // Not owned
+  const GpufMHAConfig* config;  // Not owned
   se::DeviceMemoryBase lhs_bmm1_buffer;
   se::DeviceMemoryBase rhs_bmm1_buffer;
   se::DeviceMemoryBase rhs_bmm2_buffer;
@@ -334,7 +314,7 @@ class FusedMultiHeadedAttentionF8Runner {
   explicit FusedMultiHeadedAttentionF8Runner(Repr runner)
       : repr_(std::move(runner)) {}
 
-  explicit FusedMultiHeadedAttentionF8Runner(const GpufMHAF8Config& config)
+  explicit FusedMultiHeadedAttentionF8Runner(const GpufMHAConfig& config)
       : FusedMultiHeadedAttentionF8Runner(CreateRunner(config)) {
     if (std::holds_alternative<std::monostate>(repr_)) {
       CHECK(false) << "Cannot construct FusedMultiHeadedAttentionF8Runner with "
@@ -362,7 +342,7 @@ class FusedMultiHeadedAttentionF8Runner {
   //  FusedMultiHeadedAttentionF8Runner class. Defining it static makes it easy
   //  to use and makes it clear that it is a utility function that doesn't rely
   //  on the state of any specific instance of the class.
-  static Repr CreateRunner(const GpufMHAF8Config& config) {
+  static Repr CreateRunner(const GpufMHAConfig& config) {
     switch (config.kind) {
       case CudnnfMHAKind::kSoftmaxf8:
         return std::make_unique<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>(
@@ -566,7 +546,7 @@ struct RunFusedMHABackwardOptions {
 };
 
 absl::Status RunGpuFMHAF8(
-    const GpufMHAF8Config& fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    const GpufMHAConfig& fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
     se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
@@ -609,7 +589,7 @@ absl::Status RunGpuFMHABackward(
     RunFusedMHABackwardOptions = {});
 
 std::string ToString(const GpufMHAConfig& config);
-std::string ToString(const GpufMHAF8Config& config);
+// std::string ToString(const GpufMHAF8Config& config);
 
 }  // namespace gpu
 }  // namespace xla

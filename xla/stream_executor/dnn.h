@@ -1757,23 +1757,8 @@ class DnnSupport {
       const MatmulTensorDescriptor& bmm1_rhs_descriptor,
       const MatmulTensorDescriptor& bmm2_rhs_descriptor,
       const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
-      // const TensorDescriptor& descale_q_descriptor,
-      // const TensorDescriptor& descale_k_descriptor,
-      // const TensorDescriptor& descale_v_descriptor,
-      // const TensorDescriptor& descale_s_descriptor,
-      // const TensorDescriptor& scale_s_descriptor,
-      // const TensorDescriptor& scale_o_descriptor,
-      // const TensorDescriptor& amax_s_descriptor,
-      // const TensorDescriptor& amax_o_descriptor,
       const TensorDescriptor& output_descriptor,
-      // const TensorDescriptor& amax_s_descriptor,
-      // const TensorDescriptor& amax_o_descriptor,
       std::optional<TensorDescriptor> activation_descriptor,
-      //  float descale_q, float descale_k,
-      // float descale_v,
-      // float descale_s,
-      // float scale_s,
-      // float scale_o,
       double scale, dnn::FMHAMaskKind mask_type);
 
   virtual absl::StatusOr<std::unique_ptr<const FusedMHARunner>>

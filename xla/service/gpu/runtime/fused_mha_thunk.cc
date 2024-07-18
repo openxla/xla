@@ -68,7 +68,7 @@ FusedMultiHeadedAttentionRunner& FusedMHAThunk::GetOrCreateRunner(
 }
 
 FusedMHAThunkF8::FusedMHAThunkF8(
-    ThunkInfo thunk_info, GpufMHAF8Config config,
+    ThunkInfo thunk_info, GpufMHAConfig config,
     BufferAllocation::Slice lhs_bmm1, BufferAllocation::Slice rhs_bmm1,
     BufferAllocation::Slice rhs_bmm2, BufferAllocation::Slice descale_q,
     BufferAllocation::Slice descale_k, BufferAllocation::Slice descale_v,
@@ -131,7 +131,6 @@ absl::Status FusedMHAThunkF8::Initialize(const InitializeParams& params) {
 }
 
 absl::Status FusedMHAThunkF8::ExecuteOnStream(const ExecuteParams& params) {
-  std::cout << "fused_mha_thunk.cc:ExecuteOnStream FusedMHAThunkF8\n";
   const auto& buffer_allocations = *params.buffer_allocations;
   se::DeviceMemoryBase lhs_bmm1_buffer =
       buffer_allocations.GetDeviceAddress(lhs_bmm1_buffer_);
@@ -178,7 +177,6 @@ absl::Status FusedMHAThunkF8::ExecuteOnStream(const ExecuteParams& params) {
 }
 
 absl::Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
-  std::cout << "fused_mha_thunk.cc:ExecuteOnStream FusedMHAThunk\n";
   const auto& buffer_allocations = *params.buffer_allocations;
   se::DeviceMemoryBase lhs_bmm1_buffer =
       buffer_allocations.GetDeviceAddress(lhs_bmm1_buffer_);

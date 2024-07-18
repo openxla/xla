@@ -261,8 +261,8 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                                       config.bmm1_dot_dimension_numbers(),
                                       config.bmm2_dot_dimension_numbers()};
 
-    TF_ASSIGN_OR_RETURN(GpufMHAF8Config fmha_config,
-                        GpufMHAF8Config::For(descriptor));
+    TF_ASSIGN_OR_RETURN(GpufMHAConfig fmha_config,
+                        GpufMHAConfig::For(descriptor));
     TF_ASSIGN_OR_RETURN(
         se::dnn::FMHAMaskKind dnn_mask_type,
         GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(fmha_config.mask_type));

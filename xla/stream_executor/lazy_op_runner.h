@@ -284,20 +284,11 @@ struct FusedMHAF8Op {
   using Signature = FusedMHAF8Signature;
   struct Config {
     double scale;
-    // float descale_q;
-    // float descale_k;
-    //   float descale_v;
-    //   float descale_s;
-    //   float scale_s;
-    //   float scale_o;
-
     const MatmulTensorDescriptor& bmm1_lhs_descriptor;
     const MatmulTensorDescriptor& bmm1_rhs_descriptor;
     const MatmulTensorDescriptor& bmm2_rhs_descriptor;
     const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor;
     const TensorDescriptor& output_descriptor;
-    // const TensorDescriptor& amax_s_descriptor;
-    // const TensorDescriptor& amax_o_descriptor;
     std::optional<TensorDescriptor> activation_descriptor;
     FMHAMaskKind mask_type;
   };
@@ -310,10 +301,7 @@ struct FusedMHAF8Op {
         stream, desc, config.bmm1_lhs_descriptor, config.bmm1_rhs_descriptor,
         config.bmm2_rhs_descriptor, config.intermediate_bmm2_lhs_descriptor,
         config.output_descriptor,
-        // config.amax_s_descriptor, config.amax_s_descriptor,
         config.activation_descriptor,
-        // config.descale_q, config.descale_k, config.descale_v,
-        // config.descale_s, config.scale_s, config.scale_o,
         config.scale, config.mask_type);
   }
 };
@@ -338,7 +326,6 @@ struct FusedMHAOp {
   RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
                           Stream* stream) {
     TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
-    std::cout << "lazy_op_runner.h FusedMHAOp:FusedMHARunnerFromDesc\n";
     return dnn->FusedMHARunnerFromDesc(
         stream, desc, config.bmm1_lhs_descriptor, config.bmm1_rhs_descriptor,
         config.bmm2_rhs_descriptor, config.intermediate_bmm2_lhs_descriptor,
