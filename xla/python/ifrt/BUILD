@@ -689,6 +689,12 @@ cc_library(
     alwayslink = True,
 )
 
+cc_library(
+    name = "cast",
+    hdrs = ["cast.h"],
+    deps = ["@llvm-project//llvm:Support"],
+)
+
 xla_cc_test(
     name = "custom_call_program_serdes_test",
     srcs = ["custom_call_program_serdes_test.cc"],
@@ -706,6 +712,17 @@ xla_cc_test(
         "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_test(
+    name = "cast_test",
+    srcs = ["cast_test.cc"],
+    deps = [
+        ":cast",
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
     ],
 )
