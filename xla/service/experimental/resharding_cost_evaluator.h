@@ -15,10 +15,11 @@ public:
   ReshardingCostEvaluator() = default;
   ~ReshardingCostEvaluator() = default;
 
-  // This function returns a heuristic cost of converting an array of shape 
+  // This function returns a heuristic cost of converting a shape array
   // from a specific sharding to another sharding
-  uint64_t Evaluate(const Shape& shape, const HloSharding from_sharding,
-    const HloSharding to_sharding);
+  // NOTE: shape must be an array type
+  uint64_t Evaluate(const Shape& shape, const HloSharding& from_sharding,
+    const HloSharding& to_sharding);
 
 };
 

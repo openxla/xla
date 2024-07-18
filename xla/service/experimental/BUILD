@@ -51,6 +51,7 @@ cc_library(
     hdrs = ["module_cost_evaluator.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "shape_utils",
         "//xla/hlo/ir:hlo"
     ]
 )
@@ -61,6 +62,7 @@ cc_library(
     hdrs = ["resharding_cost_evaluator.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "shape_utils",
         "//xla/hlo/ir:hlo"
     ]
 )
