@@ -56,7 +56,7 @@ absl::Status RunFusedMHA(GpufMHAParams params, se::Stream *stream,
                          DeviceMemoryBase scratch_memory,
                          DeviceMemoryBase activation_output,
                          DeviceMemoryBase seqlen_q, DeviceMemoryBase seqlen_k) {
-std::cout << "gpu_fused_mha_runner:RunFusedMHA\n";                             
+  std::cout << "gpu_fused_mha_runner:RunFusedMHA\n";
   se::dnn::LazyOpRunner<se::dnn::FusedMHAOp> *lazy_runner =
       options.runner_cache->AsFusedMHARunner();
   std::optional<se::dnn::LazyOpRunner<se::dnn::FusedMHAOp>> local_runner;
@@ -85,22 +85,17 @@ std::cout << "gpu_fused_mha_runner:RunFusedMHA\n";
 }
 
 template <typename ElementType, typename OutputType>
-absl::Status RunFusedMHAF8(GpufMHAF8Params params, se::Stream *stream,
-                         RunFusedMHAF8Options options,
-                         DeviceMemory<ElementType> lhs_bmm1_buffer,
-                         DeviceMemory<ElementType> rhs_bmm1_buffer,
-                         DeviceMemory<ElementType> rhs_bmm2_buffer,
-                         DeviceMemory<float> descale_q_buffer,
-                         DeviceMemory<float> descale_k_buffer,
-                         DeviceMemory<float> descale_v_buffer,
-                         DeviceMemory<float> descale_s_buffer,
-                         DeviceMemory<float> scale_s_buffer,
-                         DeviceMemory<float> scale_o_buffer,
-                         DeviceMemory<float> amax_s_buffer,
-                         DeviceMemory<float> amax_o_buffer,
-                         DeviceMemory<OutputType> output_buffer,
-                         DeviceMemoryBase scratch_memory,
-                         DeviceMemoryBase activation_output) {
+absl::Status RunFusedMHAF8(
+    GpufMHAF8Params params, se::Stream *stream, RunFusedMHAF8Options options,
+    DeviceMemory<ElementType> lhs_bmm1_buffer,
+    DeviceMemory<ElementType> rhs_bmm1_buffer,
+    DeviceMemory<ElementType> rhs_bmm2_buffer,
+    DeviceMemory<float> descale_q_buffer, DeviceMemory<float> descale_k_buffer,
+    DeviceMemory<float> descale_v_buffer, DeviceMemory<float> descale_s_buffer,
+    DeviceMemory<float> scale_s_buffer, DeviceMemory<float> scale_o_buffer,
+    DeviceMemory<float> amax_s_buffer, DeviceMemory<float> amax_o_buffer,
+    DeviceMemory<OutputType> output_buffer, DeviceMemoryBase scratch_memory,
+    DeviceMemoryBase activation_output) {
   std::cout << "gpu_fused_mha_runner:RunFusedMHAF8\n";
   se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op> *lazy_runner =
       options.runner_cache->AsFusedMHAF8Runner();
@@ -109,24 +104,23 @@ absl::Status RunFusedMHAF8(GpufMHAF8Params params, se::Stream *stream,
     local_runner.emplace(params.config->algorithm);
     lazy_runner = &*local_runner;
   }
- 
+
   TF_ASSIGN_OR_RETURN(se::dnn::FusedMHAF8Op::Config config,
                       params.config->AsDnnFusedMHAF8OpConfig());
   TF_ASSIGN_OR_RETURN(auto *runner,
                       lazy_runner->GetOrCreateRunner(config, stream));
   // return absl::OkStatus();
-  return (*runner)(stream, options.profile_result, scratch_memory,
-                   lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
-                   descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer,
-                   scale_s_buffer, scale_o_buffer, 
-                   amax_s_buffer, amax_o_buffer,
-                   output_buffer, activation_output);
+  return (*runner)(
+      stream, options.profile_result, scratch_memory, lhs_bmm1_buffer,
+      rhs_bmm1_buffer, rhs_bmm2_buffer, descale_q_buffer, descale_k_buffer,
+      descale_v_buffer, descale_s_buffer, scale_s_buffer, scale_o_buffer,
+      amax_s_buffer, amax_o_buffer, output_buffer, activation_output);
 }
 
 template <typename ElementType, typename OutputType>
 absl::Status RunGpuFMHAF8Impl(const GpufMHAF8Params &params, se::Stream *stream,
-                            se::DeviceMemoryBase scratch_memory,
-                            RunFusedMHAF8Options options) {
+                              se::DeviceMemoryBase scratch_memory,
+                              RunFusedMHAF8Options options) {
   auto lhs_bmm1_buffer = se::DeviceMemory<ElementType>(params.lhs_bmm1_buffer);
   auto rhs_bmm1_buffer = se::DeviceMemory<ElementType>(params.rhs_bmm1_buffer);
   auto rhs_bmm2_buffer = se::DeviceMemory<ElementType>(params.rhs_bmm2_buffer);
@@ -154,11 +148,10 @@ absl::Status RunGpuFMHAF8Impl(const GpufMHAF8Params &params, se::Stream *stream,
   switch (params.config->kind) {
     case CudnnfMHAKind::kSoftmaxf8:
       run_status = RunFusedMHAF8<ElementType, OutputType>(
-          params, stream, options, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer, 
-          descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer,
-          scale_s_buffer, scale_o_buffer,
-          amax_s_buffer, amax_o_buffer,
-          output_buffer, scratch_memory, activation_buffer);
+          params, stream, options, lhs_bmm1_buffer, rhs_bmm1_buffer,
+          rhs_bmm2_buffer, descale_q_buffer, descale_k_buffer, descale_v_buffer,
+          descale_s_buffer, scale_s_buffer, scale_o_buffer, amax_s_buffer,
+          amax_o_buffer, output_buffer, scratch_memory, activation_buffer);
       break;
     default:
       return Internal("Invalid cuDNN fMHA f8 kind");
@@ -706,13 +699,9 @@ GpufMHAF8Config::AsDnnFusedMHAF8OpConfig() const {
                       GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(mask_type));
 
   return se::dnn::FusedMHAF8Op::Config{
-      scale, 
-       lhs_bmm1, rhs_bmm1,   rhs_bmm2,   
-      intermediate_lhs_bmm2,
-      output, 
-      activation,   mask_type};
+      scale,  lhs_bmm1,   rhs_bmm1, rhs_bmm2, intermediate_lhs_bmm2,
+      output, activation, mask_type};
 }
-
 
 absl::StatusOr<se::dnn::FusedMHABackwardOp::Config>
 GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
@@ -743,14 +732,15 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
 }
 
 /*static*/ absl::StatusOr<GpufMHAF8Params> GpufMHAF8Params::For(
-    const GpufMHAF8Config& config, se::DeviceMemoryBase lhs_bmm1_buffer,
-      se::DeviceMemoryBase rhs_bmm1_buffer,
-      se::DeviceMemoryBase rhs_bmm2_buffer, 
-      se::DeviceMemoryBase descale_q_buffer, se::DeviceMemoryBase descale_k_buffer, se::DeviceMemoryBase descale_v_buffer, se::DeviceMemoryBase descale_s_buffer,
-      se::DeviceMemoryBase scale_s_buffer, se::DeviceMemoryBase scale_o_buffer,
-      se::DeviceMemoryBase amax_s_buffer, se::DeviceMemoryBase amax_o_buffer,
-      se::DeviceMemoryBase output_buffer,
-      std::optional<se::DeviceMemoryBase> activation_buffer) {
+    const GpufMHAF8Config &config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
+    se::DeviceMemoryBase descale_q_buffer,
+    se::DeviceMemoryBase descale_k_buffer,
+    se::DeviceMemoryBase descale_v_buffer,
+    se::DeviceMemoryBase descale_s_buffer, se::DeviceMemoryBase scale_s_buffer,
+    se::DeviceMemoryBase scale_o_buffer, se::DeviceMemoryBase amax_s_buffer,
+    se::DeviceMemoryBase amax_o_buffer, se::DeviceMemoryBase output_buffer,
+    std::optional<se::DeviceMemoryBase> activation_buffer) {
   GpufMHAF8Params params;
   params.config = &config;
   params.lhs_bmm1_buffer = lhs_bmm1_buffer;
@@ -768,7 +758,6 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
   params.amax_o_buffer = amax_o_buffer;
   return params;
 }
-
 
 /*static*/ absl::StatusOr<GpufMHAParams> GpufMHAParams::For(
     const GpufMHAConfig &config, se::DeviceMemoryBase lhs_bmm1_buffer,
@@ -826,27 +815,24 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardOpConfig() const {
   return params;
 }
 
-absl::Status RunGpuFMHAF8(const GpufMHAF8Config& fmha_config,
-                        se::DeviceMemoryBase lhs_bmm1_buffer,
-                        se::DeviceMemoryBase rhs_bmm1_buffer,
-                        se::DeviceMemoryBase rhs_bmm2_buffer,
-                        se::DeviceMemoryBase descale_q_buffer,
-                        se::DeviceMemoryBase descale_k_buffer,
-                        se::DeviceMemoryBase descale_v_buffer,
-                        se::DeviceMemoryBase descale_s_buffer,
-                        se::DeviceMemoryBase scale_s_buffer,
-                        se::DeviceMemoryBase scale_o_buffer,
-                        se::DeviceMemoryBase amax_s_buffer,
-                        se::DeviceMemoryBase amax_o_buffer,
-                        se::DeviceMemoryBase output_buffer,
-                        se::DeviceMemoryBase scratch_buffer,
-                        std::optional<se::DeviceMemoryBase> activation_buffer,
-                        se::Stream* stream, RunFusedMHAF8Options options) {
+absl::Status RunGpuFMHAF8(
+    const GpufMHAF8Config &fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
+    se::DeviceMemoryBase descale_q_buffer,
+    se::DeviceMemoryBase descale_k_buffer,
+    se::DeviceMemoryBase descale_v_buffer,
+    se::DeviceMemoryBase descale_s_buffer, se::DeviceMemoryBase scale_s_buffer,
+    se::DeviceMemoryBase scale_o_buffer, se::DeviceMemoryBase amax_s_buffer,
+    se::DeviceMemoryBase amax_o_buffer, se::DeviceMemoryBase output_buffer,
+    se::DeviceMemoryBase scratch_buffer,
+    std::optional<se::DeviceMemoryBase> activation_buffer, se::Stream *stream,
+    RunFusedMHAF8Options options) {
   TF_ASSIGN_OR_RETURN(
       GpufMHAF8Params params,
-      GpufMHAF8Params::For(fmha_config, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
-                           descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer, scale_s_buffer, scale_o_buffer,
-                           amax_s_buffer, amax_o_buffer,
+      GpufMHAF8Params::For(fmha_config, lhs_bmm1_buffer, rhs_bmm1_buffer,
+                           rhs_bmm2_buffer, descale_q_buffer, descale_k_buffer,
+                           descale_v_buffer, descale_s_buffer, scale_s_buffer,
+                           scale_o_buffer, amax_s_buffer, amax_o_buffer,
                            output_buffer, activation_buffer));
   PrimitiveType input_primitive_type = fmha_config.input_type;
   switch (input_primitive_type) {
@@ -981,22 +967,22 @@ std::string ToString(const GpufMHAF8Config &config) {
     absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
   }
   // if (config.descale_q) {
-    // absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
+  // absl::StrAppend(&result, "descale_q: ", config.descale_q, ", ");
   // }
   // if (config.descale_k) {
-    // absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
+  // absl::StrAppend(&result, "descale_k: ", config.descale_k, ", ");
   // }
   // if (config.descale_v) {
-    // absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
+  // absl::StrAppend(&result, "descale_v: ", config.descale_v, ", ");
   // }
   // if (config.descale_s) {
-    // absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
+  // absl::StrAppend(&result, "descale_s: ", config.descale_s, ", ");
   // }
   // if (config.scale_s) {
-    // absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
+  // absl::StrAppend(&result, "scale_s: ", config.scale_s, ", ");
   // }
   // if (config.scale_o) {
-    // absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
+  // absl::StrAppend(&result, "scale_o: ", config.scale_o, ", ");
   // }
   absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),
                   "\n");

@@ -82,20 +82,20 @@ class FusedMHAThunkF8 : public Thunk {
  public:
   // Constructs a thunk for launching a DNN FMHA.
   FusedMHAThunkF8(ThunkInfo thunk_info, GpufMHAF8Config config,
-                    BufferAllocation::Slice lhs_bmm1_slice,
-                    BufferAllocation::Slice rhs_bmm1_slice,
-                    BufferAllocation::Slice rhs_bmm2_slice,
-                    BufferAllocation::Slice descale_q_slice,
-                    BufferAllocation::Slice descale_k_slice,
-                    BufferAllocation::Slice descale_v_slice,
-                    BufferAllocation::Slice descale_s_slice,
-                    BufferAllocation::Slice scale_s_slice,
-                    BufferAllocation::Slice scale_o_slice,
-                    BufferAllocation::Slice output_slice,
-                    BufferAllocation::Slice amax_s_slice,
-                    BufferAllocation::Slice amax_o_slice,
-                    BufferAllocation::Slice scratch_slice,
-                    BufferAllocation::Slice activation_slice /* may be null */);
+                  BufferAllocation::Slice lhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm2_slice,
+                  BufferAllocation::Slice descale_q_slice,
+                  BufferAllocation::Slice descale_k_slice,
+                  BufferAllocation::Slice descale_v_slice,
+                  BufferAllocation::Slice descale_s_slice,
+                  BufferAllocation::Slice scale_s_slice,
+                  BufferAllocation::Slice scale_o_slice,
+                  BufferAllocation::Slice output_slice,
+                  BufferAllocation::Slice amax_s_slice,
+                  BufferAllocation::Slice amax_o_slice,
+                  BufferAllocation::Slice scratch_slice,
+                  BufferAllocation::Slice activation_slice /* may be null */);
 
   FusedMHAThunkF8(const FusedMHAThunkF8&) = delete;
   FusedMHAThunkF8& operator=(const FusedMHAThunkF8&) = delete;

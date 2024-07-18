@@ -104,7 +104,6 @@ struct GpufMHAF8Descriptor {
   DotDimensionNumbers bmm2_dnums;
 };
 
-
 struct GpufMHABackwardDescriptor {
   CudnnfMHAKind kind;
   CudnnfMHABackendConfig backend_config;
@@ -133,12 +132,13 @@ struct GpufMHABackwardDescriptor {
 // Structure to describe static properties of a GPU fused Multi-Headed
 // Attention.
 struct GpufMHAF8Config {
-  static absl::StatusOr<GpufMHAF8Config> For(const GpufMHAF8Descriptor& fmha_desc);
+  static absl::StatusOr<GpufMHAF8Config> For(
+      const GpufMHAF8Descriptor& fmha_desc);
 
   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
 
   PrimitiveType
-  input_type;  // Capture the primitive type of one of the inputs of BMM1
+      input_type;  // Capture the primitive type of one of the inputs of BMM1
   PrimitiveType output_type;
   CudnnfMHAKind kind;
   // float descale_q;
@@ -236,9 +236,12 @@ struct GpufMHAF8Params {
   static absl::StatusOr<GpufMHAF8Params> For(
       const GpufMHAF8Config& config, se::DeviceMemoryBase lhs_bmm1_buffer,
       se::DeviceMemoryBase rhs_bmm1_buffer,
-      se::DeviceMemoryBase rhs_bmm2_buffer, 
-      se::DeviceMemoryBase descale_q_buffer, se::DeviceMemoryBase descale_k_buffer, se::DeviceMemoryBase descale_v_buffer, se::DeviceMemoryBase descale_s_buffer,
-      se::DeviceMemoryBase scale_s_buffer, se::DeviceMemoryBase scale_o_buffer, 
+      se::DeviceMemoryBase rhs_bmm2_buffer,
+      se::DeviceMemoryBase descale_q_buffer,
+      se::DeviceMemoryBase descale_k_buffer,
+      se::DeviceMemoryBase descale_v_buffer,
+      se::DeviceMemoryBase descale_s_buffer,
+      se::DeviceMemoryBase scale_s_buffer, se::DeviceMemoryBase scale_o_buffer,
       se::DeviceMemoryBase amax_s_buffer, se::DeviceMemoryBase amax_o_buffer,
       se::DeviceMemoryBase output_buffer,
       std::optional<se::DeviceMemoryBase> activation_buffer);
@@ -318,9 +321,9 @@ struct GpufMHABackwardParams {
 
 class FusedMultiHeadedAttentionF8Runner {
  public:
-  using Repr =
-      std::variant<std::monostate,  // To allow XXX default ctor
-                   std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>;
+  using Repr = std::variant<
+      std::monostate,  // To allow XXX default ctor
+      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>;
 
   FusedMultiHeadedAttentionF8Runner() = default;
 
@@ -345,7 +348,8 @@ class FusedMultiHeadedAttentionF8Runner {
 
   se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>* AsFusedMHAF8Runner() {
     CHECK(std::holds_alternative<
-          std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(repr_));
+          std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
+        repr_));
     return std::get<
                std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
                repr_)
@@ -355,9 +359,9 @@ class FusedMultiHeadedAttentionF8Runner {
  private:
   //  The CreateRunner function is defined as static because it
   //  doesn't need access to any non-static member variables of the
-  //  FusedMultiHeadedAttentionF8Runner class. Defining it static makes it easy to
-  //  use and makes it clear that it is a utility function that doesn't rely on
-  //  the state of any specific instance of the class.
+  //  FusedMultiHeadedAttentionF8Runner class. Defining it static makes it easy
+  //  to use and makes it clear that it is a utility function that doesn't rely
+  //  on the state of any specific instance of the class.
   static Repr CreateRunner(const GpufMHAF8Config& config) {
     switch (config.kind) {
       case CudnnfMHAKind::kSoftmaxf8:
@@ -561,22 +565,18 @@ struct RunFusedMHABackwardOptions {
   FusedMultiHeadedAttentionBackwardRunner* runner_cache;
 };
 
-absl::Status RunGpuFMHAF8(const GpufMHAF8Config& fmha_config,
-                        se::DeviceMemoryBase lhs_bmm1_buffer,
-                        se::DeviceMemoryBase rhs_bmm1_buffer,
-                        se::DeviceMemoryBase rhs_bmm2_buffer,
-                        se::DeviceMemoryBase descale_q_buffer,
-                        se::DeviceMemoryBase descale_k_buffer,
-                        se::DeviceMemoryBase descale_v_buffer,
-                        se::DeviceMemoryBase descale_s_buffer,
-                        se::DeviceMemoryBase scale_s_buffer,
-                        se::DeviceMemoryBase scale_o_buffer,
-                        se::DeviceMemoryBase amax_s_buffer,
-                        se::DeviceMemoryBase amax_o_buffer,
-                        se::DeviceMemoryBase output_buffer,
-                        se::DeviceMemoryBase scratch_buffer,
-                        std::optional<se::DeviceMemoryBase> activation_buffer,
-                        se::Stream* stream, RunFusedMHAF8Options = {});
+absl::Status RunGpuFMHAF8(
+    const GpufMHAF8Config& fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
+    se::DeviceMemoryBase descale_q_buffer,
+    se::DeviceMemoryBase descale_k_buffer,
+    se::DeviceMemoryBase descale_v_buffer,
+    se::DeviceMemoryBase descale_s_buffer, se::DeviceMemoryBase scale_s_buffer,
+    se::DeviceMemoryBase scale_o_buffer, se::DeviceMemoryBase amax_s_buffer,
+    se::DeviceMemoryBase amax_o_buffer, se::DeviceMemoryBase output_buffer,
+    se::DeviceMemoryBase scratch_buffer,
+    std::optional<se::DeviceMemoryBase> activation_buffer, se::Stream* stream,
+    RunFusedMHAF8Options = {});
 
 absl::Status RunGpuFMHA(const GpufMHAConfig& fmha_config,
                         se::DeviceMemoryBase lhs_bmm1_buffer,

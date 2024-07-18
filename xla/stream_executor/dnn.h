@@ -994,18 +994,18 @@ using NormSignature = void(std::vector<DeviceMemoryBase>);
 using NormRunner = OpRunner<NormSignature>;
 
 using FusedMHAF8Signature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
-                               DeviceMemoryBase /* BMM1_inputB_data */,
-                               DeviceMemoryBase /* BMM2_inputA_data */,
-                               DeviceMemoryBase /* descale_q_data */,
-                               DeviceMemoryBase /* descale_k_data */,
-                               DeviceMemoryBase /* descale_v_data */,
-                               DeviceMemoryBase /* descale_s_data */,
-                               DeviceMemoryBase /* scale_s_data */,
-                               DeviceMemoryBase /* scale_o_data */,
-                               DeviceMemoryBase /* amax_s_data */,
-                               DeviceMemoryBase /* amax_o_data */,
-                               DeviceMemoryBase /* output_data */,
-                               DeviceMemoryBase /* activation_data */);
+                                 DeviceMemoryBase /* BMM1_inputB_data */,
+                                 DeviceMemoryBase /* BMM2_inputA_data */,
+                                 DeviceMemoryBase /* descale_q_data */,
+                                 DeviceMemoryBase /* descale_k_data */,
+                                 DeviceMemoryBase /* descale_v_data */,
+                                 DeviceMemoryBase /* descale_s_data */,
+                                 DeviceMemoryBase /* scale_s_data */,
+                                 DeviceMemoryBase /* scale_o_data */,
+                                 DeviceMemoryBase /* amax_s_data */,
+                                 DeviceMemoryBase /* amax_o_data */,
+                                 DeviceMemoryBase /* output_data */,
+                                 DeviceMemoryBase /* activation_data */);
 using FusedMHAF8Runner = OpRunner<FusedMHAF8Signature>;
 
 using FusedMHASignature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
@@ -1773,9 +1773,8 @@ class DnnSupport {
       // float descale_v,
       // float descale_s,
       // float scale_s,
-      // float scale_o,    
-      double scale,   
-      dnn::FMHAMaskKind mask_type);
+      // float scale_o,
+      double scale, dnn::FMHAMaskKind mask_type);
 
   virtual absl::StatusOr<std::unique_ptr<const FusedMHARunner>>
   FusedMHARunnerFromDesc(

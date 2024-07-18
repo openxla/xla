@@ -3792,7 +3792,7 @@ enum CudnnfMHAUid {
   SCALE_S_ID,
   SCALE_O_ID,
   AMAX_S_ID,
-  AMAX_O_ID,  
+  AMAX_O_ID,
   dQ_ID,
   dK_ID,
   dV_ID,
@@ -6164,7 +6164,8 @@ class CudnnGraphRunner<void(Args...)> : public dnn::OpRunner<void(Args...)> {
     for (int i = 0; i < uids_.size(); ++i) {
       if (uids_[i].has_value()) {
         variant_pack[*uids_[i]] = vec[i];
-        std::cout << "hit "<< i <<" " << *uids_[i]<< "with" << vec[i]<<std::endl;
+        std::cout << "hit " << i << " " << *uids_[i] << "with" << vec[i]
+                  << std::endl;
         std::cout << "------------------\n";
       }
     }
@@ -7273,7 +7274,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
                        .set_dim({1, 1, 1, 1})
                        .set_stride({1, 1, 1, 1})
                        .set_data_type(cudnn_frontend::DataType_t::FLOAT)
-                       .set_uid(CudnnfMHAUid::DESCALE_Q_ID));                                                                                                 
+                       .set_uid(CudnnfMHAUid::DESCALE_Q_ID));
   auto descale_k = graph.tensor_like(descale_q, "Descale_K");
   auto descale_v = graph.tensor_like(descale_q, "Descale_V");
   auto descale_s = graph.tensor_like(descale_q, "Descale_S");
@@ -7364,15 +7365,14 @@ CudnnSupport::FusedMHAF8RunnerFromDesc(
     const dnn::TensorDescriptor& output_descriptor,
     // const dnn::TensorDescriptor& amax_s_descriptor,
     // const dnn::TensorDescriptor& amax_o_descriptor,
-    std::optional<dnn::TensorDescriptor> activation_descriptor, 
+    std::optional<dnn::TensorDescriptor> activation_descriptor,
     // float descale_q, float descale_k,
     //   float descale_v,
     //   float descale_s,
     //   float scale_s,
-    //   float scale_o, 
-      double scale,
-    dnn::FMHAMaskKind mask_type) {
-   VLOG(3) << "cuda_dnn.cc:FusedMHAF8RunnerFromDesc!\n";
+    //   float scale_o,
+    double scale, dnn::FMHAMaskKind mask_type) {
+  VLOG(3) << "cuda_dnn.cc:FusedMHAF8RunnerFromDesc!\n";
 //  return absl::OkStatus();
 #if CUDNN_VERSION >= 8904
   auto cudnn = cudnn_->GetHandle(parent_, stream);
@@ -7429,7 +7429,7 @@ CudnnSupport::FusedMHARunnerFromDesc(
     std::optional<dnn::TensorDescriptor> bias_descriptor, double scale,
     std::optional<double> dropout_rate, std::optional<int64_t> seed,
     dnn::FMHAMaskKind mask_type) {
-    std::cout<< "cuda_dnn:FusedMHARunnerFromDesc\n";
+  std::cout << "cuda_dnn:FusedMHARunnerFromDesc\n";
 #if CUDNN_VERSION >= 8904
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   bool use_dropout = dropout_rate && *dropout_rate > 0.0;
@@ -8633,7 +8633,8 @@ absl::Status CudnnGraph::Execute(Stream& stream,
   std::unordered_map<int64_t, void*> tensor_to_ptr_map;
   absl::Span<DeviceMemoryBase> operands_without_workspace = operands;
   DeviceMemoryBase workspace;
-  std::cout << "Cudnngraph::Execute with wks="<< graph_.get_workspace_size() << std::endl;
+  std::cout << "Cudnngraph::Execute with wks=" << graph_.get_workspace_size()
+            << std::endl;
   if (graph_.get_workspace_size() != 0) {
     workspace = operands.back();
     CHECK_EQ(graph_.get_workspace_size(), workspace.size());

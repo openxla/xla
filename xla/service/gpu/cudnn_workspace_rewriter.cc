@@ -115,7 +115,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             fmha_config.dropout_rate && *fmha_config.dropout_rate > 0.0,
             fmha_config.dropout_rate, dnn_mask_type));
     return std::move(graph);
-  } else if(IsBwdCustomCallTofMHA(*custom_call)) {
+  } else if (IsBwdCustomCallTofMHA(*custom_call)) {
     TF_ASSIGN_OR_RETURN(
         auto gpu_config,
         custom_call->backend_config<xla::gpu::GpuBackendConfig>());
@@ -225,7 +225,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             fmha_config.bias != std::nullopt, dnn_mask_type,
             force_deterministic));
     return std::move(graph);
-  } else if(IsFwdCustomCallTofMHAF8(*custom_call)) {
+  } else if (IsFwdCustomCallTofMHAF8(*custom_call)) {
     TF_ASSIGN_OR_RETURN(const xla::gpu::CudnnfMHAKind kind,
                         xla::gpu::GetCudnnfMHAKind(custom_call));
 
@@ -251,15 +251,15 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
                         AsCudnnFmhaMaskKind(config.mask_type()));
     GpufMHAF8Descriptor descriptor = {kind,
-                                    config,
-                                    cudnn_mask_type,
-                                    q_shape,
-                                    k_shape,
-                                    v_shape,
-                                    intermediate_tensor_shape,
-                                    output_shapes,
-                                    config.bmm1_dot_dimension_numbers(),
-                                    config.bmm2_dot_dimension_numbers()};
+                                      config,
+                                      cudnn_mask_type,
+                                      q_shape,
+                                      k_shape,
+                                      v_shape,
+                                      intermediate_tensor_shape,
+                                      output_shapes,
+                                      config.bmm1_dot_dimension_numbers(),
+                                      config.bmm2_dot_dimension_numbers()};
 
     TF_ASSIGN_OR_RETURN(GpufMHAF8Config fmha_config,
                         GpufMHAF8Config::For(descriptor));
@@ -302,7 +302,7 @@ class CuDnnCustomCallVisitor : public DfsHloRewriteVisitor {
       Shape* shape = hlo->mutable_shape();
       shape->mutable_tuple_shapes(shape->tuple_shapes_size() - 1)
           ->set_dimensions(0, workspace);
-      VLOG(4) << "After Rewriting: " << hlo->ToString();          
+      VLOG(4) << "After Rewriting: " << hlo->ToString();
       MarkAsChanged();
     }
     return absl::OkStatus();

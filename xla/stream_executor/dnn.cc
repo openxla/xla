@@ -264,9 +264,8 @@ DnnSupport::FusedMHAF8RunnerFromDesc(
     //   float descale_v,
     //   float descale_s,
     //   float scale_s,
-    //   float scale_o, 
-      double scale, 
-     dnn::FMHAMaskKind mask_type) {
+    //   float scale_o,
+    double scale, dnn::FMHAMaskKind mask_type) {
   return absl::UnimplementedError("FusedMHAF8RunnerFromDesc not implemented.");
 }
 
