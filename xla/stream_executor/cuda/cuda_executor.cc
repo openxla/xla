@@ -165,6 +165,11 @@ absl::Status GpuExecutor::Init() {
   cc_major_ = desc->cuda_compute_capability().major;
   cc_minor_ = desc->cuda_compute_capability().minor;
   numa_node_ = desc->numa_node();
+  if (numa_node_ < 0) {
+    LOG(WARNING) << "NUMA node could not be determined for device "
+                 << device_ordinal_
+                 << ", host memory allocations will not be NUMA-pinned";
+  }
   return absl::OkStatus();
 }
 
@@ -596,18 +601,40 @@ void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
 // no external interface for us to otherwise control these DMA settings.
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 GpuExecutor::HostMemoryAllocate(uint64_t size) {
-  auto* buffer =
-      tsl::port::NUMAMalloc(numa_node_, size, /* minimum_alignment=*/16);
-  if (!GpuDriver::HostRegister(context_, buffer, size) && size > 0) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to allocate HostMemory of size %d", size));
+  if (numa_node_ >= 0) {
+    auto* buffer =
+        tsl::port::NUMAMalloc(numa_node_, size, /* minimum_alignment=*/16);
+    if (buffer == nullptr && size > 0) {
+      return absl::InternalError(absl::StrFormat(
+          "Failed to allocate host memory of size %d pinned to NUMA node %d",
+          size, numa_node_));
+    }
+    if (size > 0 && !GpuDriver::HostRegister(context_, buffer, size)) {
+      return absl::InternalError(
+          absl::StrFormat("Failed to register host memory of size %d pinned to "
+                          "NUMA node %d with the GPU driver",
+                          size, numa_node_));
+    }
+    return std::make_unique<HostMemoryAllocation>(buffer, size, this);
+  } else {
+    auto* buffer = GpuDriver::HostAllocate(context_, size);
+    if (buffer == nullptr && size > 0) {
+      return absl::InternalError(
+          absl::StrFormat("Failed to allocate HostMemory of size %d", size));
+    }
+    return std::make_unique<HostMemoryAllocation>(buffer, size, this);
   }
-  return std::make_unique<HostMemoryAllocation>(buffer, size, this);
 }
 
 void GpuExecutor::HostMemoryDeallocate(void* location, uint64_t size) {
-  GpuDriver::HostUnregister(context_, location);
-  tsl::port::NUMAFree(location, size);
+  if (numa_node_ >= 0) {
+    if (size > 0) {
+      GpuDriver::HostUnregister(context_, location);
+    }
+    tsl::port::NUMAFree(location, size);
+  } else {
+    GpuDriver::HostDeallocate(context_, location);
+  }
 }
 
 bool GpuExecutor::SynchronizeAllActivity() {
