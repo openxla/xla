@@ -5168,6 +5168,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
