@@ -679,16 +679,34 @@ namespace {
 
     ReshardingCostEvaluator evaluator;
 
+    VLOG(5) << "Map size: " << map.size();
+
     for (auto& [instr, instr_strats] : map) {
       const Shape& shape = instr->shape();
+      
+      // don't loop if no users
+      if (instr->user_count() == 0) {
+        continue;
+      }
+
+      if (instr->user_count() > 1) {
+        // TODO: do we want to deal with this
+        continue;
+      }
+
+      VLOG(5) << "\tNum sharding strats: " << instr_strats->sharding_strats().size();
 
       for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
         std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
+        VLOG(5) << "\t\tNum Users: " << instr->user_count();
+        // TODO: could honestly cache these to reduce storage
 
         for (HloInstruction* user : instr->users()) {
           // get index of instr in user's operands
           int op_idx = user->operand_index(instr);
           std::unique_ptr<InstructionStrategies>& user_strats = map[user];
+
+          VLOG(5) << "\t\t\tNum user strats: " << user_strats->sharding_strats().size();
 
           std::vector<uint64_t> resharding_costs;
           for (ShardingStrategy& out_strat : 
