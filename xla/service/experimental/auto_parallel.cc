@@ -274,6 +274,7 @@ namespace {
     // modifying resulting sharding
     // TODO: accept a shared pointer
     void set_result_sharding(HloSharding result_sharding);
+    std::shared_ptr<HloSharding> result_sharding() { return result_sharding_; };
 
     void AddUserReshardingCosts(std::vector<uint64_t> resharding_costs);
 
@@ -452,7 +453,7 @@ namespace {
   // TODO: need to make instruction sharding use shared pointers
   // going to be many identical copies of the same sharding in memory
   // for larger problems
-  std::vector<ShardingStrategy> EnumerateShardingStrategys(
+  std::vector<ShardingStrategy> EnumerateShardingStrategies(
       HloInstruction* instruction) {
 
     // enumerate through the shardings for each operator of the instruction
@@ -615,6 +616,11 @@ namespace {
     ~InstructionStrategies() = default;
     InstructionStrategies(const InstructionStrategies& info) = default;
 
+    // accessors
+    std::vector<ShardingStrategy>& sharding_strats() { 
+      return sharding_strats_;
+    };
+
   private:
 
     // Applies the given sharding strategy to the module and perforsm GSPMD
@@ -647,7 +653,7 @@ namespace {
   InstructionStrategies::InstructionStrategies(HloInstruction* orig_instr) 
       : orig_instr_(orig_instr),
         single_instr_module_(CreateModuleFromInstruction(orig_instr)),
-        sharding_strats_(EnumerateShardingStrategys(orig_instr)) {
+        sharding_strats_(EnumerateShardingStrategies(orig_instr)) {
     EstimateStrategyCosts();
     return;
   }
@@ -673,9 +679,30 @@ namespace {
 
     ReshardingCostEvaluator evaluator;
 
-    for (auto& [instr, strat] : map) {
-      // iterate through users
-      // create a vector of costs
+    for (auto& [instr, instr_strats] : map) {
+      const Shape& shape = instr->shape();
+
+      for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
+        std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
+
+        for (HloInstruction* user : instr->users()) {
+          // get index of instr in user's operands
+          int op_idx = user->operand_index(instr);
+          std::unique_ptr<InstructionStrategies>& user_strats = map[user];
+
+          std::vector<uint64_t> resharding_costs;
+          for (ShardingStrategy& out_strat : 
+              user_strats->sharding_strats()) {
+            uint64_t cost = evaluator.Evaluate(
+              shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
+            );
+            VLOG(5) << "Cost: " << cost;
+            resharding_costs.push_back(cost);
+          }
+          strat.AddUserReshardingCosts(resharding_costs);
+        }
+      }
+
     }
     
     return;
@@ -735,6 +762,7 @@ namespace {
       }
     }
 
+    VLOG(5) << "Starting to evaluate the resharding costs";
     EstimateReshardingCosts(info_map);
 
     VLOG(5) << "Number of instructions: " << info_map.size();
