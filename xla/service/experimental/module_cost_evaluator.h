@@ -14,10 +14,10 @@ namespace xla {
 // TODO: add ability to configure cost evaluator for various cost methods
 class ModuleCostEvaluator {
 public:
-    ModuleCostEvaluator() = default;
-    ~ModuleCostEvaluator() = default;
+  ModuleCostEvaluator() = default;
+  ~ModuleCostEvaluator() = default;
 
-    uint64_t Evaluate(const HloModule* module);
+  uint64_t Evaluate(const HloModule* module);
 };
 
 } // xla
