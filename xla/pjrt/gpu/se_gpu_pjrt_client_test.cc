@@ -1281,5 +1281,63 @@ TEST(StreamExecutorGpuClientTest, MlirParameterLayoutFromOptionsIsSetInHlo) {
   EXPECT_EQ(first_param_layout, Layout({0, 2, 1}));
 }
 
+TEST(StreamExecutorGpuClientTest,
+     MlirResultHostMemorySpaceIsSetInHloWithShardingPropagation) {
+  constexpr absl::string_view mlir_mul_explicit_sharding_layout_and_memory =
+      R"mlir(
+  module @jit_f attributes {
+      mhlo.num_partitions = 4 : i32,
+      mhlo.num_replicas = 1 : i32
+  } {
+    func.func public @main(%arg0: tensor<8x2xi32> {
+            mhlo.layout_mode = "{1,0}",
+            mhlo.memory_kind = "device",
+            mhlo.sharding = "{devices=[2,2]<=[4]}"
+        }) -> (tensor<8x2xi32> {
+            jax.result_info = "",
+            mhlo.layout_mode = "{0,1}",
+            mhlo.memory_kind = "pinned_host"
+        }) {
+      %c = stablehlo.constant dense<2> : tensor<i32>
+      %0 = stablehlo.broadcast_in_dim %c, dims = []
+          : (tensor<i32>) -> tensor<8x2xi32>
+      %1 = stablehlo.multiply %arg0, %0 : tensor<8x2xi32>
+      %2 = stablehlo.custom_call @Sharding(%1) {
+              mhlo.sharding = "{devices=[2,2]<=[4]}"
+          } : (tensor<8x2xi32>) -> tensor<8x2xi32>
+      %3 = stablehlo.custom_call @annotate_device_placement(%2) {
+              has_side_effect = true,
+              mhlo.frontend_attributes = {
+                  _xla_buffer_placement = "pinned_host"
+              }
+          } : (tensor<8x2xi32>) -> tensor<8x2xi32>
+      return %3 : tensor<8x2xi32>
+    }
+  })mlir";
+
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseMlirModuleString(
+                       mlir_mul_explicit_sharding_layout_and_memory, context));
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+
+  xla::CompileOptions options;
+  options.executable_build_options.set_num_partitions(4)
+      .set_use_spmd_partitioning(true)
+      .set_allow_spmd_sharding_propagation_to_output({true});
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, options));
+  TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
+
+  auto first_param_layout =
+      modules[0]->entry_computation_layout().parameter_layout(0).layout();
+  EXPECT_EQ(first_param_layout.memory_space(), Layout::kDefaultMemorySpace);
+  auto result_layout =
+      modules[0]->entry_computation_layout().result_layout().layout();
+  EXPECT_EQ(result_layout,
+            Layout({0, 1}).set_memory_space(Layout::kHostMemorySpace));
+}
+
 }  // namespace
 }  // namespace xla

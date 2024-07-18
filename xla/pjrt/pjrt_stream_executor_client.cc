@@ -3399,12 +3399,11 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
     build_options.set_device_allocator(allocator());
   }
 
-  auto layout_callback = [local_client = client()](const HloModule& module)
+  auto layout_callback = [&build_options,
+                          local_client = client()](const HloModule& module)
       -> absl::StatusOr<std::pair<std::vector<Shape>, Shape>> {
-    ExecutableBuildOptions build_options;
     std::vector<const Shape*> argument_layout_pointers;
     std::optional<std::vector<Shape>> argument_layouts;
-    Shape result_layout;
     TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
         XlaComputation(module.ToProto()),
         [local_client = local_client](Shape shape) {
@@ -3413,7 +3412,7 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
               ->ChooseCompactLayoutForShape(shape);
         },
         argument_layouts, &build_options, &argument_layout_pointers));
-    result_layout = *build_options.result_layout();
+    const Shape& result_layout = *build_options.result_layout();
     return std::make_pair(*argument_layouts, result_layout);
   };
 
