@@ -798,6 +798,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:test",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_platform",
