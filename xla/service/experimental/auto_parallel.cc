@@ -3,6 +3,7 @@
 #include "xla/service/experimental/auto_parallel.h"
 
 #include "xla/service/experimental/module_cost_evaluator.h"
+#include "xla/service/experimental/resharding_cost_evaluator.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -669,6 +670,8 @@ namespace {
     
     // for each instruction, for each user of it, for each sharding strategy
     // recalculate resharding costs
+
+    ReshardingCostEvaluator evaluator;
 
     for (auto& [instr, strat] : map) {
       // iterate through users
