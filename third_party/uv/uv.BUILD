@@ -1,5 +1,5 @@
 # Description:
-#   libuv
+#   libuv is a cross-platform asynchronous I/O library.
 
 package(
     default_visibility = ["//visibility:public"],
