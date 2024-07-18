@@ -623,27 +623,10 @@ namespace {
 
   private:
 
-    // Applies the given sharding strategy to the module and perforsm GSPMD
-    // on it to complete the sharding.
-
-    // This function will iterate through the various sharding strategies
-    // and apply them to the instruction within the module. Afterwards,
-    // GSPMD will be run to complete the module and the appropriate 
-    // sharding strategy
-    void EstimateStrategyCosts();
-
     // Points to the original instruction that will have its
     // sharding strategies enumerated. Eventually, this instruction
     // will be modified with a sharding strategy provided by the solvers
     HloInstruction* orig_instr_;
-
-    // Module containing a single computation of a single instruction that
-    // is a clone of the orig_instr. Created on construction of class.
-    // After enumerating various incomplete sharding strategies,
-    // each incomplete strategy will be applied to this module, be completed
-    // by GSPMD, and evaluated for it's computational and communication cost
-    // by inspecting the completed module's resulting operations
-    std::unique_ptr<HloModule> single_instr_module_;    
 
     // vector of sharding strategies for the given instruction
     std::vector<ShardingStrategy> sharding_strats_;
@@ -652,16 +635,16 @@ namespace {
 
   InstructionStrategies::InstructionStrategies(HloInstruction* orig_instr) 
       : orig_instr_(orig_instr),
-        single_instr_module_(CreateModuleFromInstruction(orig_instr)),
         sharding_strats_(EnumerateShardingStrategies(orig_instr)) {
-    EstimateStrategyCosts();
-    return;
-  }
 
-  void InstructionStrategies::EstimateStrategyCosts() {
+    // create a single instruction module which will then be used for evaluating
+    // all of the sharding strats
+    std::unique_ptr<HloModule> single_instr_module = 
+      CreateModuleFromInstruction(orig_instr);
 
+    // estimate costs of each sharding strategy
     for (int i = 0; i < sharding_strats_.size(); i++) {
-      EvaluateShardingStrat(single_instr_module_.get(), &sharding_strats_[i]);
+      EvaluateShardingStrat(single_instr_module.get(), &sharding_strats_[i]);
     }
 
     return;
