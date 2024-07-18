@@ -255,8 +255,9 @@ namespace {
   public:
     InstructionSharding() = default;
     ~InstructionSharding() = default;
-    InstructionSharding(const InstructionSharding &s) = default;
-    
+    InstructionSharding(const InstructionSharding& s) = default;
+    InstructionSharding(InstructionSharding&& s) = default;
+
     // cost getters and setters
     uint64_t cost() const { return cost_; }
     void set_cost(uint64_t cost) { cost_ = cost; }
@@ -273,8 +274,7 @@ namespace {
     // TODO: accept a shared pointer
     void set_result_sharding(HloSharding result_sharding);
 
-    void AddUserReshardingCosts(
-        std::unique_ptr<std::vector<uint64_t>> resharding_costs);
+    void AddUserReshardingCosts(std::vector<uint64_t> resharding_costs);
 
   private:
     // TODO: make these shared_ptr<const HloSharding>
@@ -297,7 +297,7 @@ namespace {
     // For each user of this instruction, have a resharding cost for
     // each of the user's potential sharding strategies
     // Cost vectors are added in user order
-    std::vector<std::unique_ptr<std::vector<uint64_t>>> resharding_costs_;
+    std::vector<std::vector<uint64_t>> resharding_costs_;
 
   };
 
@@ -310,7 +310,7 @@ namespace {
   }
 
   void InstructionSharding::AddUserReshardingCosts(
-      std::unique_ptr<std::vector<uint64_t>> costs) {
+      std::vector<uint64_t> costs) {
     resharding_costs_.push_back(std::move(costs));
   }
 
@@ -612,6 +612,7 @@ namespace {
   public:
     InstructionShardingInfo(HloInstruction* orig_instr);
     ~InstructionShardingInfo() = default;
+    InstructionShardingInfo(const InstructionShardingInfo& info) = default;
 
   private:
 
@@ -659,6 +660,23 @@ namespace {
     return;
   }
 
+  /*********************************************************/
+  /* Resharding Cost Estimation                            */
+  /*********************************************************/
+
+  void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
+      std::unique_ptr<InstructionShardingInfo>>& map) {
+    
+    // for each instruction, for each user of it, for each sharding strategy
+    // recalculate resharding costs
+    
+    return;
+  }
+
+  /*********************************************************/
+  /* Additional Helper Functions                           */
+  /*********************************************************/
+
   // TODO: determine if this is a valid approach to determine 
   // if the module is the main module for the computations
   bool ShardableModule(HloModule* module) {
@@ -697,26 +715,25 @@ namespace {
     std::unique_ptr<HloModule> module_clone = module->Clone();
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
-    int num_computations = module_clone->computation_count();
-    int comp_idx = 0;
+    std::unordered_map<HloInstruction*, 
+      std::unique_ptr<InstructionShardingInfo>> info_map;
 
     // TODO: shouldn't I only be doing this for the main computation?
-
-    // iterate through HloModule computations
+    // construct relevant sharding information
     for (HloComputation* computation : module_clone->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
-        // create the relevant sharding information for this instruction
-        InstructionShardingInfo i(instr);
-
+        assert(info_map.count(instr) == 0);
+        info_map[instr] = std::make_unique<InstructionShardingInfo>(instr);
       }
     }
+
+    EstimateReshardingCosts(info_map);
+
+    VLOG(5) << "Number of instructions: " << info_map.size();
 
     VLOG(5) << "Done Testing AutoParallelizer Run";
     
     return true;
   }
 
-    
-
-    
 }   // namespace xla
