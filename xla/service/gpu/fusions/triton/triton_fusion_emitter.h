@@ -127,7 +127,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
-    mlir::MLIRContext& mlir_context);
+    mlir::MLIRContext& mlir_context, bool emit_kernel = true);
 
 // Create Triton pipeline.
 //
