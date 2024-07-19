@@ -493,11 +493,22 @@ namespace {
     return;
   }
 
+  // This function applies the sharding strategy specified by strat into the 
+  // HloInstruction pointed to by instr by specifying the shardings for the
+  // instructions operands
+  void ApplyInstructionStrategy(HloInstruction* instr, 
+      ShardingStrategy* strat) {
+    int num_operands = instr->operand_count();
+
+    assert(num_operands == strat->NumOpShardings());
+    for (int i = 0; i < num_operands; i++) {
+      instr->mutable_operand(i)->set_sharding(strat->GetOpSharding(i));
+    }
+  }
+
   // This function inserts a sharding strategy into an HloModule
   // Assumes that this is a single instruction HloModule
   void ApplyModuleStrategy(HloModule* module, ShardingStrategy* strat) {
-
-    std::shared_ptr<const HloSharding> sharding_ptr;
 
     // should only have one computation
     assert(module->computation_count() == 1);
@@ -505,14 +516,7 @@ namespace {
 
     // apply the shardings to the operands of the root instruction
     HloInstruction* root_instruction = computation->root_instruction();
-    int num_operands = root_instruction->operand_count();
-    assert(strat->NumOpShardings() == num_operands);
-
-    for (int i = 0; i < num_operands; i++) {
-      root_instruction->mutable_operand(i)->set_sharding(
-        strat->GetOpSharding(i)
-      );
-    }
+    ApplyInstructionStrategy(root_instruction, strat); 
 
     return; 
   }
@@ -621,6 +625,10 @@ namespace {
       return sharding_strats_;
     };
 
+    // takes the index of sharding_strats_ and sets the sharding
+    // of the instruction
+    void set_chosen_strat(int idx);
+
   private:
 
     // Points to the original instruction that will have its
@@ -646,6 +654,13 @@ namespace {
     for (int i = 0; i < sharding_strats_.size(); i++) {
       EvaluateShardingStrat(single_instr_module.get(), &sharding_strats_[i]);
     }
+
+    return;
+  }
+
+  void InstructionStrategies::set_chosen_strat(int idx) {
+    assert(0 <= idx && idx < sharding_strats_.size());
+    ApplyInstructionStrategy(orig_instr_, &sharding_strats_[idx]);
 
     return;
   }
