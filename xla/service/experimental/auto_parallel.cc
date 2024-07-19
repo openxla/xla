@@ -429,7 +429,7 @@ namespace {
   // This function applies the sharding strategy specified by strat into the 
   // HloInstruction pointed to by instr by specifying the shardings for the
   // instructions operands
-  void ApplyInstructionStrategy(HloInstruction* instr, 
+  void ApplyStrategyToInstruction(HloInstruction* instr, 
       ShardingStrategy* strat) {
     int num_operands = instr->operand_count();
 
@@ -440,8 +440,8 @@ namespace {
   }
 
   // This function inserts a sharding strategy into an HloModule
-  // Assumes that this is a single instruction HloModule
-  void ApplyModuleStrategy(HloModule* module, ShardingStrategy* strat) {
+  // Applies sharding strategy to root instruction of entry computation
+  void ApplyStrategyToModule(HloModule* module, ShardingStrategy* strat) {
 
     // should only have one computation
     assert(module->computation_count() == 1);
@@ -449,7 +449,7 @@ namespace {
 
     // apply the shardings to the operands of the root instruction
     HloInstruction* root_instruction = computation->root_instruction();
-    ApplyInstructionStrategy(root_instruction, strat); 
+    ApplyStrategyToInstruction(root_instruction, strat); 
 
     return; 
   }
@@ -601,7 +601,7 @@ namespace {
 
   void InstructionStrategies::set_chosen_strat(int idx) {
     assert(0 <= idx && idx < sharding_strats_.size());
-    ApplyInstructionStrategy(orig_instr_, &sharding_strats_[idx]);
+    ApplyStrategyToInstruction(orig_instr_, &sharding_strats_[idx]);
 
     return;
   }
