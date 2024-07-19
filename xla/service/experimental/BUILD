@@ -63,6 +63,7 @@ cc_library(
         "sharding_strategy",
         "module_cost_evaluator",
         "instruction_to_module",
+        "sharding_enumeration",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
@@ -89,6 +90,17 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "shape_utils",
+        "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
+    name = "sharding_enumeration",
+    srcs = ["sharding_enumeration.cc"],
+    hdrs = ["sharding_enumeration.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "sharding_strategy",
         "//xla/hlo/ir:hlo"
     ]
 )
