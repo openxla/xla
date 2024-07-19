@@ -23,6 +23,8 @@ namespace xla {
 /* Convert instructions to modules                       */
 /*********************************************************/
 
+// instruction_to_module.{h,cc}
+
 // clones a parameter instruction specifically 
 // for single-instruction HloComputations
 std::unique_ptr<HloInstruction> CloneParameterInstruction(
@@ -132,6 +134,7 @@ std::unique_ptr<HloModule> CreateModuleFromInstruction(
 /*********************************************************/
 /* Sharding enumeration                                  */
 /*********************************************************/
+// sharding_enumerator.{h,cc}
 
 // enumerate sharding from the number of dimensions in the data
 // TODO: could be cached
@@ -286,6 +289,7 @@ std::vector<ShardingStrategy> EnumerateShardingStrategies(
   /*********************************************************/
   /* GSPMD Completion                                      */
   /*********************************************************/
+  // sharding_evaluator.{h,cc}
 
   // Major steps prior to evaluating the cost
   //  0. clone the original module?
