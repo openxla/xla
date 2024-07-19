@@ -62,6 +62,7 @@ cc_library(
     deps = [
         "sharding_strategy",
         "module_cost_evaluator",
+        "instruction_to_module",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
@@ -109,5 +110,15 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "//xla:shape_util"
+    ]
+)
+
+cc_library(
+    name = "instruction_to_module",
+    srcs = ["instruction_to_module.cc"],
+    hdrs = ["instruction_to_module.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/hlo/ir:hlo"
     ]
 )
