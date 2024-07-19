@@ -8385,10 +8385,7 @@ absl::StatusOr<bool> CudnnGraph::Prepare(dnn::DnnSupport& dnn_support) {
   RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_operation_graph(cudnn->handle()));
   RETURN_IF_CUDNN_FRONTEND_ERROR(
       graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
-  if (auto result = graph_.check_support(cudnn->handle()); result.is_bad()) {
-    VLOG(3) << result.get_message();
-    return false;
-  }
+  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.check_support(cudnn->handle()));
   return true;
 }
 
