@@ -64,6 +64,20 @@ cc_library(
         "module_cost_evaluator",
         "instruction_to_module",
         "sharding_enumeration",
+        "sharding_strategy_evaluator",
+        "//xla/hlo/ir:hlo",
+    ]
+)
+
+cc_library(
+    name = "sharding_strategy_evaluator",
+    srcs = ["sharding_strategy_evaluator.cc"],
+    hdrs = ["sharding_strategy_evaluator.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "sharding_enumeration",
+        "sharding_strategy",
+        "module_cost_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
