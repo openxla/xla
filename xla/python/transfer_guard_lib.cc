@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "xla/util.h"
 
 namespace jax {

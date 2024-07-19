@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_PYTHON_NB_ABSL_INLINED_VECTOR_H_
 
 #include "absl/container/inlined_vector.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/detail/nb_list.h"  // from @nanobind
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/detail/nb_list.h"
 
 namespace nanobind {
 namespace detail {

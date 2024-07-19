@@ -332,12 +332,12 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:resource_loader",
         "@tsl//tsl/platform:subprocess",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -1782,6 +1782,7 @@ xla_test(
 xla_test(
     name = "topk_test",
     srcs = ["topk_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":test_macros_header",

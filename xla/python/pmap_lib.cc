@@ -39,11 +39,11 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"

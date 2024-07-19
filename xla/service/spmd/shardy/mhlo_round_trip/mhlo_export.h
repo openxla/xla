@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_SPMD_SHARDY_MHLO_ROUND_TRIP_MHLO_EXPORT_H_
 #define XLA_SERVICE_SPMD_SHARDY_MHLO_ROUND_TRIP_MHLO_EXPORT_H_
 
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
+#include "mlir/Pass/PassRegistry.h"
 
 namespace xla {
 namespace sdy {
@@ -25,7 +25,7 @@ namespace sdy {
 void registerMhloExportPipeline();
 
 // Add the xla-sdy-mhlo-export-pipeline in `pm`. The pipeline, including a
-// sequence of passes, exports the Shardonnay dialect into an MHLO module meant
+// sequence of passes, exports the Shardy dialect into an MHLO module meant
 // for the XLA compiler with HLO shardings.
 void addMhloExportPipeline(mlir::OpPassManager& pm);
 

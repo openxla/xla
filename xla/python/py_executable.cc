@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"

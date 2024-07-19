@@ -17,7 +17,7 @@ limitations under the License.
 #define XLA_PYTHON_PJIT_H_
 
 // placeholder for index annotation headers
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 namespace jax {
 

@@ -570,6 +570,7 @@ xla_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
+        "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -818,9 +819,9 @@ lit_test_suite(
     ]),
     cfg = "//xla:lit.cfg.py",
     data = [
-        "//xla/tools/hlo_opt:gpu_specs/a100_80.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/a100_pcie_80.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/a6000.txtpb",
-        "//xla/tools/hlo_opt:gpu_specs/h100.txtpb",
+        "//xla/tools/hlo_opt:gpu_specs/h100_sxm.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/mi200.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/p100.txtpb",
         "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
@@ -855,8 +856,8 @@ lit_test_suite(
 #     name = "xla-opt",
 #     srcs = ["xla-opt.cc"],
 #     deps = [
-#         "//xla/service/gpu:prevent_mmav3_loop_unrolling",
-#         "//xla/service/gpu:triton_sparse_extensions",
+#         "//xla/service/gpu/fusions/triton:prevent_mmav3_loop_unrolling",
+#         "//xla/service/gpu/fusions/triton:sparse_extensions",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@triton//:AllPassesAndDialects",

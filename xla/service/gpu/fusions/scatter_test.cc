@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -39,6 +39,11 @@ class ScatterFusionTest : public HloTestBase {
     printer_ =
         AffineMapPrinter({"th_x", "th_y", "th_z", "bl_x", "bl_y", "bl_z"},
                          {"chunk_id", "unroll_id", "index_id"});
+  }
+  DebugOptions GetDebugOptionsForTest() override {
+    auto opts = HloTestBase::GetDebugOptionsForTest();
+    opts.set_xla_gpu_mlir_emitter_level(0);
+    return opts;
   }
 
  protected:
@@ -145,7 +150,7 @@ TEST_F(ScatterFusionTest, ThreadIdIndexing) {
 
   constexpr auto kUpdatesIndexing = R"(
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
-      ((bl_x * 128 + th_x) floordiv 200) mod 42,
+      (bl_x * 128 + th_x) floordiv 200,
       ((bl_x * 128 + th_x) floordiv 20) mod 10,
       (bl_x * 128 + th_x) mod 20
     )
@@ -187,7 +192,7 @@ TEST_F(ScatterFusionTest, ThreadIdIndexing) {
 
   constexpr auto kIndicesIndexing = R"(
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id, index_id] ->
-      (((bl_x * 128 + th_x) floordiv 200) mod 42, 0)
+      ((bl_x * 128 + th_x) floordiv 200, 0)
     domain:
     th_x in [0, 128)
     th_y in [0, 1)

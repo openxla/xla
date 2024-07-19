@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "rocm/rocm_config.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/gpu_activation.h"
@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/rocm/rocm_complex_converters.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -46,6 +47,8 @@ using tsl::OpDeterminismRequired;
 
 namespace stream_executor {
 namespace gpu {
+
+using rocm::ROCMComplex;
 
 extern void rocm_Broadcast_fp32(void *stream, float *dst, int dst_stride,
                                 int batches, int src_batches, float *src,
@@ -541,11 +544,11 @@ absl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
         "datatypes for the inputs a (%d) and b (%d) are unsupported",
         static_cast<int>(type_a), static_cast<int>(type_b)));
   }
-  TF_ASSIGN_OR_RETURN(
-      auto timer,
-      GpuTimer::CreateIfNeeded(
-          stream, profile_result && profile_result->warmup_run_executed(),
-          profile_result != nullptr));
+  std::optional<GpuTimer> timer = std::nullopt;
+  if (profile_result != nullptr) {
+    TF_ASSIGN_OR_RETURN(
+        timer, GpuTimer::Create(stream, profile_result->warmup_run_executed()));
+  }
 
   // fall back to the default implementation
   if (algorithm == blas::kDefaultAlgorithm && type_a == type_c) {
@@ -602,11 +605,11 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
         "datatypes for the inputs a (%d) and b (%d) are unsupported",
         static_cast<int>(type_a), static_cast<int>(type_b)));
   }
-  TF_ASSIGN_OR_RETURN(
-      auto timer,
-      GpuTimer::CreateIfNeeded(
-          stream, profile_result && profile_result->warmup_run_executed(),
-          profile_result != nullptr));
+  std::optional<GpuTimer> timer = std::nullopt;
+  if (profile_result != nullptr) {
+    TF_ASSIGN_OR_RETURN(
+        timer, GpuTimer::Create(stream, profile_result->warmup_run_executed()));
+  }
 
   // fall back to the default implementation
   if (algorithm == blas::kDefaultAlgorithm && type_a == type_c) {
@@ -967,8 +970,8 @@ absl::Status ROCMBlas::DoBlasGemmBatchedInternal(
   bool ok = DoBlasInternal(
       rocblas_func, stream, /* pointer_mode_host = */ true,
       ROCMBlasTranspose(transa), ROCMBlasTranspose(transb), m, n, k,
-      GpuComplex(alpha_ptr), GpuMemory(a.device_mem), lda, batch_stride_a,
-      GpuMemory(b.device_mem), ldb, batch_stride_b, GpuComplex(beta_ptr),
+      ROCMComplex(alpha_ptr), GpuMemory(a.device_mem), lda, batch_stride_a,
+      GpuMemory(b.device_mem), ldb, batch_stride_b, ROCMComplex(beta_ptr),
       GpuMemoryMutable(&c.device_mem), ldc, batch_stride_c, batch_count);
 
   if (!ok) {

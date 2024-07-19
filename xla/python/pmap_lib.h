@@ -21,7 +21,7 @@ limitations under the License.
 #include <vector>
 
 // placeholder for index annotation headers
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 // TODO(jblespiau): The current implementation moves the Python logic to C++,
 // as a preliminary step to executing the `pmap` execution path from C++.

@@ -24,7 +24,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 #include "tsl/profiler/protobuf/profile.pb.h"
 
 namespace xla {

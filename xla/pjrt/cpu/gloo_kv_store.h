@@ -22,7 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/time/time.h"
-#include "gloo/rendezvous/store.h"  // from @gloo
+#include "gloo/rendezvous/store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 
 namespace xla::cpu {

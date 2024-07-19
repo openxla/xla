@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "nanobind/make_iterator.h"  // from @nanobind
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/make_iterator.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/device.h"
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_helpers.h"

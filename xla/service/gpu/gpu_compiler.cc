@@ -55,9 +55,9 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
-#include "mlir/IR/Diagnostics.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -314,7 +314,7 @@ class GpuThunkAotCompilationResult : public AotCompilationResult {
   FromModule(const HloModule* hlo_module,
              const BufferAssignment* buffer_assignment,
              std::string_view asm_text, absl::Span<const uint8_t> binary,
-             const Thunk::BinaryMap& dnn_compiled_graphs) {
+             const BinaryMap& dnn_compiled_graphs) {
     CompilationResultProto proto;
     *proto.mutable_hlo_module_with_config() = hlo_module->ToProtoWithConfig();
     *proto.mutable_buffer_assignment() = buffer_assignment->ToProto();
@@ -427,8 +427,8 @@ GpuThunkAotCompilationResult::LoadExecutable(
           /*asm_text=*/proto_.asm_text(),
           /*binary=*/binary,
           /*dnn_compiled_graphs=*/
-          Thunk::BinaryMap(proto_.dnn_compiled_graphs().cbegin(),
-                           proto_.dnn_compiled_graphs().cend()),
+          BinaryMap(proto_.dnn_compiled_graphs().cbegin(),
+                    proto_.dnn_compiled_graphs().cend()),
           /*gpu_version=*/gpu_device_info.gpu_compute_capability(),
           /*executable=*/ir_emitter->ConsumeThunkSequence(),
           /*constants=*/std::move(constants),
@@ -870,6 +870,8 @@ absl::Status RunPostLayoutCollectivePipelinerPasses(HloModule* hlo_module) {
     // We call WhileLoopTripCountAnnotator at the end of the collective
     // pipeline, which might have changed the loop trip count.
     collectives_pipeline.AddPass<WhileLoopTripCountAnnotator>();
+    // Flatten call graph after loop peeling.
+    collectives_pipeline.AddPass<FlattenCallGraph>();
   }
   return collectives_pipeline.Run(hlo_module).status();
 }
@@ -1377,9 +1379,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         gpu_target_config.device_description.gpu_compute_capability();
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
     const auto* cuda_cc = std::get_if<se::CudaComputeCapability>(&gpu_version);
+    const auto* rocm_cc = std::get_if<se::RocmComputeCapability>(&gpu_version);
 
-    if (debug_options.xla_gpu_enable_triton_gemm() && cuda_cc != nullptr &&
-        cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) {
+    if (debug_options.xla_gpu_enable_triton_gemm() &&
+        ((cuda_cc != nullptr &&
+          cuda_cc->IsAtLeast(se::CudaComputeCapability::AMPERE)) ||
+         rocm_cc != nullptr)) {
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
     }
@@ -2131,7 +2136,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     return absl::StrFormat("XlaCompileBackend:#module=%s,program_id=%d#",
                            module->name(), module->unique_id());
   }};
-  Thunk::BinaryMap dnn_compiled_graphs;
+  BinaryMap dnn_compiled_graphs;
   if (stream_exec) {
     TF_RETURN_IF_ERROR(RunCudnnFusionCompilerPass(module.get(), stream_exec,
                                                   &dnn_compiled_graphs));
@@ -2174,7 +2179,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     HloCostAnalysis::Options cost_analysis_options{ShapeSizeBytesFunction()};
     cost_analysis_options.set_bytes_per_second(
         gpu_device_info.memory_bandwidth());
-    GpuHloCostAnalysis cost_analysis(cost_analysis_options, &gpu_device_info);
+    GpuHloCostAnalysis cost_analysis(cost_analysis_options, gpu_device_info);
     TF_RETURN_IF_ERROR(module->entry_computation()->Accept(&cost_analysis));
     if (!options.is_autotuning_compilation) {
       VLOG(1) << "HLO memory read+written: "

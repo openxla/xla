@@ -17,7 +17,7 @@ limitations under the License.
 #define XLA_PYTHON_OUTFEED_RECEIVER_PY_H_
 
 // placeholder for index annotation headers
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 namespace xla {
 

@@ -352,6 +352,7 @@ cuda_only_cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cuda_activation_header",
+        ":cuda_helpers",
         ":cuda_platform_id",
         "//xla/stream_executor",
         "//xla/stream_executor:fft",
@@ -477,7 +478,10 @@ cc_library(
     textual_hdrs = if_cuda_is_configured(["cuda_helpers.h"]),
     deps = if_cuda_is_configured([
         "//xla/stream_executor/gpu:gpu_helpers_header",
-    ]),
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + [
+        "@com_google_absl//absl/log:check",
+    ],
 )
 
 cuda_only_cc_library(
@@ -551,11 +555,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
-    ] + if_cuda_is_configured([
-        # TF has a check that requires every build target to exist, so let's guard this
-        # dependency until hermetic cuda is submitted.
         "@local_config_cuda//cuda:nvptxcompiler",
-    ]),
+    ],
 )
 
 cc_library(
@@ -668,6 +669,11 @@ xla_cc_test(
         # have this issue.
         "--heap_check_max_pointer_offset=-1",
     ]),
+    # The test fails with msan/tsan since its introduction.
+    tags = [
+        "nomsan",
+        "notsan",
+    ],
     deps = [
         ":nvjitlink",
         ":nvjitlink_support",

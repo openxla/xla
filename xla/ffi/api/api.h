@@ -198,6 +198,9 @@ class Ffi {
   template <ExecutionStage stage = ExecutionStage::kExecute>
   static Binding<stage> Bind();
 
+  // Creates an empty binding for the instantiate stage.
+  static Binding<ExecutionStage::kInstantiate> BindInstantiate();
+
   // Automatic FFI binding that does binding specification inference from the
   // `fn` type signature and binds `fn` to it. This enables a more concise FFI
   // handler registration with fully automatic type inference at the cost of
@@ -221,8 +224,8 @@ class Ffi {
       const XLA_FFI_Api* api, std::string_view name, std::string_view platform,
       XLA_FFI_Handler* execute, XLA_FFI_Handler_Traits traits = 0) {
     return RegisterStaticHandler(
-        api, name, platform, XLA_FFI_Handler_Bundle{nullptr, nullptr, execute},
-        traits);
+        api, name, platform,
+        XLA_FFI_Handler_Bundle{nullptr, nullptr, nullptr, execute}, traits);
   }
 
  protected:
@@ -475,8 +478,12 @@ class Binding {
 };
 
 template <ExecutionStage stage>
-inline Binding<stage> Ffi::Bind() {
+Binding<stage> Ffi::Bind() {
   return xla::ffi::Binding<stage>();
+}
+
+inline Binding<ExecutionStage::kInstantiate> Ffi::BindInstantiate() {
+  return Bind<ExecutionStage::kInstantiate>();
 }
 
 //===----------------------------------------------------------------------===//
@@ -776,8 +783,6 @@ struct AttrDecoding;
 //                                      XLA_FFI_ExecutionContext* ctx);
 //   }
 //
-// Second template parameter is used to conditionally enable/disable context
-// decoding specialization for a given type via SFINAE.
 template <typename T>
 struct CtxDecoding;
 
@@ -790,12 +795,17 @@ struct CtxDecoding;
 //
 // Example: encoding `absl::Status` result
 //
-//   template<>
+//   template<ExecutionStage stage>
 //   struct ResultEncoding<absl::Status> {
-//     XLA_FFI_Error* Encode(const XLA_FFI_Api* api, absl::Status status) {...}
+//     XLA_FFI_Error* Encode(const XLA_FFI_Api* api,
+//                           XLA_FFI_ExecutionContext* ctx,
+//.                          absl::Status status) {...}
 //   }
 //
-template <typename T>
+// Result encoding is execution stage specific, for example at instantiation
+// stage FFI handler can return an FFI handler state, while at execution stage
+// we only support returning a status-like type.
+template <ExecutionStage stage, typename T>
 struct ResultEncoding;
 
 //===----------------------------------------------------------------------===//
@@ -974,6 +984,7 @@ class Expected {
   constexpr const T* operator->() const { return &value(); }
 
   constexpr bool has_value() const { return std::holds_alternative<T>(data_); }
+  constexpr bool has_error() const { return std::holds_alternative<E>(data_); }
 
   constexpr T& value() & { return std::get<T>(data_); }
   constexpr const T& value() const& { return std::get<T>(data_); }
@@ -992,7 +1003,7 @@ class Expected {
 template <typename E>
 class Unexpected {
  public:
-  explicit constexpr Unexpected(E error) : error_(std::move(error)) {}
+  constexpr Unexpected(E error) : error_(std::move(error)) {}  // NOLINT
 
  private:
   template <typename, typename>
@@ -1375,9 +1386,9 @@ class Handler : public Ffi {
       }
     }
 
-    auto result = fn_(std::move(*std::get<Is>(args))...);
-    return ResultEncoding<ResultType>::Encode(call_frame->api,
-                                              std::move(result));
+    ResultType result = fn_(std::move(*std::get<Is>(args))...);
+    return ResultEncoding<stage, ResultType>::Encode(
+        call_frame->api, call_frame->ctx, std::move(result));
   }
 
   XLA_FFI_Error* FailedDecodeError(const XLA_FFI_CallFrame* call_frame,

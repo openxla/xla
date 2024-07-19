@@ -38,15 +38,14 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/gpu/model/affine_map_evaluator.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 
@@ -64,7 +63,6 @@ using mlir::AffineExpr;
 using mlir::AffineExprKind;
 using mlir::AffineMap;
 using mlir::AffineSymbolExpr;
-using mlir::getAffineBinaryOpExpr;
 using mlir::getAffineConstantExpr;
 using mlir::getAffineDimExpr;
 using mlir::MLIRContext;
@@ -722,26 +720,36 @@ bool AffineExprSimplifier::SimplifyConstraintRange(AffineExpr* expr,
 // [range_vars(second)|rt_vars(second)|range_vars(first)|rt_vars(first)]
 // to
 // [range_vars(second)|range_vars(first)|rt_vars(second)|rt_vars(first)].
+// If an empty vector is returned, no replacement is needed.
 SmallVector<AffineExpr, 4> GetComposedSymbolsPermutationToCorrectOrder(
     const IndexingMap& first, const IndexingMap& second) {
+  // No permutation is needed if the second map has no RTVars.
+  if (second.GetRTVarsCount() == 0) {
+    return {};
+  }
   SmallVector<AffineExpr, 4> symbol_replacements;
   MLIRContext* mlir_context = first.GetMLIRContext();
   for (int id = 0; id < second.GetRangeVarsCount(); ++id) {
     symbol_replacements.push_back(getAffineSymbolExpr(id, mlir_context));
   }
+  int64_t first_range_vars_count = first.GetRangeVarsCount();
+  int64_t second_range_vars_count = second.GetRangeVarsCount();
+  int64_t first_rt_vars_count = first.GetRTVarsCount();
+  int64_t second_rt_vars_count = second.GetRTVarsCount();
   int64_t rt_vars_second_start =
-      first.GetRangeVarsCount() + second.GetRangeVarsCount();
-  for (int64_t id = 0; id < second.GetRTVarsCount(); ++id) {
+      first_range_vars_count + second_range_vars_count;
+  for (int64_t id = 0; id < second_rt_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(rt_vars_second_start++, mlir_context));
   }
-  int64_t range_vars_first_start = second.GetRangeVarsCount();
-  for (int64_t id = 0; id < first.GetRangeVarsCount(); ++id) {
+  int64_t range_vars_first_start = second_range_vars_count;
+  for (int64_t id = 0; id < first_range_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(range_vars_first_start++, mlir_context));
   }
-  int64_t rt_vars_first_start = rt_vars_second_start + second.GetRTVarsCount();
-  for (int64_t id = 0; id < first.GetRTVarsCount(); ++id) {
+  int64_t rt_vars_first_start =
+      first_range_vars_count + second_range_vars_count + second_rt_vars_count;
+  for (int64_t id = 0; id < first_rt_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(rt_vars_first_start++, mlir_context));
   }
@@ -1108,8 +1116,10 @@ SmallVector<int64_t, 4> IndexingMap::Evaluate(
 }
 
 RangeEvaluator::RangeEvaluator(const IndexingMap& indexing_map,
-                               MLIRContext* mlir_context)
-    : mlir_context_(mlir_context), indexing_map_(indexing_map) {}
+                               MLIRContext* mlir_context, bool use_constraints)
+    : mlir_context_(mlir_context),
+      indexing_map_(indexing_map),
+      use_constraints_(use_constraints) {}
 
 bool RangeEvaluator::IsAlwaysPositiveOrZero(mlir::AffineExpr expr) {
   return ComputeExpressionRange(expr).lower >= 0;
@@ -1132,42 +1142,52 @@ Interval RangeEvaluator::ComputeExpressionRange(AffineExpr expr) {
       return indexing_map_.GetSymbolBound(
           mlir::cast<AffineSymbolExpr>(expr).getPosition());
     default:
-      auto bound = expression_ranges_cache_.find(expr);
-      if (bound != expression_ranges_cache_.end()) {
-        return bound->second;
-      }
-      auto binary_op = mlir::dyn_cast<AffineBinaryOpExpr>(expr);
-      CHECK(binary_op);
-      auto lhs = ComputeExpressionRange(binary_op.getLHS());
-      auto rhs = ComputeExpressionRange(binary_op.getRHS());
-
-      auto& result = expression_ranges_cache_[expr];
-      switch (expr.getKind()) {
-        case AffineExprKind::Add:
-          return result = lhs + rhs;
-        case AffineExprKind::Mul:
-          return result = lhs * rhs;
-        case AffineExprKind::Mod: {
-          CHECK(rhs.IsPoint()) << "RHS of mod must be a constant";
-          int64_t m = rhs.lower;
-          if (0 <= lhs.lower && lhs.upper < m) {
-            return result = lhs;
-          }
-          return result = {0, m - 1};
-        }
-        case AffineExprKind::FloorDiv: {
-          CHECK(rhs.IsPoint()) << "RHS of floor_div must be a constant";
-          int64_t d = rhs.lower;
-          // TODO(jreiffers): Implement saturating semantics.
-          int64_t a = llvm::divideFloorSigned(lhs.lower, d);
-          int64_t b = llvm::divideFloorSigned(lhs.upper, d);
-          return result = {std::min(a, b), std::max(a, b)};
-        }
-        default:
-          // We don't use ceildiv, so we don't support it.
-          LOG(FATAL) << "Unsupported expression";
-      }
+      break;
   }
+  auto binary_op = mlir::dyn_cast<AffineBinaryOpExpr>(expr);
+  CHECK(binary_op);
+  auto lhs = ComputeExpressionRange(binary_op.getLHS());
+  auto rhs = ComputeExpressionRange(binary_op.getRHS());
+
+  Interval result;
+  switch (expr.getKind()) {
+    case AffineExprKind::Add:
+      result = lhs + rhs;
+      break;
+    case AffineExprKind::Mul:
+      result = lhs * rhs;
+      break;
+    case AffineExprKind::Mod: {
+      CHECK(rhs.IsPoint()) << "RHS of mod must be a constant";
+      int64_t m = rhs.lower;
+      if (0 <= lhs.lower && lhs.upper < m) {
+        result = lhs;
+      } else {
+        result = {0, m - 1};
+      }
+      break;
+    }
+    case AffineExprKind::FloorDiv: {
+      CHECK(rhs.IsPoint()) << "RHS of floor_div must be a constant";
+      int64_t d = rhs.lower;
+      // TODO(jreiffers): Implement saturating semantics.
+      int64_t a = llvm::divideFloorSigned(lhs.lower, d);
+      int64_t b = llvm::divideFloorSigned(lhs.upper, d);
+      result = {std::min(a, b), std::max(a, b)};
+      break;
+    }
+    default:
+      // We don't use ceildiv, so we don't support it.
+      LOG(FATAL) << "Unsupported expression";
+  }
+
+  if (use_constraints_) {
+    auto constraint = indexing_map_.GetConstraints().find(expr);
+    if (constraint != indexing_map_.GetConstraints().end()) {
+      return result.Intersect(constraint->second);
+    }
+  }
+  return result;
 }
 
 std::string IndexingMap::ToString(const AffineMapPrinter& printer) const {
@@ -1272,12 +1292,13 @@ bool IndexingMap::Simplify() {
 
   // Simplify affine_map using the optimized ranges.
   // Potentially, we can be smarter about recreating the range_evaluator.
-  RangeEvaluator range_evaluator(*this, GetMLIRContext());
-  AffineExprSimplifier simplifier(&range_evaluator);
+  RangeEvaluator constraint_range_evaluator(*this, GetMLIRContext(),
+                                            /*use_constraints=*/false);
+  AffineExprSimplifier constraint_simplifier(&constraint_range_evaluator);
   while (true) {
     bool did_simplify = false;
-    did_simplify |= simplifier.SimplifyConstraintExprs(*this);
-    did_simplify |= simplifier.SimplifyConstraintRanges(*this);
+    did_simplify |= constraint_simplifier.SimplifyConstraintExprs(*this);
+    did_simplify |= constraint_simplifier.SimplifyConstraintRanges(*this);
     if (!did_simplify) {
       break;
     }
@@ -1285,7 +1306,10 @@ bool IndexingMap::Simplify() {
   }
   // Simplify dependent constraints.
   constraints_were_simplified |= MergeModConstraints();
-  AffineMap simplified_affine_map = simplifier.Simplify(affine_map_);
+  RangeEvaluator range_evaluator(*this, GetMLIRContext(),
+                                 /*use_constraints=*/true);
+  AffineMap simplified_affine_map =
+      AffineExprSimplifier(&range_evaluator).Simplify(affine_map_);
   bool affine_map_was_simplified = simplified_affine_map != affine_map_;
   if (affine_map_was_simplified) {
     affine_map_ = simplified_affine_map;
@@ -1404,10 +1428,17 @@ UsedParameters GetUsedParameters(const mlir::AffineExpr& expr) {
   return used_parameters;
 }
 
-bool IsFunctionOfUnusedDimsAndSymbolsOnly(
-    const UsedParameters& used_parameters,
-    const SmallBitVector& unused_dims_bit_vector,
-    const SmallBitVector& unused_symbols_bit_vector) {
+bool IsFunctionOfUnusedVarsOnly(const UsedParameters& used_parameters,
+                                const SmallBitVector& unused_dims_bit_vector,
+                                const SmallBitVector& unused_symbols_bit_vector,
+                                bool removing_dims, bool removing_symbols) {
+  if (!used_parameters.dimension_ids.empty() && !removing_dims) {
+    return false;
+  }
+  if (!used_parameters.symbol_ids.empty() && !removing_symbols) {
+    return false;
+  }
+
   for (int64_t dim_id : used_parameters.dimension_ids) {
     if (!unused_dims_bit_vector[dim_id]) return false;
   }
@@ -1424,7 +1455,9 @@ struct UnusedVariables {
 };
 
 // Detects unused dimensions and symbols in the inde
-UnusedVariables DetectUnusedVariables(const IndexingMap& indexing_map) {
+UnusedVariables DetectUnusedVariables(const IndexingMap& indexing_map,
+                                      bool removing_dims,
+                                      bool removing_symbols) {
   AffineMap affine_map = indexing_map.GetAffineMap();
 
   UnusedVariables unused_vars;
@@ -1438,11 +1471,13 @@ UnusedVariables DetectUnusedVariables(const IndexingMap& indexing_map) {
       unused_constraints_candidates;
   for (const auto& [expr, range] : indexing_map.GetConstraints()) {
     UsedParameters used_parameters = GetUsedParameters(expr);
-    // If the expression uses only symbols and dims that are "unused" in
-    // `affine_map`, then we can remove it.
-    if (IsFunctionOfUnusedDimsAndSymbolsOnly(used_parameters,
-                                             unused_vars.unused_dims,
-                                             unused_vars.unused_symbols)) {
+    // If the expression uses only symbols that are unused in `affine_map`, then
+    // we can remove it (because we will remove the symbols as well). Note that
+    // the same is not true for dimensions, because of the existence of the
+    // `RemoveUnusedSymbols` function.
+    if (IsFunctionOfUnusedVarsOnly(used_parameters, unused_vars.unused_dims,
+                                   unused_vars.unused_symbols, removing_dims,
+                                   removing_symbols)) {
       unused_constraints_candidates.push_back({expr, used_parameters});
       continue;
     }
@@ -1455,9 +1490,9 @@ UnusedVariables DetectUnusedVariables(const IndexingMap& indexing_map) {
     }
   }
   for (const auto& [expr, used_parameters] : unused_constraints_candidates) {
-    if (IsFunctionOfUnusedDimsAndSymbolsOnly(used_parameters,
-                                             unused_vars.unused_dims,
-                                             unused_vars.unused_symbols)) {
+    if (IsFunctionOfUnusedVarsOnly(used_parameters, unused_vars.unused_dims,
+                                   unused_vars.unused_symbols, removing_dims,
+                                   removing_symbols)) {
       unused_vars.constraints_with_unused_vars_only.push_back(expr);
     }
   }
@@ -1556,7 +1591,8 @@ SmallBitVector IndexingMap::RemoveUnusedSymbols() {
   if (IsUndefined()) return {};
   if (GetSymbolCount() == 0) return {};
 
-  UnusedVariables unused_vars = DetectUnusedVariables(*this);
+  UnusedVariables unused_vars = DetectUnusedVariables(
+      *this, /*removing_dims=*/false, /*removing_symbols=*/true);
   for (AffineExpr expr : unused_vars.constraints_with_unused_vars_only) {
     constraints_.erase(expr);
   }
@@ -1564,20 +1600,6 @@ SmallBitVector IndexingMap::RemoveUnusedSymbols() {
     return {};
   }
   return std::move(unused_vars.unused_symbols);
-}
-
-SmallBitVector IndexingMap::RemoveUnusedDimensions() {
-  if (IsUndefined()) return {};
-  if (GetDimensionCount() == 0) return {};
-
-  UnusedVariables unused_vars = DetectUnusedVariables(*this);
-  for (AffineExpr expr : unused_vars.constraints_with_unused_vars_only) {
-    constraints_.erase(expr);
-  }
-  if (!CompressVars(unused_vars.unused_dims, /*unused_symbols=*/{})) {
-    return {};
-  }
-  return std::move(unused_vars.unused_dims);
 }
 
 void IndexingMap::ResetToKnownEmpty() {
@@ -1619,7 +1641,8 @@ bool IndexingMap::VerifyConstraintIntervals() {
 SmallBitVector IndexingMap::RemoveUnusedVars() {
   if (IsUndefined()) return {};
 
-  UnusedVariables unused_vars = DetectUnusedVariables(*this);
+  UnusedVariables unused_vars = DetectUnusedVariables(
+      *this, /*removing_dims=*/true, /*removing_symbols=*/true);
   for (AffineExpr expr : unused_vars.constraints_with_unused_vars_only) {
     constraints_.erase(expr);
   }
@@ -1631,7 +1654,8 @@ SmallBitVector IndexingMap::RemoveUnusedVars() {
 }
 
 bool IndexingMap::MergeModConstraints() {
-  RangeEvaluator range_evaluator(*this, GetMLIRContext());
+  RangeEvaluator range_evaluator(*this, GetMLIRContext(),
+                                 /*use_constraints=*/false);
   bool did_simplify = false;
 
   // Group constraints by LHS.
@@ -1734,6 +1758,11 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
   // that range_vars go before rt_vars in the composed affine map symbols list.
   SmallVector<AffineExpr, 4> symbol_replacements =
       GetComposedSymbolsPermutationToCorrectOrder(first, second);
+  if (!symbol_replacements.empty()) {
+    composed_map = composed_map.replaceDimsAndSymbols(
+        /*dimReplacements=*/{}, symbol_replacements, composed_map.getNumDims(),
+        composed_map.getNumSymbols());
+  }
   IndexingMap composed_indexing_map(composed_map, first.GetDimVars(),
                                     std::move(combined_range_vars),
                                     std::move(combined_rt_vars));

@@ -17,7 +17,7 @@ limitations under the License.
 #define XLA_PYTHON_MLIR_H_
 
 // placeholder for index annotation headers
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 
 namespace xla {
 

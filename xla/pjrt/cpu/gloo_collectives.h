@@ -29,9 +29,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "gloo/context.h"  // from @gloo
-#include "gloo/rendezvous/store.h"  // from @gloo
-#include "gloo/transport/device.h"  // from @gloo
+#include "gloo/context.h"
+#include "gloo/rendezvous/store.h"
+#include "gloo/transport/device.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/global_device_id.h"

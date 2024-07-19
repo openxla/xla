@@ -35,18 +35,18 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "gloo/algorithm.h"  // from @gloo
-#include "gloo/allgather.h"  // from @gloo
-#include "gloo/allreduce.h"  // from @gloo
-#include "gloo/context.h"  // from @gloo
-#include "gloo/math.h"  // from @gloo
-#include "gloo/reduce_scatter.h"  // from @gloo
-#include "gloo/rendezvous/context.h"  // from @gloo
-#include "gloo/rendezvous/prefix_store.h"  // from @gloo
-#include "gloo/rendezvous/store.h"  // from @gloo
-#include "gloo/transport/device.h"  // from @gloo
-#include "gloo/transport/unbound_buffer.h"  // from @gloo
-#include "gloo/types.h"  // from @gloo
+#include "gloo/algorithm.h"
+#include "gloo/allgather.h"
+#include "gloo/allreduce.h"
+#include "gloo/context.h"
+#include "gloo/math.h"
+#include "gloo/reduce_scatter.h"
+#include "gloo/rendezvous/context.h"
+#include "gloo/rendezvous/prefix_store.h"
+#include "gloo/rendezvous/store.h"
+#include "gloo/transport/device.h"
+#include "gloo/transport/unbound_buffer.h"
+#include "gloo/types.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/collectives_interface.h"

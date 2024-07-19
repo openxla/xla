@@ -30,10 +30,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -125,8 +125,7 @@ absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
     auto* slice_instr =
         const_cast<HloInstruction*>(&slice_adaptor->instruction());
 
-    if (!IsContiguousSlice(slice_instr->operand(0)->shape(),
-                           slice_instr->shape())) {
+    if (!IsContiguousSlice(*slice_instr)) {
       return absl::InternalError(
           "DynamicSliceFusion only handles contiguous slices "
           "currently");
@@ -311,10 +310,7 @@ absl::StatusOr<BufferAllocation::Slice> GetResultSlice(
         const_cast<HloInstruction*>(&slice_adaptor->instruction());
     slice_instrs[arg_idx] = slice_instr;
 
-    if (!IsContiguousSlice(slice_instr->shape(),
-                           Cast<HloDynamicUpdateSliceInstruction>(slice_instr)
-                               ->update()
-                               ->shape())) {
+    if (!IsContiguousSlice(*slice_instr)) {
       return absl::InternalError(
           "DynamicSliceFusion only handles contiguous slices "
           "currently");
@@ -665,16 +661,16 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
 
   auto ffi_thunk = [&](Slices ops, Slices res) {
     auto& called_computations = custom_call.called_computations();
-    return std::make_unique<CustomCallThunk>(
+    return CustomCallThunk::Create(
         thunk_info, registration->bundle, std::move(ops), std::move(res),
         std::move(attributes),
         called_computations.empty() ? nullptr : called_computations[0]);
   };
 
   auto legacy_thunk = [&](Slices ops, Slices res) {
-    return std::make_unique<CustomCallThunk>(
-        thunk_info, std::move(custom_call_target), std::move(ops),
-        std::move(res), std::move(opaque));
+    return CustomCallThunk::Create(thunk_info, std::move(custom_call_target),
+                                   std::move(ops), std::move(res),
+                                   std::move(opaque));
   };
 
   std::vector<std::unique_ptr<BufferAllocation>> fake_allocations(num_args);
@@ -737,7 +733,8 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
         }));
 
     ThunkSequence seq;
-    seq.emplace_back(
+    TF_ASSIGN_OR_RETURN(
+        seq.emplace_back(),
         found_ffi_handler
             ? ffi_thunk(std::move(fake_operands), std::move(fake_results))
             : legacy_thunk(std::move(fake_operands), std::move(fake_results)));
@@ -748,9 +745,10 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
         std::move(orig_shapes), std::move(sliced_shapes),
         std::move(offset_byte_sizes));
   } else {
-    thunk = found_ffi_handler
-                ? ffi_thunk(std::move(operands), std::move(results))
-                : legacy_thunk(std::move(operands), std::move(results));
+    TF_ASSIGN_OR_RETURN(
+        thunk, found_ffi_handler
+                   ? ffi_thunk(std::move(operands), std::move(results))
+                   : legacy_thunk(std::move(operands), std::move(results)));
   }
 
   FusionEmissionResult result;

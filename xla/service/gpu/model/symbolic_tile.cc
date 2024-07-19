@@ -36,10 +36,10 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
 #include "xla/service/gpu/model/indexing_map.h"
 
@@ -1138,8 +1138,7 @@ std::string SymbolicTile::RtVarsToString(
     const AffineMapPrinter& printer) const {
   std::string s;
   std::stringstream ss(s);
-  PrintRTVars(tile_map_.GetRTVars(),
-              /*first_rt_var_symbol_index=*/tile_map_.GetDimensionCount(), ss,
+  PrintRTVars(tile_map_.GetRTVars(), /*first_rt_var_symbol_index=*/0, ss,
               printer);
   return ss.str();
 }
@@ -1163,9 +1162,7 @@ void SymbolicTile::Print(std::ostream& out,
   const std::vector<RTVar>& rt_vars = tile_map_.GetRTVars();
   if (!rt_vars.empty()) {
     out << "\n\trt_vars: ";
-    PrintRTVars(rt_vars,
-                /*first_rt_var_symbol_index=*/tile_map_.GetDimensionCount(),
-                out, printer);
+    PrintRTVars(rt_vars, /*first_rt_var_symbol_index=*/0, out, printer);
   }
   if (!constraints_.IsAlwaysSatisfied()) {
     out << "\n\tconstraints: ";

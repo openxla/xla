@@ -31,7 +31,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "llvm/ADT/SmallVector.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -135,7 +135,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> KernelThunk::Execute(
   // that kernel pointer will not change after we find it the first time.
   if (ABSL_PREDICT_FALSE(kernel == nullptr)) {
     TF_ASSIGN_OR_RETURN(SE_HOST_Kernel * kernel_fn,
-                        params.host_kernels->Find(kernel_name_));
+                        params.function_registry->FindKernel(kernel_name_));
 
     absl::MutexLock lock(&mutex_);
     kernel_.emplace(num_kernel_args_, kernel_fn, nullptr);

@@ -29,7 +29,7 @@ limitations under the License.
 #include <string_view>
 
 #include "absl/types/span.h"
-#include "nanobind/nanobind.h"  // from @nanobind
+#include "nanobind/nanobind.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 
 #if NPY_ABI_VERSION < 0x02000000

@@ -44,8 +44,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "unsupported/Eigen/CXX11/Tensor"
+#include "mlir/IR/BuiltinOps.h"
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
@@ -852,10 +852,15 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> TfrtCpuClient::Compile(
     mlir::ModuleOp module, CompileOptions options) {
   tsl::profiler::TraceMe traceme("TfrtCpuClient::Compile (mlir::ModuleOp)");
   XlaComputation xla_computation;
+  const ExecutableBuildOptions& exec_build_options =
+      options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false));
+      /*return_tuple=*/false,
+      exec_build_options.has_debug_options()
+          ? exec_build_options.debug_options().xla_use_shardy()
+          : false));
   return Compile(xla_computation, options);
 }
 
@@ -1598,7 +1603,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
           };
 
       cpu::Thunk::ExecuteParams execute_params = {
-          &cpu_executable->host_kernels(),
+          &cpu_executable->function_registry(),
           &allocations,
           cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
           run_options.intra_op_thread_pool(),
@@ -1735,7 +1740,7 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
 
             if (collective_params.ok()) {
               cpu::Thunk::ExecuteParams execute_params = {
-                  &cpu_executable->host_kernels(),
+                  &cpu_executable->function_registry(),
                   &allocations,
                   cpu::runtime::GetXfeedManager(run_options.device_ordinal()),
                   run_options.intra_op_thread_pool(),

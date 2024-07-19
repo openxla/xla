@@ -144,7 +144,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_dumping(true);
 
   opts.set_xla_gpu_enable_custom_fusions(false);
-  opts.set_xla_gpu_enable_address_computation_fusion(false);
+  opts.set_xla_gpu_enable_address_computation_fusion(true);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -246,7 +246,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
 
 #if GOOGLE_CUDA
-  opts.set_xla_gpu_mlir_emitter_level(1);
+  opts.set_xla_gpu_mlir_emitter_level(3);
 #else
   opts.set_xla_gpu_mlir_emitter_level(0);
 #endif
@@ -271,9 +271,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_nccl_terminate_on_error(false);
 
-  opts.set_xla_use_shardonnay(false);
+  opts.set_xla_use_shardy(false);
 
   opts.set_xla_gpu_shard_autotuning(false);
+
+  opts.set_xla_syntax_sugar_async_ops(false);
 
   opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
@@ -1781,15 +1783,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_nccl_terminate_on_error(),
       "If set, then NCCL errors will terminate the process."));
   flag_list->push_back(tsl::Flag(
-      "xla_use_shardonnay",
-      bool_setter_for(&DebugOptions::set_xla_use_shardonnay),
-      debug_options->xla_use_shardonnay(), "Whether to use Shardonnay."));
+      "xla_use_shardy", bool_setter_for(&DebugOptions::set_xla_use_shardy),
+      debug_options->xla_use_shardy(), "Whether to use Shardy."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_shard_autotuning",
       bool_setter_for(&DebugOptions::set_xla_gpu_shard_autotuning),
       debug_options->xla_gpu_shard_autotuning(),
       "Shard autotuning between participating compiler processes (typically in "
       "multi-host setups) and join the results when it's done."));
+  flag_list->push_back(
+      tsl::Flag("xla_syntax_sugar_async_ops",
+                bool_setter_for(&DebugOptions::set_xla_syntax_sugar_async_ops),
+                debug_options->xla_syntax_sugar_async_ops(),
+                "Enable syntax sugar for async ops in HLO dumps."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_kernel_cache_file",
                 string_setter_for(&DebugOptions::set_xla_gpu_kernel_cache_file),

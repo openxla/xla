@@ -450,6 +450,7 @@ xla_cc_test(
     ],
     deps = [
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:subprocess",
         "@tsl//tsl/platform:test",

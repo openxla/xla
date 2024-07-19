@@ -27,17 +27,17 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -146,8 +146,9 @@ MlirTransposeFusion::MlirTransposeFusion(const HloFusionAnalysis& analysis)
 
 std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToOutputIndexing(
     int64_t root_index, MLIRContext* mlir_context) const {
-  const auto& hero = analysis_.fusion_hero(root_index);
-  if (hero.opcode() != HloOpcode::kTranspose) {
+  const auto& hero = analysis_.fusion_hero(root_index).instruction();
+  if (!GetDescriptionForTiledTransposeEmitter(
+          analysis_.fusion_root(root_index).instruction(), hero)) {
     // The shape of non-transpose roots are bitcast compatible with the input
     // shape of transpose heroes.
     auto map = ComposeIndexingMaps(
@@ -164,7 +165,8 @@ std::optional<IndexingMap> MlirTransposeFusion::ComputeThreadIdToInputIndexing(
     int64_t root_index, int64_t hero_operand_index,
     MLIRContext* mlir_context) const {
   const auto& hero = analysis_.fusion_hero(root_index).instruction();
-  if (hero.opcode() != HloOpcode::kTranspose) {
+  if (!GetDescriptionForTiledTransposeEmitter(
+          analysis_.fusion_root(root_index).instruction(), hero)) {
     auto map = ComposeIndexingMaps(
         *ComputeThreadIdToOutputIndexing(root_index, mlir_context),
         *ComputeOutputToInputIndexing(
