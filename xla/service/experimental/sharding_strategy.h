@@ -3,6 +3,8 @@
 #define XLA_SERVICE_EXPERIMENTAL_SHARDING_STRATEGY_H_
 
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 
 namespace xla {
 
@@ -31,6 +33,15 @@ public:
   std::shared_ptr<HloSharding> result_sharding() { return result_sharding_; };
 
   void AddUserReshardingCosts(std::vector<uint64_t> resharding_costs);
+
+  // This function applies the sharding strategy into the 
+  // HloInstruction pointed to by instr by specifying the shardings for the
+  // instructions operands
+  void ApplyToInstruction(HloInstruction* instr);
+
+  // This function inserts a sharding strategy into an HloModule
+  // Applies sharding strategy to root instruction of entry computation
+  void ApplyToModule(HloModule* module);
 
 private:
   // TODO: make these shared_ptr<const HloSharding>

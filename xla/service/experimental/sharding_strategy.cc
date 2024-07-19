@@ -16,4 +16,20 @@ void ShardingStrategy::AddUserReshardingCosts(std::vector<uint64_t> costs) {
   resharding_costs_.push_back(std::move(costs));
 }
 
+void ShardingStrategy::ApplyToInstruction(HloInstruction* instr) {
+  int num_operands = instr->operand_count();
+
+  assert(num_operands == NumOpShardings());
+  for (int i = 0; i < num_operands; i++) {
+    instr->mutable_operand(i)->set_sharding(GetOpSharding(i));
+  }
+
+  return;
+}
+
+void ShardingStrategy::ApplyToModule(HloModule* module) {
+  ApplyToInstruction(module->entry_computation()->root_instruction()); 
+  return; 
+}
+
 } // xla

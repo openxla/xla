@@ -426,34 +426,6 @@ namespace {
     return;
   }
 
-  // This function applies the sharding strategy specified by strat into the 
-  // HloInstruction pointed to by instr by specifying the shardings for the
-  // instructions operands
-  void ApplyStrategyToInstruction(HloInstruction* instr, 
-      ShardingStrategy* strat) {
-    int num_operands = instr->operand_count();
-
-    assert(num_operands == strat->NumOpShardings());
-    for (int i = 0; i < num_operands; i++) {
-      instr->mutable_operand(i)->set_sharding(strat->GetOpSharding(i));
-    }
-  }
-
-  // This function inserts a sharding strategy into an HloModule
-  // Applies sharding strategy to root instruction of entry computation
-  void ApplyStrategyToModule(HloModule* module, ShardingStrategy* strat) {
-
-    // should only have one computation
-    assert(module->computation_count() == 1);
-    HloComputation* computation = module->entry_computation();
-
-    // apply the shardings to the operands of the root instruction
-    HloInstruction* root_instruction = computation->root_instruction();
-    ApplyStrategyToInstruction(root_instruction, strat); 
-
-    return; 
-  }
-
   // This function runs the sharding propagation pass over an HloModule
   void RunShardingPropagation(HloModule* module) {
     // automatically complete the shardings
@@ -527,7 +499,7 @@ namespace {
     // apply GSPMD to the module with the sharding strategy
     // TODO: should these take in unique pointers or is regulard pointer ok?
     ClearHloShardings(eval_module.get());
-    ApplyModuleStrategy(eval_module.get(), strat);
+    strat->ApplyToModule(eval_module.get());
     strat->set_result_sharding(RunGSPMD(eval_module.get()));
 
     // now evaluate cost
@@ -601,8 +573,7 @@ namespace {
 
   void InstructionStrategies::set_chosen_strat(int idx) {
     assert(0 <= idx && idx < sharding_strats_.size());
-    ApplyStrategyToInstruction(orig_instr_, &sharding_strats_[idx]);
-
+    sharding_strats_[idx].ApplyToInstruction(orig_instr_);
     return;
   }
 
