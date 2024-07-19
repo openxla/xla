@@ -3,6 +3,7 @@
 #include "xla/service/experimental/auto_parallel.h"
 
 #include "xla/service/experimental/module_cost_evaluator.h"
+#include "xla/service/experimental/resharding_cost_evaluator.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -215,7 +216,7 @@ namespace {
 
     // add operands
     for (int i = 0; i < params.size(); i++) {
-      builder.AddParameter(std::move(params[i]));
+      TF_CHECK_OK(builder.AddParameter(std::move(params[i])).status());
     }
     
     // build the resulting computation and return
@@ -248,15 +249,16 @@ namespace {
   }
 
   /*********************************************************/
-  /* InstructionSharding Class                             */
+  /* ShardingStrategy Class                             */
   /*********************************************************/
 
-  class InstructionSharding {
+  class ShardingStrategy {
   public:
-    InstructionSharding() = default;
-    ~InstructionSharding() = default;
-    InstructionSharding(const InstructionSharding &s) = default;
-    
+    ShardingStrategy() = default;
+    ~ShardingStrategy() = default;
+    ShardingStrategy(const ShardingStrategy& s) = default;
+    ShardingStrategy(ShardingStrategy&& s) = default;
+
     // cost getters and setters
     uint64_t cost() const { return cost_; }
     void set_cost(uint64_t cost) { cost_ = cost; }
@@ -272,6 +274,9 @@ namespace {
     // modifying resulting sharding
     // TODO: accept a shared pointer
     void set_result_sharding(HloSharding result_sharding);
+    std::shared_ptr<HloSharding> result_sharding() { return result_sharding_; };
+
+    void AddUserReshardingCosts(std::vector<uint64_t> resharding_costs);
 
   private:
     // TODO: make these shared_ptr<const HloSharding>
@@ -280,25 +285,35 @@ namespace {
     // This vector will be filled by enumerating incomplete sharding strategies
     std::vector<std::shared_ptr<HloSharding>> operand_shardings_;
 
+    // Cost of this specific instruction sharding. This will be assigned
+    // after evaluating the cost of the complete HloModule after performing
+    // sharding propagation through SPMD.
+    uint64_t cost_;
+
     // TODO: make these shared_ptr<const HloSharding>
     // Sharding of result of computing instruction. This will be completed
     // by GSPMD when given the input shardings and determining the output
     // shardings.
     std::shared_ptr<HloSharding> result_sharding_;
 
-    // Cost of this specific instruction sharding. This will be assigned
-    // after evaluating the cost of the complete HloModule after performing
-    // sharding propagation through SPMD.
-    uint64_t cost_;
+    // For each user of this instruction, have a resharding cost for
+    // each of the user's potential sharding strategies
+    // Cost vectors are added in user order
+    std::vector<std::vector<uint64_t>> resharding_costs_;
 
   };
 
-  void InstructionSharding::AddOpSharding(HloSharding sharding) {
+  void ShardingStrategy::AddOpSharding(HloSharding sharding) {
     operand_shardings_.push_back(std::make_shared<HloSharding>(sharding));
   }
 
-  void InstructionSharding::set_result_sharding(HloSharding result_sharding) {
+  void ShardingStrategy::set_result_sharding(HloSharding result_sharding) {
     result_sharding_ = std::make_shared<HloSharding>(result_sharding);
+  }
+
+  void ShardingStrategy::AddUserReshardingCosts(
+      std::vector<uint64_t> costs) {
+    resharding_costs_.push_back(std::move(costs));
   }
 
   /*********************************************************/
@@ -397,17 +412,17 @@ namespace {
   }
 
   // Combine shardings for each operator to form sharding strategies
-  std::vector<InstructionSharding> CombineShardingVectors(
+  std::vector<ShardingStrategy> CombineShardingVectors(
       std::vector<std::vector<HloSharding>> sharding_vecs) {
     int num_vecs = sharding_vecs.size();
 
     if (num_vecs == 0) {
       return {};
     } else if (num_vecs == 1) {
-      // only one operator, map each sharding to a separate InstructionSharding
-      std::vector<InstructionSharding> strats;
+      // only one operator, map each sharding to a separate ShardingStrategy
+      std::vector<ShardingStrategy> strats;
       for (HloSharding sharding : sharding_vecs[0]) {
-        InstructionSharding strat;
+        ShardingStrategy strat;
         strat.AddOpSharding(sharding);
         strats.push_back(strat);
       }
@@ -416,14 +431,14 @@ namespace {
 
     // otherwise recurse
     std::vector<HloSharding> shardings = sharding_vecs[num_vecs - 1];
-    std::vector<InstructionSharding> sub_strats = CombineShardingVectors(
+    std::vector<ShardingStrategy> sub_strats = CombineShardingVectors(
       std::vector<std::vector<HloSharding>>(sharding_vecs.begin(), 
         sharding_vecs.end() - 1)
     );
 
-    std::vector<InstructionSharding> strats;
+    std::vector<ShardingStrategy> strats;
     for (HloSharding sharding : shardings) {
-      for (InstructionSharding strat : sub_strats) {
+      for (ShardingStrategy strat : sub_strats) {
         // copy the existing sub_strat and add the new sharding
         strat.AddOpSharding(sharding);
         strats.push_back(strat);
@@ -438,7 +453,7 @@ namespace {
   // TODO: need to make instruction sharding use shared pointers
   // going to be many identical copies of the same sharding in memory
   // for larger problems
-  std::vector<InstructionSharding> EnumerateInstructionShardings(
+  std::vector<ShardingStrategy> EnumerateShardingStrategies(
       HloInstruction* instruction) {
 
     // enumerate through the shardings for each operator of the instruction
@@ -480,7 +495,7 @@ namespace {
 
   // This function inserts a sharding strategy into an HloModule
   // Assumes that this is a single instruction HloModule
-  void ApplyModuleStrategy(HloModule* module, InstructionSharding* strat) {
+  void ApplyModuleStrategy(HloModule* module, ShardingStrategy* strat) {
 
     std::shared_ptr<const HloSharding> sharding_ptr;
 
@@ -502,38 +517,53 @@ namespace {
     return; 
   }
 
-  // This function runs the sharding propagation pipeline pass on the module
-  void RunGSPMD(HloModule* module) {
-
-    // TODO: will need to remove manual setting of this eventually
-    HloModuleConfig& config = module->mutable_config();
-    config.set_num_partitions(DEVICE_COUNT);
-    config.set_replica_count(1);
-    config.set_use_spmd_partitioning(true);
-
-    // Setup HloPass for sharding propagation
-    // Should not propagate sharding to parameters because parameters should
-    // already have shardings
-    HloPassPipeline spmd_pipeline("spmd-partitioner");
-
+  // This function runs the sharding propagation pass over an HloModule
+  void RunShardingPropagation(HloModule* module) {
     // automatically complete the shardings
-    spmd_pipeline.AddPass<ShardingPropagation>(
+    HloPassPipeline sharding_pipeline("sharding-propagation");
+    sharding_pipeline.AddPass<ShardingPropagation>(
       /* is_spmd */ true,
-      /* propagate_metadata */ false,
+      /* propagate_metadata */ true,
       /* sharding propagation to output */ absl::Span<const bool>({ true }),
       /* sharding propagation to parameters */ absl::Span<const bool>({ false })
     );
 
-    // produce an SPMD program
+    TF_CHECK_OK(sharding_pipeline.Run(module).status());
+  }
+
+  // This function runs the SpmdPartitioner over an HloModule
+  void RunSpmdPartitioner(HloModule* module) {
+    // fill in communications to produce SPMD program
+    HloPassPipeline spmd_pipeline("spmd-partitioner");
     spmd_pipeline.AddPass<spmd::StatefulRngSpmdPartitioner>(
       module->config().num_partitions(),
       module->config().replica_count()
     );
 
-    // run pipeline
-    spmd_pipeline.Run(module);
+    TF_CHECK_OK(spmd_pipeline.Run(module).status());
+  }
 
-    return;
+  // This function runs the sharding propagation pipeline pass on the module
+  HloSharding RunGSPMD(HloModule* module) {
+
+    // TODO: will need to remove manual setting of this eventually
+    // TODO: is setting replica_count to 1 okay?
+    HloModuleConfig& config = module->mutable_config();
+    config.set_num_partitions(DEVICE_COUNT);
+    config.set_replica_count(1);
+    config.set_use_spmd_partitioning(true);
+
+    // complete the shardings to the output
+    RunShardingPropagation(module);
+
+    // extract the output sharding
+    HloInstruction* instr = module->entry_computation()->root_instruction();
+    HloSharding out_sharding = instr->sharding();
+
+    // now replace shardings with communication operations
+    RunSpmdPartitioner(module);
+
+    return out_sharding;
   }
 
   // This function returns the sharding of the entry computation's 
@@ -552,7 +582,7 @@ namespace {
   // The strat parameter will be updated with this cost and the resulting
   // output sharding
   void EvaluateShardingStrat(const HloModule* module, 
-      InstructionSharding* strat) {
+      ShardingStrategy* strat) {
 
     // clone the module to avoid clobbering future evaluations
     std::unique_ptr<HloModule> eval_module = module->Clone();
@@ -561,13 +591,13 @@ namespace {
     // TODO: should these take in unique pointers or is regulard pointer ok?
     ClearHloShardings(eval_module.get());
     ApplyModuleStrategy(eval_module.get(), strat);
-    RunGSPMD(eval_module.get());
+    strat->set_result_sharding(RunGSPMD(eval_module.get()));
 
     // now evaluate cost
     ModuleCostEvaluator evaluator;
     strat->set_cost(evaluator.Evaluate(eval_module.get()));
     VLOG(5) << LOG_HEADER(0) << "cost: " << strat->cost();
-    PrintModuleInfo(eval_module.get());
+    // PrintModuleInfo(eval_module.get());
     
     // update strat with cost and root instruction's output sharding
     // NOTE: the eval_module after GSPMD doesn't have it's sharding
@@ -577,59 +607,106 @@ namespace {
   }
 
   /*********************************************************/
-  /* InstructionShardingInfo Class                         */
+  /* InstructionStrategies Class                         */
   /*********************************************************/
 
-  class InstructionShardingInfo {
+  class InstructionStrategies {
   public:
-    InstructionShardingInfo(HloInstruction* orig_instr);
-    ~InstructionShardingInfo() = default;
+    InstructionStrategies(HloInstruction* orig_instr);
+    ~InstructionStrategies() = default;
+    InstructionStrategies(const InstructionStrategies& info) = default;
+
+    // accessors
+    std::vector<ShardingStrategy>& sharding_strats() { 
+      return sharding_strats_;
+    };
 
   private:
-
-    // Applies the given sharding strategy to the module and perforsm GSPMD
-    // on it to complete the sharding.
-
-    // This function will iterate through the various sharding strategies
-    // and apply them to the instruction within the module. Afterwards,
-    // GSPMD will be run to complete the module and the appropriate 
-    // sharding strategy
-    void EstimateStrategyCosts();
 
     // Points to the original instruction that will have its
     // sharding strategies enumerated. Eventually, this instruction
     // will be modified with a sharding strategy provided by the solvers
     HloInstruction* orig_instr_;
 
-    // Module containing a single computation of a single instruction that
-    // is a clone of the orig_instr. Created on construction of class.
-    // After enumerating various incomplete sharding strategies,
-    // each incomplete strategy will be applied to this module, be completed
-    // by GSPMD, and evaluated for it's computational and communication cost
-    // by inspecting the completed module's resulting operations
-    std::unique_ptr<HloModule> single_instr_module_;    
-
     // vector of sharding strategies for the given instruction
-    std::vector<InstructionSharding> sharding_strats_;
+    std::vector<ShardingStrategy> sharding_strats_;
 
   };
 
-  InstructionShardingInfo::InstructionShardingInfo(HloInstruction* orig_instr) 
+  InstructionStrategies::InstructionStrategies(HloInstruction* orig_instr) 
       : orig_instr_(orig_instr),
-        single_instr_module_(CreateModuleFromInstruction(orig_instr)),
-        sharding_strats_(EnumerateInstructionShardings(orig_instr)) {
-    EstimateStrategyCosts();
-    return;
-  }
+        sharding_strats_(EnumerateShardingStrategies(orig_instr)) {
 
-  void InstructionShardingInfo::EstimateStrategyCosts() {
+    // create a single instruction module which will then be used for evaluating
+    // all of the sharding strats
+    std::unique_ptr<HloModule> single_instr_module = 
+      CreateModuleFromInstruction(orig_instr);
 
+    // estimate costs of each sharding strategy
     for (int i = 0; i < sharding_strats_.size(); i++) {
-      EvaluateShardingStrat(single_instr_module_.get(), &sharding_strats_[i]);
+      EvaluateShardingStrat(single_instr_module.get(), &sharding_strats_[i]);
     }
 
     return;
   }
+
+  /*********************************************************/
+  /* Resharding Cost Estimation                            */
+  /*********************************************************/
+
+  void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
+      std::unique_ptr<InstructionStrategies>>& map) {
+    
+    // for each instruction, for each user of it, for each sharding strategy
+    // recalculate resharding costs
+
+    ReshardingCostEvaluator evaluator;
+
+    VLOG(5) << "Map size: " << map.size();
+
+    for (auto& [instr, instr_strats] : map) {
+      const Shape& shape = instr->shape();
+      
+      // don't loop if no users
+      if (instr->user_count() == 0) {
+        continue;
+      }
+
+      VLOG(5) << "\tNum sharding strats: " << instr_strats->sharding_strats().size();
+
+      for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
+        std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
+        VLOG(5) << "\t\tNum Users: " << instr->user_count();
+        // TODO: could honestly cache these to reduce storage
+
+        for (HloInstruction* user : instr->users()) {
+          // get index of instr in user's operands
+          int op_idx = user->operand_index(instr);
+          std::unique_ptr<InstructionStrategies>& user_strats = map[user];
+
+          VLOG(5) << "\t\t\tNum user strats: " << user_strats->sharding_strats().size();
+
+          std::vector<uint64_t> resharding_costs;
+          for (ShardingStrategy& out_strat : 
+              user_strats->sharding_strats()) {
+            uint64_t cost = evaluator.Evaluate(
+              shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
+            );
+            VLOG(5) << "Cost: " << cost;
+            resharding_costs.push_back(cost);
+          }
+          strat.AddUserReshardingCosts(resharding_costs);
+        }
+      }
+
+    }
+    
+    return;
+  }
+
+  /*********************************************************/
+  /* Additional Helper Functions                           */
+  /*********************************************************/
 
   // TODO: determine if this is a valid approach to determine 
   // if the module is the main module for the computations
@@ -669,29 +746,26 @@ namespace {
     std::unique_ptr<HloModule> module_clone = module->Clone();
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
-    int num_computations = module_clone->computation_count();
-    int comp_idx = 0;
+    std::unordered_map<HloInstruction*, 
+      std::unique_ptr<InstructionStrategies>> info_map;
 
-    // iterate through HloModule computations
+    // TODO: shouldn't I only be doing this for the main computation?
+    // construct relevant sharding information
     for (HloComputation* computation : module_clone->computations()) {
-
-      int num_instructions = computation->instruction_count();
-      int instr_idx = 0;
-      
       for (HloInstruction* instr : computation->instructions()) {
-
-        // create the relevant sharding information for this instruction
-        InstructionShardingInfo i(instr);
-
+        assert(info_map.count(instr) == 0);
+        info_map[instr] = std::make_unique<InstructionStrategies>(instr);
       }
     }
+
+    VLOG(5) << "Starting to evaluate the resharding costs";
+    EstimateReshardingCosts(info_map);
+
+    VLOG(5) << "Number of instructions: " << info_map.size();
 
     VLOG(5) << "Done Testing AutoParallelizer Run";
     
     return true;
   }
 
-    
-
-    
 }   // namespace xla

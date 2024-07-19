@@ -31,7 +31,8 @@ cc_library(
     hdrs = ["auto_parallel.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "module_cost_evaluator", 
+        "module_cost_evaluator",
+        "resharding_cost_evaluator",
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
         "//xla/service:sharding_propagation",
@@ -50,6 +51,28 @@ cc_library(
     hdrs = ["module_cost_evaluator.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "shape_utils",
         "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
+    name = "resharding_cost_evaluator",
+    srcs = ["resharding_cost_evaluator.cc"],
+    hdrs = ["resharding_cost_evaluator.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "shape_utils",
+        "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
+    name = "shape_utils",
+    srcs = ["shape_utils.cc"],
+    hdrs = ["shape_utils.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:shape_util"
     ]
 )
