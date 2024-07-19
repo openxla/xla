@@ -2,6 +2,7 @@
 
 #include "xla/service/experimental/sharding_enumeration.h"
 
+#include "xla/service/experimental/mesh.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 
 namespace xla {
@@ -14,6 +15,9 @@ std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
   // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
   std::vector<HloSharding> shardings;
 
+  int mesh_x_dim_size = Mesh::XDimSize();
+  int mesh_y_dim_size = Mesh::YDimSize();
+
   // note: this code is only acceptable for a 2D mesh grid,
   // would require more complicated solution for higher-dimensional grids
   for (int x_idx = 0; x_idx < rank; x_idx++) {
@@ -23,8 +27,8 @@ std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
 
       // construct tile_assignment_dims
       std::vector<int64_t> tile_assignment_dims(rank, 1);
-      tile_assignment_dims[x_idx] *= MESH_X_DIM;
-      tile_assignment_dims[y_idx] *= MESH_Y_DIM;
+      tile_assignment_dims[x_idx] *= mesh_x_dim_size;
+      tile_assignment_dims[y_idx] *= mesh_y_dim_size;
 
       // NOTE: intentionally may add two shardings if x_idx == y_idx
       // (i.e. when sharding a single data dimension on all devices)
@@ -34,14 +38,14 @@ std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
       if (x_idx <= y_idx) {
         shardings.push_back(HloSharding::IotaTile(
           tile_assignment_dims,
-          { MESH_X_DIM * MESH_Y_DIM },
+          { mesh_x_dim_size * mesh_y_dim_size },
           { 0 }
         ));
       }
       if (y_idx <= x_idx) {
         shardings.push_back(HloSharding::IotaTile(
           tile_assignment_dims,
-          { MESH_X_DIM, MESH_Y_DIM },
+          { mesh_x_dim_size, mesh_y_dim_size },
           { 1, 0 }
         ));
       }

@@ -3,6 +3,7 @@
 #include "xla/service/experimental/sharding_strategy_evaluator.h"
 
 #include "xla/service/experimental/module_cost_evaluator.h"
+#include "xla/service/experimental/mesh.h"
 
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/hlo_pass_interface.h"
@@ -11,9 +12,6 @@
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 
 #include "tsl/platform/errors.h"
-
-// TODO: only here because of mesh information
-#include "xla/service/experimental/sharding_enumeration.h"
 
 namespace xla {
 
@@ -74,7 +72,7 @@ HloSharding RunGSPMD(HloModule* module) {
   // TODO: will need to remove manual setting of this eventually
   // TODO: is setting replica_count to 1 okay?
   HloModuleConfig& config = module->mutable_config();
-  config.set_num_partitions(DEVICE_COUNT);
+  config.set_num_partitions(Mesh::DeviceCount());
   config.set_replica_count(1);
   config.set_use_spmd_partitioning(true);
 

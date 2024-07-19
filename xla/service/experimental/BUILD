@@ -75,9 +75,9 @@ cc_library(
     hdrs = ["sharding_strategy_evaluator.h"],
     visibility = ["//visibility:private"],
     deps = [
-        "sharding_enumeration",
-        "sharding_strategy",
+        "mesh",
         "module_cost_evaluator",
+        "sharding_strategy",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass", 
         "//xla/service:hlo_pass_pipeline",
@@ -114,8 +114,9 @@ cc_library(
     hdrs = ["sharding_enumeration.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "mesh",
         "sharding_strategy",
-        "//xla/hlo/ir:hlo"
+        "//xla/hlo/ir:hlo",
     ]
 )
 
@@ -147,4 +148,11 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo"
     ]
+)
+
+cc_library(
+    name = "mesh",
+    srcs = ["mesh.cc"],
+    hdrs = ["mesh.h"],
+    visibility = ["//visibility:private"],
 )
