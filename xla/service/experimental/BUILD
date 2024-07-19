@@ -46,6 +46,16 @@ cc_library(
 )
 
 cc_library(
+    name = "sharding_strategy_solver",
+    srcs = ["sharding_strategy_solver.cc"],
+    hdrs = ["sharding_strategy_solver.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
     name = "module_cost_evaluator",
     srcs = ["module_cost_evaluator.cc"],
     hdrs = ["module_cost_evaluator.h"],
