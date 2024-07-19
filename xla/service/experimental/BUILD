@@ -78,6 +78,16 @@ cc_library(
 )
 
 cc_library(
+    name = "sharding_strategy",
+    srcs = ["sharding_strategy.cc"],
+    hdrs = ["sharding_strategy.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
     name = "shape_utils",
     srcs = ["shape_utils.cc"],
     hdrs = ["shape_utils.h"],
