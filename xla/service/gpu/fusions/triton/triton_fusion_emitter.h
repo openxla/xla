@@ -121,6 +121,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     mlir::MLIRContext& mlir_context);
 
 // Compiles a given Triton module to LLVM IR.
+// If `emit_kernels` is false, then the function skips emitting
+// the kernels, but it still returns correctly filled TritonWrapperResult.
+// That is useful when deserializing from the compilation cache.
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     const HloModuleConfig& hlo_config, absl::string_view hlo_module_name,
     const se::GpuComputeCapability& cc,

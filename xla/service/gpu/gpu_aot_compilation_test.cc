@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/executable.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/platform.h"
@@ -180,12 +181,13 @@ std::string CreateTritonCustomCallBackendConfig() {
 }  // namespace
 
 TEST_F(GpuAotCompilationTest, ExportAndLoadExecutableWithTriton) {
-  if (auto cc = backend()
-                    .default_stream_executor()
-                    ->GetDeviceDescription()
-                    .cuda_compute_capability();
-      !cc.IsAtLeastAmpere()) {
-    GTEST_SKIP() << "Triton support is only enabled for Ampere GPUs and up.";
+  auto triton_support =
+      EnsureTritonSupportsComputeCapability(backend()
+                                                .default_stream_executor()
+                                                ->GetDeviceDescription()
+                                                .gpu_compute_capability());
+  if (!triton_support.ok()) {
+    GTEST_SKIP() << triton_support;
   }
 
   const absl::string_view hlo_string_template = R"(
@@ -206,10 +208,10 @@ TEST_F(GpuAotCompilationTest, ExportAndLoadExecutableWithTriton) {
                           ParseAndReturnVerifiedModule(hlo_string));
 
   auto compiler = backend().compiler();
-  auto name =
+  auto platform_name =
       absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
   TF_ASSERT_OK_AND_ASSIGN(se::Platform * platform,
-                          se::PlatformManager::PlatformWithName(name));
+                          se::PlatformManager::PlatformWithName(platform_name));
   TF_ASSERT_OK_AND_ASSIGN(se::StreamExecutor * stream_exec,
                           platform->ExecutorForDevice(0));
 
