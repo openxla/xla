@@ -625,6 +625,11 @@ namespace {
       return sharding_strats_;
     };
 
+    void set_user_strats(
+          std::vector<std::shared_ptr<InstructionStrategies>>& user_strats) {
+      user_strats_ = user_strats;
+    }
+
     // takes the index of sharding_strats_ and sets the sharding
     // of the instruction
     void set_chosen_strat(int idx);
@@ -635,6 +640,9 @@ namespace {
     // sharding strategies enumerated. Eventually, this instruction
     // will be modified with a sharding strategy provided by the solvers
     HloInstruction* orig_instr_;
+
+    // Pointers to strategies of users of this instruction
+    std::vector<std::shared_ptr<InstructionStrategies>> user_strats_;
 
     // vector of sharding strategies for the given instruction
     std::vector<ShardingStrategy> sharding_strats_;
@@ -670,14 +678,12 @@ namespace {
   /*********************************************************/
 
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
-      std::unique_ptr<InstructionStrategies>>& map) {
+      std::shared_ptr<InstructionStrategies>>& map) {
     
     // for each instruction, for each user of it, for each sharding strategy
     // recalculate resharding costs
 
     ReshardingCostEvaluator evaluator;
-
-    VLOG(5) << "Map size: " << map.size();
 
     for (auto& [instr, instr_strats] : map) {
       const Shape& shape = instr->shape();
@@ -687,27 +693,25 @@ namespace {
         continue;
       }
 
-      VLOG(5) << "\tNum sharding strats: " << instr_strats->sharding_strats().size();
+      // add all user strategies to current instructions strategies
+      std::vector<std::shared_ptr<InstructionStrategies>> all_user_strats;
+      for (HloInstruction* user : instr->users()) {
+        all_user_strats.push_back(map[user]);
+      }
+      instr_strats->set_user_strats(all_user_strats);
 
+      // deteremine costs for each sharding strategy 
       for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
+        // TODO: can cache this iteration to reduce time
         std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
-        VLOG(5) << "\t\tNum Users: " << instr->user_count();
-        // TODO: could honestly cache these to reduce storage
 
         for (HloInstruction* user : instr->users()) {
-          // get index of instr in user's operands
           int op_idx = user->operand_index(instr);
-          std::unique_ptr<InstructionStrategies>& user_strats = map[user];
-
-          VLOG(5) << "\t\t\tNum user strats: " << user_strats->sharding_strats().size();
-
           std::vector<uint64_t> resharding_costs;
-          for (ShardingStrategy& out_strat : 
-              user_strats->sharding_strats()) {
+          for (ShardingStrategy& out_strat : map[user]->sharding_strats()) {
             uint64_t cost = evaluator.Evaluate(
               shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
             );
-            VLOG(5) << "Cost: " << cost;
             resharding_costs.push_back(cost);
           }
           strat.AddUserReshardingCosts(resharding_costs);
@@ -762,14 +766,14 @@ namespace {
     VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
 
     std::unordered_map<HloInstruction*, 
-      std::unique_ptr<InstructionStrategies>> info_map;
+      std::shared_ptr<InstructionStrategies>> info_map;
 
     // TODO: shouldn't I only be doing this for the main computation?
     // construct relevant sharding information
     for (HloComputation* computation : module_clone->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
         assert(info_map.count(instr) == 0);
-        info_map[instr] = std::make_unique<InstructionStrategies>(instr);
+        info_map[instr] = std::make_shared<InstructionStrategies>(instr);
       }
     }
 
