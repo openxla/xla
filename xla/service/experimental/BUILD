@@ -31,6 +31,7 @@ cc_library(
     hdrs = ["auto_parallel.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "sharding_strategy",
         "module_cost_evaluator",
         "resharding_cost_evaluator",
         "//xla/service:hlo_pass", 
@@ -51,6 +52,7 @@ cc_library(
     hdrs = ["sharding_strategy_solver.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "sharding_strategy",
         "//xla/hlo/ir:hlo"
     ]
 )
