@@ -24,6 +24,7 @@ namespace {
   /*********************************************************/
   /* Debugging                                             */
   /*********************************************************/
+  // TODO: move into separate file
 
   std::string LOG_HEADER(int x, const char c[]="AutoParallel: ") {
     return ((x == 0) ? (c) : ((LOG_HEADER(x - 1, c)) + "\t"));
