@@ -1,6 +1,6 @@
 // TODO: license
 
-#include "xla/service/experimental/mesh.h"
+#include "xla/service/experimental/device_mesh.h"
 
 // assuming two dimensional mesh heirarchy of nodes and GPUs within nodes
 #define NUM_MESH_DIM 2  /* number of dimensions in the mesh grid */
@@ -10,9 +10,9 @@
 
 namespace xla {
 
-int Mesh::NumDim() { return NUM_MESH_DIM; }
-int Mesh::XDimSize() { return MESH_X_DIM; }
-int Mesh::YDimSize() { return MESH_Y_DIM; }
-int Mesh::DeviceCount() { return MESH_X_DIM * MESH_Y_DIM; }
+int DeviceMesh::NumDim() { return NUM_MESH_DIM; }
+int DeviceMesh::XDimSize() { return MESH_X_DIM; }
+int DeviceMesh::YDimSize() { return MESH_Y_DIM; }
+int DeviceMesh::DeviceCount() { return MESH_X_DIM * MESH_Y_DIM; }
 
 } // xla

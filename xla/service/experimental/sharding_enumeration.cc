@@ -2,7 +2,7 @@
 
 #include "xla/service/experimental/sharding_enumeration.h"
 
-#include "xla/service/experimental/mesh.h"
+#include "xla/service/experimental/device_mesh.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 
 namespace xla {
@@ -15,8 +15,8 @@ std::vector<HloSharding> EnumerateShardingsFromRank(int rank) {
   // two device dimensions currently (assume 4 (nodes) x 8 (gpus per node))
   std::vector<HloSharding> shardings;
 
-  int mesh_x_dim_size = Mesh::XDimSize();
-  int mesh_y_dim_size = Mesh::YDimSize();
+  int mesh_x_dim_size = DeviceMesh::XDimSize();
+  int mesh_y_dim_size = DeviceMesh::YDimSize();
 
   // note: this code is only acceptable for a 2D mesh grid,
   // would require more complicated solution for higher-dimensional grids

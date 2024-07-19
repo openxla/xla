@@ -75,7 +75,7 @@ cc_library(
     hdrs = ["sharding_strategy_evaluator.h"],
     visibility = ["//visibility:private"],
     deps = [
-        "mesh",
+        "device_mesh",
         "module_cost_evaluator",
         "sharding_strategy",
         "//xla/hlo/ir:hlo",
@@ -114,7 +114,7 @@ cc_library(
     hdrs = ["sharding_enumeration.h"],
     visibility = ["//visibility:private"],
     deps = [
-        "mesh",
+        "device_mesh",
         "sharding_strategy",
         "//xla/hlo/ir:hlo",
     ]
@@ -151,8 +151,8 @@ cc_library(
 )
 
 cc_library(
-    name = "mesh",
-    srcs = ["mesh.cc"],
-    hdrs = ["mesh.h"],
+    name = "device_mesh",
+    srcs = ["device_mesh.cc"],
+    hdrs = ["device_mesh.h"],
     visibility = ["//visibility:private"],
 )
