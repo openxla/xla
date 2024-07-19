@@ -31,13 +31,10 @@ cc_library(
     hdrs = ["auto_parallel.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "instruction_strategies",
         "sharding_strategy",
         "module_cost_evaluator",
         "resharding_cost_evaluator",
-        "//xla/service:hlo_pass", 
-        "//xla/service:hlo_pass_pipeline",
-        "//xla/service:sharding_propagation",
-        "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/status:status",
@@ -54,6 +51,22 @@ cc_library(
     deps = [
         "sharding_strategy",
         "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
+    name = "instruction_strategies",
+    srcs = ["instruction_strategies.cc"],
+    hdrs = ["instruction_strategies.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "sharding_strategy",
+        "module_cost_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass", 
+        "//xla/service:hlo_pass_pipeline",
+        "//xla/service:sharding_propagation",
+        "//xla/service/spmd:stateful_rng_spmd_partitioner",
     ]
 )
 
