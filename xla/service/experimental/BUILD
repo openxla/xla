@@ -31,6 +31,7 @@ cc_library(
     hdrs = ["auto_parallel.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "debug",
         "instruction_strategies",
         "sharding_strategy",
         "module_cost_evaluator",
@@ -155,4 +156,14 @@ cc_library(
     srcs = ["device_mesh.cc"],
     hdrs = ["device_mesh.h"],
     visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "debug",
+    srcs = ["debug.cc"],
+    hdrs = ["debug.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla/hlo/ir:hlo"
+    ]
 )
