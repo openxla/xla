@@ -596,7 +596,8 @@ std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
   std::optional<int64_t> indvar_tuple_idx =
       GetLoopInductionVarTupleIdx(while_op);
   if (!indvar_tuple_idx.has_value()) {
-    VLOG(2) << "Not attempting to unroll because induction variable could not be found.";
+    VLOG(2) << "Not attempting to unroll because induction variable could not "
+               "be found.";
     return std::nullopt;
   }
 
@@ -691,10 +692,10 @@ WhileLoopUnroller::GetUnrollableLoops(
 /*static*/ absl::StatusOr<bool> WhileLoopUnroller::Unroll(
     HloInstruction* while_op, int64_t unroll_factor, bool wrap_in_trivial_loop,
     bool force_unroll, bool prepare) {
-  TF_ASSIGN_OR_RETURN(UnrollResult result,
-                      WhileLoopUnroller::UnrollAndReturnReplacement(
-                          while_op, unroll_factor, wrap_in_trivial_loop,
-                          force_unroll));
+  TF_ASSIGN_OR_RETURN(
+      UnrollResult result,
+      WhileLoopUnroller::UnrollAndReturnReplacement(
+          while_op, unroll_factor, wrap_in_trivial_loop, force_unroll));
   return result.unrolled;
 }
 
@@ -702,8 +703,7 @@ WhileLoopUnroller::GetUnrollableLoops(
 WhileLoopUnroller::UnrollAndReturnReplacement(HloInstruction* while_op,
                                               int64_t unroll_factor,
                                               bool wrap_in_trivial_loop,
-                                              bool force_unroll,
-                                              bool prepare) {
+                                              bool force_unroll, bool prepare) {
   UnrollResult result;
 
   HloModule* module = while_op->GetModule();
@@ -719,8 +719,8 @@ WhileLoopUnroller::UnrollAndReturnReplacement(HloInstruction* while_op,
   if (prepare) {
     // Make sure all the necessary passes are executed before unrolling in order
     // to unroll every possible loop.
-    TF_ASSIGN_OR_RETURN(
-        bool changed, PrepareModuleForUnrolling(module, /*execution_threads=*/{}));
+    TF_ASSIGN_OR_RETURN(bool changed, PrepareModuleForUnrolling(
+                                          module, /*execution_threads=*/{}));
   }
 
   // Construct the loop config

@@ -696,7 +696,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     // to be consumed by the dot. This is advantageous since the chained dot can
     // fully utilize all the resources on the GPU while comm is hidden by the
     // first collective matmul loop.
-    for (GpuWindowedEinsumHandler::WindowedEinsumAgLoops ag_loop :
+    for (GpuWindowedEinsumHandler::WindowedEinsumAgLoops& ag_loop :
          all_ag_loops_) {
       HloInstruction* loop = ag_loop.loop;
       HloInstruction* ag_operand = nullptr;
