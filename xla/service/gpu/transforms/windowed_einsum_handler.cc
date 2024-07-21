@@ -58,11 +58,11 @@ namespace m = match;
 // into
 //
 //   inputs --> while loop {dequant --> collective-permute/dot/etc}.
-absl::Status ShiftDequantizationF8(HloComputation* while_body) {
+absl::StatusOr<bool> ShiftDequantizationF8(HloComputation* while_body) {
   HloInstruction* while_instr = while_body->WhileCallInstruction();
   // The input of the while loop will be modified and must have no other users.
   if (!while_instr || while_instr->operand(0)->user_count() != 1) {
-    return absl::OkStatus();
+    return false;
   }
 
   // Identify the scalings and type conversions applied to the inputs of the
@@ -78,7 +78,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
                                        m::Convert(m::Op(&operands[k])),
                                        m::Broadcast(m::Op(&scales[k])))))) {
       VLOG(5) << "Unable to identify FP8 dequantization pattern.";
-      return absl::OkStatus();
+      return false;
     }
   }
 
@@ -90,7 +90,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
         (operand_types[0] == F8E4M3FN && operand_types[1] == F8E5M2) ||
         (operand_types[0] == F8E5M2 && operand_types[1] == F8E4M3FN))) {
     VLOG(5) << "Unsupported types.";
-    return absl::OkStatus();
+    return false;
   }
 
   // The dequantized types must be BF16, FP16 or FP32.
@@ -99,7 +99,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
         binaries[k]->shape().element_type() != F16 &&
         binaries[k]->shape().element_type() != F32) {
       VLOG(5) << "Unsupported types.";
-      return absl::OkStatus();
+      return false;
     }
   }
 
@@ -107,7 +107,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
   if (!ShapeUtil::IsScalar(scales[0]->shape()) ||
       !ShapeUtil::IsScalar(scales[1]->shape())) {
     VLOG(5) << "Scaling factors must be scalars.";
-    return absl::OkStatus();
+    return false;
   }
 
   // Identify the dot, get-tuple-element and collective-permute or dynamic-slice
@@ -149,7 +149,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
     VLOG(5) << "Identified reduce-scatter windowed einsum pattern.";
   } else {
     VLOG(5) << "Unable to identify valid windowed einsum pattern.";
-    return absl::OkStatus();
+    return false;
   }
 
   // Replace the dequantized dot operands in the parameter tuple used by while
@@ -266,7 +266,7 @@ absl::Status ShiftDequantizationF8(HloComputation* while_body) {
   TF_RETURN_IF_ERROR(while_body->RemoveInstruction(gtes[1]));
 
   VLOG(5) << "FP8 dequantization moved into while loop.";
-  return absl::OkStatus();
+  return true;
 }
 
 int64_t NumberOfInstructionsInComp(const HloComputation* comp, HloOpcode op) {
@@ -285,7 +285,12 @@ absl::Status UpdateDotAndConsumerConfig(HloInstruction* dot,
   HloInstruction* updater = dot->users()[0];
   auto updater_gpu_config = updater->backend_config<gpu::GpuBackendConfig>();
   dot_gpu_config->set_operation_queue_id(stream_id);
-  updater_gpu_config->mutable_wait_on_operation_queues()->Add(stream_id);
+  const absl::flat_hash_set<int64_t> op_queue_id_set(
+      updater_gpu_config->wait_on_operation_queues().begin(),
+      updater_gpu_config->wait_on_operation_queues().end());
+  if (op_queue_id_set.find(stream_id) == op_queue_id_set.end()) {
+    updater_gpu_config->mutable_wait_on_operation_queues()->Add(stream_id);
+  }
 
   TF_RETURN_IF_ERROR(dot->set_backend_config(dot_gpu_config.value()));
   TF_RETURN_IF_ERROR(updater->set_backend_config(updater_gpu_config.value()));
@@ -310,30 +315,10 @@ absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp) {
   if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
     return changed;
   }
-  for (auto inst : comp->MakeInstructionPostOrder()) {
-    // The dot we'd like to parallelize is consuming the second loop input
-    // as RHS.
-    if (Match(inst, m::Dot())) {
-      // Dispatch the dot to additional compute stream.
-      TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(inst, stream_id));
-      ++stream_id;
-      changed = true;
-    }
-
-    // We need to enforce the first collective-permute to be always scheduled
-    // at the beginning of the loop.
-    HloInstruction* matched_cp;
-    if (Match(inst, m::CollectivePermute(
-                        &matched_cp, m::GetTupleElement(m::Parameter(), 2)))) {
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
-      changed = true;
-    }
-  }
   // If present, move the dequantization of FP8 operands of the dot into the
   // while loop to allow e.g. gemm_rewriter.cc to fuse the dequantization and
   // dot into an FP8 GEMM.
-  TF_RETURN_IF_ERROR(ShiftDequantizationF8(comp));
+  TF_ASSIGN_OR_RETURN(changed, ShiftDequantizationF8(comp));
   return changed;
 }
 
@@ -345,33 +330,10 @@ absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp) {
   if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
     return changed;
   }
-  for (auto inst : comp->MakeInstructionPostOrder()) {
-    // The dot we'd like to parallelize is consuming the second loop input
-    // as RHS and first loop input as LHS.
-    if (Match(inst, m::Dot(m::GetTupleElement(m::Parameter(), 0),
-                           m::GetTupleElement(m::Parameter(), 1)))) {
-      // Dispatch the dot to additional compute stream.
-      TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(inst, stream_id));
-      ++stream_id;
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(inst, /*force_delay=*/true));
-      changed = true;
-    }
-
-    // We need to enforce the first collective-permute to be always scheduled
-    // at the beginning of the loop.
-    HloInstruction* matched_cp;
-    if (Match(inst, m::CollectivePermute(
-                        &matched_cp, m::GetTupleElement(m::Parameter(), 0)))) {
-      TF_RETURN_IF_ERROR(
-          SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
-      changed = true;
-    }
-  }
   // If present, move the dequantization of FP8 operands of the dot into the
   // while loop to allow e.g. gemm_rewriter.cc to fuse the dequantization and
   // dot into an FP8 GEMM.
-  TF_RETURN_IF_ERROR(ShiftDequantizationF8(comp));
+  TF_ASSIGN_OR_RETURN(changed, ShiftDequantizationF8(comp));
 
   return changed;
 }
@@ -541,7 +503,7 @@ absl::Status PostProcessUnrolledLoop(HloInstruction* loop, int64_t stream_id) {
   // is 2 for RS loop; 0 for AG loop.
   int64_t force_delay_cp_gte_index =
       while_body->name().find(
-          GpuWindowedEinsumHandler::kWindowedEinsumRsLoopName) == 0
+          WindowedEinsumHandler::kWindowedEinsumRsLoopName) == 0
           ? 2
           : 0;
   for (HloInstruction* inst : while_body->MakeInstructionPostOrder()) {
@@ -1202,7 +1164,7 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
       all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
     } else if (comp->name().find(kWindowedEinsumAgLoopName) == 0) {
       VLOG(5) << "Processing computation: " << comp->name();
-      TF_ASSIGN_OR_RETURN(changed, HandleAgWindowedEinsumLoop(comp, stream_id));
+      TF_ASSIGN_OR_RETURN(changed, HandleAgWindowedEinsumLoop(comp));
       all_ag_loops_.push_back(
           WindowedEinsumAgLoops(comp->WhileCallInstruction()));
       all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
@@ -1254,8 +1216,8 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
     }
     changed |= result.unrolled;
   }
-  XLA_VLOG_LINES(
-      5, "GpuWindowedEinsumHandler::Run(), after:\n" + module->ToString());
+  XLA_VLOG_LINES(5,
+                 "WindowedEinsumHandler::Run(), after:\n" + module->ToString());
   return changed;
 }
 
