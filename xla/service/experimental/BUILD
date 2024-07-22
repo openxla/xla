@@ -34,6 +34,7 @@ cc_library(
         "debug",
         "instruction_strategies",
         "sharding_strategy",
+        "sharding_strategy_solver",
         "module_cost_evaluator",
         "resharding_cost_evaluator",
         "@com_google_absl//absl/container:flat_hash_set",

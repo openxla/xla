@@ -4,6 +4,7 @@
 
 #include "xla/service/experimental/instruction_strategies.h"
 #include "xla/service/experimental/sharding_strategy.h"
+#include "xla/service/experimental/sharding_strategy_solver.h"
 #include "xla/service/experimental/resharding_cost_evaluator.h"
 
 #include "absl/container/flat_hash_set.h"
