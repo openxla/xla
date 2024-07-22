@@ -9,7 +9,7 @@ package(
 )
 
 # Use if_not_windows macro to determine which tests to run based on the platform
-run_hlo_mhlo_tests()
+run_hlo_mhlo_tests(hlo_to_mhlo_translation_tests)
 
 # Generates lit config input file by applying path placeholder substitutions
 # similar to the configure_lit_site_cfg CMake macro.
