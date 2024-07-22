@@ -9,7 +9,7 @@ package(
 )
 
 # Run hlo_to_mhlo translation tests based on the platform
-run_hlo_mhlo_tests(name="hlo_to_mhlo_translation_tests")
+run_hlo_mhlo_tests(name="all tests")
 
 # Generates lit config input file by applying path placeholder substitutions
 # similar to the configure_lit_site_cfg CMake macro.
