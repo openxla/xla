@@ -175,22 +175,16 @@ inline std::optional<fe::DataType_t> GetComputeDataType(
   return compute_dtype;
 }
 
-int FusionLevel(const HloInstruction& hlo) {
-  return hlo.GetModule()
-      ->config()
-      .debug_options()
-      .xla_gpu_cudnn_gemm_fusion_level();
-};
-
 // Extracts dimensions and strides from HLO tensors in the format expected by
 // cuDNN.
 class GemmDimensionAdapter {
   explicit GemmDimensionAdapter(const HloDotInstruction& dot,
                                 TritonFusionAnalysis analysis)
-      : analysis_(std::move(analysis)), dot_(dot) {};
+      : analysis_(std::move(analysis)), dot_(dot){};
 
  public:
   const TritonFusionAnalysis analysis_;
+  const HloDotInstruction& dot_;
 
   static absl::StatusOr<std::optional<GemmDimensionAdapter>> Create(
       const HloComputation& computation) {
@@ -264,9 +258,6 @@ class GemmDimensionAdapter {
         if (spec->size() == 1) {
           // The dimension is not split, nothing to do.
         } else if (spec->size() == 2) {
-          if (FusionLevel(hlo) < 3) {
-            return false;
-          }
           if (!dims.lhs_batch_dimensions().empty()) {
             VLOG(8) << "Noncontracting dimension split is not compatible with "
                        "batch dimensions.";
@@ -322,7 +313,6 @@ class GemmDimensionAdapter {
 
  private:
   int64_t lhs_noncontracting_split_ = 1;
-  const HloDotInstruction& dot_;
 };
 
 template <PrimitiveType XlaT, typename T>
@@ -378,6 +368,63 @@ HandleClampToCudnnGraph(
   return graph.pointwise(min_tensor, hlo_to_cudnn[hlo.operand(0)], max_attrs);
 }
 
+bool HasType(const HloInstruction& instruction, const PrimitiveType type) {
+  return instruction.shape().element_type() == type;
+}
+
+bool HasOnlyBF16IO(const HloComputation& computation) {
+  return HasType(*computation.root_instruction(), BF16) &&
+         absl::c_all_of(computation.parameter_instructions(),
+                        [](HloInstruction* parameter) {
+                          return HasType(*parameter, BF16);
+                        });
+}
+
+bool IsOptimalS8BF16GEMMFusion(const HloDotInstruction& dot,
+                               const TritonFusionAnalysis& analysis) {
+  if (!HasType(dot, BF16) ||
+      !HasType(*dot.parent()->root_instruction(), BF16)) {
+    return false;
+  }
+  const DotDimensionNumbers& dims = dot.dot_dimension_numbers();
+  const auto lhs_parameters =
+      analysis.ScopeParameters(TritonFusionAnalysis::Scope::LHS);
+  if (lhs_parameters.size() != 1) {
+    return false;
+  }
+  const auto rhs_parameters =
+      analysis.ScopeParameters(TritonFusionAnalysis::Scope::RHS);
+  if (rhs_parameters.size() != 1) {
+    return false;
+  }
+  auto is_s8bf16 = [](const HloInstruction& a, const HloInstruction& b) {
+    return (HasType(a, S8) || HasType(a, PRED)) && HasType(b, BF16);
+  };
+  if (!is_s8bf16(**lhs_parameters.begin(), **rhs_parameters.begin()) &&
+      !is_s8bf16(**rhs_parameters.begin(), **lhs_parameters.begin())) {
+    return false;
+  }
+
+  // Check if the LHS parameter contracting dimension is minor.
+  const auto spec_lhs = analysis.IterSpec(TritonFusionAnalysis::Scope::LHS,
+                                          *lhs_parameters.begin(),
+                                          dims.lhs_contracting_dimensions(0));
+  if (!spec_lhs || spec_lhs->size() != 1 || spec_lhs->at(0).stride != 1) {
+    return false;
+  }
+  // Check if the RHS parameter non-contracting dimension is minor.
+  const auto spec_rhs = analysis.IterSpec(
+      TritonFusionAnalysis::Scope::RHS, *rhs_parameters.begin(),
+      GetNonContractingDims(dot.operand(1)->shape(),
+                            dims.rhs_batch_dimensions(),
+                            dims.rhs_contracting_dimensions())
+          ->at(0));
+  if (!spec_rhs || spec_rhs->size() != 1 || spec_rhs->at(0).stride != 1) {
+    return false;
+  }
+  return true;
+}
+
 // Traverses fusion computations and creates cuDNN graphs out of them.
 absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
     const HloFusionInstruction& fusion) {
@@ -395,6 +442,23 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
   if (!adapter.has_value()) {
     return std::nullopt;
   }
+
+  const int fusion_level = fusion.GetModule()
+                               ->config()
+                               .debug_options()
+                               .xla_gpu_cudnn_gemm_fusion_level();
+  if (HasOnlyBF16IO(computation)) {
+    if (fusion_level < 1) {
+      return std::nullopt;
+    }
+  } else if (IsOptimalS8BF16GEMMFusion(adapter->dot_, adapter->analysis_)) {
+    if (fusion_level < 2) {
+      return std::nullopt;
+    }
+  } else if (fusion_level < 3) {
+    return std::nullopt;
+  }
+
   auto add_parameter = [&](const HloInstruction& parameter,
                            std::vector<int64_t>& dimensions,
                            std::vector<int64_t> strides) {
@@ -459,8 +523,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         return std::nullopt;
       }
       continue;
-    } else if (FusionLevel(fusion) >= 2 &&
-               hlo->opcode() == HloOpcode::kConstant) {
+    } else if (hlo->opcode() == HloOpcode::kConstant) {
       if (const auto const_tensor = HandleConstantHloToCudnnGraph(*hlo, graph);
           const_tensor.has_value()) {
         hlo_to_cudnn[hlo] = const_tensor.value();
@@ -471,8 +534,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
                hlo->opcode() == HloOpcode::kBitcast ||
                hlo->opcode() == HloOpcode::kTranspose ||
                hlo->opcode() == HloOpcode::kCopy ||
-               (FusionLevel(fusion) >= 2 &&
-                hlo->opcode() == HloOpcode::kBroadcast)) {
+               hlo->opcode() == HloOpcode::kBroadcast) {
       // All these are accounted for separately as transformations of strides.
       hlo_to_cudnn[hlo] = operand(0);
     } else if (hlo->IsElementwise()) {
@@ -729,7 +791,7 @@ int CuDnnFusionCompiler::GetAvailablePlanCount(
   if (!graph.ok()) {
     return 0;
   }
-  constexpr int64_t kMaxPlans = 10;
+  constexpr int64_t kMaxPlans = 5;
   return std::min(graph->Graph().get_execution_plan_count(), kMaxPlans);
 }
 
