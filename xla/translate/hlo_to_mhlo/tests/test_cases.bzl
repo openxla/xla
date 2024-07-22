@@ -6,7 +6,7 @@ to the MHLO (MLIR High-Level Operations) format.
 """
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load("//xla/tsl:tsl.bzl", "if_windows")
-load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
+load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 
 # This function determines which test configuration to use based on the platform.
 # It modifies the LLVM test configuration to run the test cases on the Windows platform.
@@ -16,6 +16,10 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
 # To fix this error, the standard LLVM Config lit_test imported from @llvm-project//llvm:lit_test.bzl is used.
 
 def run_hlo_mhlo_tests(name):
+<<<<<<< HEAD
+=======
+    test_name = name
+>>>>>>> 7595dd1dc622353d825128264686bf90bf12ba0e
     if if_windows([1])==[]:   #run on Non-Windows Platform(Linux)
         return lit_test_suite(
         name = name,
