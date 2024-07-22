@@ -1288,13 +1288,13 @@ TEST(StreamExecutorGpuClientTest,
   constexpr absl::string_view mlir_mul_explicit_sharding_layout_and_memory =
       R"mlir(
   module @jit_f attributes {
-      mhlo.num_partitions = 4 : i32,
+      mhlo.num_partitions = 2 : i32,
       mhlo.num_replicas = 1 : i32
   } {
     func.func public @main(%arg0: tensor<8x2xi32> {
             mhlo.layout_mode = "{1,0}",
             mhlo.memory_kind = "device",
-            mhlo.sharding = "{devices=[2,2]<=[4]}"
+            mhlo.sharding = "{devices=[1,2]<=[2]}"
         }) -> (tensor<8x2xi32> {
             jax.result_info = "",
             mhlo.layout_mode = "{0,1}",
@@ -1305,7 +1305,7 @@ TEST(StreamExecutorGpuClientTest,
           : (tensor<i32>) -> tensor<8x2xi32>
       %1 = stablehlo.multiply %arg0, %0 : tensor<8x2xi32>
       %2 = stablehlo.custom_call @Sharding(%1) {
-              mhlo.sharding = "{devices=[2,2]<=[4]}"
+              mhlo.sharding = "{devices=[1,2]<=[2]}"
           } : (tensor<8x2xi32>) -> tensor<8x2xi32>
       %3 = stablehlo.custom_call @annotate_device_placement(%2) {
               has_side_effect = true,
@@ -1325,7 +1325,7 @@ TEST(StreamExecutorGpuClientTest,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
 
   xla::CompileOptions options;
-  options.executable_build_options.set_num_partitions(4)
+  options.executable_build_options.set_num_partitions(2)
       .set_use_spmd_partitioning(true)
       .set_allow_spmd_sharding_propagation_to_output({true});
 
