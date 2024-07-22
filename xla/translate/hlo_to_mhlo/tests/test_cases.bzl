@@ -1,7 +1,11 @@
+"""
+This module contains test cases for translating HLO to MHLO.
+
+The tests are designed to ensure the correct translation of High-Level Operations (HLO) 
+to the MHLO (MLIR High-Level Operations) format.
+"""
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load("//xla/tsl:tsl.bzl", "if_windows")
-load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
 
 # This function determines which test configuration to use based on the platform.
@@ -10,7 +14,9 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
 # 'D:\e7rjstdl\execroot\xla\bazel-out\x64_windows-opt\bin\xla\translate
 # \hlo_to_mhlo\tests\dynamic_param.hlo.test.zip':[Errno 2] No such file or directory
 # To fix this error, the standard LLVM Config lit_test imported from @llvm-project//llvm:lit_test.bzl is used.
-def run_hlo_mhlo_tests():
+
+def run_hlo_mhlo_tests(name):
+    print(f"Running test: {name}")
     if if_windows([1])==[]:   #run on Non-Windows Platform(Linux)
         return lit_test_suite(
         name = "all_tests",
