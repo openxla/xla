@@ -1,6 +1,6 @@
 
 load("test_cases.bzl", "run_hlo_mhlo_tests")
-load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
+load("@llvm-project//llvm:lit_test.bzl", "package_path")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 package(
@@ -9,7 +9,7 @@ package(
 )
 
 # Use if_not_windows macro to determine which tests to run based on the platform
-run_hlo_mhlo_tests(hlo_to_mhlo_translation_tests)
+run_hlo_mhlo_tests(name='hlo_to_mhlo_translation_tests')
 
 # Generates lit config input file by applying path placeholder substitutions
 # similar to the configure_lit_site_cfg CMake macro.
