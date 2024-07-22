@@ -16,7 +16,7 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test", "package_path")
 # To fix this error, the standard LLVM Config lit_test imported from @llvm-project//llvm:lit_test.bzl is used.
 
 def run_hlo_mhlo_tests(name):
-    print(f"Running test: {name}")
+    print("Running test: " + name)
     if if_windows([1])==[]:   #run on Non-Windows Platform(Linux)
         return lit_test_suite(
         name = "all_tests",
