@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_common.h"
+#include "tsl/platform/numa.h"
 #include "tsl/platform/thread_annotations.h"
 
 namespace stream_executor {
@@ -112,7 +113,7 @@ class GpuExecutor : public StreamExecutorCommon {
         cc_major_(0),
         cc_minor_(0),
         version_(0),
-        numa_node_(-1) {}
+        numa_node_(tsl::port::kNUMANoAffinity) {}
 
   // See the corresponding StreamExecutor methods for method comments on the
   // following overrides.

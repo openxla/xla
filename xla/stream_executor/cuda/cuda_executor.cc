@@ -154,21 +154,26 @@ GpuExecutor::~GpuExecutor() {
   }
 }
 
+static std::optional<int> TryToReadNumaNode(const std::string& pci_bus_id,
+                                            int device_ordinal);
+
 absl::Status GpuExecutor::Init() {
   TF_RETURN_IF_ERROR(GpuDriver::Init());
   TF_RETURN_IF_ERROR(GpuDriver::GetDevice(device_ordinal_, &device_));
   TF_RETURN_IF_ERROR(
       GpuDriver::CreateContext(device_ordinal_, device_, &context_));
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<DeviceDescription> desc,
-                      CreateDeviceDescription());
-  CHECK(desc);
-  cc_major_ = desc->cuda_compute_capability().major;
-  cc_minor_ = desc->cuda_compute_capability().minor;
-  numa_node_ = desc->numa_node();
-  if (numa_node_ < 0) {
+  TF_RETURN_IF_ERROR(
+      GpuDriver::GetComputeCapability(&cc_major_, &cc_minor_, device_));
+  std::optional<int> numa_node = TryToReadNumaNode(
+      absl::AsciiStrToLower(GpuDriver::GetPCIBusID(device_ordinal_)),
+      device_ordinal_);
+  if (!numa_node || *numa_node < 0) {
     LOG(WARNING) << "NUMA node could not be determined for device "
                  << device_ordinal_
                  << ", host memory allocations will not be NUMA-pinned";
+    numa_node_ = tsl::port::kNUMANoAffinity;
+  } else {
+    numa_node_ = *numa_node;
   }
   return absl::OkStatus();
 }
@@ -601,7 +606,7 @@ void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
 // no external interface for us to otherwise control these DMA settings.
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 GpuExecutor::HostMemoryAllocate(uint64_t size) {
-  if (numa_node_ >= 0) {
+  if (numa_node_ != tsl::port::kNUMANoAffinity) {
     auto* buffer =
         tsl::port::NUMAMalloc(numa_node_, size, /* minimum_alignment=*/16);
     if (buffer == nullptr && size > 0) {
@@ -627,7 +632,7 @@ GpuExecutor::HostMemoryAllocate(uint64_t size) {
 }
 
 void GpuExecutor::HostMemoryDeallocate(void* location, uint64_t size) {
-  if (numa_node_ >= 0) {
+  if (numa_node_ != tsl::port::kNUMANoAffinity) {
     if (size > 0) {
       GpuDriver::HostUnregister(context_, location);
     }
@@ -861,23 +866,22 @@ std::unique_ptr<GpuCommandBuffer> GpuExecutor::CreateCommandBuffer(
 GpuContext* GpuExecutor::gpu_context() { return context_; }
 
 // Attempts to read the NUMA node corresponding to the GPU device's PCI bus out
-// of SysFS. Returns -1 if it cannot.
+// of SysFS.
 //
 // For anything more complicated/prod-focused than this, you'll likely want to
 // turn to gsys' topology modeling. nvmlDeviceGetMemoryAffinity could also be
 // used.
-static int TryToReadNumaNode(const std::string& pci_bus_id,
-                             int device_ordinal) {
+static std::optional<int> TryToReadNumaNode(const std::string& pci_bus_id,
+                                            int device_ordinal) {
 #if defined(PLATFORM_WINDOWS)
   // Windows support for NUMA is not currently implemented. Return node 0.
   return 0;
 #else
   VLOG(2) << "trying to read NUMA node for device ordinal: " << device_ordinal;
-  static const int kUnknownNumaNode = -1;
 
   if (pci_bus_id.empty()) {
     LOG(INFO) << "no PCI bus ID for device ordinal: " << device_ordinal;
-    return kUnknownNumaNode;
+    return std::nullopt;
   }
 
   std::string filename =
@@ -890,7 +894,7 @@ static int TryToReadNumaNode(const std::string& pci_bus_id,
   if (file == nullptr) {
     LOG(INFO) << "could not open file to read NUMA node: " << filename
               << "\nYour kernel may have been built without NUMA support.";
-    return kUnknownNumaNode;
+    return std::nullopt;
   }
 
   std::string content;
@@ -901,17 +905,6 @@ static int TryToReadNumaNode(const std::string& pci_bus_id,
 
   int32_t value;
   if (absl::SimpleAtoi(content, &value)) {
-    if (value < 0) {  // See http://b/18228951 for details on this path.
-      LOG(INFO) << "successful NUMA node read from SysFS had negative value ("
-                << value
-                << "), but there must be at least one NUMA node"
-                   ", so returning NUMA node zero."
-                   " See more at "
-                   "https://github.com/torvalds/linux/blob/v6.0/Documentation/"
-                   "ABI/testing/sysfs-bus-pci#L344-L355";
-      fclose(file);
-      return 0;
-    }
     fclose(file);
     return value;
   }
@@ -921,7 +914,7 @@ static int TryToReadNumaNode(const std::string& pci_bus_id,
       << content;
 
   fclose(file);
-  return kUnknownNumaNode;
+  return std::nullopt;
 #endif
 }
 
@@ -953,8 +946,24 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
     builder.set_pci_bus_id(pci_bus_id);
 
     // Read the NUMA node corresponding to the PCI bus ID out of sysfs.
-    int numa_node = TryToReadNumaNode(pci_bus_id, device_ordinal);
-    builder.set_numa_node(numa_node);
+    std::optional<int> numa_node =
+        TryToReadNumaNode(pci_bus_id, device_ordinal);
+    if (numa_node.has_value()) {
+      if (*numa_node < 0) {  // See http://b/18228951 for details on this path.
+        LOG(INFO)
+            << "successful NUMA node read from SysFS had negative value ("
+            << *numa_node
+            << "), but there must be at least one NUMA node"
+               ", so returning NUMA node zero."
+               " See more at "
+               "https://github.com/torvalds/linux/blob/v6.0/Documentation/"
+               "ABI/testing/sysfs-bus-pci#L344-L355";
+        numa_node = 0;
+      }
+    } else {
+      numa_node = -1;
+    }
+    builder.set_numa_node(*numa_node);
   }
 
   {

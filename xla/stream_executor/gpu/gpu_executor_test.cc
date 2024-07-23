@@ -72,8 +72,14 @@ TEST_F(HostMemoryAllocateTest, Numa) {
     ASSERT_TRUE(host_ptr);
     EXPECT_NE(host_ptr->opaque(), nullptr);
     const int numa_node = tsl::port::NUMAGetMemAffinity(host_ptr->opaque());
-    EXPECT_NE(numa_node, tsl::port::kNUMANoAffinity);
-    EXPECT_EQ(device_desc->numa_node(), numa_node);
+    if (numa_node == tsl::port::kNUMANoAffinity) {
+      // Could be because `executor` could not determine its own NUMA node, in
+      // which case numa_node() will be -1 or 0, depending on the failure mode.
+      EXPECT_LE(device_desc->numa_node(), 0);
+      EXPECT_GE(device_desc->numa_node(), -1);
+    } else {
+      EXPECT_EQ(device_desc->numa_node(), numa_node);
+    }
   }
 }
 
