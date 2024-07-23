@@ -105,6 +105,8 @@ namespace {
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) {
 
+    VLOG(5) << "Starting AutoParallelizer Run";
+
     if (!ShardableModule(module)) {
       VLOG(5) << LOG_HEADER(0) << "module = " 
         << module->name() << " not shardable";

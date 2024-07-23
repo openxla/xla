@@ -5,11 +5,15 @@
 
 #include "xla/service/experimental/solver_builder.h"
 
+using ::operations_research::MPObjective;
 using ::operations_research::MPSolver;
 using ::operations_research::MPVariable;
 
 namespace xla {
 
+// This solver builder will ignore the resharding costs between 
+// instructions and will only perform the naive optimization of choosing a 
+// sharding strategy based off of their costs
 class SimpleSolverBuilder : SolverBuilder {
 public:
   SimpleSolverBuilder();
@@ -33,9 +37,11 @@ private:
   // solver that will be built
   std::unique_ptr<MPSolver> solver_;
 
+  // objective to optimization problem
+  MPObjective* const objective_;
+
   // map to hold the solver variables associated with an instruction
   std::unordered_map<std::shared_ptr<InstructionStrategies>, std::vector<MPVariable*>> var_map_;
-  
 };
 
 } // xla
