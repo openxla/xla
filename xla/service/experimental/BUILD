@@ -51,8 +51,24 @@ cc_library(
     hdrs = ["sharding_strategy_solver.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "instruction_strategies",
         "sharding_strategy",
-        "//xla/hlo/ir:hlo"
+        "solver_builder",
+        "//xla/hlo/ir:hlo",
+        "@com_google_ortools//ortools/linear_solver",
+    ]
+)
+
+cc_library(
+    name = "solver_builder",
+    srcs = ["simple_solver_builder.cc"],
+    hdrs = ["solver_builder.h", "simple_solver_builder.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "instruction_strategies",
+        "sharding_strategy",
+        "//xla/hlo/ir:hlo",
+        "@com_google_ortools//ortools/linear_solver",
     ]
 )
 
