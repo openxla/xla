@@ -69,6 +69,7 @@ cc_library(
         "sharding_strategy",
         "//xla/hlo/ir:hlo",
         "@com_google_ortools//ortools/linear_solver",
+        "@tsl//tsl/platform:logging",
     ]
 )
 

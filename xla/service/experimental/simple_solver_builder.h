@@ -6,6 +6,7 @@
 #include "xla/service/experimental/solver_builder.h"
 
 using ::operations_research::MPSolver;
+using ::operations_research::MPVariable;
 
 namespace xla {
 
@@ -29,8 +30,12 @@ public:
   int GetStratIdx(std::shared_ptr<InstructionStrategies> strats) override;
 
 private:
+  // solver that will be built
+  std::unique_ptr<MPSolver> solver_;
 
-  MPSolver* solver_;
+  // map to hold the solver variables associated with an instruction
+  std::unordered_map<std::shared_ptr<InstructionStrategies>, std::vector<MPVariable*>> var_map_;
+  
 };
 
 } // xla

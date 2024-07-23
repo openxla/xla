@@ -134,6 +134,9 @@ namespace {
 
     VLOG(5) << "Number of instructions: " << info_map.size();
 
+    ShardingStrategySolver solver;
+    solver.Solve(info_map);
+
     VLOG(5) << "Done Testing AutoParallelizer Run";
     
     return true;
