@@ -311,7 +311,10 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/profiler/utils:xplane_utils",
-    ] + if_cuda(["//xla/tsl/cuda:cupti"]),
+    ] + if_cuda([
+        "//xla/tsl/cuda:cupti",
+        "//xla/tsl/cuda",
+    ]),
 )
 
 tsl_gpu_library(
