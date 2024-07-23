@@ -320,5 +320,165 @@ absl::Status FusedMHABackwardThunk::ExecuteOnStream(
   return absl::OkStatus();
 }
 
+FusedMHABackwardThunkF8::FusedMHABackwardThunkF8(
+    ThunkInfo thunk_info, GpufMHABackwardConfig config,
+    BufferAllocation::Slice bmm1_grad_gemm1_rhs,
+    BufferAllocation::Slice bmm1_grad_gemm2_rhs,
+    BufferAllocation::Slice bmm2_grad_gemm2_rhs,
+    BufferAllocation::Slice fwd_output, BufferAllocation::Slice d_output,
+    BufferAllocation::Slice bmm2_grad_gemm1_lhs,
+    BufferAllocation::Slice descale_q, BufferAllocation::Slice descale_k,
+    BufferAllocation::Slice descale_v, BufferAllocation::Slice descale_o,
+    BufferAllocation::Slice descale_dO, BufferAllocation::Slice descale_s,
+    BufferAllocation::Slice descale_dP, BufferAllocation::Slice scale_s,
+    BufferAllocation::Slice scale_dQ, BufferAllocation::Slice scale_dK,
+    BufferAllocation::Slice scale_dV, BufferAllocation::Slice scale_dP,
+
+    BufferAllocation::Slice d_bmm1_lhs, BufferAllocation::Slice d_bmm1_rhs,
+    BufferAllocation::Slice d_bmm2_rhs,
+
+    BufferAllocation::Slice amax_dQ, BufferAllocation::Slice amax_dK,
+    BufferAllocation::Slice amax_dV, BufferAllocation::Slice amax_dP,
+    BufferAllocation::Slice scratch)
+    : Thunk(Kind::kFusedMHA, thunk_info),
+      bmm1_grad_gemm1_rhs_buffer_(bmm1_grad_gemm1_rhs),
+      bmm1_grad_gemm2_rhs_buffer_(bmm1_grad_gemm2_rhs),
+      bmm2_grad_gemm1_lhs_buffer_(bmm2_grad_gemm1_lhs),
+      bmm2_grad_gemm2_rhs_buffer_(bmm2_grad_gemm2_rhs),
+      d_output_buffer_(d_output),
+      scratch_buffer_(scratch),
+      d_bmm1_lhs_buffer_(d_bmm1_lhs),
+      d_bmm1_rhs_buffer_(d_bmm1_rhs),
+      d_bmm2_rhs_buffer_(d_bmm2_rhs),
+      fwd_output_buffer_(fwd_output),
+      descale_q_buffer_(descale_q),
+      descale_k_buffer_(descale_k),
+      descale_v_buffer_(descale_v),
+      descale_o_buffer_(descale_o),
+      descale_dO_buffer_(descale_dO),
+      descale_s_buffer_(descale_s),
+      descale_dP_buffer_(descale_dP),
+      scale_s_buffer_(scale_s),
+      scale_dQ_buffer_(scale_dQ),
+      scale_dK_buffer_(scale_dK),
+      scale_dV_buffer_(scale_dV),
+      scale_dP_buffer_(scale_dP),
+      amax_dQ_buffer_(amax_dQ),
+      amax_dK_buffer_(amax_dK),
+      amax_dV_buffer_(amax_dV),
+      amax_dP_buffer_(amax_dP),
+
+      config_(std::move(config)) {}
+
+FusedMultiHeadedAttentionBackwardF8Runner&
+FusedMHABackwardThunkF8::GetOrCreateRunner(
+    const stream_executor::Stream* stream) {
+  absl::MutexLock lock(&mu_);
+  auto it = runner_cache_.find(stream);
+  if (it == runner_cache_.end()) {
+    it = runner_cache_
+             .insert(
+                 {stream,
+                  std::make_unique<FusedMultiHeadedAttentionBackwardF8Runner>(
+                      config_)})
+             .first;
+  }
+  return *it->second;
+}
+
+absl::Status FusedMHABackwardThunkF8::Initialize(
+    const InitializeParams& params) {
+  se::dnn::LazyOpRunner<se::dnn::FusedMHABackwardF8Op>* lazy_runner =
+      GetOrCreateRunner(params.stream).AsFusedMHABackwardF8Runner();
+  TF_ASSIGN_OR_RETURN(auto config, config_.AsDnnFusedMHABackwardF8OpConfig());
+  return lazy_runner->GetOrCreateRunner(config, params.stream).status();
+}
+
+absl::Status FusedMHABackwardThunkF8::ExecuteOnStream(
+    const ExecuteParams& params) {
+  const auto& buffer_allocations = *params.buffer_allocations;
+  se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer =
+      buffer_allocations.GetDeviceAddress(bmm1_grad_gemm1_rhs_buffer_);
+
+  se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer =
+      buffer_allocations.GetDeviceAddress(bmm1_grad_gemm2_rhs_buffer_);
+
+  se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer =
+      buffer_allocations.GetDeviceAddress(bmm2_grad_gemm1_lhs_buffer_);
+
+  se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer =
+      buffer_allocations.GetDeviceAddress(bmm2_grad_gemm2_rhs_buffer_);
+
+  se::DeviceMemoryBase d_output_buffer =
+      buffer_allocations.GetDeviceAddress(d_output_buffer_);
+
+  se::DeviceMemoryBase scratch_buffer =
+      buffer_allocations.GetDeviceAddress(scratch_buffer_);
+
+  se::DeviceMemoryBase d_bmm1_lhs_buffer =
+      buffer_allocations.GetDeviceAddress(d_bmm1_lhs_buffer_);
+
+  se::DeviceMemoryBase d_bmm1_rhs_buffer =
+      buffer_allocations.GetDeviceAddress(d_bmm1_rhs_buffer_);
+
+  se::DeviceMemoryBase d_bmm2_rhs_buffer =
+      buffer_allocations.GetDeviceAddress(d_bmm2_rhs_buffer_);
+
+  se::DeviceMemoryBase fwd_output_buffer =
+      buffer_allocations.GetDeviceAddress(fwd_output_buffer_);
+
+  se::DeviceMemoryBase descale_q_buffer =
+      buffer_allocations.GetDeviceAddress(descale_q_buffer_);
+  se::DeviceMemoryBase descale_k_buffer =
+      buffer_allocations.GetDeviceAddress(descale_k_buffer_);
+  se::DeviceMemoryBase descale_v_buffer =
+      buffer_allocations.GetDeviceAddress(descale_v_buffer_);
+  se::DeviceMemoryBase descale_o_buffer =
+      buffer_allocations.GetDeviceAddress(descale_o_buffer_);
+  se::DeviceMemoryBase descale_dO_buffer =
+      buffer_allocations.GetDeviceAddress(descale_dO_buffer_);
+  se::DeviceMemoryBase descale_s_buffer =
+      buffer_allocations.GetDeviceAddress(descale_s_buffer_);
+  se::DeviceMemoryBase descale_dP_buffer =
+      buffer_allocations.GetDeviceAddress(descale_dP_buffer_);
+
+  se::DeviceMemoryBase scale_s_buffer =
+      buffer_allocations.GetDeviceAddress(scale_s_buffer_);
+  se::DeviceMemoryBase scale_dQ_buffer =
+      buffer_allocations.GetDeviceAddress(scale_dQ_buffer_);
+  se::DeviceMemoryBase scale_dK_buffer =
+      buffer_allocations.GetDeviceAddress(scale_dK_buffer_);
+  se::DeviceMemoryBase scale_dV_buffer =
+      buffer_allocations.GetDeviceAddress(scale_dV_buffer_);
+  se::DeviceMemoryBase scale_dP_buffer =
+      buffer_allocations.GetDeviceAddress(scale_dP_buffer_);
+
+  se::DeviceMemoryBase amax_dQ_buffer =
+      buffer_allocations.GetDeviceAddress(amax_dQ_buffer_);
+  se::DeviceMemoryBase amax_dK_buffer =
+      buffer_allocations.GetDeviceAddress(amax_dK_buffer_);
+  se::DeviceMemoryBase amax_dV_buffer =
+      buffer_allocations.GetDeviceAddress(amax_dV_buffer_);
+  se::DeviceMemoryBase amax_dP_buffer =
+      buffer_allocations.GetDeviceAddress(amax_dP_buffer_);
+
+  RunFusedMHABackwardF8Options opts;
+
+  opts.runner_cache = &GetOrCreateRunner(params.stream);
+
+  TF_RETURN_IF_ERROR(RunGpuFMHABackwardF8(
+      config_, bmm1_grad_gemm1_rhs_buffer, bmm1_grad_gemm2_rhs_buffer,
+      bmm2_grad_gemm2_rhs_buffer, d_output_buffer, bmm2_grad_gemm1_lhs_buffer,
+      descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_o_buffer,
+      descale_dO_buffer, descale_s_buffer, descale_dP_buffer, scale_s_buffer,
+      scale_dQ_buffer, scale_dK_buffer, scale_dV_buffer, scale_dP_buffer,
+      d_bmm1_lhs_buffer, d_bmm1_rhs_buffer, d_bmm2_rhs_buffer, amax_dQ_buffer,
+      amax_dK_buffer, amax_dV_buffer, amax_dP_buffer, scratch_buffer,
+      fwd_output_buffer, params.stream, opts));
+  if (!params.stream->ok()) {
+    return Internal("FusedMHABackwardThunkF8::ExecuteOnStream failed.");
+  }
+  return absl::OkStatus();
+}
 }  // namespace gpu
 }  // namespace xla

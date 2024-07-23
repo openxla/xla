@@ -194,6 +194,7 @@ extern const absl::string_view
 extern const absl::string_view kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget;
 
 bool IsFwdCustomCallTofMHAF8(const HloInstruction& hlo);
+bool IsBwdCustomCallTofMHAF8(const HloInstruction& hlo);
 bool IsCustomCallTofMHAF8(const HloInstruction& hlo);
 
 bool IsFwdCustomCallTofMHA(const HloInstruction& hlo);

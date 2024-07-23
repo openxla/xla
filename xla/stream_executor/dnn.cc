@@ -298,6 +298,23 @@ DnnSupport::FusedMHABackwardRunnerFromDesc(
       "FusedMHABackwardRunnerFromDesc not implemented.");
 }
 
+absl::StatusOr<std::unique_ptr<const dnn::FusedMHABackwardF8Runner>>
+DnnSupport::FusedMHABackwardF8RunnerFromDesc(
+    Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+    const dnn::MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& d_output_descriptor,
+    const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
+    const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
+    const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
+    std::optional<dnn::TensorDescriptor> fwd_output_descriptor, double scale,
+    dnn::FMHAMaskKind mask_type) {
+  return absl::UnimplementedError(
+      "FusedMHABackwardF8RunnerFromDesc not implemented.");
+}
+
 bool DnnSupport::GetMIOpenConvolveAlgorithms(
     dnn::ConvolutionKind /*kind*/, dnn::DataType /*element_type*/,
     dnn::DataType /*output_type*/, Stream* /*stream*/,

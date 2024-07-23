@@ -306,6 +306,39 @@ struct FusedMHAF8Op {
   }
 };
 
+struct FusedMHABackwardF8Op {
+  using Signature = FusedMHABackwardF8Signature;
+
+  struct Config {
+    double scale;
+    const MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor;
+    const MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor;
+    const MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor;
+    const MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor;
+    const MatmulTensorDescriptor& d_output_descriptor;
+    const TensorDescriptor& d_bmm1_lhs_descriptor;
+    const TensorDescriptor& d_bmm1_rhs_descriptor;
+    const TensorDescriptor& d_bmm2_rhs_descriptor;
+    std::optional<TensorDescriptor> fwd_output_descriptor;
+    FMHAMaskKind mask_type;
+  };
+
+  static absl::StatusOr<
+      std::unique_ptr<const OpRunner<FusedMHABackwardF8Signature>>>
+  RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
+                          Stream* stream) {
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->FusedMHABackwardF8RunnerFromDesc(
+        stream, desc, config.bmm1_grad_gemm1_rhs_descriptor,
+        config.bmm1_grad_gemm2_rhs_descriptor,
+        config.bmm2_grad_gemm1_lhs_descriptor,
+        config.bmm2_grad_gemm2_rhs_descriptor, config.d_output_descriptor,
+        config.d_bmm1_lhs_descriptor, config.d_bmm1_rhs_descriptor,
+        config.d_bmm2_rhs_descriptor, config.fwd_output_descriptor,
+        config.scale, config.mask_type);
+  }
+};
+
 struct FusedMHAOp {
   using Signature = FusedMHASignature;
   struct Config {
