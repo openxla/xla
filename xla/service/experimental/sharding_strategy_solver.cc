@@ -3,19 +3,6 @@
 
 #include "xla/service/experimental/simple_solver_builder.h"
 
-// require a mapping from instruction pointers to it's own variable information
-//
-/*
-  1. for each instruction create
-    a. variables
-    b. instruction-specific constraints
-    c. constraints for resharding
-    d. contribute to the objective
-  2. solve --> pretty straightforward
-  3. for each instruction
-    a. determine which strategy should get chosen and select
-*/
-
 namespace xla {
 
 // incorporate the object that defines solver setup

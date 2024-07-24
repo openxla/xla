@@ -136,6 +136,7 @@ namespace {
 
     VLOG(5) << "Number of instructions: " << info_map.size();
 
+    // TODO: refactor to ShardingStrategySelector
     ShardingStrategySolver solver;
     solver.Solve(info_map);
 

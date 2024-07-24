@@ -5,12 +5,8 @@
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/experimental/instruction_strategies.h"
-#include "ortools/linear_solver/linear_solver.h"
 
 #include <unordered_map>
-
-using ::operations_research::MPSolver;
-using ::operations_research::MPObjective;
 
 namespace xla {
 
