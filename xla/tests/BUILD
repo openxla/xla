@@ -3051,6 +3051,7 @@ xla_test(
         "cpu",
     ],
     copts = tsl_copts(),
+    shard_count = 4,
     tags = ["no_oss"],
     deps = [
         ":hlo_test_base",
