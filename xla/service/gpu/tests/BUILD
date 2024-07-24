@@ -980,7 +980,7 @@ xla_test(
         "requires-gpu-sm80",
     ]},
     backends = [
-        "gpu_h100",
+        "gpu",
     ],
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 2,
