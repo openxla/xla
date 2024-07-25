@@ -150,7 +150,7 @@ namespace {
     // TODO: refactor to ShardingStrategySelector
     ShardingStrategySolver solver;
     bool successful = solver.Solve(info_map);
-    VLOG(5) << successful;
+    VLOG(5) << "Solver success: " << successful;
 
     VLOG(5) << "Done AutoParallelizer Run";
     
