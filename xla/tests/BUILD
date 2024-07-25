@@ -2642,10 +2642,10 @@ xla_test(
         "//xla/service:llvm_compiler",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
