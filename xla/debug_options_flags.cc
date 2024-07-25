@@ -1846,13 +1846,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
 
   flag_list->push_back(
       tsl::Flag("xla_gpu_executable_warn_stuck_timeout",
-                int64_setter_for(
+                int32_setter_for(
                     &DebugOptions::set_xla_gpu_executable_warn_stuck_timeout),
                 debug_options->xla_gpu_executable_warn_stuck_timeout(),
                 "Set timeout for RendezvousSingle stuck warning"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_executable_terminate_timeout",
-      int64_setter_for(&DebugOptions::set_xla_gpu_executable_terminate_timeout),
+      int32_setter_for(&DebugOptions::set_xla_gpu_executable_terminate_timeout),
       debug_options->xla_gpu_executable_terminate_timeout(),
       "Set timeout for RendezvousSingle termination"));
 }  // NOLINT(readability/fn_size)
