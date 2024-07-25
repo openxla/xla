@@ -359,11 +359,11 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   // Initialize command sequence and load device kernels.
   Thunk::ExecutableSource source = {
 #if defined(GOOGLE_CUDA)
-      /*text=*/se::gpu::internal::kAddI32Kernel,
-      /*binary=*/{}
+    /*text=*/se::gpu::internal::kAddI32Kernel,
+    /*binary=*/{}
 #elif defined(TENSORFLOW_USE_ROCM)
-      /*text=*/{},
-      /*binary=*/se::gpu::internal::kAddI32KernelModule
+    /*text=*/{},
+    /*binary=*/se::gpu::internal::kAddI32KernelModule
 #endif
   };
 
