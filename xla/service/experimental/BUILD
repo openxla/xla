@@ -62,7 +62,7 @@ cc_library(
 cc_library(
     name = "solver_builder",
     srcs = ["simple_solver_builder.cc"],
-    hdrs = ["solver_builder.h", "simple_solver_builder.h"],
+    hdrs = ["solver_builder.h", "simple_solver_builder.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
         "instruction_strategies",

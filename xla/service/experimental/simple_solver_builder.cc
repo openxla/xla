@@ -5,6 +5,8 @@
 #include "tsl/platform/logging.h"
 #include "tsl/platform/errors.h"
 
+#include "xla/service/experimental/fix_log.h"
+
 using ::operations_research::LinearExpr;
 
 namespace xla {
@@ -21,8 +23,14 @@ SimpleSolverBuilder::SimpleSolverBuilder() :
 // setup variables within the solver
 void SimpleSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> strats) {
 
-  // ignore if instruction strategies already inside
-  if (var_map_.count(strats) > 0) {
+  // ignore if instruction strategies already inside and incorporated
+  if (var_map_.count(strats) > 0 && var_map_[strats].size() > 0) {
+    return;
+  }
+
+  // ignore instruction that doesn't have any sharding strategies
+  int num_strats = strats->sharding_strats().size();
+  if (num_strats == 0) {
     return;
   }
 
@@ -40,9 +48,11 @@ void SimpleSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> stra
 
 // setup variable constraints
 void SimpleSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies> strats) {
-  
-  // vars for strat must already be created
-  assert(var_map_.count(strats) > 0);
+
+  // ignore if no sharding strategies for instruction 
+  if (strats->sharding_strats().size() == 0) {
+    return;
+  }
 
   // get vars for current strat
   std::vector<MPVariable*>& vars = var_map_[strats];
@@ -62,8 +72,10 @@ void SimpleSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies> 
 // setup the objective
 void SimpleSolverBuilder::AddInObjective(std::shared_ptr<InstructionStrategies> strats) {
 
-  // vars for strat must already be created
-  assert(var_map_.count(strats) > 0);
+  // ignore if no sharding strategy for instruction
+  if (strats->sharding_strats().size() == 0) {
+    return;
+  }
 
   // iterate through variables for strategy and incorporate into objective
   std::vector<ShardingStrategy>& sharding_strats = strats->sharding_strats();
@@ -94,6 +106,11 @@ bool SimpleSolverBuilder::Solve() {
 
 
 int SimpleSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
+
+  // ignore if no sharding strategies for instruction
+  if (strats->sharding_strats().size() == 0) {
+    return 0;
+  }
 
   // get solved variables and return index of one that was solved
   std::vector<MPVariable*> vars = var_map_[strats];
