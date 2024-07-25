@@ -4,9 +4,6 @@
 #define XLA_SERVICE_EXPERIMENTAL_SOLVER_BUILDER_H_
 
 #include "xla/service/experimental/instruction_strategies.h"
-#include "ortools/linear_solver/linear_solver.h"
-
-using ::operations_research::MPSolver;
 
 namespace xla {
 

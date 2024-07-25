@@ -4,9 +4,10 @@
 #define XLA_SERVICE_EXPERIMENTAL_SIMPLE_SOLVER_BUILDER_H_
 
 #include "xla/service/experimental/solver_builder.h"
+#include "ortools/linear_solver/linear_solver.h"
 
-using ::operations_research::MPObjective;
 using ::operations_research::MPSolver;
+using ::operations_research::MPObjective;
 using ::operations_research::MPVariable;
 
 namespace xla {

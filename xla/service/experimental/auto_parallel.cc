@@ -138,7 +138,9 @@ namespace {
 
     // TODO: refactor to ShardingStrategySelector
     ShardingStrategySolver solver;
-    solver.Solve(info_map);
+    VLOG(5) << solver.Solve(info_map);
+
+    VLOG(5) << "Done solving";
 
     VLOG(5) << "Done Testing AutoParallelizer Run";
     

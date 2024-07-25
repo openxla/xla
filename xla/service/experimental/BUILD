@@ -48,14 +48,14 @@ cc_library(
 cc_library(
     name = "sharding_strategy_solver",
     srcs = ["sharding_strategy_solver.cc"],
-    hdrs = ["sharding_strategy_solver.h"],
+    hdrs = ["sharding_strategy_solver.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
         "instruction_strategies",
         "sharding_strategy",
         "solver_builder",
         "//xla/hlo/ir:hlo",
-        "@com_google_ortools//ortools/linear_solver",
+        "@tsl//tsl/platform:logging",
     ]
 )
 

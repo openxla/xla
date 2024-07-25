@@ -3,6 +3,13 @@
 
 #include "xla/service/experimental/simple_solver_builder.h"
 
+// #include "absl/log/log.h"
+
+#include "tsl/platform/logging.h"
+#include "tsl/platform/errors.h"
+
+#include "xla/service/experimental/fix_log.h"
+
 namespace xla {
 
 // incorporate the object that defines solver setup
@@ -14,6 +21,8 @@ ShardingStrategySolver::ShardingStrategySolver() {
 // selected from the solver
 bool ShardingStrategySolver::Solve(std::unordered_map<HloInstruction*, 
     std::shared_ptr<InstructionStrategies>> strat_map) {
+
+  VLOG(5) << "Initializing Solver";
 
   // initialize a builder
   SimpleSolverBuilder builder;
@@ -40,7 +49,6 @@ bool ShardingStrategySolver::Solve(std::unordered_map<HloInstruction*,
   for (auto& [instr, strats] : strat_map) {
     strats->set_chosen_strat(builder.GetStratIdx(strats));
   }
-
 
   return true;
 }
