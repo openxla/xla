@@ -113,36 +113,29 @@ namespace {
       return false;
     }
 
-    VLOG(5) << "Testing AutoParallelizer Run";
-
     // create a clone of the module, then run off of that 
-    std::unique_ptr<HloModule> module_clone = module->Clone();
-    VLOG(5) << LOG_HEADER(0) << "module: " << module_clone->name();
+    VLOG(5) << LOG_HEADER(0) << "module: " << module->name();
 
     std::unordered_map<HloInstruction*, 
       std::shared_ptr<InstructionStrategies>> info_map;
 
     // TODO: shouldn't I only be doing this for the main computation?
     // construct relevant sharding information
-    for (HloComputation* computation : module_clone->computations()) {
+    for (HloComputation* computation : module->computations()) {
       for (HloInstruction* instr : computation->instructions()) {
         assert(info_map.count(instr) == 0);
         info_map[instr] = std::make_shared<InstructionStrategies>(instr);
       }
     }
 
-    VLOG(5) << "Starting to evaluate the resharding costs";
     EstimateReshardingCosts(info_map);
-
-    VLOG(5) << "Number of instructions: " << info_map.size();
 
     // TODO: refactor to ShardingStrategySelector
     ShardingStrategySolver solver;
-    VLOG(5) << solver.Solve(info_map);
+    bool successful = solver.Solve(info_map);
+    VLOG(5) << successful;
 
-    VLOG(5) << "Done solving";
-
-    VLOG(5) << "Done Testing AutoParallelizer Run";
+    VLOG(5) << "Done AutoParallelizer Run";
     
     return true;
   }

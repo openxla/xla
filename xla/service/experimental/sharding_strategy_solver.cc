@@ -22,8 +22,6 @@ ShardingStrategySolver::ShardingStrategySolver() {
 bool ShardingStrategySolver::Solve(std::unordered_map<HloInstruction*, 
     std::shared_ptr<InstructionStrategies>> strat_map) {
 
-  VLOG(5) << "Initializing Solver";
-
   // initialize a builder
   SimpleSolverBuilder builder;
 
