@@ -126,8 +126,8 @@ static std::string GetSmName(se::CudaComputeCapability compute_capability) {
   int sm_version = 30;
   // If the current compute capability isn't known, fallback to the
   // most recent version before it.
-  int supported_versions[] = {90, 89, 87, 86, 80, 75, 72, 70, 62,
-                              61, 60, 53, 52, 50, 37, 35, 32, 30};
+  int supported_versions[] = {100, 90, 89, 87, 86, 80, 75, 72, 70, 62,
+                              61,  60, 53, 52, 50, 37, 35, 32, 30};
   for (int v : supported_versions) {
     if (v <= compute_capability_version) {
       sm_version = v;
@@ -327,6 +327,7 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
 #ifdef GOOGLE_CUDA
 namespace {
 constexpr int kFallbackPtxVersion = 65;
+constexpr int kMaxSupportedPtxVersion = 86;
 
 int DetermineHighestSupportedPtxVersionFromCudaVersion(
     stream_executor::ToolVersion cuda_version) {
@@ -334,6 +335,12 @@ int DetermineHighestSupportedPtxVersionFromCudaVersion(
     // For everything below CUDA 11 we just fall back to PTX 6.5.
     // We don't support CUDA below 11 anymore.
     return kFallbackPtxVersion;
+  }
+  if (cuda_version[0] * 10 + cuda_version[1] > 126) {
+    // If the CUDA version is above the maximum known (12.6), use the maximum
+    // known PTX version (8.6), as the CUDA/PTX mapping may be different for
+    // future versions.
+    return kMaxSupportedPtxVersion;
   }
 
   // Mapping determined from
