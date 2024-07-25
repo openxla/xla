@@ -21,6 +21,11 @@ public:
     return sharding_strats_;
   };
 
+  void set_operand_strats(
+      std::vector<std::shared_ptr<InstructionStrategies>>& operand_strats) {
+    operand_strats_ = operand_strats;
+  }
+
   void set_user_strats(
       std::vector<std::shared_ptr<InstructionStrategies>>& user_strats) {
     user_strats_ = user_strats;
@@ -36,6 +41,9 @@ private:
   // sharding strategies enumerated. Eventually, this instruction
   // will be modified with a sharding strategy provided by the solvers
   HloInstruction* orig_instr_;
+
+  // Pointers to strategies of operands of this instruction
+  std::vector<std::shared_ptr<InstructionStrategies>> operand_strats_;
 
   // Pointers to strategies of users of this instruction
   std::vector<std::shared_ptr<InstructionStrategies>> user_strats_;

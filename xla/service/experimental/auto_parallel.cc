@@ -29,6 +29,29 @@ namespace {
   /* Resharding Cost Estimation                            */
   /*********************************************************/
 
+  void CompleteInstructionStrategiesGraph(std::unordered_map<HloInstruction*,
+      std::shared_ptr<InstructionStrategies>>& map) {
+
+    std::vector<std::shared_ptr<InstructionStrategies>> strats;
+
+    // connect edges for all instruction nodes
+    for (auto& [instr, instr_strats] : map) {
+      // add all operand strategies to the instr_strats
+      strats.clear();
+      for (HloInstruction* operand : instr->operands()) {
+        strats.push_back(map[operand]);
+      }
+      instr_strats->set_operand_strats(strats);
+
+      // add all user strategies to instr_strats
+      strats.clear();
+      for (HloInstruction* operand : instr->users()) {
+        strats.push_back(map[operand]);
+      }
+      instr_strats->set_user_strats(strats);
+    }
+  }
+
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
       std::shared_ptr<InstructionStrategies>>& map) {
     
@@ -44,13 +67,6 @@ namespace {
       if (instr->user_count() == 0) {
         continue;
       }
-
-      // add all user strategies to current instructions strategies
-      std::vector<std::shared_ptr<InstructionStrategies>> all_user_strats;
-      for (HloInstruction* user : instr->users()) {
-        all_user_strats.push_back(map[user]);
-      }
-      instr_strats->set_user_strats(all_user_strats);
 
       // deteremine costs for each sharding strategy 
       for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
@@ -128,6 +144,7 @@ namespace {
       }
     }
 
+    CompleteInstructionStrategiesGraph(info_map);
     EstimateReshardingCosts(info_map);
 
     // TODO: refactor to ShardingStrategySelector
