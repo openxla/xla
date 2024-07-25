@@ -56,7 +56,7 @@ TEST_F(CallInlinerTest, ControlDependenciesAreCarriedToCaller) {
   auto module = CreateNewVerifiedModule();
   HloComputation* inner_computation =
       module->AddEmbeddedComputation(inner.Build());
-
+  // testing 123
   // "outer" computation just calls the "inner" computation.
   HloComputation::Builder outer(TestName() + ".outer");
   Shape r0f32 = ShapeUtil::MakeShape(F32, {});
