@@ -41,8 +41,6 @@ void SimpleSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> stra
     &var_map_[strats]
   );
 
-  VLOG(5) << "\tLength of variable map: " << var_map_[strats].size();
-
   return;
 }
 
