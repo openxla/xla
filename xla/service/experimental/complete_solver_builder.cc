@@ -2,6 +2,8 @@
 
 #include "xla/service/experimental/complete_solver_builder.h"
 
+#include "xla/service/experimental/variable_matrix.h"
+
 #include "tsl/platform/logging.h"
 #include "tsl/platform/errors.h"
 

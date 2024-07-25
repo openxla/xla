@@ -72,6 +72,7 @@ cc_library(
     deps = [
         "instruction_strategies",
         "sharding_strategy",
+        "variable_matrix",
         "//xla/hlo/ir:hlo",
         "@com_google_ortools//ortools/linear_solver",
         "@tsl//tsl/platform:logging",
@@ -179,6 +180,16 @@ cc_library(
     srcs = ["device_mesh.cc"],
     hdrs = ["device_mesh.h"],
     visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "variable_matrix",
+    srcs = ["variable_matrix.cc"],
+    hdrs = ["variable_matrix.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_google_ortools//ortools/linear_solver",
+    ]
 )
 
 cc_library(
