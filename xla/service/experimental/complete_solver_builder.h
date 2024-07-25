@@ -1,7 +1,7 @@
 // TODO: license
 
-#ifndef XLA_SERVICE_EXPERIMENTAL_SIMPLE_SOLVER_BUILDER_H_
-#define XLA_SERVICE_EXPERIMENTAL_SIMPLE_SOLVER_BUILDER_H_
+#ifndef XLA_SERVICE_EXPERIMENTAL_COMPLETE_SOLVER_BUILDER_H_
+#define XLA_SERVICE_EXPERIMENTAL_COMPLETE_SOLVER_BUILDER_H_
 
 #include "xla/service/experimental/solver_builder.h"
 #include "ortools/linear_solver/linear_solver.h"
@@ -15,9 +15,9 @@ namespace xla {
 // This solver builder will ignore the resharding costs between 
 // instructions and will only perform the naive optimization of choosing a 
 // sharding strategy based off of their costs
-class SimpleSolverBuilder : SolverBuilder {
+class CompleteSolverBuilder : SolverBuilder {
 public:
-  SimpleSolverBuilder();
+  CompleteSolverBuilder();
 
   // setup variables within the solver
   void CreateVars(std::shared_ptr<InstructionStrategies> strats) override final;
