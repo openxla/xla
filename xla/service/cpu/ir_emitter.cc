@@ -24,8 +24,9 @@ limitations under the License.
 #include <limits>
 #include <map>
 #include <memory>
-#include <numeric>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -183,8 +184,15 @@ IrEmitter::IrEmitter(mlir::MLIRContext* mlir_context,
   TF_CHECK_OK(s) << "Should have failed buffer assignment.";
 }
 
+IrEmitter::~IrEmitter() {
+  if (!compute_function_.empty()) {
+    LOG(WARNING) << "Compute function stack is not empty: "
+                 << compute_function_.size();
+  }
+};
+
 void IrEmitter::EmitThreadLocalFunctionEpilogue(HloComputation* computation) {
-  llvm::Argument* out_parameter = compute_function_->result_arg();
+  llvm::Argument* out_parameter = compute_function()->result_arg();
   llvm_ir::IrArray root_value = GetIrArrayFor(computation->root_instruction());
   const Shape& return_shape = computation->root_instruction()->shape();
 
@@ -267,7 +275,7 @@ absl::StatusOr<llvm::Function*> IrEmitter::EmitComputation(
   b()->setFastMathFlags(flags);
 
   TF_RETURN_IF_ERROR(computation->AcceptOrdered(this, instruction_order));
-  llvm::Function* ir_function = compute_function_->function();
+  llvm::Function* ir_function = compute_function()->function();
 
   for (llvm::Attribute::AttrKind attr : function_attributes) {
     ir_function->addFnAttr(attr);
@@ -291,8 +299,8 @@ absl::StatusOr<llvm::Function*> IrEmitter::EmitComputation(
     EmitThreadLocalFunctionEpilogue(computation);
   }
 
-  // Destructor for compute_function_ terminates the LLVM function definition.
-  compute_function_.reset();
+  // Destructor for compute_function() terminates the LLVM function definition.
+  PopComputeFunction();
   computation_root_allocation_ = BufferAllocation::Slice();
   computation_parameter_allocations_.clear();
   return ir_function;
@@ -306,9 +314,8 @@ void IrEmitter::InitializeIrFunction(const std::string& function_name) {
       is_top_level_computation_ ? llvm::GlobalValue::ExternalLinkage
                                 : llvm::GlobalValue::InternalLinkage;
   // Create and initialize new IrFunction.
-  compute_function_ =
-      std::make_unique<IrFunction>(function_name, linkage, hlo_module_config_,
-                                   module_, b(), num_dynamic_loop_bounds_);
+  compute_function_.emplace(function_name, linkage, hlo_module_config_, module_,
+                            b(), num_dynamic_loop_bounds_);
 }
 
 absl::Status IrEmitter::HandleBitcast(HloInstruction* bitcast) {
@@ -802,7 +809,8 @@ absl::Status IrEmitter::HandleSelectAndScatter(
       [this, init_value](const llvm_ir::IrArray::Index& target_index) {
         llvm::Value* init_value_addr = GetEmittedValueFor(init_value);
         return Load(IrShapeType(init_value->shape()), init_value_addr);
-      }));
+      },
+      std::optional<llvm_ir::IrArray>(output_array)));
 
   // Create a loop to iterate over the source array to scatter to the output.
   llvm_ir::ForLoopNest source_loops(IrName(select_and_scatter), b());
@@ -1560,8 +1568,7 @@ absl::Status IrEmitter::HandleCollectivePermute(HloInstruction* crs) {
        /*input_buffer=*/input_buffer,
        /*output_buffer=*/output_buffer,
        /*source_target_pairs=*/source_target_pairs_v,
-       /*source_target_pairs_size=*/
-       b()->getInt32(source_target_pairs.size())},
+       /*source_target_pairs_size=*/b()->getInt32(source_target_pairs.size())},
       b()->getVoidTy());
 
   return absl::OkStatus();
@@ -1760,7 +1767,7 @@ IrEmitter::ShardedVectorType IrEmitter::CreateShardedVectorType(
     PrimitiveType element_type, unsigned element_count) {
   int vector_register_size_in_elements =
       target_machine_features_.vector_register_byte_size(
-          *compute_function_->function()) /
+          *compute_function()->function()) /
       ShapeUtil::ByteSizeOfPrimitiveType(element_type);
 
   ShardedVectorType sharded_vector_type;
@@ -1929,7 +1936,7 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
 
   int vector_register_size_in_elements =
       target_machine_features_.vector_register_byte_size(
-          *compute_function_->function()) /
+          *compute_function()->function()) /
       ShapeUtil::ByteSizeOfPrimitiveType(reduce->shape().element_type());
   if (vector_register_size_in_elements == 0) {
     // Either we don't know the vector register width for the target or the
@@ -2312,7 +2319,8 @@ absl::Status IrEmitter::HandlePad(HloInstruction* pad) {
         const HloInstruction* padding_value = pad->operand(1);
         llvm::Value* padding_value_addr = GetEmittedValueFor(padding_value);
         return Load(IrShapeType(padding_value->shape()), padding_value_addr);
-      }));
+      },
+      std::nullopt));
 
   // Create a loop to iterate over the operand elements and update the output
   // locations where the operand elements should be stored.
@@ -2370,7 +2378,8 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
     BindFusionArguments(fusion, &fused_emitter);
     TF_ASSIGN_OR_RETURN(auto generator, fused_emitter.GetGenerator(
                                             *fusion->fused_expression_root()));
-    return EmitTargetElementLoop(fusion, generator);
+    return EmitTargetElementLoop(fusion, "kLoop_fusion", generator,
+                                 std::nullopt);
   } else if (fusion->IsOutputFusion()) {
     VLOG(3) << "HandleFusion kOutput";
     int64_t dot_op_index =
@@ -3150,7 +3159,7 @@ absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
   // Terminates the current block with a branch to a while header.
   llvm::BasicBlock* header_bb = llvm::BasicBlock::Create(
       module_->getContext(), IrName(xla_while, "header"),
-      compute_function_->function());
+      compute_function()->function());
   Br(header_bb);
   b()->SetInsertPoint(header_bb);
 
@@ -3166,7 +3175,7 @@ absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
   // Branches to the body or to the while exit depending on the condition.
   llvm::BasicBlock* body_bb =
       llvm::BasicBlock::Create(module_->getContext(), IrName(xla_while, "body"),
-                               compute_function_->function());
+                               compute_function()->function());
   llvm::BasicBlock* exit_bb = llvm::BasicBlock::Create(
       module_->getContext(), IrName(xla_while, "exit"));
   CondBr(while_predicate, body_bb, exit_bb);
@@ -3181,7 +3190,7 @@ absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
   Br(header_bb);
 
   // Adds the exit block to the function and sets the insert point there.
-  llvm::Function* llvm_fn = compute_function_->function();
+  llvm::Function* llvm_fn = compute_function()->function();
   llvm_fn->insert(llvm_fn->end(), exit_bb);
   b()->SetInsertPoint(exit_bb);
 
@@ -3676,11 +3685,20 @@ absl::Status IrEmitter::HandleAfterAll(HloInstruction* after_all) {
   return absl::OkStatus();
 }
 
+absl::Status IrEmitter::HandleBatchNormGrad(HloInstruction* batch_norm_grad) {
+  return Unimplemented("BatchNormGrad should be rewritten for CPU.");
+}
+
+absl::Status IrEmitter::HandleBatchNormTraining(
+    HloInstruction* batch_norm_training) {
+  return Unimplemented("BatchNormTraining should be rewritten for CPU.");
+}
+
 absl::Status IrEmitter::HandleGetDimensionSize(HloInstruction* get_size) {
   return Unimplemented("GetDimensionSize should be rewritten for CPU.");
 }
 
-absl::Status IrEmitter::HandleSetDimensionSize(HloInstruction* get_size) {
+absl::Status IrEmitter::HandleSetDimensionSize(HloInstruction* set_size) {
   return Unimplemented("SetDimensionSize should be rewritten for CPU.");
 }
 
@@ -3715,6 +3733,10 @@ absl::Status IrEmitter::HandleRngGetAndUpdateState(HloInstruction* rng_state) {
       rng_state->shape().element_type())));
 
   return absl::OkStatus();
+}
+
+absl::Status IrEmitter::HandleStochasticConvert(HloInstruction* instruction) {
+  return Unimplemented("StochasticConvert should be decomposed for CPU.");
 }
 
 absl::Status IrEmitter::FinishVisit(HloInstruction* root) {
@@ -3954,23 +3976,23 @@ llvm::Type* IrEmitter::IrShapeType(const Shape& shape) {
 }
 
 llvm::Value* IrEmitter::GetProfileCountersArgument() {
-  return compute_function_->profile_counters_arg();
+  return compute_function()->profile_counters_arg();
 }
 
 llvm::Value* IrEmitter::GetStatusArgument() {
-  return compute_function_->status_arg();
+  return compute_function()->status_arg();
 }
 
 llvm::Value* IrEmitter::GetBufferTableArgument() {
-  return compute_function_->buffer_table_arg();
+  return compute_function()->buffer_table_arg();
 }
 
 llvm::Value* IrEmitter::GetExecutableRunOptionsArgument() {
-  return compute_function_->exec_run_options_arg();
+  return compute_function()->exec_run_options_arg();
 }
 
 llvm::BasicBlock* IrEmitter::GetReturnBlock() {
-  return compute_function_->return_block();
+  return compute_function()->return_block();
 }
 
 void IrEmitter::EmitEarlyReturnIfErrorStatus() {
@@ -3998,7 +4020,7 @@ llvm::Value* IrEmitter::EmitThreadLocalBufferPointer(
       //
       // Where Param is the actual element type of the underlying buffer (for
       // example, float for an XLA F32 element type).
-      llvm::Value* params = compute_function_->parameters_arg();
+      llvm::Value* params = compute_function()->parameters_arg();
       llvm::Value* param_address_offset = llvm_ir::EmitBufferIndexingGEP(
           params, b()->getPtrTy(), param_number, b());
       llvm::LoadInst* param_address_untyped =
@@ -4018,7 +4040,7 @@ llvm::Value* IrEmitter::EmitThreadLocalBufferPointer(
     const Shape& shape = assigned_buffers.begin()->first->shape();
 
     std::pair<llvm::Function*, BufferAllocation::Slice> key = {
-        compute_function_->function(), slice};
+        compute_function()->function(), slice};
     auto buf_it = thread_local_buffers_.find(key);
     if (buf_it == thread_local_buffers_.end()) {
       llvm::Value* buffer = llvm_ir::EmitAllocaAtFunctionEntry(
@@ -4080,19 +4102,20 @@ absl::Status IrEmitter::EmitTargetAddressForOp(const HloInstruction* op) {
 }
 
 absl::Status IrEmitter::EmitTargetElementLoop(
-    HloInstruction* target_op,
-    const llvm_ir::ElementGenerator& element_generator) {
-  return EmitTargetElementLoop(target_op, /*desc=*/"", element_generator);
-}
-
-absl::Status IrEmitter::EmitTargetElementLoop(
-    HloInstruction* target_op, absl::string_view desc,
-    const llvm_ir::ElementGenerator& element_generator) {
+    const HloInstruction* target_op, absl::string_view desc,
+    const llvm_ir::ElementGenerator& element_generator,
+    std::optional<llvm_ir::IrArray> result_array_opt) {
   VLOG(2) << "EmitTargetElementLoop: " << target_op->ToString();
 
+  llvm_ir::IrArray target_array;
+  if (result_array_opt.has_value()) {
+    target_array = result_array_opt.value();
+  } else {
+    TF_RETURN_IF_ERROR(EmitTargetAddressForOp(target_op));
+    target_array = GetIrArrayFor(target_op);
+  }
+
   const Shape& target_shape = target_op->shape();
-  TF_RETURN_IF_ERROR(EmitTargetAddressForOp(target_op));
-  llvm_ir::IrArray target_array = GetIrArrayFor(target_op);
 
   if (target_shape.IsTuple() &&
       (target_op->opcode() == HloOpcode::kFusion ||
@@ -4112,7 +4135,7 @@ absl::Status IrEmitter::EmitTargetElementLoop(
     }
     TF_RETURN_IF_ERROR(
         llvm_ir::LoopEmitter(element_generator, output_arrays, b())
-            .EmitLoop(IrName(target_op)));
+            .EmitLoop(IrName(target_op, desc)));
 
     std::vector<llvm::Value*> tuple_operand_ptrs;
     for (int64_t i = 0; i < output_arrays.size(); ++i) {
@@ -4124,15 +4147,15 @@ absl::Status IrEmitter::EmitTargetElementLoop(
     if (ShouldEmitParallelLoopFor(*target_op)) {
       // Emit code to read dynamic loop bounds from compute function argument.
       std::vector<std::pair<llvm::Value*, llvm::Value*>> dynamic_loop_bounds =
-          compute_function_->GetDynamicLoopBounds();
+          compute_function()->GetDynamicLoopBounds();
       // Emit parallel loop with dynamic loop bounds for most-major dimensions.
       TF_RETURN_IF_ERROR(ParallelLoopEmitter(element_generator, target_array,
                                              &dynamic_loop_bounds, b())
-                             .EmitLoop(IrName(target_op)));
+                             .EmitLoop(IrName(target_op, desc)));
     } else {
       TF_RETURN_IF_ERROR(
           llvm_ir::LoopEmitter(element_generator, target_array, b())
-              .EmitLoop(IrName(target_op)));
+              .EmitLoop(IrName(target_op, desc)));
     }
   }
   return absl::OkStatus();
@@ -4177,7 +4200,9 @@ absl::Status IrEmitter::DefaultAction(HloInstruction* hlo) {
   }
   CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
   return EmitTargetElementLoop(
-      hlo, elemental_emitter.MakeElementGenerator(hlo, operand_to_generator));
+      hlo, "elemental_loop",
+      elemental_emitter.MakeElementGenerator(hlo, operand_to_generator),
+      std::nullopt);
 }
 
 llvm::Value* IrEmitter::EmitScalarReturningThreadLocalCall(

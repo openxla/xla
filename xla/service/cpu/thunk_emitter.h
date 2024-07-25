@@ -87,6 +87,12 @@ class ThunkEmitter {
   absl::StatusOr<ThunkSequence> EmitSetDimensionSizeThunk(
       const HloInstruction* instruction);
 
+  absl::StatusOr<ThunkSequence> EmitBatchNormGradThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitBatchNormTrainingThunk(
+      const HloInstruction* instruction);
+
   absl::StatusOr<ThunkSequence> EmitConvolutionThunk(
       const HloInstruction* instruction);
 
@@ -110,6 +116,9 @@ class ThunkEmitter {
       const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitRngGetAndUpdateStateThunk(
+      const HloInstruction* instruction);
+
+  absl::StatusOr<ThunkSequence> EmitStochasticConvertThunk(
       const HloInstruction* instruction);
 
   absl::StatusOr<ThunkSequence> EmitInfeedThunk(
