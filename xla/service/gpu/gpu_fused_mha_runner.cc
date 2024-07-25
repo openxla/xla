@@ -1325,11 +1325,13 @@ std::string ToString(const GpufMHAConfig &config) {
 // std::string ToString(const GpufMHAConfig &config) {
 //   std::string result = "GpufMHAConfig:\n";
 //   absl::StrAppend(&result,
-//                   "input_type: ", PrimitiveType_Name(config.input_type), ", ");
+//                   "input_type: ", PrimitiveType_Name(config.input_type), ",
+//                   ");
 //   absl::StrAppend(
-//       &result, "output_type: ", PrimitiveType_Name(config.output_type), ", ");
-//   absl::StrAppend(&result, "Kind: ", CudnnfMHAKindToString(config.kind), ", ");
-//   if (config.fmha_scale) {
+//       &result, "output_type: ", PrimitiveType_Name(config.output_type), ",
+//       ");
+//   absl::StrAppend(&result, "Kind: ", CudnnfMHAKindToString(config.kind), ",
+//   "); if (config.fmha_scale) {
 //     absl::StrAppend(&result, "fmha_scale: ", *config.fmha_scale, ", ");
 //   }
 //   absl::StrAppend(&result, "Algorithm Desc: ", config.algorithm.ToString(),

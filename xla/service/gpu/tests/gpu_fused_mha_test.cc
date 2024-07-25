@@ -1137,7 +1137,7 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
 
   const std::string  // NOLINT
   GetModuleFlash_Attention_Inference_BMM1_NoMask_Generation_Softmax_BMM2_HloString_FP8() {  // NOLINT
-   const std::string hlo_text = R"(
+    const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {
@@ -1181,9 +1181,9 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
     return hlo_text;
   }
 
-   const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_Bwd_BMM1_NoMask_Generation_Softmax_BMM2_HloString_BF16() {  // NOLINT
-   const std::string hlo_text = R"(
+    const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {
@@ -1237,9 +1237,9 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
     return hlo_text;
   }
 
- const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_Bwd_BMM1_NoMask_Generation_Softmax_BMM2_HloString_FP8() {  // NOLINT
-   const std::string hlo_text = R"(
+    const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {

@@ -142,7 +142,8 @@ struct GpufMHABackwardF8Descriptor {
 //   static absl::StatusOr<GpufMHAF8Config> For(
 //       const GpufMHAF8Descriptor& fmha_desc);
 
-//   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
+//   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig()
+//   const;
 
 //   PrimitiveType
 //       input_type;  // Capture the primitive type of one of the inputs of BMM1
@@ -165,7 +166,8 @@ struct GpufMHABackwardF8Descriptor {
 // Attention.
 struct GpufMHAConfig {
   static absl::StatusOr<GpufMHAConfig> For(const GpufMHADescriptor& fmha_desc);
-  static absl::StatusOr<GpufMHAConfig> For(const GpufMHAF8Descriptor& fmha_desc);
+  static absl::StatusOr<GpufMHAConfig> For(
+      const GpufMHAF8Descriptor& fmha_desc);
 
   absl::StatusOr<se::dnn::FusedMHAOp::Config> AsDnnFusedMHAOpConfig() const;
   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
