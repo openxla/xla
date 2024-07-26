@@ -14,30 +14,31 @@ using ::operations_research::LinearExpr;
 
 namespace xla {
 
-// This class represents a matrix of MPVariables and provides methods for
-// taking specific sums and setting coefficients of various variables
-
+// This class represents a matrix of MPVariables and provides methods 
+// to take specific sums and setting coefficients of various variables
+// Note: indexes into array use 0-indexing
 class VariableMatrix {
 public:
   // defines num_rows * num_cols MPVariables with lower and upper bounds
   // of lb and ub for the provided solver
-  VariableMatrix(MPSolver* solver, int num_rows, int num_cols, int lb, int ub);
+  VariableMatrix(MPSolver* solver, int num_rows, int num_cols, 
+    bool integer, int lb, int ub);
 
-  // returns a linear expression of the sum of the i'th row 
+  // returns a linear expression of the sum of the r'th row 
   // no equality constraint
-  LinearExpr SumRow(int i) const;
+  LinearExpr SumRow(int r);
 
-  // returns a linear expression of the sum of the i'th column
+  // returns a linear expression of the sum of the c'th column
   // no equality constraint
-  LinearExpr SumCol(int i) const;
+  LinearExpr SumCol(int c);
 
   // returns a linear expression of the sum of all elements in the array
   // no equality constraint
-  LinearExpr Sum(int i) const;
+  LinearExpr Sum();
 
-  // sets the coefficient of the variable in position [i, j] of the matrix
+  // sets the coefficient of the variable in position [r, c] of the matrix
   // for the solver objective
-  void SetCoefficient(int i, int j, uint64_t c);
+  void SetCoefficient(int r, int c, uint64_t coeff);
 
 private:
   // number of rows in matrix
