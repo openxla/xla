@@ -2,14 +2,10 @@
 
 #include "xla/service/experimental/complete_solver_builder.h"
 
-#include "xla/service/experimental/variable_matrix.h"
-
 #include "tsl/platform/logging.h"
 #include "tsl/platform/errors.h"
 
 #include "xla/service/experimental/fix_log.h"
-
-using ::operations_research::LinearExpr;
 
 namespace xla {
 
@@ -25,18 +21,19 @@ CompleteSolverBuilder::CompleteSolverBuilder() :
 // setup variables within the solver
 void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> strats) {
 
-  // ignore if instruction strategies already inside and incorporated
-  if (var_map_.count(strats) > 0 && var_map_[strats].size() > 0) {
+  if (strats->sharding_strats().size() == 0) {
     return;
   }
 
-  // ignore instruction that doesn't have any sharding strategies
-  int num_strats = strats->sharding_strats().size();
-  if (num_strats == 0) {
-    return;
-  }
+  // create variables representing which sharding strategy is chosen
+  solver_->MakeBoolVarArray(
+    strats->sharding_strats().size(),
+    "",
+    &var_maps_[strats].comp_vars
+  );
 
-  // TODO: implement
+  // for each user, create a sharding strategy
+  
 
   return;
 }
@@ -77,7 +74,6 @@ bool CompleteSolverBuilder::Solve() {
 
   return true;
 }
-
 
 int CompleteSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
 

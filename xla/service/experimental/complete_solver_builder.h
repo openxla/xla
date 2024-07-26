@@ -4,6 +4,9 @@
 #define XLA_SERVICE_EXPERIMENTAL_COMPLETE_SOLVER_BUILDER_H_
 
 #include "xla/service/experimental/solver_builder.h"
+
+#include "xla/service/experimental/variable_matrix.h"
+
 #include "ortools/linear_solver/linear_solver.h"
 
 using ::operations_research::MPSolver;
@@ -35,14 +38,26 @@ public:
   int GetStratIdx(std::shared_ptr<InstructionStrategies> strats) override final;
 
 private:
+
+  struct VarInfo {
+    // comp_vars will be a vector of variables representing the chosen strats
+    // in the objective, it's coefficient is a cost of the sharding strat itself
+    std::vector<MPVariable*> comp_vars;
+
+    // If there are k users of the instruction, resharding_var.size() == k
+    // if the user doesn't have any shardings, then it will be a nullptr
+    // in the objective, these var's coefficients are resharding costs
+    std::vector<std::shared_ptr<VariableMatrix>> resharding_vars;
+  };
+
   // solver that will be built
   std::unique_ptr<MPSolver> solver_;
 
   // objective to optimization problem
   MPObjective* const objective_;
 
-  // map to hold the solver variables associated with an instruction
-  std::unordered_map<std::shared_ptr<InstructionStrategies>, std::vector<MPVariable*>> var_map_;
+  // map to hold the variables for resharding costs in an instruction
+  std::unordered_map<std::shared_ptr<InstructionStrategies>, VarInfo> var_map_;
 };
 
 } // xla
