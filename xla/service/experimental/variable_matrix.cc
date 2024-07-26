@@ -13,6 +13,8 @@ VariableMatrix::VariableMatrix(MPSolver* solver, int num_rows, int num_cols,
       solver_(solver),
       matrix_(num_rows, std::vector<MPVariable*>(num_cols))  {
 
+  assert(num_rows > 0 && num_cols > 0);
+
   // fill the matrix with MPVariables
   for (int r = 0; r < num_rows_; r++) {
     for (int c = 0; c < num_cols_; c++) {

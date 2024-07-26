@@ -21,6 +21,7 @@ class VariableMatrix {
 public:
   // defines num_rows * num_cols MPVariables with lower and upper bounds
   // of lb and ub for the provided solver
+  // note: num_rows and num_cols must be > 0
   VariableMatrix(MPSolver* solver, int num_rows, int num_cols, 
     bool integer, int lb, int ub);
 
