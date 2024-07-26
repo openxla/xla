@@ -31,9 +31,26 @@ public:
     operand_strats_ = operand_strats;
   }
 
+  std::vector<std::shared_ptr<InstructionStrategies>>& operand_strats() {
+    return operand_strats_;
+  }
+
   void set_user_strats(
       std::vector<std::shared_ptr<InstructionStrategies>>& user_strats) {
     user_strats_ = user_strats;
+  }
+
+  std::vector<std::shared_ptr<InstructionStrategies>>& user_strats() {
+    return user_strats_;
+  }
+
+  void set_resharding_matrices(
+      std::vector<std::shared_ptr<ReshardingCostMatrix>>& resharding_matrices) {
+    resharding_matrices_ = resharding_matrices;
+  }
+
+  std::vector<std::shared_ptr<ReshardingCostMatrix>>& resharding_matrices() {
+    return resharding_matrices_;
   }
 
   const HloInstruction* orig_instr() { return orig_instr_; }
@@ -54,6 +71,9 @@ private:
 
   // Pointers to strategies of users of this instruction
   std::vector<std::shared_ptr<InstructionStrategies>> user_strats_;
+
+  // Pointers to resharding matrices for each user of the instruction
+  std::vector<std::shared_ptr<ReshardingCostMatrix>> resharding_matrices_;
 
   // vector of sharding strategies for the given instruction
   std::vector<ShardingStrategy> sharding_strats_;

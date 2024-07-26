@@ -91,6 +91,8 @@ namespace {
       user_instr_shardings);
   }
 
+  // Construct reshardings between all instr and user of instr pairs
+  // and store them in their appropriate strategies
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
       std::shared_ptr<InstructionStrategies>>& map) {
     
