@@ -44,20 +44,7 @@ private:
   // TODO: optimize using a single vector
   std::vector<std::vector<uint64_t>> costs_;
 
-
 };
-
-// Construct resharding matrix between two InstructionStrategy objects
-// First argument is the instruction strategies object of some instruction
-// Second argument must be the instrution strategies object of the user
-// of that instruction
-//
-// Output shardings of sharding strategies in first argument will be
-// have their resharding costs evaluated with the operand sharding strategies
-// of the second argument from the appropriate index
-std::shared_ptr<ReshardingCostMatrix> ConstructReshardingFromStrategies(
-  std::shared_ptr<InstructionStrategies> instr_strats,
-  std::shared_ptr<InstructionStrategies> user_instr_strats);
 
 } // xla
 

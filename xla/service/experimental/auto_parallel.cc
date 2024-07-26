@@ -5,7 +5,7 @@
 #include "xla/service/experimental/instruction_strategies.h"
 #include "xla/service/experimental/sharding_strategy.h"
 #include "xla/service/experimental/sharding_strategy_solver.h"
-#include "xla/service/experimental/resharding_cost_evaluator.h"
+#include "xla/service/experimental/resharding_cost_matrix.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -39,17 +39,56 @@ namespace {
       // add all operand strategies to the instr_strats
       strats.clear();
       for (HloInstruction* operand : instr->operands()) {
-        strats.push_back(map[operand]);
+        strats.push_back(map.at(operand));
       }
       instr_strats->set_operand_strats(strats);
 
       // add all user strategies to instr_strats
       strats.clear();
       for (HloInstruction* operand : instr->users()) {
-        strats.push_back(map[operand]);
+        strats.push_back(map.at(operand));
       }
       instr_strats->set_user_strats(strats);
     }
+  }
+
+  // TODO: move to some file for factory functions for ReshardingCostMatrices
+  // Construct resharding matrix between two InstructionStrategy objects
+  // First argument is the instruction strategies object of some instruction
+  // Second argument must be the instrution strategies object of the user
+  // of that instruction
+  //
+  // Output shardings of sharding strategies in first argument will be
+  // have their resharding costs evaluated with the operand sharding strategies
+  // of the second argument from the appropriate index
+  std::shared_ptr<ReshardingCostMatrix> ConstructReshardingFromStrategies(
+      std::shared_ptr<InstructionStrategies> instr_strats,
+      std::shared_ptr<InstructionStrategies> user_instr_strats) {
+    // extract instructions from their strategies objects
+    const HloInstruction* instr = instr_strats->orig_instr();
+    const HloInstruction* user_instr = user_instr_strats->orig_instr();
+
+    // get the shape of the data that is resharded between these two operations
+    const Shape& shape = instr->shape();
+
+    // build vector of the output shardings from the instruction sharding strats
+    std::vector<std::shared_ptr<HloSharding>> instr_shardings;
+    for (ShardingStrategy& strat : instr_strats->sharding_strats()) {
+      instr_shardings.push_back(strat.result_sharding());
+    } 
+
+    // build vector of operand shardings from the user instruction sharding strats
+    // determine what the operand index of the first instruction is in user
+    int op_idx = user_instr->operand_index(instr);
+    std::vector<std::shared_ptr<HloSharding>> user_instr_shardings;
+    for (ShardingStrategy& strat : user_instr_strats->sharding_strats()) {
+      user_instr_shardings.push_back(strat.GetOpSharding(op_idx));
+    }
+
+    return std::make_shared<ReshardingCostMatrix>(
+      shape, 
+      instr_shardings, 
+      user_instr_shardings);
   }
 
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
@@ -57,8 +96,6 @@ namespace {
     
     // for each instruction, for each user of it, for each sharding strategy
     // recalculate resharding costs
-
-    ReshardingCostEvaluator evaluator;
 
     for (auto& [instr, instr_strats] : map) {
       const Shape& shape = instr->shape();
