@@ -300,9 +300,8 @@ struct FusedMHAF8Op {
     return dnn->FusedMHAF8RunnerFromDesc(
         stream, desc, config.bmm1_lhs_descriptor, config.bmm1_rhs_descriptor,
         config.bmm2_rhs_descriptor, config.intermediate_bmm2_lhs_descriptor,
-        config.output_descriptor,
-        config.activation_descriptor,
-        config.scale, config.mask_type);
+        config.output_descriptor, config.activation_descriptor, config.scale,
+        config.mask_type);
   }
 };
 

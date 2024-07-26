@@ -67,8 +67,8 @@ enum class CudnnfMHAKind {
   kBackwardSoftmax,
   kBackwardScaleBiasSoftmax,
   kBackwardScaleBiasSoftmaxDropout,
-  kSoftmaxf8,
-  kBackwardSoftmaxf8,
+  kSoftmaxF8,
+  kBackwardSoftmaxF8,
 };
 
 enum class CudnnfMHAMaskKind {

@@ -117,36 +117,12 @@ struct GpufMHABackwardDescriptor {
   bool force_deterministic;
 };
 
-// // Structure to describe static properties of a GPU fused Multi-Headed
-// // Attention.
-// struct GpufMHAF8Config {
-//   static absl::StatusOr<GpufMHAF8Config> For(
-//       const GpufMHAF8Descriptor& fmha_desc);
-
-//   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
-
-//   PrimitiveType
-//       input_type;  // Capture the primitive type of one of the inputs of BMM1
-//   PrimitiveType output_type;
-//   CudnnfMHAKind kind;
-//   std::optional<double> fmha_scale;
-
-//   se::dnn::AlgorithmDesc algorithm;
-//   CudnnfMHAMaskKind mask_type;
-//   se::dnn::MatmulTensorDescriptor lhs_bmm1;
-//   se::dnn::MatmulTensorDescriptor rhs_bmm1;
-//   se::dnn::MatmulTensorDescriptor rhs_bmm2;
-//   se::dnn::MatmulTensorDescriptor intermediate_lhs_bmm2;
-//   se::dnn::TensorDescriptor output;
-
-//   std::optional<se::dnn::TensorDescriptor> activation;
-// };
-
 // Structure to describe static properties of a GPU fused Multi-Headed
 // Attention.
 struct GpufMHAConfig {
   static absl::StatusOr<GpufMHAConfig> For(const GpufMHADescriptor& fmha_desc);
-  static absl::StatusOr<GpufMHAConfig> For(const GpufMHAF8Descriptor& fmha_desc);
+  static absl::StatusOr<GpufMHAConfig> For(
+      const GpufMHAF8Descriptor& fmha_desc);
 
   absl::StatusOr<se::dnn::FusedMHAOp::Config> AsDnnFusedMHAOpConfig() const;
   absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
@@ -299,74 +275,6 @@ struct GpufMHABackwardParams {
   std::optional<se::DeviceMemoryBase> seqlen_k_buffer;
 };
 
-class FusedMultiHeadedAttentionF8Runner {
- public:
-  using Repr = std::variant<
-      std::monostate,  // To allow XXX default ctor
-      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>;
-
-  FusedMultiHeadedAttentionF8Runner() = default;
-
-  explicit FusedMultiHeadedAttentionF8Runner(
-      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>> runner)
-      : repr_(std::move(runner)) {}
-
-  explicit FusedMultiHeadedAttentionF8Runner(Repr runner)
-      : repr_(std::move(runner)) {}
-
-  explicit FusedMultiHeadedAttentionF8Runner(const GpufMHAConfig& config)
-      : FusedMultiHeadedAttentionF8Runner(CreateRunner(config)) {
-    if (std::holds_alternative<std::monostate>(repr_)) {
-      CHECK(false) << "Cannot construct FusedMultiHeadedAttentionF8Runner with "
-                      "std::monostate";
-    }
-  }
-
-  se::dnn::AlgorithmDesc ToAlgorithmDesc() const {
-    return std::visit(ToAlgorithmDescVisitor{}, repr_);
-  }
-
-  se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>* AsFusedMHAF8Runner() {
-    CHECK(std::holds_alternative<
-          std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
-        repr_));
-    return std::get<
-               std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
-               repr_)
-        .get();
-  }
-
- private:
-  //  The CreateRunner function is defined as static because it
-  //  doesn't need access to any non-static member variables of the
-  //  FusedMultiHeadedAttentionF8Runner class. Defining it static makes it easy
-  //  to use and makes it clear that it is a utility function that doesn't rely
-  //  on the state of any specific instance of the class.
-  static Repr CreateRunner(const GpufMHAConfig& config) {
-    switch (config.kind) {
-      case CudnnfMHAKind::kSoftmaxf8:
-        return std::make_unique<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>(
-            config.algorithm);
-      default:
-        LOG(FATAL) << "Internal error: unsupported CUDNN MHAF8 kind in "
-                      "FusedMultiHeadedAttentionF8Runner";
-    }
-  }
-
-  struct ToAlgorithmDescVisitor {
-    template <typename RunnerPtr>
-    se::dnn::AlgorithmDesc operator()(const RunnerPtr& runner) {
-      return runner->ToAlgorithmDesc();
-    }
-
-    se::dnn::AlgorithmDesc operator()(const std::monostate&) {
-      CHECK(false) << "Internal error: uninitialized runner in ToAlgorithmDesc";
-    }
-  };
-
-  Repr repr_;
-};
-
 class FusedMultiHeadedAttentionRunner {
  public:
   using Repr =
@@ -512,6 +420,68 @@ class FusedMultiHeadedAttentionBackwardRunner {
   Repr repr_;
 };
 
+class FusedMultiHeadedAttentionF8Runner {
+ public:
+  using Repr = std::variant<
+      std::monostate,
+      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>;
+
+  FusedMultiHeadedAttentionF8Runner() = default;
+
+  explicit FusedMultiHeadedAttentionF8Runner(
+      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>> runner)
+      : repr_(std::move(runner)) {}
+
+  explicit FusedMultiHeadedAttentionF8Runner(Repr runner)
+      : repr_(std::move(runner)) {}
+
+  explicit FusedMultiHeadedAttentionF8Runner(const GpufMHAConfig& config)
+      : FusedMultiHeadedAttentionF8Runner(CreateRunner(config)) {
+    if (std::holds_alternative<std::monostate>(repr_)) {
+      CHECK(false) << "Cannot construct FusedMultiHeadedAttentionF8Runner with "
+                      "std::monostate";
+    }
+  }
+
+  se::dnn::AlgorithmDesc ToAlgorithmDesc() const {
+    return std::visit(ToAlgorithmDescVisitor{}, repr_);
+  }
+
+  se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>* AsFusedMHAF8Runner() {
+    CHECK(std::holds_alternative<
+          std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
+        repr_));
+    return std::get<
+               std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
+               repr_)
+        .get();
+  }
+
+ private:
+  static Repr CreateRunner(const GpufMHAConfig& config) {
+    if (config.kind == CudnnfMHAKind::kSoftmaxF8) {
+      return std::make_unique<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>(
+          config.algorithm);
+    } else {
+      LOG(FATAL) << "Internal error: unsupported CUDNN MHAF8 kind in "
+                    "FusedMultiHeadedAttentionF8Runner";
+    }
+  }
+
+  struct ToAlgorithmDescVisitor {
+    template <typename RunnerPtr>
+    se::dnn::AlgorithmDesc operator()(const RunnerPtr& runner) {
+      return runner->ToAlgorithmDesc();
+    }
+
+    se::dnn::AlgorithmDesc operator()(const std::monostate&) {
+      CHECK(false) << "Internal error: uninitialized runner in ToAlgorithmDesc";
+    }
+  };
+
+  Repr repr_;
+};
+
 struct RunFusedMHAF8Options {
   // Nullable output-parameter pointer for profiling results.
   // Profile results remain unused for now since cuDNN FMHA F8 has only one
@@ -589,7 +559,6 @@ absl::Status RunGpuFMHABackward(
     RunFusedMHABackwardOptions = {});
 
 std::string ToString(const GpufMHAConfig& config);
-// std::string ToString(const GpufMHAF8Config& config);
 
 }  // namespace gpu
 }  // namespace xla

@@ -7347,8 +7347,8 @@ CudnnSupport::FusedMHAF8RunnerFromDesc(
     const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
     const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
     const dnn::TensorDescriptor& output_descriptor,
-    std::optional<dnn::TensorDescriptor> activation_descriptor,
-    double scale, dnn::FMHAMaskKind mask_type) {
+    std::optional<dnn::TensorDescriptor> activation_descriptor, double scale,
+    dnn::FMHAMaskKind mask_type) {
 #if CUDNN_VERSION >= 8904
   auto cudnn = cudnn_->GetHandle(parent_, stream);
   std::vector<int64_t> intermediate_shape;
@@ -8607,8 +8607,8 @@ absl::Status CudnnGraph::Execute(Stream& stream,
   std::unordered_map<int64_t, void*> tensor_to_ptr_map;
   absl::Span<DeviceMemoryBase> operands_without_workspace = operands;
   DeviceMemoryBase workspace;
-  std::cout << "Cudnngraph::Execute with wks=" << graph_.get_workspace_size()
-            << std::endl;
+  VLOG(4) << "Cudnngraph::Execute with workspace size: "
+          << graph_.get_workspace_size();
   if (graph_.get_workspace_size() != 0) {
     workspace = operands.back();
     CHECK_EQ(graph_.get_workspace_size(), workspace.size());

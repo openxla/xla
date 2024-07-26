@@ -343,8 +343,8 @@ class CudnnSupport : public dnn::DnnSupport {
       const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
       const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
       const dnn::TensorDescriptor& output_descriptor,
-      std::optional<dnn::TensorDescriptor> activation_descriptor,
-      double scale, dnn::FMHAMaskKind mask_type) override;
+      std::optional<dnn::TensorDescriptor> activation_descriptor, double scale,
+      dnn::FMHAMaskKind mask_type) override;
 
   absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
   FusedMHARunnerFromDesc(

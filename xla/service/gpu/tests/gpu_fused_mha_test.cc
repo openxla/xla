@@ -1092,9 +1092,15 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
 class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
     : public MultiHeadedAttentionTest {
  protected:
-  const std::string  // NOLINT
-  GetModuleFlash_Attention_Inference_BMM1_NoMask_Generation_Softmax_BMM2_HloString_BF16() {  // NOLINT
-    const std::string hlo_text = R"(
+  void TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8() {
+    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+        se::dnn::VersionInfo(8, 9, 3)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.3.";
+    }
+    XlaBuilder builder(TestName());
+    std::string hlo_string_ref =
+        R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {
@@ -1131,13 +1137,8 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
       custom-call.4.0 = (bf16[4,4,16,16]{3,1,2,0}, u8[16]{0}) custom-call(convert.19, convert.31, convert.43), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/dot_product_attention_fwd[scale=1.0 seed=42 dropout_rate=0.0 variadic_args=(False, False, False) mask_type=MaskType.NO_MASK layout=0 is_training=False]" source_file="/opt/rosetta/test_num.py" source_line=331}, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0.0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "16", "16"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "NO_MASK", "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}}}
       ROOT get-tuple-element.5.0 = bf16[4,4,16,16]{3,1,2,0} get-tuple-element(custom-call.4.0), index=0, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/dot_product_attention_fwd[scale=1.0 seed=42 dropout_rate=0.0 variadic_args=(False, False, False) mask_type=MaskType.NO_MASK layout=0 is_training=False]" source_file="/opt/rosetta/test_num.py" source_line=331}
     } // main.106
-  )";
-    return hlo_text;
-  }
-
-  const std::string  // NOLINT
-  GetModuleFlash_Attention_Inference_BMM1_NoMask_Generation_Softmax_BMM2_HloString_FP8() {  // NOLINT
-   const std::string hlo_text = R"(
+  )";  // NOLINT
+    std::string hlo_string = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0}, bf16[4,16,4,16]{3,2,1,0})->bf16[4,4,16,16]{3,1,2,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {
@@ -1177,26 +1178,7 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
       get-tuple-element.5.0 = f8e4m3fn[4,4,16,16]{3,1,2,0} get-tuple-element(custom-call.21.0), index=0, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/dot_product_attention_fwd[scale=1.0 seed=42 dropout_rate=0.0 variadic_args=(False, False, False) mask_type=MaskType.NO_MASK layout=0 is_training=False]" source_file="/opt/rosetta/test_num.py" source_line=331}
       ROOT out = bf16[4,4,16,16]{3,1,2,0} convert(get-tuple-element.5.0)
     } // main.106
-  )";
-    return hlo_text;
-  }
-
-  template <typename T>
-  void TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8() {
-    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(8, 9, 3)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 8.9.3.";
-    }
-    XlaBuilder builder(TestName());
-    // pass padding mask as bias
-    std::string hlo_string =
-        GetModuleFlash_Attention_Inference_BMM1_NoMask_Generation_Softmax_BMM2_HloString_FP8();  // NOLINT
-    // generate padding mask in cuDNN directly
-    // XLA pattern match does not support pattern matching padding mask
-    // so directly lower to custom call instead for reference
-    std::string hlo_string_ref =
-        GetModuleFlash_Attention_Inference_BMM1_NoMask_Generation_Softmax_BMM2_HloString_BF16();  // NOLINT
+  )";  // NOLINT
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
                                         ErrorSpec{1e-2, 1e-2}));
   }
@@ -1254,7 +1236,7 @@ XLA_TEST_F(FlashAttentionBMMScalePaddingMaskSoftmaxBMM,
 // BMM1 - Scale - Softmax - BMM2 fp8
 XLA_TEST_F(FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8,
            Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8) {
-  TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8<bfloat16>();
+  TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8();
 }
 }  // namespace
 }  // namespace gpu
