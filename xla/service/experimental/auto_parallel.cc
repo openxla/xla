@@ -94,9 +94,8 @@ namespace {
   void EstimateReshardingCosts(std::unordered_map<HloInstruction*, 
       std::shared_ptr<InstructionStrategies>>& map) {
     
-    // for each instruction, for each user of it, for each sharding strategy
-    // recalculate resharding costs
-
+    // iterate through (instr, user of instr) pairs and create
+    // resharding matrices from them
     for (auto& [instr, instr_strats] : map) {
       const Shape& shape = instr->shape();
       
@@ -104,24 +103,6 @@ namespace {
       if (instr->user_count() == 0) {
         continue;
       }
-
-      // // deteremine costs for each sharding strategy 
-      // for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
-      //   // TODO: can cache this iteration to reduce time
-      //   std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
-
-      //   for (HloInstruction* user : instr->users()) {
-      //     int op_idx = user->operand_index(instr);
-      //     std::vector<uint64_t> resharding_costs;
-      //     for (ShardingStrategy& out_strat : map[user]->sharding_strats()) {
-      //       uint64_t cost = evaluator.Evaluate(
-      //         shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
-      //       );
-      //       resharding_costs.push_back(cost);
-      //     }
-      //     strat.AddUserReshardingCosts(resharding_costs);
-      //   }
-      // }
 
     }
     

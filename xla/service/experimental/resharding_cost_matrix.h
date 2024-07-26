@@ -3,7 +3,6 @@
 #ifndef XLA_SERVICE_EXPERIMENTAL_RESHARDING_COST_MATRIX_H_
 #define XLA_SERVICE_EXPERIMENTAL_RESHARDING_COST_MATRIX_H_
 
-#include "xla/service/experimental/instruction_strategies.h"
 #include "xla/shape.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 

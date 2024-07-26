@@ -5,6 +5,7 @@
 
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/experimental/sharding_strategy.h"
+#include "xla/service/experimental/resharding_cost_matrix.h"
 
 #include <vector>
 

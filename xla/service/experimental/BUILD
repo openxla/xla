@@ -90,6 +90,7 @@ cc_library(
         "instruction_to_module",
         "sharding_enumeration",
         "sharding_strategy_evaluator",
+        "resharding_cost_matrix",
         "//xla/hlo/ir:hlo",
     ]
 )
@@ -128,8 +129,6 @@ cc_library(
     hdrs = ["resharding_cost_matrix.h"],
     visibility = ["//visibility:private"],
     deps = [
-        "instruction_strategies",
-        "sharding_strategy",
         "resharding_cost_evaluator",
         "//xla/hlo/ir:hlo"
     ]
