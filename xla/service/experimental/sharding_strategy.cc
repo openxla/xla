@@ -12,10 +12,6 @@ void ShardingStrategy::set_result_sharding(HloSharding result_sharding) {
   result_sharding_ = std::make_shared<HloSharding>(result_sharding);
 }
 
-void ShardingStrategy::AddUserReshardingCosts(std::vector<uint64_t> costs) {
-  resharding_costs_.push_back(std::move(costs));
-}
-
 void ShardingStrategy::ApplyToInstruction(HloInstruction* instr) {
   int num_operands = instr->operand_count();
 

@@ -32,8 +32,6 @@ public:
   void set_result_sharding(HloSharding result_sharding);
   std::shared_ptr<HloSharding> result_sharding() { return result_sharding_; };
 
-  void AddUserReshardingCosts(std::vector<uint64_t> resharding_costs);
-
   // This function applies the sharding strategy into the 
   // HloInstruction pointed to by instr by specifying the shardings for the
   // instructions operands
@@ -60,12 +58,6 @@ private:
   // by GSPMD when given the input shardings and determining the output
   // shardings.
   std::shared_ptr<HloSharding> result_sharding_;
-
-  // For each user of this instruction, have a resharding cost for
-  // each of the user's potential sharding strategies
-  // Cost vectors are added in user order
-  std::vector<std::vector<uint64_t>> resharding_costs_;
-
 };
 
 } // xla

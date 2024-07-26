@@ -68,23 +68,23 @@ namespace {
         continue;
       }
 
-      // deteremine costs for each sharding strategy 
-      for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
-        // TODO: can cache this iteration to reduce time
-        std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
+      // // deteremine costs for each sharding strategy 
+      // for (ShardingStrategy& strat: instr_strats->sharding_strats()) {
+      //   // TODO: can cache this iteration to reduce time
+      //   std::shared_ptr<HloSharding> in_sharding = strat.result_sharding();
 
-        for (HloInstruction* user : instr->users()) {
-          int op_idx = user->operand_index(instr);
-          std::vector<uint64_t> resharding_costs;
-          for (ShardingStrategy& out_strat : map[user]->sharding_strats()) {
-            uint64_t cost = evaluator.Evaluate(
-              shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
-            );
-            resharding_costs.push_back(cost);
-          }
-          strat.AddUserReshardingCosts(resharding_costs);
-        }
-      }
+      //   for (HloInstruction* user : instr->users()) {
+      //     int op_idx = user->operand_index(instr);
+      //     std::vector<uint64_t> resharding_costs;
+      //     for (ShardingStrategy& out_strat : map[user]->sharding_strats()) {
+      //       uint64_t cost = evaluator.Evaluate(
+      //         shape, *in_sharding.get(), *out_strat.GetOpSharding(op_idx).get()
+      //       );
+      //       resharding_costs.push_back(cost);
+      //     }
+      //     strat.AddUserReshardingCosts(resharding_costs);
+      //   }
+      // }
 
     }
     
