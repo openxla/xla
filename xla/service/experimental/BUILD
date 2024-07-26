@@ -36,7 +36,7 @@ cc_library(
         "sharding_strategy",
         "sharding_strategy_solver",
         "module_cost_evaluator",
-        "resharding_cost_evaluator",
+        "resharding_cost_matrix",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/status:status",
@@ -125,11 +125,12 @@ cc_library(
 cc_library(
     name = "resharding_cost_matrix",
     srcs = ["resharding_cost_matrix.cc"],
-    hdrs = ["resharding_cost_evaluator.h"],
+    hdrs = ["resharding_cost_matrix.h"],
     visibility = ["//visibility:private"],
     deps = [
-        "resharding_cost_evaluator",
         "instruction_strategies",
+        "resharding_cost_evaluator",
+        "//xla/hlo/ir:hlo"
     ]
 )
 

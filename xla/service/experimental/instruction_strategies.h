@@ -21,6 +21,10 @@ public:
     return sharding_strats_;
   };
 
+  int num_sharding_strats() {
+    return sharding_strats_.size();
+  }
+
   void set_operand_strats(
       std::vector<std::shared_ptr<InstructionStrategies>>& operand_strats) {
     operand_strats_ = operand_strats;

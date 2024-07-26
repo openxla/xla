@@ -52,6 +52,7 @@ private:
   MPSolver* solver_;
 
   // matrix of MPVariables that the class represents
+  // TODO: optimize using a single vector
   std::vector<std::vector<MPVariable*>> matrix_; 
 
 };
