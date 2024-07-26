@@ -15,12 +15,23 @@ namespace xla {
 class ReshardingCostMatrix {
 public:
 
+  // Construct resharding matrix between two InstructionStrategy objects
+  // First argument is the instruction strategies object of some instruction
+  // Second argument must be the instrution strategies object of the user
+  // of that instruction
+  //
+  // Output shardings of sharding strategies in first argument will be
+  // have their resharding costs evaluated with the operand sharding strategies
+  // of the second argument from the appropriate index
+  ReshardingCostMatrix(std::shared_ptr<InstructionStrategies> instr_strats,
+    std::shared_ptr<InstructionStrategies> user_instr_strats);
+
   // construct matrix between two InstructionStrategies objects
   // resulting matrix will have shape |s1| x |s2| where |s| is the number
   // of sharding strategies in s
   ReshardingCostMatrix(const Shape& shape, 
-    std::vector<std::shared_ptr<HloSharding>>& s1, 
-    std::vector<std::shared_ptr<HloSharding>>& s2);
+    std::vector<std::shared_ptr<HloSharding>>& strats1, 
+    std::vector<std::shared_ptr<HloSharding>>& strats2);
 
   // returns the number of elements in the matrix (num_rows * num_cols)
   int size() const { return num_rows_ * num_cols_; };
