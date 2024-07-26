@@ -71,7 +71,7 @@ def run_hlo_mhlo_tests(name):
             tags = [
                 "nomsan",  # The execution engine doesn't work with msan, see b/248097619.
             ],
-            deps = ["@pypi_lit//:pkg"], # copybara:comment
+            deps = ["@pypi_lit//:pkg"],  # copybara:comment
         )
         for src in native.glob(["**/*.hlo"])
     ]
