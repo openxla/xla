@@ -99,13 +99,13 @@ namespace {
     // iterate through (instr, user of instr) pairs and create
     // resharding matrices from them
     for (auto& [instr, instr_strats] : map) {
-      const Shape& shape = instr->shape();
-      
-      // don't loop if no users
-      if (instr->user_count() == 0) {
-        continue;
+      std::vector<std::shared_ptr<ReshardingCostMatrix>> resharding_matrices;
+      for (auto& user_instr_strats : instr_strats->user_strats()) {
+        resharding_matrices.push_back(ConstructReshardingFromStrategies(
+          instr_strats, user_instr_strats
+        ));
       }
-
+      instr_strats->set_resharding_matrices(resharding_matrices);
     }
     
     return;
