@@ -129,6 +129,7 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "instruction_strategies",
+        "sharding_strategy",
         "resharding_cost_evaluator",
         "//xla/hlo/ir:hlo"
     ]

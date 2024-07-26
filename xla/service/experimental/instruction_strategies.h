@@ -35,6 +35,8 @@ public:
     user_strats_ = user_strats;
   }
 
+  const HloInstruction* orig_instr() { return orig_instr_; }
+
   // takes the index of sharding_strats_ and sets the sharding
   // of the instruction
   void set_chosen_strat(int idx);
