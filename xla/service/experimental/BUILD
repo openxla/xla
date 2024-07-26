@@ -185,10 +185,11 @@ cc_library(
 cc_library(
     name = "variable_matrix",
     srcs = ["variable_matrix.cc"],
-    hdrs = ["variable_matrix.h"],
+    hdrs = ["variable_matrix.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
         "@com_google_ortools//ortools/linear_solver",
+        "@tsl//tsl/platform:logging",
     ]
 )
 

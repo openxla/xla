@@ -25,19 +25,32 @@ public:
 
   // returns a linear expression of the sum of the i'th row 
   // no equality constraint
-  LinearExpr SumRow(int i);
+  LinearExpr SumRow(int i) const;
 
   // returns a linear expression of the sum of the i'th column
   // no equality constraint
-  LinearExpr SumCol(int i);
+  LinearExpr SumCol(int i) const;
 
   // returns a linear expression of the sum of all elements in the array
   // no equality constraint
-  LinearExpr Sum(int i);
+  LinearExpr Sum(int i) const;
 
   // sets the coefficient of the variable in position [i, j] of the matrix
   // for the solver objective
   void SetCoefficient(int i, int j, uint64_t c);
+
+private:
+  // number of rows in matrix
+  int num_rows_;
+
+  // number of columns in matrix
+  int num_cols_;
+
+  // solver for which to create variables for
+  MPSolver* solver_;
+
+  // matrix of MPVariables that the class represents
+  std::vector<std::vector<MPVariable*>> matrix_; 
 
 };
 
