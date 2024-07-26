@@ -123,6 +123,17 @@ cc_library(
 )
 
 cc_library(
+    name = "resharding_cost_matrix",
+    srcs = ["resharding_cost_matrix.cc"],
+    hdrs = ["resharding_cost_evaluator.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "resharding_cost_evaluator",
+        "instruction_strategies",
+    ]
+)
+
+cc_library(
     name = "resharding_cost_evaluator",
     srcs = ["resharding_cost_evaluator.cc"],
     hdrs = ["resharding_cost_evaluator.h"],

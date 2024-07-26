@@ -29,7 +29,7 @@ void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> st
   solver_->MakeBoolVarArray(
     strats->sharding_strats().size(),
     "",
-    &var_maps_[strats].comp_vars
+    &var_map_[strats].comp_vars
   );
 
   // for each user, create a sharding strategy
