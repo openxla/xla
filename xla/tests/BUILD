@@ -14,7 +14,7 @@ load(
 load("//xla:package_groups.bzl", "xla_tests_package_groups")
 load("//xla:xla.bzl", "tests_build_defs_bzl_deps", "xla_cc_binary", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -381,6 +381,7 @@ cc_library(
 xla_test(
     name = "bad_rng_shape_validation_test",
     srcs = ["bad_rng_shape_validation_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -398,6 +399,7 @@ xla_test(
 xla_test(
     name = "buffer_donation_test",
     srcs = ["buffer_donation_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -422,6 +424,7 @@ xla_test(
         "conv_depthwise_test.cc",
     ],
     shard_count = 50,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":conv_depthwise_common",
@@ -442,6 +445,7 @@ xla_test(
     timeout = "long",
     srcs = ["conv_depthwise_backprop_filter_test.cc"],
     shard_count = 40,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -465,6 +469,7 @@ xla_test(
         "cpu",
     ],
     shard_count = 50,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -484,6 +489,7 @@ xla_test(
 xla_test(
     name = "check_execution_arity_test",
     srcs = ["check_execution_arity_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":test_macros_header",
@@ -503,6 +509,7 @@ xla_test(
 xla_test(
     name = "query_inferred_shape_test",
     srcs = ["query_inferred_shape_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -519,6 +526,7 @@ xla_test(
 xla_test(
     name = "while_test",
     srcs = ["while_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -623,6 +631,7 @@ xla_test(
     shard_count = 30,
     tags = [
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -647,6 +656,7 @@ xla_test(
 xla_test(
     name = "pred_test",
     srcs = ["pred_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -760,6 +770,7 @@ xla_test(
 xla_test(
     name = "deallocation_test",
     srcs = ["deallocation_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":test_macros_header",
@@ -879,6 +890,7 @@ xla_test(
 xla_test(
     name = "fft_test",
     srcs = ["fft_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":test_macros_header",
@@ -901,6 +913,7 @@ xla_test(
     },
     tags = [
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":hlo_test_base",
@@ -957,6 +970,7 @@ xla_test(
         "optonly",
         # TODO(b/151340488): Timed out on 2020-03-12.
         "nozapfhahn",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -1000,6 +1014,7 @@ xla_test(
     tags = [
         "nozapfhahn",
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -1030,7 +1045,10 @@ xla_test(
     name = "gather_operation_test",
     srcs = ["gather_operation_test.cc"],
     shard_count = 20,
-    tags = ["test_hlo_pjrt_runner"],
+    tags = [
+        "test_hlo_pjrt_runner",
+        "test_xla_cpu_thunks",
+    ],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -1049,6 +1067,7 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     # TODO(b/245550554): enable Pjrt runner for scatter test once it's fixed.
     deps = [
         ":client_library_test_base",
@@ -1078,6 +1097,7 @@ xla_test(
     shard_count = 20,
     tags = [
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -1127,6 +1147,7 @@ xla_test(
 xla_test(
     name = "constants_test",
     srcs = ["constants_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -1223,6 +1244,7 @@ xla_test(
     tags = [
         "no_rocm",
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
         "@com_google_absl//absl/memory",
@@ -1320,6 +1342,7 @@ xla_test(
         "cpu": ["nomsan"],
     },
     shard_count = 30,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -1342,6 +1365,7 @@ xla_test(
     timeout = "long",
     srcs = ["convolution_dimension_numbers_test.cc"],
     shard_count = 20,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -1449,6 +1473,7 @@ xla_test(
 xla_test(
     name = "float8_test",
     srcs = ["float8_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -1941,6 +1966,7 @@ xla_test(
 xla_test(
     name = "pad_test",
     srcs = ["pad_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -1974,6 +2000,7 @@ xla_test(
 xla_test(
     name = "log_test",
     srcs = ["log_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -1989,6 +2016,7 @@ xla_test(
     name = "matrix_ops_simple_test",
     timeout = "long",
     srcs = ["matrix_ops_simple_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2071,11 +2099,13 @@ xla_test(
     tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
+        ":hlo_test_base",
         ":literal_test_util",
         ":test_macros_header",
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array4d",
+        "//xla:error_spec",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
@@ -2088,6 +2118,21 @@ xla_test(
         "//xla/client:xla_computation",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_test(
+    name = "dynamic_reshape_test",
+    srcs = ["dynamic_reshape_test.cc"],
+    disabled_backends = ["interpreter"],
+    tags = ["test_xla_cpu_thunks"],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:test",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2106,6 +2151,25 @@ xla_test(
         "//xla/client:xla_builder",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
+    name = "stochastic_convert_test",
+    srcs = ["stochastic_convert_test.cc"],
+    backends = ["cpu"],
+    tags = ["test_xla_cpu_thunks"],
+    deps = [
+        ":hlo_test_base",
+        ":test_utils",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:shape_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -2254,7 +2318,7 @@ xla_test(
     args = ["--xla_force_host_platform_device_count=4"],
     backend_tags = {
         # This test is tagged "manual" because it requires multiple GPUs, and Forge only supports
-        # single-GPU tests. Guitar skips "manual" tests unless they're also tagged "guitar".
+        # single-GPU tests.  Guitar skips "manual" tests unless they're also tagged "guitar".
         "gpu": [
             "guitar",
             "manual",
@@ -2270,6 +2334,7 @@ xla_test(
         "gpu",
         "cpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2277,14 +2342,18 @@ xla_test(
         ":test_utils",
         ":verified_hlo_module",
         ":xla_internal_test_main",
+        "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
     ],
@@ -2325,6 +2394,7 @@ xla_test(
 xla_test(
     name = "collective_pipeliner_execution_test",
     srcs = ["collective_pipeliner_execution_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -2431,6 +2501,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":xla_internal_test_main",
@@ -2452,6 +2523,7 @@ xla_test(
 xla_test(
     name = "value_inference_test",
     srcs = ["value_inference_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":literal_test_util",
         ":test_macros_header",
@@ -2481,6 +2553,7 @@ xla_test(
 xla_test(
     name = "compute_constant_test",
     srcs = ["compute_constant_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":literal_test_util",
         ":test_macros_header",
@@ -2504,6 +2577,7 @@ xla_test(
 xla_test(
     name = "client_test",
     srcs = ["client_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2526,6 +2600,7 @@ xla_test(
 xla_test(
     name = "replay_test",
     srcs = ["replay_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2576,6 +2651,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         "//xla:literal_util",
@@ -2586,10 +2662,10 @@ xla_test(
         "//xla/service:llvm_compiler",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -2597,6 +2673,7 @@ xla_test(
 xla_test(
     name = "round_trip_packed_literal_test",
     srcs = ["round_trip_packed_literal_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2624,6 +2701,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":hlo_test_base",
@@ -2680,7 +2758,10 @@ xla_cc_test(
         ":local_client_aot_test_computation.o",
     ],
     linkstatic = 1,
-    tags = ["not_run:arm"],  # b/341355246
+    tags = [
+        "not_run:arm",  # b/341355246
+        "test_xla_cpu_thunks",
+    ],
     deps = [
         "//xla:executable_run_options",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -2693,6 +2774,7 @@ xla_cc_test(
 xla_test(
     name = "local_client_allocation_test",
     srcs = ["local_client_allocation_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -2751,6 +2833,7 @@ xla_test(
         # Outfeed ops are not supported on the interpreter backend.
         "interpreter",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":local_client_test_base",
         ":test_macros_header",
@@ -2764,6 +2847,7 @@ xla_cc_test(
     srcs = [
         "hlo_metadata_test.cc",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":local_client_test_base",
         "//xla:test_helpers",
@@ -2778,6 +2862,7 @@ xla_cc_test(
 xla_test(
     name = "round_trip_transfer_test",
     srcs = ["round_trip_transfer_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":literal_test_util",
@@ -2820,6 +2905,7 @@ xla_test(
 xla_test(
     name = "deep_graph_test",
     srcs = ["deep_graph_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":xla_internal_test_main",
@@ -2830,6 +2916,7 @@ xla_test(
 xla_cc_test(
     name = "literal_test_util_test",
     srcs = ["literal_test_util_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":literal_test_util",
         "//xla:literal",
@@ -2847,6 +2934,7 @@ xla_test(
     name = "transfer_manager_test",
     srcs = ["transfer_manager_test.cc"],
     shard_count = 50,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":literal_test_util",
         ":local_client_test_base",
@@ -2877,6 +2965,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         ":literal_test_util",
@@ -2909,6 +2998,7 @@ xla_test(
     srcs = ["test_utils_test.cc"],
     # There is nothing backend specific in this test, so just pick an arbitrary backend.
     backends = ["cpu"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":local_client_test_base",
         ":test_macros_header",
@@ -2946,6 +3036,7 @@ xla_cc_test(
     name = "multiple_devices_on_host_test",
     srcs = ["multiple_devices_on_host_test.cc"],
     args = ["--xla_force_host_platform_device_count=4"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":xla_internal_test_main",  # fixdeps: keep
         "//xla:shape_util",
@@ -2966,6 +3057,7 @@ xla_test(
     tags = [
         # Disabled in OSS until nvidia publicly releases a fixed ptxas.
         "no_oss",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":hlo_test_base",
@@ -3016,6 +3108,7 @@ xla_test(
     tags = [
         "enable_for_xla_interpreter",
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -3043,6 +3136,7 @@ xla_test(
     shard_count = 10,
     tags = [
         "optonly",
+        "test_xla_cpu_thunks",
     ],
     deps = [
         ":client_library_test_base",
@@ -3078,98 +3172,13 @@ xla_test(
 xla_cc_test(
     name = "tile_assignment_test",
     srcs = ["tile_assignment_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":xla_internal_test_main",
         "//xla:array3d",
         "//xla:test",
         "//xla/hlo/ir:tile_assignment",
         "@com_google_absl//absl/hash",
-    ],
-)
-
-xla_test(
-    name = "onednn_matmul_test",
-    srcs = ["onednn_matmul_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    tags = ["no_oss"],
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/service/cpu:onednn_util",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-xla_test(
-    name = "onednn_convolution_test",
-    srcs = ["onednn_convolution_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/hlo/utils:hlo_matchers",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-xla_test(
-    name = "onednn_layer_norm_test",
-    srcs = ["onednn_layer_norm_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-    ],
-)
-
-xla_test(
-    name = "onednn_softmax_test",
-    srcs = ["onednn_softmax_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    shard_count = 4,
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
-        "//xla/service/cpu:backend_config_proto_cc",
-        "//xla/service/cpu:onednn_ops_rewriter",
-        "//xla/service/cpu:onednn_util",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -3212,6 +3221,38 @@ xla_test(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_test(
+    name = "batch_norm_grad_test",
+    srcs = ["batch_norm_grad_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_test(
+    name = "batch_norm_training_test",
+    srcs = ["batch_norm_training_test.cc"],
+    tags = ["test_xla_cpu_thunks"],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

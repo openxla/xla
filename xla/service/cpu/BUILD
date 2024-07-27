@@ -331,6 +331,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
+        "//xla/service/spmd/shardy:shardy_xla_pass",
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
@@ -623,8 +624,10 @@ cc_library(
     hdrs = ["ir_emitter2.h"],
     deps = [
         ":backend_config_proto_cc",
+        ":dot_op_emitter",
         ":elemental_math_emitter",
         ":ir_emitter",
+        ":ir_function",
         ":parallel_loop_emitter",
         ":shape_partition",
         "//xla:cpu_function_runtime",
@@ -634,13 +637,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
-        "//xla/service/cpu:dot_op_emitter",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
-        "//xla/service/llvm_ir:tuple_ops",
         "//xla/stream_executor:launch_dim",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
@@ -1376,6 +1377,7 @@ xla_cc_test(
     deps = [
         ":cpu_instruction_fusion",
         "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:transpose_folding",
         "//xla/tests:hlo_test_base",
@@ -1383,6 +1385,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

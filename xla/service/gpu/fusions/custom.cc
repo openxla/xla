@@ -20,7 +20,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -60,6 +59,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/gemm_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -115,7 +115,7 @@ absl::StatusOr<BufferAllocation::Slice> GetOperandSlice(
                               /*index*/ {});
   }
 
-  auto slice_adaptor = HloFindIf(
+  auto slice_adaptor = HloBfsFindIf(
       {HloInstructionAdaptor(*start, &adaptor)}, adaptor,
       [](HloInstructionAdaptor node) {
         return IsOpcodeAnyOf<HloOpcode::kDynamicSlice, HloOpcode::kSlice>(
@@ -301,7 +301,7 @@ absl::StatusOr<BufferAllocation::Slice> GetResultSlice(
     }
   }
 
-  auto slice_adaptor = HloFindIf(
+  auto slice_adaptor = HloBfsFindIf(
       {HloInstructionAdaptor(*start, &adaptor)}, adaptor,
       [](auto node) { return node.opcode() == HloOpcode::kDynamicUpdateSlice; },
       /*visit_operands=*/false);
@@ -411,16 +411,15 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
         "operand/result");
   }
 
-  bool deterministic_ops =
-      ir_emitter_context.debug_options().xla_gpu_deterministic_ops() ||
-      ir_emitter_context.debug_options().xla_gpu_exclude_nondeterministic_ops();
+  const bool deterministic_ops =
+      RequireDeterminism(fusion.GetModule()->config());
 
   TF_ASSIGN_OR_RETURN(
       GemmConfig config,
       GemmConfig::For(static_cast<const HloInstruction*>(&custom_call)));
 
   std::unique_ptr<Thunk> thunk;
-  auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&custom_call);
+  auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&fusion);
 
   if (absl::c_any_of(slice_instrs, [&](auto slice_instr) {
         return DynCastOrNull<HloDynamicIndexInstruction>(slice_instr) !=
@@ -657,7 +656,7 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   }
 
   std::unique_ptr<Thunk> thunk;
-  auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&custom_call);
+  auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&fusion);
 
   auto ffi_thunk = [&](Slices ops, Slices res) {
     auto& called_computations = custom_call.called_computations();
@@ -765,7 +764,7 @@ absl::StatusOr<FusionEmissionResult> CustomFusion::Emit(
                       fusion.backend_config<GpuBackendConfig>());
   const FusionBackendConfig& backend_config =
       gpu_config.fusion_backend_config();
-  const auto& config = backend_config.custom_fusion_config();
+  const CustomFusionConfig& config = backend_config.custom_fusion_config();
 
   VLOG(3) << "Lower HLO fusion to a custom fusion " << config.name();
 
@@ -794,14 +793,10 @@ absl::StatusOr<FusionEmissionResult> CustomFusion::Emit(
                      " returned empty custom kernels for a fused computation"));
   }
 
-  // TODO(ezhulenev): Add support for auto tuning to select the best kernel.
-  if (kernels.size() != 1) {
-    return absl::InternalError("Expected exactly one custom kernel");
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      auto thunk, BuildCustomKernelThunkForFusion(ir_emitter_context, fusion,
-                                                  std::move(kernels[0])));
+  TF_ASSIGN_OR_RETURN(auto thunk,
+                      BuildCustomKernelThunkForFusion(
+                          ir_emitter_context, fusion,
+                          std::move(kernels[config.kernel_index()])));
 
   FusionEmissionResult result;
   result.thunks.push_back(std::move(thunk));
@@ -812,7 +807,7 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
     IrEmitterContext& ir_emitter_context,
     const HloFusionInstruction& fusion) const {
   const HloFusionAdaptor& adaptor = analysis_.fusion();
-  auto maybe_custom_call_adaptor = HloFindIf(
+  auto maybe_custom_call_adaptor = HloBfsFindIf(
       adaptor.GetRoots(), adaptor,
       [](auto node) { return node.opcode() == HloOpcode::kCustomCall; });
   if (maybe_custom_call_adaptor == std::nullopt) {

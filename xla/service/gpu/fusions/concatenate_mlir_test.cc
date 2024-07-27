@@ -59,15 +59,15 @@ TEST_F(MlirConcatenateFusionTest, ThreadIdIndexing) {
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] ->
       (bl_x * 128 + th_x)
     domain:
-    th_x in [0, 128)
-    th_y in [0, 1)
-    th_z in [0, 1)
-    bl_x in [0, 4)
-    bl_y in [0, 1)
-    bl_z in [0, 1)
-    chunk_id in [0, 1)
-    unroll_id in [0, 1)
-    bl_x * 128 + th_x in [0, 400)
+    th_x in [0, 127]
+    th_y in [0, 0]
+    th_z in [0, 0]
+    bl_x in [0, 3]
+    bl_y in [0, 0]
+    bl_z in [0, 0]
+    chunk_id in [0, 0]
+    unroll_id in [0, 0]
+    bl_x * 128 + th_x in [0, 399]
   )";
   auto thread_id_to_output_indexing_0 = fusion.ComputeThreadIdToInputIndexing(
       /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
@@ -235,6 +235,34 @@ TEST_F(MlirConcatenateFusionTest, EpilogueBitcast) {
       ROOT fusion = u32[1,1,3] fusion(p0, p1, p2), kind=kInput, calls=fused_computation
     }
   )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirConcatenateFusionTest, Vectorization) {
+  auto kHloString = R"(
+    HloModule module
+
+    fused_computation {
+      param0 = f32[640002] parameter(0)
+      param1 = f32[640000] parameter(1)
+      ROOT concat = f32[1280002] concatenate(param0, param1), dimensions={0}
+    }
+    ENTRY main {
+      param0 = f32[640002] parameter(0)
+      param1 = f32[640000] parameter(1)
+      ROOT fusion = f32[1280002] fusion(param0, param1), calls=fused_computation, kind=kLoop
+    }
+  )";
+  TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
+    // CHECK-DAG: affine_map<(d0, d1) -> (d1 * 128 + d0)>
+    // CHECK-DAG: affine_map<(d0, d1)[s0] -> (d0 * 2 + d1 * 256 + s0)>
+    // CHECK-DAG: affine_map<(d0, d1)[s0] -> (d0 * 2 + d1 * 256 + s0 + 640002)>
+
+    // CHECK-LABEL: fused_computation
+    // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+    // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : index
+    // CHECK-COUNT-2: scf.for %{{.*}} = %[[C0]] to %[[C2]]
+  )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 

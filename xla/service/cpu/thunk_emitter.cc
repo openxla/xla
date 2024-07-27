@@ -181,6 +181,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kSetDimensionSize:
       return EmitSetDimensionSizeThunk(instruction);
 
+    case HloOpcode::kBatchNormGrad:
+      return EmitBatchNormGradThunk(instruction);
+    case HloOpcode::kBatchNormTraining:
+      return EmitBatchNormTrainingThunk(instruction);
+
     // Simple HLO instructions lowered to elemental host kernels (plain loops
     // behind the HostKernel API).
     case HloOpcode::kAbs:
@@ -220,6 +225,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kReal:
     case HloOpcode::kReducePrecision:
     case HloOpcode::kRemainder:
+    case HloOpcode::kReshape:
     case HloOpcode::kReverse:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
@@ -259,9 +265,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     case HloOpcode::kCollectivePermute:
       return EmitCollectivePermuteThunk(instruction);
 
-    // TODO(ezhulenev): Port pad optimizations from IrEmitter.
     case HloOpcode::kPad:
-      return EmitElementalKernelThunk(instruction);
+      return EmitPadKernelThunk(instruction);
 
     case HloOpcode::kSlice:
     case HloOpcode::kDynamicSlice:
@@ -288,6 +293,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
 
     case HloOpcode::kRngGetAndUpdateState:
       return EmitRngGetAndUpdateStateThunk(instruction);
+
+    case HloOpcode::kStochasticConvert:
+      return EmitStochasticConvertThunk(instruction);
 
     case HloOpcode::kInfeed:
       return EmitInfeedThunk(instruction);
@@ -523,6 +531,16 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSetDimensionSizeThunk(
   return Unimplemented("SetDimensionSize should be rewritten for CPU.");
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitBatchNormGradThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("BatchNormGrad should be rewritten for CPU.");
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitBatchNormTrainingThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("BatchNormTraining should be rewritten for CPU.");
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionThunk(
     const HloInstruction* instruction) {
   // NOTE: The following code (along with TODOs and comments) partially
@@ -596,6 +614,17 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitElementalKernelThunk(
       kernel.thread_dims, /*min_alignment=*/cpu_function_runtime::MinAlign());
 }
 
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitPadKernelThunk(
+    const HloInstruction* instruction) {
+  const HloPadInstruction* padInstr = Cast<HloPadInstruction>(instruction);
+  TF_ASSIGN_OR_RETURN(auto kernel, ir_emitter_.EmitPadHostKernel(padInstr));
+  TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(padInstr));
+
+  return ThunkSequence::Of<KernelThunk>(
+      ThunkInfo(padInstr), buffers.arguments, buffers.results, kernel.name,
+      kernel.thread_dims, /*min_alignment=*/cpu_function_runtime::MinAlign());
+}
+
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
     const HloInstruction* instruction) {
   auto* fusion = Cast<HloFusionInstruction>(instruction);
@@ -634,6 +663,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateStateThunk(
   auto* rng_state = Cast<HloRngGetAndUpdateStateInstruction>(instruction);
   return ThunkSequence::Of<RngGetAndUpdateStateThunk>(
       ThunkInfo(instruction), state_buffer, rng_state->delta());
+}
+
+absl::StatusOr<ThunkSequence> ThunkEmitter::EmitStochasticConvertThunk(
+    const HloInstruction* instruction) {
+  return Unimplemented("StochasticConvert should be decomposed for CPU.");
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitInfeedThunk(

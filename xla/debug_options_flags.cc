@@ -171,7 +171,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_pipelined_reduce_scatter(false);
   opts.set_xla_gpu_enable_pipelined_p2p(false);
 
-  opts.set_xla_gpu_run_post_layout_collective_pipeliner(true);
+  opts.set_xla_gpu_run_post_layout_collective_pipeliner(false);
 
   opts.set_xla_gpu_collective_permute_decomposer_threshold(
       std::numeric_limits<int64_t>::max());
@@ -280,6 +280,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_per_fusion_autotune_cache_dir("");
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
+
+  opts.set_xla_enable_command_buffers_during_profiling(false);
 
   return opts;
 }
@@ -1830,6 +1832,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "version checks must be done by the user (e.g. if you want to use "
       "separate caches for different versions of XLA, please use different "
       "directories). Default: no cache."));
+  flag_list->push_back(tsl::Flag(
+      "xla_enable_command_buffers_during_profiling",
+      bool_setter_for(
+          &DebugOptions::set_xla_enable_command_buffers_during_profiling),
+      debug_options->xla_enable_command_buffers_during_profiling(),
+      "Experimental: Enable command buffers while a profiling active. "
+      "By default, enabling profiling switches from command buffers to "
+      "op-by-op mode."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

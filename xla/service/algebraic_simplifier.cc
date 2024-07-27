@@ -7742,7 +7742,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // Convert Reduce(Dot(X,Y)) to Dot(X,Y) if any of the dimensions reduced were
   // batch dimensions of the dot. The transformation supports reducing other
   // dimensions as well.
-  if (options_.enable_dot_strength_reduction() &&
+  if (options_.supports_non_canonical_dots() &&
+      options_.enable_dot_strength_reduction() &&
       Match(arg, m::Dot(&dot, m::Op(&lhs), m::Op(&rhs)).WithOneUser()) &&
       Match(reduce->to_apply()->root_instruction(),
             m::AddAnyOrder(m::Parameter(0), m::Parameter(1))) &&
@@ -7877,6 +7878,29 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
           HloInstruction::CreateBinary(
               reduce_result_shape, function->root_instruction()->opcode(),
               broadcast_arg, reduce->mutable_operand(1)));
+    }
+  }
+
+  // Replace Reduce(Broadcast(Scalar)) with Broadcast(Multiply(Scalar)) when the
+  // reduction operation is addition
+  if (arg->opcode() == HloOpcode::kBroadcast &&
+      ShapeUtil::IsScalar(arg->operand(0)->shape())) {
+    if (Match(reduce->to_apply()->root_instruction(),
+              m::AddAnyOrder(m::Parameter(0), m::Parameter(1))) &&
+        IsScalarConstantZero(init_value)) {
+      int64_t reduction_dims_prod = 1;
+      for (auto i : reduce->dimensions()) {
+        reduction_dims_prod *= arg->shape().dimensions(i);
+      }
+
+      HloInstruction* multiplier =
+          MakeScalarLike(arg->mutable_operand(0), reduction_dims_prod);
+      TF_ASSIGN_OR_RETURN(HloInstruction * multiplied_scalar,
+                          MakeBinaryHlo(HloOpcode::kMultiply,
+                                        arg->mutable_operand(0), multiplier));
+      return ReplaceWithNewInstruction(
+          reduce, HloInstruction::CreateBroadcast(reduce->shape(),
+                                                  multiplied_scalar, {}));
     }
   }
 

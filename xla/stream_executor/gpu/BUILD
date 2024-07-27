@@ -576,14 +576,15 @@ xla_test(
 
 cc_library(
     name = "gpu_cudamallocasync_allocator",
-    srcs = ["gpu_cudamallocasync_allocator.cc"],
-    hdrs = ["gpu_cudamallocasync_allocator.h"],
+    srcs = if_cuda_is_configured(["gpu_cudamallocasync_allocator.cc"]),
+    hdrs = if_cuda_is_configured(["gpu_cudamallocasync_allocator.h"]),
     tags = ["gpu"],
     deps = [
         ":gpu_init_impl",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cuda_activation",
         "//xla/stream_executor/cuda:cuda_executor",
+        "//xla/stream_executor/cuda:cuda_status",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework:device_id",
         "//xla/tsl/util:env_var",
