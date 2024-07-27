@@ -3160,6 +3160,7 @@ cc_library(
         ":all_reduce_blueconnect",
         ":autotuner_util",
         ":buffer_sharing",
+        ":cancel_all_gather_dynamic_slice",
         ":collective_permute_cycle_decomposer",
         ":collective_permute_valid_iteration_annotator",
         ":command_buffer_scheduling",
@@ -4422,6 +4423,31 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "cancel_all_gather_dynamic_slice",
+    srcs = ["cancel_all_gather_dynamic_slice.cc"],
+    hdrs = ["cancel_all_gather_dynamic_slice.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:collective_opt_utils",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:op_expander_pass",
+    ],
+)
+
+xla_cc_test(
+    name = "cancel_all_gather_dynamic_slice_test",
+    srcs = ["cancel_all_gather_dynamic_slice_test.cc"],
+    deps = [
+        ":cancel_all_gather_dynamic_slice",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 

@@ -113,6 +113,7 @@ limitations under the License.
 #include "xla/service/gpu/algorithm_checker.h"
 #include "xla/service/gpu/all_reduce_blueconnect.h"
 #include "xla/service/gpu/autotuner_util.h"
+#include "xla/service/gpu/cancel_all_gather_dynamic_slice.h"
 #include "xla/service/gpu/collective_permute_cycle_decomposer.h"
 #include "xla/service/gpu/collective_permute_valid_iteration_annotator.h"
 #include "xla/service/gpu/command_buffer_scheduling.h"
@@ -888,6 +889,7 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<AllReduceSplitter>();
   collectives_pipeline.AddPass<ReduceScatterCreator>();
+  collectives_pipeline.AddPass<CancelAllGatherDynamicSlice>();
   collectives_pipeline.AddPass<AllGatherOptimizer>();
   collectives_pipeline.AddPass<AllReduceReassociate>(
       debug_options.xla_gpu_enable_reassociation_for_converted_ar());
