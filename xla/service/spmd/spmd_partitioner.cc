@@ -568,12 +568,13 @@ PartitionedHlo PartitionedHlo::ReshardNoCache(
       }
       LOG(ERROR)
           << "[spmd] Involuntary full rematerialization. The compiler was "
-             "not able to go from sharding "
+            "not able to go from sharding "
           << sharding().ToString(/*include_metadata=*/true) << " to "
           << target.ToString(/*include_metadata=*/true)
-          << " without doing a full rematerialization of the tensor. You "
-             "probably want to enrich the sharding annotations to prevent "
-             "this from happening.";
+          << " without doing a full rematerialization of the tensor for HLO operation: "
+          << hlo_->ToString()
+          << ". You probably want to enrich the sharding annotations to prevent "
+            "this from happening.";
     }
     return Replicate().Reshard(target);
   }
