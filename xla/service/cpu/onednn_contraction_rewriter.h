@@ -29,16 +29,18 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-// This pass pattern-matches HLO Dot and Convolution instructions and rewrites into custom
-// calls.
+// This pass pattern-matches HLO Dot and Convolution instructions and rewrites
+// into custom calls.
 class OneDnnContractionRewriter : public HloModulePass {
  public:
   OneDnnContractionRewriter(int intra_op_parallelism,
-                       const tsl::thread::ThreadPool* compile_threadpool)
+                            const tsl::thread::ThreadPool* compile_threadpool)
       : intra_op_parallelism_(intra_op_parallelism),
         compile_threadpool_(compile_threadpool) {}
   OneDnnContractionRewriter() = default;
-  absl::string_view name() const override { return "onednn-contraction-rewriter"; }
+  absl::string_view name() const override {
+    return "onednn-contraction-rewriter";
+  }
 
   using HloPassInterface::Run;
   absl::StatusOr<bool> Run(

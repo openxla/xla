@@ -365,7 +365,8 @@ inline auto OptionalConvertAndBitcast(HloInstruction** optional_convert,
 
 }  // namespace
 
-bool OneDnnContractionRewriter::ShouldRewriteDot(const HloInstruction* dot_instr) {
+bool OneDnnContractionRewriter::ShouldRewriteDot(
+    const HloInstruction* dot_instr) {
   // Currently, blocking control dependencies
   if (dot_instr->HasControlDependencies()) return false;
   if (!IsSupportedType(dot_instr->shape().element_type())) return false;
@@ -425,7 +426,8 @@ bool OneDnnContractionRewriter::ShouldRewriteDot(const HloInstruction* dot_instr
   return (num_flops >= flops_threshold);
 }
 
-bool OneDnnContractionRewriter::ShouldRewriteConv(const HloInstruction* conv_instr) {
+bool OneDnnContractionRewriter::ShouldRewriteConv(
+    const HloInstruction* conv_instr) {
   if (conv_instr->HasControlDependencies()) return false;
   if (!IsSupportedType(conv_instr->shape().element_type())) return false;
   if (conv_instr->batch_group_count() != 1) return false;
