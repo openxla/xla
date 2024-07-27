@@ -399,6 +399,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:instruction_fusion",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
@@ -415,6 +417,9 @@ xla_cc_test(
     name = "triton_support_test",
     srcs = ["triton_support_test.cc"],
     shard_count = 20,
+    # TODO(b/353912594): this test does not need to run on GPU, but it is broken on CPU in OSS.
+    # Force it to run on GPU temporarily in order to get important OSS coverage.
+    tags = ["gpu"],
     deps = [
         ":triton_fusion_emitter",
         ":triton_support",

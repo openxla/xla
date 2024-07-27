@@ -332,6 +332,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
+        "//xla/service/spmd/shardy:shardy_xla_pass",
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
@@ -1377,6 +1378,7 @@ xla_cc_test(
     deps = [
         ":cpu_instruction_fusion",
         "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:transpose_folding",
         "//xla/tests:hlo_test_base",
@@ -1384,6 +1386,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 

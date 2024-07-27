@@ -14,7 +14,7 @@ load(
 load("//xla:package_groups.bzl", "xla_tests_package_groups")
 load("//xla:xla.bzl", "tests_build_defs_bzl_deps", "xla_cc_binary", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -424,6 +424,7 @@ xla_test(
         "conv_depthwise_test.cc",
     ],
     shard_count = 50,
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
         ":conv_depthwise_common",
@@ -2098,11 +2099,13 @@ xla_test(
     tags = ["test_xla_cpu_thunks"],
     deps = [
         ":client_library_test_base",
+        ":hlo_test_base",
         ":literal_test_util",
         ":test_macros_header",
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array4d",
+        "//xla:error_spec",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
@@ -2115,6 +2118,21 @@ xla_test(
         "//xla/client:xla_computation",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_test(
+    name = "dynamic_reshape_test",
+    srcs = ["dynamic_reshape_test.cc"],
+    disabled_backends = ["interpreter"],
+    tags = ["test_xla_cpu_thunks"],
+    deps = [
+        ":hlo_test_base",
+        ":xla_internal_test_main",  # fixdeps: keep
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:test",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2300,7 +2318,7 @@ xla_test(
     args = ["--xla_force_host_platform_device_count=4"],
     backend_tags = {
         # This test is tagged "manual" because it requires multiple GPUs, and Forge only supports
-        # single-GPU tests. Guitar skips "manual" tests unless they're also tagged "guitar".
+        # single-GPU tests.  Guitar skips "manual" tests unless they're also tagged "guitar".
         "gpu": [
             "guitar",
             "manual",
@@ -2324,14 +2342,18 @@ xla_test(
         ":test_utils",
         ":verified_hlo_module",
         ":xla_internal_test_main",
+        "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:statusor",
         "//xla/hlo/ir:hlo",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
     ],
@@ -2629,6 +2651,7 @@ xla_test(
         "cpu",
         "gpu",
     ],
+    tags = ["test_xla_cpu_thunks"],
     deps = [
         ":hlo_test_base",
         "//xla:literal_util",
@@ -2639,10 +2662,10 @@ xla_test(
         "//xla/service:llvm_compiler",
         "//xla/stream_executor",
         "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Core",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -3156,93 +3179,6 @@ xla_cc_test(
         "//xla:test",
         "//xla/hlo/ir:tile_assignment",
         "@com_google_absl//absl/hash",
-    ],
-)
-
-xla_test(
-    name = "onednn_matmul_test",
-    srcs = ["onednn_matmul_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    shard_count = 4,
-    tags = ["no_oss"],
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/service/cpu:onednn_util",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-xla_test(
-    name = "onednn_convolution_test",
-    srcs = ["onednn_convolution_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/hlo/utils:hlo_matchers",
-        "@tsl//tsl/platform:platform_port",
-    ],
-)
-
-xla_test(
-    name = "onednn_layer_norm_test",
-    srcs = ["onednn_layer_norm_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-    ],
-)
-
-xla_test(
-    name = "onednn_softmax_test",
-    srcs = ["onednn_softmax_test.cc"],
-    backends = [
-        "cpu",
-    ],
-    copts = tsl_copts(),
-    shard_count = 4,
-    deps = [
-        ":hlo_test_base",
-        ":test_macros_header",
-        ":xla_internal_test_main",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla:test",
-        "//xla:test_helpers",
-        "//xla/service:pattern_matcher",
-        "//xla/service:pattern_matcher_gmock",
-        "//xla/service/cpu:backend_config_proto_cc",
-        "//xla/service/cpu:onednn_ops_rewriter",
-        "//xla/service/cpu:onednn_util",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 

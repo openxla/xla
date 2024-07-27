@@ -99,7 +99,7 @@ TEST(TfrtCpuClientTest, MemorySpace) {
 }
 
 TEST(TfrtCpuClientTest, DonationWithExecutionError) {
-  constexpr char kProgram[] =
+  static constexpr char kProgram[] =
       R"(
 HloModule DonationWithExecutionError,
           input_output_alias={ {}: (0, {}, must-alias) }
@@ -134,17 +134,17 @@ ENTRY DonationWithExecutionError() -> f32[2, 2] {
   auto result = pjrt_executable->Execute(/*argument_handles=*/{{buffer.get()}},
                                          /*options=*/{});
   ASSERT_FALSE(result.ok());
-  EXPECT_THAT(result.status().message(), ::testing::HasSubstr("test error."));
+  EXPECT_THAT(result.status().message(), HasSubstr("test error."));
 
   result = pjrt_executable->Execute(/*argument_handles=*/{{buffer.get()}},
                                     /*options=*/{});
   ASSERT_FALSE(result.ok());
   EXPECT_THAT(result.status().message(),
-              ::testing::HasSubstr("buffer has been deleted or donated."));
+              HasSubstr("buffer has been deleted or donated."));
 }
 
 TEST(TfrtCpuClientTest, HloSnapshot) {
-  constexpr char kProgram[] = R"(
+  static constexpr char kProgram[] = R"(
     HloModule add
     ENTRY add {
       x = f32[3,2] parameter(0)
