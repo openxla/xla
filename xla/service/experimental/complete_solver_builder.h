@@ -47,7 +47,7 @@ private:
     // If there are k users of the instruction, resharding_var.size() == k
     // if the user doesn't have any shardings, then it will be a nullptr
     // in the objective, these var's coefficients are resharding costs
-    std::vector<std::shared_ptr<VariableMatrix>> resharding_vars;
+    std::vector<std::shared_ptr<VariableMatrix>> resharding_var_matrices;
   };
 
   // solver that will be built
