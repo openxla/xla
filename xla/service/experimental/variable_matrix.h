@@ -24,7 +24,7 @@ public:
   // defines num_rows * num_cols MPVariables with lower and upper bounds
   // of lb and ub for the provided solver
   // note: num_rows and num_cols must be > 0
-  VariableMatrix(MPSolver* solver, int num_rows, int num_cols, 
+  VariableMatrix(std::shared_ptr<MPSolver> solver, int num_rows, int num_cols, 
     bool integer, int lb, int ub);
 
   // returns a linear expression of the sum of the r'th row 
@@ -55,7 +55,7 @@ private:
   int num_cols_;
 
   // solver for which to create variables for
-  MPSolver* solver_;
+  std::shared_ptr<MPSolver> solver_;
 
   // matrix of MPVariables that the class represents
   // TODO: optimize using a single vector

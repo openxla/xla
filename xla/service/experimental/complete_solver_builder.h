@@ -51,7 +51,7 @@ private:
   };
 
   // solver that will be built
-  std::unique_ptr<MPSolver> solver_;
+  std::shared_ptr<MPSolver> solver_;
 
   // objective to optimization problem
   MPObjective* const objective_;

@@ -6,8 +6,8 @@
 
 namespace xla {
 
-VariableMatrix::VariableMatrix(MPSolver* solver, int num_rows, int num_cols,
-    bool integer, int lb, int ub) : 
+VariableMatrix::VariableMatrix(std::shared_ptr<MPSolver> solver, 
+    int num_rows, int num_cols, bool integer, int lb, int ub) : 
       num_rows_(num_rows),
       num_cols_(num_cols),
       solver_(solver),

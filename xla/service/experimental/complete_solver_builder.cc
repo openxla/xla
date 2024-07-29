@@ -9,7 +9,6 @@
 
 namespace xla {
 
-
 CompleteSolverBuilder::CompleteSolverBuilder() :
     solver_(MPSolver::CreateSolver("SCIP")),
     objective_(solver_->MutableObjective()) {
@@ -32,7 +31,18 @@ void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> st
     &var_map_[strats].comp_vars
   );
 
-  // for each user, create a sharding strategy
+  // for each user, create a matrix representing the resharding choices
+  int num_rows = strats->num_sharding_strats();
+  int num_cols;
+  for (auto& user_strats : strats->user_strats()) {
+    var_map_[strats].resharding_vars.push_back(
+      std::make_shared<VariableMatrix>(
+        solver_,
+        num_rows, num_cols,
+        true, 0, 1 /* binary variable specification */
+      )
+    );
+  }
   
 
   return;
