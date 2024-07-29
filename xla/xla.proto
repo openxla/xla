@@ -879,8 +879,8 @@ message DebugOptions {
   bool xla_enable_command_buffers_during_profiling = 317;
 
   // Timeouts for RendezvousSingle stuck warning and termination.
-  bool xla_gpu_executable_warn_stuck_timeout = 318;
-  bool xla_gpu_executable_terminate_timeout = 319;
+  int32 xla_gpu_executable_warn_stuck_timeout = 318;
+  int32 xla_gpu_executable_terminate_timeout = 319;
 
   // Next id: 320
 
