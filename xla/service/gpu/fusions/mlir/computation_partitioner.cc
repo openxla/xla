@@ -301,11 +301,11 @@ PartitionedComputation::PartitionedComputation(
           absl::StrAppend(out, root->name());
         })));
     subgraphs_.push_back(
-        Subgraph{.name = std::move(name),
-                 .instructions = {instructions.begin(), instructions.end()},
-                 .roots = std::move(roots),
-                 .index_ranges = std::move(ranges),
-                 .root_indexing = std::move(root_indexing)});
+        Subgraph{/* .name = */ std::move(name),
+                 /* .instructions = */ {instructions.begin(), instructions.end()},
+                 /* .roots = */ std::move(roots),
+                 /* .index_ranges = */ std::move(ranges),
+                 /* .root_indexing = */ std::move(root_indexing)});
   }
 
   for (const auto& subgraph : subgraphs_) {
