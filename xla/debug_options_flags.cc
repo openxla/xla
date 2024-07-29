@@ -283,6 +283,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_enable_command_buffers_during_profiling(false);
 
+  opts.set_xla_gpu_sharded_autotuning_timeout_seconds(3600);
+
   return opts;
 }
 
@@ -1840,6 +1842,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental: Enable command buffers while a profiling active. "
       "By default, enabling profiling switches from command buffers to "
       "op-by-op mode."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_sharded_autotuning_timeout_seconds",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_sharded_autotuning_timeout_seconds),
+      debug_options->xla_gpu_sharded_autotuning_timeout_seconds(),
+      "Timeout in seconds before terminating sharded autotuning."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

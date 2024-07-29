@@ -1167,7 +1167,8 @@ static TilingConfigs TrimConfigs(const TilingConfigs& gemm_config_sets,
 // Exchange the results with the other ranks.
 absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
                              const int module_id, const int shard_index,
-                             const int shard_count) {
+                             const int shard_count,
+                             const absl::Duration timeout) {
   AutotuneResults results;
   TF_RETURN_IF_ERROR(AutotunerUtil::SerializeAutotuneResults(&results));
   TF_ASSIGN_OR_RETURN(std::string results_str,
@@ -1183,8 +1184,7 @@ absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
     TF_ASSIGN_OR_RETURN(
         std::string autotune_results_str,
         key_value_store.Get(
-            absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, i),
-            absl::InfiniteDuration()));
+            absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, i), timeout));
     TF_RETURN_IF_ERROR(
         AutotunerUtil::LoadAutotuneResults(autotune_results_str, true));
   }
@@ -1265,7 +1265,9 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
     if (shard_autotuning) {
       TF_RETURN_IF_ERROR(ExchangeResults(
           *key_value_store_.key_value_store, module->unique_id(),
-          key_value_store_.process_index, key_value_store_.process_count));
+          key_value_store_.process_index, key_value_store_.process_count,
+          absl::Seconds(
+              debug_options.xla_gpu_sharded_autotuning_timeout_seconds())));
     }
   }
 
