@@ -35,6 +35,7 @@ void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> st
   int num_rows = strats->num_sharding_strats();
   int num_cols;
   for (auto& user_strats : strats->user_strats()) {
+    num_cols = user_strats->num_sharding_strats();
     var_map_[strats].resharding_var_matrices.push_back(
       std::make_shared<VariableMatrix>(
         solver_,
@@ -43,7 +44,6 @@ void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> st
       )
     );
   }
-  
 
   return;
 }
