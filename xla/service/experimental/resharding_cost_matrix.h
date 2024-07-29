@@ -34,6 +34,8 @@ public:
   // and the c'th sharding strategy of s2
   uint64_t CostAt(int r, int c);
 
+  std::string ToString();
+
 private:
 
   int num_rows_;

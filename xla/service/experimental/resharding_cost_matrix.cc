@@ -38,4 +38,17 @@ uint64_t ReshardingCostMatrix::CostAt(int r, int c) {
   return costs_[r][c];
 }
 
+std::string ReshardingCostMatrix::ToString() {
+
+  std::string s = "";
+  for (int r = 0; r < num_rows(); r++) {
+    for (int c = 0; c < num_cols(); c++) {
+      s += std::to_string(costs_[r][c]) + " ";
+    }
+    s += "\n";
+  }
+
+  return s;
+}
+
 } // xla
