@@ -63,4 +63,18 @@ void VariableMatrix::SetCoefficient(int r, int c, uint64_t coeff) {
   return;
 }
 
+void VariableMatrix::SetCoefficients(
+    std::shared_ptr<ReshardingCostMatrix> cost_matrix) {
+  assert(cost_matrix->num_rows() == num_rows_);
+  assert(cost_matrix->num_cols() == num_cols_);
+
+  for (int r = 0; r < num_rows_; r++) {
+    for (int c = 0; c < num_cols_; c++) {
+      SetCoefficient(r, c, cost_matrix->CostAt(r, c));
+    }
+  }
+
+  return;
+}
+
 } // xla

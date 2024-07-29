@@ -200,6 +200,7 @@ cc_library(
     hdrs = ["variable_matrix.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
+        "resharding_cost_matrix",
         "@com_google_ortools//ortools/linear_solver",
         "@tsl//tsl/platform:logging",
     ]

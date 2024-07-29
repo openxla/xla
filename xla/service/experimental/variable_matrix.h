@@ -3,6 +3,8 @@
 #ifndef XLA_SERVICE_EXPERIMENTAL_VARIABLE_MATRIX_H_
 #define XLA_SERVICE_EXPERIMENTAL_VARIABLE_MATRIX_H_
 
+#include "xla/service/experimental/resharding_cost_matrix.h"
+
 #include "ortools/linear_solver/linear_solver.h"
 
 #include "stdint.h"
@@ -40,6 +42,10 @@ public:
   // sets the coefficient of the variable in position [r, c] of the matrix
   // for the solver objective
   void SetCoefficient(int r, int c, uint64_t coeff);
+
+  // sets the coefficients of the variables from a ReshardingCostMatrix
+  // ReshardingCostMatrix must have same dimensions as this VariableMatrix
+  void SetCoefficients(std::shared_ptr<ReshardingCostMatrix> cost_matrix);
 
 private:
   // number of rows in matrix
