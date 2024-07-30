@@ -53,7 +53,7 @@ public:
     return resharding_matrices_;
   }
 
-  const HloInstruction* orig_instr() { return orig_instr_; }
+  HloInstruction* orig_instr() { return orig_instr_; }
 
   // takes the index of sharding_strats_ and sets the sharding
   // of the instruction

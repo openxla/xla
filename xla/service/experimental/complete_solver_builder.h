@@ -39,6 +39,13 @@ public:
 
 private:
 
+  // returns a vector of the resharding matrices of the operand's to the current
+  // instruction, if an operand doesn't have any shardings, then it doesn't
+  // have a matrix to contribute into result
+  // NOTE: as a result, won't return a 1-to-1 correspondence
+  std::vector<std::shared_ptr<VariableMatrix>> GetOpMatrices(
+    std::shared_ptr<InstructionStrategies> strats);
+
   struct VarInfo {
     // comp_vars will be a vector of variables representing the chosen strats
     // in the objective, it's coefficient is a cost of the sharding strat itself

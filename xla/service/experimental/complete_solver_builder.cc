@@ -20,7 +20,7 @@ CompleteSolverBuilder::CompleteSolverBuilder() :
 // setup variables within the solver
 void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> strats) {
 
-  if (strats->sharding_strats().size() == 0) {
+  if (strats->num_sharding_strats() == 0) {
     return;
   }
 
@@ -52,7 +52,7 @@ void CompleteSolverBuilder::CreateVars(std::shared_ptr<InstructionStrategies> st
 void CompleteSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategies for instruction 
-  if (strats->sharding_strats().size() == 0) {
+  if (strats->num_sharding_strats() == 0) {
     return;
   }
 
@@ -108,7 +108,7 @@ void CompleteSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies
 void CompleteSolverBuilder::AddInObjective(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategy for instruction
-  if (strats->sharding_strats().size() == 0) {
+  if (strats->num_sharding_strats() == 0) {
     return;
   }
 
@@ -131,7 +131,7 @@ bool CompleteSolverBuilder::Solve() {
 int CompleteSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategies for instruction
-  if (strats->sharding_strats().size() == 0) {
+  if (strats->num_sharding_strats() == 0) {
     return 0;
   }
 
@@ -141,6 +141,23 @@ int CompleteSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> st
   assert(0);
 
   return -1;
+}
+
+std::vector<std::shared_ptr<VariableMatrix>> CompleteSolverBuilder::GetOpMatrices(
+    std::shared_ptr<InstructionStrategies> strats) {
+
+  std::vector<std::shared_ptr<VariableMatrix>> op_matrices;
+
+  for (auto op_strats : strats->operand_strats()) {
+    if (var_map_[op_strats].resharding_var_matrices.size() > 0) {
+      int user_idx = op_strats->orig_instr()->UserId(strats->orig_instr());
+      op_matrices.push_back(
+        var_map_[op_strats].resharding_var_matrices[user_idx]
+      );
+    }
+  }
+
+  return op_matrices;
 }
 
 } // xla
