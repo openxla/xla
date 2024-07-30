@@ -742,7 +742,7 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
       }
     }
   }
-  ""
+
   entries {
     key: "sm_86"
     value {
