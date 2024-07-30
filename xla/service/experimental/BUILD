@@ -32,6 +32,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "debug",
+        "complete_strategy_graph",
         "instruction_strategies",
         "sharding_strategy",
         "sharding_strategy_solver",
@@ -76,6 +77,17 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "@com_google_ortools//ortools/linear_solver",
         "@tsl//tsl/platform:logging",
+    ]
+)
+
+cc_library(
+    name = "complete_strategy_graph",
+    srcs = ["complete_strategy_graph.cc"],
+    hdrs = ["complete_strategy_graph.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "instruction_strategies",
+        "//xla/hlo/ir:hlo"
     ]
 )
 

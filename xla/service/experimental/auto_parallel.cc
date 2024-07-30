@@ -2,6 +2,7 @@
 
 #include "xla/service/experimental/auto_parallel.h"
 
+#include "xla/service/experimental/complete_strategy_graph.h"
 #include "xla/service/experimental/instruction_strategies.h"
 #include "xla/service/experimental/sharding_strategy.h"
 #include "xla/service/experimental/sharding_strategy_solver.h"
