@@ -65,6 +65,8 @@ filegroup(
     ]),
 )
 
+exports_files(srcs = ["gpu_compiler_test_autotune_db.textproto"])
+
 tf_proto_library(
     name = "backend_configs",
     srcs = ["backend_configs.proto"],
@@ -4241,7 +4243,6 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:data_type",
         "//xla/stream_executor:dnn",
-        "//xla/stream_executor:kernel_factory",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:typed_kernel_factory",

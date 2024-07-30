@@ -144,7 +144,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_enable_dumping(true);
 
   opts.set_xla_gpu_enable_custom_fusions(false);
-  opts.set_xla_gpu_enable_address_computation_fusion(true);
+  opts.set_xla_gpu_enable_dynamic_slice_fusion(true);
   opts.set_xla_gpu_nccl_termination_timeout_seconds(-1);
   opts.set_xla_gpu_enable_shared_constants(true);
   opts.set_xla_gpu_enable_nccl_user_buffers(false);
@@ -270,8 +270,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_host_memory_offloading(false);
 
   opts.set_xla_gpu_nccl_terminate_on_error(false);
-
-  opts.set_xla_use_shardy(false);
 
   opts.set_xla_gpu_shard_autotuning(false);
 
@@ -1298,10 +1296,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "expression. Default is all custom fusions registerered in a current "
       "process."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_address_computation_fusion",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_enable_address_computation_fusion),
-      debug_options->xla_gpu_enable_address_computation_fusion(),
+      "xla_gpu_enable_dynamic_slice_fusion",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_dynamic_slice_fusion),
+      debug_options->xla_gpu_enable_dynamic_slice_fusion(),
       "Whether to enable XLA address computation fusion"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_nccl_termination_timeout_seconds",
@@ -1797,9 +1794,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_nccl_terminate_on_error),
       debug_options->xla_gpu_nccl_terminate_on_error(),
       "If set, then NCCL errors will terminate the process."));
-  flag_list->push_back(tsl::Flag(
-      "xla_use_shardy", bool_setter_for(&DebugOptions::set_xla_use_shardy),
-      debug_options->xla_use_shardy(), "Whether to use Shardy."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_shard_autotuning",
       bool_setter_for(&DebugOptions::set_xla_gpu_shard_autotuning),
