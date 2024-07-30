@@ -38,7 +38,6 @@ bool ShardableModule(HloModule* module) {
 
 }   // namespace
 
-
 /*********************************************************/
 /* AutoParallelizer Pass Implementation                  */
 /*********************************************************/
