@@ -176,7 +176,7 @@ absl::StatusOr<std::shared_ptr<NcclClique::Lock>> AcquireNcclClique(
     const NcclCliqueIdCallback& clique_id_callback, int32_t rank,
     size_t num_local_participants,
     const NcclClique::AcquiredCliquesMap& acquired_cliques,
-    const std::vector<se::Event*> async_events_queue,
+    const std::vector<std::unique_ptr<se::Event>>& async_events_queue,
     absl::Status& async_status, int64_t max_nchannels = 0);
 
 }  // namespace xla::gpu

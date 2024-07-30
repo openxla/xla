@@ -150,6 +150,7 @@ GpuExecutable::~GpuExecutable() {
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());
   }
+  async_events_queue_.clear();
 }
 
 absl::Status GpuExecutable::CheckCompatibilityWithServiceExecutableRunOptions(
@@ -220,7 +221,9 @@ class ResourceRequests : public Thunk::ResourceRequests {
   }
 
   absl::StatusOr<Thunk::CollectiveCliques> AcquireCollectiveCliques(
-      const Thunk::CollectiveExecuteParams& params) {
+      const Thunk::CollectiveExecuteParams& params,
+      std::vector<std::unique_ptr<se::Event>>& async_events_queue,
+      absl::Status& async_status) {
     if (cliques_.empty()) return Thunk::CollectiveCliques();
 
     VLOG(2) << "Acquire " << cliques_.size()
@@ -268,10 +271,10 @@ class ResourceRequests : public Thunk::ResourceRequests {
                                  : params.p2p_max_nchannels;
       TF_ASSIGN_OR_RETURN(
           std::shared_ptr<NcclClique::Lock> clique,
-          AcquireNcclClique(
-              params.executor, params.run_id, r.key, *clique_id_callback, *rank,
-              r.num_local_participants, cliques_map, params.async_events_queue,
-              const_cast<absl::Status&>(params.async_status), max_channels));
+          AcquireNcclClique(params.executor, params.run_id, r.key,
+                            *clique_id_callback, *rank,
+                            r.num_local_participants, cliques_map,
+                            async_events_queue, async_status, max_channels));
 
       cliques_map[r.key] = std::move(clique);
     }
@@ -345,7 +348,9 @@ absl::Status ExecuteThunks(
     Thunk::ExecutableSource executable_source,
     const ServiceExecutableRunOptions* run_options,
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
-    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids) {
+    const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
+    std::vector<std::unique_ptr<se::Event>>& async_events_queue,
+    absl::Status& async_status) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -426,7 +431,8 @@ absl::Status ExecuteThunks(
                           *run_options, async_comms_streams,
                           main_stream->parent()->device_ordinal(),
                           collective_max_nchannels, p2p_max_nchannels));
-
+  collective_params.async_status = &async_status;
+  collective_params.async_events_queue = &async_events_queue;
   ResourceRequests resource_requests;
 
   {  // Collect resource requirements from thunks.
@@ -442,10 +448,13 @@ absl::Status ExecuteThunks(
   if (!mock_collectives) {
     TF_ASSIGN_OR_RETURN(
         collective_cliques,
-        resource_requests.AcquireCollectiveCliques(collective_params));
+        resource_requests.AcquireCollectiveCliques(
+            collective_params, async_events_queue, async_status));
   }
 
   {  // Initialize thunks using prepared resources before execution.
+    collective_params.async_status = &async_status;
+    collective_params.async_events_queue = &async_events_queue;
     Thunk::InitializeParams initialize_params{
         executor,
         executable_source,
@@ -476,8 +485,6 @@ absl::Status ExecuteThunks(
       std::move(additional_execution_streams));
 
   TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
-
-  collective_params.async_events_queue.clear();
   return MaybeSyncAndProfile(run_options, execution_timer.get(),
                              block_host_until_done ? main_stream : nullptr);
 }
@@ -1006,7 +1013,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     TF_RETURN_IF_ERROR(ExecuteThunks(
         has_module() ? &module_config().debug_options() : nullptr, module_name_,
         unique_id, *thunks_, executable_source, run_options, buffer_allocations,
-        block_host_until_done, execution_stream_ids_));
+        block_host_until_done, execution_stream_ids_, async_events_queue_,
+        async_status_));
   }
 
   TF_RETURN_IF_ERROR(
