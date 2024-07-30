@@ -32,11 +32,12 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "debug",
+        "complete_strategy_graph",
         "instruction_strategies",
         "sharding_strategy",
-        "sharding_strategy_solver",
+        "sharding_strategy_selector",
         "module_cost_evaluator",
-        "resharding_cost_evaluator",
+        "resharding_cost_matrix",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/status:status",
@@ -46,9 +47,9 @@ cc_library(
 )
 
 cc_library(
-    name = "sharding_strategy_solver",
-    srcs = ["sharding_strategy_solver.cc"],
-    hdrs = ["sharding_strategy_solver.h", "fix_log.h"],
+    name = "sharding_strategy_selector",
+    srcs = ["sharding_strategy_selector.cc"],
+    hdrs = ["sharding_strategy_selector.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
         "instruction_strategies",
@@ -72,9 +73,21 @@ cc_library(
     deps = [
         "instruction_strategies",
         "sharding_strategy",
+        "variable_matrix",
         "//xla/hlo/ir:hlo",
         "@com_google_ortools//ortools/linear_solver",
         "@tsl//tsl/platform:logging",
+    ]
+)
+
+cc_library(
+    name = "complete_strategy_graph",
+    srcs = ["complete_strategy_graph.cc"],
+    hdrs = ["complete_strategy_graph.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "instruction_strategies",
+        "//xla/hlo/ir:hlo"
     ]
 )
 
@@ -89,6 +102,7 @@ cc_library(
         "instruction_to_module",
         "sharding_enumeration",
         "sharding_strategy_evaluator",
+        "resharding_cost_matrix",
         "//xla/hlo/ir:hlo",
     ]
 )
@@ -117,6 +131,17 @@ cc_library(
     visibility = ["//visibility:private"],
     deps = [
         "shape_utils",
+        "//xla/hlo/ir:hlo"
+    ]
+)
+
+cc_library(
+    name = "resharding_cost_matrix",
+    srcs = ["resharding_cost_matrix.cc"],
+    hdrs = ["resharding_cost_matrix.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "resharding_cost_evaluator",
         "//xla/hlo/ir:hlo"
     ]
 )
@@ -179,6 +204,18 @@ cc_library(
     srcs = ["device_mesh.cc"],
     hdrs = ["device_mesh.h"],
     visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "variable_matrix",
+    srcs = ["variable_matrix.cc"],
+    hdrs = ["variable_matrix.h", "fix_log.h"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "resharding_cost_matrix",
+        "@com_google_ortools//ortools/linear_solver",
+        "@tsl//tsl/platform:logging",
+    ]
 )
 
 cc_library(

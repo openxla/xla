@@ -106,9 +106,7 @@ bool SimpleSolverBuilder::Solve() {
 int SimpleSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategies for instruction
-  if (strats->sharding_strats().size() == 0) {
-    return 0;
-  }
+  assert(strats->num_sharding_strats() != 0); 
 
   // get solved variables and return index of one that was solved
   std::vector<MPVariable*> vars = var_map_[strats];

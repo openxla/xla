@@ -102,7 +102,7 @@ std::vector<HloSharding> EnumerateOpSharding(
 }
 
 // Combine shardings for each operator to form sharding strategies
-std::vector<ShardingStrategy> CombineShardingVectors(
+std::vector<ShardingStrategy> CartesianProductShardingVectors(
     std::vector<std::vector<HloSharding>> sharding_vecs) {
   int num_vecs = sharding_vecs.size();
 
@@ -121,7 +121,7 @@ std::vector<ShardingStrategy> CombineShardingVectors(
 
   // otherwise recurse
   std::vector<HloSharding> shardings = sharding_vecs[num_vecs - 1];
-  std::vector<ShardingStrategy> sub_strats = CombineShardingVectors(
+  std::vector<ShardingStrategy> sub_strats = CartesianProductShardingVectors(
     std::vector<std::vector<HloSharding>>(sharding_vecs.begin(), 
       sharding_vecs.end() - 1)
   );
@@ -156,7 +156,7 @@ std::vector<ShardingStrategy> EnumerateShardingStrategies(
     all_op_shardings.push_back(EnumerateOpSharding(op, instruction));
   }
 
-  return CombineShardingVectors(all_op_shardings);
+  return CartesianProductShardingVectors(all_op_shardings);
 } 
 
 }
