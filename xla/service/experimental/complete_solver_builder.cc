@@ -150,7 +150,7 @@ std::vector<std::shared_ptr<VariableMatrix>> CompleteSolverBuilder::GetOpMatrice
   std::vector<std::shared_ptr<VariableMatrix>> op_matrices;
 
   for (auto op_strats : strats->operand_strats()) {
-    if (var_map_[op_strats].resharding_var_matrices.size() > 0) {
+    if (op_strats->num_sharding_strats() > 0) {
       int user_idx = op_strats->orig_instr()->UserId(strats->orig_instr());
       op_matrices.push_back(
         var_map_[op_strats].resharding_var_matrices[user_idx]
