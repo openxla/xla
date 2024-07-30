@@ -153,11 +153,8 @@ bool CompleteSolverBuilder::Solve() {
 int CompleteSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategies for instruction
-  if (strats->num_sharding_strats() == 0) {
-    return 0;
-  }
+  assert(strats->num_sharding_strats() != 0);   
 
-  // TODO: implement
 
   // should not have reached this point with a valid solution
   assert(0);
