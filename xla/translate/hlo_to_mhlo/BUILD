@@ -148,9 +148,9 @@ xla_cc_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:types",
+        "//xla/tsl/lib/core:status_test_util",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test_main",
     ],
 )

@@ -273,7 +273,7 @@ tsl_cc_test(
     srcs = ["device_name_utils_test.cc"],
     deps = [
         ":device_name_utils",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:test",

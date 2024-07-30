@@ -1400,7 +1400,7 @@ xla_cc_test(
         ":cpu_runtime",
         "//xla:shape_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
@@ -1586,8 +1586,8 @@ xla_cc_test(
         "//xla/service/cpu:target_machine_features",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )
