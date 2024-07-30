@@ -24,583 +24,583 @@ namespace gpu {
 
 constexpr char kDeviceHloOpProfiles[] =
     R"pb(
-         entries {
-           key: "sm_90"  # "NVIDIA H100 80GB HBM3"
-           value {
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 356
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 364
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 297
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 71
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 685
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 253
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 300
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 304
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 126
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 71
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 629
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 253
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 201
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 997
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 102
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 217
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 182
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 245
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 95
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 993
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 95
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 502
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 451
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 43
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 526
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 178
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 978
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 79
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 190
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 166
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 229
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 75
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 958
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 75
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 467
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 431
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 19
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 510
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 7
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 586
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 558
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 376
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 712
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 815
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1259
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 277
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 554
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 332
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 431
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 15
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 930
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 526
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 15
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 2205
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 15
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2415
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 641
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2055
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 756
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 633
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 3148
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2324
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 4344
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2379
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 7
-             }
+         entries { key: "sm_90"  # "NVIDIA H100 80GB HBM3"
+
+                   value { entries {
+                     instruction {
+                       opcode: "divide"
+                       shape { element_type: S8 }
+                     }
+                     clock_cycles: 356
+                   }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 364
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 297
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 71
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 685
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 253
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 300
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 304
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 126
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 71
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 629
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 253
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 201
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 997
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 102
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 217
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 182
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 245
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 95
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 993
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 95
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 502
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 451
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 43
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 526
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 178
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 978
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 79
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 190
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 166
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 229
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 75
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 958
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 75
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 467
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 431
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 19
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 510
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 7
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 586
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 558
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 376
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 712
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 815
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1259
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 277
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 554
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 332
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 431
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 15
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 930
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 526
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 15
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 2205
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 15
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2415
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 641
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2055
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 756
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 633
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 3148
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2324
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 4344
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2379
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 7
+                           })pb"
+    R"pb(
              entries {
                instruction {
                  opcode: "atan2"
@@ -742,7 +742,7 @@ constexpr char kDeviceHloOpProfiles[] =
                clock_cycles: 15
              }
            }
-         })pb"
+                      })pb"
     R"pb(
          entries {
            key: "sm_86"
@@ -1312,6 +1312,7 @@ constexpr char kDeviceHloOpProfiles[] =
     R"pb(
          entries {
            key: "sm_80"  # "NVIDIA A100-SXM4-40GB"
+
            value {
              entries {
                instruction {
@@ -1610,478 +1611,478 @@ constexpr char kDeviceHloOpProfiles[] =
            }
          })pb"
     R"pb(
-         entries {
-           key: "sm_70"  # "Tesla V100-SXM2-16GB"
-           value {
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 336
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 189
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 345
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 183
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 287
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 104
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 685
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 12
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 376
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 293
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 189
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 293
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 183
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 113
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 104
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 3
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 599
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 12
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 376
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 226
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 425
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 128
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 241
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 232
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 266
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 425
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 122
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 284
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 449
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 73
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 709
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 9
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 189
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 373
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 79
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 205
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 180
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 217
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 76
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 373
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 76
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 269
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 6
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 406
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 21
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 6
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 673
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 6
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 599
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 624
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 358
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 410
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 318
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 633
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 263
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 618
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 324
-             }
+         entries { key: "sm_70"  # "Tesla V100-SXM2-16GB"
+
+                   value { entries {
+                     instruction {
+                       opcode: "divide"
+                       shape { element_type: S8 }
+                     }
+                     clock_cycles: 336
+                   }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 189
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 345
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 183
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 287
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 104
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 685
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 12
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 376
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 293
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 189
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 293
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 183
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 113
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 104
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 3
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 599
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 12
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 376
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 226
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 425
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 128
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 241
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 232
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 266
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 425
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 122
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 284
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 449
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 73
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 709
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 9
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 189
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 373
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 79
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 205
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 180
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 217
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 76
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 373
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 76
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 269
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 6
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 406
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 21
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 6
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 673
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 6
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 599
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 624
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 358
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 410
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 318
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 633
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 263
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 618
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 324
+                           })pb"
+    R"pb(
              entries {
                instruction {
                  opcode: "tanh"
@@ -2342,494 +2343,494 @@ constexpr char kDeviceHloOpProfiles[] =
                clock_cycles: 15
              }
            }
-         })pb"
+                      })pb"
     R"pb(
-         entries {
-           key: "sm_60"  # "Tesla P100-SXM2-16GB"
-           value {
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 426
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 5
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 216
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 420
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 5
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 216
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 444
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 14
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 417
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 1018
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 82
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 1569
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 299
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 5
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 213
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 307
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 5
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 216
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 189
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 14
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 420
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 2
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 888
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 79
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 1548
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 233
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 532
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 142
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 364
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 325
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 373
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 100
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 497
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 100
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 458
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 675
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 68
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 1012
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 213
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 494
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 109
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 337
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 284
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 328
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 71
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 473
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 71
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 426
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 663
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 35
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 988
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 11
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 645
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1427
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 405
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 544
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 441
-             }
+         entries { key: "sm_60"  # "Tesla P100-SXM2-16GB"
+
+                   value { entries {
+                     instruction {
+                       opcode: "add"
+                       shape { element_type: S8 }
+                     }
+                     clock_cycles: 2
+                   }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 426
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 5
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 216
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 420
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 5
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 216
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 444
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 14
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 417
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 1018
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 82
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 1569
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 299
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 5
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 213
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 307
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 5
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 216
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 189
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 14
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 420
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 2
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 888
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 79
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 1548
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 233
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 532
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 142
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 364
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 325
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 373
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 100
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 497
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 100
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 458
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 675
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 68
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 1012
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 213
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 494
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 109
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 337
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 284
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 328
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 71
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 473
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 71
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 426
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 663
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 35
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 988
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 11
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 645
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1427
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 405
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 544
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 441
+                           })pb"
+    R"pb(
              entries {
                instruction {
                  opcode: "log-plus-one"
@@ -3118,494 +3119,493 @@ constexpr char kDeviceHloOpProfiles[] =
                clock_cycles: 20
              }
            }
-         })pb"
+                      })pb"
     R"pb(
-         entries {
-           key: "sm_75"
-           value {
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 360
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S8 }
-               }
-               clock_cycles: 336
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 357
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S16 }
-               }
-               clock_cycles: 339
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S32 }
-               }
-               clock_cycles: 296
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 979
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: S64 }
-               }
-               clock_cycles: 495
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 293
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U8 }
-               }
-               clock_cycles: 334
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 290
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U16 }
-               }
-               clock_cycles: 336
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U32 }
-               }
-               clock_cycles: 118
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 812
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: U64 }
-               }
-               clock_cycles: 515
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 792
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 815
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 132
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 342
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 239
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 239
-             }
-             entries {
-               instruction {
-                 opcode: "logistic"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 262
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 126
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 794
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 123
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 175
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 414
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 74
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F16 }
-               }
-               clock_cycles: 1120
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 783
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 737
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 83
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 319
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 201
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 218
-             }
-             entries {
-               instruction {
-                 opcode: "logistic"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 181
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 74
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 717
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 74
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 167
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 414
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F32 }
-               }
-               clock_cycles: 1085
-             }
-             entries {
-               instruction {
-                 opcode: "cbrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 6494
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1800
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1630
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1929
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 596
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1774
-             }
-             entries {
-               instruction {
-                 opcode: "logistic"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 2430
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 705
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1805
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 984
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1535
-             }
-             entries {
-               instruction {
-                 opcode: "add"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 95
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 3744
-             }
-             entries {
-               instruction {
-                 opcode: "divide"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 1915
-             }
-             entries {
-               instruction {
-                 opcode: "multiply"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 95
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 5538
-             }
-             entries {
-               instruction {
-                 opcode: "subtract"
-                 shape { element_type: F64 }
-               }
-               clock_cycles: 95
-             }
-             entries {
-               instruction {
-                 opcode: "cosine"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 1702
-             }
-             entries {
-               instruction {
-                 opcode: "exponential"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 1503
-             }
-             entries {
-               instruction {
-                 opcode: "exponential-minus-one"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 1474
-             }
-             entries {
-               instruction {
-                 opcode: "log"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 835
-             }
-             entries {
-               instruction {
-                 opcode: "log-plus-one"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 737
-             }
-             entries {
-               instruction {
-                 opcode: "rsqrt"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2232
-             }
-             entries {
-               instruction {
-                 opcode: "sine"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 1632
-             }
-             entries {
-               instruction {
-                 opcode: "sqrt"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2989
-             }
-             entries {
-               instruction {
-                 opcode: "tanh"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 2263
-             }
-             entries {
-               instruction {
-                 opcode: "atan2"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 4847
-             }
-             entries {
-               instruction {
-                 opcode: "power"
-                 shape { element_type: C64 }
-               }
-               clock_cycles: 3219
-             }
+         entries { key: "sm_75"
+                   value { entries {
+                     instruction {
+                       opcode: "divide"
+                       shape { element_type: S8 }
+                     }
+                     clock_cycles: 360
+                   }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S8 }
+                             }
+                             clock_cycles: 336
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 357
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S16 }
+                             }
+                             clock_cycles: 339
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S32 }
+                             }
+                             clock_cycles: 296
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 979
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: S64 }
+                             }
+                             clock_cycles: 495
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 293
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U8 }
+                             }
+                             clock_cycles: 334
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 290
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U16 }
+                             }
+                             clock_cycles: 336
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U32 }
+                             }
+                             clock_cycles: 118
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 812
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: U64 }
+                             }
+                             clock_cycles: 515
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 792
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 815
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 132
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 342
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 239
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 239
+                           }
+                           entries {
+                             instruction {
+                               opcode: "logistic"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 262
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 126
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 794
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 123
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 175
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 414
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 74
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F16 }
+                             }
+                             clock_cycles: 1120
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 783
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 737
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 83
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 319
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 201
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 218
+                           }
+                           entries {
+                             instruction {
+                               opcode: "logistic"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 181
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 74
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 717
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 74
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 167
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 414
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F32 }
+                             }
+                             clock_cycles: 1085
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cbrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 6494
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1800
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1630
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1929
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 596
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1774
+                           }
+                           entries {
+                             instruction {
+                               opcode: "logistic"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 2430
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 705
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1805
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 984
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1535
+                           }
+                           entries {
+                             instruction {
+                               opcode: "add"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 95
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 3744
+                           }
+                           entries {
+                             instruction {
+                               opcode: "divide"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 1915
+                           }
+                           entries {
+                             instruction {
+                               opcode: "multiply"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 95
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 5538
+                           }
+                           entries {
+                             instruction {
+                               opcode: "subtract"
+                               shape { element_type: F64 }
+                             }
+                             clock_cycles: 95
+                           }
+                           entries {
+                             instruction {
+                               opcode: "cosine"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 1702
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 1503
+                           }
+                           entries {
+                             instruction {
+                               opcode: "exponential-minus-one"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 1474
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 835
+                           }
+                           entries {
+                             instruction {
+                               opcode: "log-plus-one"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 737
+                           }
+                           entries {
+                             instruction {
+                               opcode: "rsqrt"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2232
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sine"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 1632
+                           }
+                           entries {
+                             instruction {
+                               opcode: "sqrt"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2989
+                           }
+                           entries {
+                             instruction {
+                               opcode: "tanh"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 2263
+                           }
+                           entries {
+                             instruction {
+                               opcode: "atan2"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 4847
+                           }
+                           entries {
+                             instruction {
+                               opcode: "power"
+                               shape { element_type: C64 }
+                             }
+                             clock_cycles: 3219
+                           })pb"
+    R"pb(
              entries {
                instruction {
                  opcode: "cosine"
@@ -3712,7 +3712,7 @@ constexpr char kDeviceHloOpProfiles[] =
                clock_cycles: 97
              }
            }
-         }
+                      }
     )pb";
 
 }  // namespace gpu
