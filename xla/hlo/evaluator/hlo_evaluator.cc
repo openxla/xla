@@ -535,6 +535,10 @@ std::optional<DynamicOrStaticInteger> EvaluateWhileLoopParamInitValue(
 
 namespace internal {
 
+#if !defined(_MSC_VER)
+constexpr absl::string_view kEvalErrorDetailUrl = "EvalErrorDetailUrl";
+#endif
+
 std::optional<EvalErrorDetail> ParseEvalErrorDetail(const absl::Status& error) {
   auto error_detail = error.GetPayload(kEvalErrorDetailUrl);
   if (!error_detail.has_value() || error_detail->empty()) {
