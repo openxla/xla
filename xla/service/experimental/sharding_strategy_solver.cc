@@ -45,7 +45,9 @@ bool ShardingStrategySolver::Solve(std::unordered_map<HloInstruction*,
 
   // success, determine which sharding to load into the instruction
   for (auto& [instr, strats] : strat_map) {
-    strats->set_chosen_strat(builder.GetStratIdx(strats));
+    if (strats->num_sharding_strats() > 0) {
+      strats->set_chosen_strat(builder.GetStratIdx(strats));
+    }
   }
 
   return true;
