@@ -741,8 +741,8 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
         clock_cycles: 15
       }
     }
-  }
-
+  })pb"
+  R"pb(
   entries {
     key: "sm_86"
     value {
@@ -1307,8 +1307,8 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
         clock_cycles: 97
       }
     }
-  }
-
+  })pb"
+  R"pb(
   entries {
     key: "sm_80"  # "NVIDIA A100-SXM4-40GB"
     value {
@@ -1607,8 +1607,8 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
         clock_cycles: 6054
       }
     }
-  }
-
+  })pb"
+  R"pb(
   entries {
     key: "sm_70"  # "Tesla V100-SXM2-16GB"
     value {
@@ -2341,8 +2341,8 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
         clock_cycles: 15
       }
     }
-  }
-
+  })pb"
+  R"pb(
   entries {
     key: "sm_60"  # "Tesla P100-SXM2-16GB"
     value {
@@ -3117,8 +3117,8 @@ constexpr char kDeviceHloOpProfiles[] = R"pb(
         clock_cycles: 20
       }
     }
-  }
-
+  })pb"
+  R"pb(
   entries {
     key: "sm_75"
     value {
