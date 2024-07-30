@@ -14,8 +14,10 @@ those to this list.
 """
 
 temporary_patch_list = [
-    # This patch can be removed once the fork is updated to include changes from this PR:
-    # https://github.com/triton-lang/triton/pull/4416
+    # These patches can be removed once the fork is updated to include changes from these PRs:
+    # - https://github.com/triton-lang/triton/pull/4416
+    # - https://github.com/triton-lang/triton/pull/4420
     "//third_party/triton/temporary:f2reduce.patch",
+    "//third_party/triton/temporary:triton.patch",
     # Add new patches just above this line
 ]
