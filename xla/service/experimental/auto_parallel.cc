@@ -167,10 +167,14 @@ namespace {
     CompleteInstructionStrategiesGraph(info_map);
     EstimateReshardingCosts(info_map);
 
+    PrintModuleInfo(module);
+
     // TODO: refactor to ShardingStrategySelector
     ShardingStrategySolver solver;
     bool successful = solver.Solve(info_map);
     VLOG(5) << "Solver success: " << successful;
+
+    PrintModuleInfo(module);
 
     VLOG(5) << "Done AutoParallelizer Run";
     
