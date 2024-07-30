@@ -30,6 +30,12 @@ public:
   // returns number of vars in matrix
   int size() { return num_rows_ * num_cols_; }
 
+  // return number of rows in matrix
+  int num_rows() { return num_rows_; }
+
+  // return number of columns in matrix
+  int num_cols() { return num_cols_; }
+
   // returns a linear expression of the sum of the r'th row 
   // no equality constraint
   LinearExpr SumRow(int r);
