@@ -977,13 +977,34 @@ absl::Status GpuCommandBuffer::Finalize() {
   if (mode_ == Mode::kPrimary && state_ == State::kCreate) {
     // If this is the first time we finalize command buffer after construction,
     // we need to instantiate it to an executable graph.
-    GpuDriver::GraphInstantiateFlags flags;
 
     uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 
+#if CUDA_VERSION >= 12000
+    GpuDriver::GraphInstantiateParams params;
+    auto instantiated =
+        GpuDriver::GraphInstantiateWithParams(&exec_, graph_, &params);
+    if (params.result_out != GpuGraphInstantiateSuccess) {
+      LOG(ERROR)
+          << "Command buffer GraphInstantiateWithParams failed due to error "
+          << GpuDriver::GraphInstantiateResultString(params.result_out)
+          << " on node " << std::uppercase << params.err_node_out;
+
+      std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
+      auto printed = GpuDriver::GraphDebugDotPrint(graph_, path.c_str(),
+                                                   /*return_printed_graph=*/1);
+      if (printed.ok()) {
+        VLOG(3) << "The graph with error " << graph_ << " to: " << path << "\n"
+                << *printed;
+      }
+    }
+#else
+    GpuDriver::GraphInstantiateFlags flags;
+    auto instantiated = GpuDriver::GraphInstantiate(&exec_, graph_, flags);
+#endif
+
     // If we get a "resource exhausted error" we retry instantiating Gpu graph
     // one more time after releasing unused device memory allocated for graphs.
-    auto instantiated = GpuDriver::GraphInstantiate(&exec_, graph_, flags);
     if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
       LOG(WARNING) << "Retry CUDA graph instantiation after OOM error"
                    << "; execution_scopes: " << execution_scopes_.size()
@@ -993,7 +1014,13 @@ absl::Status GpuCommandBuffer::Finalize() {
 
       TF_RETURN_IF_ERROR(GpuDriver::DeviceGraphMemTrim(parent_->device()));
 
+#if CUDA_VERSION >= 12000
+      auto retry =
+          GpuDriver::GraphInstantiateWithParams(&exec_, graph_, &params);
+#else
       auto retry = GpuDriver::GraphInstantiate(&exec_, graph_, flags);
+#endif
+
       if (retry.code() == absl::StatusCode::kResourceExhausted) {
         return absl::ResourceExhaustedError(absl::StrFormat(
             "CUDA driver ran out of memory trying to instantiate CUDA graph "

@@ -18,6 +18,8 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 #define XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 
+#include <string>
+
 #if TENSORFLOW_USE_SYCL
 
 #include "sycl/sycl.hpp"
@@ -60,6 +62,7 @@ using GpuGraphHandle = UnsupportedGpuFeature;
 using GpuGraphExecHandle = UnsupportedGpuFeature;
 using GpuGraphNodeHandle = UnsupportedGpuFeature;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
+using GpuGraphInstantiateResult = UnsupportedGpuFeature;
 
 #elif TENSORFLOW_USE_ROCM
 
@@ -79,6 +82,8 @@ using GpuGraphHandle = hipGraph_t;
 using GpuGraphExecHandle = hipGraphExec_t;
 using GpuGraphNodeHandle = hipGraphNode_t;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
+using GpuGraphInstantiateResult = UnsupportedGpuFeature;
+
 #else  // CUDA
 
 using GpuStreamHandle = CUstream;
@@ -95,12 +100,29 @@ using GpuSharedMemConfig = CUsharedconfig;
 using GpuGraphHandle = CUgraph;
 using GpuGraphExecHandle = CUgraphExec;
 using GpuGraphNodeHandle = CUgraphNode;
-
 #if CUDA_VERSION >= 12030
 using GpuGraphConditionalHandle = CUgraphConditionalHandle;
 #else
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
 #endif  // #if CUDA_VERSION >= 12030
+
+#if CUDA_VERSION >= 12000
+using GpuGraphInstantiateResult = CUgraphInstantiateResult;
+constexpr CUgraphInstantiateResult GpuGraphInstantiateSuccess =
+    CUDA_GRAPH_INSTANTIATE_SUCCESS;
+constexpr CUgraphInstantiateResult GpuGraphInstantiateError =
+    CUDA_GRAPH_INSTANTIATE_ERROR;
+constexpr CUgraphInstantiateResult GpuGraphInstantiateInvalidStructure =
+    CUDA_GRAPH_INSTANTIATE_INVALID_STRUCTURE;
+constexpr CUgraphInstantiateResult
+    GpuGraphInstantiateNodeOperationNotSupported =
+        CUDA_GRAPH_INSTANTIATE_NODE_OPERATION_NOT_SUPPORTED;
+constexpr CUgraphInstantiateResult GpuGraphInstantiateMultiDeviceNotSupported =
+    CUDA_GRAPH_INSTANTIATE_MULTIPLE_CTXS_NOT_SUPPORTED;
+
+#else
+using GpuGraphInstantiateResult = UnsupportedGpuFeature;
+#endif  // #if CUDA_VERSION >= 12000
 
 #endif
 

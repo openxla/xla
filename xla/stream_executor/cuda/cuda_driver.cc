@@ -513,6 +513,38 @@ absl::Status GpuDriver::GraphInstantiate(CUgraphExec* exec, CUgraph graph,
 #endif  // CUDA_VERSION >= 12000
 }
 
+absl::Status GpuDriver::GraphInstantiateWithParams(
+    CUgraphExec* exec, CUgraph graph, GraphInstantiateParams* params) {
+  VLOG(2) << "Instantiate CUDA executable graph from graph " << graph << " ("
+          << "auto_free_on_launch=" << params->flags.auto_free_on_launch << ", "
+          << "device_launch=" << params->flags.device_launch << ", "
+          << "use_node_priority=" << params->flags.use_node_prirotiy << ", "
+          << "upload=" << params->flags.upload << ")";
+
+#if CUDA_VERSION >= 12000
+  CUDA_GRAPH_INSTANTIATE_PARAMS cuda_params;
+  memset(&cuda_params, 0, sizeof(cuda_params));
+  if (params->flags.auto_free_on_launch)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH;
+  if (params->flags.use_node_prirotiy)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_USE_NODE_PRIORITY;
+  if (params->flags.device_launch)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_DEVICE_LAUNCH;
+  if (params->flags.upload)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_UPLOAD;
+  cuda_params.hUploadStream = params->upload_stream;
+  auto result =
+      cuda::ToStatus(cuGraphInstantiateWithParams(exec, graph, &cuda_params),
+                     "Failed to instantiate CUDA graph");
+  params->err_node_out = cuda_params.hErrNode_out;
+  params->result_out = cuda_params.result_out;
+  return result;
+#else
+  return absl::UnimplementedError(
+      "cuGraphInstantiateWithParams is not supported for CUDA version < 12000");
+#endif  // CUDA_VERSION >= 12000
+}
+
 absl::Status GpuDriver::GraphLaunch(CUgraphExec exec, CUstream stream) {
   VLOG(2) << "Launching CUDA executable graph " << exec << " on a stream "
           << stream;
@@ -1226,75 +1258,75 @@ absl::Status GpuDriver::LoadPtx(GpuContext* context, const char* ptx_contents,
                                 CUmodule* module) {
   absl::Notification notification;
   absl::Status ret = absl::OkStatus();
-  GetDriverExecutor()->Schedule(
-      [context, ptx_contents, module, &ret, &notification]() {
-        ScopedActivateContext activation(context);
-        void* ptx_data = const_cast<char*>(ptx_contents);
-        static const unsigned int kLogBufferBytesLimit = 1024;
-        unsigned int error_log_buffer_bytes = kLogBufferBytesLimit;
-        unsigned int info_log_buffer_bytes = kLogBufferBytesLimit;
-        absl::InlinedVector<char, 4> error_log_buffer(error_log_buffer_bytes);
-        absl::InlinedVector<char, 4> info_log_buffer(info_log_buffer_bytes);
-        bool log_verbose = true;
-        CUjit_option options[] = {CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
-                                  CU_JIT_ERROR_LOG_BUFFER,
-                                  CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
-                                  CU_JIT_INFO_LOG_BUFFER, CU_JIT_LOG_VERBOSE};
-        // Note that the driver API wants the contents of this values to be
-        // stored in an array of void*s, so we coerce them accordingly.
-        void* option_values[] = {
-            absl::bit_cast<void*>(uintptr_t(error_log_buffer_bytes)),
-            absl::bit_cast<void*>(error_log_buffer.data()),
-            absl::bit_cast<void*>(uintptr_t(info_log_buffer_bytes)),
-            absl::bit_cast<void*>(info_log_buffer.data()),
-            absl::bit_cast<void*>(uintptr_t(log_verbose))};
-        CHECK(TF_ARRAYSIZE(options) == TF_ARRAYSIZE(option_values));
+  GetDriverExecutor()->Schedule([context, ptx_contents, module, &ret,
+                                 &notification]() {
+    ScopedActivateContext activation(context);
+    void* ptx_data = const_cast<char*>(ptx_contents);
+    static const unsigned int kLogBufferBytesLimit = 1024;
+    unsigned int error_log_buffer_bytes = kLogBufferBytesLimit;
+    unsigned int info_log_buffer_bytes = kLogBufferBytesLimit;
+    absl::InlinedVector<char, 4> error_log_buffer(error_log_buffer_bytes);
+    absl::InlinedVector<char, 4> info_log_buffer(info_log_buffer_bytes);
+    bool log_verbose = true;
+    CUjit_option options[] = {CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
+                              CU_JIT_ERROR_LOG_BUFFER,
+                              CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
+                              CU_JIT_INFO_LOG_BUFFER, CU_JIT_LOG_VERBOSE};
+    // Note that the driver API wants the contents of this values to be stored
+    // in an array of void*s, so we coerce them accordingly.
+    void* option_values[] = {
+        absl::bit_cast<void*>(uintptr_t(error_log_buffer_bytes)),
+        absl::bit_cast<void*>(error_log_buffer.data()),
+        absl::bit_cast<void*>(uintptr_t(info_log_buffer_bytes)),
+        absl::bit_cast<void*>(info_log_buffer.data()),
+        absl::bit_cast<void*>(uintptr_t(log_verbose))};
+    CHECK(TF_ARRAYSIZE(options) == TF_ARRAYSIZE(option_values));
 
-        absl::Status status;
-        {
-          // TODO(leary) Need to see if NVIDIA can expunge the leakiness in
-          // their module loading: see http://b/13248943
-          absl::LeakCheckDisabler disabler;
-          status = cuda::ToStatus(cuModuleLoadDataEx(
-              module, ptx_data, TF_ARRAYSIZE(options), options, option_values));
-        }
+    absl::Status status;
+    {
+      // TODO(leary) Need to see if NVIDIA can expunge the leakiness in their
+      // module loading: see http://b/13248943
+      absl::LeakCheckDisabler disabler;
+      status = cuda::ToStatus(cuModuleLoadDataEx(
+          module, ptx_data, TF_ARRAYSIZE(options), options, option_values));
+    }
 
-        // The PTX JIT mutates the values in the option values array to reflect
-        // the size of the logs it output; now that we've made the call, read
-        // the values back out.
-        error_log_buffer_bytes = reinterpret_cast<uintptr_t>(option_values[0]);
-        info_log_buffer_bytes = reinterpret_cast<uintptr_t>(option_values[2]);
-        CHECK_LE(error_log_buffer_bytes, kLogBufferBytesLimit);
-        CHECK_LE(info_log_buffer_bytes, kLogBufferBytesLimit);
+    // The PTX JIT mutates the values in the option values array to reflect the
+    // size of the logs it output; now that we've made the call, read the values
+    // back out.
+    error_log_buffer_bytes = reinterpret_cast<uintptr_t>(option_values[0]);
+    info_log_buffer_bytes = reinterpret_cast<uintptr_t>(option_values[2]);
+    CHECK_LE(error_log_buffer_bytes, kLogBufferBytesLimit);
+    CHECK_LE(info_log_buffer_bytes, kLogBufferBytesLimit);
 
-        if (!status.ok()) {
-          LOG(ERROR) << "failed to load PTX text as a module: " << status;
-          // As a precaution for null termination of the API-provided value,
-          // ensure that at least the last byte is null.
-          error_log_buffer[error_log_buffer_bytes ? error_log_buffer_bytes - 1
-                                                  : 0] = '\0';
-          LOG(ERROR) << "error log buffer (" << error_log_buffer_bytes
-                     << " bytes): " << error_log_buffer.data();
-          if (absl::StrContains(error_log_buffer.data(),
-                                "Register allocation failed")) {
-            ret = absl::ResourceExhaustedError(
-                absl::StrFormat("Failed to load PTX text as a module (register "
-                                "allocation failed): %s",
-                                status.ToString()));
-          } else {
-            ret = status;
-          }
-          notification.Notify();
-          return;
-        }
+    if (!status.ok()) {
+      LOG(ERROR) << "failed to load PTX text as a module: " << status;
+      // As a precaution for null termination of the API-provided value, ensure
+      // that at least the last byte is null.
+      error_log_buffer[error_log_buffer_bytes ? error_log_buffer_bytes - 1
+                                              : 0] = '\0';
+      LOG(ERROR) << "error log buffer (" << error_log_buffer_bytes
+                 << " bytes): " << error_log_buffer.data();
+      if (absl::StrContains(error_log_buffer.data(),
+                            "Register allocation failed")) {
+        ret = absl::ResourceExhaustedError(
+            absl::StrFormat("Failed to load PTX text as a module (register "
+                            "allocation failed): %s",
+                            status.ToString()));
+      } else {
+        ret = status;
+      }
+      notification.Notify();
+      return;
+    }
 
-        VLOG(3) << "PTX compilation info log (" << info_log_buffer_bytes
-                << " bytes): " << info_log_buffer.data();
-        VLOG(3) << "PTX compilation error log (" << error_log_buffer_bytes
-                << " bytes): " << error_log_buffer.data();
-        CHECK(module != nullptr);
-        notification.Notify();
-      });
+    VLOG(3) << "PTX compilation info log (" << info_log_buffer_bytes
+            << " bytes): " << info_log_buffer.data();
+    VLOG(3) << "PTX compilation error log (" << error_log_buffer_bytes
+            << " bytes): " << error_log_buffer.data();
+    CHECK(module != nullptr);
+    notification.Notify();
+  });
   notification.WaitForNotification();
 
   return ret;
