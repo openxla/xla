@@ -992,6 +992,25 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, MockNcclClientProcessPerGpuTest) {
+  const int num_nodes = 8;
+  GpuClientOptions options;
+  options.num_nodes = num_nodes;
+  options.enable_mock_nccl = true;
+  options.mock_num_hosts_per_slice = 4;
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  TF_ASSERT_OK_AND_ASSIGN(const xla::PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+  const StreamExecutorGpuTopologyDescription& gpu_topology =
+      tensorflow::down_cast<const xla::StreamExecutorGpuTopologyDescription&>(
+          *topology);
+
+  EXPECT_EQ(gpu_topology.gpu_topology().num_slices(), 2);
+  EXPECT_EQ(gpu_topology.gpu_topology().num_hosts_per_slice(), 4);
+  EXPECT_EQ(gpu_topology.gpu_topology().num_devices_per_host(), 2);
+}
+
 TEST(StreamExecutorGpuClientTest, BufferFromHostBufferPinnedMemory) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));

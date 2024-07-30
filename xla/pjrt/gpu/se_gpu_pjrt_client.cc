@@ -1038,7 +1038,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     int node_id, int num_nodes,
     gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
-    absl::Duration get_local_topology_timeout,
+    int mock_num_hosts_per_slice, absl::Duration get_local_topology_timeout,
     absl::Duration get_global_topology_timeout) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   LocalTopologyProto local_topology;
@@ -1070,11 +1070,17 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   GlobalTopologyProto global_topology;
   if (enable_mock_nccl) {
     std::vector<LocalTopologyProto> local_topologies(num_nodes, local_topology);
+    if (num_nodes % mock_num_hosts_per_slice != 0) {
+      return absl::InternalError(
+          "Mocked num_nodes must be divisible "
+          "by mock_num_hosts_per_slice");
+    }
     for (int i = 0; i < num_nodes; ++i) {
       local_topologies[i].set_node_id(i);
       // Set a distinct boot_id for each local topology to change slice_index
       // for each node.
-      local_topologies[i].set_boot_id(absl::StrCat(i));
+      local_topologies[i].set_boot_id(
+          absl::StrCat(i / mock_num_hosts_per_slice));
     }
     global_topology = BuildGlobalTopology(absl::MakeSpan(local_topologies),
                                           /*assign_global_device_ids=*/true);
@@ -1254,10 +1260,10 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   TF_RET_CHECK(options.num_nodes == 1 || kv_store != nullptr);
   TF_ASSIGN_OR_RETURN(
       DeviceTopologyPair device_topology_pair,
-      BuildDistributedDevices(pjrt_platform_name,
-                              std::move(local_device_states), options.node_id,
-                              options.num_nodes, gpu_run_options.get(),
-                              kv_store, options.enable_mock_nccl));
+      BuildDistributedDevices(
+          pjrt_platform_name, std::move(local_device_states), options.node_id,
+          options.num_nodes, gpu_run_options.get(), kv_store,
+          options.enable_mock_nccl, options.mock_num_hosts_per_slice));
 
   auto gpu_topology = std::shared_ptr<const GpuTopology>(
       GpuTopology::FromProto(device_topology_pair.second));
