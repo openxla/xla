@@ -3,7 +3,7 @@
 #include "xla/service/experimental/auto_parallel.h"
 
 #include "xla/service/experimental/complete_strategy_graph.h"
-#include "xla/service/experimental/sharding_strategy_solver.h"
+#include "xla/service/experimental/sharding_strategy_selector.h"
 
 #include "xla/service/experimental/debug.h"
 
@@ -59,13 +59,12 @@ absl::StatusOr<bool> AutoParallelizer::Run(
       info_map[instr] = std::make_shared<InstructionStrategies>(instr);
     }
   }
-
   CompleteStrategyGraph(info_map);
 
-  // TODO: refactor to ShardingStrategySelector
-  ShardingStrategySolver solver;
-  bool successful = solver.Solve(info_map);
-  VLOG(5) << "Solver success: " << successful;
+  // select optimal sharding strategies
+  ShardingStrategySelector selector;
+  bool successful = selector.Select(info_map);
+  VLOG(5) << "Selector success: " << successful;
 
   VLOG(5) << "Done AutoParallelizer Run";
   

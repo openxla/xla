@@ -35,7 +35,7 @@ cc_library(
         "complete_strategy_graph",
         "instruction_strategies",
         "sharding_strategy",
-        "sharding_strategy_solver",
+        "sharding_strategy_selector",
         "module_cost_evaluator",
         "resharding_cost_matrix",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -47,9 +47,9 @@ cc_library(
 )
 
 cc_library(
-    name = "sharding_strategy_solver",
-    srcs = ["sharding_strategy_solver.cc"],
-    hdrs = ["sharding_strategy_solver.h", "fix_log.h"],
+    name = "sharding_strategy_selector",
+    srcs = ["sharding_strategy_selector.cc"],
+    hdrs = ["sharding_strategy_selector.h", "fix_log.h"],
     visibility = ["//visibility:private"],
     deps = [
         "instruction_strategies",
