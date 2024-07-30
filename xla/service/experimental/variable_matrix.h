@@ -27,6 +27,9 @@ public:
   VariableMatrix(std::shared_ptr<MPSolver> solver, int num_rows, int num_cols, 
     bool integer, int lb, int ub);
 
+  // returns number of vars in matrix
+  int size() { return num_rows_ * num_cols_; }
+
   // returns a linear expression of the sum of the r'th row 
   // no equality constraint
   LinearExpr SumRow(int r);
@@ -38,6 +41,7 @@ public:
   // returns a linear expression of the sum of all elements in the array
   // no equality constraint
   LinearExpr Sum();
+
 
   // sets the coefficient of the variable in position [r, c] of the matrix
   // for the solver objective

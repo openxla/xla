@@ -27,6 +27,7 @@ VariableMatrix::VariableMatrix(std::shared_ptr<MPSolver> solver,
 
 LinearExpr VariableMatrix::SumRow(int r) {
   assert(0 <= r && r < num_rows_);
+  assert(size() > 0); // create constraint only with non-empty matrix
 
   LinearExpr row_sum;
   for (int c = 0; c < num_cols_; c++) {
@@ -38,6 +39,7 @@ LinearExpr VariableMatrix::SumRow(int r) {
 
 LinearExpr VariableMatrix::SumCol(int c) {
   assert(0 <= c && c < num_cols_);
+  assert(size() > 0); // create constraint only with non-empty matrix
 
   LinearExpr col_sum;
   for (int r = 0; r < num_rows_; r++) {
@@ -48,6 +50,8 @@ LinearExpr VariableMatrix::SumCol(int c) {
 }
 
 LinearExpr VariableMatrix::Sum() {
+  assert(size() > 0); // create constraint only with non-empty matrix
+
   LinearExpr sum;
   for (int r = 0; r < num_rows_; r++) {
     for (int c = 0; c < num_cols_; c++) {
@@ -59,12 +63,17 @@ LinearExpr VariableMatrix::Sum() {
 }
 
 void VariableMatrix::SetCoefficient(int r, int c, uint64_t coeff) {
+  assert(size() > 0); // create constraint only with non-empty matrix
+  assert(0 <= r && r < num_rows_);
+  assert(0 <= c && c < num_cols_);
+
   solver_->MutableObjective()->SetCoefficient(matrix_[r][c], coeff);
   return;
 }
 
 void VariableMatrix::SetCoefficients(
     std::shared_ptr<ReshardingCostMatrix> cost_matrix) {
+  assert(size() > 0); // create constraint only with non-empty matrix
   assert(cost_matrix->num_rows() == num_rows_);
   assert(cost_matrix->num_cols() == num_cols_);
 

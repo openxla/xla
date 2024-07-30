@@ -56,7 +56,50 @@ void CompleteSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies
     return;
   }
 
-  // TODO: implement
+  int num_shardings = strats->num_sharding_strats();
+  std::vector<MPVariable*>& comp_vars = var_map_[strats].comp_vars;
+  std::vector<std::shared_ptr<VariableMatrix>>& user_matrices 
+    = var_map_[strats].resharding_var_matrices;
+  std::vector<std::shared_ptr<VariableMatrix>> op_matrices; 
+
+  assert(num_shardings == comp_vars.size());
+  
+  // constraints on solely sharding strategy decision:
+  // - sums to 1
+  LinearExpr expr;
+  for (int i = 0; i < num_shardings; i++) {
+    expr += comp_vars[i];
+  }
+  solver_->MakeRowConstraint(expr == 1);
+
+  // constraints on solely resharding decision variable matrices:
+  // - sums to 1
+  for (std::shared_ptr<VariableMatrix> mat : user_matrices) {
+    if (mat->size() > 0) {
+      solver_->MakeRowConstraint(mat->Sum() == 1);
+    }
+  }
+
+  // constraints between sharding strategy decision and decision var matrices
+  // - for user resharding matrices, rows of matrix sum to that sharding strat
+  for (std::shared_ptr<VariableMatrix> mat : user_matrices) {
+    if (mat->size() > 0) {
+      assert(num_shardings == user_matrices[user_idx].num_rows());
+      for (int r = 0; r < num_shardings; r++) {
+        solver_->MakeRowConstraint(mat->SumRow(r) == comp_vars[r]);
+      }
+    }
+  } 
+
+  // - for op resharding matrices, cols of matrix sum to that sharding strat
+  for (std::shared_ptr<VariableMatrix> mat : op_matrices) {
+    if (mat->size() > 0) {
+      assert(num_shardings == user_matrices[user_idx].num_rows());
+      for (int c = 0; c < num_shardings; c++) {
+        solver_->MakeRowConstraint(mat->SumCol(c) == comp_vars[c]);
+      }
+    }
+  } 
 
   return;
 }
