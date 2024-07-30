@@ -153,8 +153,16 @@ bool CompleteSolverBuilder::Solve() {
 int CompleteSolverBuilder::GetStratIdx(std::shared_ptr<InstructionStrategies> strats) {
 
   // ignore if no sharding strategies for instruction
-  assert(strats->num_sharding_strats() != 0);   
+  assert(strats->num_sharding_strats() != 0);
 
+  // get solved variables and return index of one that was solved
+  std::vector<MPVariable*> vars = var_map_[strats].comp_vars;
+
+  for (int i = 0; i < vars.size(); i++) {
+    if (vars[i]->solution_value() == 1) {
+      return i;
+    }
+  }
 
   // should not have reached this point with a valid solution
   assert(0);
