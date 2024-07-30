@@ -24,7 +24,8 @@ namespace gpu {
 
 constexpr char kDeviceHloOpProfiles[] =
     R"pb(
-         entries { key: "sm_90"  # "NVIDIA H100 80GB HBM3"
+         entries { key: "sm_90"  # "NVIDIA H100 80GB HBM3"
+
 
                    value { entries {
                      instruction {
@@ -1311,7 +1312,8 @@ constexpr char kDeviceHloOpProfiles[] =
          })pb"
     R"pb(
          entries {
-           key: "sm_80"  # "NVIDIA A100-SXM4-40GB"
+           key: "sm_80"  # "NVIDIA A100-SXM4-40GB"
+
 
            value {
              entries {
@@ -1611,7 +1613,8 @@ constexpr char kDeviceHloOpProfiles[] =
            }
          })pb"
     R"pb(
-         entries { key: "sm_70"  # "Tesla V100-SXM2-16GB"
+         entries { key: "sm_70"  # "Tesla V100-SXM2-16GB"
+
 
                    value { entries {
                      instruction {
@@ -2345,7 +2348,8 @@ constexpr char kDeviceHloOpProfiles[] =
            }
                       })pb"
     R"pb(
-         entries { key: "sm_60"  # "Tesla P100-SXM2-16GB"
+         entries { key: "sm_60"  # "Tesla P100-SXM2-16GB"
+
 
                    value { entries {
                      instruction {
