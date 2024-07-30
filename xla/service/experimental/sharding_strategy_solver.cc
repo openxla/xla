@@ -1,7 +1,7 @@
 
 #include "xla/service/experimental/sharding_strategy_solver.h"
 
-#include "xla/service/experimental/simple_solver_builder.h"
+#include "xla/service/experimental/complete_solver_builder.h"
 
 // #include "absl/log/log.h"
 
@@ -23,7 +23,7 @@ bool ShardingStrategySolver::Solve(std::unordered_map<HloInstruction*,
     std::shared_ptr<InstructionStrategies>> strat_map) {
 
   // initialize a builder
-  SimpleSolverBuilder builder;
+  CompleteSolverBuilder builder;
 
   // create variables, construct their constraints, and add to the objective
   for (auto& [instr, strats] : strat_map) {

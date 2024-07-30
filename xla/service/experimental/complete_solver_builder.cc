@@ -125,7 +125,7 @@ void CompleteSolverBuilder::AddInObjective(std::shared_ptr<InstructionStrategies
   }
 
   // incorporate the resharding communication costs into each variable matrix
-  std::vector<std::shared_ptr<ReshardingCostMatrices>>& cost_matrices 
+  std::vector<std::shared_ptr<ReshardingCostMatrix>>& cost_matrices 
     = strats->resharding_matrices();
   std::vector<std::shared_ptr<VariableMatrix>>& var_matrices 
     = var_map_[strats].resharding_var_matrices;
