@@ -57,7 +57,8 @@ ProfilerDomainHandle DefaultProfilerDomain() {
 }
 
 void NameCurrentThread(const std::string& thread_name) {
-  if (std::optional<uint32_t> tid = MaybeGetCurrentThreadId(); tid.has_value()) {
+  if (std::optional<uint32_t> tid = MaybeGetCurrentThreadId();
+      tid.has_value()) {
     nvtxNameOsThreadA(*tid, thread_name.c_str());
   }
 }
