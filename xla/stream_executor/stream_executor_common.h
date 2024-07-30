@@ -46,6 +46,12 @@ class StreamExecutorCommon : public StreamExecutor {
   const DeviceDescription& GetDeviceDescription() const override;
   int64_t GetMemoryLimitBytes() const override { return memory_limit_bytes_; }
 
+  // Default implementation for modern derived classes; logs an error
+  /* deprecated */ void HostMemoryDeallocate(void* mem) override;
+  // Default implementation for obsolete derived classes; calls the deprecated
+  // signature (above) that should be implemented by the obsolete derived class
+  void HostMemoryDeallocate(void* mem, uint64_t size) override;
+
  private:
   // Reader/writer lock for mutable data structures on this StreamExecutor.
   //
