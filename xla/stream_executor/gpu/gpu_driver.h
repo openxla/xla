@@ -346,6 +346,44 @@ class GpuDriver {
                                        GpuGraphHandle graph,
                                        const GraphInstantiateFlags& flags);
 
+  // Graph instantiation parameters
+  struct GraphInstantiateParams {
+    GraphInstantiateFlags flags;
+    GpuGraphNodeHandle err_node_out = NULL;
+    GpuStreamHandle upload_stream = NULL;
+    GpuGraphInstantiateResult result_out = GpuGraphInstantiateSuccess;
+  };
+
+#if CUDA_VERSION >= 12000
+  std::string GraphInstantiateResultString(GpuGraphInstantiateResult result) {
+    switch (result) {
+      case GpuGraphInstantiateSuccess:
+        return "Success";
+      case GpuGraphInstantiateError:
+        return "Error";
+      case GpuGraphInstantiateInvalidStructure:
+        return "InvalidStrucutre";
+      case GpuGraphInstantiateNodeOperationNotSupported:
+        return "NodeOperationNotSupported";
+      case GpuGraphInstantiateMultiDeviceNotSupported:
+        return "MultiDeviceNotSupported";
+      default:
+        return "UnknownResult";
+    }
+  }
+#else
+  std::string GraphInstantiateResultString(GpuGraphInstantiateResult result) {
+    return "UnSupportedResult";
+  }
+#endif
+
+  // Creates an executable graph from a graph with parameters.
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g8d9541e4df43ee8440e794634a0d1af8
+  // https://rocm.docs.amd.com/projects/HIP/en/latest/doxygen/html/group___graph.html#ga97772b87ae4396a8100890df46890c8c
+  static absl::Status GraphInstantiateWithParams(
+      GpuGraphExecHandle* exec, GpuGraphHandle graph,
+      GraphInstantiateParams* params);
+
   // Launches an executable graph in a stream.
   // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GRAPH.html#group__CUDA__GRAPH_1g6b2dceb3901e71a390d2bd8b0491e471
   // https://rocm.docs.amd.com/projects/HIPIFY/en/latest/tables/CUDA_Driver_API_functions_supported_by_HIP.html#graph-management
