@@ -1750,7 +1750,7 @@ absl::Status CheckAndFetchProjectionWeights(
         dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
 #endif  // CUDNN_VERSION >= 8100
     dnn::RnnDescriptor::ParamsRegion region = {
-        reinterpret_cast<int64_t>(offset), size};
+        static_cast<int64_t>(offset), size};
     weights->push_back(region);
   }
   return absl::OkStatus();
@@ -1892,7 +1892,7 @@ absl::StatusOr<CudnnRnnParamsDescriptor> CudnnRnnParamsDescriptor::Create(
         int64_t size =
             dims[0] * dims[1] * dims[2] * CudnnDataTypeToByteSize(data_type);
         dnn::RnnDescriptor::ParamsRegion region = {
-            reinterpret_cast<int64_t>(offset), size};
+            static_cast<int64_t>(offset), size};
         (type == 0 ? weights : biases).push_back(region);
       }
 #endif  // CUDNN_VERSION >= 8100
