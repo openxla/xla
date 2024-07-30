@@ -60,7 +60,8 @@ void CompleteSolverBuilder::AddConstraints(std::shared_ptr<InstructionStrategies
   std::vector<MPVariable*>& comp_vars = var_map_[strats].comp_vars;
   std::vector<std::shared_ptr<VariableMatrix>>& user_matrices 
     = var_map_[strats].resharding_var_matrices;
-  std::vector<std::shared_ptr<VariableMatrix>> op_matrices; 
+  std::vector<std::shared_ptr<VariableMatrix>> op_matrices
+    = GetOpMatrices(strats); 
 
   assert(num_shardings == comp_vars.size());
   
