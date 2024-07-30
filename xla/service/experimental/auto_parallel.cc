@@ -3,21 +3,7 @@
 #include "xla/service/experimental/auto_parallel.h"
 
 #include "xla/service/experimental/complete_strategy_graph.h"
-#include "xla/service/experimental/instruction_strategies.h"
-#include "xla/service/experimental/sharding_strategy.h"
 #include "xla/service/experimental/sharding_strategy_solver.h"
-#include "xla/service/experimental/resharding_cost_matrix.h"
-
-#include "absl/container/flat_hash_set.h"
-#include "absl/status/status.h"
-#include "absl/strings/string_view.h"
-#include "absl/types/span.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/errors.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-
-#include <stdint.h>
 
 #include "xla/service/experimental/debug.h"
 
