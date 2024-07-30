@@ -113,7 +113,28 @@ void CompleteSolverBuilder::AddInObjective(std::shared_ptr<InstructionStrategies
     return;
   }
 
-  // TODO: implement
+  // incorporate the comp + comm cost of the sharding strategy into the variable
+  int num_strats = strats->num_sharding_strats();
+  std::vector<MPVariable*>& comp_vars = var_map_[strats].comp_vars;
+  std::vector<ShardingStrategy>& sharding_strats = strats->sharding_strats();
+  for (int i = 0; i < num_strats; i++) {
+    objective_->SetCoefficient(
+      comp_vars[i],
+      sharding_strats[i].cost()
+    );
+  }
+
+  // incorporate the resharding communication costs into each variable matrix
+  std::vector<std::shared_ptr<ReshardingCostMatrices>>& cost_matrices 
+    = strats->resharding_matrices();
+  std::vector<std::shared_ptr<VariableMatrix>>& var_matrices 
+    = var_map_[strats].resharding_var_matrices;
+  
+  assert(var_matrices.size() == cost_matrices.size());
+  int num_matrices = var_matrices.size();
+  for (int i = 0; i < num_matrices; i++) {
+    var_matrices[i]->SetCoefficients(cost_matrices[i]);
+  }
 
   return;
 }
