@@ -1499,8 +1499,8 @@ TEST_F(MatmulTest, ConsecutiveBinaryAdd) {
   const char* matmul_module_str = R"(
   HloModule matmul.test.f32
   ENTRY matmul.test.f32 {
-    arg0.1 = f32[128,32,4,4] parameter(0), parameter_replication={false}
-    arg0.2 = f32[128,32,4,4] parameter(1), parameter_replication={false}
+    arg0.1 = f32[128,32,4,4] parameter(0)
+    arg0.2 = f32[128,32,4,4] parameter(1)
     dot.7 = f32[128,32,4,4] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
     const.0 = f32[128,32] constant({...})
     bcast.1 = f32[128,32,4,4] broadcast(const.0), dimensions={0,1}
