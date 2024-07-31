@@ -987,8 +987,8 @@ absl::Status GpuCommandBuffer::Finalize() {
     if (params.result_out != GpuGraphInstantiateSuccess) {
       LOG(ERROR)
           << "Command buffer GraphInstantiateWithParams failed due to error "
-          << GpuDriver::GraphInstantiateResultString(params.result_out) << " on node "
-          << params.err_node_out;
+          << GpuDriver::GraphInstantiateResultString(params.result_out)
+          << " on node " << params.err_node_out;
 
       std::string path = tsl::io::GetTempFilename(/*extension=*/"dot");
       auto printed = GpuDriver::GraphDebugDotPrint(graph_, path.c_str(),
