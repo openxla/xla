@@ -86,4 +86,21 @@ void VariableMatrix::SetCoefficients(
   return;
 }
 
+std::string VariableMatrix::ToString(std::string delimiter) {
+  std::string s = "";
+  s += "[" + std::to_string(num_rows_) + "," + std::to_string(num_cols_) + "]" + "\n";
+
+  for (int r = 0; r < num_rows_; r++) {
+    for (int c = 0; c < num_cols_; c++) {
+      s += std::to_string((int)(matrix_[r][c]->solution_value()));
+      if (c != num_cols_ - 1) {
+        s += delimiter;
+      }
+    }
+    s += "\n";
+  }
+
+  return s;
+}
+
 } // xla

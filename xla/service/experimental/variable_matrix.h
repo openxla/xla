@@ -7,6 +7,7 @@
 
 #include "ortools/linear_solver/linear_solver.h"
 
+#include <string>
 #include "stdint.h"
 
 using ::operations_research::MPSolver;
@@ -56,6 +57,10 @@ public:
   // sets the coefficients of the variables from a ReshardingCostMatrix
   // ReshardingCostMatrix must have same dimensions as this VariableMatrix
   void SetCoefficients(std::shared_ptr<ReshardingCostMatrix> cost_matrix);
+
+  // Converts the variable matrix to a string of it's values
+  // delimiter is placed between each number along a row
+  std::string ToString(std::string delimiter="");
 
 private:
   // number of rows in matrix
