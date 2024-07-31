@@ -644,10 +644,6 @@ absl::StatusOr<std::unique_ptr<GpuEvent>> GpuExecutor::CreateGpuEvent(
   return std::move(gpu_event);
 }
 
-absl::StatusOr<std::unique_ptr<Event>> GpuExecutor::CreateEvent() {
-  return CreateGpuEvent(/*allow_timing=*/false);
-}
-
 absl::StatusOr<std::unique_ptr<Stream>> GpuExecutor::CreateStream(
     std::optional<std::variant<StreamPriority, int>> priority) {
   auto gpu_stream = std::make_unique<GpuStream>(this);
