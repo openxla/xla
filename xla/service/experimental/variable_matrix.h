@@ -60,7 +60,7 @@ public:
 
   // Converts the variable matrix to a string of it's values
   // delimiter is placed between each number along a row
-  std::string ToString(std::string delimiter="");
+  std::string ToString(bool sparse=false, std::string delimiter="");
 
 private:
   // number of rows in matrix

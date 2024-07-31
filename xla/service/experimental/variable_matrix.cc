@@ -86,18 +86,33 @@ void VariableMatrix::SetCoefficients(
   return;
 }
 
-std::string VariableMatrix::ToString(std::string delimiter) {
+std::string VariableMatrix::ToString(bool sparse, std::string delimiter) {
   std::string s = "";
-  s += "[" + std::to_string(num_rows_) + "," + std::to_string(num_cols_) + "]" + "\n";
+  s += "[" + std::to_string(num_rows_) + "," + std::to_string(num_cols_) + "] ";
+  if (!sparse) {
+    s += "\n";
+  }
 
+  bool found_nonzero = false;
   for (int r = 0; r < num_rows_; r++) {
     for (int c = 0; c < num_cols_; c++) {
-      s += std::to_string((int)(matrix_[r][c]->solution_value()));
-      if (c != num_cols_ - 1) {
-        s += delimiter;
+      int val = (int) matrix_[r][c]->solution_value();
+      if (sparse && val != 0) {
+        if (found_nonzero) {
+          s += delimiter;
+        }
+        s += std::to_string(val) + "(" + std::to_string(r) + "," + std::to_string(c) + ")";
+        found_nonzero = true;
+      } else if (!sparse) {
+        s += std::to_string((int)(matrix_[r][c]->solution_value()));
+        if (c != num_cols_ - 1) {
+          s += delimiter;
+        }
       }
     }
-    s += "\n";
+    if (!sparse) {
+      s += "\n";
+    }
   }
 
   return s;
