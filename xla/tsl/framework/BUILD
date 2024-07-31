@@ -16,7 +16,7 @@ load(
     "@tsl//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
-load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
@@ -358,10 +358,10 @@ cc_library(
     hdrs = [
         "cancellation.h",
     ],
-    copts = select({
-        "@xla//xla/tsl:windows": [],
-        "//conditions:default": ["-Wno-thread-safety-precise"],
-    }),
+    copts = if_windows(
+        [],
+        ["-Wno-thread-safety-precise"],
+    ),
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_absl//absl/memory",
@@ -465,8 +465,8 @@ tsl_cc_test(
     deps = [
         ":device_id_impl",
         ":device_id_utils",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/util:device_name_utils",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
         "@tsl//tsl/protobuf:error_codes_proto_impl_cc",

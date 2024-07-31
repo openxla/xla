@@ -103,7 +103,7 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
       uint64_t size) override {
     return std::make_unique<HostMemoryAllocation>(new char[size], size, this);
   }
-  void HostMemoryDeallocate(void *mem) override {
+  void HostMemoryDeallocate(void *mem, uint64_t size) override {
     delete[] static_cast<char *>(mem);
   }
 
@@ -151,8 +151,7 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
   }
 
   absl::StatusOr<std::unique_ptr<Stream>> CreateStream(
-      std::optional<std::variant<StreamPriority, int>> priority =
-          std::nullopt) override {
+      std::optional<std::variant<StreamPriority, int>> priority) override {
     return std::make_unique<InterpreterStream>(this);
   }
 

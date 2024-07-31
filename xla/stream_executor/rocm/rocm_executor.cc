@@ -384,19 +384,6 @@ absl::Status GpuExecutor::Launch(Stream* stream, const ThreadDim& thread_dims,
   return Launch(stream, thread_dims, block_dims, kernel, args);
 }
 
-absl::Status GpuExecutor::Submit(Stream* stream,
-                                 const CommandBuffer& command_buffer) {
-  if (command_buffer.mode() != CommandBuffer::Mode::kPrimary) {
-    return absl::InvalidArgumentError(
-        "Can't submit non-primary command buffer for execution");
-  }
-
-  auto exec = GpuCommandBuffer::Cast(&command_buffer)->executable();
-  VLOG(3) << "Launch command buffer execuable graph " << exec
-          << " on a stream: " << stream;
-  return GpuDriver::GraphLaunch(exec, AsGpuStreamValue(stream));
-}
-
 absl::Status GpuExecutor::LoadModule(const MultiModuleLoaderSpec& spec,
                                      ModuleHandle* module_handle) {
   // In GpuExecutor we store the pointer to the  HSACO binary  as
@@ -457,6 +444,20 @@ DeviceMemoryBase GpuExecutor::Allocate(uint64_t size, int64_t memory_space) {
 
 void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
   GpuDriver::DeviceDeallocate(context_, mem->opaque());
+}
+
+absl::StatusOr<std::unique_ptr<MemoryAllocation>>
+GpuExecutor::HostMemoryAllocate(uint64_t size) {
+  auto* buffer = GpuDriver::HostAllocate(context_, size);
+  if (buffer == nullptr && size > 0) {
+    return absl::InternalError(
+        absl::StrFormat("Failed to allocate HostMemory of size %d", size));
+  }
+  return std::make_unique<HostMemoryAllocation>(buffer, size, this);
+}
+
+void GpuExecutor::HostMemoryDeallocate(void* location, uint64_t size) {
+  return GpuDriver::HostDeallocate(context_, location);
 }
 
 bool GpuExecutor::SynchronizeAllActivity() {

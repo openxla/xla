@@ -485,7 +485,7 @@ xla_cc_test(
         ":hlo_module_loader",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -587,7 +587,7 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
@@ -642,8 +642,8 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_parser",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
@@ -692,8 +692,8 @@ xla_cc_test(
         "//xla/service/spmd:spmd_partitioner",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 
@@ -837,10 +837,10 @@ xla_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:path",

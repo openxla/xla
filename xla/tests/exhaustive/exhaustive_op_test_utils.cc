@@ -35,14 +35,25 @@ limitations under the License.
 #include "Eigen/Core"
 #include "xla/literal.h"
 #include "xla/types.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace exhaustive_op_test {
+
+int eup_version = 0;
+
+int GetEupVersion() { return eup_version; }
 
 bool IsSubnormalReal(xla::complex64 value) { return IsSubnormal(value.real()); }
 
 bool IsSubnormalReal(xla::complex128 value) {
   return IsSubnormal(value.real());
+}
+
+bool IsMinNormalReal(xla::complex64 value) { return IsMinNormal(value.real()); }
+
+bool IsMinNormalReal(xla::complex128 value) {
+  return IsMinNormal(value.real());
 }
 
 bool IsSubnormalImaginary(xla::complex64 value) {
@@ -51,6 +62,14 @@ bool IsSubnormalImaginary(xla::complex64 value) {
 
 bool IsSubnormalImaginary(xla::complex128 value) {
   return IsSubnormal(value.imag());
+}
+
+bool IsMinNormalImaginary(xla::complex64 value) {
+  return IsMinNormal(value.imag());
+}
+
+bool IsMinPositiveImaginary(xla::complex128 value) {
+  return IsMinNormal(value.imag());
 }
 
 // For f64, f32, f16, and bf16, we need 17, 9, 5, and 4 decimal places of
@@ -329,6 +348,22 @@ std::string StringifyNum(const std::array<NativeT, N>& inputs) {
 }
 
 template <typename ErrorGenerator>
+void PrintSkipped(int64_t* skipped, const ErrorGenerator& err_generator) {
+  // We send some fixed amount of skipped messages to the log. The remainder we
+  // squelch unless we're at vlog level 2.
+  constexpr int64_t kMaxMismatchesLoggedToErr = 1000;
+
+  (*skipped)++;
+  if (*skipped < kMaxMismatchesLoggedToErr || VLOG_IS_ON(2)) {
+    LOG(WARNING) << err_generator();
+  } else if (*skipped == kMaxMismatchesLoggedToErr) {
+    LOG(WARNING) << "Not printing any more skipped messages; pass "
+                    "--vmodule=exhaustive_op_test=2 to see "
+                    "all of them.";
+  }
+}
+
+template <typename ErrorGenerator>
 void PrintMismatch(int64_t* mismatches, const ErrorGenerator& err_generator) {
   // We send a few mismatches to gunit so they show up nicely in test logs.
   // Then we send more to LOG(ERROR).  The remainder we squelch unless we're
@@ -347,6 +382,7 @@ void PrintMismatch(int64_t* mismatches, const ErrorGenerator& err_generator) {
                   "all of them.";
   }
 }
+
 }  // namespace
 
 template <PrimitiveType T, size_t N>
@@ -356,17 +392,21 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
     OutputRangeCheck check_valid_range) {
   // Cache for when all components are subnormal testing values.
   std::vector<NativeRefT> pure_subnormal_cache;
-  // Since we take the cross product of all possible test values, and each
-  // component has kNumSubnormalSubstitutionValues possible test values, then
-  // the total number of different cache locations are
-  // kNumSubnormalSubstitutionValues raised to the num_components.
-  // num_components = N for the reals, and 2*N for the complex.
-  int64_t max_cache_size =
-      pow(kNumSubnormalSubstitutionValues, N * (kIsComplex ? 2 : 1));
-  pure_subnormal_cache.reserve(max_cache_size);
-  for (int i = 0; i < max_cache_size; ++i) {
-    pure_subnormal_cache.push_back(CallOperation(
-        evaluate_op, FromCacheLocation<kIsComplex, NativeRefT, N>(i)));
+  // TODO(b/353790524): Subnormal cache does not seem to work properly with
+  // more than 1 input.
+  if constexpr (N == 1) {
+    // Since we take the cross product of all possible test values, and each
+    // component has kNumSubnormalSubstitutionValues possible test values, then
+    // the total number of different cache locations are
+    // kNumSubnormalSubstitutionValues raised to the num_components.
+    // num_components = N for the reals, and 2*N for the complex.
+    int64_t max_cache_size =
+        pow(kNumSubnormalSubstitutionValues, N * (kIsComplex ? 2 : 1));
+    pure_subnormal_cache.reserve(max_cache_size);
+    for (int i = 0; i < max_cache_size; ++i) {
+      pure_subnormal_cache.push_back(CallOperation(
+          evaluate_op, FromCacheLocation<kIsComplex, NativeRefT, N>(i)));
+    }
   }
 
   NativeInputsList inputs_arr;
@@ -377,6 +417,7 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
 
   absl::Span<const NativeT> result_arr = result_literal.data<NativeT>();
 
+  int64_t skipped = 0;
   int64_t mismatches = 0;
 
   for (int64_t i = 0; i < result_arr.size(); ++i) {
@@ -392,6 +433,16 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
     NativeT expected =
         static_cast<NativeT>(CallOperation(evaluate_op, inputs_ref_ty));
     ErrorSpec error_spec = CallErrorSpec(error_spec_gen, inputs);
+
+    if (error_spec.skip_comparison) {
+      PrintSkipped(&skipped, [&] {
+        return absl::StrFormat(
+            "skipping tolerance check for input %s due to "
+            "ErrorSpec::skip_comparison",
+            StringifyNum<NativeT, ComponentIntegralNativeT, N>(inputs));
+      });
+      continue;
+    }
 
     if (check_valid_range != nullptr && !check_valid_range(inputs, actual)) {
       PrintMismatch(&mismatches, [&] {
@@ -431,13 +482,19 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
 
     for (NativeRefInputs test_value : subnormal_test_inputs) {
       NativeRefT result;
-      int cache_loc =
-          GetCacheLocation<kIsComplex, typename NativeRefInputs::value_type, N>(
-              test_value);
-      if (cache_loc == kInvalidCacheIndex) {
-        result = CallOperation(evaluate_op, test_value);
+      // TODO(b/353790524): Subnormal cache does not seem to work properly with
+      // more than 1 input.
+      if constexpr (N == 1) {
+        int cache_loc =
+            GetCacheLocation<kIsComplex, typename NativeRefInputs::value_type,
+                             N>(test_value);
+        if (cache_loc == kInvalidCacheIndex) {
+          result = CallOperation(evaluate_op, test_value);
+        } else {
+          result = pure_subnormal_cache[cache_loc];
+        }
       } else {
-        result = pure_subnormal_cache[cache_loc];
+        result = result = CallOperation(evaluate_op, test_value);
       }
 
       if (IsClose(result, static_cast<NativeRefT>(actual), error_spec)) {

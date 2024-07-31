@@ -78,8 +78,6 @@ class MockStreamExecutor : public StreamExecutor {
                const BlockDim& block_dims, const ClusterDim& cluster_dims,
                const Kernel& k, const KernelArgs& args),
               (override));
-  MOCK_METHOD(absl::Status, Submit,
-              (Stream * stream, const CommandBuffer& command_buffer));
   MOCK_METHOD(void, UnloadKernel, (const Kernel* kernel), (override));
   MOCK_METHOD(DeviceMemoryBase, Allocate, (uint64_t size, int64_t memory_space),
               (override));
@@ -92,7 +90,8 @@ class MockStreamExecutor : public StreamExecutor {
               (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<MemoryAllocation>>,
               HostMemoryAllocate, (uint64_t size), (override));
-  MOCK_METHOD(void, HostMemoryDeallocate, (void* mem), (override));
+  MOCK_METHOD(void, HostMemoryDeallocate, (void* mem, uint64_t size),
+              (override));
   MOCK_METHOD(bool, SynchronizeAllActivity, (), (override));
   MOCK_METHOD(absl::Status, SynchronousMemZero,
               (DeviceMemoryBase * location, uint64_t size), (override));

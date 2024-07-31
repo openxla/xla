@@ -41,8 +41,11 @@ limitations under the License.
 namespace xla::cpu {
 
 ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
-                             std::vector<NodeDef> nodes_defs)
+                             std::vector<NodeDef> nodes_defs,
+                             const ThunkExecutor::Options& options)
     : thunk_sequence_(std::move(thunk_sequence)),
+      options_(options),
+      num_thunks_(thunk_sequence_.size()),
       nodes_defs_(std::move(nodes_defs)),
       is_sequential_(true) {
   for (NodeId i = 0; i < nodes_defs_.size(); ++i) {
@@ -66,11 +69,21 @@ ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
     is_sequential_ &= (absl::c_count(nodes_defs_[i].in_edges, i - 1) != 0);
   }
 
+  // Maybe mark execution as sequential if all thunks use small buffers.
+  auto uses_small_buffers = [&](const std::unique_ptr<Thunk>& thunk) {
+    return absl::c_all_of(thunk->buffer_uses(), [&](const BufferUse& use) {
+      return use.slice().size() <= options.execute_sequential_buffer_threshold;
+    });
+  };
+
+  bool small_buffers = absl::c_all_of(thunk_sequence_, uses_small_buffers);
+  is_sequential_ |= small_buffers;
+
   VLOG(2) << absl::StreamFormat(
       "Constructed ThunkExecutor with %d nodes: #source_nodes=%d "
-      "#sink_nodes=%d, #erased_edges=%d, is_sequential=%v",
+      "#sink_nodes=%d, #erased_edges=%d, is_sequential=%v, small_buffers=%v",
       nodes_defs_.size(), source_.size(), sink_.size(), num_erased_edges,
-      is_sequential_);
+      is_sequential_, small_buffers);
 
   // Sanity check that all vectors are empty or all vectors are non-empty.
   DCHECK((!source_.empty() && !sink_.empty() && !thunk_sequence_.empty()) ||
@@ -78,7 +91,7 @@ ThunkExecutor::ThunkExecutor(ThunkSequence thunk_sequence,
 }
 
 absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
-    ThunkSequence thunk_sequence) {
+    ThunkSequence thunk_sequence, const ThunkExecutor::Options& options) {
   std::vector<NodeDef> defs(thunk_sequence.size());
 
   std::vector<BufferUse::ReadWriteSet> buffer_rwsets(thunk_sequence.size());
@@ -106,7 +119,7 @@ absl::StatusOr<ThunkExecutor> ThunkExecutor::Create(
     }
   }
 
-  return ThunkExecutor(std::move(thunk_sequence), std::move(defs));
+  return ThunkExecutor(std::move(thunk_sequence), std::move(defs), options);
 }
 
 ThunkExecutor::ExecuteState::ExecuteState(ThunkExecutor* executor,
@@ -131,10 +144,10 @@ ThunkExecutor::ExecuteState::ExecuteState(ThunkExecutor* executor,
 tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
     const Thunk::ExecuteParams& params) {
   // Short-circuit execution of trivial thunk sequences.
-  if (ABSL_PREDICT_FALSE(thunk_sequence_.empty())) {
-    return Thunk::OkExecuteEvent();
+  if (ABSL_PREDICT_FALSE(num_thunks_ == 0)) {
+    return Thunk::OkExecuteEventSingleton();
   }
-  if (ABSL_PREDICT_FALSE(thunk_sequence_.size() == 1)) {
+  if (ABSL_PREDICT_FALSE(num_thunks_ == 1)) {
     return thunk_sequence_[0]->Execute(params);
   }
 
@@ -164,19 +177,24 @@ tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent> ThunkExecutor::Execute(
 
 tsl::AsyncValueRef<ThunkExecutor::ExecuteEvent>
 ThunkExecutor::ExecuteSequential(const Thunk::ExecuteParams& params) {
-  for (int64_t i = 0; i < thunk_sequence_.size(); ++i) {
-    Thunk& thunk = *thunk_sequence_[i];
+  for (auto it = thunk_sequence_.begin(); it != thunk_sequence_.end(); ++it) {
+    Thunk& thunk = **it;
     auto execute_event = thunk.Execute(params);
+
+    // Fast path for thunks executed inline and returned OkExecuteEvent.
+    if (ABSL_PREDICT_TRUE(thunk.IsOkExecuteEvent(execute_event))) {
+      continue;
+    }
 
     // If thunk execution is not completed yet, attach a continuation to
     // resume sequential execution starting from the next thunk.
     if (ABSL_PREDICT_FALSE(!execute_event.IsAvailable())) {
       auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
-      execute_event.AndThen([this, &params, i, event](absl::Status status) {
+      execute_event.AndThen([this, &params, it, event](absl::Status status) {
         if (ABSL_PREDICT_FALSE(!status.ok())) {
           event.SetError(std::move(status));
         } else {
-          ResumeExecuteSequential(i + 1, params, std::move(event));
+          ResumeExecuteSequential(it + 1, params, std::move(event));
         }
       });
       return event;
@@ -190,25 +208,30 @@ ThunkExecutor::ExecuteSequential(const Thunk::ExecuteParams& params) {
 
   // If we got to the end of the sequence it means that all thunks have
   // succeeded.
-  return Thunk::OkExecuteEvent();
+  return Thunk::OkExecuteEventSingleton();
 }
 
 void ThunkExecutor::ResumeExecuteSequential(
-    int64_t index, const Thunk::ExecuteParams& params,
+    ThunkIterator it, const Thunk::ExecuteParams& params,
     tsl::AsyncValueRef<ExecuteEvent> event) {
-  for (int64_t i = index; i < thunk_sequence_.size(); ++i) {
-    Thunk& thunk = *thunk_sequence_[i];
+  for (; it != thunk_sequence_.end(); ++it) {
+    Thunk& thunk = **it;
     auto execute_event = thunk.Execute(params);
+
+    // Fast path for thunks executed inline and returned OkExecuteEvent.
+    if (ABSL_PREDICT_TRUE(thunk.IsOkExecuteEvent(execute_event))) {
+      continue;
+    }
 
     // If thunk execution is not completed yet, attach a continuation to
     // resume sequential execution starting from the next thunk.
     if (ABSL_PREDICT_FALSE(!execute_event.IsAvailable())) {
       execute_event.AndThen(
-          [this, &params, i, event = std::move(event)](absl::Status status) {
+          [this, &params, it, event = std::move(event)](absl::Status status) {
             if (ABSL_PREDICT_FALSE(!status.ok())) {
               event.SetError(std::move(status));
             } else {
-              ResumeExecuteSequential(i + 1, params, std::move(event));
+              ResumeExecuteSequential(it + 1, params, std::move(event));
             }
           });
       return;
@@ -259,7 +282,7 @@ void ThunkExecutor::Execute(ExecuteState* state,
     Thunk& thunk = *state->executor->thunk_sequence_[id];
     tsl::AsyncValueRef<ExecuteEvent> execute_event =
         ABSL_PREDICT_FALSE(state->abort.load(std::memory_order_relaxed))
-            ? Thunk::OkExecuteEvent()
+            ? Thunk::OkExecuteEventSingleton()
             : thunk.Execute(params);
 
     if (ABSL_PREDICT_TRUE(execute_event.IsAvailable())) {
@@ -349,7 +372,7 @@ void ThunkExecutor::ProcessOutEdges(
     ExecuteState::Node& out_node = state->nodes[out_edge];
 
     int64_t cnt = out_node.counter.fetch_sub(1, std::memory_order_release);
-    CHECK_GE(cnt, 1) << "Node counter can't drop below 0";  // Crash Ok
+    DCHECK_GE(cnt, 1) << "Node counter can't drop below 0";
     if (cnt == 1) ready_queue.push_back(out_edge);
   }
 
@@ -367,7 +390,7 @@ void ThunkExecutor::ProcessOutEdges(
     if (ABSL_PREDICT_FALSE(state->abort.load(std::memory_order_relaxed))) {
       auto take_error = [&] {
         absl::MutexLock lock(&state->abort_mutex);
-        CHECK(!state->abort_status.ok())  // Crash Ok
+        DCHECK(!state->abort_status.ok())
             << "Abort status must be set if execution is aborted";
         return std::move(state->abort_status);
       };
@@ -449,11 +472,11 @@ int64_t ThunkExecutor::TransitiveReduction() {
 
 std::string ThunkExecutor::ToString() const {
   std::string str = absl::StrFormat(
-      "ThunkExecutor: #thunks=%d #source_nodes=%d #sink_nodes=%d",
-      thunk_sequence_.size(), source_.size(), sink_.size());
+      "ThunkExecutor: #thunks=%d #source_nodes=%d #sink_nodes=%d", num_thunks_,
+      source_.size(), sink_.size());
 
   // Collect names of `in_edges`.
-  std::vector<std::vector<std::string>> in_edges(thunk_sequence_.size());
+  std::vector<std::vector<std::string>> in_edges(num_thunks_);
   for (const auto& node_def : nodes_defs_) {
     for (NodeId in_edge : node_def.in_edges) {
       in_edges[node_def.id].push_back(thunk_sequence_[in_edge]->info().op_name);
@@ -461,7 +484,7 @@ std::string ThunkExecutor::ToString() const {
   }
 
   // Print thunks with a list of their dependencies;
-  for (NodeId i = 0; i < thunk_sequence_.size(); ++i) {
+  for (NodeId i = 0; i < num_thunks_; ++i) {
     const Thunk& thunk = *thunk_sequence_[i];
     bool is_source = absl::c_find(source_, i) != source_.end();
     bool is_sink = absl::c_find(sink_, i) != sink_.end();
