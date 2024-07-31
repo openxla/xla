@@ -351,11 +351,15 @@ class GpuDriver {
     GraphInstantiateFlags flags;
     GpuGraphNodeHandle err_node_out = NULL;
     GpuStreamHandle upload_stream = NULL;
+#if CUDA_VERSION >= 12000
     GpuGraphInstantiateResult result_out = GpuGraphInstantiateSuccess;
+#else
+    GpuGraphInstantiateResult result_out;
+#endif
   };
 
 #if CUDA_VERSION >= 12000
-  std::string GraphInstantiateResultString(GpuGraphInstantiateResult result) {
+static  std::string GraphInstantiateResultString(GpuGraphInstantiateResult result) {
     switch (result) {
       case GpuGraphInstantiateSuccess:
         return "Success";
