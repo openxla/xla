@@ -359,7 +359,8 @@ class GpuDriver {
   };
 
 #if CUDA_VERSION >= 12000
-static  std::string GraphInstantiateResultString(GpuGraphInstantiateResult result) {
+  static std::string GraphInstantiateResultString(
+      GpuGraphInstantiateResult result) {
     switch (result) {
       case GpuGraphInstantiateSuccess:
         return "Success";
