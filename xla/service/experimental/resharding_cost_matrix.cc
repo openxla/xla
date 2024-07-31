@@ -7,6 +7,30 @@
 
 namespace xla {
 
+namespace {
+
+std::string UIntToShortString(uint64_t n) {
+  uint64_t K = 1000;
+  uint64_t M = 1000000;
+  uint64_t G = 1000000000;
+  uint64_t T = 1000000000000;
+
+  if (n < K) {
+    return std::to_string(n);
+  } else if (K <= n && n < M) {
+    return std::to_string((uint64_t)(n / K)) + "K";
+  } else if (M <= n && n < G) {
+    return std::to_string((uint64_t)(n / M)) + "M";
+  } else if (G < n && n <= T) {
+    return std::to_string((uint64_t)(n / G)) + "G";
+  } else {
+    return std::to_string((uint64_t)(n / T)) + "T";
+  }
+
+}
+
+} // namespace
+
 ReshardingCostMatrix::ReshardingCostMatrix(const Shape& shape, 
     std::vector<std::shared_ptr<HloSharding>>& strats1, 
     std::vector<std::shared_ptr<HloSharding>>& strats2) :
@@ -43,7 +67,7 @@ std::string ReshardingCostMatrix::ToString() {
   std::string s = "";
   for (int r = 0; r < num_rows(); r++) {
     for (int c = 0; c < num_cols(); c++) {
-      s += std::to_string(costs_[r][c]) + " ";
+      s += UIntToShortString(costs_[r][c]) + " ";
     }
     s += "\n";
   }
