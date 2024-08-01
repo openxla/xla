@@ -42,6 +42,9 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+// <HLO computation fingerprint, serialized compiled object>.
+using BinaryMap = absl::flat_hash_map<std::string, std::string>;
+
 // If a dimensions is smaller than this, untiled transposition may be more
 // efficient.
 inline constexpr int64_t kMinDimensionToTransposeTiled = 16;
@@ -96,12 +99,9 @@ extern const char* const kCusolverCholeskyCallTarget;
 // Returns true if `instr` is a non-strided slice.
 bool IsSliceWithUnitStrides(const HloInstruction* instr);
 
-// Returns true if `instr` is a slice instruction and produces a contiguous
-// slice.
+// Returns true if `instr` is a slice (or dynamic slice) instruction and
+// operates on a contiguous slice of the input buffer.
 bool IsContiguousSlice(const HloInstruction& instr);
-
-// Returns true if `sliced` is a contiguous slice of `orig`.
-bool IsContiguousSlice(const Shape& orig, const Shape& sliced);
 
 // Emits code to shuffle data between threads of a warp. This has the same
 // semantics as the PTX "shfl.sync.down" instruction but works for values that
@@ -125,21 +125,25 @@ absl::StatusOr<BufferAllocation::Slice> GetAllocationSlice(
     const BufferAssignment& buffer_assignment, const HloInstruction* instr,
     const ShapeIndex& index);
 
-// Returns whether 'fusion' can be emitted with the dynamic update slice
-// in-place emitter.
+// Returns whether the fusion represented by 'fusion_adaptor' can be emitted
+// with the dynamic update slice in-place emitter. If 'fusion_adaptor'
+// represents a single fusion computation, 'fusion' should provide the fusion
+// instruction corresponding to that fusion computation. 'get_allocation_slice'
+// is a callback for getting the allocated buffer slice, given an instruction
+// and a shape index. This is ignored in case 'fusion' is a nullptr.
 absl::StatusOr<bool> CanEmitFusedDynamicUpdateSliceInPlaceForGpu(
-    const HloFusionInstruction* fusion,
+    const HloFusionAdaptor& fusion_adaptor,
     std::function<absl::StatusOr<BufferAllocation::Slice>(
         const HloInstruction* instr, const ShapeIndex& index)>
         get_allocation_slice,
-    absl::Span<HloInstructionAdaptor const> roots);
+    const HloInstruction* fusion = nullptr);
 
 // Returns the dynamic-update-slice instructions defining the results of a
 // fusion node. A dynamic slice update is said to be "defining" of a result if
 // that result is the output of a dynamic slice update, or if that result is the
 // output of a bitcast of a dynamic slice update---since such bitcast may be
 // handled as a no-op.
-std::vector<const HloInstruction*> GetOutputDefiningDynamicUpdateSlices(
+std::vector<HloInstructionAdaptor> GetOutputDefiningDynamicUpdateSlices(
     absl::Span<HloInstructionAdaptor const> roots);
 
 // Returns the first hero instruction reachable from `instr` as root. Hero

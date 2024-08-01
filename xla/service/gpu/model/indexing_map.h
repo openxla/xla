@@ -26,14 +26,15 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/model/affine_map_printer.h"
 
@@ -144,6 +145,11 @@ struct Interval {
 };
 
 std::ostream& operator<<(std::ostream& out, const Interval& range);
+inline llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
+                                     const Interval& interval) {
+  os << absl::StrFormat("[%d, %d]", interval.lower, interval.upper);
+  return os;
+}
 
 template <typename H>
 H AbslHashValue(H h, const Interval& range) {
@@ -197,6 +203,10 @@ H AbslHashValue(H h, const DimVar& dimension) {
   return H::combine(std::move(h), dimension.bounds);
 }
 
+inline size_t hash_value(const DimVar& dim_var) {
+  return llvm::hash_combine(dim_var.bounds);
+}
+
 // RangeSymbol variable represents a range of values, e.g. to compute a single
 // element of the reduction's result we need a range of values from the input
 // tensor. RangeSymbol variables correspond to the front portion of the
@@ -212,6 +222,10 @@ inline bool operator!=(const RangeVar& lhs, const RangeVar& rhs) {
 template <typename H>
 H AbslHashValue(H h, const RangeVar& range_var) {
   return H::combine(std::move(h), range_var.range);
+}
+
+inline size_t hash_value(const RangeVar& range_var) {
+  return llvm::hash_combine(range_var.range);
 }
 
 // RTSymbol variable represents a runtime symbol, e.g. a dynamic offset in

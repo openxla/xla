@@ -25,8 +25,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "gloo/transport/tcp/attr.h"  // from @gloo
-#include "gloo/transport/tcp/device.h"  // from @gloo
+#include "gloo/transport/tcp/attr.h"
+#include "gloo/transport/tcp/device.h"
 #include "xla/executable_run_options.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -34,8 +34,8 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/global_device_id.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"

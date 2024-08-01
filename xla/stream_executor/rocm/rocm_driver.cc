@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -74,7 +75,6 @@ namespace stream_executor {
 namespace gpu {
 
 /* static */ absl::Mutex CreatedContexts::mu_{absl::kConstInit};
-/* static */ int64_t CreatedContexts::next_id_ = 1;  // 0 means "no context"
 
 // Formats hipError_t to output prettified values into a log stream.
 // Error summaries taken from:
@@ -181,17 +181,6 @@ tsl::thread::ThreadPool* GetDriverExecutor() {
 
 }  // namespace
 
-std::string MemorySpaceString(MemorySpace memory_space) {
-  switch (memory_space) {
-    case MemorySpace::kHost:
-      return "host";
-    case MemorySpace::kDevice:
-      return "device";
-    default:
-      LOG(FATAL) << "impossible memory space";
-  }
-}
-
 namespace {
 
 // Call hipDeviceSynchronize and crash if it doesn't succeed.
@@ -291,7 +280,7 @@ std::string ROCMPointerToDeviceString(hipDeviceptr_t pointer) {
 std::string ROCMPointerToMemorySpaceString(hipDeviceptr_t pointer) {
   auto value = GpuDriver::GetPointerMemorySpace(pointer);
   if (value.ok()) {
-    return MemorySpaceString(value.value());
+    return MemoryTypeString(value.value());
   }
   LOG(ERROR) << "could not query device: " << value.status();
   return "?";
@@ -1378,16 +1367,32 @@ struct BitPatternToValue {
 /* static */ void* GpuDriver::UnifiedMemoryAllocate(GpuContext* context,
                                                     uint64_t bytes) {
   ScopedActivateContext activated{context};
-
-  LOG(ERROR)
-      << "Feature not supported on ROCm platform (UnifiedMemoryAllocate)";
-  return nullptr;
+  hipDeviceptr_t result = 0;
+  // "managed" memory is visible to both CPU and GPU.
+  hipError_t res = wrap::hipMallocManaged(&result, bytes, hipMemAttachGlobal);
+  if (res != hipSuccess) {
+    LOG(ERROR) << "failed to alloc " << bytes
+               << " bytes unified memory; result: " << ToString(res);
+    return nullptr;
+  }
+  void* ptr = reinterpret_cast<void*>(result);
+  VLOG(2) << "allocated " << ptr << " for context " << context->context()
+          << " of " << bytes << " bytes in unified memory";
+  return ptr;
 }
 
 /* static */ void GpuDriver::UnifiedMemoryDeallocate(GpuContext* context,
                                                      void* location) {
-  LOG(ERROR)
-      << "Feature not supported on ROCm platform (UnifiedMemoryDeallocate)";
+  ScopedActivateContext activation(context);
+  hipDeviceptr_t pointer = absl::bit_cast<hipDeviceptr_t>(location);
+  hipError_t res = wrap::hipFree(pointer);
+  if (res != hipSuccess) {
+    LOG(ERROR) << "failed to free unified memory at " << location
+               << "; result: " << ToString(res);
+  } else {
+    VLOG(2) << "deallocated unified memory at " << location << " for context "
+            << context->context();
+  }
 }
 
 /* static */ void* GpuDriver::HostAllocate(GpuContext* context,
@@ -1789,7 +1794,7 @@ struct BitPatternToValue {
       "failed to query context for device pointer: ", ToString(result)));
 }
 
-/* static */ absl::StatusOr<MemorySpace> GpuDriver::GetPointerMemorySpace(
+/* static */ absl::StatusOr<MemoryType> GpuDriver::GetPointerMemorySpace(
     hipDeviceptr_t pointer) {
   unsigned int value;
   hipError_t result = wrap::hipPointerGetAttribute(
@@ -1797,9 +1802,9 @@ struct BitPatternToValue {
   if (result == hipSuccess) {
     switch (value) {
       case hipMemoryTypeDevice:
-        return MemorySpace::kDevice;
+        return MemoryType::kDevice;
       case hipMemoryTypeHost:
-        return MemorySpace::kHost;
+        return MemoryType::kHost;
       default:
         return absl::Status{
             absl::StatusCode::kInternal,

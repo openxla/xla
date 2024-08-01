@@ -189,7 +189,8 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
-      /*return_tuple=*/false));
+      /*return_tuple=*/false,
+      /*use_shardy=*/false));
   return Compile(std::move(input_options), xla_computation, topology, client);
 #else
   return absl::InternalError(
@@ -198,13 +199,15 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
 #endif
 }
 
-STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
-  PjRtRegisterCompiler(
 #if TENSORFLOW_USE_ROCM
-      RocmName(),
-#else
-                       CudaName(),
-#endif
-      std::make_unique<StreamExecutorGpuCompiler>());
+STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
+  PjRtRegisterCompiler(RocmName(),
+                       std::make_unique<StreamExecutorGpuCompiler>());
 });
+#else
+STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(pjrt_register_se_gpu_compiler, {
+  PjRtRegisterCompiler(CudaName(),
+                       std::make_unique<StreamExecutorGpuCompiler>());
+});
+#endif
 }  // namespace xla

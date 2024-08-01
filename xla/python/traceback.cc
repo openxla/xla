@@ -28,11 +28,11 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/exceptions.h"
 #include "xla/python/nb_class_ptr.h"
 #include "tsl/platform/platform.h"
@@ -222,6 +222,7 @@ PyType_Slot traceback_slots_[] = {
 
 void BuildTracebackSubmodule(nb::module_& m) {
   nb::class_<Traceback::Frame>(m, "Frame")
+      .def(nb::init<const nb::str&, const nb::str&, int, int>())
       .def_ro("file_name", &Traceback::Frame::file_name)
       .def_ro("function_name", &Traceback::Frame::function_name)
       .def_ro("function_start_line", &Traceback::Frame::function_start_line)
@@ -270,6 +271,33 @@ void BuildTracebackSubmodule(nb::module_& m) {
   });
   traceback.def("__str__", &Traceback::ToString);
   traceback.def("as_python_traceback", &Traceback::AsPythonTraceback);
+
+  traceback.def_static(
+      "traceback_from_frames",
+      [](std::vector<Traceback::Frame> frames) {
+        nb::object traceback = nb::none();
+        nb::dict globals;
+        nb::handle traceback_type(
+            reinterpret_cast<PyObject*>(&PyTraceBack_Type));
+        for (const Traceback::Frame& frame : frames) {
+          PyCodeObject* py_code =
+              PyCode_NewEmpty(frame.file_name.c_str(),
+                              frame.function_name.c_str(), frame.line_num);
+          PyFrameObject* py_frame = PyFrame_New(PyThreadState_Get(), py_code,
+                                                globals.ptr(), /*locals=*/
+                                                nullptr);
+          Py_DECREF(py_code);
+          traceback = traceback_type(
+              /*tb_next=*/std::move(traceback),
+              /*tb_frame=*/
+              nb::steal<nb::object>(reinterpret_cast<PyObject*>(py_frame)),
+              /*tb_lasti=*/0,
+              /*tb_lineno=*/
+              frame.line_num);
+        }
+        return traceback;
+      },
+      "Creates a traceback from a list of frames.");
 
   traceback.def_static(
       "code_addr2line",

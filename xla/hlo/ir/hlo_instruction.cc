@@ -56,11 +56,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_frontend_attributes.h"
-#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
@@ -680,17 +680,13 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (opcode == HloOpcode::kAllGather) {
         instruction = CreateAllGather(
             shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList(std::vector<ReplicaGroup>(
-                proto.replica_groups().begin(), proto.replica_groups().end())),
-            proto.constrain_layout(), channel_id,
-            proto.use_global_device_ids());
+            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
+            channel_id, proto.use_global_device_ids());
       } else {
         instruction = CreateAllGatherStart(
             shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList(std::vector<ReplicaGroup>(
-                proto.replica_groups().begin(), proto.replica_groups().end())),
-            proto.constrain_layout(), channel_id,
-            proto.use_global_device_ids());
+            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
+            channel_id, proto.use_global_device_ids());
       }
       break;
     }
@@ -709,9 +705,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (proto.all_reduce_id() > 0) {
         channel_id = proto.all_reduce_id();
       }
-      std::vector<ReplicaGroup> replica_groups(proto.replica_groups().begin(),
-                                               proto.replica_groups().end());
-      CollectiveDeviceList device_list(replica_groups);
+      CollectiveDeviceList device_list = CollectiveDeviceList::FromProto(proto);
       if (opcode == HloOpcode::kAllReduce) {
         instruction =
             CreateAllReduce(shape, all_operands(), computations(0), device_list,
@@ -748,12 +742,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         split_dimension = proto.dimensions(0);
       }
       instruction = CreateAllToAll(
-          shape, all_operands(),
-          /*replica_groups=*/
-          CollectiveDeviceList(std::vector<ReplicaGroup>(
-              proto.replica_groups().begin(), proto.replica_groups().end())),
-          /*constrain_layout=*/proto.constrain_layout(),
-          /*channel_id=*/channel_id, split_dimension);
+          shape, all_operands(), CollectiveDeviceList::FromProto(proto),
+          proto.constrain_layout(), channel_id, split_dimension);
       break;
     }
     case HloOpcode::kCollectiveBroadcast: {
@@ -761,10 +751,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (proto.channel_id() > 0) {
         channel_id = proto.channel_id();
       }
-      auto replica_groups = std::vector<ReplicaGroup>(
-          proto.replica_groups().begin(), proto.replica_groups().end());
       instruction = CreateCollectiveBroadcast(
-          shape, all_operands(), CollectiveDeviceList(replica_groups), false,
+          shape, all_operands(), CollectiveDeviceList::FromProto(proto), false,
           channel_id);
       break;
     }
@@ -1236,6 +1224,20 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   if (proto.has_statistics_viz()) {
     instruction->set_statistics_viz(proto.statistics_viz());
+  }
+
+  if (proto.has_original_value()) {
+    const xla::OriginalValueProto& original_value_proto =
+        proto.original_value();
+    auto original_value = std::make_shared<OriginalValue>(shape);
+    std::cerr << __func__ << ", shape: " << shape.ToString() << "\n";
+
+    for (const auto& leaf : original_value_proto.leaves()) {
+      *original_value->mutable_element(ShapeIndex(leaf.leaf_shape_index())) = {
+          leaf.instruction_name(), ShapeIndex(leaf.shape_index())};
+    }
+
+    instruction->set_original_value(original_value);
   }
 
   return std::move(instruction);
@@ -2801,8 +2803,8 @@ bool HloInstruction::IdenticalInternal(
                          : ShapeUtil::Compatible(shape(), other.shape()))) {
     return false;
   }
-  if (sharding_sensitive &&
-      !hlo_instruction_utils::HasEquivalentShardings(*this, other)) {
+  if (sharding_sensitive && has_sharding() && other.has_sharding() &&
+      sharding() != other.sharding()) {
     return false;
   }
   if (operands().size() != other.operands().size()) {
@@ -3616,9 +3618,16 @@ void HloInstruction::PrintWithCanonicalNameMap(
   });
   PrintExtraAttributes(attr_printer, options);
 
+  if (original_value_) {
+    printer->Append(", original_value={");
+    printer->Append(OriginalValueToString(*original_value()));
+    printer->Append("}");
+  }
+
   if (options.print_metadata() &&
       (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
-       !metadata_->source_file().empty())) {
+       !metadata_->source_file().empty() ||
+       !metadata_->scheduling_name().empty())) {
     printer->Append(", metadata={");
     printer->Append(xla::OpMetadataToString(
         *metadata_, options.print_metadata_only_op_name()));
@@ -3983,6 +3992,23 @@ HloInstructionProto HloInstruction::ToProto() const {
   *proto.mutable_frontend_attributes() = frontend_attributes();
 
   *proto.mutable_statistics_viz() = statistics_viz();
+
+  if (original_value_) {
+    xla::OriginalValueProto* original_value_proto =
+        proto.mutable_original_value();
+    for (const auto& leaf : original_value_->leaves()) {
+      OriginalArrayProto* original_array_proto =
+          original_value_proto->add_leaves();
+      for (const auto& index : leaf.first) {
+        original_array_proto->add_leaf_shape_index(index);
+      }
+      *original_array_proto->mutable_instruction_name() =
+          leaf.second->instruction_name;
+      for (const auto& index : leaf.second->shape_index) {
+        original_array_proto->add_shape_index(index);
+      }
+    }
+  }
 
   return proto;
 }
@@ -4816,17 +4842,6 @@ std::string ConvolutionDimensionNumbersToString(
                 StrJoin(output_dims, ""));
 }
 
-std::string ReplicaGroupsToString(
-    absl::Span<const ReplicaGroup> replica_groups) {
-  std::vector<std::string> replica_group_str;
-  replica_group_str.reserve(replica_groups.size());
-  for (const ReplicaGroup& group : replica_groups) {
-    replica_group_str.push_back(
-        StrCat("{", StrJoin(group.replica_ids(), ","), "}"));
-  }
-  return StrCat("{", StrJoin(replica_group_str, ","), "}");
-}
-
 absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
     const std::string& name) {
   static absl::flat_hash_map<std::string, RandomAlgorithm>* map = [] {
@@ -5007,6 +5022,14 @@ HloModule* HloInstruction::GetModule() const {
 
 void HloInstruction::UniquifyName(NameUniquer* name_uniquer) {
   name_ = name_uniquer->GetUniqueName(name_);
+}
+
+void HloInstruction::UniquifyName(HloModule* module) {
+  UniquifyName(&module->instruction_name_uniquer());
+}
+
+void HloInstruction::UniquifyId(HloModule* module) {
+  SetUniqueId(module->NewUniqueInstructionId());
 }
 
 void HloInstruction::SortInstructionUsersAndControlLists(
@@ -5492,6 +5515,15 @@ void HloInstruction::set_output_to_operand_aliasing(
         aliasing) {
   Cast<HloCallableInstruction>(this)->set_output_to_operand_aliasing(
       std::move(aliasing));
+}
+
+std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
+  return original_value_;
+}
+
+void HloInstruction::set_original_value(
+    std::shared_ptr<OriginalValue> original_value) {
+  original_value_ = original_value;
 }
 
 }  // namespace xla

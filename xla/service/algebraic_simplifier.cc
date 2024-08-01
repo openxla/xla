@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
-#include "xla/literal_comparison.h"
 #include "xla/literal_util.h"
 #include "xla/overflow_util.h"
 #include "xla/permutation_util.h"
@@ -5201,11 +5200,14 @@ absl::Status AlgebraicSimplifierVisitor::HandleConvert(
   }
 
   // Try to replace convert(constant) with a constant of the right type to begin
-  // with. Disallow moving int4 since it is not supported for many ops
+  // with. Disallow moving sub-byte types since they may not be supported for
+  // some ops.
   HloInstruction* constant;
-  if (Match(convert, m::Convert(m::Constant(&constant))) &&
-      !primitive_util::IsSubByteNonPredType(src_type) &&
-      !primitive_util::IsSubByteNonPredType(dest_type)) {
+  if (options_.use_convert_constant_folding() &&
+      Match(convert, m::Convert(m::Constant(&constant))) &&
+      primitive_util::BitWidth(dest_type) <=
+          primitive_util::BitWidth(src_type) &&
+      constant->user_count() == 1 && primitive_util::BitWidth(dest_type) >= 8) {
     TF_ASSIGN_OR_RETURN(Literal dest_literal,
                         constant->literal().Convert(dest_type));
     VLOG(10) << "Replacing convert(constant) with constant";
@@ -6473,7 +6475,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
 
   // Try to reorder slice of dot to the operand it comes from
   if (!options_.is_layout_sensitive() &&
-      options_.use_associative_reordering() &&
+      options_.raise_slice_and_reduce_through_dot() &&
       slice->operand(0)->opcode() == HloOpcode::kDot) {
     // Unpack the dot operands
     HloDotInstruction* dot = Cast<HloDotInstruction>(slice->mutable_operand(0));
@@ -7357,6 +7359,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
     if (multi_output_reduce) {
       std::vector<HloInstruction*> broadcast_inits;
       int64_t inputs = reduce->input_count();
+      broadcast_inits.reserve(inputs);
       for (int64_t i = 0; i < inputs; ++i) {
         broadcast_inits.push_back(reduce->init_values()[i]->AddInstruction(
             HloInstruction::CreateBroadcast(reduce->shape().tuple_shapes(i),
@@ -7402,6 +7405,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
     if (multi_output_reduce) {
       std::vector<HloInstruction*> reshaped_args;
       int64_t inputs = reduce->input_count();
+      reshaped_args.reserve(inputs);
       for (int64_t i = 0; i < inputs; ++i) {
         reshaped_args.push_back(
             reduce->AddInstruction(HloInstruction::CreateReshape(
@@ -7434,7 +7438,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   }
 
   // Try to reorder reduce(dot(A, B)) to dot(A, reduce(B))
-  if (options_.use_associative_reordering()) {
+  if (options_.raise_slice_and_reduce_through_dot()) {
     HloInstruction *a, *b;
     // Reordering does not seem possible if the dot has batch dimensions. We
     // also need the reduction operation to be add, and the reduce to have an
@@ -7528,7 +7532,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
 
       // Only reorder if it would result in sufficiently fewer flops
       if (old_flops / static_cast<double>(new_flops) >
-          options_.associative_reordering_threshold()) {
+          options_.raise_slice_and_reduce_through_dot_threshold()) {
         VLOG(10) << "Reordering reduce into dot operands";
         return ReplaceInstruction(reduce, new_dot);
       }
@@ -7740,7 +7744,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // Convert Reduce(Dot(X,Y)) to Dot(X,Y) if any of the dimensions reduced were
   // batch dimensions of the dot. The transformation supports reducing other
   // dimensions as well.
-  if (options_.enable_dot_strength_reduction() &&
+  if (options_.supports_non_canonical_dots() &&
+      options_.enable_dot_strength_reduction() &&
       Match(arg, m::Dot(&dot, m::Op(&lhs), m::Op(&rhs)).WithOneUser()) &&
       Match(reduce->to_apply()->root_instruction(),
             m::AddAnyOrder(m::Parameter(0), m::Parameter(1))) &&
@@ -7878,6 +7883,29 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
     }
   }
 
+  // Replace Reduce(Broadcast(Scalar)) with Broadcast(Multiply(Scalar)) when the
+  // reduction operation is addition
+  if (arg->opcode() == HloOpcode::kBroadcast &&
+      ShapeUtil::IsScalar(arg->operand(0)->shape())) {
+    if (Match(reduce->to_apply()->root_instruction(),
+              m::AddAnyOrder(m::Parameter(0), m::Parameter(1))) &&
+        IsScalarConstantZero(init_value)) {
+      int64_t reduction_dims_prod = 1;
+      for (auto i : reduce->dimensions()) {
+        reduction_dims_prod *= arg->shape().dimensions(i);
+      }
+
+      HloInstruction* multiplier =
+          MakeScalarLike(arg->mutable_operand(0), reduction_dims_prod);
+      TF_ASSIGN_OR_RETURN(HloInstruction * multiplied_scalar,
+                          MakeBinaryHlo(HloOpcode::kMultiply,
+                                        arg->mutable_operand(0), multiplier));
+      return ReplaceWithNewInstruction(
+          reduce, HloInstruction::CreateBroadcast(reduce->shape(),
+                                                  multiplied_scalar, {}));
+    }
+  }
+
   return absl::OkStatus();
 }
 
@@ -7904,6 +7932,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
   if (ShapeUtil::IsZeroElementArray(*input_shapes[0]) ||
       ShapeUtil::IsZeroElementArray(*output_shapes[0])) {
     std::vector<HloInstruction*> broadcast_inits;
+    broadcast_inits.reserve(input_count);
     for (int64_t i = 0; i < input_count; ++i) {
       broadcast_inits.push_back(
           hlo->AddInstruction(HloInstruction::CreateBroadcast(

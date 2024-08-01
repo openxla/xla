@@ -22,20 +22,31 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
+#include "xla/literal.h"
 #include "xla/permutation_util.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
 #include "xla/util.h"
-#include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -731,21 +742,31 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     Shape s = hlo->shape();
     HloOpcode opcode = hlo->opcode();
     TF_RET_CHECK(opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect);
-    HloInstruction* p = hlo->mutable_operand(0);
-    HloInstruction* i1 = hlo->mutable_operand(1);
-    HloInstruction* i2 = hlo->mutable_operand(2);
-    TF_RET_CHECK(p->shape().layout() == s.layout());
-    TF_RET_CHECK(i1->shape().layout() == s.layout());
-    TF_RET_CHECK(i2->shape().layout() == s.layout());
+    HloInstruction* arg0 = hlo->mutable_operand(0);
+    HloInstruction* arg1 = hlo->mutable_operand(1);
+    HloInstruction* arg2 = hlo->mutable_operand(2);
+    if (opcode == HloOpcode::kClamp) {
+      TF_RET_CHECK(arg1->shape().layout() == s.layout());
+    } else if (opcode == HloOpcode::kSelect) {
+      TF_RET_CHECK(arg1->shape().layout() == s.layout());
+      TF_RET_CHECK(arg2->shape().layout() == s.layout());
+    } else {
+      TF_RET_CHECK(false);
+    }
 
-    TF_ASSIGN_OR_RETURN(HloInstruction * p_0, GetNormalizedInput(p));
-    TF_ASSIGN_OR_RETURN(HloInstruction * i1_0, GetNormalizedInput(i1));
-    TF_ASSIGN_OR_RETURN(HloInstruction * i2_0, GetNormalizedInput(i2));
+    TF_ASSIGN_OR_RETURN(HloInstruction * normalized_arg0,
+                        GetNormalizedInput(arg0));
+    TF_ASSIGN_OR_RETURN(HloInstruction * normalized_arg1,
+                        GetNormalizedInput(arg1));
+    TF_ASSIGN_OR_RETURN(HloInstruction * normalized_arg2,
+                        GetNormalizedInput(arg2));
 
     TF_ASSIGN_OR_RETURN(Shape new_shape, ShapeInference::InferTernaryOpShape(
-                                             opcode, p_0, i1_0, i2_0));
+                                             opcode, normalized_arg0,
+                                             normalized_arg1, normalized_arg2));
     HloInstruction* normalized = hlo->parent()->AddInstruction(
-        HloInstruction::CreateTernary(new_shape, opcode, p_0, i1_0, i2_0));
+        HloInstruction::CreateTernary(new_shape, opcode, normalized_arg0,
+                                      normalized_arg1, normalized_arg2));
     hlo->SetupDerivedInstruction(normalized);
     SetVisited(*normalized);
 

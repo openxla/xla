@@ -253,6 +253,37 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitElementalHostKernel(
       kernel_prototype.function->getName().str(), se::BlockDim(), thread_dims});
 }
 
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
+    const HloInstruction* pad) {
+  VLOG(2) << "Emit Pad host kernel.";
+
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(pad));
+
+  llvm_ir::IrArray operand_array = kernel_prototype.arguments[0];
+  llvm_ir::IrArray padvalue_array = kernel_prototype.arguments[1];
+  llvm_ir::IrArray output_array = kernel_prototype.results[0];
+
+  llvm::LLVMContext& ctx = module_->getContext();
+  llvm::IRBuilder<> b(ctx);
+  auto builder_overwrite = nested_ir_emitter_->WithBuilder(b);
+
+  nested_ir_emitter_->PushComputeFunction(
+      &b, module_,
+      /*num_dynamic_loop_bounds=*/0, kernel_prototype.function,
+      /*dynamic_loop_bounds_arg=*/nullptr, kernel_prototype.return_block);
+
+  TF_RETURN_IF_ERROR(nested_ir_emitter_->HandlePad(
+      const_cast<HloInstruction*>(pad), operand_array, padvalue_array,
+      output_array));
+
+  nested_ir_emitter_->PopComputeFunction();
+
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
+}
+
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitFusionHostKernel(
     const HloFusionInstruction* fusion) {
   VLOG(2) << "Emit fusion host kernel: " << fusion->name();
@@ -449,6 +480,25 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitDotFusionHostKernel(
                  se::ThreadDim()});
 }
 
+absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitSliceToDynamicHostKernel(
+    const HloInstruction* instr) {
+  VLOG(2) << "Emit slice-to-dynamic host kernel: " << instr->name();
+
+  TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
+                      EmitKernelPrototype(instr));
+  llvm::IRBuilder<> ir_builder(module_->getContext());
+  ir_builder.SetInsertPoint(
+      kernel_prototype.function->getEntryBlock().getTerminator());
+
+  llvm_ir::IrArray output_array = kernel_prototype.results[0];
+  auto guard = nested_ir_emitter_->WithBuilder(ir_builder);
+  TF_RETURN_IF_ERROR(nested_ir_emitter_->EmitSliceToDynamic(
+      instr, kernel_prototype.arguments, output_array));
+  return kernels_.emplace_back(
+      KernelInfo{kernel_prototype.function->getName().str(), se::BlockDim(),
+                 se::ThreadDim()});
+}
+
 absl::StatusOr<IrEmitter2::KernelInfo>
 IrEmitter2::EmitSelectAndScatterHostKernel(const HloInstruction* instr) {
   TF_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
@@ -490,6 +540,32 @@ IrEmitter2::EmitDynamicUpdateSliceHostKernel(const HloInstruction* instr) {
   }
 
   return EmitElementalHostKernel(instr);
+}
+
+absl::StatusOr<IrEmitter2::ComparatorInfo> IrEmitter2::EmitSortComparator(
+    const HloInstruction* instr) {
+  HloComputation* comparator = instr->to_apply();
+
+  // Find if we already emitted this comparator.
+  auto info = absl::c_find_if(comparators_, [&](const ComparatorInfo& info) {
+    return info.name == comparator->name();
+  });
+  if (info != comparators_.end()) return *info;
+
+  // We use simple post-order schedule as we are not emitting a "real"
+  // computation that requires buffer assignment.
+  auto schedule = comparator->MakeInstructionPostOrder();
+
+  // Emit LLVM IR for comparator function. We emit it as a top-level computation
+  // to set external linkage and to get a pointer to compiled function later.
+  TF_ASSIGN_OR_RETURN(llvm::Function * comparator_function,
+                      nested_ir_emitter_->EmitComputation(
+                          comparator, comparator->name(),
+                          /*is_top_level_computation=*/true, schedule,
+                          /*allow_reassociation=*/false));
+
+  return comparators_.emplace_back(
+      ComparatorInfo{comparator_function->getName().str()});
 }
 
 //===----------------------------------------------------------------------===//
@@ -770,11 +846,21 @@ absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
 
   // Return null pointer to signal success as we do not support error handling
   // in the compiled host kernel.
+  llvm::BasicBlock* return_block =
+      llvm::BasicBlock::Create(ctx, "return", function);
+
+  b.CreateBr(return_block);
+
+  b.SetInsertPoint(return_block);
   b.CreateRet(
       llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(ctx)));
 
-  return KernelPrototype{function, kernel_thread_dims, kernel_thread,
-                         std::move(ir_arguments), std::move(ir_results)};
+  return KernelPrototype{function,
+                         return_block,
+                         kernel_thread_dims,
+                         kernel_thread,
+                         std::move(ir_arguments),
+                         std::move(ir_results)};
 }
 
 absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(

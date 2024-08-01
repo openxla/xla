@@ -29,31 +29,33 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Bytecode/BytecodeWriter.h"  // from @llvm-project
-#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"  // from @llvm-project
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/Extensions/AllExtensions.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/MLProgram/IR/MLProgram.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/IR/Visitors.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
-#include "mlir/Support/LogicalResult.h"  // from @llvm-project
-#include "mlir/Transforms/Passes.h"  // from @llvm-project
-#include "stablehlo/dialect/ChloOps.h"  // from @stablehlo
-#include "stablehlo/dialect/Register.h"  // from @stablehlo
-#include "stablehlo/dialect/Serialization.h"  // from @stablehlo
-#include "stablehlo/dialect/StablehloOps.h"  // from @stablehlo
-#include "stablehlo/transforms/Passes.h"  // from @stablehlo
+#include "mlir/Bytecode/BytecodeWriter.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/Extensions/AllExtensions.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MLProgram/IR/MLProgram.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Visitors.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/Transforms/Passes.h"
+#include "shardy/dialect/sdy/ir/utils.h"
+#include "stablehlo/dialect/ChloOps.h"
+#include "stablehlo/dialect/Register.h"
+#include "stablehlo/dialect/Serialization.h"
+#include "stablehlo/dialect/StablehloOps.h"
+#include "stablehlo/transforms/Passes.h"
 #include "xla/debug_options_flags.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
@@ -68,7 +70,8 @@ namespace xla {
 
 absl::Status MlirToXlaComputation(mlir::ModuleOp module,
                                   XlaComputation& xla_computation,
-                                  bool use_tuple_args, bool return_tuple) {
+                                  bool use_tuple_args, bool return_tuple,
+                                  bool use_shardy) {
   mlir::MLIRContext* context = module->getContext();
   mlir::BaseScopedDiagnosticHandler diagnostic_handler(context);
   {
@@ -93,11 +96,11 @@ absl::Status MlirToXlaComputation(mlir::ModuleOp module,
     }
   }
 
-  // TODO(b/345414638): Delete when we move Shardonnay as the first pass in the
+  // TODO(b/345414638): Delete when we move Shardy as the first pass in the
   // XLA pipeline.
-  if (use_tuple_args && GetDebugOptionsFromFlags().xla_use_shardonnay()) {
-    // Shardonnay can't handle tuple args when round-tripping. So delay using
-    // tuples until after Shardonnay is run.
+  if (use_tuple_args && use_shardy) {
+    // Shardy can't handle tuple args when round-tripping. So delay using
+    // tuples until after Shardy is run.
     sdy::addFrontendAttribute(module, sdy::kUseTupleArgs,
                               mlir::StringAttr::get(context, "t"));
     use_tuple_args = false;
@@ -124,6 +127,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseMlirModuleString(
   registry.insert<mlir::shape::ShapeDialect>();
   mlir::func::registerAllExtensions(registry);
   mlir::mhlo::registerAllMhloDialects(registry);
+  mlir::sdy::loadAllRequiredDialects(&context);
   mlir::stablehlo::registerAllDialects(registry);
   context.appendDialectRegistry(registry);
 
@@ -162,7 +166,7 @@ absl::Status ParseMlirModuleStringAndConvertToXlaComputation(
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       xla::ParseMlirModuleString(mlir_module_str, context));
   return xla::MlirToXlaComputation(*module, xla_computation, use_tuple_args,
-                                   return_tuple);
+                                   return_tuple, /*use_shardy=*/false);
 }
 
 absl::StatusOr<std::string> SerializeUsingNativeBytecode(

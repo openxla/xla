@@ -2,6 +2,7 @@ load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
+    # copybara:uncomment "tf_pyclif_proto_library",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
@@ -631,13 +632,13 @@ xla_cc_test(
         ":types",
         ":util",
         ":xla_data_proto_cc",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
@@ -691,8 +692,8 @@ xla_cc_test(
         ":literal_comparison",
         ":literal_util",
         ":test_helpers",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:test_main",
     ],
@@ -959,7 +960,7 @@ xla_cc_test(
         ":test_helpers",
         ":text_literal_writer",
         ":types",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test_main",
     ],
@@ -1225,6 +1226,14 @@ xla_py_proto_library(
     ],
 )
 
+# copybara:uncomment_begin(google-only)
+# tf_pyclif_proto_library(
+#     name = "autotune_results_pyclif",
+#     proto_lib = ":autotune_results_proto",
+#     visibility = ["//visibility:public"],
+# )
+# copybara:uncomment_end
+
 tf_proto_library(
     name = "autotuning_proto",
     srcs = ["autotuning.proto"],
@@ -1301,6 +1310,33 @@ cc_library(
 cc_library(
     name = "empty",
     visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "sort_json",
+    srcs = ["sort_json.cc"],
+    hdrs = ["sort_json.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "sort_json_test",
+    srcs = ["sort_json_test.cc"],
+    deps = [
+        ":sort_json",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
 )
 
 # Needed to workaround https://github.com/bazelbuild/bazel/issues/21519

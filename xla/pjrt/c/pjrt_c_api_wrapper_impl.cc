@@ -38,9 +38,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "xla/client/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
@@ -2129,7 +2129,7 @@ PJRT_Error* PJRT_Layouts_MemoryLayout_Serialize(
       PJRT_Layouts_MemoryLayout_Serialize_Args_STRUCT_SIZE, args->struct_size));
 
   PJRT_Layouts_SerializedLayout* s_layout = new PJRT_Layouts_SerializedLayout{
-      .serialized = args->layout->layout->Serialize()};
+      /* .serialized = */ args->layout->layout->Serialize()};
   args->serialized_layout = s_layout;
   args->serialized_bytes = s_layout->serialized.data();
   args->serialized_bytes_size = s_layout->serialized.size();

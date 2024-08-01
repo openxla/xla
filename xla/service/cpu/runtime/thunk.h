@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
+#include "xla/util.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
@@ -87,6 +88,7 @@ class Thunk {
     kReduceScatter,
     kReplicaId,
     kRngGetAndUpdateState,
+    kSort,
     kTopK,
     kWhile,
   };
@@ -108,7 +110,7 @@ class Thunk {
   using Task = std::function<void()>;
   using TaskRunner = absl::AnyInvocable<void(Task)>;
 
-  Thunk(Kind kind, Info info) : kind_(kind), info_(std::move(info)) {}
+  Thunk(Kind kind, Info info);
 
   Thunk(const Thunk&) = delete;
   Thunk& operator=(const Thunk&) = delete;
@@ -134,17 +136,40 @@ class Thunk {
   virtual ResourceUses resource_uses() const { return {}; }
 
   //===--------------------------------------------------------------------===//
-  // HostKernels
+  // FunctionRegistry
   //===--------------------------------------------------------------------===//
 
-  // Interface for finding host kernels (function pointers with host kernel API)
-  // by name. At run time this is typically backed by an LLVM jit compiler that
-  // compiles LLVM IR to executables on demand.
-  class HostKernels {
+  // An API to resolve function pointers required for running ThunkSequence:
+  //
+  // 1. Host kernels that are executed by a KernelThunk via StreamExecutor APIs.
+  // 2. Comparator functions required by a SortThunk.
+  //
+  // At run time this is typically backed by an LLVM JIT compiler that compiles
+  // LLVM IR to function pointers on demand. At compile time, together with
+  // thunks themselves, we emit LLVM module(s) and metadata describing all the
+  // functions required for running emitted thunks (number of threads, etc.).
+  class FunctionRegistry {
    public:
-    virtual ~HostKernels() = default;
+    using Kernel = SE_HOST_Kernel*;
 
-    virtual absl::StatusOr<SE_HOST_Kernel*> Find(std::string_view name) = 0;
+    // TODO(ezhulenev): We rely on legacy IrEmitter to emit comparator
+    // functions, and we use legacy compute function ABI. We should emit a
+    // much simpler comparator function that only takes compared values.
+    using Comparator = void (*)(bool*, /*run_options=*/const void*,
+                                /*params=*/const void**,
+                                /*buffer_table=*/const void*,
+                                /*status=*/const void*,
+                                /*prof_counters=*/const void*);
+
+    virtual ~FunctionRegistry() = default;
+
+    virtual absl::StatusOr<Kernel> FindKernel(std::string_view name) {
+      return Unimplemented("Host kernels are not supported");
+    }
+
+    virtual absl::StatusOr<Comparator> FindComparator(std::string_view name) {
+      return Unimplemented("Comparator functions are not supported");
+    }
   };
 
   //===--------------------------------------------------------------------===//
@@ -247,7 +272,7 @@ class Thunk {
   // Parameters passed to Execute. Execute is responsible for launching "work"
   // on device, i.e., it launches host kernels, calls into libraries, etc.
   struct ExecuteParams {
-    HostKernels* host_kernels = nullptr;
+    FunctionRegistry* function_registry = nullptr;
     const BufferAllocations* buffer_allocations = nullptr;
     runtime::XfeedManager* xfeed = nullptr;
     const Eigen::ThreadPoolDevice* intra_op_threadpool = nullptr;
@@ -261,9 +286,21 @@ class Thunk {
   // An execute event that becomes ready when all tasks are completed.
   using ExecuteEvent = tsl::Chain;
 
-  // Returns non-reference-counted async value ref for thunks executed in the
-  // caller thread to avoid reference counting overhead.
-  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent();
+  // Returns non-reference-counted async value ref in constructed state.
+  // Returned async value is a per-process singleton stored in a storage with a
+  // static duration, and can be safely compared using pointer equality.
+  static tsl::AsyncValueRef<ExecuteEvent> OkExecuteEventSingleton();
+
+  // Returns `OkExecuteEventSingleton()` cached by this thunk instance.
+  tsl::AsyncValueRef<ExecuteEvent> OkExecuteEvent() const { return ok_event_; }
+
+  bool IsOkExecuteEvent(const tsl::AsyncValueRef<ExecuteEvent>& event) const {
+    return event == ok_event_;
+  }
+
+  bool IsOkExecuteEvent(tsl::AsyncValuePtr<ExecuteEvent> event) const {
+    return event == ok_event_.AsPtr();
+  }
 
   // Thunk execution must be asynchronous and never block the caller thread,
   // especially waiting for work submitted into the `intra_op_threadpool`,
@@ -279,7 +316,8 @@ class Thunk {
   // multiple tasks and need to signal completion when all tasks are done (see
   // ConvolutionThunk and DotThunk for examples).
   struct ExecuteState {
-    explicit ExecuteState(int64_t parallel_tasks);
+    explicit ExecuteState(int64_t num_tasks);
+    ~ExecuteState();
 
     void Notify();
 
@@ -305,6 +343,8 @@ class Thunk {
  private:
   Kind kind_;
   Info info_;
+
+  tsl::AsyncValueRef<ExecuteEvent> ok_event_;
 };
 
 std::ostream& operator<<(std::ostream& os, Thunk::Kind kind);

@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -41,6 +41,11 @@ class InputSlicesTest : public HloTestBase {
   }
 
  protected:
+  DebugOptions GetDebugOptionsForTest() override {
+    auto opts = HloTestBase::GetDebugOptionsForTest();
+    opts.set_xla_gpu_mlir_emitter_level(0);
+    return opts;
+  }
   AffineMapPrinter printer_;
   mlir::MLIRContext mlir_context_;
 };
@@ -82,15 +87,15 @@ TEST_F(InputSlicesTest, ThreadIndexing) {
        (bl_x * 128 + th_x) mod 3,
        (bl_x * 128 + th_x) floordiv 6)
     domain:
-    th_x in [0, 128)
-    th_y in [0, 1)
-    th_z in [0, 1)
-    bl_x in [0, 2)
-    bl_y in [0, 1)
-    bl_z in [0, 1)
-    chunk_id in [0, 1)
-    unroll_id in [0, 1)
-    bl_x * 128 + th_x in [0, 30)
+    th_x in [0, 127]
+    th_y in [0, 0]
+    th_z in [0, 0]
+    bl_x in [0, 1]
+    bl_y in [0, 0]
+    bl_z in [0, 0]
+    chunk_id in [0, 0]
+    unroll_id in [0, 0]
+    bl_x * 128 + th_x in [0, 29]
   )"));
 }
 

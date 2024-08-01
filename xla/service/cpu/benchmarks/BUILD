@@ -249,3 +249,19 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_cc_test(
+    name = "pad_benchmark_test",
+    srcs = ["pad_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)

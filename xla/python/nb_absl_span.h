@@ -20,9 +20,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/types/span.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/stl/detail/nb_list.h"  // from @nanobind
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/detail/nb_list.h"
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 
 namespace nanobind {
 namespace detail {

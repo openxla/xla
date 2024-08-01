@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -42,6 +42,11 @@ class InPlaceDynamicUpdateSliceFusionTest : public HloTestBase {
   }
 
  protected:
+  DebugOptions GetDebugOptionsForTest() override {
+    auto opts = HloTestBase::GetDebugOptionsForTest();
+    opts.set_xla_gpu_mlir_emitter_level(0);
+    return opts;
+  }
   AffineMapPrinter printer_;
   mlir::MLIRContext mlir_context_;
   stream_executor::DeviceDescription device_info_ =
@@ -83,14 +88,14 @@ TEST_F(InPlaceDynamicUpdateSliceFusionTest, ThreadIndexing) {
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (
     th_x floordiv 6, th_x mod 6)
     domain:
-    th_x in [0, 30)
-    th_y in [0, 1)
-    th_z in [0, 1)
-    bl_x in [0, 1)
-    bl_y in [0, 1)
-    bl_z in [0, 1)
-    chunk_id in [0, 1)
-    unroll_id in [0, 1)
+    th_x in [0, 29]
+    th_y in [0, 0]
+    th_z in [0, 0]
+    bl_x in [0, 0]
+    bl_y in [0, 0]
+    bl_z in [0, 0]
+    chunk_id in [0, 0]
+    unroll_id in [0, 0]
   )"));
   auto thread_id_dst_indexing = fusion->ComputeThreadIdToInputIndexing(
       /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);

@@ -29,14 +29,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "stablehlo/dialect/Register.h"  // from @stablehlo
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Parser/Parser.h"
+#include "stablehlo/dialect/Register.h"
 #include "xla/client/xla_computation.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -207,7 +207,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> LoadModule(
   // Convert Mhlo to Hlo Module.
   XlaComputation xla_computation;
   TF_RETURN_IF_ERROR(
-      MlirToXlaComputation(*module, xla_computation, false, false));
+      MlirToXlaComputation(*module, xla_computation, /*use_tuple_args=*/false,
+                           /*return_tuple=*/false, /*use_shardy=*/false));
   HloModuleProto hlo_module_proto = xla_computation.proto();
 
   TF_ASSIGN_OR_RETURN(ProgramShape shape, xla_computation.GetProgramShape());
@@ -231,22 +232,6 @@ ReadModuleFromSymbolRepo(absl::string_view symbol_repo,
   return mod;
 }
 
-static absl::StatusOr<bool> LoadAutotuneDataFromModule(
-    HloModuleAndMetadata* mod, BackendType backend) {
-  if (backend == BackendType::kGpu) {
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-    if (auto* data = static_cast<gpu::GpuBackendSpecificData*>(
-            mod->backend_specific_data.get());
-        data != nullptr && data->autotune_results.has_value()) {
-      TF_RETURN_IF_ERROR(
-          gpu::AutotunerUtil::LoadAutotuneResults(*data->autotune_results));
-      return true;
-    }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-  }
-  return false;
-}
-
 static std::unique_ptr<Compiler::TargetConfig> ReadTargetConfigFromModule(
     HloModuleAndMetadata* mod, BackendType backend) {
   if (backend == BackendType::kGpu) {
@@ -261,6 +246,28 @@ static std::unique_ptr<Compiler::TargetConfig> ReadTargetConfigFromModule(
 
   return nullptr;
 }
+
+namespace internal {
+
+absl::StatusOr<bool> LoadAutotuneDataFromModule(HloModuleAndMetadata* mod,
+                                                BackendType backend) {
+  if (backend == BackendType::kGpu) {
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+    if (auto* data = static_cast<gpu::GpuBackendSpecificData*>(
+            mod->backend_specific_data.get());
+        data != nullptr && data->autotune_results.has_value() &&
+        mod->hlo_module->config().debug_options().xla_gpu_autotune_level() >
+            0) {
+      TF_RETURN_IF_ERROR(
+          gpu::AutotunerUtil::LoadAutotuneResults(*data->autotune_results));
+      return true;
+    }
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+  }
+  return false;
+}
+
+}  // namespace internal
 
 absl::Status XlaCompileMain(const XlaCompileOptions& options) {
   std::unique_ptr<HloModule> hlo_module;
@@ -298,7 +305,7 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
         ReadModuleFromSymbolRepo(symbol_repo, optimized_symbol_id, backend));
 
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-    TF_ASSIGN_OR_RETURN(found_autotune, LoadAutotuneDataFromModule(
+    TF_ASSIGN_OR_RETURN(found_autotune, internal::LoadAutotuneDataFromModule(
                                             optimized_mod.get(), backend));
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   }
@@ -339,7 +346,8 @@ absl::Status XlaCompileMain(const XlaCompileOptions& options) {
 
       if (absl::string_view autotune_results_path =
               options.gpu_options.autotune_results_path;
-          !found_autotune && !autotune_results_path.empty()) {
+          !found_autotune && !autotune_results_path.empty() &&
+          hlo_module->config().debug_options().xla_gpu_autotune_level() > 0) {
         TF_RETURN_IF_ERROR(gpu::AutotunerUtil::LoadAutotuneResultsFromFile(
             autotune_results_path));
       }

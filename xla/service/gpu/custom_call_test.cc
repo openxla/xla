@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -33,6 +34,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
@@ -55,7 +57,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/client_library_test_base.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 #if GOOGLE_CUDA
@@ -758,6 +760,7 @@ XLA_FFI_DEFINE_HANDLER(kExecutionContextExecute,
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla.gpu.ffi_execution_context",
                          PLATFORM,
                          {
+                             /*instantiate=*/nullptr,
                              /*prepare=*/nullptr,
                              /*initialize=*/kExecutionContextInitialize,
                              /*execute=*/kExecutionContextExecute,
@@ -786,6 +789,59 @@ TEST_F(CustomCallTest, FfiExecutionContext) {
                           execution_context.Lookup<SomeExtraContext>());
   EXPECT_TRUE(user_context->initialized);
   EXPECT_TRUE(user_context->executed);
+}
+
+//===----------------------------------------------------------------------===//
+// Stateful XLA:FFI handler
+//===----------------------------------------------------------------------===//
+
+struct SomeState {
+  explicit SomeState(int32_t value) : value(value) {}
+  int32_t value = 0;
+};
+
+// Every time custom call HLO operation is instantiated as a GPU runtime Thunk,
+// XLA calls instantiate callback to create a new instance of the handler state,
+// that will be passed to all other FFI handler calls.
+static absl::StatusOr<std::unique_ptr<SomeState>> InstantiateState() {
+  return std::make_unique<SomeState>(42);
+}
+
+// At run time we can access the state created by the instantiate callback.
+static absl::Status GetState(ffi::Result<ffi::AnyBuffer>, SomeState* state) {
+  if (state->value != 42) {
+    return absl::InternalError("Unexpected value");
+  }
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kInstantiateState, InstantiateState,
+                       ffi::Ffi::BindInstantiate());
+
+XLA_FFI_DEFINE_HANDLER(
+    kGetState, GetState,
+    ffi::Ffi::Bind().Ret<ffi::AnyBuffer>().Ctx<ffi::State<SomeState>>());
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla.gpu.ffi_execution_state",
+                         PLATFORM,
+                         {
+                             /*instantiate=*/kInstantiateState,
+                             /*prepare=*/nullptr,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kGetState,
+                         });
+
+TEST_F(CustomCallTest, FfiExecutionState) {
+  XlaBuilder b(TestName());
+  CustomCall(&b, "xla.gpu.ffi_execution_state", /*operands=*/{},
+             ShapeUtil::MakeShape(F32, {}),
+             /*opaque=*/"",
+             /*has_side_effect=*/false,
+             /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
+             /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,
+             /*api_version=*/CustomCallApiVersion::API_VERSION_TYPED_FFI);
+
+  TF_ASSERT_OK(Execute(&b, {}).status());
 }
 
 }  // anonymous namespace

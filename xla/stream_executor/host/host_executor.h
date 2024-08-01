@@ -70,10 +70,8 @@ class HostExecutor : public StreamExecutorCommon {
 
   absl::Status Init() override;
 
-  absl::Status GetKernel(const MultiKernelLoaderSpec& spec,
-                         Kernel* kernel) override;
-
-  absl::StatusOr<std::unique_ptr<Kernel>> CreateKernel() override;
+  absl::StatusOr<std::unique_ptr<Kernel>> LoadKernel(
+      const MultiKernelLoaderSpec& spec) override;
 
   absl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
                       const BlockDim& block_dims, const Kernel& kernel,
@@ -90,9 +88,6 @@ class HostExecutor : public StreamExecutorCommon {
     delete[] static_cast<char*>(mem);
   }
 
-  absl::Status Memset(Stream* stream, DeviceMemoryBase* location,
-                      uint8_t pattern, uint64_t size) override;
-
   // No "synchronize all activity" implemented for this platform at the moment.
   bool SynchronizeAllActivity() override { return true; }
   absl::Status SynchronousMemZero(DeviceMemoryBase* location,
@@ -103,9 +98,6 @@ class HostExecutor : public StreamExecutorCommon {
   absl::Status SynchronousMemcpy(void* host_dst,
                                  const DeviceMemoryBase& gpu_src,
                                  uint64_t size) override;
-
-  bool HostCallback(Stream* stream,
-                    absl::AnyInvocable<absl::Status() &&> callback) override;
 
   void DeallocateStream(Stream* stream) override;
 

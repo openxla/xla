@@ -9,6 +9,7 @@ load("//xla:xla.bzl", "xla_cc_binary")
 load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_windows")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -110,6 +111,7 @@ xla_test(
     tags = ["no_rocm"],
     deps = [
         ":custom_kernel_fusion_pattern",
+        ":cutlass_gemm_custom_kernel",
         ":cutlass_gemm_fusion",
         "//xla:array",
         "//xla:array2d",
@@ -183,13 +185,13 @@ xla_test(
         "//xla/stream_executor:device_memory_handle",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/gpu:gpu_init",
-        "//xla/stream_executor/gpu:gpu_timer",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/stream_executor/host:host_platform",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
         "@tsl//tsl/platform:test_main",
@@ -230,14 +232,13 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:platform_util",
         "//xla/stream_executor",
-        "//xla/stream_executor:kernel_factory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/random",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -280,11 +281,10 @@ xla_test(
         ":cutlass_gemm_custom_kernel",
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
-        "//xla/stream_executor:kernel_factory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -301,7 +301,6 @@ xla_cc_binary(
         "//xla:xla_data_proto_cc",
         "//xla/service:gpu_plugin",
         "//xla/stream_executor",
-        "//xla/stream_executor:kernel_factory",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor/cuda:cuda_platform",
@@ -327,7 +326,10 @@ cc_library(
 cuda_library(
     name = "cutlass_gemm_adaptor",
     hdrs = if_cuda_is_configured(["cutlass_gemm_adaptor.cu.h"]),
-    copts = ["-Wno-unknown-attributes"],  # __grid_constant__ is not supported by clang
+    copts = if_windows(
+        [],
+        ["-Wno-unknown-attributes"],
+    ),  # __grid_constant__ is not supported by clang
     deps = if_cuda_is_configured([
         ":cutlass_gemm",
         "@cutlass_archive//:cutlass",
@@ -369,7 +371,13 @@ cc_library(
 cuda_library(
     name = "cutlass_gemm_kernel_bf16xbf16_to_bf16",
     srcs = if_cuda_is_configured(["cutlass_gemm_kernel_bf16xbf16_to_bf16.cu.cc"]),
-    copts = ["-Wno-unknown-attributes -mllvm -unroll-threshold=100000"],
+    copts = [
+        "-mllvm",
+        "-unroll-threshold=100000",
+    ] + if_windows(
+        [],
+        ["-Wno-unknown-attributes"],
+    ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -380,7 +388,13 @@ cuda_library(
 cuda_library(
     name = "cutlass_gemm_kernel_bf16xbf16_to_bf16_sm80",
     srcs = if_cuda_is_configured(["cutlass_gemm_kernel_bf16xbf16_to_bf16_sm80.cu.cc"]),
-    copts = ["-Wno-unknown-attributes -mllvm -unroll-threshold=100000"],
+    copts = [
+        "-mllvm",
+        "-unroll-threshold=100000",
+    ] + if_windows(
+        [],
+        ["-Wno-unknown-attributes"],
+    ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",
@@ -391,7 +405,16 @@ cuda_library(
 cuda_library(
     name = "cutlass_gemm_kernel_bf16xbf16_to_bf16_sm90",
     srcs = if_cuda_is_configured(["cutlass_gemm_kernel_bf16xbf16_to_bf16_sm90.cu.cc"]),
-    copts = ["-Wno-ctad-maybe-unsupported -Wno-unknown-attributes -mllvm -unroll-threshold=100000"],
+    copts = [
+        "-mllvm",
+        "-unroll-threshold=100000",
+    ] + if_windows(
+        [],
+        [
+            "-Wno-ctad-maybe-unsupported",
+            "-Wno-unknown-attributes",
+        ],
+    ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
         ":cutlass_gemm_epilogue",
@@ -403,7 +426,10 @@ cuda_library(
 cuda_library(
     name = "cutlass_gemm_kernel_f32xf32_to_f32",
     srcs = if_cuda_is_configured(["cutlass_gemm_kernel_f32xf32_to_f32.cu.cc"]),
-    copts = ["-Wno-unknown-attributes"],
+    copts = if_windows(
+        [],
+        ["-Wno-unknown-attributes"],
+    ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
         "@cutlass_archive//:cutlass",

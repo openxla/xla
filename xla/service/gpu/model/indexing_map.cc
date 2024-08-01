@@ -38,10 +38,10 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -293,15 +293,6 @@ AffineExpr AffineExprSimplifier::SimplifySumDiv(AffineExpr dividend,
     return expr;
   });
 
-  std::optional<int64_t> inner_divisor = std::nullopt;
-  int num_inner_divisors = 0;
-  VisitSummands(new_dividend, [&](AffineExpr summand) {
-    if (auto divisor = GetConstantRhs(summand, AffineExprKind::FloorDiv)) {
-      inner_divisor = divisor;
-      ++num_inner_divisors;
-    }
-  });
-
   // Split `new_dividend` into `multiplied * multiplier_gcd + not_multiplied`.
   auto [multiplied, multiplier_gcd, not_multiplied] =
       SplitSumByGcd(new_dividend);
@@ -338,6 +329,14 @@ AffineExpr AffineExprSimplifier::SimplifySumDiv(AffineExpr dividend,
   // If a0 is 16 and a1 is 2, the result is `(5 + 0) / 6 = 0`, whereas the
   // rewritten form `(a0 + a1) / 18` evaluates to 1. This can only happen when
   // there is more than one division.
+  std::optional<int64_t> inner_divisor = std::nullopt;
+  int num_inner_divisors = 0;
+  VisitSummands(new_dividend, [&](AffineExpr summand) {
+    if (auto divisor = GetConstantRhs(summand, AffineExprKind::FloorDiv)) {
+      inner_divisor = divisor;
+      ++num_inner_divisors;
+    }
+  });
   if (num_inner_divisors == 1) {
     new_dividend = MapSummands(new_dividend, [&](AffineExpr summand) {
       if (auto inner_divisor =
@@ -720,26 +719,36 @@ bool AffineExprSimplifier::SimplifyConstraintRange(AffineExpr* expr,
 // [range_vars(second)|rt_vars(second)|range_vars(first)|rt_vars(first)]
 // to
 // [range_vars(second)|range_vars(first)|rt_vars(second)|rt_vars(first)].
+// If an empty vector is returned, no replacement is needed.
 SmallVector<AffineExpr, 4> GetComposedSymbolsPermutationToCorrectOrder(
     const IndexingMap& first, const IndexingMap& second) {
+  // No permutation is needed if the second map has no RTVars.
+  if (second.GetRTVarsCount() == 0) {
+    return {};
+  }
   SmallVector<AffineExpr, 4> symbol_replacements;
   MLIRContext* mlir_context = first.GetMLIRContext();
   for (int id = 0; id < second.GetRangeVarsCount(); ++id) {
     symbol_replacements.push_back(getAffineSymbolExpr(id, mlir_context));
   }
+  int64_t first_range_vars_count = first.GetRangeVarsCount();
+  int64_t second_range_vars_count = second.GetRangeVarsCount();
+  int64_t first_rt_vars_count = first.GetRTVarsCount();
+  int64_t second_rt_vars_count = second.GetRTVarsCount();
   int64_t rt_vars_second_start =
-      first.GetRangeVarsCount() + second.GetRangeVarsCount();
-  for (int64_t id = 0; id < second.GetRTVarsCount(); ++id) {
+      first_range_vars_count + second_range_vars_count;
+  for (int64_t id = 0; id < second_rt_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(rt_vars_second_start++, mlir_context));
   }
-  int64_t range_vars_first_start = second.GetRangeVarsCount();
-  for (int64_t id = 0; id < first.GetRangeVarsCount(); ++id) {
+  int64_t range_vars_first_start = second_range_vars_count;
+  for (int64_t id = 0; id < first_range_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(range_vars_first_start++, mlir_context));
   }
-  int64_t rt_vars_first_start = rt_vars_second_start + second.GetRTVarsCount();
-  for (int64_t id = 0; id < first.GetRTVarsCount(); ++id) {
+  int64_t rt_vars_first_start =
+      first_range_vars_count + second_range_vars_count + second_rt_vars_count;
+  for (int64_t id = 0; id < first_rt_vars_count; ++id) {
     symbol_replacements.push_back(
         getAffineSymbolExpr(rt_vars_first_start++, mlir_context));
   }
@@ -783,8 +792,7 @@ std::string Interval::ToString() const {
 }
 
 void Interval::Print(std::ostream& out) const {
-  // The interval is printed as a semi-open one because it is easier to read.
-  out << '[' << lower << ", " << upper + 1 << ")";
+  out << '[' << lower << ", " << upper << "]";
 }
 
 int64_t Interval::GetLoopTripCount() const {
@@ -1748,6 +1756,11 @@ IndexingMap ComposeIndexingMaps(const IndexingMap& first,
   // that range_vars go before rt_vars in the composed affine map symbols list.
   SmallVector<AffineExpr, 4> symbol_replacements =
       GetComposedSymbolsPermutationToCorrectOrder(first, second);
+  if (!symbol_replacements.empty()) {
+    composed_map = composed_map.replaceDimsAndSymbols(
+        /*dimReplacements=*/{}, symbol_replacements, composed_map.getNumDims(),
+        composed_map.getNumSymbols());
+  }
   IndexingMap composed_indexing_map(composed_map, first.GetDimVars(),
                                     std::move(combined_range_vars),
                                     std::move(combined_rt_vars));

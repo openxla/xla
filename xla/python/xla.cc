@@ -34,18 +34,18 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
-#include "nanobind/nanobind.h"  // from @nanobind
-#include "nanobind/nb_defs.h"  // from @nanobind
-#include "nanobind/stl/function.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/optional.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/set.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/string_view.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // from @nanobind  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // from @nanobind  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "nanobind/nb_defs.h"
+#include "nanobind/stl/function.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/set.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
@@ -67,8 +67,12 @@ limitations under the License.
 #endif  // XLA_PYTHON_ENABLE_GPU
 
 #ifdef __linux__
-#include "gloo/transport/tcp/attr.h"  // from @gloo
-#include "gloo/transport/tcp/device.h"  // from @gloo
+#include "gloo/transport/tcp/attr.h"
+#include "gloo/transport/tcp/device.h"
+#include "xla/pjrt/cpu/gloo_collectives.h"
+#include "xla/pjrt/cpu/gloo_kv_store.h"
+#elif __APPLE__
+#include "gloo/transport/uv/device.h"
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
 #endif  // __linux__
@@ -182,7 +186,7 @@ NB_MODULE(xla_extension, m_nb) {
                                                    PyExc_RuntimeError);
 
   // Types
-  nb::enum_<PrimitiveType>(m_nb, "PrimitiveType")
+  nb::enum_<PrimitiveType>(m_nb, "PrimitiveType", nb::is_arithmetic())
       .value("PRIMITIVE_TYPE_INVALID", PRIMITIVE_TYPE_INVALID)
       .value("PRED", PRED)
       .value("S4", S4)
@@ -257,7 +261,7 @@ NB_MODULE(xla_extension, m_nb) {
          std::optional<std::string> hostname,
          std::optional<std::string> interface)
           -> std::shared_ptr<xla::cpu::CollectivesInterface> {
-#ifdef __linux__
+#if defined(__linux__)
         std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr;
         if (distributed_client != nullptr) {
           kv_store = GetDistributedKeyValueStore(distributed_client,
@@ -274,9 +278,26 @@ NB_MODULE(xla_extension, m_nb) {
         auto tcp_device = gloo::transport::tcp::CreateDevice(tcp_attrs);
         return std::make_shared<cpu::GlooCollectives>(std::move(gloo_kv_store),
                                                       std::move(tcp_device));
+#elif defined(__APPLE__)
+        std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr;
+        if (distributed_client != nullptr) {
+          kv_store = GetDistributedKeyValueStore(distributed_client,
+                                                 /*key_prefix=*/"cpu:");
+        }
+        auto gloo_kv_store = std::make_unique<cpu::GlooKeyValueStore>(kv_store);
+        auto uv_attrs = gloo::transport::uv::attr();
+        if (hostname) {
+          uv_attrs.hostname = *hostname;
+        }
+        if (interface) {
+          uv_attrs.iface = *interface;
+        }
+        auto uv_device = gloo::transport::uv::CreateDevice(uv_attrs);
+        return std::make_shared<cpu::GlooCollectives>(std::move(gloo_kv_store),
+                                                      std::move(uv_device));
 #else   // __linux__
         throw xla::XlaRuntimeError(
-            "make_gloo_tcp_collectives only implemented for linux");
+            "make_gloo_tcp_collectives only implemented for linux and macos");
 #endif  // __linux__
       },
       nb::arg("distributed_client"), nb::arg("hostname").none() = std::nullopt,

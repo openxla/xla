@@ -31,19 +31,19 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/Dialect/Vector/IR/VectorOps.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/AffineMap.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
@@ -173,10 +173,13 @@ struct MlirReductionFusion::EmitterState {
         builder(entry_function.getLoc(), entry_function),
         computation(computations.FindPartitionedComputation(
             fusion.fused_instructions_computation())) {
-    int index = 0;
-    for (const auto& root : owner.analysis_.fusion_roots()) {
-      fusion_result_index_starts[&root.instruction()] = index;
-      index += root.shape().IsTuple() ? root.shape().tuple_shapes_size() : 1;
+    int output_index = 0;
+    for (const auto& [root_index, root] :
+         llvm::enumerate(owner.analysis_.fusion_roots())) {
+      root_indices[&root.instruction()] = root_index;
+      fusion_result_index_starts[&root.instruction()] = output_index;
+      output_index +=
+          root.shape().IsTuple() ? root.shape().tuple_shapes_size() : 1;
     }
   }
 
@@ -225,6 +228,7 @@ struct MlirReductionFusion::EmitterState {
   ImplicitLocOpBuilder builder;
   const mlir_converter::PartitionedComputation& computation;
   absl::flat_hash_map<const HloInstruction*, int> fusion_result_index_starts;
+  absl::flat_hash_map<const HloInstruction*, int> root_indices;
   SmallVector<Value> thread_and_block_ids;
 };
 
@@ -517,9 +521,15 @@ mlir::ValueRange MlirReductionFusion::EmitterState::ReduceViaSharedMemory(
       owner.GetSharedMemoryReductionReadMap(builder.getContext());
   auto loop_indexing = read_indexing;
   // All threads must participate in the shuffle, so we clear the constraints
-  // for the iteration. Otherwise, some threads might not be part of the loop.
-  // The constraints are still checked inside the loop.
+  // for the iteration. Otherwise, some threads might not be part of the loop,
+  // resulting in incorrect results for the warp shuffle.
+  // The constraints are still checked inside the loop in the
+  // PredicatedExtractOp.
   loop_indexing.ClearConstraints();
+  // The constraints may have reduced the upper bound of the dimension. If
+  // that's the case, we reset it to a multiple of the warp size.
+  auto& bound = loop_indexing.GetMutableDimensionBound(0);
+  bound.upper = RoundUpTo(bound.upper + 1, WarpSize()) - 1;
 
   auto tiles = WriteToSharedMemory(reductions, per_thread.reduction_scalars);
   return mlir_converter::EmitLoopNest(
@@ -618,7 +628,7 @@ SmallVector<Value> MlirReductionFusion::EvaluateEpilogue(
 
   auto values = EmitEpilogue(group_id, state.computations, state.entry_function,
                              results, epilogue_input_indices, b);
-  int first_root_index = state.OutputIndex(epilogue.roots.front(), 0);
+  int first_root_index = state.root_indices[epilogue.roots.front()];
   auto thread_has_output = mlir_converter::CheckConstraints(
       *ComputeThreadIdToOutputIndexing(first_root_index, b.getContext()),
       state.thread_and_block_ids, symbol_values, b);
@@ -732,7 +742,12 @@ MlirMultiRowReductionFusion::MlirMultiRowReductionFusion(
   // This vector size is always valid: we know that the reduced dimension is a
   // power of 2, since otherwise RowReductionGetRowsPerWarp would have
   // returned 1.
-  int vector_size = 32 / smallest_input_or_output_bits;
+  // Our codegen can't currently deal with vectorization across rows, so we
+  // limit the vector size to the size of the row. Note that this emitter
+  // essentially reverts to the loop emitter in this case, except for side
+  // outputs.
+  int vector_size = std::min(static_cast<int>(input_shape_[kRowMinorReduced]),
+                             32 / smallest_input_or_output_bits);
 
   // We target 8 warps per block, which means there could be up to 8 blocks per
   // SM, but we have no good way of knowing. In practice, enabling vectorization

@@ -45,7 +45,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"  // from @eigen_archive
+#include "Eigen/Core"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -892,6 +892,22 @@ inline void UnpackIntN(int bits_per_element, absl::Span<const char> input,
   } else {
     LOG(FATAL) << "Invalid bits_per_element: " << bits_per_element;
   }
+}
+
+// Returns a container with `sorted_ids_to_remove` elements removed.
+template <typename T>
+static T RemoveElements(absl::Span<int64_t const> sorted_ids_to_remove,
+                        const T& container) {
+  T result;
+  auto id_to_remove = sorted_ids_to_remove.begin();
+  for (size_t i = 0; i < container.size(); ++i) {
+    if (id_to_remove != sorted_ids_to_remove.end() && *id_to_remove == i) {
+      ++id_to_remove;
+      continue;
+    }
+    result.push_back(container[i]);
+  }
+  return result;
 }
 
 class HloInstruction;

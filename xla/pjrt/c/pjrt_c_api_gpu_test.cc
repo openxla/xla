@@ -30,9 +30,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/client/client_library.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/ffi/type_id_registry.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -182,7 +184,7 @@ TEST_F(PjrtCApiGpuTest, CreateAndDestroyExecuteContext) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto lookup_user_data,
       create_arg.context->execute_context->ffi_context().Lookup(
-          xla::ffi::ExecutionContext::TypeId(42)));
+          xla::ffi::TypeIdRegistry::TypeId(42)));
   EXPECT_EQ(lookup_user_data, &string_data);
 
   PJRT_ExecuteContext_Destroy_Args destroy_args;
@@ -214,6 +216,7 @@ TEST(PjrtCApiGpuKVStoreTest, CreateClientWithKVCallback) {
   auto kv_store = std::make_shared<xla::InMemoryKeyValueStore>();
   std::shared_ptr<::pjrt::PJRT_KeyValueCallbackData> kv_callback_data =
       ::pjrt::ConvertToCKeyValueCallbacks(kv_store);
+  xla::ClientLibrary::DestroyLocalInstances();
 
   int num_nodes = 2;
   std::vector<std::thread> threads;
@@ -224,7 +227,8 @@ TEST(PjrtCApiGpuKVStoreTest, CreateClientWithKVCallback) {
                           kv_store = kv_store] {
       absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
           {"num_nodes", static_cast<int64_t>(num_nodes)},
-          {"node_id", static_cast<int64_t>(i)}};
+          {"node_id", static_cast<int64_t>(i)},
+          {"visible_devices", std::vector<int64_t>({0})}};
       TF_ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
                               ::pjrt::ConvertToPjRtNamedValueList(options));
       TF_ASSERT_OK_AND_ASSIGN(

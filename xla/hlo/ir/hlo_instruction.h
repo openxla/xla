@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/layout.h"
@@ -2052,6 +2053,14 @@ class HloInstruction {
   // SetAndSanitizeName().
   void UniquifyName(NameUniquer* name_uniquer);
 
+  // Use the `module`'s name uniquer to select a unique name for this
+  // instruction based on the instruction's existing name.
+  void UniquifyName(HloModule* module);
+
+  // Use the `module`s `NewUniqueInstructionId` to set the id of this
+  // instruction.
+  void UniquifyId(HloModule* module);
+
   // Clear the unique ID of the instruction so that it can be re-assigned, such
   // as for the purpose of compacting the instruction unique IDs.
   void ClearUniqueIdInternal() { unique_id_ = -1; }
@@ -2189,6 +2198,9 @@ class HloInstruction {
   }
   void set_metadata_preserve_layout(bool preserve_layout) {
     metadata_->set_preserve_layout(preserve_layout);
+  }
+  void set_metadata_scheduling_name(const std::string& name) {
+    metadata_->set_scheduling_name(name);
   }
   const OpMetadata& metadata() const { return *metadata_; }
 
@@ -2538,6 +2550,9 @@ class HloInstruction {
   HloInstruction(const HloInstruction&) = delete;
   HloInstruction& operator=(const HloInstruction&) = delete;
 
+  std::shared_ptr<OriginalValue> original_value() const;
+  void set_original_value(std::shared_ptr<OriginalValue> original_value);
+
  protected:
   // Internal constructor for a given opcode/shape, other fields must be filled
   // by factory methods.
@@ -2788,6 +2803,10 @@ class HloInstruction {
   // String identifier for instruction.
   std::string name_;
 
+  // Original value this instruction corresponds to in the unoptimized HLO
+  // graph.
+  std::shared_ptr<OriginalValue> original_value_ = nullptr;
+
   // Metadata for debugging.  Allocate it on heap, so that it does not increase
   // the memory footprint of HloInstruction.
   std::unique_ptr<OpMetadata> metadata_ = std::make_unique<OpMetadata>();
@@ -2816,8 +2835,6 @@ std::string AlgorithmToString(const PrecisionConfig::Algorithm& algorithm);
 std::string DotDimensionNumbersToString(const DotDimensionNumbers& dnums);
 std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums);
-std::string ReplicaGroupsToString(
-    absl::Span<const ReplicaGroup> replica_groups);
 
 absl::StatusOr<RandomAlgorithm> StringToRandomAlgorithm(
     const std::string& name);

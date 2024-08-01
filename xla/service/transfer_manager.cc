@@ -270,6 +270,8 @@ absl::Status TransferManager::WriteRootTupleIndexTable(
                device_memory.size());
 
   std::vector<se::DeviceMemoryBase> elements;
+  elements.reserve(
+      ShapeUtil::TupleElementCount(device_buffer.on_device_shape()));
   for (int64_t i = 0;
        i < ShapeUtil::TupleElementCount(device_buffer.on_device_shape()); ++i) {
     elements.push_back(device_buffer.buffer({i}));
@@ -290,6 +292,7 @@ absl::Status TransferManager::WriteRootTupleIndexTable(
                device_memory.size());
 
   std::vector<se::DeviceMemoryBase> elements;
+  elements.reserve(ShapeUtil::TupleElementCount(buffer_tree.shape()));
   for (int64_t i = 0; i < ShapeUtil::TupleElementCount(buffer_tree.shape());
        ++i) {
     elements.push_back(buffer_tree.element({i}).AsDeviceMemoryBase());
@@ -300,7 +303,8 @@ absl::Status TransferManager::WriteRootTupleIndexTable(
 
 absl::StatusOr<ScopedShapedBuffer> TransferManager::AllocateScopedShapedBuffer(
     const Shape& on_host_shape, se::DeviceMemoryAllocator* allocator,
-    int device_ordinal, DeviceShapeRepresentationFn shape_representation_fn) {
+    int device_ordinal, int physical_device_ordinal,
+    DeviceShapeRepresentationFn shape_representation_fn) {
   if (!LayoutUtil::HasLayout(on_host_shape)) {
     return InvalidArgument("Shape must have a layout: %s",
                            ShapeUtil::HumanStringWithLayout(on_host_shape));
@@ -312,7 +316,7 @@ absl::StatusOr<ScopedShapedBuffer> TransferManager::AllocateScopedShapedBuffer(
   TF_RET_CHECK(LayoutUtil::HasLayout(on_device_shape));
 
   ScopedShapedBuffer shaped_buffer(std::move(on_device_shape), allocator,
-                                   device_ordinal);
+                                   device_ordinal, physical_device_ordinal);
 
   // Allocate an appropriate sized buffer for each element in the shape
   // including the tuple pointer arrays.

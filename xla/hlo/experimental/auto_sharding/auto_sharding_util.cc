@@ -184,7 +184,7 @@ InstructionDepthMap BuildInstructionDepthMap(
   const std::vector<HloInstruction*>& instructions = sequence.instructions();
 
   InstructionDepthMap depth_map;
-  StableHashMap<const HloInstruction*, size_t> degree_dict;
+  ConstInstructionMap<size_t> degree_dict;
 
   // Init frontier
   size_t collected = 0;
@@ -838,13 +838,12 @@ InstructionBatchDimMap BuildInstructionBatchDimMap(
 // Returns true if there is one row with only infinity cost.
 bool AllInfinityCosts(
     const std::vector<std::vector<double>>& resharding_costs) {
-  for (const auto& costs : resharding_costs) {
-    bool all_infinity = true;
+  for (const std::vector<double>& costs : resharding_costs) {
     if (costs.empty()) {
-      all_infinity = false;
       continue;
     }
-    for (const auto& cost : costs) {
+    bool all_infinity = true;
+    for (double cost : costs) {
       if (cost < kInfinityCost) {
         all_infinity = false;
       }
@@ -856,7 +855,7 @@ bool AllInfinityCosts(
   return false;
 }
 
-// Remove duplicated strategies with the same output sharding spec.
+// Removes duplicated strategies with the same output sharding spec.
 // If duplicates strategies have different costs, an arbitrary one will be
 // chosen. A exception is replicated strategy. Only *real* replicated strategies
 // are preserved, which are generated with name "R" or starting with "R
@@ -930,7 +929,7 @@ bool IsDivisible(const HloInstruction* ins, const Array<int64_t>& device_mesh,
 void SetSharding(HloInstruction* to_split, const HloSharding& output_spec,
                  const HloInstruction* ref_inst,
                  const HloInstruction* shape_inst,
-                 StableHashSet<const HloInstruction*>& modified) {
+                 ConstInstructionSet& modified) {
   modified.insert(to_split);
   if (DimensionsEqual(to_split->shape(), ref_inst->shape())) {
     to_split->set_sharding(output_spec);
@@ -956,16 +955,16 @@ bool IsAlwaysReplicated(const HloInstruction* inst) {
 }
 
 // Try to reduce the boundary set to its common ancestor
-void TryReduceWithCommonAncestor(StableHashSet<HloInstruction*>& replicated_set,
-                                 StableHashSet<HloInstruction*>& boundary_set,
-                                 StableHashSet<HloInstruction*>& consumer_set,
+void TryReduceWithCommonAncestor(InstructionSet& replicated_set,
+                                 InstructionSet& boundary_set,
+                                 InstructionSet& consumer_set,
                                  const AliasMap& alias_map) {
   if (boundary_set.size() != 2) {
     return;
   }
 
   HloInstruction* ancestor = nullptr;
-  StableHashSet<HloInstruction*> path;
+  InstructionSet path;
   for (HloInstruction* node : boundary_set) {
     HloInstruction* cur = node;
     while (cur->operand_count() == 1) {
@@ -1000,7 +999,7 @@ void TryReduceWithCommonAncestor(StableHashSet<HloInstruction*>& replicated_set,
   consumer_set.insert(ancestor);
 }
 
-void UseAllReduceForGradAcc(StableHashSet<HloInstruction*>& replicated_set,
+void UseAllReduceForGradAcc(InstructionSet& replicated_set,
                             const HloInstruction* inst) {
   if (inst->users().size() != 1) {
     return;
@@ -1008,7 +1007,7 @@ void UseAllReduceForGradAcc(StableHashSet<HloInstruction*>& replicated_set,
 
   // Find the add instruction for grad accumulation, skip the identity marker
   // for remat and other elementwise ops.
-  const HloInstruction* add =
+  HloInstruction* add =
       PassThroughCustomCallMarkerUser(inst->users().front(), inst);
   if (add->opcode() == HloOpcode::kGetTupleElement ||
       add->opcode() == HloOpcode::kTranspose) {
@@ -1030,9 +1029,9 @@ void UseAllReduceForGradAcc(StableHashSet<HloInstruction*>& replicated_set,
 
     // Do not partition the dot, add and parameter, so we can generate
     // all-reduce for grad accumulation.
-    std::function<void(const HloInstruction*)> dfs_remove;
-    dfs_remove = [&](const HloInstruction* cur) {
-      if (!replicated_set.contains(cur)) {
+    std::function<void(HloInstruction*)> dfs_remove;
+    dfs_remove = [&](HloInstruction* cur) {
+      if (replicated_set.count(cur) == 0) {
         return;
       }
 
@@ -2080,26 +2079,32 @@ absl::StatusOr<bool> AdjustShardingsWithPartialMeshShape(
 }
 
 std::vector<std::vector<int64_t>> DecomposeMeshShapes(
-    std::vector<int64_t> mesh_shape) {
+    const std::vector<int64_t>& mesh_shape,
+    const std::vector<double>& mesh_alpha,
+    const std::vector<double>& mesh_beta) {
   // Get the ranking order based on the size of each value.
   std::vector<int64_t> ranking_order;
   std::vector<std::vector<int64_t>> partial_mesh_shapes;
-  std::vector<std::pair<int64_t, size_t>> pairs(mesh_shape.size());
+  std::vector<std::tuple<double, double, int64_t, size_t>> tuples(
+      mesh_shape.size());
   for (size_t i = 0; i < mesh_shape.size(); i++) {
-    pairs[i] = {mesh_shape[i], i};
+    // Here we prioritize the throughput term (beta) over the latency term
+    // (alpha), assuming that collectives are more often throughput-bound. This
+    // is currently somewhat of an arbitrary choice and can be changed.
+    tuples[i] = {mesh_beta[i], mesh_alpha[i], mesh_shape[i], i};
   }
   // For vector of size 3, the sorted indices happen to be the same as their
   // rankings. mesh_shapes over 3 elements are not supported by AutoSharding.
-  std::sort(pairs.begin(), pairs.end(),
-            std::greater<std::pair<int64_t, size_t>>());
+  std::sort(tuples.begin(), tuples.end(),
+            std::greater<std::tuple<double, double, int64_t, size_t>>());
 
   std::vector<int64_t> partial_mesh_shape(mesh_shape.size(), 1);
   // Starts from the largest dimension of mesh_shape.
-  for (size_t i = 0; i < pairs.size(); i++) {
-    if (pairs[i].first == 1) {
-      break;
+  for (size_t i = 0; i < tuples.size(); i++) {
+    if (std::get<2>(tuples[i]) == 1) {
+      continue;
     }
-    partial_mesh_shape[pairs[i].second] = pairs[i].first;
+    partial_mesh_shape[std::get<3>(tuples[i])] = std::get<2>(tuples[i]);
     // Needs to copy partial_mesh_shape.
     partial_mesh_shapes.push_back(partial_mesh_shape);
   }

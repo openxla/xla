@@ -152,6 +152,7 @@ cc_library(
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -250,9 +251,11 @@ cc_library(
         ":auto_sharding_strategy",
         ":auto_sharding_util",
         ":profiling_result",
+        "//xla:array",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service/spmd:spmd_partitioner",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -355,6 +358,7 @@ xla_cc_test(
         "//xla/service:hlo_value",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
@@ -362,7 +366,6 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -388,5 +391,6 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform",
     ] + if_google(["@com_google_ortools//ortools/linear_solver:linear_solver_scip"]),
 )

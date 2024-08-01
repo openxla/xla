@@ -17,10 +17,11 @@ limitations under the License.
 
 #include <cassert>
 
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/spmd/shardy/mhlo_round_trip/export_shardings.h"
 #include "xla/service/spmd/shardy/round_trip_common/pipeline_passes.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/export_shardings.h"
@@ -38,7 +39,11 @@ void addSdyRoundTripExportPipeline(mlir::OpPassManager& pm) {
   // `createSdyRoundTripExportShardingsPass` and make use of
   // `createSdyRoundTripImportShardingsPass` to import them.
   pm.addPass(createSdyRoundTripExportOpsPass());
+  // Preserve the SDY shardings for `createExportMhloShardingsPass` so that
+  // we have both `mhlo.sharding`s and hidden `sdy.sharding`s on the module. We
+  // want to have `mhlo.sharding`s for Pathways to read from.
   pm.addPass(createSdyRoundTripExportShardingsPass());
+  pm.addPass(createExportMhloShardingsPass());
 }
 
 void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm) {
@@ -50,7 +55,7 @@ void addSdyRoundTripImportPipeline(mlir::OpPassManager& pm) {
 void registerSdyRoundTripExportPipeline() {
   PassPipelineRegistration<> exportPipeline(
       "xla-sdy-round-trip-export-pipeline",
-      "Run passes to export the SDY (Shardonnay) dialect into an MHLO module, "
+      "Run passes to export the SDY (Shardy) dialect into an MHLO module, "
       "but with the SDY ops/attrs saved for roundtripping.",
       addSdyRoundTripExportPipeline);
 }
@@ -58,7 +63,7 @@ void registerSdyRoundTripExportPipeline() {
 void registerSdyRoundTripImportPipeline() {
   PassPipelineRegistration<> importPipeline(
       "xla-sdy-round-trip-import-pipeline",
-      "Run passes to import an mhlo module into the SDY (Shardonnay) dialect.",
+      "Run passes to import an mhlo module into the SDY (Shardy) dialect.",
       addSdyRoundTripImportPipeline);
 }
 

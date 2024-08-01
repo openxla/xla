@@ -328,9 +328,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> TritonGemmAutotuneExtractor(
     bool allow_filtering_kernels_spilling_registers) {
   std::unique_ptr<HloModule> new_module =
       ExtractInstructionIntoNewModule(*fusion);
-  // TODO(anlunx): Disable command buffers for now because it breaks triton
-  // autotuner test. Enable this when the function of command buffers is stable.
-  debug_opts.clear_xla_gpu_enable_command_buffer();
   if (!allow_filtering_kernels_spilling_registers) {
     debug_opts.set_xla_gpu_filter_kernels_spilling_registers_on_autotuning(
         false);
@@ -633,7 +630,7 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
   // to avoid autotuning configurations that are not supported by Triton. This
   // is used to restrict the values for tile_k.
   std::vector<const HloInstruction*> converts =
-      HloFindAll({&dot}, [&](const HloInstruction* node) {
+      HloBfsFindAll({&dot}, [&](const HloInstruction* node) {
         return node->opcode() == HloOpcode::kConvert;
       });
   int minBitWidth = primitive_util::BitWidth(dot.shape().element_type());
@@ -887,7 +884,7 @@ absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
 
   const HloInstruction& root = *fusion_computation->root_instruction();
   BufferComparator comparator(root.shape(),
-                              fusion_computation->parent()->config());
+                              debug_options_.xla_gpu_autotune_gemm_rtol());
 
   TF_ASSIGN_OR_RETURN(auto rz_buffers,
                       RedzoneBuffers::FromInstruction(
@@ -1179,10 +1176,13 @@ absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
   TF_RETURN_IF_ERROR(key_value_store.Set(
       absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, shard_index),
       results_str));
+  VLOG(2) << "Rank " << shard_index << ": published results";
   for (int i = 0; i < shard_count; ++i) {
     if (i == shard_index) {
       continue;
     }
+    VLOG(2) << "Rank " << shard_index << ": waiting for results from rank " << i
+            << " / " << shard_count;
     TF_ASSIGN_OR_RETURN(
         std::string autotune_results_str,
         key_value_store.Get(

@@ -35,7 +35,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"  // from @eigen_archive
+#include "Eigen/Core"
 #include "xla/error_spec.h"
 #include "xla/fp_util.h"
 #include "xla/index_util.h"
@@ -255,18 +255,25 @@ class NearComparator {
     // from the 'actual' literal.
     int64_t linear_index;
 
+    int float_distance = -1;
+
     bool operator<(const Mismatch& other) const {
       return rel_error < other.rel_error;
     }
 
     std::string ToString(const Shape& shape) const {
-      return absl::StrFormat(
-          "actual %s, expected %s, index %s, rel error %8.3g, abs error %8.3g",
+      auto s = absl::StrFormat(
+          "actual %s, expected %s, index %s, rel error %8.3g, abs error "
+          "%8.3g",
           FpValueToString(actual), FpValueToString(expected),
           LiteralUtil::MultiIndexAsString(
               IndexUtil::LinearIndexToMultidimensionalIndex(shape,
                                                             linear_index)),
           rel_error, abs_error);
+      if (float_distance >= 0) {
+        StrAppendFormat(&s, ", float distance %d", float_distance);
+      }
+      return s;
     }
   };
 
@@ -345,18 +352,13 @@ class NearComparator {
     if (error_.low_precision_fp_error_spec.type ==
         PrimitiveType::PRIMITIVE_TYPE_INVALID)
       return -1;
-    switch (error_.low_precision_fp_error_spec.type) {
-      case PrimitiveType::F8E4M3FN:
-        return CalculateDistanceInFloats(tsl::float8_e4m3fn(expected),
-                                         tsl::float8_e4m3fn(actual));
-      case PrimitiveType::F8E5M2:
-        return CalculateDistanceInFloats(tsl::float8_e5m2(expected),
-                                         tsl::float8_e5m2(actual));
-      default:
-        LOG(WARNING) << "Comparing error for unsupported type: "
-                     << error_.low_precision_fp_error_spec.type;
-        return -1;
-    }
+    return primitive_util::FloatingPointTypeSwitch<int>(
+        [&](const auto kType) -> int {
+          using NarrowNativeT = primitive_util::NativeTypeOf<kType>;
+          return CalculateDistanceInFloats(NarrowNativeT(expected),
+                                           NarrowNativeT(actual));
+        },
+        error_.low_precision_fp_error_spec.type);
   }
 
   // Compares the two given elements from the expected and actual literals at
@@ -460,8 +462,12 @@ class NearComparator {
     // Keep track of the kTopRelativeErrorCount relative error mismatches.
     if (top_rel_mismatches_.size() < kTopRelativeErrorCount ||
         rel_error > top_rel_mismatches_.begin()->rel_error) {
-      Mismatch mismatch = {actual, expected, rel_error, abs_error,
-                           linear_index};
+      Mismatch mismatch = {/*actual=*/actual,
+                           /*expected=*/expected,
+                           /*rel_error=*/rel_error,
+                           /*abs_error=*/abs_error,
+                           /*linear_index=*/linear_index,
+                           /*float_distance=*/float_distance};
       top_rel_mismatches_.insert(mismatch);
       if (top_rel_mismatches_.size() > kTopRelativeErrorCount) {
         top_rel_mismatches_.erase(top_rel_mismatches_.begin());

@@ -212,9 +212,9 @@ xla_test(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
@@ -246,11 +246,11 @@ xla_test(
         "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:filecheck",
         "//xla/tests:verified_hlo_module",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ] + if_cuda_is_configured([
@@ -403,6 +403,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
@@ -570,6 +571,7 @@ xla_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
+        "//xla/tests:hlo_test_base",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -855,8 +857,8 @@ lit_test_suite(
 #     name = "xla-opt",
 #     srcs = ["xla-opt.cc"],
 #     deps = [
-#         "//xla/service/gpu:prevent_mmav3_loop_unrolling",
-#         "//xla/service/gpu:triton_sparse_extensions",
+#         "//xla/service/gpu/fusions/triton:prevent_mmav3_loop_unrolling",
+#         "//xla/service/gpu/fusions/triton:sparse_extensions",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@triton//:AllPassesAndDialects",
@@ -952,7 +954,7 @@ xla_test(
             "//xla:literal",
             "//xla:literal_util",
             "//xla/tests:xla_internal_test_main",
-            "@tsl//tsl/lib/core:status_test_util",
+            "//xla/tsl/lib/core:status_test_util",
         ],
         ["@tsl//tsl/platform:test_main"],  # b/317293391
     ),
@@ -1037,8 +1039,8 @@ cc_library(
     deps = [
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/core:status_test_util",
     ],
 )
 

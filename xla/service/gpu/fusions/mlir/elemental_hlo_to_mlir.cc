@@ -38,29 +38,29 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"  // from @llvm-project
-#include "mlir/Dialect/Affine/LoopUtils.h"  // from @llvm-project
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
-#include "mlir/Dialect/Complex/IR/Complex.h"  // from @llvm-project
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/Dialect/SCF/IR/SCF.h"  // from @llvm-project
-#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
-#include "mlir/Dialect/Vector/IR/VectorOps.h"  // from @llvm-project
-#include "mlir/IR/AffineExpr.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypeInterfaces.h"  // from @llvm-project
-#include "mlir/IR/BuiltinTypes.h"  // from @llvm-project
-#include "mlir/IR/IRMapping.h"  // from @llvm-project
-#include "mlir/IR/ImplicitLocOpBuilder.h"  // from @llvm-project
-#include "mlir/IR/TypeRange.h"  // from @llvm-project
-#include "mlir/IR/Types.h"  // from @llvm-project
-#include "mlir/IR/Value.h"  // from @llvm-project
-#include "mlir/IR/ValueRange.h"  // from @llvm-project
-#include "mlir/Interfaces/DataLayoutInterfaces.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/LoopUtils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -118,56 +118,56 @@ namespace scf = ::mlir::scf;
 
 // HLO opcodes that we never support.
 static auto& kUnsupportedOps =
-    *new absl::flat_hash_set<HloOpcode>{HloOpcode::kAddDependency,
-                                        HloOpcode::kAfterAll,
-                                        HloOpcode::kAllGather,
-                                        HloOpcode::kAllGatherDone,
-                                        HloOpcode::kAllGatherStart,
-                                        HloOpcode::kAllReduce,
-                                        HloOpcode::kAllReduceDone,
-                                        HloOpcode::kAllReduceStart,
-                                        HloOpcode::kAllToAll,
-                                        HloOpcode::kAsyncDone,
-                                        HloOpcode::kAsyncStart,
-                                        HloOpcode::kAsyncUpdate,
-                                        HloOpcode::kBatchNormGrad,
-                                        HloOpcode::kBatchNormInference,
-                                        HloOpcode::kBatchNormTraining,
-                                        HloOpcode::kCholesky,
-                                        HloOpcode::kCollectivePermute,
-                                        HloOpcode::kCollectivePermuteDone,
-                                        HloOpcode::kCollectivePermuteStart,
-                                        HloOpcode::kCopyDone,
-                                        HloOpcode::kCopyStart,
-                                        HloOpcode::kCustomCall,
-                                        HloOpcode::kDomain,
-                                        HloOpcode::kDynamicReshape,
-                                        HloOpcode::kFft,
-                                        HloOpcode::kFusion,
-                                        HloOpcode::kGetDimensionSize,
-                                        HloOpcode::kOptimizationBarrier,
-                                        HloOpcode::kInfeed,
-                                        HloOpcode::kOutfeed,
-                                        HloOpcode::kPartitionId,
-                                        HloOpcode::kRecv,
-                                        HloOpcode::kRecvDone,
-                                        HloOpcode::kReduceScatter,
-                                        HloOpcode::kReplicaId,
-                                        HloOpcode::kRng,
-                                        HloOpcode::kRngBitGenerator,
-                                        HloOpcode::kRngGetAndUpdateState,
-                                        HloOpcode::kScatter,
-                                        HloOpcode::kSelectAndScatter,
-                                        HloOpcode::kSend,
-                                        HloOpcode::kSendDone,
-                                        HloOpcode::kSetDimensionSize,
-                                        HloOpcode::kSort,
-                                        HloOpcode::kTopK,
-                                        HloOpcode::kTriangularSolve,
-                                        HloOpcode::kWhile,
-                                        HloOpcode::kConditional,
-                                        HloOpcode::kStochasticConvert,
-                                        HloOpcode::kCall};
+    *new llvm::DenseSet<HloOpcode>{HloOpcode::kAddDependency,
+                                   HloOpcode::kAfterAll,
+                                   HloOpcode::kAllGather,
+                                   HloOpcode::kAllGatherDone,
+                                   HloOpcode::kAllGatherStart,
+                                   HloOpcode::kAllReduce,
+                                   HloOpcode::kAllReduceDone,
+                                   HloOpcode::kAllReduceStart,
+                                   HloOpcode::kAllToAll,
+                                   HloOpcode::kAsyncDone,
+                                   HloOpcode::kAsyncStart,
+                                   HloOpcode::kAsyncUpdate,
+                                   HloOpcode::kBatchNormGrad,
+                                   HloOpcode::kBatchNormInference,
+                                   HloOpcode::kBatchNormTraining,
+                                   HloOpcode::kCholesky,
+                                   HloOpcode::kCollectivePermute,
+                                   HloOpcode::kCollectivePermuteDone,
+                                   HloOpcode::kCollectivePermuteStart,
+                                   HloOpcode::kCopyDone,
+                                   HloOpcode::kCopyStart,
+                                   HloOpcode::kCustomCall,
+                                   HloOpcode::kDomain,
+                                   HloOpcode::kDynamicReshape,
+                                   HloOpcode::kFft,
+                                   HloOpcode::kFusion,
+                                   HloOpcode::kGetDimensionSize,
+                                   HloOpcode::kOptimizationBarrier,
+                                   HloOpcode::kInfeed,
+                                   HloOpcode::kOutfeed,
+                                   HloOpcode::kPartitionId,
+                                   HloOpcode::kRecv,
+                                   HloOpcode::kRecvDone,
+                                   HloOpcode::kReduceScatter,
+                                   HloOpcode::kReplicaId,
+                                   HloOpcode::kRng,
+                                   HloOpcode::kRngBitGenerator,
+                                   HloOpcode::kRngGetAndUpdateState,
+                                   HloOpcode::kScatter,
+                                   HloOpcode::kSelectAndScatter,
+                                   HloOpcode::kSend,
+                                   HloOpcode::kSendDone,
+                                   HloOpcode::kSetDimensionSize,
+                                   HloOpcode::kSort,
+                                   HloOpcode::kTopK,
+                                   HloOpcode::kTriangularSolve,
+                                   HloOpcode::kWhile,
+                                   HloOpcode::kConditional,
+                                   HloOpcode::kStochasticConvert,
+                                   HloOpcode::kCall};
 
 bool IsUnsupportedGather(const HloInstruction* instr) {
   // We assume gather simplifier ran, so we don't need to support all gather
@@ -665,9 +665,10 @@ Value ApplyAffineExpr(mlir::AffineExpr expr, ValueRange dims,
   return b.createOrFold<mlir::affine::AffineApplyOp>(expr, args);
 }
 
-SmallVector<Value, 3> ApplyIndexing(const IndexingMap& map, ValueRange dims,
+SmallVector<Value, 3> ApplyIndexing(IndexingMap map, ValueRange dims,
                                     ValueRange symbols,
                                     ImplicitLocOpBuilder& b) {
+  map.ClearConstraints();
   SmallVector<Value, 3> results;
   for (unsigned int i = 0; i < map.GetAffineMap().getNumResults(); ++i) {
     SmallVector<Value, 1> result;
@@ -788,8 +789,19 @@ absl::StatusOr<SmallVector<Value, 2>> GetOperands(
     const HloInstruction* instr, ValueRange indices,
     const OperandProvider& operand_provider, ImplicitLocOpBuilder& builder) {
   SmallVector<Value, 2> operands;
-  if (HloInstruction::IsOpElementwise(instr->opcode()) ||
-      instr->opcode() == HloOpcode::kMap) {
+  bool is_elementwise = HloInstruction::IsOpElementwise(instr->opcode()) ||
+                        instr->opcode() == HloOpcode::kMap;
+  if (is_elementwise && instr->shape().IsArray()) {
+    // Check if the instruction is really elementwise. There may be some
+    // broadcasting.
+    int64_t rank = instr->shape().rank();
+    is_elementwise &=
+        absl::c_all_of(instr->operands(), [&](const HloInstruction* operand) {
+          return operand->shape().rank() == rank;
+        });
+  }
+
+  if (is_elementwise) {
     // Avoid materializing the input indices for elementwise ops.
     for (int64_t operand_number = 0; operand_number < instr->operand_count();
          ++operand_number) {
@@ -1206,15 +1218,14 @@ bool IsHloConversionSupported(const HloFusionAdaptor& fusion,
   auto cuda_compute_capability =
       std::get<se::CudaComputeCapability>(compute_capability);
 
-  return !HloFindIf(
-      fusion.GetRoots(), fusion, [=](HloInstructionAdaptor instr) {
-        return !absl::c_all_of(instr.instruction().called_computations(),
-                               [&](const HloComputation* called) {
-                                 return IsHloConversionSupported(
-                                     called, compute_capability);
-                               }) ||
-               !IsHloOpSupported(&instr.instruction(), cuda_compute_capability);
-      });
+  return !HloAnyOf(fusion, [=](HloInstructionAdaptor instr) {
+    return !absl::c_all_of(instr.instruction().called_computations(),
+                           [&](const HloComputation* called) {
+                             return IsHloConversionSupported(
+                                 called, compute_capability);
+                           }) ||
+           !IsHloOpSupported(&instr.instruction(), cuda_compute_capability);
+  });
 }
 
 ValueRange ProvideParameter(const PartitionedComputation& computation,

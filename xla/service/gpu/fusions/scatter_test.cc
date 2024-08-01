@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -39,6 +39,11 @@ class ScatterFusionTest : public HloTestBase {
     printer_ =
         AffineMapPrinter({"th_x", "th_y", "th_z", "bl_x", "bl_y", "bl_z"},
                          {"chunk_id", "unroll_id", "index_id"});
+  }
+  DebugOptions GetDebugOptionsForTest() override {
+    auto opts = HloTestBase::GetDebugOptionsForTest();
+    opts.set_xla_gpu_mlir_emitter_level(0);
+    return opts;
   }
 
  protected:
@@ -150,15 +155,15 @@ TEST_F(ScatterFusionTest, ThreadIdIndexing) {
       (bl_x * 128 + th_x) mod 20
     )
     domain:
-    th_x in [0, 128)
-    th_y in [0, 1)
-    th_z in [0, 1)
-    bl_x in [0, 66)
-    bl_y in [0, 1)
-    bl_z in [0, 1)
-    chunk_id in [0, 1)
-    unroll_id in [0, 1)
-    bl_x * 128 + th_x in [0, 8400)
+    th_x in [0, 127]
+    th_y in [0, 0]
+    th_z in [0, 0]
+    bl_x in [0, 65]
+    bl_y in [0, 0]
+    bl_z in [0, 0]
+    chunk_id in [0, 0]
+    unroll_id in [0, 0]
+    bl_x * 128 + th_x in [0, 8399]
   )";
   EXPECT_THAT(
       fusion
@@ -189,16 +194,16 @@ TEST_F(ScatterFusionTest, ThreadIdIndexing) {
     (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id, index_id] ->
       ((bl_x * 128 + th_x) floordiv 200, 0)
     domain:
-    th_x in [0, 128)
-    th_y in [0, 1)
-    th_z in [0, 1)
-    bl_x in [0, 66)
-    bl_y in [0, 1)
-    bl_z in [0, 1)
-    chunk_id in [0, 1)
-    unroll_id in [0, 1)
-    index_id in [0, 1)
-    bl_x * 128 + th_x in [0, 8400)
+    th_x in [0, 127]
+    th_y in [0, 0]
+    th_z in [0, 0]
+    bl_x in [0, 65]
+    bl_y in [0, 0]
+    bl_z in [0, 0]
+    chunk_id in [0, 0]
+    unroll_id in [0, 0]
+    index_id in [0, 0]
+    bl_x * 128 + th_x in [0, 8399]
   )";
   EXPECT_THAT(
       fusion

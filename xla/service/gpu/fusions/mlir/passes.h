@@ -19,7 +19,8 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "mlir/Pass/Pass.h"  // from @llvm-project
+#include "mlir/IR/Value.h"
+#include "mlir/Pass/Pass.h"
 #include "xla/service/gpu/model/indexing_map.h"
 
 namespace xla {
@@ -31,9 +32,14 @@ namespace gpu {
 // Returns the range of a given value, if it can be statically determined.
 std::optional<Interval> GetRange(mlir::Value value);
 
+// Returns the range for the induction variable, if it can be statically
+// determined.
+std::optional<Interval> GetIVRange(mlir::Value iv);
+
 std::unique_ptr<mlir::Pass> CreateEraseDeadFunctionsPass();
 std::unique_ptr<mlir::Pass> CreateExpandFloatOpsPass(bool pre_ampere);
 std::unique_ptr<mlir::Pass> CreateConvertPureCallOpsPass();
+std::unique_ptr<mlir::Pass> CreateFlattenTensorsPass();
 std::unique_ptr<mlir::Pass> CreateLowerTensorsPass(
     bool is_amd_gpu = false, const std::string& gpu_arch = "6.0");
 std::unique_ptr<mlir::Pass> CreateLowerToLLVMPass();

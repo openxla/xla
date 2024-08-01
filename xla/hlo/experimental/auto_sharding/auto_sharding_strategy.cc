@@ -142,15 +142,14 @@ BuildStrategyAndCost(
   // is useful when the operand is forced to use a user sharding, and the op
   // doesn't need to strictly follow it. We restore the trimmed strategies in
   // this situation.
-  StableHashMap<int64_t, std::vector<ShardingStrategy>> pretrimmed_strategy_map;
+  StableMap<int64_t, std::vector<ShardingStrategy>> pretrimmed_strategy_map;
   StrategyGroups strategy_groups;
   AssociativeDotPairs associative_dot_pairs;
 
   const std::vector<HloInstruction*>& instructions = sequence.instructions();
 
   // Add penalty for replicated tensors
-  double replicated_penalty = std::round(cluster_env.AllReduceCost(1, 0) +
-                                         cluster_env.AllReduceCost(1, 1));
+  double replicated_penalty = cluster_env.GetDefaultReplicatedPenalty();
 
   int64_t max_depth = -1;
   for (auto iter : depth_map) {
@@ -739,16 +738,13 @@ BuildStrategyAndCost(
         break;
       }
       case HloOpcode::kIota: {
-        // For an unknown reason, we do not generate partially replicated
-        // strategies for iota ops. This can be changed if we find that our
-        // search isn't exhaustive enough for certain ops.
         strategy_group =
             CreateAllStrategiesGroup(
                 ins, ins->shape(), instruction_id, strategy_groups, cluster_env,
                 strategy_map, option, replicated_penalty, batch_dim_map,
                 call_graph, only_allow_divisible,
                 /* create_replicated_strategies */ true,
-                /* create_partially_replicated_strategies */ false)
+                /* create_partially_replicated_strategies */ true)
                 .value();
         break;
       }

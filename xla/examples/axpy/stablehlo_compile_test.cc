@@ -21,13 +21,13 @@ limitations under the License.
 #include <vector>
 
 #include <gtest/gtest.h>
-#include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
-#include "mlir/IR/DialectRegistry.h"  // from @llvm-project
-#include "mlir/IR/MLIRContext.h"  // from @llvm-project
-#include "mlir/IR/OwningOpRef.h"  // from @llvm-project
-#include "mlir/Parser/Parser.h"  // from @llvm-project
-#include "stablehlo/dialect/Register.h"  // from @stablehlo
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/Parser/Parser.h"
+#include "stablehlo/dialect/Register.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
 #include "xla/error_spec.h"
@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/service/stream_pool.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tests/literal_test_util.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/statusor.h"

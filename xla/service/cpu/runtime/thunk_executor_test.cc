@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/service/cpu/runtime/thunk_executor.h"
 
-#define EIGEN_USE_THREADS
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -31,7 +29,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime/buffer_allocations.h"
@@ -47,6 +44,10 @@ limitations under the License.
 #include "tsl/platform/test.h"
 #include "tsl/platform/test_benchmark.h"
 #include "tsl/platform/threadpool.h"
+
+#define EIGEN_USE_THREADS
+
+#include "unsupported/Eigen/CXX11/Tensor"
 
 namespace xla::cpu {
 namespace {
@@ -210,6 +211,13 @@ AddI32Thunk::ResourceUses AddI32Thunk::resource_uses() const {
              : ResourceUses{};
 }
 
+static ThunkExecutor::Options OptionsForTest() {
+  // Override small buffers threshold to make sure that we test all execution
+  // paths, because in test we always use small buffers below the default
+  // threshold of `512`.
+  return ThunkExecutor::Options{/*execute_sequential_buffer_threshold=*/0};
+}
+
 TEST(ThunkExecutorTest, DependencyOrdering) {
   BufferAllocation alloc(/*index=*/0, /*size=*/80, /*color=*/0);
 
@@ -222,12 +230,17 @@ TEST(ThunkExecutorTest, DependencyOrdering) {
   sequence.push_back(AddI32Thunk::Create("b", {slice1}, {slice1}));
   sequence.push_back(AddI32Thunk::Create("c", {slice2}, {slice2}));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(sequence), OptionsForTest()));
 
   EXPECT_FALSE(executor.is_sequential());
   EXPECT_THAT(executor.source(), ElementsAre(0, 1));
   EXPECT_THAT(executor.sink(), ElementsAre(2));
+
+  EXPECT_EQ(executor.node_def(0).priority, 1);
+  EXPECT_EQ(executor.node_def(1).priority, 1);
+  EXPECT_EQ(executor.node_def(2).priority, 0);
 }
 
 TEST(ThunkExecutorTest, SequentialOrdering) {
@@ -239,12 +252,17 @@ TEST(ThunkExecutorTest, SequentialOrdering) {
   sequence.push_back(AddI32Thunk::Create("b", {slice}, {slice}));
   sequence.push_back(AddI32Thunk::Create("c", {slice}, {slice}));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(sequence), OptionsForTest()));
 
   EXPECT_TRUE(executor.is_sequential());
   EXPECT_THAT(executor.source(), ElementsAre(0));
   EXPECT_THAT(executor.sink(), ElementsAre(2));
+
+  EXPECT_EQ(executor.node_def(0).priority, 2);
+  EXPECT_EQ(executor.node_def(1).priority, 1);
+  EXPECT_EQ(executor.node_def(2).priority, 0);
 }
 
 TEST(ThunkExecutorTest, ResourceOrdering) {
@@ -261,12 +279,16 @@ TEST(ThunkExecutorTest, ResourceOrdering) {
                                          /*trace=*/nullptr,
                                          /*use_shared_resource=*/true));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(sequence), OptionsForTest()));
 
   EXPECT_TRUE(executor.is_sequential());
   EXPECT_THAT(executor.source(), ElementsAre(0));
   EXPECT_THAT(executor.sink(), ElementsAre(1));
+
+  EXPECT_EQ(executor.node_def(0).priority, 1);
+  EXPECT_EQ(executor.node_def(1).priority, 0);
 }
 
 TEST(ThunkExecutorTest, TransitiveReduction) {
@@ -278,8 +300,9 @@ TEST(ThunkExecutorTest, TransitiveReduction) {
   sequence.push_back(AddI32Thunk::Create("b", {slice}, {slice}));
   sequence.push_back(AddI32Thunk::Create("c", {slice}, {slice}));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(sequence), OptionsForTest()));
 
   EXPECT_THAT(executor.source(), ElementsAre(0));
   EXPECT_THAT(executor.sink(), ElementsAre(2));
@@ -288,6 +311,10 @@ TEST(ThunkExecutorTest, TransitiveReduction) {
   EXPECT_THAT(executor.node_def(1).in_edges, ElementsAre(0));
   EXPECT_THAT(executor.node_def(1).out_edges, ElementsAre(2));
   EXPECT_THAT(executor.node_def(2).in_edges, ElementsAre(1));
+
+  EXPECT_EQ(executor.node_def(0).priority, 2);
+  EXPECT_EQ(executor.node_def(1).priority, 1);
+  EXPECT_EQ(executor.node_def(2).priority, 0);
 }
 
 TEST(ThunkExecutorTest, Execute) {
@@ -304,8 +331,9 @@ TEST(ThunkExecutorTest, Execute) {
   sequence.push_back(AddI32Thunk::Create("b", {slice1}, {slice1}, &trace));
   sequence.push_back(AddI32Thunk::Create("c", {slice2}, {slice2}, &trace));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(sequence), OptionsForTest()));
 
   std::vector<int32_t> data(20, 1);  // shared src and dst allocation
 
@@ -471,8 +499,9 @@ TEST_P(ThunkExecutorStressTest, Execute) {
       GenerateThunkSequence(/*num_elements=*/1024, num_thunks,
                             shared_resource_use, inject_errors));
 
-  TF_ASSERT_OK_AND_ASSIGN(ThunkExecutor executor,
-                          ThunkExecutor::Create(std::move(g->sequence)));
+  TF_ASSERT_OK_AND_ASSIGN(
+      ThunkExecutor executor,
+      ThunkExecutor::Create(std::move(g->sequence), OptionsForTest()));
 
   BufferAllocations allocations(g->buffers);
   Thunk::ExecuteParams params = {nullptr, &allocations, nullptr, device(),
@@ -516,7 +545,8 @@ static void BM_SequentialThunkExecutor(benchmark::State& state) {
                             /*shared_resource_use=*/SharedResourceUse::kAll,
                             /*inject_errors=*/false)
           .value();
-  auto e = ThunkExecutor::Create(std::move(g->sequence)).value();
+  auto e =
+      ThunkExecutor::Create(std::move(g->sequence), OptionsForTest()).value();
 
   BufferAllocations allocations(g->buffers);
   Thunk::ExecuteParams params = {nullptr, &allocations};
@@ -535,7 +565,8 @@ static void BM_SyncThunkExecutor(benchmark::State& state) {
                                  /*shared_resource_use=*/SharedResourceUse::kNo,
                                  /*inject_errors=*/false)
                .value();
-  auto e = ThunkExecutor::Create(std::move(g->sequence)).value();
+  auto e =
+      ThunkExecutor::Create(std::move(g->sequence), OptionsForTest()).value();
 
   BufferAllocations allocations(g->buffers);
   Thunk::ExecuteParams params = {nullptr, &allocations};
@@ -558,7 +589,8 @@ static void BM_AsyncThunkExecutor(benchmark::State& state) {
                                  /*shared_resource_use=*/SharedResourceUse::kNo,
                                  /*inject_errors=*/false)
                .value();
-  auto e = ThunkExecutor::Create(std::move(g->sequence)).value();
+  auto e =
+      ThunkExecutor::Create(std::move(g->sequence), OptionsForTest()).value();
 
   BufferAllocations allocations(g->buffers);
 

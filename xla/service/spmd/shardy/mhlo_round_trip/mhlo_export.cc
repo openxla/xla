@@ -17,9 +17,9 @@ limitations under the License.
 
 #include <functional>
 
-#include "mlir/Pass/PassManager.h"  // from @llvm-project
-#include "mlir/Pass/PassRegistry.h"  // from @llvm-project
-#include "mlir/Support/LLVM.h"  // from @llvm-project
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/service/spmd/shardy/mhlo_round_trip/export_ops.h"
 #include "xla/service/spmd/shardy/mhlo_round_trip/export_shardings.h"
 #include "xla/service/spmd/shardy/mhlo_round_trip/shard_map_export.h"
@@ -39,7 +39,7 @@ void addMhloExportPipeline(mlir::OpPassManager& pm) {
 void registerMhloExportPipeline() {
   mlir::PassPipelineRegistration<> exportPipeline(
       "xla-sdy-mhlo-export-pipeline",
-      "Run passes to export the SDY (Shardonnay) dialect into an MHLO module, "
+      "Run passes to export the SDY (Shardy) dialect into an MHLO module, "
       "which is ready for MHLO -> HLO conversion.",
       addMhloExportPipeline);
 }

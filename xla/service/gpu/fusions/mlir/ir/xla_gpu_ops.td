@@ -16,23 +16,14 @@ limitations under the License.
 #define XLA_SERVICE_GPU_FUSIONS_MLIR_OPS
 
 include "mlir/IR/AttrTypeBase.td"
-include "mlir/IR/DialectBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-
-def XlaGpuDialect : Dialect {
-  let name = "xla_gpu";
-
-  let description = [{
-    This dialect contains ops required for lowering HLO to LLVM.
-  }];
-
-  let cppNamespace = "::xla::gpu";
-}
+include "xla/service/gpu/fusions/mlir/ir/xla_gpu_dialect.td"
+include "xla/service/gpu/fusions/mlir/ir/xla_gpu_attrs.td"
 
 class XLAGPU_Op<string mnemonic, list<Trait> traits = []> :
       Op<XlaGpuDialect, mnemonic, traits> {
@@ -107,6 +98,7 @@ def XLAGPU_AtomicRMWOp : XLAGPU_Op<"atomic_rmw",
       return getRegion().getArgument(0);
     }
   }];
+  let hasFolder = 1;
 
   let assemblyFormat = [{
     $input `[` $indices `]` `:` type($input) $computation attr-dict
@@ -251,29 +243,23 @@ def ApplyIndexingOp : XLAGPU_Op<"apply_indexing", [Pure]> {
     ```
   }];
   let arguments = (ins Variadic<Index>:$operands,
-                       AffineMapAttr:$map,
-                       DenseI64ArrayAttr:$lower_bounds,
-                       DenseI64ArrayAttr:$upper_bounds);
+                   XLAGPU_IndexingMapAttr:$indexing_map_attr);
   let results = (outs Variadic<Index>);
 
   let builders = [
     OpBuilder<(ins "mlir::ValueRange":$dims, "mlir::ValueRange":$symbols,
                    "const IndexingMap&":$indexing_map)>,
     OpBuilder<(ins "mlir::ValueRange":$operands,
-                   "const IndexingMap&":$indexing_map)>,
+                   "IndexingMap":$indexing_map)>,
     OpBuilder<(ins "mlir::ValueRange":$operands, "mlir::AffineMap":$affine_map,
                "llvm::ArrayRef<DimVar>":$dim_vars,
                "llvm::ArrayRef<RangeVar>":$range_vars)>,
-    OpBuilder<(ins "mlir::ValueRange":$operands,
-                   "mlir::AffineMap":$affine_map,
-                   "llvm::ArrayRef<int64_t>":$lower_bounds,
-                   "llvm::ArrayRef<int64_t>":$upper_bounds)>,
   ];
   let extraClassDeclaration = [{
     // Returns the indexing map constructed from affine_map and the bounds.
     xla::gpu::IndexingMap getIndexingMap();
     // Extracts the affine map from the attribute.
-    mlir::AffineMap getAffineMap() { return getMapAttr().getAffineMap(); }
+    mlir::AffineMap getAffineMap() { return getIndexingMapAttr().getMap(); }
   }];
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;

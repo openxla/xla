@@ -43,9 +43,10 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "tsl/platform/platform.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
@@ -2502,6 +2503,81 @@ ENTRY computation {
                    .status());
 }
 
+TEST_F(HloVerifierTest, VerifyInstructionNameChanged) {
+  const char* const hlo = R"(
+HloModule module
+
+ENTRY computation {
+  p0 = f32[32] parameter(0), metadata={scheduling_name="p0"}
+  p1 = f32[32] parameter(1), metadata={scheduling_name="p1"}
+  ROOT add0 = f32[32] add(p0,p1), metadata={scheduling_name="add_changed"}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                    .Run(module.get())
+                    .status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("Expected instruction name to remain the same."));
+}
+
+TEST_F(HloVerifierTest, VerifyInstructionNameUnchanged) {
+  const char* const hlo = R"(
+HloModule module
+
+ENTRY computation {
+  p0 = f32[32] parameter(0), metadata={scheduling_name="p0"}
+  p1 = f32[32] parameter(1), metadata={scheduling_name="p1"}
+  ROOT add0 = f32[32] add(p0,p1), metadata={scheduling_name="add0"}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  TF_ASSERT_OK(HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                   .Run(module.get())
+                   .status());
+}
+
+TEST_F(HloVerifierTest, VerifyInstructionNameSchedulingNameNotPresent) {
+  const char* const hlo = R"(
+HloModule module
+
+ENTRY computation {
+  p0 = f32[32] parameter(0)
+  p1 = f32[32] parameter(1)
+  ROOT add0 = f32[32] add(p0,p1)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  TF_ASSERT_OK(HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                   .Run(module.get())
+                   .status());
+}
+
+TEST_F(HloVerifierTest, VerifyInstructionNameChangedOkWithRematAndClones) {
+  const char* const hlo = R"(
+HloModule module
+
+ENTRY computation {
+  p0 = f32[32] parameter(0), metadata={scheduling_name="p0"}
+  p1 = f32[32] parameter(1), metadata={scheduling_name="p1"}
+  add0.remat = f32[32] add(p0,p1), metadata={scheduling_name="add0"}
+  ROOT add1.clone = f32[32] add(add0.remat, p0), metadata={scheduling_name="add1"}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                    .Run(module.get())
+                    .status();
+  TF_ASSERT_OK(HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                   .Run(module.get())
+                   .status());
+}
+
 TEST_F(HloVerifierTest, ReshapeIsNotBitcast) {
   const char* const hlo = R"(
 HloModule Module
@@ -2776,7 +2852,7 @@ TEST_F(HloVerifierTest, DisableS4Veridication) {
 }
 
 TEST(MetadataTrackerTest, MetadataTrackerLogsInfo) {
-  if (tsl::testing::kIsOpenSource) {
+  if (tsl::kIsOpenSource) {
     return;
   }
   constexpr absl::string_view hlo = R"(

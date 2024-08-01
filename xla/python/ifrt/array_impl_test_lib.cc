@@ -31,7 +31,7 @@ limitations under the License.
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/ifrt/value.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -716,6 +716,31 @@ TEST(ArrayImplTest, Delete) {
                       /*byte_strides=*/std::nullopt, sharding, semantics,
                       /*on_done_with_host_buffer=*/{}));
   TF_EXPECT_OK(array->Delete().Await());
+}
+
+TEST(ArrayImplTest, DeleteIsIdempotent) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  DType dtype(DType::kF32);
+  Shape shape({2, 3});
+  std::vector<float> data(6);
+  std::iota(data.begin(), data.end(), 0);
+  Device* device = client->addressable_devices().at(0);
+  std::shared_ptr<const Sharding> sharding =
+      SingleDeviceSharding::Create(device, MemoryKind());
+  auto semantics = Client::HostBufferSemantics::kImmutableOnlyDuringCall;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto array, client->MakeArrayFromHostBuffer(
+                      data.data(), dtype, shape,
+                      /*byte_strides=*/std::nullopt, sharding, semantics,
+                      /*on_done_with_host_buffer=*/{}));
+
+  auto future_1 = array->Delete();
+  auto future_2 = array->Delete();
+
+  TF_EXPECT_OK(future_1.Await());
+  TF_EXPECT_OK(future_2.Await());
 }
 
 TEST(ArrayImplTest, IsDeleted) {

@@ -128,9 +128,9 @@ xla_cc_test(
     srcs = ["host_tracer_test.cc"],
     deps = [
         ":host_tracer_impl",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/types:optional",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",

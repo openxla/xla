@@ -28,12 +28,12 @@ cc_library(
         "hlo_frontend_attributes.cc",
         "hlo_input_output_alias_config.cc",
         "hlo_instruction.cc",
-        "hlo_instruction_utils.cc",
         "hlo_instructions.cc",
         "hlo_module.cc",
         "hlo_module_metadata.cc",
         "hlo_op_metadata.cc",
         "hlo_opcode.cc",
+        "hlo_original_value.cc",
         "hlo_schedule.cc",
         "hlo_sharding.cc",
         "hlo_sharding_metadata.cc",
@@ -50,12 +50,12 @@ cc_library(
         "hlo_frontend_attributes.h",
         "hlo_input_output_alias_config.h",
         "hlo_instruction.h",
-        "hlo_instruction_utils.h",
         "hlo_instructions.h",
         "hlo_module.h",
         "hlo_module_metadata.h",
         "hlo_op_metadata.h",
         "hlo_opcode.h",
+        "hlo_original_value.h",
         "hlo_schedule.h",
         "hlo_sharding.h",
         "hlo_sharding_metadata.h",
@@ -136,9 +136,9 @@ xla_cc_test(
     deps = [
         ":backend_config",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -153,6 +153,16 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "hlo_instruction_utils",
+    srcs = ["hlo_instruction_utils.cc"],
+    hdrs = ["hlo_instruction_utils.h"],
+    deps = [
+        ":hlo",
+        "@com_google_absl//absl/algorithm:container",
     ],
 )
 
@@ -215,5 +225,18 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_device_list_test",
+    srcs = ["collective_device_list_test.cc"],
+    deps = [
+        ":hlo",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
