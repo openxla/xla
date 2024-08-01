@@ -163,7 +163,10 @@ class GpuPriorityFusionQueue {
       }
       instructions.push_back(instruction);
     }
-
+    // write here and only read in worker threads
+    for (auto producer : instructions) {
+      updatePerformanceModelCache(producer);
+    }
     ComputeAndSetPriorities(instructions);
   }
 
@@ -247,12 +250,38 @@ class GpuPriorityFusionQueue {
     return !current_consumers_.empty();
   }
 
+  void updatePerformanceModelCache(HloInstruction* producer) {
+    if (producer->opcode() == HloOpcode::kBitcast ||
+        producer->opcode() == HloOpcode::kConstant ||
+        !CanFuseWithAllNonBitcastUsers(producer)) {
+      return;
+    }
+
+    auto config = GpuPerformanceModelOptions::PriorityFusion(
+        &fusion_analysis_cache_, &gpu_performance_model_cache_);
+
+    EstimateRunTimeData producer_runtime =
+        GpuPerformanceModel::EstimateRunTimeForInstructionCached(
+            producer, *device_info_, &cost_analysis_, config);
+    for (auto consumer : producer->users()) {
+      EstimateRunTimeData consumer_runtime =
+          GpuPerformanceModel::EstimateRunTimeForInstructionCached(
+              consumer, *device_info_, &cost_analysis_, config);
+      GpuPerformanceModel::EstimateRunTimeForFusionCached(
+          producer, consumer, producer_runtime, consumer_runtime, *device_info_,
+          &cost_analysis_, config);
+    }
+  }
+
   // Update priorities of all affected ops.
   void UpdatePriorities() {
     // Revisit costs of all updated ops. It's important to update cost analysis
     // before recalculating priorities.
     for (auto instruction : to_update_priority_) {
       TF_CHECK_OK(cost_analysis_.RevisitInstruction(instruction));
+    }
+    for (auto producer : to_update_priority_) {
+      updatePerformanceModelCache(producer);
     }
 
     ComputeAndSetPriorities(std::vector<HloInstruction*>{
@@ -395,11 +424,14 @@ class GpuPriorityFusionQueue {
       return std::numeric_limits<Priority>::min();
     }
 
+    // everything should already be in performance model cache
+    // never write cache here as we dont have locks anymore
     GpuPerformanceModel::RunTimes run_times =
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, *device_info_, &cost_analysis_,
             GpuPerformanceModelOptions::PriorityFusion(
-                &fusion_analysis_cache_, &gpu_performance_model_cache_),
+                &fusion_analysis_cache_, &gpu_performance_model_cache_,
+                true /*gpu_performance_model_cache_read_only*/),
             producer->users());
 
     if (fusion_process_dump_) {
@@ -541,14 +573,11 @@ class GpuPriorityFusionQueue {
 
   FusionDecision CanFuseCached(HloInstruction* producer,
                                HloInstruction* consumer) {
-    {
-      absl::MutexLock lock(&can_fuse_cache_mutex_);
-      auto& producer_cache = can_fuse_cache_[producer];
+    auto& producer_cache = can_fuse_cache_[producer];
 
-      auto it = producer_cache.find(consumer);
-      if (it != producer_cache.end()) {
-        return it->second;
-      }
+    auto it = producer_cache.find(consumer);
+    if (it != producer_cache.end()) {
+      return it->second;
     }
 
     auto fusion_decision = CanFuse(producer, consumer);
@@ -557,11 +586,7 @@ class GpuPriorityFusionQueue {
     // thread-safe even for different keys. We never call this computation
     // concurrently for the same producer, so it's guaranteed that we don't
     // override any value.
-    {
-      absl::MutexLock lock(&can_fuse_cache_mutex_);
-      can_fuse_cache_[producer][consumer] = fusion_decision;
-    }
-
+    can_fuse_cache_[producer][consumer] = fusion_decision;
     return fusion_decision;
   }
 

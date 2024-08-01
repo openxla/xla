@@ -80,8 +80,6 @@ class GpuPerformanceModelCache {
   void Invalidate(const HloInstruction& instruction);
 
  private:
-  absl::Mutex mutex_;
-
   // Stores unfused runtime data for individual instructions.
   absl::flat_hash_map<const HloInstruction*, EstimateRunTimeData>
       instruction_runtime_data_;
@@ -105,13 +103,16 @@ struct GpuPerformanceModelOptions {
 
   GpuPerformanceModelCache* gpu_performance_model_cache = nullptr;
 
+  bool gpu_performance_model_cache_read_only;
+
   static GpuPerformanceModelOptions Default() {
     return GpuPerformanceModelOptions();
   }
 
   static GpuPerformanceModelOptions PriorityFusion(
       HloFusionAnalysisCache* fusion_analysis_cache = nullptr,
-      GpuPerformanceModelCache* gpu_performance_model_cache = nullptr) {
+      GpuPerformanceModelCache* gpu_performance_model_cache = nullptr,
+      bool gpu_performance_model_cache_read_only = false) {
     GpuPerformanceModelOptions config;
     config.fusion_analysis_cache = fusion_analysis_cache;
     config.gpu_performance_model_cache = gpu_performance_model_cache;
@@ -121,6 +122,8 @@ struct GpuPerformanceModelOptions {
     // or memory accesses will be stalled waiting for the other, but usually
     // they won't).
     config.memory_compute_parallelism = 0.95;
+    config.gpu_performance_model_cache_read_only =
+        gpu_performance_model_cache_read_only;
     return config;
   }
 

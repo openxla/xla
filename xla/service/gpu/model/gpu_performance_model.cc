@@ -113,7 +113,8 @@ GpuPerformanceModel::EstimateRunTimeForInstructionCached(
       return *cached_result;
     }
   }
-
+  CHECK(!config.gpu_performance_model_cache_read_only)
+      << "cache hit failed for read only cache.";
   auto runtime_data =
       EstimateRunTimeForInstruction(instr, device_info, cost_analysis, config);
 
@@ -266,6 +267,9 @@ absl::Duration GpuPerformanceModel::EstimateRunTimeForFusionCached(
       return *fusion_runtime;
     }
   }
+
+  CHECK(!config.gpu_performance_model_cache_read_only)
+      << "cache hit failed for read only cache.";
 
   auto fusion_runtime = EstimateRunTimeForFusion(
       producer, consumer, producer_runtime, consumer_runtime, device_info,

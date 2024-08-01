@@ -88,8 +88,6 @@ float AdjustBandwidth(const se::DeviceDescription& gpu_device_info,
 
 std::optional<EstimateRunTimeData> GpuPerformanceModelCache::Get(
     const HloInstruction& instruction) {
-  absl::MutexLock lock(&mutex_);
-
   auto it = instruction_runtime_data_.find(&instruction);
   if (it != instruction_runtime_data_.end()) {
     return it->second;
@@ -99,8 +97,6 @@ std::optional<EstimateRunTimeData> GpuPerformanceModelCache::Get(
 
 std::optional<absl::Duration> GpuPerformanceModelCache::Get(
     const HloInstruction& producer, const HloInstruction& consumer) {
-  absl::MutexLock lock(&mutex_);
-
   auto it = fusion_runtime_data_.find(&producer);
   if (it != fusion_runtime_data_.end()) {
     auto jt = it->second.find(&consumer);
@@ -113,21 +109,16 @@ std::optional<absl::Duration> GpuPerformanceModelCache::Get(
 
 void GpuPerformanceModelCache::Set(const HloInstruction& instruction,
                                    const EstimateRunTimeData& runtime_data) {
-  absl::MutexLock lock(&mutex_);
-
   instruction_runtime_data_[&instruction] = runtime_data;
 }
 
 void GpuPerformanceModelCache::Set(const HloInstruction& producer,
                                    const HloInstruction& consumer,
                                    absl::Duration runtime) {
-  absl::MutexLock lock(&mutex_);
   fusion_runtime_data_[&producer][&consumer] = runtime;
 }
 
 void GpuPerformanceModelCache::Invalidate(const HloInstruction& instruction) {
-  absl::MutexLock lock(&mutex_);
-
   // Remove runtime data for the instruction.
   instruction_runtime_data_.erase(&instruction);
 
