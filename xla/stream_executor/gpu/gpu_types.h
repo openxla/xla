@@ -19,6 +19,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_GPU_GPU_TYPES_H_
 
 #include <string>
+
 #if TENSORFLOW_USE_SYCL
 
 #include "sycl/sycl.hpp"
@@ -62,11 +63,6 @@ using GpuGraphExecHandle = UnsupportedGpuFeature;
 using GpuGraphNodeHandle = UnsupportedGpuFeature;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
 uusing GpuGraphInstantiateResult = UnsupportedGpuFeature;
-using GpuGraphInstantiateSuccess = UnsupportedGpuFeature;
-using GpuGraphInstantiateError = UnsupportedGpuFeature;
-using GpuGraphInstantiateInvalidStructure = UnsupportedGpuFeature;
-using GpuGraphInstantiateNodeOperationNotSupported = UnsupportedGpuFeature;
-using GpuGraphInstantiateMultiDeviceNotSupported = UnsupportedGpuFeature;
 
 #elif TENSORFLOW_USE_ROCM
 
@@ -87,11 +83,6 @@ using GpuGraphExecHandle = hipGraphExec_t;
 using GpuGraphNodeHandle = hipGraphNode_t;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
 using GpuGraphInstantiateResult = UnsupportedGpuFeature;
-using GpuGraphInstantiateSuccess = UnsupportedGpuFeature;
-using GpuGraphInstantiateError = UnsupportedGpuFeature;
-using GpuGraphInstantiateInvalidStructure = UnsupportedGpuFeature;
-using GpuGraphInstantiateNodeOperationNotSupported = UnsupportedGpuFeature;
-using GpuGraphInstantiateMultiDeviceNotSupported = UnsupportedGpuFeature;
 
 #else  // CUDA
 
@@ -131,11 +122,6 @@ constexpr CUgraphInstantiateResult GpuGraphInstantiateMultiDeviceNotSupported =
 
 #else
 using GpuGraphInstantiateResult = UnsupportedGpuFeature;
-using GpuGraphInstantiateSuccess = UnsupportedGpuFeature;
-using GpuGraphInstantiateError = UnsupportedGpuFeature;
-using GpuGraphInstantiateInvalidStructure = UnsupportedGpuFeature;
-using GpuGraphInstantiateNodeOperationNotSupported = UnsupportedGpuFeature;
-using GpuGraphInstantiateMultiDeviceNotSupported = UnsupportedGpuFeature;
 #endif  // #if CUDA_VERSION >= 12000
 
 #endif
