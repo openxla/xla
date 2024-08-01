@@ -62,7 +62,7 @@ using GpuGraphHandle = UnsupportedGpuFeature;
 using GpuGraphExecHandle = UnsupportedGpuFeature;
 using GpuGraphNodeHandle = UnsupportedGpuFeature;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
-uusing GpuGraphInstantiateResult = UnsupportedGpuFeature;
+using GpuGraphInstantiateResult = UnsupportedGpuFeature;
 
 #elif TENSORFLOW_USE_ROCM
 

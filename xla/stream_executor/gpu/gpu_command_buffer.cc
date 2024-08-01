@@ -976,7 +976,7 @@ absl::Status GpuCommandBuffer::Finalize() {
 
   if (mode_ == Mode::kPrimary && state_ == State::kCreate) {
     // If this is the first time we finalize command buffer after construction,
-    // we need to instantiate it to an executable graph.x
+    // we need to instantiate it to an executable graph.
 
     uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 
@@ -1011,6 +1011,7 @@ absl::Status GpuCommandBuffer::Finalize() {
                    << "; nodes: " << num_nodes
                    << "; conditionals: " << num_cond_cmd_buffers
                    << "; alive executable graphs: " << AliveExecs();
+                   
       TF_RETURN_IF_ERROR(GpuDriver::DeviceGraphMemTrim(parent_->device()));
 
 #if CUDA_VERSION >= 12000
