@@ -1011,7 +1011,7 @@ absl::Status GpuCommandBuffer::Finalize() {
                    << "; nodes: " << num_nodes
                    << "; conditionals: " << num_cond_cmd_buffers
                    << "; alive executable graphs: " << AliveExecs();
-                   
+
       TF_RETURN_IF_ERROR(GpuDriver::DeviceGraphMemTrim(parent_->device()));
 
 #if CUDA_VERSION >= 12000
