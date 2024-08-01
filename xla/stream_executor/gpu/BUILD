@@ -235,7 +235,6 @@ gpu_only_cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:thread_annotations",
     ],
 )
@@ -799,7 +798,6 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ] + if_cuda([
