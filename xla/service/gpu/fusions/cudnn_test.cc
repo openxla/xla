@@ -43,9 +43,9 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/statusor.h"
@@ -199,6 +199,46 @@ ENTRY e {
                   ->root_instruction(),
               GmockMatch(m::Tuple(m::Dot(), m::CustomCall())));
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionExecutionTest,
+       CuDnnFusionCompilerDoesNotFailOnDependentFusions) {
+  if (!IsAtLeastCuDnn91()) {
+    GTEST_SKIP() << "This test case requests a workspace only with cuDNN 9.1+.";
+  }
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+c1 {
+  p0 = f32[32,96] parameter(0)
+  p1 = f32[96,64] parameter(1)
+  ROOT r = f32[32,64] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+c2 {
+  p0 = f32[32,96] parameter(0)
+  p1 = f32[32,64] parameter(1)
+  ROOT r = f32[96,64] dot(p0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[32,96] parameter(0)
+  p1 = f32[96,64] parameter(1)
+  f0 = f32[32,64] fusion(p0, p1), kind=kCustom, calls=c1,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion","cudnn_fusion_config":{"plan_id":"0"}}}
+  f1 = f32[96,64] fusion(p0, f0), kind=kCustom, calls=c2,
+    backend_config={"fusion_backend_config": {kind: "__cudnn$fusion","cudnn_fusion_config":{"plan_id":"0"}}}
+  ROOT r = tuple(f0, f1)
+})"));
+  BinaryMap dnn_compiled_graphs;
+  CuDnnFusionCompiler cudnn_compiler(*backend().default_stream_executor(),
+                                     dnn_compiled_graphs);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, cudnn_compiler.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Tuple(m::GetTupleElement(m::Fusion()),
+                                  m::GetTupleElement(m::Fusion()))));
 }
 
 TEST_F(CuDnnFusionExecutionTest,

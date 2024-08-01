@@ -51,8 +51,8 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
@@ -303,7 +303,6 @@ CHECK:    tt.return
 CHECK:  }
 )"));
 }
-
 
 TEST_F(TritonTest, PredParametersAreTruncatedToI1) {
   const std::string kHloText = R"(
@@ -1182,6 +1181,46 @@ ENTRY e {
 ; CHECK: cublas
 ; CHECK-NOT: triton
 )");
+}
+
+TEST_F(TritonTest, FloatToSignedIntConversion) {
+  const std::string kHloText = R"(
+HloModule t, is_scheduled=true
+
+triton_gemm_r {
+  p_0 = s8[32,32]{1,0} parameter(0)
+  p_1 = f16[32,32]{1,0} parameter(1)
+  cvt_1 = s8[32,32]{1,0} convert(p_1)
+  ROOT r.1 = f32[32,32]{1,0} dot(p_0, cvt_1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY e {
+  p_0 = s8[32,32]{1,0} parameter(0)
+  p_1 = f16[32,32]{1,0} parameter(1)
+  ROOT triton_gemm_r = f32[32,32]{1,0} fusion(p_0, p_1), kind=kCustom,
+    calls=triton_gemm_r,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":32,"block_n":32,"block_k":32,
+                         "split_k":1,"num_stages":1,"num_warps":4,
+                         "num_ctas":1}}}
+})";
+  TF_EXPECT_OK(
+      CreateTritonIrAndFileCheckForDot(this, kHloText, "triton_gemm_r", R"(
+CHECK:    tt.func @triton_fn
+CHECK-DAG:      %[[ZERO:.*]] = arith.constant dense<0>
+CHECK-DAG:      %[[FMIN:.*]] = arith.constant dense<-1.280000e+02>
+CHECK-DAG:      %[[IMIN:.*]] = arith.constant dense<-128>
+CHECK-DAG:      %[[FMAX:.*]] = arith.constant dense<1.270000e+02>
+CHECK-DAG:      %[[IMAX:.*]] = arith.constant dense<127>
+CHECK:          %[[FPTOSI:.*]] = arith.fptosi %[[IN:.*]] :
+CHECK:          %[[CMP1:.*]] = arith.cmpf ole, %[[IN]], %[[FMIN]]
+CHECK:          %[[RES1:.*]] = arith.select %[[CMP1]], %[[IMIN]], %[[FPTOSI]]
+CHECK:          %[[CMP2:.*]] = arith.cmpf oge, %[[IN]], %[[FMAX]]
+CHECK:          %[[RES2:.*]] = arith.select %[[CMP2]], %[[IMAX]], %[[RES1]]
+CHECK:          %[[CMP3:.*]] = arith.cmpf uno, %[[IN]], %[[IN]]
+CHECK:          %[[RES3:.*]] = arith.select %[[CMP3]], %[[ZERO]], %[[RES2]]
+})"));
 }
 
 TEST_F(TritonGemmTestWithoutTritonGemmAny, SkipF32F32) {
@@ -4703,8 +4742,7 @@ CHECK-NOT:  inputPrecision = tf32
 }
 
 TEST_F(TritonTest, Fp8LoweringIsSupportedPostHopper) {
-  if (!GetCudaComputeCapability().IsAtLeast(
-          se::CudaComputeCapability::HOPPER)) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
     GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
   }
   const std::string hlo_text = R"(
@@ -4733,6 +4771,36 @@ ENTRY main {
       CreateTritonIrAndFileCheckForDot(this, hlo_text, "triton_dot", R"(
 CHECK: tt.dot {{.*}}{maxNumImpreciseAcc = 2147483647 : i32} : tensor<128x64xf8E4M3FNUZ> * tensor<64x32xf8E4M3FNUZ> -> tensor<128x32xf32>
   )"));
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1.0, /*arel=*/1e-3}));
+}
+
+TEST_F(TritonTest, BF16ToFP8EndToEnd) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
+  }
+
+  const std::string hlo_text = R"(
+HloModule t
+
+triton_dot {
+  parameter_0 = bf16[32,32]{1,0} parameter(0)
+  parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  convert = f8e4m3fn[32,32]{1,0} convert(parameter_0)
+  ROOT dot = f32[32,32]{1,0} dot(convert, parameter_1),
+                lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY main {
+  parameter_0 = bf16[32,32]{1,0} parameter(0)
+  parameter_1 = f8e4m3fn[32,32]{1,0} parameter(1)
+  ROOT gemm_fusion_dot = f32[32,32]{1,0} fusion(parameter_0, parameter_1),
+       kind=kCustom, calls=triton_dot,
+       backend_config={
+       "fusion_backend_config":{"kind":"__triton_gemm","triton_gemm_config":
+         {"block_m":"32","block_n":"32","block_k":"32","split_k":"1",
+          "num_stages":"1","num_warps":"4","num_ctas":"1"}}}
+})";
 
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/1.0, /*arel=*/1e-3}));
 }
@@ -4771,6 +4839,37 @@ CHECK: $L__BB0_1:
 CHECK-NEXT: // begin inline asm
 CHECK-NEXT: .pragma "nounroll";
 CHECK: wgmma
+)");
+}
+
+TEST_F(TritonGemmTest, WgmmaIsUsedForMemBoundShape) {
+  if (GetCudaComputeCapability().major != se::CudaComputeCapability::HOPPER) {
+    GTEST_SKIP() << "wgmma instruction is only available on Hopper";
+  }
+  const std::string hlo_text = R"(
+gemm_fusion_dot {
+  p0 = s8[128,128]{1,0} parameter(0)
+  p1 = bf16[128,16]{1,0} parameter(1)
+  convert = bf16[128,128]{1,0} convert(p0)
+  ROOT %dot = bf16[128,16]{1,0} dot(convert, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = s8[128,128]{1,0} parameter(0)
+  p1 = bf16[128,16]{1,0} parameter(1)
+  ROOT triton_gemm_fusion_dot = bf16[128,16]{1,0} fusion(p0, p1), kind=kCustom,
+    calls=gemm_fusion_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+      triton_gemm_config:
+        {"block_m":128,"block_n":16,"block_k":16,
+         "split_k":1,"num_stages":1,"num_warps":4,
+         "num_ctas":1}}}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> verified_module,
+                          ParseAndReturnVerifiedModule(hlo_text));
+  CompileAndOptionallyVerifyPtx(std::move(verified_module), R"(
+CHECK: wgmma.mma_async.sync.aligned.m64n16k16.f32.bf16.bf16
 )");
 }
 

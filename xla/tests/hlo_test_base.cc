@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/tests/pjrt_client_registry.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
 
@@ -294,15 +294,15 @@ void HloTestBase::RunAndFilecheckHloModuleGroupRewrite(
 }
 
 absl::StatusOr<Literal> HloTestBase::Execute(
-    std::unique_ptr<HloModule> module, absl::Span<Literal* const> arguments) {
-  return runner_->Execute(std::move(module), arguments);
+    std::unique_ptr<HloModule> module, absl::Span<Literal* const> arguments,
+    bool run_hlo_passes) {
+  return runner_->Execute(std::move(module), arguments, run_hlo_passes);
 }
 
 Literal HloTestBase::ExecuteNoHloPasses(std::unique_ptr<HloModule> module,
                                         absl::Span<Literal* const> arguments) {
-  return runner_
-      ->Execute(std::move(module), arguments,
-                /*run_hlo_passes=*/false)
+  return Execute(std::move(module), arguments,
+                 /*run_hlo_passes=*/false)
       .value();
 }
 
@@ -409,6 +409,29 @@ absl::StatusOr<std::vector<Literal>> HloTestBase::ExecuteReplicated(
   return runner_->ExecuteReplicated(executable_provider,
                                     argument_count_provider, argument_provider,
                                     options, device_assignment);
+}
+
+absl::StatusOr<std::vector<Literal>> HloTestBase::ExecuteReplicated(
+    std::unique_ptr<HloModule> module,
+    std::vector<std::vector<Literal*>> arguments, int64_t num_replicas,
+    bool run_hlo_passes) {
+  CHECK(num_replicas > 0 && "expect at least one replica");
+  CHECK(num_replicas == arguments.size() &&
+        "expect arguments for each replica");
+  int64_t argument_count = arguments.front().size();
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<Executable> executable,
+      runner_->CreateExecutable(std::unique_ptr<HloModule>(std::move(module)),
+                                run_hlo_passes));
+  return ExecuteReplicated(
+      /*executable_provider=*/[&](int64_t) { return executable.get(); },
+      /*argument_count_provider=*/[&](int64_t) { return argument_count; },
+      /*argument_provider=*/
+      [&](int64_t replica_idx, int64_t argument_idx) -> const Literal* {
+        return arguments[replica_idx][argument_idx];
+      },
+      num_replicas, /*run_hlo_passes=*/run_hlo_passes,
+      /*device_assignment=*/nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>> HloTestBase::MakeReferenceModule(

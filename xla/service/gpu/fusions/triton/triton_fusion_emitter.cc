@@ -340,12 +340,46 @@ Value Cast(ImplicitLocOpBuilder& b, Value value, Type dst_element_ty) {
   }
   // float => int
   if (src_fp_element_ty && mlir::isa<mlir::IntegerType>(dst_element_ty)) {
-    // TODO(b/266862493): Support unsigned integer types.
     if (dst_element_ty.isInteger(1)) {
       return b.create<ma::CmpFOp>(ma::CmpFPredicate::UNE, value,
                                   ZerosLike(b, value));
     }
-    return b.create<ma::FPToSIOp>(dst_ty, value);
+    // TODO(b/266862493): Support unsigned integer types.
+    // The current logic handles signed integer types only. Additional handling
+    // is needed for unsigned integer types.
+    auto cst_int = [&](int64_t x) {
+      if (auto src_shaped_ty = mlir::dyn_cast<ShapedType>(src_ty)) {
+        return CreateConst(b, dst_element_ty, x, src_shaped_ty.getShape());
+      } else {
+        return CreateConst(b, dst_element_ty, x);
+      }
+    };
+    auto cst_float = [&](int64_t x) {
+      if (auto src_shaped_ty = mlir::dyn_cast<ShapedType>(src_ty)) {
+        return CreateConst(b, src_fp_element_ty, x, src_shaped_ty.getShape());
+      } else {
+        return CreateConst(b, src_fp_element_ty, x);
+      }
+    };
+    auto fptosi = b.create<ma::FPToSIOp>(dst_ty, value);
+    int64_t min = llvm::minIntN(dst_element_ty.getIntOrFloatBitWidth());
+    int64_t max = llvm::maxIntN(dst_element_ty.getIntOrFloatBitWidth());
+
+    // value <= static_cast<float>(INT_MIN) ? INT_MIN : ...
+    auto clamped = b.create<mlir::arith::SelectOp>(
+        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OLE, value,
+                                      cst_float(min)),
+        cst_int(min), fptosi);
+    // value >= static_cast<float>(INT_MAX) ? INT_MAX : ...
+    clamped = b.create<mlir::arith::SelectOp>(
+        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OGE, value,
+                                      cst_float(max)),
+        cst_int(max), clamped);
+    // isnan(value) ? 0 : ...
+    return b.create<mlir::arith::SelectOp>(
+        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::UNO, value,
+                                      value),
+        cst_int(0), clamped);
   }
 
   LOG(FATAL) << "Type conversion not supported: "
@@ -674,24 +708,20 @@ absl::StatusOr<Value> EmitReduce(
     absl::flat_hash_map<const TiledHloInstruction*, Value>& values,
     absl::string_view libdevice_path,
     const se::DeviceDescription& device_info) {
+  // At the moment, we should only emit a full reduction over a single
+  // dimension using a scalar as a neutral element.
   const HloReduceInstruction& hlo_reduce =
       *::xla::Cast<HloReduceInstruction>(tiled_hlo_reduce.hlo());
-  // At the moment, we should only emit a full reduction over the last axis of
-  // a single input.
   TF_RET_CHECK(hlo_reduce.operand_count() == 2);
   TF_RET_CHECK(hlo_reduce.dimensions().size() == 1);
-  TF_RET_CHECK(hlo_reduce.dimensions().front() ==
-               hlo_reduce.operand(0)->shape().rank() - 1);
 
-  const int64_t row_len = hlo_reduce.operand(0)->shape().dimensions_minor(0);
-  const int64_t block_row = llvm::PowerOf2Ceil(row_len);
   Value input = values[tiled_hlo_reduce.operand(0)];
-  Value neutral = values[tiled_hlo_reduce.operand(1)];
-
   llvm::ArrayRef<int64_t> input_shape =
-      mlir::cast<ShapedType>(values[tiled_hlo_reduce.operand(0)].getType())
-          .getShape();
-  int64_t input_rank = input_shape.size();
+      mlir::cast<ShapedType>(input.getType()).getShape();
+  absl::Span<const int64_t> source_tensor_shape =
+      hlo_reduce.operand(0)->shape().dimensions();
+
+  int reduction_dimension = hlo_reduce.dimensions().front();
 
   // Since every shape is padded to a power of 2 in Triton, the input tile may
   // be padded with arbitrary values. These values could affect the result of
@@ -701,29 +731,42 @@ absl::StatusOr<Value> EmitReduce(
   // hlo_reduce.operand(1) is thus always the right choice to ensure that the
   // reduction is computed correctly, since it is the neutral value with regards
   // to the reducer.
-  if (block_row != row_len) {
-    Value mask = b.create<ma::CmpIOp>(
-        ma::CmpIPredicate::slt, Range(b, block_row),
-        Splat(b, CreateConst(b, b.getI32Type(), row_len), block_row));
+  int64_t source_tensor_reduction_dimension_size =
+      source_tensor_shape[reduction_dimension];
+  int64_t input_reduction_dimension_size = input_shape[reduction_dimension];
+  if (input_reduction_dimension_size !=
+      source_tensor_reduction_dimension_size) {
+    Value range = Range(b, input_reduction_dimension_size);
+    // Triton's broadcast requires that the rank of the source and broadcasted
+    // result are equal.
+    for (int i = 0; i < input_shape.size() - 1; i++) {
+      if (i < reduction_dimension) {
+        range = b.create<mt::ExpandDimsOp>(range, /*axis=*/0);
+      } else {
+        range = b.create<mt::ExpandDimsOp>(range, /*axis=*/i + 1);
+      }
+    }
+    Value mask = Broadcast(b, mlir::cast<TensorValue>(range), input_shape);
+    Value constant =
+        CreateConst(b, b.getI32Type(), source_tensor_reduction_dimension_size);
+    Value constant_tensor = Splat(b, constant, input_shape);
+    mask = b.create<ma::CmpIOp>(ma::CmpIPredicate::slt, mask, constant_tensor);
 
-    // Make the mask match the rank of the input---the mask starts out with
-    // rank 1.
-    mask = LeftExpandDimNTimes(b, mask, input_rank - 1);
-    mask = Broadcast(b, mlir::cast<TensorValue>(mask), input_shape);
-
-    Value broadcasted_neutral = Broadcast(
-        b, mlir::cast<TensorValue>(LeftExpandDimNTimes(b, neutral, input_rank)),
-        input_shape);
-
-    input = b.create<ma::SelectOp>(mask, input, broadcasted_neutral);
+    Value neutral = values[tiled_hlo_reduce.operand(1)];
+    // Triton's broadcast requires that the rank of the source and broadcasted
+    // result are equal.
+    for (int i = 0; i < input_shape.size(); i++) {
+      neutral = b.create<mt::ExpandDimsOp>(neutral, /*axis=*/0);
+    }
+    neutral = Broadcast(b, mlir::cast<TensorValue>(neutral), input_shape);
+    input = b.create<ma::SelectOp>(mask, input, neutral);
   }
 
   // Triton actually only performs reductions on float32 inputs, and we must
   // thus upcast/downcast our input if its data type is different.
-  Value casted_input = Cast(b, input, b.getF32Type());
+  input = Cast(b, input, b.getF32Type());
 
-  mt::ReduceOp reduction = b.create<mt::ReduceOp>(
-      SmallVector<Value>({casted_input}), (int)input_shape.size() - 1);
+  mt::ReduceOp reduction = b.create<mt::ReduceOp>(input, reduction_dimension);
   {
     mlir::Location loc = b.getLoc();
     mlir::Block* reducer =
@@ -897,9 +940,10 @@ absl::StatusOr<Value> EmitTiledHloInstruction(
   const HloInstruction* hlo = tiled_hlo.hlo();
 
   if (fusion->IsUserOf(tiled_hlo.hlo())) {
-    auto make_tensor = ir_emitter_triton_internal::CreateMakeTensorPtrOp(
-        b, tile_multi_index, tiled_hlo,
-        fn.getArgument(fusion->operand_index(hlo)));
+    TF_ASSIGN_OR_RETURN(auto make_tensor,
+                        ir_emitter_triton_internal::CreateMakeTensorPtrOp(
+                            b, tile_multi_index, tiled_hlo,
+                            fn.getArgument(fusion->operand_index(hlo))));
 
     return EmitParameterLoad(b, make_tensor.op, make_tensor.boundary_checks);
   }
@@ -1832,7 +1876,7 @@ class MatMulEmitterHelper {
 absl::StatusOr<LaunchDimensions> GetMatMulLaunchDimensions(
     const TritonFusionAnalysis& analysis, const HloFusionAdaptor& fusion,
     const TritonGemmConfig& config) {
-  auto dot = HloFindIf(fusion.GetRoots(), fusion, [](auto node) {
+  auto dot = HloBfsFindIf(fusion.GetRoots(), fusion, [](auto node) {
     return node.opcode() == HloOpcode::kDot;
   });
   TF_RET_CHECK(dot != std::nullopt);
@@ -2167,7 +2211,7 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
 
   // TODO(b/320659359) Allow TF32 for 8-bit or less types with F32.
   bool is_unsupported_bitwidth =
-      HloAnyOf({dot_instr}, [&](const HloInstruction* node) {
+      HloBfsAnyOf({dot_instr}, [&](const HloInstruction* node) {
         if (node->opcode() != HloOpcode::kConvert) {
           return false;
         }
@@ -2489,8 +2533,9 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
 
 // Computes the base pointer offset for the given tile multi-index and hlo shape
 // taking into account the physical layout of the hlo buffer.
-Value ComputeBasePtrOffset(ImplicitLocOpBuilder b, ValueRange tile_multi_index,
-                           const TiledHloInstruction& tiled_hlo) {
+absl::StatusOr<Value> ComputeBasePtrOffset(
+    ImplicitLocOpBuilder b, ValueRange tile_multi_index,
+    const TiledHloInstruction& tiled_hlo) {
   const Shape& shape = tiled_hlo.hlo()->shape();
   Shape linear_shape = ShapeUtil::MakeShape(shape.element_type(),
                                             {ShapeUtil::ElementsIn(shape)});
@@ -2498,8 +2543,12 @@ Value ComputeBasePtrOffset(ImplicitLocOpBuilder b, ValueRange tile_multi_index,
   // Bitcast map gives an indexing map from linear index to the parameter shape
   // index respecting physical layout of the memory.
   auto bitcast_map = GetBitcastMap(shape, linear_shape, b.getContext());
+
+  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                      tiled_hlo.tile_offsets_indexing());
+
   auto compose_indexing_maps =
-      ComposeIndexingMaps(tiled_hlo.tile_offsets_indexing(), bitcast_map);
+      ComposeIndexingMaps(tile_offsets_indexing, bitcast_map);
   compose_indexing_maps.Simplify();
 
   return b.create<ma::IndexCastUIOp>(
@@ -2532,7 +2581,7 @@ SmallVector<Value, 3> ComputeDelinearizedTileIndex(
                                        /*symbols=*/{}, b);
 }
 
-MakeTensorPtrOpAndBoundaryChecks CreateMakeTensorPtrOp(
+absl::StatusOr<MakeTensorPtrOpAndBoundaryChecks> CreateMakeTensorPtrOp(
     ImplicitLocOpBuilder& b, ValueRange tile_multi_index,
     const TiledHloInstruction& tiled_hlo, Value argument_block) {
   llvm::SmallVector<Value> sizes;
@@ -2592,7 +2641,8 @@ MakeTensorPtrOpAndBoundaryChecks CreateMakeTensorPtrOp(
 
   // Manually compute pointer offset to avoid materialized fully parallel
   // dimensions in the tile. Current codegen tried to avoid size-1 dims.
-  Value ptr_offset = ComputeBasePtrOffset(b, tile_multi_index, tiled_hlo);
+  TF_ASSIGN_OR_RETURN(Value ptr_offset,
+                      ComputeBasePtrOffset(b, tile_multi_index, tiled_hlo));
   auto tile_ptr = AddPtr(b, argument_block, ptr_offset);
 
   return MakeTensorPtrOpAndBoundaryChecks{b.create<mt::MakeTensorPtrOp>(
@@ -2631,7 +2681,9 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
                       symbolic_tile_analysis.ComputeTiledHloInstructions(
-                          block_level_parameters.output_tile_sizes));
+                          block_level_parameters.output_tile_sizes,
+                          /*constraints_are_known_satisfied=*/false,
+                          /*compute_all_tile_offset_indexing_maps=*/true));
 
   SmallVector<Value, 3> tile_multi_index =
       ir_emitter_triton_internal::ComputeDelinearizedTileIndex(
@@ -2643,9 +2695,10 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                      tiled_hlo_computation, fn, tile_multi_index));
 
   const auto& tiled_hlo = *tiled_hlo_computation.GetRoot();
-  auto make_tensor = ir_emitter_triton_internal::CreateMakeTensorPtrOp(
-      b, tile_multi_index, tiled_hlo,
-      fn.getArgument(computation->num_parameters()));
+  TF_ASSIGN_OR_RETURN(auto make_tensor,
+                      ir_emitter_triton_internal::CreateMakeTensorPtrOp(
+                          b, tile_multi_index, tiled_hlo,
+                          fn.getArgument(computation->num_parameters())));
   b.create<mt::StoreOp>(make_tensor.op, result, make_tensor.boundary_checks,
                         mt::CacheModifier::NONE, mt::EvictionPolicy::NORMAL);
 
@@ -2831,7 +2884,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
-    mlir::MLIRContext& mlir_context) {
+    mlir::MLIRContext& mlir_context, bool emit_kernel) {
   if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
     auto ccCuda = std::get<se::CudaComputeCapability>(cc);
     if (!ccCuda.IsAtLeastAmpere()) {
@@ -2926,27 +2979,30 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
         shared_mem_bytes, device_info.shared_memory_per_block_optin()));
   }
 
-  TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<llvm::Module> ll_triton_module,
-      TranslateLLVMToLLVMIR(&llvm_module->getContext(), triton_module,
-                            GetLibdevicePath(hlo_config, device_info)));
-  VLogModule(5, *ll_triton_module);
-  if (should_verify) {
-    VerifyModule(*ll_triton_module);
-  }
+  if (emit_kernel) {
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<llvm::Module> ll_triton_module,
+        TranslateLLVMToLLVMIR(&llvm_module->getContext(), triton_module,
+                              GetLibdevicePath(hlo_config, device_info)));
+    VLogModule(5, *ll_triton_module);
+    if (should_verify) {
+      VerifyModule(*ll_triton_module);
+    }
 
-  // Integrate LLVM matmul kernel into XLA's LLVM module.
-  ll_triton_module->eraseNamedMDNode(
-      ll_triton_module->getNamedMetadata("nvvm.annotations"));
-  ll_triton_module->setDataLayout(llvm_module->getDataLayout());
-  ll_triton_module->setTargetTriple(llvm_module->getTargetTriple());
-  // Use override flag because libdevice functions can be present in both.
-  TF_RET_CHECK(
-      !llvm::Linker::linkModules(*llvm_module, std::move(ll_triton_module),
-                                 llvm::Linker::Flags::OverrideFromSrc));
-  VLogModule(5, *llvm_module);
-  if (should_verify) {
-    VerifyModule(*llvm_module);
+    // Integrate LLVM matmul kernel into XLA's LLVM module.
+    ll_triton_module->eraseNamedMDNode(
+        ll_triton_module->getNamedMetadata("nvvm.annotations"));
+    ll_triton_module->setDataLayout(llvm_module->getDataLayout());
+    ll_triton_module->setTargetTriple(llvm_module->getTargetTriple());
+    // Use override flag because libdevice functions can be present in both.
+    TF_RET_CHECK(
+        !llvm::Linker::linkModules(*llvm_module, std::move(ll_triton_module),
+                                   llvm::Linker::Flags::OverrideFromSrc));
+
+    VLogModule(5, *llvm_module);
+    if (should_verify) {
+      VerifyModule(*llvm_module);
+    }
   }
 
   // `cluster_info` must be read after pm.run().

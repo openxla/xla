@@ -108,8 +108,8 @@ tsl_cc_test(
     ],
     deps = [
         ":grpc_channel",
+        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/util:device_name_utils",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:test",

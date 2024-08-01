@@ -212,6 +212,7 @@ xla_test(
         "//xla/tests:filecheck",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -219,7 +220,6 @@ xla_test(
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
@@ -257,13 +257,13 @@ xla_test(
         "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
@@ -322,6 +322,7 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -332,7 +333,6 @@ xla_cc_test(
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:Support",
         "@triton//:TritonDialects",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -399,6 +399,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:instruction_fusion",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:variant_visitor",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/algorithm:container",
@@ -415,6 +417,9 @@ xla_cc_test(
     name = "triton_support_test",
     srcs = ["triton_support_test.cc"],
     shard_count = 20,
+    # TODO(b/353912594): this test does not need to run on GPU, but it is broken on CPU in OSS.
+    # Force it to run on GPU temporarily in order to get important OSS coverage.
+    tags = ["gpu"],
     deps = [
         ":triton_fusion_emitter",
         ":triton_support",
@@ -459,11 +464,11 @@ xla_test(
         "//xla/service/gpu:triton_fusion_analysis",
         "//xla/service/gpu/model:tiled_hlo_computation",
         "//xla/stream_executor:device_description",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],

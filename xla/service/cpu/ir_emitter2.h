@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
@@ -90,6 +91,7 @@ class IrEmitter2 {
   // to emit the actual kernel body.
   struct KernelPrototype {
     llvm::Function* function;
+    llvm::BasicBlock* return_block;
 
     // LLVM values identifying kernel invocation thread coordinates.
     KernelThreadDims thread_dims;
@@ -123,6 +125,9 @@ class IrEmitter2 {
   absl::StatusOr<KernelInfo> EmitElementalHostKernel(
       const HloInstruction* instr);
 
+  // Emits a host kernel for the pad instruction.
+  absl::StatusOr<KernelInfo> EmitPadHostKernel(const HloInstruction* pad);
+
   // Emits a host kernel for the given fusion instruction.
   absl::StatusOr<KernelInfo> EmitFusionHostKernel(
       const HloFusionInstruction* fusion);
@@ -143,6 +148,10 @@ class IrEmitter2 {
   // Emits a host kernel for the given dot fusion instruction (output fusion).
   absl::StatusOr<KernelInfo> EmitDotFusionHostKernel(
       const HloFusionInstruction* fusion);
+
+  // Emits a host kernel for the given slice-to-dynamic instruction.
+  absl::StatusOr<KernelInfo> EmitSliceToDynamicHostKernel(
+      const HloInstruction* instr);
 
   // Emits a host kernel for the given select-and-scatter instruction.
   absl::StatusOr<KernelInfo> EmitSelectAndScatterHostKernel(

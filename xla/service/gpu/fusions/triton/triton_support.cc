@@ -32,6 +32,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/variant_visitor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
@@ -309,9 +311,7 @@ CodegenDecision CanTritonHandleReduce(
     return "Unsupported reduction computation by Triton.";
   }
 
-  if (reduce.dimensions().size() == 1 &&
-      reduce.dimensions().front() == reduce.operand(0)->shape().rank() - 1 &&
-      reduce.operand_count() == 2) {
+  if (reduce.dimensions().size() == 1 && reduce.operand_count() == 2) {
     return CodegenDecision{};
   }
   return "Reduction is not a row-reduction of a single operand.";
@@ -646,6 +646,16 @@ CodegenDecision IsTritonSupportedInstruction(
   VLOG(2) << "IsTritonSupportedInstruction: " << instr.ToString() << " "
           << bool(decision);
   return decision;
+}
+
+bool IsTritonFusedComputation(const HloComputation& computation) {
+  HloFusionInstruction* fusion =
+      static_cast<HloFusionInstruction*>(computation.FusionInstruction());
+  return fusion != nullptr &&
+         fusion->fusion_kind() == HloInstruction::FusionKind::kCustom &&
+         fusion->backend_config<gpu::GpuBackendConfig>()
+                 ->fusion_backend_config()
+                 .kind() == kTritonGemmFusionKind;
 }
 
 }  // namespace gpu

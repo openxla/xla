@@ -37,8 +37,8 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -841,6 +841,19 @@ TEST(FfiTest, AllowRegisterDuplicateWhenEqual) {
   auto status = TakeStatus(Ffi::RegisterStaticHandler(
       GetXlaFfiApi(), "duplicate-when-equal", "Host", NoOp));
   TF_ASSERT_OK(status);
+}
+
+TEST(FfiTest, ApiVersion) {
+  auto handler = Ffi::Bind().To([]() { return absl::OkStatus(); });
+  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
+  auto call_frame = builder.Build();
+  auto api = GetXlaFfiApi();
+  XLA_FFI_Api api_copy = *api;
+  api_copy.api_version.major_version += 1;
+  auto status = CallWithApi(&api_copy, *handler, call_frame);
+  EXPECT_TRUE(absl::StrContains(status.message(), "FFI handler's API version"))
+      << "status.message():\n"
+      << status.message() << "\n";
 }
 
 //===----------------------------------------------------------------------===//

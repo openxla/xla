@@ -18,6 +18,10 @@ limitations under the License.
 #include <cstdint>
 #include <utility>
 
+#include "xla/executable_run_options.h"
+#include "xla/service/cpu/collectives_interface.h"
+#include "xla/service/cpu/cpu_executable_run_options.h"
+#include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
 namespace xla::cpu {
@@ -30,8 +34,8 @@ class ThunkExecuteStateTestHelper : public Thunk {
   }
 };
 
-TEST(ThunkTest, OkExecuteEvent) {
-  auto event = Thunk::OkExecuteEvent();
+TEST(ThunkTest, OkExecuteEventSingleton) {
+  auto event = Thunk::OkExecuteEventSingleton();
   ASSERT_TRUE(event.IsConcrete());
 }
 
@@ -110,6 +114,27 @@ TEST(ThunkTest, ExecuteSession) {
   EXPECT_TRUE(lock5);
 
   EXPECT_EQ(session.num_workers(), 2);
+}
+
+TEST(ThunkTest, CollectiveExecuteParams) {
+  ExecutableRunOptions run_options;
+  run_options.set_device_ordinal(0);
+
+  // Collectives interface initialized with a default implementation.
+  TF_ASSERT_OK_AND_ASSIGN(auto params,
+                          Thunk::CollectiveExecuteParams::Create(&run_options));
+  EXPECT_NE(params.collectives, nullptr);
+
+  // Test forwarding collectives interface from CpuExecutableRunOptions.
+  CpuExecutableRunOptions cpu_run_options;
+  cpu_run_options.set_collectives(
+      reinterpret_cast<CollectivesInterface*>(0x12345678));
+  run_options.set_cpu_executable_run_options(&cpu_run_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(params,
+                          Thunk::CollectiveExecuteParams::Create(&run_options));
+  EXPECT_EQ(params.collectives,
+            reinterpret_cast<CollectivesInterface*>(0x12345678));
 }
 
 }  // namespace

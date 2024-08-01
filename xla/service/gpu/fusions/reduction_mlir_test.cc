@@ -29,7 +29,7 @@ limitations under the License.
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {
@@ -159,6 +159,24 @@ constexpr auto kMultiRowReductionX2VectorX4 = R"(
       p1 = f32[76800,16]{1,0} parameter(1)
 
       ROOT fusion = (pred[76800]{0}, pred[76800]{0}) fusion(p0, p1), kind=kInput, calls=fusion
+    })";
+
+constexpr auto kMultiRowReductionX16VectorX2 = R"(
+    or {
+      tmp_0 = pred[] parameter(0)
+      tmp_1 = pred[] parameter(1)
+      ROOT tmp_2 = pred[] or(tmp_0, tmp_1)
+    }
+
+    fusion {
+      p0 = pred[76800,2] parameter(0)
+      c0 = pred[] constant(false)
+      ROOT reduce = pred[76800] reduce(p0, c0), dimensions={1}, to_apply=or
+    }
+
+    ENTRY main {
+      p0 = pred[76800,2] parameter(0)
+      ROOT fusion = pred[76800] fusion(p0), kind=kInput, calls=fusion
     })";
 
 constexpr std::string_view kRowReductionSideOutput = R"(
@@ -381,8 +399,8 @@ TEST_F(MlirRowReductionTest, NonPowerOfTwoRowReduction) {
       ROOT fusion = f32[100] fusion(a, c), kind=kInput, calls=fused_computation
     })";
   TF_EXPECT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK-DAG: #[[MAP1:.*]] = affine_map<(d0, d1)[s0] -> ((d1 mod 64) * 2 + s0 * 128 + d0)>
-    // CHECK-DAG: #[[MAP2:.*]] = affine_map<(d0, d1) -> ((d1 mod 64) * 2 + d0 + 512)>
+    // CHECK-DAG: #[[MAP1:.*]] = #xla_gpu.indexing_map<(d0, d1)[s0] -> ((d1 mod 64) * 2 + s0 * 128 + d0), domain: d0 in [0, 1], d1 in [0, 255], s0 in [0, 3]>
+    // CHECK-DAG: #[[MAP2:.*]] = #xla_gpu.indexing_map<(d0, d1) -> ((d1 mod 64) * 2 + d0 + 512), domain: d0 in [0, 1], d1 in [0, 255]>
     // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
     // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
     // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : index
@@ -390,10 +408,10 @@ TEST_F(MlirRowReductionTest, NonPowerOfTwoRowReduction) {
     // CHECK: %[[FULL_TILES:.*]] = scf.for %[[I:.*]] = %[[C0]] to %[[C4]] step %[[C1]]
     // CHECK-NEXT: scf.for %[[J:.*]] = %[[C0]] to %[[C2]] step %[[C1]]
     // CHECK-NOT: scf.if
-    // CHECK: xla_gpu.apply_indexing #[[MAP1]](%[[J]] in [0, 2), %thread_id_x in [0, 256))[%[[I]] in [0, 5)]
+    // CHECK: xla_gpu.apply_indexing #[[MAP1]](%[[J]], %thread_id_x)[%[[I]]]
     // CHECK: scf.for %[[J:.*]] = %[[C0]] to %[[C2]] step %[[C1]] iter_args(%{{.*}} = %[[FULL_TILES]])
     // CHECK: scf.if
-    // CHECK: xla_gpu.apply_indexing #[[MAP2]](%[[J]] in [0, 2), %thread_id_x in [0, 256))
+    // CHECK: xla_gpu.apply_indexing #[[MAP2]](%[[J]], %thread_id_x)
   )"));
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
@@ -673,16 +691,16 @@ TEST_F(MlirColumnReductionTest, ColumnReduction) {
           (d3 mod 11) * 32 + d0 mod 32
         )
         domain:
-        d0 in [0, 1024)
-        d1 in [0, 1)
-        d2 in [0, 1)
-        d3 in [0, 143)
-        d4 in [0, 1)
-        d5 in [0, 1)
-        s0 in [0, 33)
-        s1 in [0, 1)
-        (d3 mod 11) * 32 + d0 mod 32 in [0, 321)
-        d0 floordiv 32 + s0 * 32 in [0, 1051)
+        d0 in [0, 1023]
+        d1 in [0, 0]
+        d2 in [0, 0]
+        d3 in [0, 142]
+        d4 in [0, 0]
+        d5 in [0, 0]
+        s0 in [0, 32]
+        s1 in [0, 0]
+        (d3 mod 11) * 32 + d0 mod 32 in [0, 320]
+        d0 floordiv 32 + s0 * 32 in [0, 1050]
       )"));
   EXPECT_THAT(
       fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
@@ -691,15 +709,15 @@ TEST_F(MlirColumnReductionTest, ColumnReduction) {
           d3 floordiv 11, (d3 mod 11) * 32 + d0 floordiv 32
         )
         domain:
-        d0 in [0, 993)
-        d1 in [0, 1)
-        d2 in [0, 1)
-        d3 in [0, 143)
-        d4 in [0, 1)
-        d5 in [0, 1)
-        s0 in [0, 1)
-        (d3 mod 11) * 32 + d0 floordiv 32 in [0, 321)
-        d0 mod 32 in [0, 1)
+        d0 in [0, 992]
+        d1 in [0, 0]
+        d2 in [0, 0]
+        d3 in [0, 142]
+        d4 in [0, 0]
+        d5 in [0, 0]
+        s0 in [0, 0]
+        (d3 mod 11) * 32 + d0 floordiv 32 in [0, 320]
+        d0 mod 32 in [0, 0]
       )"));
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
     // CHECK: xla_gpu.pure_call @Add_add
@@ -855,9 +873,69 @@ TEST_F(MlirMultiRowReductionTest, VectorizedX4Indexing) {
               ElementsAre(1 /* major reduced */, 4 /* vector size */));
 }
 
+TEST_F(MlirMultiRowReductionTest, LimitedVectorizationCorrectness) {
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(kMultiRowReductionX16VectorX2, ErrorSpec{1e-3}));
+}
+
 TEST_F(MlirMultiRowReductionTest, VectorizedX4Correctness) {
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(kMultiRowReductionX2VectorX4, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirRowReductionTest, LargeToUnit) {
+  // Regression test for a bug where not all threads in the warp produced a
+  // valid value for the final warp shuffle.
+  constexpr auto kHloString = R"(
+    and {
+      p0 = pred[] parameter(0)
+      p1 = pred[] parameter(1)
+      ROOT and = pred[] and(p0, p1)
+    }
+
+    %fused_reduce {
+      c1 = pred[] constant(true)
+      p0 = pred[10000] broadcast(c1), dimensions={}
+      ROOT reduce = pred[] reduce(p0, c1), dimensions={0}, to_apply=and
+    }
+  )";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
+}
+
+TEST_F(MlirRowReductionTest, MOFTwoVariadic) {
+  // Regression test for a compilation crash with a MOF with two variadic
+  // reductions.
+  constexpr auto kHloString = R"(
+    add {
+      p0 = f32[] parameter(0)
+      p1 = f32[] parameter(1)
+      p2 = f32[] parameter(2)
+      p3 = f32[] parameter(3)
+      a = f32[] add(p0, p2)
+      b = f32[] add(p1, p3)
+      ROOT out = (f32[], f32[]) tuple(a, b)
+    }
+
+    fused_reduce {
+      p0 = f32[3,2] parameter(0)
+      p1 = f32[3,2] parameter(1)
+      c0 = f32[] constant(0)
+      iota0 = f32[3,2] iota(), iota_dimension=1
+      iota1 = f32[3,2] iota(), iota_dimension=1
+      reduce0 = (f32[3], f32[3]) reduce(p0, iota0, c0, c0), dimensions={1},
+          to_apply=add
+      reduce1 = (f32[3], f32[3]) reduce(p1, iota1, c0, c0), dimensions={1},
+          to_apply=add
+      ROOT tuple = ((f32[3], f32[3]), (f32[3], f32[3])) tuple(reduce0, %reduce1)
+    }
+
+    ENTRY main {
+      p0 = f32[3,2] parameter(0)
+      p1 = f32[3,2] parameter(1)
+      ROOT fusion = ((f32[3], f32[3]), (f32[3], f32[3])) fusion(p0, p1),
+        kind=kInput, calls=fused_reduce
+    })";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloString, ErrorSpec{1e-3}));
 }
 
 }  // namespace

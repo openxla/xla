@@ -31,14 +31,10 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tests/hlo_test_base.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 #include "tsl/protobuf/dnn.pb.h"
-
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
-#endif
 
 namespace xla::gpu {
 namespace {
@@ -109,6 +105,68 @@ TEST_P(GemmAlgorithmPickerTest, BlasGetVersion) {
   ASSERT_TRUE(blas->GetVersion(&version).ok());
   VLOG(0) << "Blas version: " << version;
   ASSERT_TRUE(!version.empty());
+}
+
+TEST_P(GemmAlgorithmPickerTest, SkipAlgorithmsWithAccuracyCheck) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY main {
+  %arg0 = f32[100,100]{1,0} parameter(0)
+  %arg1 = f32[100,100]{1,0} parameter(1)
+  ROOT %dot = f32[100,100]{1,0} dot(arg0, arg1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+
+  auto module_cfg = GetModuleConfigForTest();
+  auto debug_opts = module_cfg.debug_options();
+  size_t num_left1 = 0, num_left2 = 0;
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHlo, module_cfg));
+
+  {
+    // Run first with default settings (autotune level = 4), keep the number of
+    // algorithms left after autotuning
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        RunHloPass(GemmRewriter(gpu_comp(), /*toolkit_version=*/12040),
+                   module.get()));
+
+    AutotuneConfig cfg{DeviceConfig{stream_exec(), nullptr}, debug_opts};
+    GemmAlgorithmPicker gpicker(cfg);
+    // Note that, we do not care if the algorithm index has been changed:
+    // the thing matters is the # of algorithms left after sorting out.
+    TF_ASSERT_OK_AND_ASSIGN(changed, RunHloPass(gpicker, module.get()));
+    num_left1 = gpicker.num_algorithms_left();
+    if (num_left1 < 2) {
+      GTEST_SKIP() << "Too few algorithms left after the first step";
+    }
+  }
+
+  // Clear cache before the second run!
+  AutotunerUtil::ClearAutotuneResults();
+  {
+    // Run once again but now with autotune level 5 and embarassingly tight
+    // rtol which shall disqualify most of the algorithms.
+
+    // Note that, we have "two sources of truth" for GemmAlgorithmPicker: i.e.,
+    // debug_options are used to initialize both 'HloModuleConfig' and also
+    // 'AutotuneConfig'.
+    debug_opts.set_xla_gpu_autotune_gemm_rtol(1e-12);
+    debug_opts.set_xla_gpu_autotune_level(5);
+    module->mutable_config().set_debug_options(debug_opts);
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        RunHloPass(GemmRewriter(gpu_comp(), /*toolkit_version=*/12040),
+                   module.get()));
+
+    AutotuneConfig cfg{DeviceConfig{stream_exec(), nullptr}, debug_opts};
+    GemmAlgorithmPicker gpicker(cfg);
+    TF_ASSERT_OK_AND_ASSIGN(changed, RunHloPass(gpicker, module.get()));
+    num_left2 = gpicker.num_algorithms_left();
+  }
+  // Assert that we have fewer algorithms left after the second run.
+  ASSERT_TRUE(num_left1 > num_left2);
 }
 
 TEST_P(GemmAlgorithmPickerTest, SetAlgorithm) {
@@ -212,7 +270,7 @@ ENTRY main {
   TF_ASSERT_OK_AND_ASSIGN(m, ParseAndReturnVerifiedModule(kHlo, module_cfg));
   changed = false;
 
-  DevicelessConfig deviceless_config{gpu_device_desc().model_str(), gpu_comp()};
+  DevicelessConfig deviceless_config{gpu_device_desc()};
   AutotuneConfig deviceless_cfg{deviceless_config, opts};
   TF_ASSERT_OK_AND_ASSIGN(changed,
                           RunHloPass(GemmRewriter(gpu_comp(),

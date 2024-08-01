@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
@@ -80,18 +80,24 @@ absl::StatusOr<std::unique_ptr<LoadedExecutable>> CompileOnDevices(
   } else {
     build_options.set_device_ordinal(devices.front()->Id().value());
     if (replicated) {
+      build_options.set_num_replicas(devices.size());
+      build_options.set_num_partitions(1);
+      build_options.set_use_spmd_partitioning(false);
       DeviceAssignment device_assignment(/*replica_count=*/devices.size(),
                                          /*computation_count=*/1);
       for (int i = 0; i < devices.size(); ++i) {
-        device_assignment(i, 0) = i;
+        device_assignment(i, 0) = devices[i]->Id().value();
       }
       build_options.set_device_assignment(device_assignment);
     } else {
+      build_options.set_num_replicas(1);
+      build_options.set_num_partitions(devices.size());
+      build_options.set_use_spmd_partitioning(true);
       DeviceAssignment device_assignment(
           /*replica_count=*/1,
           /*computation_count=*/devices.size());
       for (int i = 0; i < devices.size(); ++i) {
-        device_assignment(i, 0) = i;
+        device_assignment(0, i) = devices[i]->Id().value();
       }
       build_options.set_device_assignment(device_assignment);
     }

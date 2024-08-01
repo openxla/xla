@@ -50,14 +50,15 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_description.pb.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/tools/hlo_decomposer.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/status_test_util.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
@@ -244,7 +245,11 @@ absl::StatusOr<std::vector<TritonGemmConfig>> GetPossibleMatmulAutotuneConfigs(
     const HloDotInstruction& dot,
     const se::CudaComputeCapability& compute_capability,
     const int32_t toolkit_version, const DebugOptions& debug_options) {
-  DevicelessConfig test_config{/*model_str=*/"", compute_capability};
+  se::GpuDeviceInfoProto deviceless_proto;
+  auto ccc = deviceless_proto.mutable_cuda_compute_capability();
+  ccc->set_major(compute_capability.major);
+  ccc->set_minor(compute_capability.minor);
+  DevicelessConfig test_config{se::DeviceDescription{deviceless_proto}};
   AutotuneConfig autotune_config{test_config, debug_options};
   GemmFusionAutotunerImpl autotuner(autotune_config, toolkit_version,
                                     debug_options, nullptr);
@@ -649,18 +654,18 @@ TEST_F(GemmFusionAutotunerDumpTest, DumpingWorks) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(R"(
 fusion1 {
-  p0 = f32[3333,3333] parameter(0)
-  s = f32[3333,3333] sine(p0)
-  p1 = f32[3333,3333] parameter(1)
-  c = f32[3333,3333] cosine(p1)
-  ROOT dot = f32[3333,3333] dot(s, c),
+  p0 = f32[333,333] parameter(0)
+  s = f32[333,333] sine(p0)
+  p1 = f32[333,333] parameter(1)
+  c = f32[333,333] cosine(p1)
+  ROOT dot = f32[333,333] dot(s, c),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 
 ENTRY e {
-  p0 = f32[3333,3333] parameter(0)
-  p1 = f32[3333,3333] parameter(1)
-  ROOT rr = f32[3333,3333] fusion(p0, p1), kind=kCustom, calls=fusion1,
+  p0 = f32[333,333] parameter(0)
+  p1 = f32[333,333] parameter(1)
+  ROOT rr = f32[333,333] fusion(p0, p1), kind=kCustom, calls=fusion1,
     backend_config={"fusion_backend_config": {kind: "__triton_gemm"}}
 })",
                                                        config));
@@ -776,15 +781,10 @@ ENTRY e {
   DebugOptions opts;
   MultiProcessKeyValueStore key_value_store;
   pipeline.AddPass<GemmFusionAutotuner>(
-      AutotuneConfig{DevicelessConfig{backend()
-                                          .default_stream_executor()
-                                          ->GetDeviceDescription()
-                                          .model_str(),
-                                      backend()
-                                          .default_stream_executor()
-                                          ->GetDeviceDescription()
-                                          .cuda_compute_capability()},
-                     opts},
+      AutotuneConfig{
+          DevicelessConfig{
+              backend().default_stream_executor()->GetDeviceDescription()},
+          opts},
       GetToolkitVersion(), &thread_pool, key_value_store);
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
