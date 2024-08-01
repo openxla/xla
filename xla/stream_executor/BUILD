@@ -576,12 +576,13 @@ cc_library(
         ":platform",
         ":stream_executor_h",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -808,6 +809,19 @@ xla_cc_test(
         ":device_description",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "executor_cache_test",
+    srcs = ["executor_cache_test.cc"],
+    deps = [
+        ":executor_cache",
+        ":mock_stream_executor",
+        ":platform",
+        ":stream",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
