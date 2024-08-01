@@ -97,6 +97,8 @@ std::optional<EstimateRunTimeData> GpuPerformanceModelCache::Get(
 
 std::optional<absl::Duration> GpuPerformanceModelCache::Get(
     const HloInstruction& producer, const HloInstruction& consumer) {
+  absl::MutexLock lock(&mutex_);
+
   auto it = fusion_runtime_data_.find(&producer);
   if (it != fusion_runtime_data_.end()) {
     auto jt = it->second.find(&consumer);
@@ -115,6 +117,7 @@ void GpuPerformanceModelCache::Set(const HloInstruction& instruction,
 void GpuPerformanceModelCache::Set(const HloInstruction& producer,
                                    const HloInstruction& consumer,
                                    absl::Duration runtime) {
+  absl::MutexLock lock(&mutex_);
   fusion_runtime_data_[&producer][&consumer] = runtime;
 }
 

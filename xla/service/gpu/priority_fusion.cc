@@ -253,7 +253,7 @@ class GpuPriorityFusionQueue {
   void updatePerformanceModelCache(HloInstruction* producer) {
     if (producer->opcode() == HloOpcode::kBitcast ||
         producer->opcode() == HloOpcode::kConstant ||
-        !CanFuseWithAllNonBitcastUsers(producer)) {
+        !IsFusible(*producer)) {
       return;
     }
 
@@ -264,12 +264,10 @@ class GpuPriorityFusionQueue {
         GpuPerformanceModel::EstimateRunTimeForInstructionCached(
             producer, *device_info_, &cost_analysis_, config);
     for (auto consumer : producer->users()) {
+      if (!IsFusible(*consumer)) continue;
       EstimateRunTimeData consumer_runtime =
           GpuPerformanceModel::EstimateRunTimeForInstructionCached(
               consumer, *device_info_, &cost_analysis_, config);
-      GpuPerformanceModel::EstimateRunTimeForFusionCached(
-          producer, consumer, producer_runtime, consumer_runtime, *device_info_,
-          &cost_analysis_, config);
     }
   }
 
@@ -573,20 +571,26 @@ class GpuPriorityFusionQueue {
 
   FusionDecision CanFuseCached(HloInstruction* producer,
                                HloInstruction* consumer) {
-    auto& producer_cache = can_fuse_cache_[producer];
+    {
+      absl::MutexLock lock(&can_fuse_cache_mutex_);
+      auto& producer_cache = can_fuse_cache_[producer];
 
-    auto it = producer_cache.find(consumer);
-    if (it != producer_cache.end()) {
-      return it->second;
+      auto it = producer_cache.find(consumer);
+      if (it != producer_cache.end()) {
+        return it->second;
+      }
     }
-
     auto fusion_decision = CanFuse(producer, consumer);
 
     // The lock is required, because writing to a flat_hash_map is not
     // thread-safe even for different keys. We never call this computation
     // concurrently for the same producer, so it's guaranteed that we don't
     // override any value.
-    can_fuse_cache_[producer][consumer] = fusion_decision;
+    {
+      absl::MutexLock lock(&can_fuse_cache_mutex_);
+      can_fuse_cache_[producer][consumer] = fusion_decision;
+    }
+
     return fusion_decision;
   }
 

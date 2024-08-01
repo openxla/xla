@@ -80,6 +80,8 @@ class GpuPerformanceModelCache {
   void Invalidate(const HloInstruction& instruction);
 
  private:
+  absl::Mutex mutex_;
+
   // Stores unfused runtime data for individual instructions.
   absl::flat_hash_map<const HloInstruction*, EstimateRunTimeData>
       instruction_runtime_data_;

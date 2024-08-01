@@ -268,9 +268,6 @@ absl::Duration GpuPerformanceModel::EstimateRunTimeForFusionCached(
     }
   }
 
-  CHECK(!config.gpu_performance_model_cache_read_only)
-      << "cache hit failed for read only cache.";
-
   auto fusion_runtime = EstimateRunTimeForFusion(
       producer, consumer, producer_runtime, consumer_runtime, device_info,
       cost_analysis, config);
