@@ -165,7 +165,7 @@ class GpuPriorityFusionQueue {
     }
     // write here and only read in worker threads
     for (auto producer : instructions) {
-      updatePerformanceModelCache(producer);
+      UpdatePerformanceModelCache(producer);
     }
     ComputeAndSetPriorities(instructions);
   }
@@ -250,7 +250,7 @@ class GpuPriorityFusionQueue {
     return !current_consumers_.empty();
   }
 
-  void updatePerformanceModelCache(HloInstruction* producer) {
+  void UpdatePerformanceModelCache(HloInstruction* producer) {
     if (producer->opcode() == HloOpcode::kBitcast ||
         producer->opcode() == HloOpcode::kConstant ||
         !IsFusible(*producer)) {
@@ -260,15 +260,12 @@ class GpuPriorityFusionQueue {
     auto config = GpuPerformanceModelOptions::PriorityFusion(
         &fusion_analysis_cache_, &gpu_performance_model_cache_);
 
-    EstimateRunTimeData producer_runtime =
-        GpuPerformanceModel::EstimateRunTimeForInstructionCached(
-            producer, *device_info_, &cost_analysis_, config);
-    for (auto consumer : producer->users()) {
-      if (!IsFusible(*consumer)) continue;
-      EstimateRunTimeData consumer_runtime =
-          GpuPerformanceModel::EstimateRunTimeForInstructionCached(
-              consumer, *device_info_, &cost_analysis_, config);
+    if (auto cached_result = gpu_performance_model_cache_.Get(*producer)) {
+      return;
     }
+    auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
+        producer, *device_info_, &cost_analysis_, config);
+    gpu_performance_model_cache_.Set(*producer, runtime_data);
   }
 
   // Update priorities of all affected ops.
@@ -279,7 +276,7 @@ class GpuPriorityFusionQueue {
       TF_CHECK_OK(cost_analysis_.RevisitInstruction(instruction));
     }
     for (auto producer : to_update_priority_) {
-      updatePerformanceModelCache(producer);
+      UpdatePerformanceModelCache(producer);
     }
 
     ComputeAndSetPriorities(std::vector<HloInstruction*>{
@@ -428,8 +425,7 @@ class GpuPriorityFusionQueue {
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, *device_info_, &cost_analysis_,
             GpuPerformanceModelOptions::PriorityFusion(
-                &fusion_analysis_cache_, &gpu_performance_model_cache_,
-                true /*gpu_performance_model_cache_read_only*/),
+                &fusion_analysis_cache_, &gpu_performance_model_cache_),
             producer->users());
 
     if (fusion_process_dump_) {
