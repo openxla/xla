@@ -418,7 +418,6 @@ class GpuPriorityFusionQueue {
       return std::numeric_limits<Priority>::min();
     }
 
-    // everything should already be in performance model cache
     // never write cache here as we dont have locks anymore
     GpuPerformanceModel::RunTimes run_times =
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
