@@ -28,6 +28,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
+#include "absl/status/status.h"
+
 // TODO(b/210891274): Use btree_map after build issue in Windows is resolved.
 #if defined(__GNUC__) || defined(__clang__)
 #include "absl/container/btree_map.h"
@@ -416,6 +419,8 @@ class BufferIntervalTree {
   // All the memory blocks beyond 64 are free for time interval [18,23].
   std::string NodesOverlappingInTimeToAsciiArt(int64_t start, int64_t end,
                                                int64_t group_size = 0) const;
+
+  std::vector<int64_t> MemoryUsedByTime(int64_t start, int64_t end) const;
 
  private:
   std::vector<const BufferIntervalTreeNode*> NodesOverlappingInTime(
