@@ -252,8 +252,7 @@ class GpuPriorityFusionQueue {
 
   void UpdatePerformanceModelCache(HloInstruction* producer) {
     if (producer->opcode() == HloOpcode::kBitcast ||
-        producer->opcode() == HloOpcode::kConstant ||
-        !IsFusible(*producer)) {
+        producer->opcode() == HloOpcode::kConstant || !IsFusible(*producer)) {
       return;
     }
 
