@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -432,6 +432,8 @@ bool OneDnnContractionRewriter::ShouldRewriteConv(
   if (!IsSupportedType(conv_instr->shape().element_type())) return false;
   if (conv_instr->batch_group_count() != 1) return false;
 
+  // TODO(intel-tf): Remove this restriction after enabling backward weights
+  // support
   if (conv_instr->operand(1)->opcode() == HloOpcode::kReverse) return false;
 
   const Shape& inp_shape = conv_instr->operand(0)->shape();
@@ -495,8 +497,6 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleConvolution(HloInstruction* conv) override {
-    auto pattern = match::Op(&conv).WithOpcode(HloOpcode::kConvolution);
-    if (!Match(conv, pattern)) return absl::OkStatus();
     if (!OneDnnContractionRewriter::ShouldRewriteConv(conv)) {
       return absl::OkStatus();
     }
@@ -530,17 +530,17 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     for (auto it = conv->window().dimensions().begin();
          it != conv->window().dimensions().end(); it++) {
       if ((*it).padding_low() < 0 || (*it).padding_high() < 0 ||
-          (*it).stride() < 0) {
+          (*it).stride() < 0 || (*it).base_dilation() != 1 ||
+          (*it).window_reversal()) {
         return absl::OkStatus();
       }
+      // Changing the input subspace of uint repeated fields from whole numbers
+      // to natural nummbers to avoid misinterpretation of buffer values.
       conv_config->mutable_window()->add_pad_left((*it).padding_low() + 1);
       conv_config->mutable_window()->add_pad_right((*it).padding_high() + 1);
       conv_config->mutable_window()->add_strides((*it).stride() + 1);
       conv_config->mutable_window()->add_window_dilations(
           (*it).window_dilation() + 1);
-      if ((*it).base_dilation() != 1 || (*it).window_reversal()) {
-        return absl::OkStatus();
-      }
     }
 
     for (int i = 0; i < dims; i++) {
