@@ -126,7 +126,9 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
 
   TF_ASSIGN_OR_RETURN(int32_t num_participants, nccl_api->CommCount(comm));
 
-  if (!use_memcpy) {
+  if (use_memcpy) {
+    TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());
+  } else {
     TF_RETURN_IF_ERROR(nccl_api->GroupStart());
   }
 
