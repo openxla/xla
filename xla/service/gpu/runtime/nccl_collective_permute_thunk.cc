@@ -63,7 +63,7 @@ bool IsLocalPeerTransfer(
   // We determine if it's a local peer by the following conditions:
   // 1. Both source and target IDs are present and they are within a node
   // 2. Source ID is present, but target ID is not.
-  // 3. Target ID is presetn, but source ID is not.
+  // 3. Target ID is present, but source ID is not.
   int64_t host_id = (current_id / device_count);
   if (source_id && target_id) {
     return (host_id == (*source_id / device_count)) &&
