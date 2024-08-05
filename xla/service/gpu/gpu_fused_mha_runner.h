@@ -133,7 +133,7 @@ struct GpufMHABackwardF8Descriptor {
   DotDimensionNumbers bmm1_grad_gemm2_dnums;
   DotDimensionNumbers bmm2_grad_gemm1_dnums;
   DotDimensionNumbers bmm2_grad_gemm2_dnums;
-  std::optional<Shape> fwd_output_shape;
+  Shape fwd_output_shape;
 };
 
 // // Structure to describe static properties of a GPU fused Multi-Headed
@@ -329,9 +329,10 @@ struct GpufMHABackwardF8Params {
       const GpufMHABackwardConfig& config,
       se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
       se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
-      se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-      se::DeviceMemoryBase d_output_buffer,
       se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+      se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
+      se::DeviceMemoryBase fwd_output_buffer,
+      se::DeviceMemoryBase d_output_buffer,
       se::DeviceMemoryBase descale_q_buffer,
       se::DeviceMemoryBase descale_k_buffer,
       se::DeviceMemoryBase descale_v_buffer,
@@ -347,14 +348,15 @@ struct GpufMHABackwardF8Params {
       se::DeviceMemoryBase d_bmm1_rhs_buffer,
       se::DeviceMemoryBase d_bmm2_rhs_buffer,
       se::DeviceMemoryBase amax_dQ_buffer, se::DeviceMemoryBase amax_dK_buffer,
-      se::DeviceMemoryBase amax_dV_buffer, se::DeviceMemoryBase amax_dP_buffer,
-      std::optional<se::DeviceMemoryBase> fwd_output_buffer);
+      se::DeviceMemoryBase amax_dV_buffer, se::DeviceMemoryBase amax_dP_buffer);
 
   const GpufMHABackwardConfig* config;  // Not owned
   se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer;
   se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer;
-  se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer;
   se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer;
+  se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer;
+  
+  se::DeviceMemoryBase fwd_output_buffer;
   se::DeviceMemoryBase d_output_buffer;
   se::DeviceMemoryBase descale_q_buffer;
   se::DeviceMemoryBase descale_k_buffer;
@@ -378,7 +380,7 @@ struct GpufMHABackwardF8Params {
   se::DeviceMemoryBase amax_dV_buffer;
   se::DeviceMemoryBase amax_dP_buffer;
 
-  std::optional<se::DeviceMemoryBase> fwd_output_buffer;
+  
 };
 
 class FusedMultiHeadedAttentionF8Runner {
@@ -757,8 +759,9 @@ absl::Status RunGpuFMHABackwardF8(
     se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
     se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
     se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+    se::DeviceMemoryBase fwd_output_buffer,
+    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
     se::DeviceMemoryBase descale_v_buffer,
@@ -773,7 +776,7 @@ absl::Status RunGpuFMHABackwardF8(
     se::DeviceMemoryBase d_bmm2_rhs_buffer, se::DeviceMemoryBase amax_dQ_buffer,
     se::DeviceMemoryBase amax_dK_buffer, se::DeviceMemoryBase amax_dV_buffer,
     se::DeviceMemoryBase amax_dP_buffer, se::DeviceMemoryBase scratch_buffer,
-    std::optional<se::DeviceMemoryBase> fwd_output_buffer, se::Stream* stream,
+    se::Stream* stream,
     RunFusedMHABackwardF8Options = {});
 
 std::string ToString(const GpufMHAConfig& config);

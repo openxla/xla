@@ -324,9 +324,9 @@ FusedMHABackwardThunkF8::FusedMHABackwardThunkF8(
     ThunkInfo thunk_info, GpufMHABackwardConfig config,
     BufferAllocation::Slice bmm1_grad_gemm1_rhs,
     BufferAllocation::Slice bmm1_grad_gemm2_rhs,
+    BufferAllocation::Slice bmm2_grad_gemm1_lhs,
     BufferAllocation::Slice bmm2_grad_gemm2_rhs,
     BufferAllocation::Slice fwd_output, BufferAllocation::Slice d_output,
-    BufferAllocation::Slice bmm2_grad_gemm1_lhs,
     BufferAllocation::Slice descale_q, BufferAllocation::Slice descale_k,
     BufferAllocation::Slice descale_v, BufferAllocation::Slice descale_o,
     BufferAllocation::Slice descale_dO, BufferAllocation::Slice descale_s,
@@ -408,6 +408,8 @@ absl::Status FusedMHABackwardThunkF8::ExecuteOnStream(
 
   se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer =
       buffer_allocations.GetDeviceAddress(bmm2_grad_gemm2_rhs_buffer_);
+  se::DeviceMemoryBase fwd_output_buffer =
+      buffer_allocations.GetDeviceAddress(fwd_output_buffer_);      
 
   se::DeviceMemoryBase d_output_buffer =
       buffer_allocations.GetDeviceAddress(d_output_buffer_);
@@ -423,9 +425,6 @@ absl::Status FusedMHABackwardThunkF8::ExecuteOnStream(
 
   se::DeviceMemoryBase d_bmm2_rhs_buffer =
       buffer_allocations.GetDeviceAddress(d_bmm2_rhs_buffer_);
-
-  se::DeviceMemoryBase fwd_output_buffer =
-      buffer_allocations.GetDeviceAddress(fwd_output_buffer_);
 
   se::DeviceMemoryBase descale_q_buffer =
       buffer_allocations.GetDeviceAddress(descale_q_buffer_);
@@ -468,13 +467,13 @@ absl::Status FusedMHABackwardThunkF8::ExecuteOnStream(
 
   TF_RETURN_IF_ERROR(RunGpuFMHABackwardF8(
       config_, bmm1_grad_gemm1_rhs_buffer, bmm1_grad_gemm2_rhs_buffer,
-      bmm2_grad_gemm2_rhs_buffer, d_output_buffer, bmm2_grad_gemm1_lhs_buffer,
+      bmm2_grad_gemm1_lhs_buffer, bmm2_grad_gemm2_rhs_buffer, fwd_output_buffer, d_output_buffer,
       descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_o_buffer,
       descale_dO_buffer, descale_s_buffer, descale_dP_buffer, scale_s_buffer,
       scale_dQ_buffer, scale_dK_buffer, scale_dV_buffer, scale_dP_buffer,
       d_bmm1_lhs_buffer, d_bmm1_rhs_buffer, d_bmm2_rhs_buffer, amax_dQ_buffer,
       amax_dK_buffer, amax_dV_buffer, amax_dP_buffer, scratch_buffer,
-      fwd_output_buffer, params.stream, opts));
+      params.stream, opts));
   if (!params.stream->ok()) {
     return Internal("FusedMHABackwardThunkF8::ExecuteOnStream failed.");
   }

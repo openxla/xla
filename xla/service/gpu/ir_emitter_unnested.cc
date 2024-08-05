@@ -1281,12 +1281,12 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunkF8(
                       GetAllocationSliceForHlo(instr->operand(input_index)));
   Shape bmm2_grad_gemm2_rhs_shape = instr->operand(input_index++)->shape();
 
-  BufferAllocation::Slice fwd_output_slice;
-  std::optional<Shape> fwd_output_shape;
 
-  TF_ASSIGN_OR_RETURN(fwd_output_slice,
+  // std::optional<Shape> fwd_output_shape;
+
+  TF_ASSIGN_OR_RETURN(BufferAllocation::Slice fwd_output_slice,
                       GetAllocationSliceForHlo(instr->operand(input_index)));
-  fwd_output_shape = instr->operand(input_index++)->shape();
+  Shape fwd_output_shape = instr->operand(input_index++)->shape();
 
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice d_output_slice,
                       GetAllocationSliceForHlo(instr->operand(input_index)));
@@ -1386,9 +1386,9 @@ absl::Status IrEmitterUnnested::EmitFusedMHABackwardThunkF8(
   AddThunkToThunkSequence(std::make_unique<FusedMHABackwardThunkF8>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr),
       std::move(fmha_backward_config), bmm1_grad_gemm1_rhs_slice,
-      bmm1_grad_gemm2_rhs_slice, bmm2_grad_gemm1_lhs_slice, fwd_output_slice,
-      d_output_slice, bmm2_grad_gemm2_rhs_slice, descale_q_slice,
-      descale_k_slice, descale_v_slice, descale_o_slice, descale_dO_slice,
+      bmm1_grad_gemm2_rhs_slice, bmm2_grad_gemm1_lhs_slice, bmm2_grad_gemm2_rhs_slice,
+      fwd_output_slice, d_output_slice,
+      descale_q_slice, descale_k_slice, descale_v_slice, descale_o_slice, descale_dO_slice,
       descale_s_slice, descale_dP_slice, scale_s_slice, scale_dQ_slice,
       scale_dK_slice, scale_dV_slice, scale_dP_slice, d_bmm1_lhs_slice,
       d_bmm1_rhs_slice, d_bmm2_rhs_slice, amax_dQ_slice, amax_dK_slice,

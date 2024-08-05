@@ -173,10 +173,10 @@ absl::Status RunFusedMHABackwardF8(
     RunFusedMHABackwardF8Options options,
     DeviceMemory<ElementType> bmm1_grad_gemm1_rhs_buffer,
     DeviceMemory<ElementType> bmm1_grad_gemm2_rhs_buffer,
-    DeviceMemory<ElementType> bmm2_grad_gemm2_rhs_buffer,
-    DeviceMemoryBase fwd_output_buffer,
-    DeviceMemory<ElementType> d_output_buffer,
     DeviceMemory<ElementType> bmm2_grad_gemm1_lhs_buffer,
+    DeviceMemory<ElementType> bmm2_grad_gemm2_rhs_buffer,
+    DeviceMemory<ElementType> fwd_output_buffer,
+    DeviceMemory<ElementType> d_output_buffer,
     DeviceMemory<float> descale_q_buffer, DeviceMemory<float> descale_k_buffer,
     DeviceMemory<float> descale_v_buffer, DeviceMemory<float> descale_o_buffer,
     DeviceMemory<float> descale_dO_buffer, DeviceMemory<float> descale_s_buffer,
@@ -206,8 +206,8 @@ absl::Status RunFusedMHABackwardF8(
   return (*runner)(
       stream, options.profile_result, scratch_memory,
       bmm1_grad_gemm1_rhs_buffer, bmm1_grad_gemm2_rhs_buffer,
-      bmm2_grad_gemm1_lhs_buffer, fwd_output_buffer, d_output_buffer,
-      bmm2_grad_gemm2_rhs_buffer, descale_q_buffer, descale_k_buffer,
+      bmm2_grad_gemm2_rhs_buffer, fwd_output_buffer, d_output_buffer,
+      bmm2_grad_gemm1_lhs_buffer, descale_q_buffer, descale_k_buffer,
       descale_v_buffer, descale_o_buffer, descale_dO_buffer, descale_s_buffer,
       descale_dP_buffer, scale_s_buffer, scale_dQ_buffer, scale_dK_buffer,
       scale_dV_buffer, scale_dP_buffer, d_bmm1_lhs_buffer, d_bmm1_rhs_buffer,
@@ -417,6 +417,7 @@ absl::Status RunGpuFMHABackwardF8Impl(const GpufMHABackwardF8Params &params,
       se::DeviceMemory<ElementType>(params.bmm2_grad_gemm2_rhs_buffer);
   auto bmm2_grad_gemm1_lhs_buffer =
       se::DeviceMemory<ElementType>(params.bmm2_grad_gemm1_lhs_buffer);
+  auto fwd_output_buffer = se::DeviceMemory<ElementType>(params.fwd_output_buffer);
   auto d_output_buffer = se::DeviceMemory<ElementType>(params.d_output_buffer);
   auto d_bmm1_lhs_buffer =
       se::DeviceMemory<OutputType>(params.d_bmm1_lhs_buffer);
@@ -424,10 +425,6 @@ absl::Status RunGpuFMHABackwardF8Impl(const GpufMHABackwardF8Params &params,
       se::DeviceMemory<OutputType>(params.d_bmm1_rhs_buffer);
   auto d_bmm2_rhs_buffer =
       se::DeviceMemory<OutputType>(params.d_bmm2_rhs_buffer);
-  auto fwd_output_buffer =
-      params.fwd_output_buffer.has_value()
-          ? se::DeviceMemory<ElementType>(*params.fwd_output_buffer)
-          : se::DeviceMemoryBase();
 
   auto descale_q_buffer = se::DeviceMemory<float>(params.descale_q_buffer);
   auto descale_k_buffer = se::DeviceMemory<float>(params.descale_k_buffer);
@@ -458,8 +455,9 @@ absl::Status RunGpuFMHABackwardF8Impl(const GpufMHABackwardF8Params &params,
     case CudnnfMHAKind::kBackwardSoftmaxf8:
       run_status = RunFusedMHABackwardF8<ElementType, OutputType>(
           params, stream, options, bmm1_grad_gemm1_rhs_buffer,
-          bmm1_grad_gemm2_rhs_buffer, bmm2_grad_gemm2_rhs_buffer,
-          fwd_output_buffer, d_output_buffer, bmm2_grad_gemm1_lhs_buffer,
+          bmm1_grad_gemm2_rhs_buffer, bmm2_grad_gemm1_lhs_buffer,
+          bmm2_grad_gemm2_rhs_buffer,
+          fwd_output_buffer, d_output_buffer,
           descale_q_buffer, descale_k_buffer, descale_v_buffer,
           descale_o_buffer, descale_dO_buffer, descale_s_buffer,
           descale_dP_buffer, scale_s_buffer, scale_dQ_buffer, scale_dK_buffer,
@@ -897,15 +895,15 @@ absl::Status RunGpuFMHABackwardF8Impl(const GpufMHABackwardF8Params &params,
       bmm2_grad_gemm1_lhs_type, bmm2_grad_gemm1_lhs_shape.dimensions(),
       bmm2_grad_gemm1_lhs_shape.layout().minor_to_major());
 
-  if (desc.fwd_output_shape) {
-    const Shape &fwd_output_shape = *desc.fwd_output_shape;
+ 
+    const Shape &fwd_output_shape = desc.fwd_output_shape;
     TF_ASSIGN_OR_RETURN(
         DataType fwd_output_type,
         GetDNNDataTypeFromPrimitiveType(fwd_output_shape.element_type()));
     config.fwd_output =
         TensorDescriptor::For(fwd_output_type, fwd_output_shape.dimensions(),
                               fwd_output_shape.layout().minor_to_major());
-  }
+  
 
   config.kind = desc.kind;
   config.mask_type = desc.mask_type;
@@ -1082,9 +1080,10 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardF8OpConfig() const {
     const GpufMHABackwardConfig &config,
     se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
     se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
+    se::DeviceMemoryBase fwd_output_buffer,
+    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
     se::DeviceMemoryBase descale_v_buffer,
@@ -1098,19 +1097,20 @@ GpufMHABackwardConfig::AsDnnFusedMHABackwardF8OpConfig() const {
     se::DeviceMemoryBase d_bmm1_rhs_buffer,
     se::DeviceMemoryBase d_bmm2_rhs_buffer, se::DeviceMemoryBase amax_dQ_buffer,
     se::DeviceMemoryBase amax_dK_buffer, se::DeviceMemoryBase amax_dV_buffer,
-    se::DeviceMemoryBase amax_dP_buffer,
-    std::optional<se::DeviceMemoryBase> fwd_output_buffer) {
+    se::DeviceMemoryBase amax_dP_buffer) {
   GpufMHABackwardF8Params params;
   params.config = &config;
   params.bmm1_grad_gemm1_rhs_buffer = bmm1_grad_gemm1_rhs_buffer;
   params.bmm1_grad_gemm2_rhs_buffer = bmm1_grad_gemm2_rhs_buffer;
   params.bmm2_grad_gemm1_lhs_buffer = bmm2_grad_gemm1_lhs_buffer;
   params.bmm2_grad_gemm2_rhs_buffer = bmm2_grad_gemm2_rhs_buffer;
+  
+  params.fwd_output_buffer = fwd_output_buffer;
   params.d_output_buffer = d_output_buffer;
   params.d_bmm1_lhs_buffer = d_bmm1_lhs_buffer;
   params.d_bmm1_rhs_buffer = d_bmm1_rhs_buffer;
   params.d_bmm2_rhs_buffer = d_bmm2_rhs_buffer;
-  params.fwd_output_buffer = fwd_output_buffer;
+ 
 
   params.descale_q_buffer = descale_q_buffer;
   params.descale_k_buffer = descale_k_buffer;
@@ -1171,9 +1171,10 @@ absl::Status RunGpuFMHABackwardF8(
     const GpufMHABackwardConfig &fmha_config,
     se::DeviceMemoryBase bmm1_grad_gemm1_rhs_buffer,
     se::DeviceMemoryBase bmm1_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
-    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase bmm2_grad_gemm1_lhs_buffer,
+    se::DeviceMemoryBase bmm2_grad_gemm2_rhs_buffer,
+    se::DeviceMemoryBase fwd_output_buffer,
+    se::DeviceMemoryBase d_output_buffer,
     se::DeviceMemoryBase descale_q_buffer,
     se::DeviceMemoryBase descale_k_buffer,
     se::DeviceMemoryBase descale_v_buffer,
@@ -1188,19 +1189,19 @@ absl::Status RunGpuFMHABackwardF8(
     se::DeviceMemoryBase d_bmm2_rhs_buffer, se::DeviceMemoryBase amax_dQ_buffer,
     se::DeviceMemoryBase amax_dK_buffer, se::DeviceMemoryBase amax_dV_buffer,
     se::DeviceMemoryBase amax_dP_buffer, se::DeviceMemoryBase scratch_buffer,
-    std::optional<se::DeviceMemoryBase> fwd_output_buffer, se::Stream *stream,
+    se::Stream *stream,
     RunFusedMHABackwardF8Options options) {
   TF_ASSIGN_OR_RETURN(
       GpufMHABackwardF8Params params,
       GpufMHABackwardF8Params::For(
           fmha_config, bmm1_grad_gemm1_rhs_buffer, bmm1_grad_gemm2_rhs_buffer,
-          bmm2_grad_gemm2_rhs_buffer, d_output_buffer,
-          bmm2_grad_gemm1_lhs_buffer, descale_q_buffer, descale_k_buffer,
+          bmm2_grad_gemm1_lhs_buffer, bmm2_grad_gemm2_rhs_buffer, fwd_output_buffer, d_output_buffer,
+          descale_q_buffer, descale_k_buffer,
           descale_v_buffer, descale_o_buffer, descale_dO_buffer,
           descale_s_buffer, descale_dP_buffer, scale_s_buffer, scale_dQ_buffer,
           scale_dK_buffer, scale_dV_buffer, scale_dP_buffer, d_bmm1_lhs_buffer,
           d_bmm1_rhs_buffer, d_bmm2_rhs_buffer, amax_dQ_buffer, amax_dK_buffer,
-          amax_dV_buffer, amax_dP_buffer, fwd_output_buffer));
+          amax_dV_buffer, amax_dP_buffer));
   PrimitiveType input_primitive_type = fmha_config.input_type;
   switch (input_primitive_type) {
     case F8E4M3FN:

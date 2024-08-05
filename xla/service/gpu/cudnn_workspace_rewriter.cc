@@ -288,7 +288,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     Shape bmm2_grad_gemm2_rhs_shape =
         custom_call->operand(input_index++)->shape();
 
-    std::optional<Shape> fwd_output_shape =
+    Shape fwd_output_shape =
         custom_call->operand(input_index++)->shape();
     Shape d_output_shape = custom_call->operand(input_index++)->shape();
 
