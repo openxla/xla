@@ -181,6 +181,9 @@ ENTRY entry {
   EXPECT_EQ(get_tuple_index->tuple_index(), 3);
 }
 
+// A case where Bitcast will become the user of a pipelined instruction and
+// check if the DUS is pushed to the next iteration successfully. Absense of
+// Bitcast in acceptable users will break this test.
 TEST_F(CollectivePipelinerTest, BitcastAsUser) {
   constexpr absl::string_view hlo_string = R"(
 HloModule module
@@ -205,21 +208,14 @@ while_body {
   get-tuple-element.5 = bf16[3,8,128] get-tuple-element(param), index=2
   constant.2557 = s32[] constant(1)
   add.230 = s32[] add(get-tuple-element.394, constant.2557)
-  constant.2559 = s32[] constant(3)
-  subtract.139 = s32[] subtract(constant.2559, get-tuple-element.394)
-  constant.2560 = s32[] constant(-1)
-  add.231 = s32[] add(subtract.139, constant.2560)
   constant.2561 = s32[] constant(0)
-  compare.747 = pred[] compare(add.231, constant.2561), direction=LT
-  constant.2562 = s32[] constant(2)
-  add.232 = s32[] add(subtract.139, constant.2562)
-  select.1348 = s32[] select(compare.747, add.232, add.231)
-  dynamic-slice.99 = bf16[1,8,128] dynamic-slice(get-tuple-element.5, select.1348, constant.2561, constant.2561), dynamic_slice_sizes={1,8,128}
-  mul = bf16[1,8,128] multiply(dynamic-slice.99, dynamic-slice.99)
-  ar.0 = bf16[1,8,128] all-reduce(mul), replica_groups={}, to_apply=add, channel_id=1
+  dynamic-slice.99 = bf16[1,8,128] dynamic-slice(get-tuple-element.5, get-tuple-element.394, constant.2561, constant.2561), dynamic_slice_sizes={1,8,128}
+
+  ar.0 = bf16[1,8,128] all-reduce(dynamic-slice.99), replica_groups={}, to_apply=add, channel_id=1
   bitcasted-ar.0 = u16[3,8,128] bitcast(ar.0)
   ar.1 = bf16[3,8,128] bitcast(bitcasted-ar.0)
-  dynamic-update-slice.35 = bf16[3,8,128] dynamic-update-slice(get-tuple-element.395, ar.1, select.1348, constant.2561, constant.2561)
+
+  dynamic-update-slice.35 = bf16[3,8,128] dynamic-update-slice(get-tuple-element.395, ar.1, get-tuple-element.394, constant.2561, constant.2561)
   ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(add.230, dynamic-update-slice.35, get-tuple-element.5)
 }
 
