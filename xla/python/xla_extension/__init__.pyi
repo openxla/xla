@@ -321,6 +321,7 @@ class DebugOptions:
   xla_gpu_kernel_cache_file: str
   xla_gpu_enable_llvm_module_compilation_parallelism: bool
   xla_gpu_per_fusion_autotune_cache_dir: str
+  xla_cpu_use_acl: bool
 
 class CompiledMemoryStats:
   generated_code_size_in_bytes: int
