@@ -1213,7 +1213,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    &DebugOptions::xla_gpu_per_fusion_autotune_cache_dir,
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_gpu_per_fusion_autotune_cache_dir(value);
-                   });
+                   })
+      .def_prop_rw("xla_cpu_use_acl", &DebugOptions::xla_cpu_use_acl,
+                   &DebugOptions::set_xla_cpu_use_acl);
 
   nb::class_<ExecutableBuildOptions>(m, "ExecutableBuildOptions")
       .def(nb::init<>())
