@@ -134,6 +134,16 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
   TF_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
                       GetOrCreateCommandBuffer(params.executor));
+
+  {
+    absl::MutexLock lock(&state_->mutex);
+    if (state_->last_runid.contains(params.executor)) {
+      state_->last_runid[params.executor].reset();
+    } else {
+      state_->last_runid[params.executor] = std::nullopt;
+    }
+  }
+
   absl::MutexLock lock(&cmd_buffer->mutex);
 
   // Initialize commands.
@@ -154,12 +164,6 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*host_to_device_stream=*/nullptr,
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context);
-
-  if (state_->last_runid.contains(params.executor)) {
-    state_->last_runid[params.executor].reset();
-  } else {
-    state_->last_runid[params.executor] = std::nullopt;
-  }
 
   // If command buffer is in `kCreate` state it means that command buffer
   // sequence was never recorded into it. We initialize all command buffers
@@ -224,14 +228,22 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   absl::MutexLock lock(&cmd_buffer->mutex);
 
   std::optional<RunId> current_run_id = std::nullopt;
+  bool thunk_first_run;
+
   if (params.collective_params) {
     current_run_id = params.collective_params->run_id;
   }
 
-  TF_RET_CHECK(state_->last_runid.contains(executor));
-  std::optional<RunId>& optional_last_run_id = state_->last_runid[executor];
-  if (!(optional_last_run_id.has_value() && current_run_id.has_value() &&
-        optional_last_run_id.value() == current_run_id.value())) {
+  {
+    absl::MutexLock lock_state(&state_->mutex);
+    TF_RET_CHECK(state_->last_runid.contains(executor));
+    std::optional<RunId>& optional_last_run_id = state_->last_runid[executor];
+    thunk_first_run =
+        !(optional_last_run_id.has_value() && current_run_id.has_value() &&
+          optional_last_run_id.value() == current_run_id.value());
+  }
+
+  if (thunk_first_run) {
     if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
       VLOG(3) << "Update command buffer on device #"
               << executor->device_ordinal()
@@ -258,8 +270,12 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
       VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
               << " μs; num_commands=" << commands_.size();
       cmd_buffer->num_executions = 0;
-      if (current_run_id.has_value()) {
-        optional_last_run_id = current_run_id;
+
+      {
+        absl::MutexLock lock_state(&state_->mutex);
+        if (current_run_id.has_value()) {
+          state_->last_runid[executor] = current_run_id;
+        }
       }
     }
   } else {
