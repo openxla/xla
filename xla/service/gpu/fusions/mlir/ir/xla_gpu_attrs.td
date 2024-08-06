@@ -55,6 +55,10 @@ def XLAGPU_IndexingMapAttr : XLAGPU_Attr<"IndexingMap"> {
     AttrBuilder<(ins "const ::xla::gpu::IndexingMap&":$indexing_map)>,
   ];
   let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    // Returns the indexing map constructed from IndexingMapAttr.
+    xla::gpu::IndexingMap getIndexingMap();
+  }];
 }
 
-#endif // MLIR_HLO_DIALECT_MHLO_IR_HLO_ATTRS
+#endif // XLA_SERVICE_GPU_FUSIONS_MLIR_ATTRS

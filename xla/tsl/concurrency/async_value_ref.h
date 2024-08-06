@@ -88,8 +88,8 @@ class AsyncValueRef {
   AsyncValueRef(const AsyncValueRef&) = default;
   AsyncValueRef& operator=(const AsyncValueRef&) = default;
 
-  AsyncValueRef(AsyncValueRef&&) = default;
-  AsyncValueRef& operator=(AsyncValueRef&&) = default;
+  AsyncValueRef(AsyncValueRef&&) noexcept = default;
+  AsyncValueRef& operator=(AsyncValueRef&&) noexcept = default;
 
   explicit AsyncValueRef(RCReference<AsyncValue> value)
       : value_(std::move(value)) {}
@@ -423,7 +423,9 @@ class AsyncValuePtr {
   T& operator*() const { return get(); }
 
   explicit operator bool() const { return value_ != nullptr; }
-  bool operator!=(std::nullptr_t) const { return value_ != nullptr; }
+  bool operator==(const AsyncValuePtr& p) const { return value_ == p.value_; }
+  bool operator!=(const AsyncValuePtr& p) const { return value_ != p.value_; }
+
   AsyncValuePtr& operator=(std::nullptr_t) {
     value_ = nullptr;
     return *this;
@@ -951,13 +953,13 @@ class AsyncValueOwningRef {
   AsyncValueOwningRef(const AsyncValueOwningRef&) = delete;
   AsyncValueOwningRef& operator=(const AsyncValueOwningRef&) = delete;
 
-  AsyncValueOwningRef& operator=(AsyncValueOwningRef&& other) {
+  AsyncValueOwningRef& operator=(AsyncValueOwningRef&& other) noexcept {
     Destroy();
     std::swap(value_, other.value_);
     return *this;
   }
 
-  AsyncValueOwningRef(AsyncValueOwningRef&& other) {
+  AsyncValueOwningRef(AsyncValueOwningRef&& other) noexcept {
     Destroy();
     std::swap(value_, other.value_);
   }

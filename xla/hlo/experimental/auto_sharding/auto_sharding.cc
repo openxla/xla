@@ -3016,7 +3016,6 @@ void FindReplicateSet(
 
   for (size_t i = 0; i < cur->operand_count(); ++i) {
     HloInstruction* operand = cur->mutable_operand(i);
-    operand = PassThroughCustomCallMarkerOperand(operand, cur);
 
     if (!visited.contains(operand) && !IsAlwaysReplicated(operand) &&
         GetShardingStrategy(operand, strategy_map, cost_graph, s_val)
@@ -3040,9 +3039,6 @@ absl::Status GenerateReduceScatter(
 
   // Propagation ends at output.
   const HloInstruction* output = instructions.back();
-  if (IsCustomCallMarker(output)) {
-    output = output->operand(0);
-  }
 
   // A debug option: whether to do all-gather after backward pass.
   // This controls the location of all-gather.
@@ -3118,8 +3114,7 @@ absl::Status GenerateReduceScatter(
       while (true) {
         path.push_back(root);
         if (root->opcode() == HloOpcode::kGetTupleElement) {
-          root = PassThroughCustomCallMarkerOperand(root->mutable_operand(0),
-                                                    root);
+          root = root->mutable_operand(0);
         } else {
           break;
         }
@@ -3215,14 +3210,6 @@ absl::Status GenerateReduceScatter(
             insert_all_gather.push_back(alias_map.at(to_split));
           } else {
             insert_all_gather.push_back(to_split);
-
-            if (to_split->opcode() == HloOpcode::kGetTupleElement &&
-                IsCustomCallMarker(to_split->operand(0)) &&
-                to_split->users().size() == 1 &&
-                to_split->users().front() == output) {
-              insert_all_gather.push_back(PassThroughCustomCallMarkerOperand(
-                  to_split->mutable_operand(0), to_split));
-            }
           }
         }
       } else {
@@ -3325,6 +3312,7 @@ void AnnotateShardingWithSimpleHeuristic(
 
       if (heuristic == "shard-largest") {
         std::vector<int64_t> lengths;
+        lengths.reserve(inst->shape().rank());
         for (int64_t i = 0; i < inst->shape().rank(); ++i) {
           lengths.push_back(inst->shape().dimensions(i));
         }
@@ -3982,7 +3970,9 @@ absl::StatusOr<AutoShardingResult> AutoShardingImplementation::RunAutoSharding(
   std::vector<std::vector<int64_t>> partial_mesh_shapes;
   if (option_.solve_nd_sharding_iteratively) {
     // Generate partial mesh shapes to optimize iteratively.
-    partial_mesh_shapes = spmd::DecomposeMeshShapes(option_.device_mesh_shape);
+    partial_mesh_shapes = spmd::DecomposeMeshShapes(option_.device_mesh_shape,
+                                                    option_.device_mesh_alpha,
+                                                    option_.device_mesh_beta);
   } else {
     partial_mesh_shapes = {option_.device_mesh_shape};
   }

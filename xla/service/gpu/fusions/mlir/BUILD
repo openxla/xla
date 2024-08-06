@@ -126,6 +126,7 @@ xla_cc_test(
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:Support",
@@ -140,7 +141,6 @@ xla_cc_test(
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
@@ -298,6 +298,7 @@ cc_library(
     ],
     hdrs = ["passes.h"],
     deps = [
+        ":elemental_hlo_to_mlir",
         ":passes_inc_gen",
         "//xla:shape_util",
         "//xla:util",
