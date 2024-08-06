@@ -124,8 +124,7 @@ absl::StatusOr<bool> WrapIntoFusionAndAnnotateStreamAttributes(
     // to match their newly assigned instruction names during creation.
     fusion_instruction->set_metadata_scheduling_name(
         std::string(fusion_instruction->name()));
-    HloInstruction* root =
-        fusion_instruction->called_computations()[0]->root_instruction();
+    HloInstruction* root = fusion_instruction->fused_expression_root();
     root->set_metadata_scheduling_name(std::string(root->name()));
     module->schedule().replace_instruction(computation, instruction,
                                            fusion_instruction);
