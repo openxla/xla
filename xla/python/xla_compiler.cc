@@ -1199,7 +1199,9 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    &DebugOptions::xla_gpu_dump_autotune_logs_to,
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_gpu_dump_autotune_logs_to(value);
-                   });
+                   })
+      .def_prop_rw("xla_cpu_use_acl", &DebugOptions::xla_cpu_use_acl,
+                   &DebugOptions::set_xla_cpu_use_acl);
 
   nb::class_<ExecutableBuildOptions>(m, "ExecutableBuildOptions")
       .def(nb::init<>())
