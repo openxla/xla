@@ -351,7 +351,8 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::Stream* stream_to_sync);
 
 absl::Status RendezvousAfterInitialization(
-    const ServiceExecutableRunOptions* run_options);
+    const ServiceExecutableRunOptions* run_options,
+    const DebugOptions* debug_options);
 
 absl::Status ExecuteThunks(
     const DebugOptions* debug_options, const std::string& module_name,
