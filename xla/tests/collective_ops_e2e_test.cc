@@ -863,22 +863,6 @@ ENTRY main.12 {
 }
 
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
-       WindowedEinsumE2EAllToAllDecompose) {
-  absl::string_view kModuleReplicatedStr = R"(
-HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,128,64]{2,1,0}, bf16[1,4,64,128]{3,2,1,0})->bf16[1,4,64,64]{3,2,1,0}}, num_partitions=4
-
-ENTRY main.9_spmd {
-  param0 = bf16[1,128,64]{2,1,0} parameter(0)
-  param1 = bf16[1,4,64,128]{3,2,1,0} parameter(1)
-  all-to-all = bf16[1,4,64,128]{3,2,1,0} all-to-all(param1), channel_id=4, replica_groups={{0,1,2,3}}, dimensions={1}
-  ROOT dot.12 = bf16[1,4,64,64]{3,2,1,0} dot(all-to-all, param0), lhs_batch_dims={0}, lhs_contracting_dims={3}, rhs_batch_dims={0}, rhs_contracting_dims={1}
-}
-)";
-
-  CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr);
-}
-
-TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
        WindowedEinsumE2EAllgatherMultiConsumerF8) {
   absl::string_view kModuleReplicatedStr = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f8e4m3fn[2,16,48]{2,1,0}, f8e4m3fn[48,192]{1,0}, f8e4m3fn[48,192]{1,0}, bf16[], bf16[], bf16[])->bf16[2,16,192]{2,1,0}}, allow_spmd_sharding_propagation_to_parameters={false,false,false,false}, num_partitions=4
@@ -906,6 +890,8 @@ ENTRY main.12 {
 } // main.12
 )";
 
+  // Disable the dot merger pass which can prevent the creation of FP8 GEMM
+  // Custom Calls.
   CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr,
                                           /*disable_dot_merger=*/true);
 
@@ -918,6 +904,22 @@ ENTRY main.12 {
   opts.set_xla_gpu_enable_triton_gemm(false);
   opts.add_xla_disable_hlo_passes("dot-merger");
   CollectiveOpsVerifyF8Matmul(kModuleReplicatedStr, opts);
+}
+
+TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
+       WindowedEinsumE2EAllToAllDecompose) {
+  absl::string_view kModuleReplicatedStr = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,128,64]{2,1,0}, bf16[1,4,64,128]{3,2,1,0})->bf16[1,4,64,64]{3,2,1,0}}, num_partitions=4
+
+ENTRY main.9_spmd {
+  param0 = bf16[1,128,64]{2,1,0} parameter(0)
+  param1 = bf16[1,4,64,128]{3,2,1,0} parameter(1)
+  all-to-all = bf16[1,4,64,128]{3,2,1,0} all-to-all(param1), channel_id=4, replica_groups={{0,1,2,3}}, dimensions={1}
+  ROOT dot.12 = bf16[1,4,64,64]{3,2,1,0} dot(all-to-all, param0), lhs_batch_dims={0}, lhs_contracting_dims={3}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+}
+)";
+
+  CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr);
 }
 
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
