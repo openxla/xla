@@ -146,7 +146,14 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it copied the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -200,7 +207,14 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it zeroes the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -242,7 +256,14 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it set the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -296,7 +317,15 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto profiler_lock,
                           tsl::profiler::ProfilerLock::Acquire());
+
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it set the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -350,7 +379,14 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto profiler_lock,
                           tsl::profiler::ProfilerLock::Acquire());
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it set the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
@@ -389,7 +425,14 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
       run_options, allocations, stream.get(), stream.get(), nullptr, nullptr);
 
+  Thunk::InitializeParams initialize_params{
+      executor,     Thunk::ExecutableSource{},
+      &allocations, stream.get(),
+      nullptr,      nullptr,
+      nullptr};
+
   // Execute command buffer thunk and verify that it set the memory.
+  TF_ASSERT_OK(thunk.Initialize(initialize_params));
   TF_ASSERT_OK(thunk.ExecuteOnStream(params));
   TF_ASSERT_OK(stream->BlockHostUntilDone());
 
