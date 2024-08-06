@@ -208,7 +208,9 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
     }
   }
 
-  if (!use_memcpy) {
+  if (use_memcpy) {
+    TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());
+  } else {
     return nccl_api->GroupEnd();
   }
   return absl::OkStatus();
