@@ -203,20 +203,20 @@ while_cond {
 
 while_body {
   param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
-  get-tuple-element.394 = s32[] get-tuple-element(param), index=0
-  get-tuple-element.395 = bf16[3,8,128] get-tuple-element(param), index=1
-  get-tuple-element.5 = bf16[3,8,128] get-tuple-element(param), index=2
-  constant.2557 = s32[] constant(1)
-  add.230 = s32[] add(get-tuple-element.394, constant.2557)
-  constant.2561 = s32[] constant(0)
-  dynamic-slice.99 = bf16[1,8,128] dynamic-slice(get-tuple-element.5, get-tuple-element.394, constant.2561, constant.2561), dynamic_slice_sizes={1,8,128}
+  current-loop-index = s32[] get-tuple-element(param), index=0
+  parameter.0 = bf16[3,8,128] get-tuple-element(param), index=1
+  parameter.1 = bf16[3,8,128] get-tuple-element(param), index=2
+  constant.1 = s32[] constant(1)
+  next-loop-index = s32[] add(current-loop-index, constant.1)
+  constant.0 = s32[] constant(0)
+  sliced-parameter.1 = bf16[1,8,128] dynamic-slice(parameter.1, current-loop-index, constant.0, constant.0), dynamic_slice_sizes={1,8,128}
 
-  ar.0 = bf16[1,8,128] all-reduce(dynamic-slice.99), replica_groups={}, to_apply=add, channel_id=1
-  bitcasted-ar.0 = u16[3,8,128] bitcast(ar.0)
-  ar.1 = bf16[3,8,128] bitcast(bitcasted-ar.0)
+  all-reduce.0 = bf16[1,8,128] all-reduce(sliced-parameter.1), replica_groups={}, to_apply=add, channel_id=1
+  bitcasted-all-reduce.0 = u16[3,8,128] bitcast(all-reduce.0)
+  all-reduce.1 = bf16[3,8,128] bitcast(bitcasted-all-reduce.0)
 
-  dynamic-update-slice.35 = bf16[3,8,128] dynamic-update-slice(get-tuple-element.395, ar.1, get-tuple-element.394, constant.2561, constant.2561)
-  ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(add.230, dynamic-update-slice.35, get-tuple-element.5)
+  dynamic-update-slice = bf16[3,8,128] dynamic-update-slice(parameter.0, all-reduce.1, current-loop-index, constant.0, constant.0)
+  ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(next-loop-index, dynamic-update-slice, parameter.1)
 }
 
 ENTRY entry {
