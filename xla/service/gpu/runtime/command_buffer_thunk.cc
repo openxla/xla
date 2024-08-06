@@ -155,6 +155,12 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context);
 
+  if (state_-> last_runid.contains(params.executor)) {
+    state_->last_runid[params.executor].reset();
+  } else {
+    state_->last_runid[params.executor] = std::nullopt;
+  }
+
   // If command buffer is in `kCreate` state it means that command buffer
   // sequence was never recorded into it. We initialize all command buffers
   // before execution, because command buffers when instantiated will allocate
@@ -217,30 +223,47 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   absl::MutexLock lock(&cmd_buffer->mutex);
 
-  if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
-    VLOG(3) << "Update command buffer on device #" << executor->device_ordinal()
-            << " by recoding command buffer cmd sequence" << " after "
-            << cmd_buffer->num_executions << " executions since last update"
-            << "; num_commands=" << commands_.size();
+  std::optional<RunId> current_run_id = std::nullopt;
+  if (params.collective_params) {
+    current_run_id = params.collective_params->run_id;
+  }
 
-    TraceMe trace([&] {
-      cmd_buffer->mutex.AssertHeld();
-      return TraceMeEncode("command_buffer::update",
-                           {{"device", executor->device_ordinal()},
-                            {"num_commands", commands_.size()},
-                            {"num_executions", cmd_buffer->num_executions}});
-    });
+  TF_RET_CHECK(state_->last_runid.contains(executor));
+  std::optional<RunId>& optional_last_run_id = state_->last_runid[executor];
+  if (!(optional_last_run_id.has_value() && current_run_id.has_value() &&
+        optional_last_run_id.value() == current_run_id.value())) {
+    if (cmd_buffer->ShouldUpdateCommandBuffer(commands_, params)) {
+      VLOG(3) << "Update command buffer on device #"
+              << executor->device_ordinal()
+              << " by recoding command buffer cmd sequence"
+              << " after " << cmd_buffer->num_executions
+              << " executions since last update"
+              << "; num_commands=" << commands_.size();
 
-    uint64_t start_micros = tsl::Env::Default()->NowMicros();
+      TraceMe trace([&] {
+        cmd_buffer->mutex.AssertHeld();
+        return TraceMeEncode("command_buffer::update",
+                             {{"device", executor->device_ordinal()},
+                              {"num_commands", commands_.size()},
+                              {"num_executions", cmd_buffer->num_executions}});
+      });
 
-    CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
-    TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
-                                        cmd_buffer->command_buffer.get()));
+      uint64_t start_micros = tsl::Env::Default()->NowMicros();
 
-    uint64_t end_micros = tsl::Env::Default()->NowMicros();
-    VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
-            << " μs; num_commands=" << commands_.size();
-    cmd_buffer->num_executions = 0;
+      CommandBufferCmd::RecordParams record_params = {cmd_buffer->state};
+      TF_RETURN_IF_ERROR(commands_.Record(params, record_params,
+                                          cmd_buffer->command_buffer.get()));
+
+      uint64_t end_micros = tsl::Env::Default()->NowMicros();
+      VLOG(3) << "Updated command buffer in " << (end_micros - start_micros)
+              << " μs; num_commands=" << commands_.size();
+      cmd_buffer->num_executions = 0;
+      if (current_run_id.has_value()) {
+        optional_last_run_id = current_run_id;
+      }
+    }
+  } else {
+    VLOG(3) << "Skip command buffer thunk update for multi runs from loop";
   }
 
   ++cmd_buffer->num_executions;
