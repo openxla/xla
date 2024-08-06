@@ -99,8 +99,8 @@ class CommandBufferThunk : public Thunk {
     absl::flat_hash_map<se::StreamExecutor*,
                         std::shared_ptr<ExecutorCommandBuffer>>
         command_buffers ABSL_GUARDED_BY(mutex);
-    absl::flat_hash_map<se::StreamExecutor*, std::optional<RunId>>
-        last_runid ABSL_GUARDED_BY(mutex);
+    absl::flat_hash_map<se::StreamExecutor*, std::optional<RunId>> last_runid
+        ABSL_GUARDED_BY(mutex);
   };
 
   // Returns a command buffer instantiated for `executor` or creates new one.

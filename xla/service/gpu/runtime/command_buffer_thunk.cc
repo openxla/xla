@@ -155,7 +155,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
       /*send_device_memory_function=*/nullptr,
       /*recv_device_memory_function=*/nullptr, params.ffi_execution_context);
 
-  if (state_-> last_runid.contains(params.executor)) {
+  if (state_->last_runid.contains(params.executor)) {
     state_->last_runid[params.executor].reset();
   } else {
     state_->last_runid[params.executor] = std::nullopt;
