@@ -61,7 +61,8 @@ NcclAllToAllStartThunk::NcclAllToAllStartThunk(
     : NcclCollectiveThunk(Thunk::kNcclAllToAllStart, thunk_info, nccl_api,
                           IsSyncCollective(instr)),
       config_(GetNcclAllToAllConfig(instr)),
-      buffers_(std::move(buffers)), p2p_memcpy_enabled_(p2p_memcpy_enabled) {
+      buffers_(std::move(buffers)),
+      p2p_memcpy_enabled_(p2p_memcpy_enabled) {
   CHECK_EQ(config_.config.operand_count, buffers_.size());
 }
 
@@ -102,23 +103,25 @@ absl::Status NcclAllToAllStartThunk::RunNcclCollective(
   TF_ASSIGN_OR_RETURN(const int64_t current_id,
                       GetCurrentId(params.collective_params, config_));
 
-  TF_ASSIGN_OR_RETURN(int32_t num_participants, nccl_api()->CommCount(comm_wrapper.comm_handle));
+  TF_ASSIGN_OR_RETURN(int32_t num_participants,
+                      nccl_api()->CommCount(comm_wrapper.comm_handle));
   for (int64_t id = 0; id < num_participants; ++id) {
     TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(id, current_id));
     TF_RETURN_IF_ERROR(recv_ptr_map_.InitializeId(current_id, id));
   }
 
   bool use_memcpy = comm_wrapper.is_local && p2p_memcpy_enabled_;
-  
+
   return xla::gpu::RunAllToAll(nccl_api(), config_.has_split_dimension,
-                               device_buffers, stream,
-                               comm_wrapper.comm_handle, current_id, use_memcpy, recv_ptr_map_);
+                               device_buffers, stream, comm_wrapper.comm_handle,
+                               current_id, use_memcpy, recv_ptr_map_);
 }
 
 absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
-                         se::Stream& stream, NcclApi::NcclCommHandle comm, int64_t current_id,
-                         bool use_memcpy, NcclAllToAllStartThunk::RecvPtrMap& recv_ptr_map) {
+                         se::Stream& stream, NcclApi::NcclCommHandle comm,
+                         int64_t current_id, bool use_memcpy,
+                         NcclAllToAllStartThunk::RecvPtrMap& recv_ptr_map) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-to-all from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
@@ -153,8 +156,10 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
                            peer * chunk_elements, chunk_elements);
 
         if (use_memcpy) {
-          TF_RETURN_IF_ERROR(recv_ptr_map.PutRecvPtr(peer, current_id, recv_slice.opaque()));
-          TF_ASSIGN_OR_RETURN(auto recv_ptr, recv_ptr_map.GetRecvPtr(current_id, peer));
+          TF_RETURN_IF_ERROR(
+              recv_ptr_map.PutRecvPtr(peer, current_id, recv_slice.opaque()));
+          TF_ASSIGN_OR_RETURN(auto recv_ptr,
+                              recv_ptr_map.GetRecvPtr(current_id, peer));
           if (recv_ptr.IsUnavailable()) {
             // TODO make BlockUntilReady support AsyncValueRef directly.
             BlockUntilReady(recv_ptr.GetAsyncValue());
@@ -163,13 +168,16 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
                   << " current_id " << current_id << " target_id: " << peer;
           VLOG(3) << current_id << " initiating memcpy to " << peer;
           se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptr.get());
-          TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, send_slice, send_slice.size()));
+          TF_RETURN_IF_ERROR(
+              stream.MemcpyD2D(&dst_addr, send_slice, send_slice.size()));
         } else {
           TF_RETURN_IF_ERROR(nccl_api->Send(send_slice, buffer.element_type,
-                                          chunk_elements, peer, comm, &stream));
+                                            chunk_elements, peer, comm,
+                                            &stream));
 
           TF_RETURN_IF_ERROR(nccl_api->Recv(recv_slice, buffer.element_type,
-                                          chunk_elements, peer, comm, &stream));
+                                            chunk_elements, peer, comm,
+                                            &stream));
         }
       }
     }
@@ -181,21 +189,28 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
       DeviceBufferPair& buffer = buffers[peer];
 
       if (use_memcpy) {
-        TF_RETURN_IF_ERROR(recv_ptr_map.PutRecvPtr(peer, current_id, buffers[current_id].destination_buffer.opaque()));
-        TF_ASSIGN_OR_RETURN(auto recv_ptr, recv_ptr_map.GetRecvPtr(current_id, peer));
+        TF_RETURN_IF_ERROR(recv_ptr_map.PutRecvPtr(
+            peer, current_id, buffers[current_id].destination_buffer.opaque()));
+        TF_ASSIGN_OR_RETURN(auto recv_ptr,
+                            recv_ptr_map.GetRecvPtr(current_id, peer));
         if (recv_ptr.IsUnavailable()) {
           // TODO make BlockUntilReady support AsyncValueRef directly.
           BlockUntilReady(recv_ptr.GetAsyncValue());
         }
-        VLOG(3) << "Using double buffer memcpy, participanting pointers: " << buffer.destination_buffer.opaque() << ", " << recv_ptr.get();
+        VLOG(3) << "Using double buffer memcpy, participanting pointers: "
+                << buffer.destination_buffer.opaque() << ", " << recv_ptr.get();
         VLOG(3) << current_id << " initiating double buffer memcpy to " << peer;
 
         // double buffer, exchange data with peer
         se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptr.get());
-        se::DeviceMemoryBase cur_addr = se::DeviceMemoryBase(buffer.destination_buffer);
+        se::DeviceMemoryBase cur_addr =
+            se::DeviceMemoryBase(buffer.destination_buffer);
         // TODO parallelize below copies on to two streams
-        TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, buffer.source_buffer, buffer.source_buffer.size()));
-        TF_RETURN_IF_ERROR(stream.MemcpyD2D(&cur_addr, buffers[peer].source_buffer, buffers[peer].source_buffer.size()));
+        TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, buffer.source_buffer,
+                                            buffer.source_buffer.size()));
+        TF_RETURN_IF_ERROR(
+            stream.MemcpyD2D(&cur_addr, buffers[peer].source_buffer,
+                             buffers[peer].source_buffer.size()));
       } else {
         TF_RETURN_IF_ERROR(
             nccl_api->Send(buffer.source_buffer, buffer.element_type,

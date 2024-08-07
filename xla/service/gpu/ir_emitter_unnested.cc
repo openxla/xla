@@ -2340,7 +2340,8 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
     }
     auto thunk = std::make_unique<NcclThunkType>(
         thunk_info, NcclApi::Default(), inst,
-        /*buffers=*/std::move(buffers), ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        /*buffers=*/std::move(buffers),
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();

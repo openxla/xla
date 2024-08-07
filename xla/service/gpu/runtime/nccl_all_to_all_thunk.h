@@ -44,36 +44,45 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
    public:
     bool IsInitialized(int64_t send_id, int64_t recv_id) {
       absl::MutexLock lock(&mutex_);
-      return recv_ptrs_.find(send_id) != recv_ptrs_.end() && recv_ptrs_.at(send_id).find(recv_id) != recv_ptrs_.at(send_id).end();
+      return recv_ptrs_.find(send_id) != recv_ptrs_.end() &&
+             recv_ptrs_.at(send_id).find(recv_id) !=
+                 recv_ptrs_.at(send_id).end();
     }
 
     absl::Status InitializeId(int64_t send_id, int64_t recv_id) {
       absl::MutexLock lock(&mutex_);
       if (recv_ptrs_.find(send_id) == recv_ptrs_.end()) {
-        recv_ptrs_[send_id] = absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>();
+        recv_ptrs_[send_id] =
+            absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>();
       }
-      if (recv_ptrs_.at(send_id).find(recv_id) == recv_ptrs_.at(send_id).end()) {
-        recv_ptrs_.at(send_id)[recv_id] = tsl::MakeUnconstructedAsyncValueRef<void*>();
+      if (recv_ptrs_.at(send_id).find(recv_id) ==
+          recv_ptrs_.at(send_id).end()) {
+        recv_ptrs_.at(send_id)[recv_id] =
+            tsl::MakeUnconstructedAsyncValueRef<void*>();
       }
       return absl::OkStatus();
     }
 
     absl::Status PutRecvPtr(int64_t send_id, int64_t recv_id, void* ptr) {
       if (!IsInitialized(send_id, recv_id)) {
-        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id, ", ", recv_id,
+        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id,
+                                                ", ", recv_id,
                                                 " has not been initialized!"));
       }
       absl::MutexLock lock(&mutex_);
       if (recv_ptrs_.at(send_id).at(recv_id).IsUnavailable()) {
-        VLOG(3) << "Putting pointer: " << ptr << " for send_id " << send_id << ", and recv_id " << recv_id;
+        VLOG(3) << "Putting pointer: " << ptr << " for send_id " << send_id
+                << ", and recv_id " << recv_id;
         recv_ptrs_.at(send_id).at(recv_id).emplace(ptr);
       }
       return absl::OkStatus();
     }
 
-    absl::StatusOr<tsl::AsyncValueRef<void*>> GetRecvPtr(int64_t send_id, int64_t recv_id) {
+    absl::StatusOr<tsl::AsyncValueRef<void*>> GetRecvPtr(int64_t send_id,
+                                                         int64_t recv_id) {
       if (!IsInitialized(send_id, recv_id)) {
-        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id, ", ", recv_id,
+        return absl::InternalError(absl::StrCat("Send-receive pair ", send_id,
+                                                ", ", recv_id,
                                                 " has not been initialized!"));
       }
       absl::MutexLock lock(&mutex_);
@@ -82,8 +91,9 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
 
    private:
     absl::Mutex mutex_;
-    absl::node_hash_map<int64_t, absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>> recv_ptrs_
-        ABSL_GUARDED_BY(mutex_);
+    absl::node_hash_map<int64_t,
+                        absl::node_hash_map<int64_t, tsl::AsyncValueRef<void*>>>
+        recv_ptrs_ ABSL_GUARDED_BY(mutex_);
   };
 
   NcclAllToAllStartThunk(ThunkInfo thunk_info, NcclApi* nccl_api,
@@ -116,8 +126,9 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
 
 absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
-                         se::Stream& stream, NcclApi::NcclCommHandle comm, int64_t current_id,
-                         bool use_memcpy, NcclAllToAllStartThunk::RecvPtrMap& recv_ptr_map);
+                         se::Stream& stream, NcclApi::NcclCommHandle comm,
+                         int64_t current_id, bool use_memcpy,
+                         NcclAllToAllStartThunk::RecvPtrMap& recv_ptr_map);
 
 }  // namespace gpu
 }  // namespace xla

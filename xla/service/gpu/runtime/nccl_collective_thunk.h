@@ -73,8 +73,7 @@ struct NcclCollectiveConfig {
 
 template <typename T>
 absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const T& config) {
+    Thunk::CollectiveExecuteParams* collective_params, const T& config) {
   GlobalDeviceId global_device_id = collective_params->global_device_id;
   TF_ASSIGN_OR_RETURN(
       const DeviceAssignment::LogicalID current_logical_id,
