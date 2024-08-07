@@ -37,6 +37,16 @@ namespace xla {
 namespace gpu {
 namespace {
 
+// Returns the mutable first operand of instr when instr has at least one
+// operand. Returns instr otherwise.
+HloInstruction* MaybeOperand0(HloInstruction* instr) {
+  if (instr->operand_count() > 0) {
+    return instr->mutable_operand(0);
+  } else {
+    return instr;
+  }
+}
+
 absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
     HloCustomCallInstruction* hlo) {
   HloInstruction* lhs = hlo->mutable_operand(0);
@@ -136,7 +146,9 @@ absl::StatusOr<std::optional<HloInstruction*>> UpdateLayoutForCudnnConvolution(
     const Shape& s = op->shape();
     Shape s_reordered =
         ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(s);
-    HloInstruction* normalized_op = op->mutable_operand(0);
+    // When hlo describes a forward graph convolution, op may be a parameter or
+    // a constant.
+    HloInstruction* normalized_op = MaybeOperand0(op);
     HloInstruction* new_op;
     if (normalized_op->shape() == s_reordered) {
       new_op = normalized_op;
