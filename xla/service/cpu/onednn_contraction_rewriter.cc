@@ -398,9 +398,9 @@ bool OneDnnContractionRewriter::ShouldRewriteDot(
 
   // Layout should be row-major, contraction dimensions captures transpose
   // scenarios in last two dimensions.
-  // Col-major layouts are corrected to row-majow for BatchDot operation as
-  // part of the layout-pass.
-  // Skip row-major layout check before layout-pass
+  // Col-major layouts are corrected to row-major for BatchDot operation as
+  // part of the layout-assignment pass.
+  // Skip row-major layout check before layout-assignment pass
   if (!before_layout_assignment) {
     bool row_major = IsRowMajor(lhs_shape) && IsRowMajor(rhs_shape) &&
                      IsRowMajor(output_shape);
@@ -1020,7 +1020,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   // This function upcasts BF16 dots to F32 if we are unable to rewrite them to
-  // onednn custom calls.
+  // oneDNN custom calls.
   absl::Status UpcastDotToF32(HloInstruction* dot_instr) {
     if (dot_instr->shape().element_type() != BF16) return absl::OkStatus();
     std::vector<HloInstruction*> new_operands;
