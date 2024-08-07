@@ -155,6 +155,7 @@ class GpuPriorityFusionQueue {
     // Initializes the priority queue.
     std::vector<HloInstruction*> instructions;
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
+      UpdatePerformanceModelCache(instruction);
       if (instruction->opcode() == HloOpcode::kParameter ||
           instruction->user_count() == 0 || !instruction->IsFusible() ||
           instruction->opcode() == HloOpcode::kTuple ||
@@ -162,12 +163,6 @@ class GpuPriorityFusionQueue {
         continue;
       }
       instructions.push_back(instruction);
-    }
-
-    for (auto instruction : computation->MakeInstructionPostOrder()) {
-      if (instruction->IsFusible()) {
-        UpdatePerformanceModelCache(instruction);
-      }
     }
     ComputeAndSetPriorities(instructions);
   }
@@ -253,13 +248,8 @@ class GpuPriorityFusionQueue {
   }
 
   void UpdatePerformanceModelCache(HloInstruction* producer) {
-    if (producer->opcode() == HloOpcode::kBitcast ||
-        producer->opcode() == HloOpcode::kConstant || !IsFusible(*producer)) {
+    if (!IsFusible(*producer)) {
       return;
-    }
-
-    for (auto consumer : producer->users()) {
-      if (!IsFusible(*consumer)) return;
     }
 
     auto config = GpuPerformanceModelOptions::PriorityFusion(
@@ -269,14 +259,6 @@ class GpuPriorityFusionQueue {
       auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
           producer, *device_info_, &cost_analysis_, config);
       gpu_performance_model_cache_.Set(*producer, runtime_data);
-    }
-
-    for (auto consumer : producer->users()) {
-      if (!gpu_performance_model_cache_.Get(*consumer)) {
-        auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
-            consumer, *device_info_, &cost_analysis_, config);
-        gpu_performance_model_cache_.Set(*consumer, runtime_data);
-      }
     }
   }
 
@@ -307,8 +289,6 @@ class GpuPriorityFusionQueue {
                        consumer->name(), "| inside PriorityFusion"),
           *consumer, producer);
     }
-
-    InvalidateCaches(producer);
     InvalidateCaches(consumer);
   }
 
@@ -363,6 +343,7 @@ class GpuPriorityFusionQueue {
     // calculations on 'fusion.operands' below, before it is finally removed
     // in 'RemoveInstruction'.
     if (original_producer->user_count() == 0) {
+      InvalidateCaches(original_producer);
       original_producer->DetachFromOperandsAndUsers();
     }
 
