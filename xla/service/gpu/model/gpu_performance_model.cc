@@ -358,7 +358,8 @@ GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
   for (auto fused_consumer : fused_consumers) {
     VLOG(8) << "Fused consumer: " << fused_consumer->name();
 
-    auto cache_result = config.gpu_performance_model_cache->Get(*producer);
+    auto cache_result =
+        config.gpu_performance_model_cache->Get(*fused_consumer);
     CHECK(cache_result.has_value());
     EstimateRunTimeData consumer_runtime = *cache_result;
 

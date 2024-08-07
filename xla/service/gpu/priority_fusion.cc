@@ -163,9 +163,11 @@ class GpuPriorityFusionQueue {
       }
       instructions.push_back(instruction);
     }
-    // write here and only read in worker threads
-    for (auto producer : instructions) {
-      UpdatePerformanceModelCache(producer);
+
+    for (auto instruction : computation->MakeInstructionPostOrder()) {
+      if (instruction->IsFusible()) {
+        UpdatePerformanceModelCache(instruction);
+      }
     }
     ComputeAndSetPriorities(instructions);
   }
@@ -256,15 +258,26 @@ class GpuPriorityFusionQueue {
       return;
     }
 
+    for (auto consumer : producer->users()) {
+      if (!IsFusible(*consumer)) return;
+    }
+
     auto config = GpuPerformanceModelOptions::PriorityFusion(
         &fusion_analysis_cache_, &gpu_performance_model_cache_);
 
-    if (auto cached_result = gpu_performance_model_cache_.Get(*producer)) {
-      return;
+    if (!gpu_performance_model_cache_.Get(*producer)) {
+      auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
+          producer, *device_info_, &cost_analysis_, config);
+      gpu_performance_model_cache_.Set(*producer, runtime_data);
     }
-    auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
-        producer, *device_info_, &cost_analysis_, config);
-    gpu_performance_model_cache_.Set(*producer, runtime_data);
+
+    for (auto consumer : producer->users()) {
+      if (!gpu_performance_model_cache_.Get(*consumer)) {
+        auto runtime_data = GpuPerformanceModel::EstimateRunTimeForInstruction(
+            consumer, *device_info_, &cost_analysis_, config);
+        gpu_performance_model_cache_.Set(*consumer, runtime_data);
+      }
+    }
   }
 
   // Update priorities of all affected ops.
@@ -418,7 +431,6 @@ class GpuPriorityFusionQueue {
       return std::numeric_limits<Priority>::min();
     }
 
-    // never write cache here as we dont have locks anymore
     GpuPerformanceModel::RunTimes run_times =
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, *device_info_, &cost_analysis_,
