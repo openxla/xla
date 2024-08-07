@@ -35,7 +35,7 @@ def if_mkl(if_true, if_false = []):
       may need it. It may be deleted in future with refactoring.
     """
     return select({
-        "@xla//xla/tsl/mkl:build_with_mkl_aarch64": if_true,
+        # "@xla//xla/tsl/mkl:build_with_mkl_aarch64": if_true,
         "@xla//xla/tsl:linux_x86_64": if_true,
         "@xla//xla/tsl:windows": if_true,
         "//conditions:default": if_false,
