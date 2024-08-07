@@ -248,7 +248,7 @@ class GpuPriorityFusionQueue {
   }
 
   void UpdatePerformanceModelCache(HloInstruction* producer) {
-    if (!IsFusible(*producer)) {
+    if (!IsFusible(*producer) && !IsGenericTritonFusion(*producer)) {
       return;
     }
 
