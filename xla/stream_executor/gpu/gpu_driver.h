@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 
 namespace stream_executor {
 namespace gpu {
