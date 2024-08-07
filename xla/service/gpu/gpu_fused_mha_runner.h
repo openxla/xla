@@ -78,6 +78,20 @@ struct GpufMHADescriptor {
   std::optional<Shape> bias_shape;
 };
 
+struct GpufMHAF8Descriptor {
+  CudnnfMHAKind kind;
+  CudnnfMHABackendConfig backend_config;
+  CudnnfMHAMaskKind mask_type;
+  Shape lhs_bmm1_shape;
+  Shape rhs_bmm1_shape;
+  Shape rhs_bmm2_shape;
+  Shape intermediate_lhs_bmm2_shape;
+  // This will contain both output shape and activation shape
+  absl::InlinedVector<Shape, 4> output_shapes;
+  DotDimensionNumbers bmm1_dnums;
+  DotDimensionNumbers bmm2_dnums;
+};
+
 struct GpufMHABackwardDescriptor {
   CudnnfMHAKind kind;
   CudnnfMHABackendConfig backend_config;
@@ -107,8 +121,11 @@ struct GpufMHABackwardDescriptor {
 // Attention.
 struct GpufMHAConfig {
   static absl::StatusOr<GpufMHAConfig> For(const GpufMHADescriptor& fmha_desc);
+  static absl::StatusOr<GpufMHAConfig> For(
+      const GpufMHAF8Descriptor& fmha_desc);
 
   absl::StatusOr<se::dnn::FusedMHAOp::Config> AsDnnFusedMHAOpConfig() const;
+  absl::StatusOr<se::dnn::FusedMHAF8Op::Config> AsDnnFusedMHAF8OpConfig() const;
 
   PrimitiveType
       input_type;  // Capture the primitive type of one of the inputs of BMM1
@@ -168,6 +185,37 @@ struct GpufMHABackwardConfig {
   std::optional<se::dnn::TensorDescriptor> fwd_output;
   std::optional<se::dnn::TensorDescriptor> bias;
   bool force_deterministic;
+};
+
+// Implementation struct exposed for debugging and log analysis for Fp8.
+struct GpufMHAF8Params {
+  static absl::StatusOr<GpufMHAF8Params> For(
+      const GpufMHAConfig& config, se::DeviceMemoryBase lhs_bmm1_buffer,
+      se::DeviceMemoryBase rhs_bmm1_buffer,
+      se::DeviceMemoryBase rhs_bmm2_buffer,
+      se::DeviceMemoryBase descale_q_buffer,
+      se::DeviceMemoryBase descale_k_buffer,
+      se::DeviceMemoryBase descale_v_buffer,
+      se::DeviceMemoryBase descale_s_buffer,
+      se::DeviceMemoryBase scale_s_buffer, se::DeviceMemoryBase scale_o_buffer,
+      se::DeviceMemoryBase amax_s_buffer, se::DeviceMemoryBase amax_o_buffer,
+      se::DeviceMemoryBase output_buffer,
+      std::optional<se::DeviceMemoryBase> activation_buffer);
+
+  const GpufMHAConfig* config;  // Not owned
+  se::DeviceMemoryBase lhs_bmm1_buffer;
+  se::DeviceMemoryBase rhs_bmm1_buffer;
+  se::DeviceMemoryBase rhs_bmm2_buffer;
+  se::DeviceMemoryBase descale_q_buffer;
+  se::DeviceMemoryBase descale_k_buffer;
+  se::DeviceMemoryBase descale_v_buffer;
+  se::DeviceMemoryBase descale_s_buffer;
+  se::DeviceMemoryBase scale_s_buffer;
+  se::DeviceMemoryBase scale_o_buffer;
+  se::DeviceMemoryBase amax_s_buffer;
+  se::DeviceMemoryBase amax_o_buffer;
+  se::DeviceMemoryBase output_buffer;
+  std::optional<se::DeviceMemoryBase> activation_buffer;
 };
 
 // Implementation struct exposed for debugging and log analysis.
@@ -372,6 +420,79 @@ class FusedMultiHeadedAttentionBackwardRunner {
   Repr repr_;
 };
 
+class FusedMultiHeadedAttentionF8Runner {
+ public:
+  using Repr = std::variant<
+      std::monostate,
+      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>;
+
+  FusedMultiHeadedAttentionF8Runner() = default;
+
+  explicit FusedMultiHeadedAttentionF8Runner(
+      std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>> runner)
+      : repr_(std::move(runner)) {}
+
+  explicit FusedMultiHeadedAttentionF8Runner(Repr runner)
+      : repr_(std::move(runner)) {}
+
+  explicit FusedMultiHeadedAttentionF8Runner(const GpufMHAConfig& config)
+      : FusedMultiHeadedAttentionF8Runner(CreateRunner(config)) {
+    if (std::holds_alternative<std::monostate>(repr_)) {
+      CHECK(false) << "Cannot construct FusedMultiHeadedAttentionF8Runner with "
+                      "std::monostate";
+    }
+  }
+
+  se::dnn::AlgorithmDesc ToAlgorithmDesc() const {
+    return std::visit(ToAlgorithmDescVisitor{}, repr_);
+  }
+
+  se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>* AsFusedMHAF8Runner() {
+    CHECK(std::holds_alternative<
+          std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
+        repr_));
+    return std::get<
+               std::unique_ptr<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>>(
+               repr_)
+        .get();
+  }
+
+ private:
+  static Repr CreateRunner(const GpufMHAConfig& config) {
+    if (config.kind == CudnnfMHAKind::kSoftmaxF8) {
+      return std::make_unique<se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>>(
+          config.algorithm);
+    } else {
+      LOG(FATAL) << "Internal error: unsupported CUDNN MHAF8 kind in "
+                    "FusedMultiHeadedAttentionF8Runner";
+    }
+  }
+
+  struct ToAlgorithmDescVisitor {
+    template <typename RunnerPtr>
+    se::dnn::AlgorithmDesc operator()(const RunnerPtr& runner) {
+      return runner->ToAlgorithmDesc();
+    }
+
+    se::dnn::AlgorithmDesc operator()(const std::monostate&) {
+      CHECK(false) << "Internal error: uninitialized runner in ToAlgorithmDesc";
+    }
+  };
+
+  Repr repr_;
+};
+
+struct RunFusedMHAF8Options {
+  // Nullable output-parameter pointer for profiling results.
+  // Profile results remain unused for now since cuDNN FMHA F8 has only one
+  // algorithm for now.
+  se::dnn::ProfileResult* profile_result = nullptr;
+
+  // Use this runner cache (and its configured algorithm), instead of the one
+  // from the instruction.
+  FusedMultiHeadedAttentionF8Runner* runner_cache;
+};
+
 struct RunFusedMHAOptions {
   // Nullable output-parameter pointer for profiling results.
   // Profile results remain unused for now since cuDNN FMHA has only one
@@ -393,6 +514,19 @@ struct RunFusedMHABackwardOptions {
   // from the instruction.
   FusedMultiHeadedAttentionBackwardRunner* runner_cache;
 };
+
+absl::Status RunGpuFMHAF8(
+    const GpufMHAConfig& fmha_config, se::DeviceMemoryBase lhs_bmm1_buffer,
+    se::DeviceMemoryBase rhs_bmm1_buffer, se::DeviceMemoryBase rhs_bmm2_buffer,
+    se::DeviceMemoryBase descale_q_buffer,
+    se::DeviceMemoryBase descale_k_buffer,
+    se::DeviceMemoryBase descale_v_buffer,
+    se::DeviceMemoryBase descale_s_buffer, se::DeviceMemoryBase scale_s_buffer,
+    se::DeviceMemoryBase scale_o_buffer, se::DeviceMemoryBase amax_s_buffer,
+    se::DeviceMemoryBase amax_o_buffer, se::DeviceMemoryBase output_buffer,
+    se::DeviceMemoryBase scratch_buffer,
+    std::optional<se::DeviceMemoryBase> activation_buffer, se::Stream* stream,
+    RunFusedMHAF8Options = {});
 
 absl::Status RunGpuFMHA(const GpufMHAConfig& fmha_config,
                         se::DeviceMemoryBase lhs_bmm1_buffer,

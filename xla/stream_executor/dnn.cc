@@ -249,6 +249,19 @@ DnnSupport::NormRunnerFromDesc(
   return absl::UnimplementedError("NormRunnerFromDesc not implemented.");
 }
 
+absl::StatusOr<std::unique_ptr<const FusedMHAF8Runner>>
+DnnSupport::FusedMHAF8RunnerFromDesc(
+    Stream* stream, const AlgorithmDesc& algorithm_desc,
+    const MatmulTensorDescriptor& bmm1_lhs_descriptor,
+    const MatmulTensorDescriptor& bmm1_rhs_descriptor,
+    const MatmulTensorDescriptor& bmm2_rhs_descriptor,
+    const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+    const TensorDescriptor& output_descriptor,
+    std::optional<TensorDescriptor> activation_descriptor, double scale,
+    dnn::FMHAMaskKind mask_type) {
+  return absl::UnimplementedError("FusedMHAF8RunnerFromDesc not implemented.");
+}
+
 absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
 DnnSupport::FusedMHARunnerFromDesc(
     Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,

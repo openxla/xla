@@ -91,6 +91,58 @@ class FusedMHAThunk : public Thunk {
       runner_cache_ ABSL_GUARDED_BY(mu_);
 };
 
+class FusedMHAThunkF8 : public Thunk {
+ public:
+  // Constructs a thunk for launching a DNN FMHA.
+  FusedMHAThunkF8(ThunkInfo thunk_info, GpufMHAConfig config,
+                  BufferAllocation::Slice lhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm2_slice,
+                  BufferAllocation::Slice descale_q_slice,
+                  BufferAllocation::Slice descale_k_slice,
+                  BufferAllocation::Slice descale_v_slice,
+                  BufferAllocation::Slice descale_s_slice,
+                  BufferAllocation::Slice scale_s_slice,
+                  BufferAllocation::Slice scale_o_slice,
+                  BufferAllocation::Slice output_slice,
+                  BufferAllocation::Slice amax_s_slice,
+                  BufferAllocation::Slice amax_o_slice,
+                  BufferAllocation::Slice scratch_slice,
+                  BufferAllocation::Slice activation_slice /* may be null */);
+
+  FusedMHAThunkF8(const FusedMHAThunkF8&) = delete;
+  FusedMHAThunkF8& operator=(const FusedMHAThunkF8&) = delete;
+
+  absl::Status Initialize(const InitializeParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+ private:
+  BufferAllocation::Slice lhs_bmm1_buffer_;
+  BufferAllocation::Slice rhs_bmm1_buffer_;
+  BufferAllocation::Slice rhs_bmm2_buffer_;
+  BufferAllocation::Slice descale_q_buffer_;
+  BufferAllocation::Slice descale_k_buffer_;
+  BufferAllocation::Slice descale_v_buffer_;
+  BufferAllocation::Slice descale_s_buffer_;
+  BufferAllocation::Slice scale_s_buffer_;
+  BufferAllocation::Slice scale_o_buffer_;
+  BufferAllocation::Slice output_buffer_;
+  BufferAllocation::Slice amax_s_buffer_;
+  BufferAllocation::Slice amax_o_buffer_;
+  BufferAllocation::Slice scratch_buffer_;
+  BufferAllocation::Slice activation_buffer_;
+
+  FusedMultiHeadedAttentionF8Runner& GetOrCreateRunner(
+      const stream_executor::Stream* stream);
+
+  // FusedMHA config
+  const GpufMHAConfig config_;
+  absl::Mutex mu_;
+  absl::flat_hash_map<const stream_executor::Stream*,
+                      std::unique_ptr<FusedMultiHeadedAttentionF8Runner>>
+      runner_cache_ ABSL_GUARDED_BY(mu_);
+};
+
 class FusedMHABackwardThunk : public Thunk {
  public:
   // Constructs a thunk for launching a DNN FMHA backward.

@@ -280,6 +280,31 @@ struct FusedMatmulOp {
   }
 };
 
+struct FusedMHAF8Op {
+  using Signature = FusedMHAF8Signature;
+  struct Config {
+    double scale;
+    const MatmulTensorDescriptor& bmm1_lhs_descriptor;
+    const MatmulTensorDescriptor& bmm1_rhs_descriptor;
+    const MatmulTensorDescriptor& bmm2_rhs_descriptor;
+    const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor;
+    const TensorDescriptor& output_descriptor;
+    std::optional<TensorDescriptor> activation_descriptor;
+    FMHAMaskKind mask_type;
+  };
+
+  static absl::StatusOr<std::unique_ptr<const OpRunner<FusedMHAF8Signature>>>
+  RunnerFromAlgorithmDesc(const AlgorithmDesc& desc, Config config,
+                          Stream* stream) {
+    TF_ASSIGN_OR_RETURN(auto dnn, internal::GetDnnFromStream(stream));
+    return dnn->FusedMHAF8RunnerFromDesc(
+        stream, desc, config.bmm1_lhs_descriptor, config.bmm1_rhs_descriptor,
+        config.bmm2_rhs_descriptor, config.intermediate_bmm2_lhs_descriptor,
+        config.output_descriptor, config.activation_descriptor, config.scale,
+        config.mask_type);
+  }
+};
+
 struct FusedMHAOp {
   using Signature = FusedMHASignature;
   struct Config {

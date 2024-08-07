@@ -67,6 +67,46 @@ FusedMultiHeadedAttentionRunner& FusedMHAThunk::GetOrCreateRunner(
   return *it->second;
 }
 
+FusedMHAThunkF8::FusedMHAThunkF8(
+    ThunkInfo thunk_info, GpufMHAConfig config,
+    BufferAllocation::Slice lhs_bmm1, BufferAllocation::Slice rhs_bmm1,
+    BufferAllocation::Slice rhs_bmm2, BufferAllocation::Slice descale_q,
+    BufferAllocation::Slice descale_k, BufferAllocation::Slice descale_v,
+    BufferAllocation::Slice descale_s, BufferAllocation::Slice scale_s,
+    BufferAllocation::Slice scale_o, BufferAllocation::Slice output,
+    BufferAllocation::Slice amax_s, BufferAllocation::Slice amax_o,
+    BufferAllocation::Slice scratch, BufferAllocation::Slice activation)
+    : Thunk(Kind::kFusedMHA, thunk_info),
+      lhs_bmm1_buffer_(lhs_bmm1),
+      rhs_bmm1_buffer_(rhs_bmm1),
+      rhs_bmm2_buffer_(rhs_bmm2),
+      descale_q_buffer_(descale_q),
+      descale_k_buffer_(descale_k),
+      descale_v_buffer_(descale_v),
+      descale_s_buffer_(descale_s),
+      scale_s_buffer_(scale_s),
+      scale_o_buffer_(scale_o),
+      output_buffer_(output),
+      amax_s_buffer_(amax_s),
+      amax_o_buffer_(amax_o),
+      scratch_buffer_(scratch),
+      activation_buffer_(activation),
+      config_(std::move(config)) {}
+
+FusedMultiHeadedAttentionF8Runner& FusedMHAThunkF8::GetOrCreateRunner(
+    const stream_executor::Stream* stream) {
+  absl::MutexLock lock(&mu_);
+  auto it = runner_cache_.find(stream);
+  if (it == runner_cache_.end()) {
+    it = runner_cache_
+             .insert(
+                 {stream,
+                  std::make_unique<FusedMultiHeadedAttentionF8Runner>(config_)})
+             .first;
+  }
+  return *it->second;
+}
+
 std::optional<se::DeviceMemoryBase> AssignBufferIfNotNull(
     const BufferAllocations& buffer_allocations,
     BufferAllocation::Slice& slice) {
@@ -81,6 +121,59 @@ absl::Status FusedMHAThunk::Initialize(const InitializeParams& params) {
       GetOrCreateRunner(params.stream).AsFusedMHARunner();
   TF_ASSIGN_OR_RETURN(auto config, config_.AsDnnFusedMHAOpConfig());
   return lazy_runner->GetOrCreateRunner(config, params.stream).status();
+}
+
+absl::Status FusedMHAThunkF8::Initialize(const InitializeParams& params) {
+  se::dnn::LazyOpRunner<se::dnn::FusedMHAF8Op>* lazy_runner =
+      GetOrCreateRunner(params.stream).AsFusedMHAF8Runner();
+  TF_ASSIGN_OR_RETURN(auto config, config_.AsDnnFusedMHAF8OpConfig());
+  return lazy_runner->GetOrCreateRunner(config, params.stream).status();
+}
+
+absl::Status FusedMHAThunkF8::ExecuteOnStream(const ExecuteParams& params) {
+  const auto& buffer_allocations = *params.buffer_allocations;
+  se::DeviceMemoryBase lhs_bmm1_buffer =
+      buffer_allocations.GetDeviceAddress(lhs_bmm1_buffer_);
+  se::DeviceMemoryBase rhs_bmm1_buffer =
+      buffer_allocations.GetDeviceAddress(rhs_bmm1_buffer_);
+  se::DeviceMemoryBase rhs_bmm2_buffer =
+      buffer_allocations.GetDeviceAddress(rhs_bmm2_buffer_);
+  se::DeviceMemoryBase output_buffer =
+      buffer_allocations.GetDeviceAddress(output_buffer_);
+  se::DeviceMemoryBase scratch_buffer =
+      buffer_allocations.GetDeviceAddress(scratch_buffer_);
+
+  se::DeviceMemoryBase descale_q_buffer =
+      buffer_allocations.GetDeviceAddress(descale_q_buffer_);
+  se::DeviceMemoryBase descale_k_buffer =
+      buffer_allocations.GetDeviceAddress(descale_k_buffer_);
+  se::DeviceMemoryBase descale_v_buffer =
+      buffer_allocations.GetDeviceAddress(descale_v_buffer_);
+  se::DeviceMemoryBase descale_s_buffer =
+      buffer_allocations.GetDeviceAddress(descale_s_buffer_);
+  se::DeviceMemoryBase scale_s_buffer =
+      buffer_allocations.GetDeviceAddress(scale_s_buffer_);
+  se::DeviceMemoryBase scale_o_buffer =
+      buffer_allocations.GetDeviceAddress(scale_o_buffer_);
+  se::DeviceMemoryBase amax_s_buffer =
+      buffer_allocations.GetDeviceAddress(amax_s_buffer_);
+  se::DeviceMemoryBase amax_o_buffer =
+      buffer_allocations.GetDeviceAddress(amax_o_buffer_);
+  std::optional<se::DeviceMemoryBase> activation_buffer =
+      AssignBufferIfNotNull(buffer_allocations, activation_buffer_);
+
+  RunFusedMHAF8Options opts;
+  opts.runner_cache = &GetOrCreateRunner(params.stream);
+  TF_RETURN_IF_ERROR(RunGpuFMHAF8(
+      config_, lhs_bmm1_buffer, rhs_bmm1_buffer, rhs_bmm2_buffer,
+      descale_q_buffer, descale_k_buffer, descale_v_buffer, descale_s_buffer,
+      scale_s_buffer, scale_o_buffer, amax_s_buffer, amax_o_buffer,
+      output_buffer, scratch_buffer, activation_buffer, params.stream, opts));
+
+  if (!params.stream->ok()) {
+    return Internal("FusedMHAThunk::ExecuteOnStream failed.");
+  }
+  return absl::OkStatus();
 }
 
 absl::Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
@@ -116,6 +209,7 @@ absl::Status FusedMHAThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
   return absl::OkStatus();
 }
+
 FusedMHABackwardThunk::FusedMHABackwardThunk(
     ThunkInfo thunk_info, GpufMHABackwardConfig config,
     BufferAllocation::Slice bmm1_grad_gemm1_rhs,
