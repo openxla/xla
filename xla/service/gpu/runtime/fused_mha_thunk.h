@@ -91,6 +91,58 @@ class FusedMHAThunk : public Thunk {
       runner_cache_ ABSL_GUARDED_BY(mu_);
 };
 
+class FusedMHAThunkF8 : public Thunk {
+ public:
+  // Constructs a thunk for launching a DNN FMHA.
+  FusedMHAThunkF8(ThunkInfo thunk_info, GpufMHAConfig config,
+                  BufferAllocation::Slice lhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm1_slice,
+                  BufferAllocation::Slice rhs_bmm2_slice,
+                  BufferAllocation::Slice descale_q_slice,
+                  BufferAllocation::Slice descale_k_slice,
+                  BufferAllocation::Slice descale_v_slice,
+                  BufferAllocation::Slice descale_s_slice,
+                  BufferAllocation::Slice scale_s_slice,
+                  BufferAllocation::Slice scale_o_slice,
+                  BufferAllocation::Slice output_slice,
+                  BufferAllocation::Slice amax_s_slice,
+                  BufferAllocation::Slice amax_o_slice,
+                  BufferAllocation::Slice scratch_slice,
+                  BufferAllocation::Slice activation_slice /* may be null */);
+
+  FusedMHAThunkF8(const FusedMHAThunkF8&) = delete;
+  FusedMHAThunkF8& operator=(const FusedMHAThunkF8&) = delete;
+
+  absl::Status Initialize(const InitializeParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+ private:
+  BufferAllocation::Slice lhs_bmm1_buffer_;
+  BufferAllocation::Slice rhs_bmm1_buffer_;
+  BufferAllocation::Slice rhs_bmm2_buffer_;
+  BufferAllocation::Slice descale_q_buffer_;
+  BufferAllocation::Slice descale_k_buffer_;
+  BufferAllocation::Slice descale_v_buffer_;
+  BufferAllocation::Slice descale_s_buffer_;
+  BufferAllocation::Slice scale_s_buffer_;
+  BufferAllocation::Slice scale_o_buffer_;
+  BufferAllocation::Slice output_buffer_;
+  BufferAllocation::Slice amax_s_buffer_;
+  BufferAllocation::Slice amax_o_buffer_;
+  BufferAllocation::Slice scratch_buffer_;
+  BufferAllocation::Slice activation_buffer_;
+
+  FusedMultiHeadedAttentionF8Runner& GetOrCreateRunner(
+      const stream_executor::Stream* stream);
+
+  // FusedMHA config
+  const GpufMHAConfig config_;
+  absl::Mutex mu_;
+  absl::flat_hash_map<const stream_executor::Stream*,
+                      std::unique_ptr<FusedMultiHeadedAttentionF8Runner>>
+      runner_cache_ ABSL_GUARDED_BY(mu_);
+};
+
 class FusedMHABackwardThunk : public Thunk {
  public:
   // Constructs a thunk for launching a DNN FMHA backward.
@@ -177,6 +229,86 @@ class FusedMHABackwardThunk : public Thunk {
   absl::Mutex mu_;
   absl::flat_hash_map<const stream_executor::Stream*,
                       std::unique_ptr<FusedMultiHeadedAttentionBackwardRunner>>
+      runner_cache_ ABSL_GUARDED_BY(mu_);
+};
+
+class FusedMHABackwardThunkF8 : public Thunk {
+ public:
+  // Constructs a thunk for launching a DNN FMHA backward.
+  FusedMHABackwardThunkF8(ThunkInfo thunk_info, GpufMHABackwardConfig config,
+                          BufferAllocation::Slice bmm1_grad_gemm1_rhs_slice,
+                          BufferAllocation::Slice bmm1_grad_gemm2_rhs_slice,
+                          BufferAllocation::Slice bmm2_grad_gemm1_lhs_slice,
+                          BufferAllocation::Slice bmm2_grad_gemm2_rhs_slice,
+                          BufferAllocation::Slice fwd_output_slice,
+                          BufferAllocation::Slice d_output_slice,
+                          BufferAllocation::Slice descale_q_slice,
+                          BufferAllocation::Slice descale_k_slice,
+                          BufferAllocation::Slice descale_v_slice,
+                          BufferAllocation::Slice descale_o_slice,
+                          BufferAllocation::Slice descale_dO_slice,
+                          BufferAllocation::Slice descale_s_slice,
+                          BufferAllocation::Slice descale_dP_slice,
+                          BufferAllocation::Slice scale_s_slice,
+                          BufferAllocation::Slice scale_dQ_slice,
+                          BufferAllocation::Slice scale_dK_slice,
+                          BufferAllocation::Slice scale_dV_slice,
+                          BufferAllocation::Slice scale_dP_slice,
+                          BufferAllocation::Slice d_bmm1_lhs_slice,
+                          BufferAllocation::Slice d_bmm1_rhs_slice,
+                          BufferAllocation::Slice d_bmm2_rhs_slice,
+                          BufferAllocation::Slice amax_dQ_slice,
+                          BufferAllocation::Slice amax_dK_slice,
+                          BufferAllocation::Slice amax_dV_slice,
+                          BufferAllocation::Slice amax_dP_slice,
+                          BufferAllocation::Slice scratch_slice);
+
+  FusedMHABackwardThunkF8(const FusedMHABackwardThunkF8&) = delete;
+  FusedMHABackwardThunkF8& operator=(const FusedMHABackwardThunkF8&) = delete;
+
+  absl::Status Initialize(const InitializeParams& params) override;
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+ private:
+  BufferAllocation::Slice bmm1_grad_gemm1_rhs_buffer_;
+  BufferAllocation::Slice bmm1_grad_gemm2_rhs_buffer_;
+  BufferAllocation::Slice bmm2_grad_gemm1_lhs_buffer_;
+  BufferAllocation::Slice bmm2_grad_gemm2_rhs_buffer_;
+  BufferAllocation::Slice d_output_buffer_;
+  BufferAllocation::Slice scratch_buffer_;
+  BufferAllocation::Slice d_bmm1_lhs_buffer_;
+  BufferAllocation::Slice d_bmm1_rhs_buffer_;
+  BufferAllocation::Slice d_bmm2_rhs_buffer_;
+
+  BufferAllocation::Slice fwd_output_buffer_;
+  BufferAllocation::Slice descale_q_buffer_;
+  BufferAllocation::Slice descale_k_buffer_;
+  BufferAllocation::Slice descale_v_buffer_;
+  BufferAllocation::Slice descale_o_buffer_;
+  BufferAllocation::Slice descale_dO_buffer_;
+  BufferAllocation::Slice descale_s_buffer_;
+  BufferAllocation::Slice descale_dP_buffer_;
+
+  BufferAllocation::Slice scale_s_buffer_;
+  BufferAllocation::Slice scale_dQ_buffer_;
+  BufferAllocation::Slice scale_dK_buffer_;
+  BufferAllocation::Slice scale_dV_buffer_;
+  BufferAllocation::Slice scale_dP_buffer_;
+
+  BufferAllocation::Slice amax_dQ_buffer_;
+  BufferAllocation::Slice amax_dK_buffer_;
+  BufferAllocation::Slice amax_dV_buffer_;
+  BufferAllocation::Slice amax_dP_buffer_;
+
+  FusedMultiHeadedAttentionBackwardF8Runner& GetOrCreateRunner(
+      const stream_executor::Stream* stream);
+
+  // FusedMHA backward config
+  const GpufMHABackwardConfig config_;
+  absl::Mutex mu_;
+  absl::flat_hash_map<
+      const stream_executor::Stream*,
+      std::unique_ptr<FusedMultiHeadedAttentionBackwardF8Runner>>
       runner_cache_ ABSL_GUARDED_BY(mu_);
 };
 }  // namespace gpu

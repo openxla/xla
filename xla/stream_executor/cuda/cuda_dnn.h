@@ -335,6 +335,17 @@ class CudnnSupport : public dnn::DnnSupport {
       std::optional<dnn::TensorDescriptor> dscale_descriptor,
       std::optional<dnn::TensorDescriptor> dbias_descriptor) override;
 
+  absl::StatusOr<std::unique_ptr<const dnn::FusedMHAF8Runner>>
+  FusedMHAF8RunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      const dnn::MatmulTensorDescriptor& bmm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+      const dnn::TensorDescriptor& output_descriptor,
+      std::optional<dnn::TensorDescriptor> activation_descriptor,
+      double scale, dnn::FMHAMaskKind mask_type) override;
+
   absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
   FusedMHARunnerFromDesc(
       Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
@@ -364,7 +375,21 @@ class CudnnSupport : public dnn::DnnSupport {
       std::optional<dnn::TensorDescriptor> fwd_output_descriptor,
       std::optional<dnn::TensorDescriptor> bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed,
-      dnn::FMHAMaskKind mask_type, bool force_deterministic);
+      dnn::FMHAMaskKind mask_type, bool force_deterministic) override;
+
+  absl::StatusOr<std::unique_ptr<const dnn::FusedMHABackwardF8Runner>>
+  FusedMHABackwardF8RunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      const dnn::MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& d_output_descriptor,
+      const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
+      const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
+      const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
+      std::optional<dnn::TensorDescriptor> fwd_output_descriptor, double scale,
+      dnn::FMHAMaskKind mask_type) override;
 
   bool GetRnnAlgorithms(
       std::vector<dnn::AlgorithmDesc>* out_algorithms) override;
@@ -715,6 +740,25 @@ class CudnnSupport : public dnn::DnnSupport {
   CudnnSupport(const CudnnSupport&) = delete;
   void operator=(const CudnnSupport&) = delete;
 };
+
+absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
+    dnn::DnnSupport& dnn_support,
+    const dnn::MatmulTensorDescriptor& q_descriptor,
+    const dnn::MatmulTensorDescriptor& k_descriptor,
+    const dnn::MatmulTensorDescriptor& v_descriptor,
+    const dnn::TensorDescriptor& o_descriptor,
+    const std::optional<dnn::TensorDescriptor> stats_descriptor,
+    const float scale, const dnn::FMHAMaskKind mask_type);
+
+absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
+    dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,
+    const dnn::MatmulTensorDescriptor& k_desc,
+    const dnn::MatmulTensorDescriptor& p_desc,
+    const dnn::MatmulTensorDescriptor& v_desc,
+    const dnn::MatmulTensorDescriptor& do_desc,
+    const dnn::TensorDescriptor& dq_desc, const dnn::TensorDescriptor& dk_desc,
+    const dnn::TensorDescriptor& dv_desc, double scale,
+    dnn::FMHAMaskKind mask_type);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     dnn::DnnSupport& dnn_support,

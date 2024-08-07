@@ -993,6 +993,44 @@ using FusedMatmulRunner = OpRunner<FusedMatmulSignature>;
 using NormSignature = void(std::vector<DeviceMemoryBase>);
 using NormRunner = OpRunner<NormSignature>;
 
+using FusedMHAF8Signature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
+                                 DeviceMemoryBase /* BMM1_inputB_data */,
+                                 DeviceMemoryBase /* BMM2_inputA_data */,
+                                 DeviceMemoryBase /* descale_q_data */,
+                                 DeviceMemoryBase /* descale_k_data */,
+                                 DeviceMemoryBase /* descale_v_data */,
+                                 DeviceMemoryBase /* descale_s_data */,
+                                 DeviceMemoryBase /* scale_s_data */,
+                                 DeviceMemoryBase /* scale_o_data */,
+                                 DeviceMemoryBase /* amax_s_data */,
+                                 DeviceMemoryBase /* amax_o_data */,
+                                 DeviceMemoryBase /* output_data */,
+                                 DeviceMemoryBase /* activation_data */);
+using FusedMHAF8Runner = OpRunner<FusedMHAF8Signature>;
+
+using FusedMHABackwardF8Signature = void(
+    DeviceMemoryBase /* BMM1_GRAD_GEMM1_inputA_data */,
+    DeviceMemoryBase /* BMM1_GRAD_GEMM2_inputB_data */,
+    DeviceMemoryBase /* BMM2_GRAD_GEMM2_inputB_data */,
+    DeviceMemoryBase /* fwd_output_data */,
+    DeviceMemoryBase /* d_output_data */,
+    DeviceMemoryBase /* BMM2_GRAD_GEMM1_inputA_data */,
+    DeviceMemoryBase /* descale_q_data */,
+    DeviceMemoryBase /* descale_k_data */,
+    DeviceMemoryBase /* descale_v_data */,
+    DeviceMemoryBase /* descale_o_data */,
+    DeviceMemoryBase /* descale_dO_data */,
+    DeviceMemoryBase /* descale_s_data */,
+    DeviceMemoryBase /* descale_dP_data */, DeviceMemoryBase /* scale_s_data */,
+    DeviceMemoryBase /* scale_dQ_data */, DeviceMemoryBase /* scale_dK_data */,
+    DeviceMemoryBase /* scale_dV_data */, DeviceMemoryBase /* scale_dP_data */,
+    // outputs
+    DeviceMemoryBase /* dQ */, DeviceMemoryBase /* dK */,
+    DeviceMemoryBase /* dV */, DeviceMemoryBase /* amax_dQ */,
+    DeviceMemoryBase /* amax_dK */, DeviceMemoryBase /* amax_dV */,
+    DeviceMemoryBase /* amax_dP */);
+using FusedMHABackwardF8Runner = OpRunner<FusedMHABackwardF8Signature>;
+
 using FusedMHASignature = void(DeviceMemoryBase /*BMM1_inputA_data*/,
                                DeviceMemoryBase /* BMM1_inputB_data */,
                                DeviceMemoryBase /* BMM2_inputA_data */,
@@ -1731,6 +1769,17 @@ class DnnSupport {
     return absl::UnimplementedError("Graph support requires cuDNN >= 8.1.");
   };
 
+  virtual absl::StatusOr<std::unique_ptr<const FusedMHAF8Runner>>
+  FusedMHAF8RunnerFromDesc(
+      Stream* stream, const AlgorithmDesc& algorithm_desc,
+      const MatmulTensorDescriptor& bmm1_lhs_descriptor,
+      const MatmulTensorDescriptor& bmm1_rhs_descriptor,
+      const MatmulTensorDescriptor& bmm2_rhs_descriptor,
+      const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+      const TensorDescriptor& output_descriptor,
+      std::optional<TensorDescriptor> activation_descriptor,
+      double scale, dnn::FMHAMaskKind mask_type);
+
   virtual absl::StatusOr<std::unique_ptr<const FusedMHARunner>>
   FusedMHARunnerFromDesc(
       Stream* stream, const AlgorithmDesc& algorithm_desc,
@@ -1761,6 +1810,20 @@ class DnnSupport {
       std::optional<TensorDescriptor> bias_descriptor, double scale,
       std::optional<double> dropout_rate, std::optional<int64_t> seed,
       dnn::FMHAMaskKind mask_type, bool force_deterministic);
+
+  virtual absl::StatusOr<std::unique_ptr<const dnn::FusedMHABackwardF8Runner>>
+  FusedMHABackwardF8RunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      const dnn::MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor,
+      const dnn::MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor,
+      const dnn::MatmulTensorDescriptor& d_output_descriptor,
+      const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
+      const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
+      const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
+      std::optional<dnn::TensorDescriptor> fwd_output_descriptor, double scale,
+      dnn::FMHAMaskKind mask_type);
 
   virtual bool GetMIOpenConvolveAlgorithms(
       ConvolutionKind kind, DataType element_type, DataType output_type,

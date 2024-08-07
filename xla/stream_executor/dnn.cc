@@ -249,6 +249,19 @@ DnnSupport::NormRunnerFromDesc(
   return absl::UnimplementedError("NormRunnerFromDesc not implemented.");
 }
 
+absl::StatusOr<std::unique_ptr<const FusedMHAF8Runner>>
+DnnSupport::FusedMHAF8RunnerFromDesc(
+    Stream* stream, const AlgorithmDesc& algorithm_desc,
+    const MatmulTensorDescriptor& bmm1_lhs_descriptor,
+    const MatmulTensorDescriptor& bmm1_rhs_descriptor,
+    const MatmulTensorDescriptor& bmm2_rhs_descriptor,
+    const MatmulTensorDescriptor& intermediate_bmm2_lhs_descriptor,
+    const TensorDescriptor& output_descriptor,
+    std::optional<TensorDescriptor> activation_descriptor,
+    double scale, dnn::FMHAMaskKind mask_type) {
+  return absl::UnimplementedError("FusedMHAF8RunnerFromDesc not implemented.");
+}
+
 absl::StatusOr<std::unique_ptr<const dnn::FusedMHARunner>>
 DnnSupport::FusedMHARunnerFromDesc(
     Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
@@ -283,6 +296,23 @@ DnnSupport::FusedMHABackwardRunnerFromDesc(
     dnn::FMHAMaskKind mask_type, bool force_deterministic) {
   return absl::UnimplementedError(
       "FusedMHABackwardRunnerFromDesc not implemented.");
+}
+
+absl::StatusOr<std::unique_ptr<const dnn::FusedMHABackwardF8Runner>>
+DnnSupport::FusedMHABackwardF8RunnerFromDesc(
+    Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+    const dnn::MatmulTensorDescriptor& bmm1_grad_gemm1_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm1_grad_gemm2_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm2_grad_gemm1_lhs_descriptor,
+    const dnn::MatmulTensorDescriptor& bmm2_grad_gemm2_rhs_descriptor,
+    const dnn::MatmulTensorDescriptor& d_output_descriptor,
+    const dnn::TensorDescriptor& d_bmm1_lhs_descriptor,
+    const dnn::TensorDescriptor& d_bmm1_rhs_descriptor,
+    const dnn::TensorDescriptor& d_bmm2_rhs_descriptor,
+    std::optional<dnn::TensorDescriptor> fwd_output_descriptor, double scale,
+    dnn::FMHAMaskKind mask_type) {
+  return absl::UnimplementedError(
+      "FusedMHABackwardF8RunnerFromDesc not implemented.");
 }
 
 bool DnnSupport::GetMIOpenConvolveAlgorithms(
