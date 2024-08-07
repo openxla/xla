@@ -147,9 +147,11 @@ static std::string GetSmName(se::CudaComputeCapability compute_capability) {
                  << ". Defaulting to telling LLVM that we're compiling for sm_"
                  << sm_version;
   }
-  // If the target is sm_90, hard code it to sm_90a so that all instructions
-  // can be used. We don't need the portability that sm_90 gives.
-  std::string_view extension = sm_version == 90 ? "a" : "";
+  // On Hopper, default to sm_90a so that all instructions can be used. But
+  // only sm_90 is forward compatible, so don't use sm_90a with newer hardware:
+  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#ptx-compatibility
+  std::string_view extension =
+      (compute_capability.major == 9 && sm_version == 90) ? "a" : "";
   return absl::StrCat("sm_", sm_version, extension);
 }
 
