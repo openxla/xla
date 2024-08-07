@@ -2554,6 +2554,18 @@ cc_library(
     ],
 )
 
+
+cc_library(
+    name = "scatter_utils",
+    srcs = ["scatter_utils.cc"],
+    hdrs = ["scatter_utils.h"],
+    deps = [
+        ":call_inliner",
+        ":hlo_creation_utils",
+    ],
+)
+
+
 cc_library(
     name = "scatter_expander",
     srcs = ["scatter_expander.cc"],
@@ -2562,6 +2574,7 @@ cc_library(
         ":call_inliner",
         ":hlo_creation_utils",
         ":op_expander_pass",
+        ":scatter_utils",
         ":while_util",
         "//xla:literal_util",
         "//xla/hlo/ir:hlo",
@@ -2570,11 +2583,51 @@ cc_library(
     ],
 )
 
+
+cc_library(
+    name = "scatter_determinism_expander",
+    srcs = ["scatter_determinism_expander.cc"],
+    hdrs = ["scatter_determinism_expander.h"],
+    deps = [
+        ":call_inliner",
+        ":hlo_creation_utils",
+        ":op_expander_pass",
+        ":scatter_utils",
+        ":while_util",
+        "//xla:literal_util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
 xla_cc_test(
     name = "scatter_expander_test",
     srcs = ["scatter_expander_test.cc"],
     deps = [
         ":scatter_expander",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:test",
+        "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
+    ],
+)
+
+xla_test(
+    name = "scatter_determinism_expander_test",
+    srcs = ["scatter_determinism_expander_test.cc"],
+    backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        ":scatter_determinism_expander",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:test",
