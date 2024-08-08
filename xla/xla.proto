@@ -880,7 +880,11 @@ message DebugOptions {
   // but potentially higher the performance.
   int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
-  // Next id: 319
+  // Timeouts for RendezvousSingle stuck warning and termination.
+  int32 xla_gpu_executable_warn_stuck_timeout = 319;
+  int32 xla_gpu_executable_terminate_timeout = 320;
+
+  // Next id: 321
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
