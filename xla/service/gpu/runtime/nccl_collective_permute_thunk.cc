@@ -59,23 +59,26 @@ bool IsLocalPeerTransfer(
     se::Stream& stream, const int64_t current_id, const int64_t device_count) {
   const std::optional<int64_t> source_id = source_target.source;
   const std::optional<int64_t> target_id = source_target.target;
-  // Since mixing nccl p2p with p2p memcopy will cause random deadlocks.
+  // Mixing nccl p2p with p2p memcopy will cause random deadlocks, namely
+  // when calling nccl call and cuda memcpy p2p together(which both are
+  // synchronizing devices), in this case if this rank is sending across host
+  // using a nccl call but receiving from a local peer which is going through
+  // cuda api, the deadlock could happen because nccl cannot ensure the
+  // order of cuda api calls.
   // We determine if it's a local peer by the following conditions:
   // 1. Both source and target IDs are present and they are within a node
-  // 2. Source ID is present, but target ID is not.
-  // 3. Target ID is present, but source ID is not.
+  // 2. Source ID is present and is within the node, but target ID is not
+  // present.
+  // 3. Target ID is present and is within the node, but source ID is not
+  // present.
   int64_t host_id = (current_id / device_count);
   if (source_id && target_id) {
     return (host_id == (*source_id / device_count)) &&
            (host_id == (*target_id / device_count));
   }
-  if (source_id) {
-    return (host_id == (*source_id / device_count));
-  }
-  if (target_id) {
-    return (host_id == (*target_id / device_count));
-  }
-  return false;
+  if (source_id && host_id != *source_id / device_count) return false;
+  if (target_id && host_id != *target_id / device_count) return false;
+  return true;
 }
 
 }  // namespace
@@ -158,7 +161,7 @@ NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
 absl::Status NcclCollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NcclCollectiveThunk::Initialize(params));
-  device_count_ = params.executor->GetDeviceCount();
+  TF_ASSIGN_OR_RETURN(device_count_, params.executor->GetDeviceCount());
   VLOG(5) << "Local device count: " << device_count_;
 
   if (p2p_memcpy_enabled_) {

@@ -325,7 +325,9 @@ class StreamExecutor {
   virtual int64_t GetMemoryLimitBytes() const = 0;
 
   // Returns the total number of compute capable devices.
-  virtual int64_t GetDeviceCount() { return 0; };
+  virtual absl::StatusOr<int64_t> GetDeviceCount() {
+    return absl::UnimplementedError("Not implemented");
+  };
 
   // The following methods access an internal log of some subset
   // of arguments passed to other class methods.
