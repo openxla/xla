@@ -174,7 +174,7 @@ int32_t MatMulF32(const void* run_options_ptr, float* out, float* lhs,
   acl_obj.out_tensor.allocator()->free();
   if (acl_conf.is_trans_lhs) acl_obj.lhs_acc_tensor.allocator()->free();
   if (acl_conf.is_trans_rhs) acl_obj.rhs_acc_tensor.allocator()->free();
-
+  VLOG(1) << "ACL matmul succeeded";
   return 0;
 }
 
