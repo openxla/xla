@@ -3181,6 +3181,7 @@ xla_test(
         "//xla:types",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
