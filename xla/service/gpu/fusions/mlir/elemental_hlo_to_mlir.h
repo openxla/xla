@@ -64,7 +64,7 @@ llvm::SmallVector<mlir::Value, 2> ProvideParameterRange(
 
 // Checks whether the given HLO instruction can be converted to MLIR.
 bool IsHloOpSupported(const HloInstruction* instr,
-                      se::CudaComputeCapability compute_capability);
+                      se::GpuComputeCapability compute_capability);
 
 // Checks whether the given HLO computation is supported by the MLIR converter:
 // - all instructions in it are supported

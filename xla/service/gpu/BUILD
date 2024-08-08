@@ -267,6 +267,7 @@ cc_library(
     testonly = 1,
     srcs = ["gpu_device_info_for_tests.cc"],
     hdrs = ["gpu_device_info_for_tests.h"],
+    local_defines = if_rocm_is_configured(["TENSORFLOW_USE_ROCM=1"]),
     compatible_with = get_compatible_with_portable(),
     deps = [
         "//xla/stream_executor:device_description",
