@@ -107,7 +107,6 @@ cc_library(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:human_readable_json",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status",
