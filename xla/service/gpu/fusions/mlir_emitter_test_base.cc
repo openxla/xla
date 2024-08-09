@@ -51,6 +51,11 @@ namespace gpu {
 
 MlirEmitterTestBaseImpl::MlirEmitterTestBaseImpl() {
   // clang-format off
+#ifdef GOOGLE_CUDA
+  device_info_ = TestGpuDeviceInfo::RTXA6000DeviceInfo();
+#elif TENSORFLOW_USE_ROCM
+  device_info_ = TestGpuDeviceInfo::AMDMI210DeviceInfo();
+#endif
   mlir_context_.loadDialect<
       mlir::affine::AffineDialect,
       mlir::arith::ArithDialect,
@@ -73,7 +78,11 @@ MlirEmitterTestBaseImpl::MlirEmitterTestBaseImpl() {
 
 DebugOptions MlirEmitterTestBaseImpl::GetDebugOptionsForTest() {
   auto debug_options = HloTestBase::GetDebugOptionsForTest();
+#ifdef GOOGLE_CUDA
   debug_options.set_xla_gpu_mlir_emitter_level(4);
+#elif TENSORFLOW_USE_ROCM
+  debug_options.set_xla_gpu_mlir_emitter_level(0);
+#endif
   return debug_options;
 }
 
