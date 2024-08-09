@@ -1170,7 +1170,7 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
         "//xla/service:tuple_simplifier",
-        "@tsl//tsl/lib/strings:proto_serialization",
+        "//xla/tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
