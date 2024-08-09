@@ -181,6 +181,59 @@ ENTRY entry {
   EXPECT_EQ(get_tuple_index->tuple_index(), 3);
 }
 
+// A case where Bitcast will become the user of a pipelined instruction and
+// check if the DUS is pushed to the next iteration successfully. Absense of
+// Bitcast in acceptable users will break this test.
+TEST_F(CollectivePipelinerTest, BitcastAsUser) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+add {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT add = bf16[] add(lhs, rhs)
+}
+
+while_cond {
+  param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+  gte = s32[] get-tuple-element(param), index=0
+  constant.1 = s32[] constant(3)
+  ROOT cmp = pred[] compare(gte, constant.1), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+  current-loop-index = s32[] get-tuple-element(param), index=0
+  parameter.0 = bf16[3,8,128] get-tuple-element(param), index=1
+  parameter.1 = bf16[3,8,128] get-tuple-element(param), index=2
+  constant.1 = s32[] constant(1)
+  next-loop-index = s32[] add(current-loop-index, constant.1)
+  constant.0 = s32[] constant(0)
+  sliced-parameter.1 = bf16[1,8,128] dynamic-slice(parameter.1, current-loop-index, constant.0, constant.0), dynamic_slice_sizes={1,8,128}
+
+  all-reduce.0 = bf16[1,8,128] all-reduce(sliced-parameter.1), replica_groups={}, to_apply=add, channel_id=1
+  bitcasted-all-reduce.0 = u16[3,8,128] bitcast(all-reduce.0)
+  all-reduce.1 = bf16[3,8,128] bitcast(bitcasted-all-reduce.0)
+
+  dynamic-update-slice = bf16[3,8,128] dynamic-update-slice(parameter.0, all-reduce.1, current-loop-index, constant.0, constant.0)
+  ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(next-loop-index, dynamic-update-slice, parameter.1)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[3,8,128] parameter(0)
+  tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
+  while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple), condition=while_cond, body=while_body
+  ROOT gte1 = bf16[3,8,128] get-tuple-element(while), index=1
+}
+)";
+  auto module = ParseAndReturnUnverifiedModule(hlo_string, config_).value();
+  EXPECT_TRUE(RunOptimizer(module.get(), /*last_run=*/true).value());
+  XLA_VLOG_LINES(1, module->ToString());
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::DynamicUpdateSlice(_, _, _, _, _));
+}
+
 TEST_F(CollectivePipelinerTest, TransformIncrementIndexByOneCollectivePermute) {
   constexpr absl::string_view hlo_string = R"(
 HloModule module
