@@ -161,9 +161,7 @@ NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
 absl::Status NcclCollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NcclCollectiveThunk::Initialize(params));
-  const se::Platform* platform = params.executor->GetPlatform();
-  CHECK(platform != nullptr);
-  device_count_ = platform->VisibleDeviceCount();
+  device_count_ = params.local_device_count;
   CHECK(device_count_ > 0);
   VLOG(5) << "Local device count: " << device_count_;
 
