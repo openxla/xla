@@ -72,6 +72,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:sort_json",
         "//xla:status_macros",
+        "//xla:statusor",
         "//xla:types",
         "//xla:util",
         "//xla:window_util",
