@@ -292,6 +292,8 @@ class GpuExecutor : public StreamExecutorCommon {
     return true;
   }
 
+  int64_t GetDeviceCount() override;
+
   uint64_t GetArgumentLoggingMode() const { return argument_logging_mode_; }
 
   // Creates an EventBasedTimer for the given stream.

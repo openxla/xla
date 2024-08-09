@@ -40,18 +40,28 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
-absl::StatusOr<const int64_t> GetCurrentId(
-    Thunk::CollectiveExecuteParams* collective_params,
-    const NcclP2PConfig& config) {
-  GlobalDeviceId global_device_id = collective_params->global_device_id;
-  TF_ASSIGN_OR_RETURN(
-      const DeviceAssignment::LogicalID current_logical_id,
-      collective_params->device_assn->LogicalIdForDevice(global_device_id));
-  const int64_t current_id =
-      config.config.group_mode == CollectiveOpGroupMode::kCrossReplica
-          ? current_logical_id.replica_id
-          : current_logical_id.computation_id;
-  return current_id;
+bool IsLocalPeerTransfer(
+    const NcclP2PConfig::SourceTargetMapEntry& source_target,
+    se::Stream& stream, const int64_t current_id, const int64_t device_count) {
+  const std::optional<int64_t> source_id = source_target.source;
+  const std::optional<int64_t> target_id = source_target.target;
+  // Since mixing nccl p2p with p2p memcopy will cause random deadlocks.
+  // We determine if it's a local peer by the following conditions:
+  // 1. Both source and target IDs are present and they are within a node
+  // 2. Source ID is present, but target ID is not.
+  // 3. Target ID is presetn, but source ID is not.
+  int64_t host_id = (current_id / device_count);
+  if (source_id && target_id) {
+    return (host_id == (*source_id / device_count)) &&
+           (host_id == (*target_id / device_count));
+  }
+  if (source_id) {
+    return (host_id == (*source_id / device_count));
+  }
+  if (target_id) {
+    return (host_id == (*target_id / device_count));
+  }
+  return false;
 }
 }  // namespace
 
@@ -133,6 +143,9 @@ NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
 absl::Status NcclCollectivePermuteStartThunk::Initialize(
     const InitializeParams& params) {
   TF_RETURN_IF_ERROR(NcclCollectiveThunk::Initialize(params));
+  device_count_ = params.executor->GetDeviceCount();
+  VLOG(5) << "Local device count: " << device_count_;
+
   if (p2p_memcpy_enabled_) {
     TF_ASSIGN_OR_RETURN(const int64_t current_id,
                         GetCurrentId(params.collective_params, config_));
@@ -157,9 +170,11 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
 
   const NcclP2PConfig::SourceTargetMapEntry source_target =
       NcclP2PConfig::GetSourceTarget(config_.id_to_source_target, current_id);
+  bool is_local_peer =
+      IsLocalPeerTransfer(source_target, stream, current_id, device_count_);
+  VLOG(5) << "Is local peer : " << (is_local_peer ? "true" : "false");
 
-  bool use_memcpy = comm_wrapper.is_local &&
-                    recv_ptr_map_.IsInitialized(current_id) &&
+  bool use_memcpy = is_local_peer && recv_ptr_map_.IsInitialized(current_id) &&
                     p2p_memcpy_enabled_;
 
   return ::xla::gpu::RunCollectivePermute(
