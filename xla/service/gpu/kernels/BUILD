@@ -335,7 +335,9 @@ cuda_library(
         ["-Wno-unknown-attributes"],
     ),  # __grid_constant__ is not supported by clang
     deps = if_cuda_is_configured([
+        # keep sorted
         ":cutlass_gemm",
+        "//xla/tsl/cuda",
         "@cutlass_archive//:cutlass",
     ]),
 )
@@ -344,7 +346,11 @@ cuda_library(
     name = "cutlass_gemm_epilogue",
     # TODO(ezhulenev): Update to regular hdrs after fixing CUTLASS headers.
     textual_hdrs = if_cuda_is_configured(["cutlass_gemm_epilogue.cu.h"]),
-    deps = if_cuda_is_configured(["@cutlass_archive//:cutlass"]),
+    deps = if_cuda_is_configured([
+        # keep sorted
+        "//xla/tsl/cuda",
+        "@cutlass_archive//:cutlass",
+    ]),
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -387,7 +393,9 @@ cuda_library(
         ["-Wno-unknown-attributes"],
     ),
     deps = if_cuda_is_configured([
+        # keep sorted
         ":cutlass_gemm_adaptor",
+        "//xla/tsl/cuda",
         "@cutlass_archive//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
@@ -404,7 +412,9 @@ cuda_library(
         ["-Wno-unknown-attributes"],
     ),
     deps = if_cuda_is_configured([
+        # keep sorted
         ":cutlass_gemm_adaptor",
+        "//xla/tsl/cuda",
         "@cutlass_archive//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
@@ -424,8 +434,10 @@ cuda_library(
         ],
     ),
     deps = if_cuda_is_configured([
+        # keep sorted
         ":cutlass_gemm_adaptor",
         ":cutlass_gemm_epilogue",
+        "//xla/tsl/cuda",
         "@cutlass_archive//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
@@ -501,7 +513,9 @@ cuda_library(
     srcs = if_cuda_is_configured(["cutlass_gemm_kernel_bf16xs8_to_f32.cu.cc"]),
     copts = ["-Wno-unknown-attributes -mllvm -unroll-threshold=100000"],
     deps = if_cuda_is_configured([
+        # keep sorted
         ":cutlass_gemm_adaptor",
+        "//xla/tsl/cuda",
         "@cutlass_archive//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
