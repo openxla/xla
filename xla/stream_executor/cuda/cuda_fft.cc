@@ -475,6 +475,7 @@ void initialize_cufft() {
           });
   if (!status.ok()) {
     LOG(ERROR) << "Unable to register cuFFT factory: " << status.message();
+    LOG(INFO) << "TESTING";
   }
 }
 
