@@ -80,7 +80,7 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
         "//tsl/profiler:internal",
-    ]),
+    ]) + ["//third_party/car/onboard/gpu:__subpackages__"],
     deps = [
         "//tsl/platform:macros",
         "//tsl/platform:types",
