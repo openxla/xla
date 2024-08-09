@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include "xla/python/py_client_gpu.h"
 
 #include <string_view>
 #include <vector>
@@ -23,6 +24,8 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #if TENSORFLOW_USE_ROCM
 #include "rocm/include/hip/hip_runtime.h"
+#elif TENSORFLOW_USE_SYCL
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #else
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
@@ -41,6 +44,13 @@ limitations under the License.
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuMemcpyHostToDevice hipMemcpyHostToDevice
+#elif TENSORFLOW_USE_SYCL
+#define gpuSuccess SYCL_SUCCESS
+#define gpuStreamHandle ::sycl::queue*
+#define gpuMemcpyAsync SYCLMemcpyAsync
+#define gpuStreamSynchronize SYCLStreamSynchronize
+#define gpuMemcpyDeviceToHost SYCLMemcpyDtoHAsync
+#define gpuMemcpyHostToDevice SYCLMemcpyHtoDAsync
 #else
 #define gpuSuccess cudaSuccess
 #define gpuStreamHandle CUstream

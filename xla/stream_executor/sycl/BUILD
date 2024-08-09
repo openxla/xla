@@ -66,6 +66,18 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "sycl_gpu_runtime",
+    srcs = ["sycl_gpu_runtime.cc"],
+    hdrs = ["sycl_gpu_runtime.h"],
+    deps = [
+        "//xla/tsl/util:env_var",
+        "@com_google_absl//absl/strings",
+        "@local_config_sycl//sycl",
+        "@local_config_sycl//sycl:sycl_headers",
+    ],
+)
+
+cc_library(
     name = "all_runtime",
     copts = tsl_copts(),
     visibility = ["//visibility:public"],
