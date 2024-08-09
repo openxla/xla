@@ -336,7 +336,7 @@ cuda_library(
     ),  # __grid_constant__ is not supported by clang
     deps = if_cuda_is_configured([
         ":cutlass_gemm",
-        "@cutlass_archive//:cutlass",
+        "@cutlass_archive//",
     ]),
 )
 
@@ -344,7 +344,7 @@ cuda_library(
     name = "cutlass_gemm_epilogue",
     # TODO(ezhulenev): Update to regular hdrs after fixing CUTLASS headers.
     textual_hdrs = if_cuda_is_configured(["cutlass_gemm_epilogue.cu.h"]),
-    deps = if_cuda_is_configured(["@cutlass_archive//:cutlass"]),
+    deps = if_cuda_is_configured(["@cutlass_archive//"]),
 )
 
 #===--------------------------------------------------------------------------------------------===#
@@ -388,7 +388,7 @@ cuda_library(
     ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass_archive//",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
@@ -405,7 +405,7 @@ cuda_library(
     ),
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass_archive//",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
@@ -426,7 +426,7 @@ cuda_library(
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
         ":cutlass_gemm_epilogue",
-        "@cutlass_archive//:cutlass",
+        "@cutlass_archive//",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
@@ -502,7 +502,7 @@ cuda_library(
     copts = ["-Wno-unknown-attributes -mllvm -unroll-threshold=100000"],
     deps = if_cuda_is_configured([
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
+        "@cutlass_archive//",
         "@local_config_cuda//cuda:cuda_headers",
     ]),
 )
