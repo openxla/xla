@@ -1,9 +1,9 @@
-load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
-load("@xla//xla/tsl:tsl.default.bzl", "filegroup")
 load(
-    "//tsl/platform:rules_cc.bzl",
+    "@tsl//tsl/platform:rules_cc.bzl",
     "cc_library",
 )
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
@@ -13,13 +13,13 @@ cc_library(
     hdrs = ["proto_serialization.h"],
     visibility = ["//visibility:public"],
     deps = [
-        "//tsl/lib/gtl:inlined_vector",
-        "//tsl/platform:hash",
-        "//tsl/platform:logging",
-        "//tsl/platform:macros",
-        "//tsl/platform:protobuf",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/lib/gtl:inlined_vector",
+        "@tsl//tsl/platform:hash",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 
