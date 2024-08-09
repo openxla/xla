@@ -1088,7 +1088,7 @@ ENTRY entry {
   EXPECT_TRUE(executable->has_module());
 }
 
-TEST_F(CollectiveOpsTestE2E, AllToAllCollectiveQuantizer) {
+TEST_F(CollectiveOpsTestE2E, AllToAllConvertCollectiveQuantizer) {
   absl::string_view kModuleReplicatedStr = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f32[4,32,128]{2,1,0})->bf16[4,32,128]{2,1,0}}, num_partitions=4
 ENTRY entry {
@@ -1100,6 +1100,35 @@ ENTRY entry {
 
   const int64_t kNumReplicas = 1;
   SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas);
+  const int64_t kNumPartitions = 4;
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.set_num_partitions(kNumPartitions);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/true));
+  EXPECT_TRUE(executable->has_module());
+  HloInstruction* all_to_all =
+      FindInstruction(&executable->module(), HloOpcode::kAllToAll);
+  EXPECT_THAT(all_to_all, NotNull());
+  EXPECT_EQ(all_to_all->shape().element_type(), BF16);
+}
+
+TEST_F(CollectiveOpsTestE2E, ConvertAllToAllCollectiveQuantizer) {
+  absl::string_view kModuleReplicatedStr = R"(
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,32,128]{2,1,0})->f32[4,32,128]{2,1,0}}, num_partitions=4
+ENTRY entry {
+  param = bf16[4,32,128]{2,1,0} parameter(0)
+  convert = f32[4,32,128]{2,1,0} convert(param)
+  ROOT all-to-all = f32[4,32,128]{2,1,0} all-to-all(convert), channel_id=1, replica_groups={{0,1,2,3}}, dimensions={1}
+}
+)";
+
+  const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
 
   HloModuleConfig config =
