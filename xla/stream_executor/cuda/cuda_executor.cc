@@ -618,10 +618,6 @@ absl::Status GpuExecutor::BlockHostUntilDone(Stream* stream) {
   return GpuDriver::SynchronizeStream(context_, AsGpuStreamValue(stream));
 }
 
-absl::StatusOr<int64_t> GpuExecutor::GetDeviceCount() {
-  return GpuDriver::GetDeviceCount();
-}
-
 blas::BlasSupport* GpuExecutor::AsBlas() {
   absl::MutexLock lock(&mu_);
   if (blas_ != nullptr) {
