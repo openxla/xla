@@ -104,6 +104,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:status_to_from_proto",
+        "@tsl//tsl/profiler/lib:traceme",
     ] + if_google(["@com_google_absl//absl/types:source_location"]),
 )
 
