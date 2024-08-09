@@ -18,6 +18,8 @@ limitations under the License.
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/include/hip/hip_runtime.h"
+#elif TENSORFLOW_USE_SYCL
+#include "xla/stream_executor/sycl/sycl_gpu_runtime.h"
 #else
 #include "third_party/gpus/cuda/include/cuda.h"
 #endif
@@ -25,6 +27,8 @@ limitations under the License.
 
 #if TENSORFLOW_USE_ROCM
 #define gpuStreamHandle hipStream_t
+#elif TENSORFLOW_USE_SYCL
+#define gpuStreamHandle ::sycl::queue*
 #else
 #define gpuStreamHandle CUstream
 #endif

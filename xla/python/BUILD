@@ -1,6 +1,11 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
+load(
+    "//xla/stream_executor:build_defs.bzl",
+    "if_gpu_is_configured",
+)
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:pytype.default.bzl", "pytype_strict_library")
@@ -12,7 +17,6 @@ load(
 )
 load(
     "//xla/tsl:tsl.bzl",
-    "if_cuda_or_rocm",
     "if_google",
     "internal_visibility",
 )
@@ -431,7 +435,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_driver",
     ]) + if_rocm([
         "@local_config_rocm//rocm:rocm_headers",
-    ]) + if_cuda_or_rocm([
+    ]) + if_gpu_is_configured([
         ":py_client_gpu",  # TODO(b/337876408): remove after migration to plugin
     ]) + if_google(["@com_google_protobuf//:any_cc_proto"]),
 )
@@ -475,11 +479,11 @@ cc_library(
     name = "py_client_gpu",
     srcs = if_google(
         ["py_client_gpu.cc"],
-        if_cuda_or_rocm(["py_client_gpu.cc"]),
+        if_gpu_is_configured(["py_client_gpu.cc"]),
     ),
     hdrs = if_google(
         ["py_client_gpu.h"],
-        if_cuda_or_rocm(["py_client_gpu.h"]),
+        if_gpu_is_configured(["py_client_gpu.h"]),
     ),
     compatible_with = [],
     copts = [
@@ -505,7 +509,10 @@ cc_library(
     ] + if_rocm(
         ["@local_config_rocm//rocm:rocm_headers"],
         ["@local_config_cuda//cuda:cuda_headers"],
-    ),
+    ) + if_sycl_is_configured([
+        "//xla/stream_executor/sycl:sycl_gpu_runtime",
+        "@local_config_sycl//sycl:sycl_headers",
+    ]),
 )
 
 cc_library(

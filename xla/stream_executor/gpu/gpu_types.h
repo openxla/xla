@@ -44,21 +44,30 @@ struct UnsupportedGpuFeature {};
 
 #if TENSORFLOW_USE_SYCL
 
+typedef struct SYCLEventWrapper {
+  ::sycl::event* event;
+  ::sycl::queue* queue;
+} EventWrapper;
+
+using GpuContextHandle = const void*;
 using GpuStreamHandle = ::sycl::queue*;
-using GpuEventHandle = ::sycl::event*;
+using GpuEventHandle = EventWrapper*;
 using GpuFunctionHandle = ::sycl::kernel*;
-using GpuFunctionAttribute = UnsupportedGpuFeature;
+using GpuFunctionAttribute = const void*;
 using GpuDeviceHandle = ::sycl::device*;
 using GpuDevicePtr = void*;
-using GpuDeviceAttribute = UnsupportedGpuFeature;
-using GpuDeviceProperty = UnsupportedGpuFeature;
+using GpuDeviceAttribute = const void*;
+using GpuDeviceProperty = const void*;
 using GpuModuleHandle = ze_module_handle_t;
-using GpuFuncCachePreference = UnsupportedGpuFeature;
-using GpuSharedMemConfig = UnsupportedGpuFeature;
-using GpuRngHandle = UnsupportedGpuFeature;
-using GpuGraphHandle = UnsupportedGpuFeature;
-using GpuGraphExecHandle = UnsupportedGpuFeature;
-using GpuGraphNodeHandle = UnsupportedGpuFeature;
+using GpuStatus = const void*;
+using GpuFuncCachePreference = const void*;
+using GpuSharedMemConfig = const void*;
+using GpuComplexType = std::complex<float>;
+using GpuDoubleComplexType = std::complex<double>;
+using GpuRngHandle = const void*;
+using GpuGraphHandle = const void*;
+using GpuGraphExecHandle = const void*;
+using GpuGraphNodeHandle = const void*;
 using GpuGraphConditionalHandle = UnsupportedGpuFeature;
 
 #elif TENSORFLOW_USE_ROCM
