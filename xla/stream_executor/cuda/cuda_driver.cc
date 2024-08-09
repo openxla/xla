@@ -508,6 +508,38 @@ absl::Status GpuDriver::GraphInstantiate(CUgraphExec* exec, CUgraph graph,
 #endif  // CUDA_VERSION >= 12000
 }
 
+absl::Status GpuDriver::GraphInstantiateWithParams(
+    CUgraphExec* exec, CUgraph graph, GraphInstantiateParams* params) {
+  VLOG(2) << "Instantiate CUDA executable graph from graph " << graph << " ("
+          << "auto_free_on_launch=" << params->flags.auto_free_on_launch << ", "
+          << "device_launch=" << params->flags.device_launch << ", "
+          << "use_node_priority=" << params->flags.use_node_prirotiy << ", "
+          << "upload=" << params->flags.upload << ")";
+
+#if CUDA_VERSION >= 12000
+  CUDA_GRAPH_INSTANTIATE_PARAMS cuda_params;
+  memset(&cuda_params, 0, sizeof(cuda_params));
+  if (params->flags.auto_free_on_launch)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_AUTO_FREE_ON_LAUNCH;
+  if (params->flags.use_node_prirotiy)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_USE_NODE_PRIORITY;
+  if (params->flags.device_launch)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_DEVICE_LAUNCH;
+  if (params->flags.upload)
+    cuda_params.flags |= CUDA_GRAPH_INSTANTIATE_FLAG_UPLOAD;
+  cuda_params.hUploadStream = params->upload_stream;
+  auto result =
+      cuda::ToStatus(cuGraphInstantiateWithParams(exec, graph, &cuda_params),
+                     "Failed to instantiate CUDA graph");
+  params->err_node_out = cuda_params.hErrNode_out;
+  params->result_out = cuda_params.result_out;
+  return result;
+#else
+  return absl::UnimplementedError(
+      "cuGraphInstantiateWithParams is not supported for CUDA version < 12000");
+#endif  // CUDA_VERSION >= 12000
+}
+
 absl::Status GpuDriver::GraphLaunch(CUgraphExec exec, CUstream stream) {
   VLOG(2) << "Launching CUDA executable graph " << exec << " on a stream "
           << stream;
