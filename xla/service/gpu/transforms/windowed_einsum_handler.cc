@@ -1184,8 +1184,8 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
     changed |= visitor.changed();
   }
 
-  XLA_VLOG_LINES(
-      5, "WindowedEinsumHandler::Run(), after:\n" + module->ToString());
+  XLA_VLOG_LINES(5,
+                 "WindowedEinsumHandler::Run(), after:\n" + module->ToString());
   return changed;
 }
 
