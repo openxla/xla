@@ -21,13 +21,7 @@ limitations under the License.
 
 #include "absl/strings/ascii.h"
 
-#if __has_include(<sycl/sycl.hpp>)
 #include <sycl/sycl.hpp>
-#elif __has_include(<CL/sycl.hpp>)
-#include <CL/sycl.hpp>
-#else
-#error "Unsupported compiler"
-#endif
 
 enum SYCLError_t {
   SYCL_SUCCESS,
@@ -39,8 +33,6 @@ enum SYCLError_t {
   SYCL_ERROR_DESTROY_DEFAULT_STREAM,
   SYCL_ERROR_ZE_ERROR,
 };
-
-bool IsMultipleStreamEnabled();
 
 const char* ToString(SYCLError_t error);
 

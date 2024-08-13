@@ -28,27 +28,6 @@ limitations under the License.
 
 namespace {
 
-// SYCL_TILE_AS_DEVICE
-//   True (default behaviour): Tile as an individual device in device list
-//   False: Only root device as an individual device in device list
-inline bool TileAsDevice() {
-  bool tile_as_device;
-  TF_CHECK_OK(
-      tsl::ReadBoolFromEnvVar("SYCL_TILE_AS_DEVICE", true, &tile_as_device));
-  return tile_as_device;
-}
-
-inline bool RunOnLevelZero() {
-  char* sycl_device_filter = getenv("SYCL_DEVICE_FILTER");
-  // Current default backend platform is Level-Zero
-  if (sycl_device_filter == nullptr) return true;
-  auto filter_device = std::string(sycl_device_filter);
-  std::transform(filter_device.begin(), filter_device.end(),
-                 filter_device.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  return filter_device.find("level_zero") != std::string::npos;
-}
-
 bool hasDevice() {
   int count = 0;
   SYCLError_t error = SYCLGetDeviceCount(&count);
@@ -125,13 +104,9 @@ class DevicePool {
       auto platform_list = sycl::platform::get_platforms();
       for (const auto& platform : platform_list) {
         auto platform_name = platform.get_info<sycl::info::platform::name>();
-        bool is_level_zero =
-            platform_name.find("Level-Zero") != std::string::npos;
-        // Add device in these two scenarios:
-        // true == true means need Level-Zero and the backend platform is
-        // Level-Zero.
-        // false == false mean need OCL and the backend platform is OCL.
-        if (is_level_zero == RunOnLevelZero()) {
+        bool is_found = platform_name.find("Level-Zero") != std::string::npos;
+
+        if (is_found) {
           LOG(INFO) << "Selected platform: " << platform_name;
           auto device_list = platform.get_devices();
           for (const auto& device : device_list) {
@@ -142,37 +117,7 @@ class DevicePool {
         }
       }
 
-      if (TileAsDevice()) {
-        // If SYCL_TILE_AS_DEVICE is true.
-        // Create sub devices from root devices:
-        //   If succ, add sub devices into devices list
-        //   If fail, add root devices into devices list
-        constexpr auto partition_by_affinity =
-            sycl::info::partition_property::partition_by_affinity_domain;
-        constexpr auto next_partitionable =
-            sycl::info::partition_affinity_domain::next_partitionable;
-        for (const auto& root_device : root_devices) {
-          std::vector<sycl::device> sub_devices;
-          auto max_sub_devices =
-              root_device
-                  .get_info<sycl::info::device::partition_max_sub_devices>();
-          if (max_sub_devices == 0) {
-            LOG(INFO) << "number of sub-devices is zero, expose root "
-                         "device.";
-            devices.push_back(root_device);
-          } else {
-            sub_devices = root_device.create_sub_devices<partition_by_affinity>(
-                next_partitionable);
-            devices.insert(devices.end(), sub_devices.begin(),
-                           sub_devices.end());
-          }
-        }
-      } else {
-        // If SYCL_TILE_AS_DEVICE is false.
-        // Only set root device as device list.
-        devices = std::move(root_devices);
-      }
-
+      devices = std::move(root_devices);
       size_t num_device = devices.size();
 
       if (num_device <= 0) {
@@ -202,31 +147,13 @@ DevicePool* DevicePool::GetInstance() {
 }
 }  // namespace
 
-bool IsMultipleStreamEnabled() {
-  static absl::once_flag init_flag;
-  static bool is_multiple_stream_enabled = false;
-
-  absl::call_once(init_flag, [&]() {
-    const char* env = std::getenv("XLA_ENABLE_MULTIPLE_STREAM");
-
-    if (env != nullptr) {
-      std::string str_value = absl::AsciiStrToLower(env);
-      if (str_value == "1" || str_value == "true") {
-        is_multiple_stream_enabled = true;
-      }
-    }
-  });
-
-  return is_multiple_stream_enabled;
-}
-
 /******************* SYCL context management**************************/
 static sycl::async_handler SYCLAsyncHandler = [](sycl::exception_list eL) {
   for (auto& e : eL) {
     try {
       std::rethrow_exception(e);
     } catch (sycl::exception& e) {
-      LOG(ERROR) << "DPC++ Exception: " << e.what() << ", file = " << __FILE__
+      LOG(ERROR) << "SYCL Exception: " << e.what() << ", file = " << __FILE__
                  << ", line = " << __LINE__ << ".";
     }
   }
@@ -242,14 +169,6 @@ class SYCLStreamPool {
 
   static SYCLError_t createStream(sycl::device* device_handle,
                                   sycl::queue** stream_p) {
-    if (IsMultipleStreamEnabled()) {
-      sycl::property_list propList{sycl::property::queue::enable_profiling(),
-                                   sycl::property::queue::in_order()};
-      SYCLStreamPool::GetStreamsPool(device_handle)
-          .push_back(std::make_shared<sycl::queue>(
-              DevicePool::getDeviceContext(), *device_handle, SYCLAsyncHandler,
-              propList));
-    }
     *stream_p = SYCLStreamPool::GetStreamsPool(device_handle).back().get();
     return SYCL_SUCCESS;
   }
@@ -546,18 +465,18 @@ void SYCLStreamDependOnEvents(sycl::queue* stream,
 const char* ToString(SYCLError_t error) {
   switch (error) {
     case SYCL_SUCCESS:
-      return "DPC++ succeed.";
+      return "SYCL succeed.";
     case SYCL_ERROR_NO_DEVICE:
-      return "DPC++ did not find the device.";
+      return "SYCL did not find the device.";
     case SYCL_ERROR_INVALID_DEVICE:
-      return "DPC++ got invalid device id.";
+      return "SYCL got invalid device id.";
     case SYCL_ERROR_INVALID_POINTER:
-      return "DPC++ got invalid pointer.";
+      return "SYCL got invalid pointer.";
     case SYCL_ERROR_INVALID_STREAM:
-      return "DPC++ got invalid stream.";
+      return "SYCL got invalid stream.";
     case SYCL_ERROR_DESTROY_DEFAULT_STREAM:
-      return "DPC++ cannot destroy default stream.";
+      return "SYCL cannot destroy default stream.";
     default:
-      return "DPC++ got invalid error code.";
+      return "SYCL got invalid error code.";
   }
 }  // namespace
