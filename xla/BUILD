@@ -516,6 +516,7 @@ xla_cc_test(
         ":test",
         ":util",
         ":xla_data_proto_cc",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -1260,10 +1261,10 @@ cc_library(
     deps = [
         ":autotune_results_proto_cc",
         ":autotuning_proto_cc",
+        "//xla/tsl/lib/strings:proto_serialization",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/lib/strings:proto_serialization",
     ],
 )
 

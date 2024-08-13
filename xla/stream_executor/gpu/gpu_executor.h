@@ -1,4 +1,3 @@
-#include "xla/stream_executor/event_based_timer.h"
 /* Copyright 2019 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,10 +30,10 @@ limitations under the License.
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/functional/any_invocable.h"
 #include "absl/numeric/int128.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -46,6 +45,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
+#include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/gpu/gpu_collectives.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
@@ -137,15 +137,6 @@ class GpuExecutor : public StreamExecutorCommon {
   // returns a pointer to that buffer with shared ownership.
   absl::StatusOr<std::shared_ptr<DeviceMemoryBase>> CreateOrShareConstant(
       Stream* stream, absl::Span<const uint8_t> content) override;
-
-  absl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
-                      const BlockDim& block_dims, const Kernel& kernel,
-                      const KernelArgs& args) override;
-
-  absl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
-                      const BlockDim& block_dims,
-                      const ClusterDim& cluster_dims, const Kernel& kernel,
-                      const KernelArgs& args) override;
 
   DeviceMemoryBase Allocate(uint64_t size, int64_t memory_space) override;
 
@@ -315,11 +306,6 @@ class GpuExecutor : public StreamExecutorCommon {
   // (supported on ROCm only)
   absl::Status LoadModuleFromHsaco(const char* hsaco, GpuModuleHandle* module)
       TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
-
-  absl::Status Launch(Stream* stream, const ThreadDim& thread_dims,
-                      const BlockDim& block_dims,
-                      const std::optional<ClusterDim>& cluster_dims,
-                      const Kernel& kernel, const KernelArgs& args);
 
   bool UnloadGpuBinary(const void* gpu_binary)
       TF_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);

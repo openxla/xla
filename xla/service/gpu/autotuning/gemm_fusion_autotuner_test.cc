@@ -42,10 +42,10 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_compile_util.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gemm_fusion.h"
-#include "xla/service/gpu/gemm_rewriter.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/gpu/transforms/gemm_fusion.h"
+#include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_pass_pipeline.h"
 #include "xla/service/pattern_matcher.h"
@@ -618,9 +618,12 @@ ENTRY main {
   pipeline.AddPass<GemmFusionAutotuner>(autotune_config, GetToolkitVersion(),
                                         &thread_pool, key_value_store);
   pipeline.AddPass<CallInliner>();
-  for (bool fp8_rewrite : {true, false}) {
+  for (GemmRewriterOptions::DType dtype :
+       {GemmRewriterOptions::DType::kFp8Only,
+        GemmRewriterOptions::DType::kNonFp8Only}) {
     pipeline.AddPass<GemmRewriter>(autotune_config.GetGpuComputeCapability(),
-                                   GetToolkitVersion(), fp8_rewrite);
+                                   GetToolkitVersion(),
+                                   GemmRewriterOptions{dtype});
   }
 
   TF_EXPECT_OK(HloTestBase::RunHloPass(&pipeline, module.get()));

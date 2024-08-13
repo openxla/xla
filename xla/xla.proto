@@ -880,11 +880,14 @@ message DebugOptions {
   // but potentially higher the performance.
   int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
-  // Timeouts for RendezvousSingle stuck warning and termination.
-  int32 xla_gpu_executable_warn_stuck_timeout = 319;
-  int32 xla_gpu_executable_terminate_timeout = 320;
+  // If enabled, uses the libnvjitlink library for PTX compilation and linking
+  bool xla_gpu_enable_libnvjitlink = 319;
 
-  // Next id: 321
+  // Timeouts for RendezvousSingle stuck warning and termination.
+  int32 xla_gpu_executable_warn_stuck_timeout = 320;
+  int32 xla_gpu_executable_terminate_timeout = 321;
+
+  // Next id: 322
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

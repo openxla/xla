@@ -82,7 +82,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
-  opts.set_xla_cpu_use_thunk_runtime(false);
+  opts.set_xla_cpu_use_thunk_runtime(true);
   opts.set_xla_cpu_enable_concurrency_optimized_scheduler(false);
   opts.set_xla_cpu_prefer_vector_width(256);
 
@@ -237,6 +237,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
 
   opts.set_xla_gpu_enable_libnvptxcompiler(false);
+  opts.set_xla_gpu_enable_libnvjitlink(false);
 
   opts.set_xla_gpu_enable_dot_strength_reduction(true);
 

@@ -81,8 +81,9 @@ limitations under the License.
 #include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/lib/gtl/map_util.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -1261,7 +1262,6 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
     const xla::OriginalValueProto& original_value_proto =
         proto.original_value();
     auto original_value = std::make_shared<OriginalValue>(shape);
-    std::cerr << __func__ << ", shape: " << shape.ToString() << "\n";
 
     for (const auto& leaf : original_value_proto.leaves()) {
       *original_value->mutable_element(ShapeIndex(leaf.leaf_shape_index())) = {

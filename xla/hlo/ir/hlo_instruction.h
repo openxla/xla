@@ -25,6 +25,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -2239,8 +2240,8 @@ class HloInstruction {
   void set_metadata_preserve_layout(bool preserve_layout) {
     metadata_->set_preserve_layout(preserve_layout);
   }
-  void set_metadata_scheduling_name(const std::string& name) {
-    metadata_->set_scheduling_name(name);
+  void set_metadata_scheduling_name(absl::string_view name) {
+    metadata_->set_scheduling_name(std::string(name));
   }
   const OpMetadata& metadata() const { return *metadata_; }
 

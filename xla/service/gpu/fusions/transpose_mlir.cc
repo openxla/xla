@@ -45,9 +45,9 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/fusions/fusion_emitter.h"
+#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/type_util.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -71,8 +71,6 @@ using mlir::Value;
 using mlir::ValueRange;
 using mlir::func::FuncOp;
 using mlir::func::ReturnOp;
-using mlir::tensor::ExtractOp;
-using mlir::tensor::InsertOp;
 using mlir_converter::ApplyIndexing;
 
 constexpr int kNumRows = 4;
@@ -199,7 +197,8 @@ LaunchDimensions MlirTransposeFusion::launch_dimensions() const {
 IndexingMap MlirTransposeFusion::GetSharedMemoryIndexing(
     bool read, mlir::MLIRContext* ctx) const {
   auto thread_offsets =
-      Permute(GetThreadOffsets(ctx), read ? Vector3{0, 1, 2} : permutation_);
+      Permute(GetThreadOffsets(ctx),
+              read ? absl::InlinedVector<int64_t, 3>{0, 1, 2} : permutation_);
   if (MostMinorDimensionUnchanged()) {
     return {mlir::AffineMap::get(6, 3, thread_offsets, ctx),
             DimVarsFromTensorSizes({kNumThreadsPerBlock, 1, 1, 1, 1, 1}),
@@ -260,8 +259,8 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
           root_computation, transpose,
           /*operand_index=*/0, input_indices(transpose->operand(0)),
           call_target_provider, entry_function, builder)[0];
-      result_tensors.push_back(
-          builder.create<InsertOp>(result_scalar, output, shmem_indices));
+      result_tensors.push_back(builder.create<mlir::tensor::InsertOp>(
+          result_scalar, output, shmem_indices));
     }
 
     // Produce all side outputs and then write them.
@@ -281,7 +280,7 @@ MlirTransposeFusion::WriteResult MlirTransposeFusion::EmitWriteToShMemMlir(
          llvm::zip(side_outputs, side_output_indices,
                    output_tensors.take_back(side_output_roots_.size()))) {
       result_tensors.push_back(
-          builder.create<InsertOp>(value, output, indices));
+          builder.create<mlir::tensor::InsertOp>(value, output, indices));
     }
 
     return result_tensors;
@@ -329,7 +328,7 @@ void MlirTransposeFusion::EmitReadFromShMemMlir(
         for (auto [transpose, shmem] :
              llvm::zip(shmem_transposes_, written.shmem_tensors)) {
           transpose_values[transpose].push_back(
-              builder.create<ExtractOp>(shmem, shmem_indices));
+              builder.create<mlir::tensor::ExtractOp>(shmem, shmem_indices));
         }
         llvm::SmallVector<Value> epilogue_indices = dim_values;
         absl::c_copy(symbol_values, std::back_inserter(epilogue_indices));
@@ -343,7 +342,7 @@ void MlirTransposeFusion::EmitReadFromShMemMlir(
                        shmem_transpose_root_indices_)) {
           llvm::SmallVector<Value> indices =
               ApplyIndexing(indexing, dim_values, symbol_values, builder);
-          results[root_index] = builder.create<InsertOp>(
+          results[root_index] = builder.create<mlir::tensor::InsertOp>(
               result_scalars.at(root).front(), results[root_index], indices);
         }
         return results;
@@ -407,8 +406,9 @@ IndexingMap MlirTransposeFusion::GetIndexing(bool input,
                                              mlir::MLIRContext* ctx) const {
   auto raw_id = mlir::getAffineDimExpr(
       KernelFusionInterface::kIndexingMapBlockIdxDims[0], ctx);
-  auto block_ids = Permute(DelinearizeInBoundsIndex(raw_id, block_counts_),
-                           input ? Vector3{0, 1, 2} : permutation_);
+  auto block_ids =
+      Permute(DelinearizeInBoundsIndex(raw_id, block_counts_),
+              input ? absl::InlinedVector<int64_t, 3>{0, 1, 2} : permutation_);
   auto thread_offsets = GetThreadOffsets(ctx);
   llvm::SmallVector<AffineExpr, 3> offsets;
   for (auto [block_id, block_size, thread] :

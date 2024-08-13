@@ -135,10 +135,10 @@ a custom call, they can be decoded at run time using `RemainingArgs` and
 `RemainingRets`.
 
 ```
-auto handler = Ffi::Bind().RemainingArgs().RemainingResults().To(
-    [](RemainingArgs args, RemainingResults results) -> Error {
-      auto arg = args.get<AnyBuffer>(0);
-      auto res = results.get<AnyBuffer>(0);
+auto handler = Ffi::Bind().RemainingArgs().RemainingRets().To(
+    [](RemainingArgs args, RemainingRets results) -> Error {
+      ErrorOr<AnyBuffer> arg = args.get<AnyBuffer>(0);
+      ErrorOr<Result<AnyBuffer>> res = results.get<AnyBuffer>(0);
 
       if (!arg.has_value()) {
         return Error(ErrorCode::kInternal, arg.error());
@@ -150,6 +150,21 @@ auto handler = Ffi::Bind().RemainingArgs().RemainingResults().To(
 
       return Error::Success();
     });
+```
+
+Variadic arguments and results can be declared after regular arguments and
+results, however binding regular arguments and results after variadic one is
+illegal.
+
+```c++
+auto handler =
+    Ffi::Bind()
+        .Arg<AnyBuffer>()
+        .RemainingArgs()
+        .Ret<AnyBuffer>()
+        .RemainingRets()
+        .To([](AnyBuffer arg, RemainingArgs args, AnyBuffer ret,
+               RemainingRets results) -> Error { return Error::Success(); });
 ```
 
 ### Attributes
@@ -220,7 +235,53 @@ and lazily decode only the attributes that are needed at run time.
 
 ```c++
 auto handler = Ffi::Bind().Attrs().To([](Dictionary attrs) -> Error {
-  auto i32 = attrs.get<int32_t>("i32");
+  ErrorOr<int32_t> i32 = attrs.get<int32_t>("i32");
+  return Error::Success();
+});
+```
+
+### User-defined Struct Attributes
+
+XLA FFI can decode dictionary attributes into user-defined structs.
+
+```mlir
+%0 = "stablehlo.custom_call"(%arg0) {
+  call_target_name = "foo",
+  backend_config= {
+    range = { lo = 0 : i64, hi = 42 : i64 }
+  },
+  api_version = 4 : i32
+} : (tensor<f32>) -> tensor<f32>
+```
+
+In example above `range` is an `mlir::DictionaryAttr` attribute, and instead
+of accessing dictionary fields by name, it can be automatically decoded as
+a C++ struct. Decoding has to be explicitly registered with a
+`XLA_FFI_REGISTER_STRUCT_ATTR_DECODING` macro (behind the scene it defines
+a template specialization in `::xla::ffi` namespace, thus macro must be added to
+the global namespace).
+
+```c++
+struct Range {
+  int64_t lo;
+  int64_t hi;
+};
+
+XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(Range, StructMember<int64_t>("i64"),
+                                             StructMember<int64_t>("i64"));
+
+auto handler = Ffi::Bind().Attr<Range>("range").To([](Range range) -> Error{
+  return Error::Success();
+});
+```
+
+Custom attributes can be loaded from a dictionary, just like any other
+attribute. In example below, all custom call attributes decoded as a
+`Dictionary`, and a `range` can be accessed by name.
+
+```c++
+auto handler = Ffi::Bind().Attrs().To([](Dictionary attrs) -> Error {
+  ErrorOr<Range> range = attrs.get<Range>("range");
   return Error::Success();
 });
 ```

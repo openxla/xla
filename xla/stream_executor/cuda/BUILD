@@ -10,6 +10,7 @@ load(
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
+    "if_cuda_newer_than",
 )
 load(
     "//xla:xla.bzl",
@@ -225,11 +226,7 @@ xla_test(
     name = "cuda_driver_test",
     srcs = ["cuda_driver_test.cc"],
     backends = ["gpu"],
-    tags = [
-        # TODO(b/317293391) Remove once Bazel test_suite handles tags correctly
-        "gpu",
-        "no_rocm",
-    ],
+    tags = ["no_rocm"],
     deps = [
         ":cuda_driver",
         ":cuda_status",
@@ -428,7 +425,6 @@ gpu_kernel_library(
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/gpu:gpu_semaphore",
-        "//xla/stream_executor/gpu:gpu_stream",
         "@com_google_absl//absl/status:statusor",
     ],
 )
@@ -590,6 +586,7 @@ cc_library(
 cc_library(
     name = "ptx_compiler",
     hdrs = ["ptx_compiler.h"],
+    tags = ["no_rocm"],
     deps = select({
         ":libnvptxcompiler_support_enabled": [":ptx_compiler_impl"],
         "//conditions:default": [":ptx_compiler_stub"],
@@ -599,11 +596,30 @@ cc_library(
     ],
 )
 
+xla_test(
+    name = "cuda_platform_test",
+    srcs = ["cuda_platform_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":cuda_platform",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 xla_cc_test(
     name = "ptx_compiler_test",
     srcs = ["ptx_compiler_test.cc"],
-    # TODO(b/343996893): Figure out whether msan reports a false positive or not.
-    tags = ["nomsan"],
+    tags = [
+        "no_rocm",
+        # TODO(b/343996893): Figure out whether msan reports a false positive or not.
+        "nomsan",
+    ],
     deps = [
         ":ptx_compiler",
         ":ptx_compiler_support",
@@ -629,7 +645,11 @@ cc_library(
         "//conditions:default": [
             "LIBNVJITLINK_SUPPORT=false",
         ],
-    }),
+    }) + if_cuda_newer_than(
+        "12_0",
+        ["CUDA_SUPPORTS_NVJITLINK=true"],
+        ["CUDA_SUPPORTS_NVJITLINK=false"],
+    ),
 )
 
 cc_library(
@@ -672,13 +692,25 @@ cc_library(
     ],
 )
 
+# Since select() can't be nested, we need to wrap the cuda_newer_than check in a separate
+# library target.
+cc_library(
+    name = "nvjitlink_cuda_supported",
+    # Even though the macro is called `*_newer_than`, it does a greater-than-or-equal-to comparison.
+    deps = if_cuda_newer_than(
+        "12_0",
+        [":nvjitlink_impl"],
+        [":nvjitlink_stub"],
+    ),
+)
+
 cc_library(
     name = "nvjitlink",
     hdrs = [
         "nvjitlink.h",
     ],
     deps = select({
-        ":libnvjitlink_support_enabled": [":nvjitlink_impl"],
+        ":libnvjitlink_support_enabled": [":nvjitlink_cuda_supported"],
         "//conditions:default": [":nvjitlink_stub"],
     }) + [
         "//xla/stream_executor/gpu:gpu_asm_opts",

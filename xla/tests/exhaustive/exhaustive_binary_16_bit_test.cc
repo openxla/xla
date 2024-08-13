@@ -16,7 +16,7 @@ limitations under the License.
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include <cstdlib>
 #include <limits>
 #include <tuple>
 #include <type_traits>
@@ -118,8 +118,8 @@ BINARY_TEST_16BIT(Sub, {
   Run(AddEmptyBroadcastDimension(Sub), host_sub);
 })
 
-// Can be thought of as an absolute error of `<=
-// |std::numeric_limits::<float>::min()|`.
+// Can be thought of as an absolute error of
+// `<= |std::numeric_limits::<float>::min()|`.
 double MulCpuBf16AbsErr(xla::bfloat16 left, xla::bfloat16 right) {
   float output = static_cast<float>(left) * static_cast<float>(right);
 
@@ -175,8 +175,8 @@ BINARY_TEST_16BIT(Mul, {
       error_spec_gen);
 })
 
-// Can be thought of as an absolute error of `<=
-// |std::numeric_limits::<float>::min()|`.
+// Can be thought of as an absolute error of
+// `<= |std::numeric_limits::<float>::min()|`.
 double DivCpuBf16AbsErr(xla::bfloat16 left, xla::bfloat16 right) {
   float output = static_cast<float>(left) / static_cast<float>(right);
 
@@ -223,21 +223,135 @@ BINARY_TEST_16BIT(Min, {
   Run(AddEmptyBroadcastDimension(Min), ReferenceMin<float>);
 })
 
-// TODO(bixia): Pow fails with bfloat16 on CPU.
-BINARY_TEST_16BIT(DISABLED_ON_GPU(DISABLED_ON_CPU(Pow)), {
-  // See b/162664705.
-  known_incorrect_fn_ = [](int64_t val) {
-    Eigen::bfloat16 f;
-    uint16_t val_16 = val;
-    memcpy(&f, &val_16, 2);
-    return std::isnan(f);
+template <typename NativeT>
+bool PowCpuGpuF16Skip(NativeT left, NativeT right) {
+  // Hardware seems to always return 1 if right is 0, no matter if left is NaN.
+  if (std::isnan(left) && right == 0) {
+    return true;
+  }
+  // Hardware seems to always return 1 if left is 1, no matter if right is NaN.
+  if (left == 1 && std::isnan(right)) {
+    return true;
+  }
+  return false;
+}
+
+double PowCpuBf16AbsErr(xla::bfloat16 left, xla::bfloat16 right) {
+  float output = std::pow(static_cast<float>(left), static_cast<float>(right));
+
+  // Output is flushed to 0 if subnormal.
+  if (IsSubnormal(output)) {
+    return std::numeric_limits<float>::min();
+  }
+
+  // TODO(b/359325328): pow computation for subnormal bases is different from
+  // std::pow.
+  //
+  // If the base is subnormal, the output computation selects a different base.
+  // The minimum value ever chosen is slightly greater than the 1e-91 used
+  // below. We return an absolute error from this value to the "real" output.
+  //
+  // Because the exponent (right) can be any floating point value, this allows
+  // an arbitrary absolute error for subnormal values.
+  if (IsSubnormal(left)) {
+    xla::bfloat16 output_as_bf16 = static_cast<xla::bfloat16>(output);
+    auto expected = std::pow(1e-91, static_cast<double>(right));
+    auto err = std::abs(expected - output_as_bf16);
+    if (!std::isnan(err)) {
+      return err;
+    }
+  }
+
+  return 0.0;
+}
+
+BINARY_TEST_16BIT(Pow, {
+  ErrorSpecGen error_spec_gen = +[](NativeT, NativeT) {
+    return ErrorSpec::Builder().strict_signed_zeros().build();
   };
-  Run(AddEmptyBroadcastDimension(Pow), std::pow);
+  if (IsCpu(platform_)) {
+    if constexpr (std::is_same_v<NativeT, xla::half>) {
+      error_spec_gen = +[](NativeT left, NativeT right) {
+        return ErrorSpec::Builder()
+            .strict_signed_zeros()
+            .skip_comparison(PowCpuGpuF16Skip(left, right))
+            .build();
+      };
+    }
+    if constexpr (std::is_same_v<NativeT, xla::bfloat16>) {
+      error_spec_gen = +[](NativeT left, NativeT right) {
+        return ErrorSpec::Builder()
+            .abs_err(PowCpuBf16AbsErr(static_cast<xla::bfloat16>(left),
+                                      static_cast<xla::bfloat16>(right)))
+            .strict_signed_zeros()
+            .build();
+      };
+    }
+  }
+  if (IsGpu(platform_)) {
+    error_spec_gen = +[](NativeT left, NativeT right) {
+      return ErrorSpec::Builder()
+          .distance_err(1)
+          .strict_signed_zeros()
+          .skip_comparison(PowCpuGpuF16Skip(left, right))
+          .build();
+    };
+  }
+  Run(AddEmptyBroadcastDimension(Pow), std::pow, error_spec_gen);
 })
 
-// TODO(bixia): Atan2 fails with bfloat16 on CPU.
-BINARY_TEST_16BIT(DISABLED_ON_CPU(Atan2),
-                  { Run(AddEmptyBroadcastDimension(Atan2), std::atan2); })
+// Can be thought of as an absolute error of
+// `<= |std::numeric_limits::<float>::min()|`.
+double Atan2CpuBf16AbsErr(xla::bfloat16 left, xla::bfloat16 right) {
+  float output =
+      std::atan2(static_cast<float>(left), static_cast<float>(right));
+
+  // If the output would be a subnormal float, we allow some error to account
+  // for BF16 implementation flushing subnormals to zero.
+  auto output_is_subnormal = IsSubnormal(output);
+  if (output_is_subnormal) {
+    return std::numeric_limits<float>::min();
+  }
+
+  return 0.0;
+}
+
+bool Atan2CpuBf16Skip(xla::bfloat16 left, xla::bfloat16 right) {
+  // Subnormals are flushed to 0, but 0/0 returns NaN instead of
+  // <subnormal>/<subnormal> which returns some positive number. We cannot set
+  // an error to compare against NaN.
+  if (IsSubnormal(left) && IsSubnormal(right)) {
+    return true;
+  }
+
+  return false;
+}
+
+BINARY_TEST_16BIT(Atan2, {
+  auto error_spec_gen = +[](NativeT, NativeT) {
+    return ErrorSpec::Builder().strict_signed_zeros().build();
+  };
+  if (IsCpu(platform_)) {
+    if constexpr (std::is_same_v<NativeT, xla::bfloat16>) {
+      error_spec_gen = +[](NativeT left, NativeT right) {
+        return ErrorSpec::Builder()
+            .abs_err(Atan2CpuBf16AbsErr(static_cast<xla::bfloat16>(left),
+                                        static_cast<xla::bfloat16>(right)))
+            .strict_signed_zeros()
+            .skip_comparison(
+                Atan2CpuBf16Skip(static_cast<xla::bfloat16>(left),
+                                 static_cast<xla::bfloat16>(right)))
+            .build();
+      };
+    }
+  }
+  if (IsGpu(platform_)) {
+    error_spec_gen = +[](NativeT, NativeT) {
+      return ErrorSpec::Builder().distance_err(1).strict_signed_zeros().build();
+    };
+  }
+  Run(AddEmptyBroadcastDimension(Atan2), std::atan2, error_spec_gen);
+})
 
 #if !defined(XLA_BACKEND_DOES_NOT_SUPPORT_FLOAT16)
 INSTANTIATE_TEST_SUITE_P(F16, ExhaustiveF16BinaryTest,
