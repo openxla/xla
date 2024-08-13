@@ -68,7 +68,7 @@ limitations under the License.
 #include "gloo/transport/tcp/device.h"
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
-#elif __APPLE__
+#elifdef __APPLE__
 #include "gloo/transport/uv/device.h"
 #include "xla/pjrt/cpu/gloo_collectives.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
