@@ -525,7 +525,7 @@ absl::Status DotOpEmitter::Emit() {
                  ShapeUtil::IsScalar(rhs_shape));
     return EmitScalarDot();
   }
-
+  VLOG(1) << "Emitting....";
   switch (GetNonBatchDotImplementationStrategy(hlo_module_config_, dot_info_,
                                                target_machine_features_)) {
     case DotImplementationStrategy::kNaiveLlvmIr:
@@ -567,7 +567,7 @@ absl::Status DotOpEmitter::EmitBatch() {
   // each dimension of the output. Inside this loop nest is another for-loop
   // which performs the sum-of-products (the reduction loop) before storing
   // the result in the output buffer.
-
+  VLOG(1) << "Emitting BATCH....";
   return EmitCallToBatchRuntime();
 }
 
