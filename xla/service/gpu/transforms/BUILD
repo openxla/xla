@@ -2961,3 +2961,37 @@ xla_cc_test(
         "@tsl//tsl/platform:statusor",
     ],
 )
+
+cc_library(
+    name = "pgle_accuracy_checker",
+    srcs = ["pgle_accuracy_checker.cc"],
+    hdrs = ["pgle_accuracy_checker.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_pass",
+        "//xla/service:profile_guided_latency_estimator",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+xla_cc_test(
+    name = "pgle_accuracy_checker_test",
+    srcs = ["pgle_accuracy_checker_test.cc"],
+    deps = [
+        ":pgle_accuracy_checker",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:latency_hiding_scheduler",
+        "//xla/service:profile_guided_latency_estimator",
+        "//xla/service/gpu:gpu_latency_hiding_scheduler",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
