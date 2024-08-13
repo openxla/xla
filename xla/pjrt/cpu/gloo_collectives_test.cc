@@ -28,7 +28,7 @@ limitations under the License.
 #ifdef __linux__
 #include "gloo/transport/tcp/attr.h"
 #include "gloo/transport/tcp/device.h"
-#elif __APPLE__
+#elifdef __APPLE__
 #include "gloo/transport/uv/device.h"
 #endif  // __linux__
 #include "xla/executable_run_options.h"
