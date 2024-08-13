@@ -66,7 +66,14 @@ def prepare_nvidia_gpu_backend_data(backends, disabled_backends, backend_tags, b
         all_tags = new_backend_tags[gpu_backend]
         requires_gpu = [t for t in all_tags if t.startswith("requires-gpu-")]
         requires_sm, only = None, False
+        num_gpus = None
         for tag in requires_gpu:
+            if ":" in tag:  # Multi-GPU tests are suffixed with colon and number of GPUs.
+                tag, suffix = tag.split(":")  # Remove the suffix from the tag for further parsing.
+                parsed_num_gpus = int(suffix)
+                if num_gpus and num_gpus != parsed_num_gpus:
+                    fail("Inconsistent number of GPUs: %d vs %d" % (num_gpus, parsed_num_gpus))
+                num_gpus = parsed_num_gpus
             if tag.startswith("requires-gpu-sm"):
                 version = tag.split("-")[2][2:]
                 sm = (int(version[:-1]), int(version[-1]))
@@ -84,6 +91,8 @@ def prepare_nvidia_gpu_backend_data(backends, disabled_backends, backend_tags, b
         else:
             sm_major, sm_minor = sm_requirements[gpu_backend]
             sm_tag = "requires-gpu-nvidia" if sm_major == 0 else "requires-gpu-sm%s%s-only" % (sm_major, sm_minor)
+            if num_gpus:
+                sm_tag += ":%d" % num_gpus
             new_backend_tags[gpu_backend] = [t for t in all_tags if t not in requires_gpu]
             new_backend_tags[gpu_backend].append(sm_tag)
 
@@ -311,8 +320,23 @@ def xla_test(
     # b/317293391. For this reason, if we would create an empty `test_suite`,
     # instead create a `cc_test` with no srcs that links against `main` to have
     # more predictable behavior that avoids bugs.
+    #
+    # Due to b/317293391, we also mark the test suite `manual`, so that wild card builds
+    # like in the XLA CI won't try to build the test suite target. Instead the wild card
+    # build will build the individual test targets and therefore respect the tags on each
+    # individual test target.
+    # Example: Assume we have an `xla_test(name=my_test)` in `//xla/service/gpu` with backends `cpu`
+    # and `gpu`. This generates two test targets `//xla/service/gpu:my_test_{cpu|gpu}`. The latter
+    # has a tag `gpu`.
+    #
+    # - `bazel test --test_tag_filters=-gpu //xla/service/gpu/...` will only run the cpu test.
+    # - `bazel test //xla/service/gpu/...` will run both tests.
+    # - `bazel test //xla/service/gpu:my_test` will run both tests.
+    # Caveat:
+    # - `bazel test --test_tag_filters=-gpu //xla/service/gpu:my_test` will run both tests and
+    #   not respect the tag filter - but it's way better than the previous behavoir.
     if test_names:
-        native.test_suite(name = name, tags = tags, tests = test_names)
+        native.test_suite(name = name, tags = tags + ["manual"], tests = test_names)
     else:
         native.cc_test(name = name, deps = ["@tsl//tsl/platform:test_main"])
 

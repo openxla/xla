@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
@@ -141,22 +140,6 @@ void StreamCommon::ReturnSubStream(Stream *sub_stream) {
 
   LOG(FATAL) << "stream=" << this << " did not create the returned sub-stream "
              << sub_stream;
-}
-
-absl::Status StreamCommon::DoHostCallback(
-    absl::AnyInvocable<void() &&> callback) {
-  return DoHostCallbackWithStatus([cb = std::move(callback)]() mutable {
-    std::move(cb)();
-    return absl::OkStatus();
-  });
-}
-
-absl::Status StreamCommon::DoHostCallbackWithStatus(
-    absl::AnyInvocable<absl::Status() &&> callback) {
-  if (parent_->HostCallback(this, std::move(callback))) {
-    return absl::OkStatus();
-  }
-  return absl::InternalError("failed to host callback");
 }
 
 void StreamCommon::CheckError(bool operation_retcode) {

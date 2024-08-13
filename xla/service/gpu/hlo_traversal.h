@@ -53,6 +53,8 @@ class HloInstructionAdaptor {
 
   friend bool operator==(const HloInstructionAdaptor& lhs,
                          const HloInstructionAdaptor& rhs);
+  friend bool operator!=(const HloInstructionAdaptor& lhs,
+                         const HloInstructionAdaptor& rhs);
   template <typename H>
   friend H AbslHashValue(H h, const HloInstructionAdaptor& m);
 
@@ -95,6 +97,8 @@ class HloFusionInstructionAdaptor {
   virtual const HloInstruction& FusionInstruction() const = 0;
   virtual absl::InlinedVector<HloInstructionAdaptor, 2>
   MakeInstructionPostOrder() const = 0;
+  virtual void ForEach(
+      const std::function<void(HloInstructionAdaptor)>& fn) const = 0;
   virtual std::string ToString() const = 0;
 };
 
@@ -108,6 +112,10 @@ class HloFusionAdaptor {
   absl::InlinedVector<const HloInstruction*, 2> GetParameters() const;
   absl::InlinedVector<HloInstructionAdaptor, 2> MakeInstructionPostOrder()
       const;
+
+  // Calls `fn` for each instruction in the fusion.
+  void ForEach(const std::function<void(HloInstructionAdaptor)>& fn) const;
+
   std::string ToString() const;
 
   static std::unique_ptr<HloFusionAdaptor> ForInstruction(
@@ -141,9 +149,7 @@ void HloBfsConsumersFirstTraversal(
     absl::Span<const HloInstructionAdaptor> roots,
     const HloFusionAdaptor& fusion,
     const std::function<TraversalResult(HloInstructionAdaptor node)>&
-        visit_node,
-    const std::function<void(HloInstructionAdaptor producer)>& visit_arg =
-        [](HloInstructionAdaptor) {});
+        visit_node);
 
 // Visit the HLO nodes starting from `producers` in BFS order following the
 // `user` edges. Each node will be visited exactly once.
@@ -157,24 +163,24 @@ void HloBfsProducersFirstTraversal(
 // of `visit` for any of nodes is true. Uses the same order as
 // `HloBfsConsumersFirstTraversal` if `visit_operands` is true. Otherwise the
 // same order as `HloBfsProducersFirstTraversal` is used.
-bool HloAnyOf(absl::Span<const HloInstructionAdaptor> roots,
-              const HloFusionAdaptor& fusion,
-              const std::function<bool(HloInstructionAdaptor node)>& visit,
-              bool visit_operands = true);
+bool HloBfsAnyOf(absl::Span<const HloInstructionAdaptor> roots,
+                 const HloFusionAdaptor& fusion,
+                 const std::function<bool(HloInstructionAdaptor node)>& visit,
+                 bool visit_operands = true);
 
 // Visit the HLO nodes starting from `roots`, returning true if the return value
 // of `visit` for any of nodes is true. If `visit_operands` is true, the
 // search is going towards the operands, otherwise towards the users. Doesn't
 // require instruction and fusion adaptors.
-bool HloAnyOf(absl::Span<const HloInstruction* const> roots,
-              const std::function<bool(const HloInstruction* node)>& visit,
-              bool visit_operands = true);
+bool HloBfsAnyOf(absl::Span<const HloInstruction* const> roots,
+                 const std::function<bool(const HloInstruction* node)>& visit,
+                 bool visit_operands = true);
 
 // Visit the HLO nodes starting from `roots`, returning the first
 // node for which `visit` returns true, or `nullopt` if no node matches. Uses
 // the same order as `HloBfsConsumersFirstTraversal` if `visit_operands` is
 // true. Otherwise the same order as `HloBfsProducersFirstTraversal` is used.
-std::optional<HloInstructionAdaptor> HloFindIf(
+std::optional<HloInstructionAdaptor> HloBfsFindIf(
     absl::Span<const HloInstructionAdaptor> roots,
     const HloFusionAdaptor& fusion,
     const std::function<bool(HloInstructionAdaptor node)>& visit,
@@ -184,7 +190,7 @@ std::optional<HloInstructionAdaptor> HloFindIf(
 // search is going towards the operands, otherwise towards the users. Returns
 // the first node for which `visit` returns true, or `nullopt` if no node
 // matches.
-std::optional<const HloInstruction*> HloFindIf(
+std::optional<const HloInstruction*> HloBfsFindIf(
     absl::Span<const HloInstruction* const> roots,
     const std::function<bool(const HloInstruction* node)>& visit,
     bool visit_operands = true);
@@ -193,10 +199,22 @@ std::optional<const HloInstruction*> HloFindIf(
 // search is going towards the operands, otherwise towards the users. Returns
 // all nodes for which `visit` returns true. If no node matches, returns an
 // empty vector.
-std::vector<const HloInstruction*> HloFindAll(
+std::vector<const HloInstruction*> HloBfsFindAll(
     absl::Span<const HloInstruction* const> roots,
     const std::function<bool(const HloInstruction* node)>& visit,
     bool visit_operands = true);
+
+// Returns true if any instruction in the fusion adaptor matches the predicate.
+template <typename Pred>
+bool HloAnyOf(const HloFusionAdaptor& fusion, Pred&& pred) {
+  bool is_any = false;
+  fusion.ForEach([&](HloInstructionAdaptor node) {
+    if (pred(node)) {
+      is_any = true;
+    }
+  });
+  return is_any;
+}
 
 // Find a use chain from `parent` to `root`. Empty if no chain exists.
 // `[parent]` if `parent` is `root`.

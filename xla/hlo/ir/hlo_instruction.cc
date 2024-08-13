@@ -55,12 +55,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_domain_metadata.h"
-#include "xla/hlo/ir/hlo_frontend_attributes.h"
-#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_op_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
@@ -75,14 +74,16 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/sort_json.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/lib/gtl/iterator_range.h"
 #include "tsl/lib/gtl/map_util.h"
 #include "tsl/platform/errors.h"
-#include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -680,17 +681,13 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (opcode == HloOpcode::kAllGather) {
         instruction = CreateAllGather(
             shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList(std::vector<ReplicaGroup>(
-                proto.replica_groups().begin(), proto.replica_groups().end())),
-            proto.constrain_layout(), channel_id,
-            proto.use_global_device_ids());
+            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
+            channel_id, proto.use_global_device_ids());
       } else {
         instruction = CreateAllGatherStart(
             shape, all_operands(), all_gather_dimension,
-            CollectiveDeviceList(std::vector<ReplicaGroup>(
-                proto.replica_groups().begin(), proto.replica_groups().end())),
-            proto.constrain_layout(), channel_id,
-            proto.use_global_device_ids());
+            CollectiveDeviceList::FromProto(proto), proto.constrain_layout(),
+            channel_id, proto.use_global_device_ids());
       }
       break;
     }
@@ -709,9 +706,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (proto.all_reduce_id() > 0) {
         channel_id = proto.all_reduce_id();
       }
-      std::vector<ReplicaGroup> replica_groups(proto.replica_groups().begin(),
-                                               proto.replica_groups().end());
-      CollectiveDeviceList device_list(replica_groups);
+      CollectiveDeviceList device_list = CollectiveDeviceList::FromProto(proto);
       if (opcode == HloOpcode::kAllReduce) {
         instruction =
             CreateAllReduce(shape, all_operands(), computations(0), device_list,
@@ -748,12 +743,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
         split_dimension = proto.dimensions(0);
       }
       instruction = CreateAllToAll(
-          shape, all_operands(),
-          /*replica_groups=*/
-          CollectiveDeviceList(std::vector<ReplicaGroup>(
-              proto.replica_groups().begin(), proto.replica_groups().end())),
-          /*constrain_layout=*/proto.constrain_layout(),
-          /*channel_id=*/channel_id, split_dimension);
+          shape, all_operands(), CollectiveDeviceList::FromProto(proto),
+          proto.constrain_layout(), channel_id, split_dimension);
       break;
     }
     case HloOpcode::kCollectiveBroadcast: {
@@ -761,10 +752,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       if (proto.channel_id() > 0) {
         channel_id = proto.channel_id();
       }
-      auto replica_groups = std::vector<ReplicaGroup>(
-          proto.replica_groups().begin(), proto.replica_groups().end());
       instruction = CreateCollectiveBroadcast(
-          shape, all_operands(), CollectiveDeviceList(replica_groups), false,
+          shape, all_operands(), CollectiveDeviceList::FromProto(proto), false,
           channel_id);
       break;
     }
@@ -1171,12 +1160,43 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           << instruction->opcode() << proto.name();
       TF_RET_CHECK(!proto.has_dot_dimension_numbers()) << instruction->opcode();
 
-      auto call_instruction = new HloCallInstruction(
-          shape, all_operands(),
-          computation_map.at(proto.called_computation_ids()[0]));
-      call_instruction->set_output_to_operand_aliasing(
-          output_to_operand_aliasing());
-      instruction = absl::WrapUnique(call_instruction);
+      if (proto.is_composite()) {
+        TF_RET_CHECK(proto.has_frontend_attributes())
+            << "A composite call op must have frontend attributes";
+        auto map = proto.frontend_attributes().map();
+        auto name = map.find("composite.name");
+        TF_RET_CHECK(name != map.end() && !name->second.empty())
+            << "A composite call op must have frontend attributes with key "
+               "composite.name whose value is non-empty";
+
+        auto attributes = map.find("composite.attributes");
+        TF_RET_CHECK(attributes == map.end() || !attributes->second.empty())
+            << "A composite call op must have frontend attributes with key "
+               "composite.attributes whose value is default: {} or non-empty";
+
+        auto version_str = map.find("composite.version");
+        int64_t version = 0;
+        TF_RET_CHECK(
+            version_str == map.end() ||
+            (absl::SimpleAtoi(version_str->second, &version) && version >= 0))
+            << "A composite call op must have frontend attributes with a "
+               "composite.version whose value is a non-negative integer but "
+               "got: "
+            << version_str->second;
+
+        instruction = CreateCompositeCall(
+            shape, all_operands(),
+            computation_map.at(proto.called_computation_ids()[0]), name->second,
+            attributes == map.end() ? "{}" : attributes->second, version);
+        instruction->set_output_to_operand_aliasing(
+            output_to_operand_aliasing());
+      } else {
+        instruction = std::make_unique<HloCallInstruction>(
+            shape, all_operands(),
+            computation_map.at(proto.called_computation_ids()[0]));
+        instruction->set_output_to_operand_aliasing(
+            output_to_operand_aliasing());
+      }
       break;
     }
     default: {
@@ -1236,6 +1256,19 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
 
   if (proto.has_statistics_viz()) {
     instruction->set_statistics_viz(proto.statistics_viz());
+  }
+
+  if (proto.has_original_value()) {
+    const xla::OriginalValueProto& original_value_proto =
+        proto.original_value();
+    auto original_value = std::make_shared<OriginalValue>(shape);
+
+    for (const auto& leaf : original_value_proto.leaves()) {
+      *original_value->mutable_element(ShapeIndex(leaf.leaf_shape_index())) = {
+          leaf.instruction_name(), ShapeIndex(leaf.shape_index())};
+    }
+
+    instruction->set_original_value(original_value);
   }
 
   return std::move(instruction);
@@ -2250,6 +2283,27 @@ bool HloInstruction::HasSideEffect() const {
   return std::make_unique<HloCallInstruction>(shape, operands, computation);
 }
 
+/* static */ std::unique_ptr<HloInstruction>
+HloInstruction::CreateCompositeCall(const Shape& shape,
+                                    HloInstruction* decomposition_root,
+                                    const std::string& name,
+                                    const std::string& attributes,
+                                    int64_t version) {
+  return std::make_unique<HloCallInstruction>(shape, decomposition_root, name,
+                                              attributes, version);
+}
+
+/* static */ std::unique_ptr<HloInstruction>
+HloInstruction::CreateCompositeCall(const Shape& shape,
+                                    absl::Span<HloInstruction* const> operands,
+                                    HloComputation* decomposition,
+                                    const std::string& name,
+                                    const std::string& attributes,
+                                    int64_t version) {
+  return std::make_unique<HloCallInstruction>(shape, operands, decomposition,
+                                              name, attributes, version);
+}
+
 /* static */ std::unique_ptr<HloInstruction> HloInstruction::CreateCustomCall(
     const Shape& shape, absl::Span<HloInstruction* const> operands,
     absl::string_view custom_call_target, std::string opaque,
@@ -2801,8 +2855,8 @@ bool HloInstruction::IdenticalInternal(
                          : ShapeUtil::Compatible(shape(), other.shape()))) {
     return false;
   }
-  if (sharding_sensitive &&
-      !hlo_instruction_utils::HasEquivalentShardings(*this, other)) {
+  if (sharding_sensitive && has_sharding() && other.has_sharding() &&
+      sharding() != other.sharding()) {
     return false;
   }
   if (operands().size() != other.operands().size()) {
@@ -3616,9 +3670,16 @@ void HloInstruction::PrintWithCanonicalNameMap(
   });
   PrintExtraAttributes(attr_printer, options);
 
+  if (original_value_) {
+    printer->Append(", original_value={");
+    printer->Append(OriginalValueToString(*original_value()));
+    printer->Append("}");
+  }
+
   if (options.print_metadata() &&
       (!metadata_->op_type().empty() || !metadata_->op_name().empty() ||
-       !metadata_->source_file().empty())) {
+       !metadata_->source_file().empty() ||
+       !metadata_->scheduling_name().empty())) {
     printer->Append(", metadata={");
     printer->Append(xla::OpMetadataToString(
         *metadata_, options.print_metadata_only_op_name()));
@@ -3626,6 +3687,13 @@ void HloInstruction::PrintWithCanonicalNameMap(
   }
   if (options.print_backend_config() && !backend_config_.empty()) {
     absl::string_view config = backend_config_.GetRawString();
+    std::string sorted_config;
+    if (options.sort_backend_config()) {
+      // Use `value_or` below, because the backend config string isn't
+      // guaranteed to be a JSON string.
+      sorted_config = SortJson(config).value_or(std::string(config));
+      config = sorted_config;
+    }
     printer->Append(", backend_config=");
     // In the common case that the backend-config is valid-ish JSON, the parser
     // doesn't need it delimited by quotes, so we can print it without
@@ -3773,6 +3841,10 @@ void HloInstruction::PrintExtraAttributes(
           PrintNameInternal(printer, to_apply()->name(), options);
         });
       }
+      if (opcode() == HloOpcode::kCall && is_composite()) {
+        printer.Next(
+            [](Printer* printer) { printer->Append("is_composite=true"); });
+      }
     } else if (opcode() == HloOpcode::kCustomCall) {
       if (!called_computations().empty()) {
         printer.Next([this, &options](Printer* printer) {
@@ -3869,6 +3941,10 @@ void HloInstruction::PrintExtraAttributes(
             to_apply()->Print(printer, new_options);
           });
         }
+        if (opcode() == HloOpcode::kCall && is_composite()) {
+          printer.Next(
+              [](Printer* printer) { printer->Append("is_composite=true"); });
+        }
         break;
       default:
         if (!called_computations().empty()) {
@@ -3891,11 +3967,16 @@ void HloInstruction::PrintExtraAttributes(
       sharding().Print(printer, options.print_metadata());
     });
   }
-  if (!rare()->frontend_attributes.map().empty()) {
+  if (!frontend_attributes().map().empty()) {
     printer.Next([this](Printer* printer) {
       AppendCat(printer, "frontend_attributes=",
-                FrontendAttributesToString(rare()->frontend_attributes));
+                FrontendAttributesToString(frontend_attributes()));
     });
+  }
+
+  if (opcode() != HloOpcode::kCall) {
+    CHECK(!is_composite())
+        << "Only kCall instructions should have is_composite set";
   }
 
   if (options.print_control_dependencies() && !control_predecessors().empty()) {
@@ -3943,6 +4024,23 @@ std::vector<std::string> HloInstruction::ExtraAttributesToString(
   return std::move(multi_string_printer).ConsumeStrings();
 }
 
+std::string FrontendAttributesToString(
+    const FrontendAttributes& frontend_attributes) {
+  std::vector<std::pair<std::string, std::string>> sorted_attributes(
+      frontend_attributes.map().begin(), frontend_attributes.map().end());
+  absl::c_sort(sorted_attributes);
+  const auto formatter = [](std::string* out,
+                            const std::pair<std::string, std::string>& item) {
+    if (LexesAsJsonDict(item.second)) {
+      absl::StrAppend(out, item.first, "=", item.second);
+    } else {
+      absl::StrAppend(out, item.first, "=\"", item.second, "\"");
+    }
+  };
+  return absl::StrFormat("{%s}",
+                         absl::StrJoin(sorted_attributes, ",", formatter));
+}
+
 std::string HloInstruction::ToShortString() const {
   return StrCat("%", name(), " = ", HloOpcodeString(opcode()), "(",
                 StrJoin(operands_, ", ",
@@ -3981,8 +4079,26 @@ HloInstructionProto HloInstruction::ToProto() const {
   }
 
   *proto.mutable_frontend_attributes() = frontend_attributes();
+  proto.set_is_composite(is_composite());
 
   *proto.mutable_statistics_viz() = statistics_viz();
+
+  if (original_value_) {
+    xla::OriginalValueProto* original_value_proto =
+        proto.mutable_original_value();
+    for (const auto& leaf : original_value_->leaves()) {
+      OriginalArrayProto* original_array_proto =
+          original_value_proto->add_leaves();
+      for (const auto& index : leaf.first) {
+        original_array_proto->add_leaf_shape_index(index);
+      }
+      *original_array_proto->mutable_instruction_name() =
+          leaf.second->instruction_name;
+      for (const auto& index : leaf.second->shape_index) {
+        original_array_proto->add_shape_index(index);
+      }
+    }
+  }
 
   return proto;
 }
@@ -4998,6 +5114,14 @@ void HloInstruction::UniquifyName(NameUniquer* name_uniquer) {
   name_ = name_uniquer->GetUniqueName(name_);
 }
 
+void HloInstruction::UniquifyName(HloModule* module) {
+  UniquifyName(&module->instruction_name_uniquer());
+}
+
+void HloInstruction::UniquifyId(HloModule* module) {
+  SetUniqueId(module->NewUniqueInstructionId());
+}
+
 void HloInstruction::SortInstructionUsersAndControlLists(
     const MappedPtrContainerSorter<HloInstruction>::MapPtrFn& map_fn,
     const HloInstruction& sorted_instruction) {
@@ -5481,6 +5605,15 @@ void HloInstruction::set_output_to_operand_aliasing(
         aliasing) {
   Cast<HloCallableInstruction>(this)->set_output_to_operand_aliasing(
       std::move(aliasing));
+}
+
+std::shared_ptr<OriginalValue> HloInstruction::original_value() const {
+  return original_value_;
+}
+
+void HloInstruction::set_original_value(
+    std::shared_ptr<OriginalValue> original_value) {
+  original_value_ = original_value;
 }
 
 }  // namespace xla

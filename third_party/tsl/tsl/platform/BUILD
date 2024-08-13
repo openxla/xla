@@ -847,6 +847,7 @@ cc_library(
     deps = [
         ":logging",
         ":path",
+        ":platform",
         ":test",
     ],
 )
@@ -1464,7 +1465,7 @@ tsl_cc_test(
         ":subprocess",
         ":test",
         ":test_main",
-        "//tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -1767,7 +1768,7 @@ tsl_cc_test(
         ":str_util",
         ":test",
         ":test_main",
-        "//tsl/lib/core:status_test_util",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 
@@ -1783,7 +1784,7 @@ tsl_cc_test(
         ":str_util",
         ":test",
         ":test_main",
-        "//tsl/lib/core:status_test_util",
         "@com_google_absl//absl/time",
+        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )

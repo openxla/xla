@@ -22,7 +22,6 @@ limitations under the License.
 #include <string>
 #include <variant>
 
-#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -59,8 +58,8 @@ class MockStreamExecutor : public StreamExecutor {
   MockStreamExecutor() = default;
   MOCK_METHOD(absl::Status, Init, (), (override));
   MOCK_METHOD(int, device_ordinal, (), (const, override));
-  MOCK_METHOD(absl::Status, GetKernel,
-              (const MultiKernelLoaderSpec& spec, Kernel* kernel), (override));
+  MOCK_METHOD(absl::StatusOr<std::unique_ptr<Kernel>>, LoadKernel,
+              (const MultiKernelLoaderSpec& spec), (override));
   MOCK_METHOD(bool, UnloadModule, (ModuleHandle module_handle), (override));
   MOCK_METHOD(absl::Status, LoadModule,
               (const MultiModuleLoaderSpec& spec, ModuleHandle* module_handle),
@@ -78,9 +77,6 @@ class MockStreamExecutor : public StreamExecutor {
                const BlockDim& block_dims, const ClusterDim& cluster_dims,
                const Kernel& k, const KernelArgs& args),
               (override));
-  MOCK_METHOD(absl::Status, Submit,
-              (Stream * stream, const CommandBuffer& command_buffer));
-  MOCK_METHOD(void, UnloadKernel, (const Kernel* kernel), (override));
   MOCK_METHOD(DeviceMemoryBase, Allocate, (uint64_t size, int64_t memory_space),
               (override));
   MOCK_METHOD(void, Deallocate, (DeviceMemoryBase * mem), (override));
@@ -104,13 +100,6 @@ class MockStreamExecutor : public StreamExecutor {
               (void* host_dst, const DeviceMemoryBase& device_src,
                uint64_t size),
               (override));
-  MOCK_METHOD(absl::Status, Memset,
-              (Stream * stream, DeviceMemoryBase* location, uint8_t pattern,
-               uint64_t size),
-              (override));
-  MOCK_METHOD(bool, HostCallback,
-              (Stream * stream, absl::AnyInvocable<absl::Status() &&> callback),
-              (override));
   MOCK_METHOD(void, DeallocateStream, (Stream * stream), (override));
   MOCK_METHOD(absl::Status, BlockHostUntilDone, (Stream * stream), (override));
   MOCK_METHOD(absl::Status, EnablePeerAccessTo, (StreamExecutor * other),
@@ -127,8 +116,6 @@ class MockStreamExecutor : public StreamExecutor {
   MOCK_METHOD(blas::BlasSupport*, AsBlas, (), (override));
   MOCK_METHOD(fft::FftSupport*, AsFft, (), (override));
   MOCK_METHOD(dnn::DnnSupport*, AsDnn, (), (override));
-  MOCK_METHOD(absl::StatusOr<std::unique_ptr<Kernel>>, CreateKernel, (),
-              (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<CommandBuffer>>,
               CreateCommandBuffer, (CommandBuffer::Mode mode), (override));
   MOCK_METHOD(std::optional<AllocatorStats>, GetAllocatorStats, (), (override));

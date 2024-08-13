@@ -222,8 +222,7 @@ cc_library(
         ":ir_emission_utils",
         ":ir_emitter",
         ":ir_emitter2",
-        ":onednn_convolution_rewriter",
-        ":onednn_matmul_rewriter",
+        ":onednn_contraction_rewriter",
         ":onednn_ops_rewriter",
         ":parallel_task_assignment",
         ":simple_orc_jit",
@@ -327,11 +326,13 @@ cc_library(
         "//xla/service:while_loop_constant_sinking",
         "//xla/service:while_loop_invariant_code_motion",
         "//xla/service:while_loop_simplifier",
+        "//xla/service:while_loop_trip_count_annotator",
         "//xla/service:zero_sized_hlo_elimination",
         "//xla/service/cpu/runtime:thunk",
         "//xla/service/llvm_ir:llvm_command_line_options",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
+        "//xla/service/spmd/shardy:shardy_xla_pass",
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
         "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
@@ -587,6 +588,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
+        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:ExecutionEngine",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:OrcShared",
@@ -624,8 +626,10 @@ cc_library(
     hdrs = ["ir_emitter2.h"],
     deps = [
         ":backend_config_proto_cc",
+        ":dot_op_emitter",
         ":elemental_math_emitter",
         ":ir_emitter",
+        ":ir_function",
         ":parallel_loop_emitter",
         ":shape_partition",
         "//xla:cpu_function_runtime",
@@ -635,13 +639,11 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
-        "//xla/service/cpu:dot_op_emitter",
         "//xla/service/llvm_ir:dynamic_update_slice_util",
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
-        "//xla/service/llvm_ir:tuple_ops",
         "//xla/stream_executor:launch_dim",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
@@ -658,6 +660,28 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "ir_emitter_test",
+    srcs = ["ir_emitter_test.cc"],
+    deps = [
+        ":ir_emitter",
+        ":ir_function",
+        ":target_machine_features_fake",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_ordering",
+        "//xla/service:hlo_parser",
+        "//xla/service:logical_buffer",
+        "//xla/tests:hlo_test_base",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -850,6 +874,7 @@ cc_library(
         "//xla/service/cpu/runtime:reduce_scatter_thunk",
         "//xla/service/cpu/runtime:resource_use",
         "//xla/service/cpu/runtime:rng_state_thunk",
+        "//xla/service/cpu/runtime:sort_thunk",
         "//xla/service/cpu/runtime:thunk",
         "//xla/service/cpu/runtime:topk_thunk",
         "//xla/service/cpu/runtime:while_thunk",
@@ -1357,6 +1382,7 @@ xla_cc_test(
         ":runtime_matmul_acl",
         ":runtime_single_threaded_matmul",
         "//xla:array2d",
+        "//xla:executable_run_options",
         "//xla:types",
         "//xla/client:local_client",
         "//xla/service:custom_call_status_internal",
@@ -1376,6 +1402,7 @@ xla_cc_test(
     deps = [
         ":cpu_instruction_fusion",
         "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:transpose_folding",
         "//xla/tests:hlo_test_base",
@@ -1383,6 +1410,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1394,7 +1422,7 @@ xla_cc_test(
         ":cpu_runtime",
         "//xla:shape_util",
         "//xla/tests:xla_internal_test_main",
-        "@tsl//tsl/lib/core:status_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
@@ -1580,8 +1608,8 @@ xla_cc_test(
         "//xla/service/cpu:target_machine_features",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/lib/core:status_test_util",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -1653,6 +1681,23 @@ xla_cc_test(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:Target",
+    ],
+)
+
+xla_cc_test(
+    name = "scoped_ir_builder_test",
+    srcs = ["scoped_ir_builder_test.cc"],
+    deps = [
+        ":ir_emitter",
+        ":target_machine_features_fake",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_ordering",
+        "//xla/service:logical_buffer",
+        "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -1827,17 +1872,19 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_matmul_rewriter",
-    srcs = ["onednn_matmul_rewriter.cc"],
+    name = "onednn_contraction_rewriter",
+    srcs = ["onednn_contraction_rewriter.cc"],
     hdrs = [
+        "onednn_contraction_rewriter.h",
+        "onednn_convolution.h",
         "onednn_matmul.h",
-        "onednn_matmul_rewriter.h",
         "//xla/tsl/util:onednn_util_hdrs",
     ],
     copts = tsl_copts(),
     deps = [
         ":backend_config_proto_cc",
         ":onednn_config_proto_cc",
+        ":onednn_convolution",
         ":onednn_matmul",
         ":onednn_memory_util",
         ":onednn_pattern_utils",
@@ -1853,6 +1900,7 @@ cc_library(
         "//xla/service:hlo_pass",
         "//xla/service:pattern_matcher",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
@@ -1886,43 +1934,12 @@ cc_library(
 )
 
 cc_library(
-    name = "onednn_convolution_rewriter",
-    srcs = ["onednn_convolution_rewriter.cc"],
-    hdrs = ["onednn_convolution_rewriter.h"],
-    copts = tsl_copts(),
-    deps = [
-        ":backend_config_proto_cc",
-        ":onednn_config_proto_cc",
-        ":onednn_convolution",
-        ":onednn_memory_util",
-        ":onednn_util",
-        "//xla:executable_run_options",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/evaluator:hlo_evaluator",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_creation_utils",
-        "//xla/service:hlo_pass",
-        "//xla/service:pattern_matcher",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/status:statusor",
-        "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:blocking_counter",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
-    ] + mkl_deps(),
-)
-
-cc_library(
     name = "cpu_float_support",
     srcs = ["cpu_float_support.cc"],
     hdrs = ["cpu_float_support.h"],
     copts = tsl_copts(),
     deps = [
-        ":onednn_convolution_rewriter",
-        ":onednn_matmul_rewriter",
+        ":onednn_contraction_rewriter",
         "//xla/service:float_support",
     ],
 )

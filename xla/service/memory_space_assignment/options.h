@@ -57,6 +57,10 @@ using ReservedScopedMemoryFunction = std::function<int64_t(
     const absl::flat_hash_set<ShapeIndex>& /*outputs_in_alternate_memory*/)>;
 using PositionRequiresContiguousAllocationFunction =
     std::function<bool(const HloPosition&)>;
+using WindowPrefetchDetailFunction =
+    std::function<WindowPrefetchDetail(const HloInstruction*)>;
+using WindowPrefetchNotifyOperandAppendedFunction =
+    std::function<void(HloInstruction*, int64_t, int64_t)>;
 
 // The different options to be passed to the Run() API.
 struct Options {
@@ -111,6 +115,15 @@ struct Options {
       position_requires_contiguous_allocation_fn =
           [](const HloPosition&) { return false; };
 
+  // This function is called to get details about window prefetches.
+  WindowPrefetchDetailFunction window_prefetch_detail_fn =
+      [](const HloInstruction*) { return WindowPrefetchDetail(); };
+
+  // This function is called to notify that an operand has been appended as a
+  // window prefetch buffer.
+  WindowPrefetchNotifyOperandAppendedFunction notify_operand_appended_fn =
+      [](HloInstruction*, int64_t, int64_t) {};
+
   // If true, we will try to reduce scoped allocation buffer size for all
   // instructions if their operand/output has been allocated in alternate
   // memory.
@@ -147,10 +160,6 @@ struct Options {
   // This is only useful for testing, repack after every allocation.
   bool repack_after_every_allocation = false;
 
-  // If true, tries allocating buffers across (e.g., before and inside a while
-  // loop body) sequential calls (kWhile, kCall, and kConditional).
-  bool allocate_across_sequential_calls = false;
-
   // If true, verifies the memory space assignment against overlapping
   // buffers.
   bool verify = false;
@@ -175,6 +184,11 @@ struct Options {
   // The maximum number of cross program prefetches.
   // TODO(tjablin): Use a heuristic to determine this automatically.
   int max_cross_program_prefetches = 1;
+
+  // If false, we assume tensors that we couldn't explicitly determine to be
+  // activations are activations. If true, we assume these aren't activations,
+  // so they may be cross-program-prefetch candidates.
+  bool cross_program_prefetch_permissive_mode = false;
 
   // Enable redundant eviction optimization in/around while loops. If enabled,
   // this optimization would keep a copy of the buffer in the default memory in
@@ -233,6 +247,13 @@ struct Options {
   // Option to always spill buffers from alternate memory to default memory
   // and prefetching back to alternate memory(if needed) just in time for use.
   bool always_spill_to_default_memory = false;
+
+  // If true, enables window prefetching. Window prefetching is a mechanism
+  // where we prefetch windows of data into the alternate memory before the
+  // first use of the buffer. This allows large tensors to be prefetched as well
+  // and gives MSA more flexibility in choosing the prefetch time and how much
+  // data to prefetch.
+  bool enable_window_prefetch = false;
 };
 }  // namespace memory_space_assignment
 }  // namespace xla

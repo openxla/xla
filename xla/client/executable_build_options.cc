@@ -27,14 +27,13 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/execution_options_util.h"
 #include "xla/layout_util.h"
+#include "xla/pjrt/compile_options.pb.h"
 #include "xla/service/compilation_environments.h"
 #include "xla/service/computation_placer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -196,6 +195,7 @@ absl::StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto()
   for (int64_t s : auto_spmd_partitioning_mesh_ids()) {
     output.mutable_auto_spmd_partitioning_mesh_ids()->Add(s);
   }
+  output.set_use_shardy_partitioner(use_shardy_partitioner());
   return output;
 }
 
@@ -242,6 +242,7 @@ absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
   output.set_auto_spmd_partitioning_mesh_ids(
       std::vector<int64_t>(input.auto_spmd_partitioning_mesh_ids().begin(),
                            input.auto_spmd_partitioning_mesh_ids().end()));
+  output.set_use_shardy_partitioner(input.use_shardy_partitioner());
   return output;
 }
 
@@ -300,6 +301,8 @@ ExecutionOptions CreateExecutionOptions(
   execution_options.set_fdo_profile(build_options.fdo_profile().data(),
                                     build_options.fdo_profile().size());
   execution_options.set_device_memory_size(build_options.device_memory_size());
+  execution_options.set_use_shardy_partitioner(
+      build_options.use_shardy_partitioner());
   return execution_options;
 }
 

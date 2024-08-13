@@ -20,7 +20,7 @@ limitations under the License.
 #include "xla/service/gpu/fusions/mlir_emitter_test_base.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
-#include "tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -46,7 +46,7 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingUnrolled) {
   thread_id_printer_.SetSymbolName(1, "unroll_id");
 
   auto* root = module->entry_computation()->root_instruction();
-  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto analysis = HloFusionAnalysis::Create(*root, device_info_);
   MlirLoopFusion fusion(analysis);
   auto thread_id_to_output_indexing =
       fusion.ComputeThreadIdToOutputIndexing(/*root_index=*/0, &mlir_context_);
@@ -59,15 +59,15 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingUnrolled) {
     ((bl_x * 128 + chunk_id * 129024 + th_x) mod 75) * 4 + unroll_id
   )
   domain:
-  th_x in [0, 128)
-  th_y in [0, 1)
-  th_z in [0, 1)
-  bl_x in [0, 1008)
-  bl_y in [0, 1)
-  bl_z in [0, 1)
-  chunk_id in [0, 12)
-  unroll_id in [0, 4)
-  bl_x * 128 + chunk_id * 129024 + th_x in [0, 1500000)
+  th_x in [0, 127]
+  th_y in [0, 0]
+  th_z in [0, 0]
+  bl_x in [0, 1007]
+  bl_y in [0, 0]
+  bl_z in [0, 0]
+  chunk_id in [0, 11]
+  unroll_id in [0, 3]
+  bl_x * 128 + chunk_id * 129024 + th_x in [0, 1499999]
 )"));
 }
 
@@ -88,7 +88,7 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingNotUnrolled) {
   thread_id_printer_.SetSymbolName(1, "unroll_id");
 
   auto* root = module->entry_computation()->root_instruction();
-  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto analysis = HloFusionAnalysis::Create(*root, device_info_);
 
   MlirLoopFusion fusion(analysis);
   auto thread_id_to_output_indexing =
@@ -97,14 +97,14 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingNotUnrolled) {
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
               domain:
-              th_x in [0, 20)
-              th_y in [0, 1)
-              th_z in [0, 1)
-              bl_x in [0, 1)
-              bl_y in [0, 1)
-              bl_z in [0, 1)
-              chunk_id in [0, 1)
-              unroll_id in [0, 1)
+              th_x in [0, 19]
+              th_y in [0, 0]
+              th_z in [0, 0]
+              bl_x in [0, 0]
+              bl_y in [0, 0]
+              bl_z in [0, 0]
+              chunk_id in [0, 0]
+              unroll_id in [0, 0]
             )"));
   auto thread_id_to_input_indexing = fusion.ComputeThreadIdToInputIndexing(
       /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
@@ -112,14 +112,14 @@ TEST_F(MlirLoopFusionTest, ThreadId_IndexingNotUnrolled) {
               MatchIndexingString(R"(
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] -> (th_x)
               domain:
-              th_x in [0, 20)
-              th_y in [0, 1)
-              th_z in [0, 1)
-              bl_x in [0, 1)
-              bl_y in [0, 1)
-              bl_z in [0, 1)
-              chunk_id in [0, 1)
-              unroll_id in [0, 1)
+              th_x in [0, 19]
+              th_y in [0, 0]
+              th_z in [0, 0]
+              bl_x in [0, 0]
+              bl_y in [0, 0]
+              bl_z in [0, 0]
+              chunk_id in [0, 0]
+              unroll_id in [0, 0]
             )"));
 }
 
@@ -140,7 +140,7 @@ TEST_F(MlirLoopFusionTest, ThreadId_Broadcast) {
   thread_id_printer_.SetSymbolName(1, "unroll_id");
 
   auto* root = module->entry_computation()->root_instruction();
-  auto analysis = AnalyzeFusion(*root, device_info_);
+  auto analysis = HloFusionAnalysis::Create(*root, device_info_);
 
   MlirLoopFusion fusion(analysis);
   auto thread_id_to_output_indexing =
@@ -153,15 +153,15 @@ TEST_F(MlirLoopFusionTest, ThreadId_Broadcast) {
                   (bl_x * 128 + th_x) mod 30
                 )
                 domain:
-                th_x in [0, 128)
-                th_y in [0, 1)
-                th_z in [0, 1)
-                bl_x in [0, 47)
-                bl_y in [0, 1)
-                bl_z in [0, 1)
-                chunk_id in [0, 1)
-                unroll_id in [0, 1)
-                bl_x * 128 + th_x in [0, 6000)
+                th_x in [0, 127]
+                th_y in [0, 0]
+                th_z in [0, 0]
+                bl_x in [0, 46]
+                bl_y in [0, 0]
+                bl_z in [0, 0]
+                chunk_id in [0, 0]
+                unroll_id in [0, 0]
+                bl_x * 128 + th_x in [0, 5999]
             )"));
   auto thread_id_to_input_indexing = fusion.ComputeThreadIdToInputIndexing(
       /*root_index=*/0, /*hero_operand_index=*/0, &mlir_context_);
@@ -170,15 +170,15 @@ TEST_F(MlirLoopFusionTest, ThreadId_Broadcast) {
               (th_x, th_y, th_z, bl_x, bl_y, bl_z)[chunk_id, unroll_id] ->
                 (((bl_x * 128 + th_x) floordiv 30) mod 20)
                 domain:
-                th_x in [0, 128)
-                th_y in [0, 1)
-                th_z in [0, 1)
-                bl_x in [0, 47)
-                bl_y in [0, 1)
-                bl_z in [0, 1)
-                chunk_id in [0, 1)
-                unroll_id in [0, 1)
-                bl_x * 128 + th_x in [0, 6000)
+                th_x in [0, 127]
+                th_y in [0, 0]
+                th_z in [0, 0]
+                bl_x in [0, 46]
+                bl_y in [0, 0]
+                bl_z in [0, 0]
+                chunk_id in [0, 0]
+                unroll_id in [0, 0]
+                bl_x * 128 + th_x in [0, 5999]
             )"));
 }
 
@@ -196,10 +196,10 @@ TEST_F(MlirLoopFusionTest, Constant_Broadcast) {
     }
   )";
   TF_ASSERT_OK(EmitAndCheckIR(kHloString, R"(
-    // CHECK: #[[MAP0:.*]] = affine_map<(d0, d1) -> (d1 * 1024 + d0)>
-    // CHECK: #[[MAP1:.*]] = affine_map<(d0, d1) -> ((d1 * 1024 + d0) floordiv 768)>
-    // CHECK: #[[MAP2:.*]] = affine_map<(d0, d1) -> (((d1 * 1024 + d0) floordiv 48) mod 16)>
-    // CHECK: #[[MAP3:.*]] = affine_map<(d0, d1) -> ((d1 * 1024 + d0) mod 48)>
+    // CHECK-DAG: #[[MAP0:.*]] = #xla_gpu.indexing_map<(d0, d1) -> (d1 * 1024 + d0)
+    // CHECK-DAG: #[[MAP1:.*]] = #xla_gpu.indexing_map<(d0, d1) -> ((d1 * 1024 + d0) floordiv 768)
+    // CHECK-DAG: #[[MAP2:.*]] = #xla_gpu.indexing_map<(d0, d1) -> (((d1 * 1024 + d0) floordiv 48) mod 16)
+    // CHECK-DAG: #[[MAP3:.*]] = #xla_gpu.indexing_map<(d0, d1) -> ((d1 * 1024 + d0) mod 48)
     // CHECK: func.func @fused_computation(%[[ARG0:.*]]: tensor<2x16x48xbf16>
     // CHECK: %[[UPPER_BOUND:.*]] = arith.constant 1535 : index
     // CHECK: %[[THREAD_ID:.*]] = gpu.thread_id

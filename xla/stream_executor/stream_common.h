@@ -28,7 +28,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -69,9 +68,6 @@ class StreamCommon : public Stream {
       TF_LOCKS_EXCLUDED(mu_);
   void ReturnSubStream(Stream *sub_stream) override TF_LOCKS_EXCLUDED(mu_);
   absl::Status BlockHostUntilDone() override TF_LOCKS_EXCLUDED(mu_);
-  absl::Status DoHostCallback(absl::AnyInvocable<void() &&> callback) override;
-  absl::Status DoHostCallbackWithStatus(
-      absl::AnyInvocable<absl::Status() &&> callback) override;
   StreamExecutor *parent() const override {
     CHECK(parent_ != nullptr);
     return parent_;

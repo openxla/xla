@@ -42,9 +42,7 @@
 #     rocm:         Build with AMD GPU support (rocm)
 #     mkl:          Enable full mkl support.
 #     tensorrt:     Enable Tensorrt support.
-#     noaws:        Disable AWS S3 storage support
 #     nogcp:        Disable GCS support.
-#     nohdfs:       Disable hadoop hdfs support.
 #     nonccl:       Disable nccl support.
 #
 #
@@ -116,10 +114,6 @@ build --config=short_logs
 
 # TODO(mihaimaruseac): Document this option or remove if no longer needed
 build --config=v2
-
-# Disable AWS/HDFS support by default
-build --define=no_aws_support=true
-build --define=no_hdfs_support=true
 
 # TF now has `cc_shared_library` targets, so it needs the experimental flag
 # TODO(rostam): Remove when `cc_shared_library` is enabled by default
@@ -296,9 +290,7 @@ build:sycl --define=tensorflow_mkldnn_contraction_kernel=0
 build:sycl --repo_env TF_NEED_SYCL=1
 
 # Options to disable default on features
-build:noaws --define=no_aws_support=true
 build:nogcp --define=no_gcp_support=true
-build:nohdfs --define=no_hdfs_support=true
 build:nonccl --define=no_nccl_support=true
 
 # Modular TF build options
@@ -358,6 +350,13 @@ build:windows --features=archive_param_file
 # https://groups.google.com/a/tensorflow.org/d/topic/build/SsW98Eo7l3o/discussion
 build:windows --copt=/d2ReducedOptimizeHugeFunctions
 build:windows --host_copt=/d2ReducedOptimizeHugeFunctions
+
+# Before VS 2017 15.8, the member "type" would non-conformingly have an
+# alignment of only alignof(max_align_t). VS 2017 15.8 was fixed to handle this
+# correctly, but the fix inherently changes layout and breaks binary
+# compatibility (*only* for uses of aligned_storage with extended alignments).
+build:windows --copt=-D_ENABLE_EXTENDED_ALIGNED_STORAGE
+build:windows --host_copt=-D_ENABLE_EXTENDED_ALIGNED_STORAGE
 
 # Enable the runfiles symlink tree on Windows. This makes it possible to build
 # the pip package on Windows without an intermediate data-file archive, as the
@@ -574,6 +573,9 @@ build:rbe_win_clang --compiler=clang-cl
 build:rbe_win_clang --linkopt=/FORCE:MULTIPLE
 build:rbe_win_clang --host_linkopt=/FORCE:MULTIPLE
 
+# TODO(belitskiy): Rename `rbe_win_clang` to this, once done switching presubmits.
+build:rbe_windows_x86_cpu --config=rbe_win_clang
+
 # END TF REMOTE BUILD EXECUTION OPTIONS
 
 # TFLite build configs for generic embedded Linux
@@ -788,17 +790,19 @@ test:macos_x86_wheel_test --config=macos_x86_wheel_test_filters -- //tensorflow/
 
 # PYCPP TESTS run a suite of Python and C++ tests to verify general correctness over
 # the whole TF code base. These are usually run continuously or upon presubmit.
-# CPU PYCPP:
+# LINUX CPU PYCPP:
 test:linux_cpu_pycpp_test_filters --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
 test:linux_cpu_pycpp_test_filters --build_tag_filters=-no_oss,-oss_excluded,-oss_serial,-gpu,-tpu,-benchmark-test,-v1only
 test:linux_cpu_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium
 test:linux_cpu_pycpp_test --config=linux_cpu_pycpp_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/...
-# CUDA PYCPP:
+
+# LINUX CUDA PYCPP:
 test:linux_cuda_pycpp_test_filters --test_tag_filters=-no_oss,-oss_excluded,-oss_serial,-benchmark-test,-v1only,gpu,-no_gpu,-no_gpu_presubmit,-no_cuda11
 test:linux_cuda_pycpp_test_filters --build_tag_filters=-no_oss,-oss_excluded,-oss_serial,-benchmark-test,-v1only,gpu,-no_gpu,-no_gpu_presubmit,-no_cuda11
 test:linux_cuda_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium
 test:linux_cuda_pycpp_test --config=linux_cuda_pycpp_test_filters -- //tensorflow/... -//tensorflow/compiler/tf2tensorrt/... -//tensorflow/core/tpu/... -//tensorflow/lite/... -//tensorflow/tools/toolchains/...
-# ARM64 PYCPP
+
+# LINUX ARM64 PYCPP
 # In Linux Arm64 presubmit/continuous build, we cross-compile the binaries on
 # Linux x86 so that we can use RBE. Since tests still need to run on the single
 # host Arm64 machine, the build becomes too slow (~30 min) to be a presubmit.
@@ -831,6 +835,13 @@ build:macos_x86_pycpp_test --config=macos_x86_pycpp_test_filters -- //tensorflow
 # CROSS-COMPILE MACOS X86 PYCPP
 build:cross_compile_macos_x86_pycpp_test --config=macos_x86_pycpp_test
 build:cross_compile_macos_x86_pycpp_test -//tensorflow/core/kernels:quantized_conv_ops_test -//tensorflow/core/kernels:quantized_matmul_op_test -//tensorflow/python/ops:quantized_conv_ops_test -//tensorflow/tools/graph_transforms:transforms_test -//tensorflow/python/tools:aot_compiled_test
+# WINDOWS X86-64 CPU PYCPP
+test:windows_x86_cpu_pycpp_test_filters --test_tag_filters=-no_windows,-windows_excluded,-no_oss,-oss_excluded,-gpu,-tpu,-benchmark-test
+test:windows_x86_cpu_pycpp_test_filters --build_tag_filters=-no_windows,-windows_excluded,-no_oss,-oss_excluded,-benchmark-test
+test:windows_x86_cpu_pycpp_test_filters --test_lang_filters=cc,py --test_size_filters=small,medium --test_timeout="300,450,1200,3600"
+test:windows_x86_cpu_pycpp_test_opts --copt=/d2ReducedOptimizeHugeFunctions --host_copt=/d2ReducedOptimizeHugeFunctions --dynamic_mode=off --build_tests_only
+test:windows_x86_cpu_pycpp_test --config=windows_x86_cpu_pycpp_test_opts --config=windows_x86_cpu_pycpp_test_filters -- //tensorflow/... -//tensorflow/java/... -//tensorflow/lite/... -//tensorflow/compiler/...
+
 # END TF TEST SUITE OPTIONS
 
 # START CROSS-COMPILE CONFIGS

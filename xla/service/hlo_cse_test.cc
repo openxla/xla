@@ -543,29 +543,6 @@ ENTRY %entry {
   EXPECT_FALSE(cse.Run(m.get()).value());
 }
 
-TEST_F(HloCseTest, DoNotCombineSkippedOps) {
-  const char* const hlo_string = R"(
-HloModule module
-
-ENTRY %entry {
-  constant = bf16[] constant(0)
-  broadcast.0 = bf16[14,4,32768,3072]{3,2,1,0} broadcast(constant), dimensions={}, sharding={devices=[1,1,8,1,8]<=[64] last_tile_dim_replicate}
-  broadcast.1 = bf16[14,4,32768,3072]{3,2,1,0} broadcast(constant), dimensions={}, sharding={devices=[1,1,8,8]<=[64]}
-  ROOT tuple = (bf16[14,4,32768,3072]{3,2,1,0}, bf16[14,4,32768,3072]{3,2,1,0}) tuple(broadcast.0, broadcast.1)
-})";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
-  HloInstruction* broadcast_0 = FindInstruction(m.get(), "broadcast.0");
-  HloCSE cse(/*is_layout_sensitive=*/false,
-             /*only_fusion_computations=*/false,
-             /*ignore_control_dependencies=*/false,
-             /*only_scalars=*/false,
-             /*is_sharding_sensitive=*/true,
-             /*allow_compatible_sharding=*/true,
-             /*instructions_to_skip=*/{broadcast_0});
-  EXPECT_FALSE(cse.Run(m.get()).value());
-  XLA_VLOG_LINES(0, m->ToString());
-}
-
 TEST_F(HloCseTest, DoNotCombineCallsToImpureFunctions) {
   // Test that two calls to an impure function are not commoned. RNG
   // is the source of the impurity.
@@ -958,108 +935,6 @@ TEST_F(HloCseTest, MultiOutputFusion) {
       GmockMatch(m::Tuple(m::Add(&add0, m::Parameter(0), m::Parameter(1)),
                           m::Add(&add1, m::Parameter(0), m::Parameter(1)))));
   EXPECT_EQ(add0, add1);
-}
-
-TEST_F(HloCseTest, CombineWithCompatibleShardings) {
-  const char* const hlo_string = R"(
-HloModule module_entry
-
-%body (param: (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024])) -> (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024]) {
-  %param = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0)
-  %count = s32[] get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=0
-  %broadcast1 = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=1
-  %lhs = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=2
-  %add1 = f32[1024,1024]{1,0} add(f32[1024,1024]{1,0} %broadcast1, f32[1024,1024]{1,0} %lhs)
-  %broadcast2 = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=3
-  %rhs = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=4
-  %add2 = f32[1024,1024]{1,0} add(f32[1024,1024]{1,0} %broadcast2, f32[1024,1024]{1,0} %rhs)
-  ROOT %tuple = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) tuple(s32[] %count, f32[1024,1024]{1,0} %broadcast1, f32[1024,1024]{1,0} %add1, f32[1024,1024]{1,0} %broadcast2, f32[1024,1024]{1,0} %add2)
-}
-
-%cond (vars.cond: (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024])) -> pred[] {
-  %vars.cond = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0)
-  %count.cond = s32[] get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %vars.cond), index=0
-  %limit = s32[] constant(10)
-  ROOT %lt = pred[] compare(s32[] %count.cond, s32[] %limit), direction=LT
-}
-
-ENTRY %entry (param.1: (f32[], f32[1024,1024], f32[1024,1024])) -> (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024]) {
-  %param.1 = (f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0), sharding={{replicated}, {devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}, {devices=[1,2,2]0,1,2,3 last_tile_dim_replicate}}
-  %gte0 = f32[] get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=0
-  %broadcast = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}
-  %zero = s32[] constant(0)
-  %broadcast.clone = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}, sharding={devices=[2,2]0,1,2,3}
-  %gte1 = f32[1024,1024]{1,0} get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=1
-  %broadcast.clone.1 = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}, sharding={devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}
-  %gte2 = f32[1024,1024]{1,0} get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=2
-  %tuple.1 = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) tuple(s32[] %zero, f32[1024,1024]{1,0} %broadcast.clone, f32[1024,1024]{1,0} %gte1, f32[1024,1024]{1,0} %broadcast.clone.1, f32[1024,1024]{1,0} %gte2)
-  %while = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) while((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %tuple.1), condition=%cond, body=%body
-  ROOT %copy = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) copy((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %while)
-})";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  HloCSE cse(/*is_layout_sensitive=*/false,
-             /*only_fusion_computations=*/false,
-             /*ignore_control_dependencies=*/false,
-             /*only_scalars=*/false,
-             /*is_sharding_sensitive=*/true,
-             /*allow_compatible_sharding=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool result, cse.Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(result);
-  auto root = module->entry_computation()->root_instruction();
-  auto tuple = root->operand(0)->operand(0);
-  auto broadcast1 = tuple->operand(1);
-  auto broadcast2 = tuple->operand(3);
-  EXPECT_EQ(broadcast1, broadcast2);
-}
-
-TEST_F(HloCseTest, DoNotCombineWithCompatibleShardings) {
-  const char* const hlo_string = R"(
-HloModule module_entry
-
-%body (param: (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024])) -> (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024]) {
-  %param = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0)
-  %count = s32[] get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=0
-  %broadcast1 = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=1
-  %lhs = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=2
-  %add1 = f32[1024,1024]{1,0} add(f32[1024,1024]{1,0} %broadcast1, f32[1024,1024]{1,0} %lhs)
-  %broadcast2 = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=3
-  %rhs = f32[1024,1024]{1,0} get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param), index=4
-  %add2 = f32[1024,1024]{1,0} add(f32[1024,1024]{1,0} %broadcast2, f32[1024,1024]{1,0} %rhs)
-  ROOT %tuple = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) tuple(s32[] %count, f32[1024,1024]{1,0} %broadcast1, f32[1024,1024]{1,0} %add1, f32[1024,1024]{1,0} %broadcast2, f32[1024,1024]{1,0} %add2)
-}
-
-%cond (vars.cond: (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024])) -> pred[] {
-  %vars.cond = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0)
-  %count.cond = s32[] get-tuple-element((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %vars.cond), index=0
-  %limit = s32[] constant(10)
-  ROOT %lt = pred[] compare(s32[] %count.cond, s32[] %limit), direction=LT
-}
-
-ENTRY %entry (param.1: (f32[], f32[1024,1024], f32[1024,1024])) -> (s32[], f32[1024,1024], f32[1024,1024], f32[1024,1024], f32[1024,1024]) {
-  %param.1 = (f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) parameter(0), sharding={{replicated}, {devices=[2,1,2]0,1,2,3 last_tile_dim_replicate}, {devices=[1,2,2]0,1,2,3 last_tile_dim_replicate}}
-  %gte0 = f32[] get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=0
-  %broadcast = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}
-  %zero = s32[] constant(0)
-  %broadcast.clone = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}, sharding={devices=[2,2]0,1,2,3}
-  %gte1 = f32[1024,1024]{1,0} get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=1
-  %broadcast.clone.1 = f32[1024,1024]{1,0} broadcast(f32[] %gte0), dimensions={}, sharding={devices=[2,1,2]0,2,1,3 last_tile_dim_replicate}
-  %gte2 = f32[1024,1024]{1,0} get-tuple-element((f32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %param.1), index=2
-  %tuple.1 = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) tuple(s32[] %zero, f32[1024,1024]{1,0} %broadcast.clone, f32[1024,1024]{1,0} %gte1, f32[1024,1024]{1,0} %broadcast.clone.1, f32[1024,1024]{1,0} %gte2)
-  %while = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) while((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %tuple.1), condition=%cond, body=%body
-  ROOT %copy = (s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) copy((s32[], f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}, f32[1024,1024]{1,0}) %while)
-})";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
-  HloCSE cse(/*is_layout_sensitive=*/false,
-             /*only_fusion_computations=*/false,
-             /*ignore_control_dependencies=*/false,
-             /*only_scalars=*/false,
-             /*is_sharding_sensitive=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool result, cse.Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_FALSE(result);
 }
 
 class HloCseCommutativeOpTest

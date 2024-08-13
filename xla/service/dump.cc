@@ -50,10 +50,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_proto_util.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "tsl/lib/io/zlib_compression_options.h"
 #include "tsl/lib/io/zlib_outputbuffer.h"
-#include "tsl/lib/strings/proto_serialization.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/file_system.h"
@@ -63,6 +63,24 @@ limitations under the License.
 #include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla {
+
+absl::Status CreateDirIfNeeded(const std::string& dir, tsl::Env* env) {
+  if (!env->IsDirectory(dir).ok()) {
+    absl::Status status = env->RecursivelyCreateDir(dir);
+    // Two threads can race to observe the absence of the dump directory and
+    // simultaneously try to create it, causing the "losing" thread to get a
+    // "directory already exists" error.  We can work around this by checking
+    // again whether the dir exists.
+    if (!status.ok()) {
+      status = env->IsDirectory(dir);
+      if (!status.ok()) {
+        LOG(ERROR) << "Could not create directory " << dir;
+        return status;
+      }
+    }
+  }
+  return absl::OkStatus();
+}
 
 std::string RenderGraph(absl::string_view label, const HloModule& module,
                         RenderedGraphFormat format,
@@ -102,7 +120,8 @@ struct CanonicalDebugOptions {
         dump_hlo_metadata(!opts.xla_dump_disable_metadata()),
         dump_as_long_text(opts.xla_dump_hlo_as_long_text()),
         dump_mlir_pretty_form(opts.xla_dump_enable_mlir_pretty_form()),
-        dump_large_constants(opts.xla_dump_large_constants()) {
+        dump_large_constants(opts.xla_dump_large_constants()),
+        syntax_sugar_async_ops(opts.xla_syntax_sugar_async_ops()) {
     // This constructor examines the values in `opts` and turns on other flags
     // based on what we think is the user's intent.  To reduce confusion about
     // what was a user-specified value versus an extrapolated value, within this
@@ -220,6 +239,7 @@ struct CanonicalDebugOptions {
   bool dump_as_long_text;
   bool dump_mlir_pretty_form;
   bool dump_large_constants;
+  bool syntax_sugar_async_ops;
 };
 
 // Helper class to hold a list of functions that produces data to be written to
@@ -297,17 +317,8 @@ static std::optional<std::string> GetDumpFilePath(
   VLOG(1) << "Dumping " << filename << " to " << dir;
 
   tsl::Env* env = tsl::Env::Default();
-  // Two threads can race to observe the absence of the dump directory and
-  // simultaneously try to create it, causing the "losing" thread to get a
-  // "directory already exists" error.  We can work around this by checking
-  // again whether the dir exists.
-  if (!env->IsDirectory(dir).ok()) {
-    auto status = env->RecursivelyCreateDir(dir);
-    if (!status.ok() && !env->IsDirectory(dir).ok()) {
-      LOG(ERROR) << "Could not create directory " << dir
-                 << " for dumping XLA debug data: " << status;
-      return std::nullopt;
-    }
+  if (!CreateDirIfNeeded(dir, env).ok()) {
+    return std::nullopt;
   }
 
   // Make sure we are not going to dump more modules than the user has asked.
@@ -445,6 +456,7 @@ static std::vector<std::string> DumpHloModuleImpl(
     print_options.set_print_backend_config(true);
     print_options.set_print_metadata(opts.dump_hlo_metadata);
     print_options.set_print_name_after_closing_brace(true);
+    print_options.set_syntax_sugar_async_ops(opts.syntax_sugar_async_ops);
     file_paths.push_back(DumpToFileInDirOrStdoutImpl(
         StrCat(filename, ".txt"), module.ToString(print_options), opts));
     if (buffer_assn) {
@@ -674,15 +686,7 @@ void DumpProtobufToFile(const tsl::protobuf::Message& proto,
   if (dir.empty()) {
     return;
   }
-  if (!env->IsDirectory(dir).ok()) {
-    auto status = env->RecursivelyCreateDir(dir);
-    if (!status.ok()) {
-      LOG(ERROR) << "Could not create directory " << dir
-                 << " for dumping: " << status;
-      return;
-    }
-  }
-  if (!env->IsDirectory(dir).ok()) {
+  if (!CreateDirIfNeeded(dir, env).ok()) {
     return;
   }
   const std::string path = tsl::io::JoinPath(dir, filename);
@@ -879,6 +883,22 @@ void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules) {
                             &dumped_module_ids);
     }
   }
+}
+
+absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
+                                  const std::string& directory,
+                                  const std::string& file_name,
+                                  std::string* full_path) {
+  tsl::Env* env = tsl::Env::Default();
+  TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(directory));
+  TF_RETURN_IF_ERROR(CreateDirIfNeeded(directory, env));
+  std::string safe_file_name = SanitizeFileName(file_name) + ".pb";
+  std::string full_path_impl;
+  if (!full_path) {
+    full_path = &full_path_impl;
+  }
+  *full_path = tsl::io::JoinPath(directory, safe_file_name);
+  return tsl::WriteBinaryProto(env, *full_path, message);
 }
 
 }  // namespace xla

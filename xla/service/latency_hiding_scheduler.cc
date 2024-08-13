@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -49,8 +50,14 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
+#include "xla/service/hlo_cost_analysis.h"
+#include "xla/service/hlo_value.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -470,6 +477,24 @@ AsyncTracker::GetReleasedNonextendableResourcesFromVector(
   return {};
 }
 
+bool AsyncTracker::ReleasesSelectiveResource(const HloGraphNode* node) const {
+  return absl::c_any_of(
+      node->GetResources(), [&](const ResourcePair& resource) {
+        return resource.second == ResourceUsageType::kResourceRelease &&
+               GetResourceHazardType(resource.first) ==
+                   ResourceHazardType::kSelective;
+      });
+}
+
+bool AsyncTracker::OccupiesSelectiveResource(const HloGraphNode* node) const {
+  return absl::c_any_of(
+      node->GetResources(), [&](const ResourcePair& resource) {
+        return resource.second == ResourceUsageType::kResourceOccupy &&
+               GetResourceHazardType(resource.first) ==
+                   ResourceHazardType::kSelective;
+      });
+}
+
 BufferInfoTracker::BufferInfoTracker(
     const HloModule* module, const HloAliasAnalysis* alias_analysis,
     const HloCostAnalysis::ShapeSizeFunction& shape_size_bytes) {
@@ -715,6 +740,25 @@ DefaultSchedulerCore::ScheduleCandidate InitializeCandidate(
 
 namespace {
 
+// Find the num hops to the closest selective resource overlap in ready set that
+// provided node can be scheduled in between.
+int64_t GetNumHopsToClosestSelectiveOverlap(
+    const DefaultSchedulerCore::ReadyQueueSet& ready_set,
+    const HloGraphNode* node) {
+  int64_t num_hops_to_closest_selective_resource_occupier =
+      std::numeric_limits<int64_t>::max();
+  for (const HloGraphNode* n : ready_set) {
+    // Skip the node itself.
+    if (n == node) {
+      continue;
+    }
+    num_hops_to_closest_selective_resource_occupier =
+        std::min(num_hops_to_closest_selective_resource_occupier,
+                 n->GetNumHopsToClosestSelectiveResourceOccupier());
+  }
+  return num_hops_to_closest_selective_resource_occupier;
+}
+
 // Comparator for the ready set. This class represents the priority policies
 // for the nodes in the ready set. The policy can be whatever is appropriate to
 // reduce the execution time of the graph or achieve interesting properties
@@ -786,7 +830,8 @@ class ReadySetLt {
             return *value;
           }
         }
-        // Otherwise pick a node that increases the pressure from the list.
+        // Otherwise pick a node that increases the pressure the least from the
+        // list.
         if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
                 a_increase.first < b_increase.first, a,
                 b_increase.first < a_increase.first, b,
@@ -864,6 +909,36 @@ class ReadySetLt {
       }
     }
 
+    auto async_depth_0_candidate =
+        [this](DefaultSchedulerCore::ScheduleCandidate& a,
+               DefaultSchedulerCore::ScheduleCandidate& b)
+        -> std::optional<DefaultSchedulerCore::CandidateResult> {
+      // If an instruction releasing a resource is not resource constrained and
+      // has an async depth of 0, delay it as much as possible to avoid
+      // potential cost model inefficiencies. For example, if a pair of
+      // async-start and async-done have no dependencies on other ops inside a
+      // loop, the async-start will be pushed to the beginning of the loop.
+      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+              /*first_cond=*/!(a.node->DoesReleaseAnyResource() &&
+                               a.node->GetAsyncDepth() == 0 &&
+                               !IsResourceConstrained(a)),
+              a,
+              /*second_cond=*/
+              !(b.node->DoesReleaseAnyResource() &&
+                b.node->GetAsyncDepth() == 0 && !IsResourceConstrained(b)),
+              b, "kStartAtZeroDepth")) {
+        return value;
+      }
+      return std::nullopt;
+    };
+
+    if (sched_state_.config.aggressive_scheduling_policies &&
+        sched_state_.config.prioritize_async_depth_over_stall) {
+      if (auto value = async_depth_0_candidate(a, b)) {
+        return *value;
+      }
+    }
+
     const ApproximateLatencyEstimator::TimeCost a_ready_interval =
         std::max(a.node->GetReadyTime() - sched_state_.current_time, 0.0);
     const ApproximateLatencyEstimator::TimeCost b_ready_interval =
@@ -890,19 +965,9 @@ class ReadySetLt {
         return *value;
       }
     }
-    if (sched_state_.config.aggressive_scheduling_policies) {
-      // If an instruction releasing a resource is not resource constrained and
-      // has an async depth of 0, delay it as much as possible to avoid
-      // potential cost model inefficiencies.
-      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
-              /*first_cond=*/!(a.node->DoesReleaseAnyResource() &&
-                               a.node->GetAsyncDepth() == 0 &&
-                               !IsResourceConstrained(a)),
-              a,
-              /*second_cond=*/
-              !(b.node->DoesReleaseAnyResource() &&
-                b.node->GetAsyncDepth() == 0 && !IsResourceConstrained(b)),
-              b, "kStartAtZeroDepth")) {
+    if (sched_state_.config.aggressive_scheduling_policies &&
+        !sched_state_.config.prioritize_async_depth_over_stall) {
+      if (auto value = async_depth_0_candidate(a, b)) {
         return *value;
       }
     }
@@ -965,6 +1030,31 @@ class ReadySetLt {
         return *value;
       }
     }
+    // If there are no selective overlaps open currently and there will be
+    // overlaps opened in the near future, hold off scheduling instructions
+    // that are valuable for selective overlaps.
+    if (sched_state_.config.enable_selective_resources &&
+        sched_state_.selective_resource_releasers.empty()) {
+      int64_t distance_to_selective_overlap_for_a =
+          GetNumHopsToClosestSelectiveOverlap(sched_state_.ready_set, a.node);
+      int64_t distance_to_selective_overlap_for_b =
+          GetNumHopsToClosestSelectiveOverlap(sched_state_.ready_set, b.node);
+      // If a is valuable for selective overlap and there is a selective
+      // overlap in the near future a can be scheduled inside, hold off
+      // scheduling a and schedule b instead. Same logic applies in reverse.
+      int64_t max_distance =
+          sched_state_.config.max_hops_to_closest_selective_overlap;
+      if (auto value = DefaultSchedulerCore::ChooseBestCandidate(
+              (a.node->GetValuableForSelectiveOverlap() &&
+               distance_to_selective_overlap_for_a <= max_distance),
+              b,
+              (b.node->GetValuableForSelectiveOverlap() &&
+               distance_to_selective_overlap_for_b <= max_distance),
+              a, "kNotValuableForSelectiveOverlap")) {
+        return *value;
+      }
+    }
+
     if (sched_state_.config.aggressive_scheduling_policies) {
       // Favor nodes that unlock other nodes to be scheduled if possible.
       // This makes us more flexible in what we can use in scheduling.
@@ -1276,10 +1366,10 @@ void DefaultSchedulerCore::LogInstruction(const HloInstruction* instr) const {
 
 void PrintOccupierList(
     std::vector<std::pair<HloEdge*, HloGraphNode::TimeCost>>& occupiers) {
-  VLOG(2) << "Occupier list:";
   for (int64_t i = 0; i < occupiers.size(); i++) {
-    VLOG(2) << "\tOccupier at index: " << i
-            << " with projected finish time: " << occupiers[i].second
+    VLOG(2) << "\tOccupier " << i << ": "
+            << occupiers[i].first->Target().GetInstr().name()
+            << ", projected finish time: " << occupiers[i].second
             << " original latency: " << occupiers[i].first->OriginalLatency()
             << " latency: " << occupiers[i].first->Latency();
   }
@@ -1329,9 +1419,6 @@ bool DefaultSchedulerCore::DeleteOccupierFromResource(
   it = occupiers.erase(it);
   for (; it != occupiers.end(); it++) {
     it->second -= accumulated_saved_time;
-  }
-  if (VLOG_IS_ON(2)) {
-    PrintOccupierList(occupiers);
   }
   return true;
 }
@@ -1384,9 +1471,6 @@ bool DefaultSchedulerCore::AddOccupierToResource(
   for (; it != occupiers.end(); it++) {
     it->second += accumulated_delay;
   }
-  if (VLOG_IS_ON(2)) {
-    PrintOccupierList(occupiers);
-  }
   return true;
 }
 
@@ -1396,6 +1480,33 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   sched_state->new_sequence_reversed.push_back(
       const_cast<HloInstruction*>(&n->GetInstr()));
   n->SetScheduled();
+
+  // Remove scheduled node from selective_resources_releasers if it
+  // was there.
+  if (sched_state->config.enable_selective_resources &&
+      n->ReleasesSelectiveResource()) {
+    auto it = std::find(sched_state->selective_resource_releasers.begin(),
+                        sched_state->selective_resource_releasers.end(), n);
+    // Perform sanity check node was in selective_resources_releasers.
+    if (it == sched_state->selective_resource_releasers.end()) {
+      LOG(WARNING) << "Selective resource releasers list does not contain node "
+                      "that releases a selective resource: "
+                   << n->ToString();
+    } else {
+      sched_state->selective_resource_releasers.erase(it);
+    }
+  }
+
+  // If scheduled node cannot overlap with nodes that hold selective resources,
+  // we increment the ready time of all nodes that release a selective resource
+  // with the cost of the scheduled node.
+  if (sched_state->config.enable_selective_resources &&
+      !n->GetValuableForSelectiveOverlap()) {
+    for (HloGraphNode* node : sched_state->selective_resource_releasers) {
+      node->SetReadyTime(node->GetReadyTime() + n->GetCost());
+    }
+  }
+
   // If this node is an async start/done handle the increase/decrease the number
   // of outstanding async ops.
   for (auto& resource : n->GetResources()) {
@@ -1422,13 +1533,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
         auto occupiers = sched_state->shareable_resource_occupiers[resource];
         for (auto [occupier_edge, edge_pft] : occupiers) {
           if (occupier_edge == &pred) {
-            VLOG(10) << "Ready time of scheduled node " << n->GetInstr().name()
-                     << " before update with pft: " << edge_pft
-                     << ", ready_time: " << schedule_time;
+            VLOG(2) << "Ready time of scheduled node " << n->GetInstr().name()
+                    << " before update with pft: " << edge_pft
+                    << ", ready_time: " << schedule_time;
             schedule_time = std::max(schedule_time, edge_pft);
-            VLOG(10) << "Ready time of scheduled node " << n->GetInstr().name()
-                     << " after update with pft: " << edge_pft
-                     << ", ready_time: " << schedule_time;
+            VLOG(2) << "Ready time of scheduled node " << n->GetInstr().name()
+                    << " after update with pft: " << edge_pft
+                    << ", ready_time: " << schedule_time;
           }
         }
       }
@@ -1446,6 +1557,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
         CHECK(DeleteOccupierFromResource(
             schedule_time, edge,
             sched_state->shareable_resource_occupiers[resource]));
+        if (VLOG_IS_ON(2)) {
+          VLOG(2) << "Occupier list for "
+                  << sched_state->async_tracker->GetResourceName(resource)
+                  << ": ";
+          PrintOccupierList(
+              sched_state->shareable_resource_occupiers[resource]);
+        }
       }
     }
     // If a shareable resource is occupied by scheduling this node, insert the
@@ -1459,6 +1577,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
             CHECK(AddOccupierToResource(
                 current_time, inverse_edge,
                 sched_state->shareable_resource_occupiers[resource]));
+            if (VLOG_IS_ON(2)) {
+              VLOG(2) << "Occupier list for "
+                      << sched_state->async_tracker->GetResourceName(resource)
+                      << ": ";
+              PrintOccupierList(
+                  sched_state->shareable_resource_occupiers[resource]);
+            }
           }
           break;
         }
@@ -1508,15 +1633,15 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
           auto occupiers = sched_state->shareable_resource_occupiers[resource];
           for (auto [occupier_edge, edge_pft] : occupiers) {
             if (occupier_edge == &pred) {
-              VLOG(10) << "Ready time of predecessor "
-                       << edge.Target().GetInstr().name()
-                       << " before update with pft: " << edge_pft
-                       << ", ready_time: " << ready_time;
+              VLOG(2) << "Ready time of predecessor "
+                      << edge.Target().GetInstr().name()
+                      << " before update with pft: " << edge_pft
+                      << ", ready_time: " << ready_time;
               ready_time = std::max(ready_time, edge_pft);
-              VLOG(10) << "Ready time of predecessor "
-                       << edge.Target().GetInstr().name()
-                       << " after update with pft: " << edge_pft
-                       << ", ready_time: " << ready_time;
+              VLOG(2) << "Ready time of predecessor "
+                      << edge.Target().GetInstr().name()
+                      << " after update with pft: " << edge_pft
+                      << ", ready_time: " << ready_time;
             }
           }
         }
@@ -1533,6 +1658,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       sched_state->next_ready_stack.push_back(&edge.Target());
       std::push_heap(sched_state->next_ready_stack.begin(),
                      sched_state->next_ready_stack.end(), ready_time_cmp);
+    }
+
+    // If the node we added to ready set releases a selective resource, add
+    // it to selective_resources_releasers.
+    if (sched_state->config.enable_selective_resources &&
+        edge.Target().ReleasesSelectiveResource()) {
+      sched_state->selective_resource_releasers.push_back(&edge.Target());
     }
   }
   ++sched_state->scheduled_count;
@@ -1612,6 +1744,10 @@ HloScheduleGraph::HloScheduleGraph(
     new_node_it->second->occupied_shareable_resources_ =
         async_tracker->GetOccupiedShareableResourcesFromVector(
             new_node_it->second->GetResources());
+    new_node_it->second->releases_selective_resource_ =
+        async_tracker->ReleasesSelectiveResource(new_node_it->second.get());
+    new_node_it->second->occupies_selective_resource_ =
+        async_tracker->OccupiesSelectiveResource(new_node_it->second.get());
     // Gather while instructions for subsequent send-done dependency checks.
     if (instr->opcode() == HloOpcode::kWhile) {
       while_instrs.push_back(instr);
@@ -1819,6 +1955,25 @@ void HloScheduleGraph::InitializeGraphAnalysis(
   while (!stack.empty()) {
     auto* node = stack.back();
     stack.pop_back();
+    // If a node occupies a selective resource, it is the closest selective
+    // resource occupier to itself and is 0 hops away. Otherwise, the num hops
+    // to closest selective resource occupier is the minimum of that of all
+    // predecessors plus 1.
+    if (async_tracker->OccupiesSelectiveResource(node)) {
+      node->num_hops_to_closest_selective_resource_occupier_ = 0;
+    } else {
+      int64_t closest_predecessor_distance =
+          std::numeric_limits<int64_t>::max();
+      for (auto& pred : node->GetPredecessors()) {
+        closest_predecessor_distance = std::min(
+            closest_predecessor_distance,
+            pred.Target().num_hops_to_closest_selective_resource_occupier_);
+      }
+      if (closest_predecessor_distance != std::numeric_limits<int64_t>::max()) {
+        node->num_hops_to_closest_selective_resource_occupier_ =
+            closest_predecessor_distance + 1;
+      }
+    }
     if (async_tracker->IsSupportedAsyncDone(node->GetInstr())) {
       for (auto& pred : node->GetPredecessors()) {
         node->SetAsyncDepth(

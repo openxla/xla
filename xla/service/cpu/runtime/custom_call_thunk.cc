@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
 #include "xla/ffi/ffi_api.h"
@@ -94,7 +95,7 @@ absl::StatusOr<ffi::CallFrame> BuildCallFrameForTypedFFI(
     mlir::MLIRContext mlir_context;
     ffi::CallFrameBuilder::FlatAttributesMap attributes;
     mlir::Attribute attr = mlir::parseAttribute(backend_config, &mlir_context);
-    if (auto dict = attr.dyn_cast_or_null<mlir::DictionaryAttr>()) {
+    if (auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr)) {
       TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
     } else {
       return Internal(
@@ -156,11 +157,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
   // Find the registered FFI handler for this target.
   auto handler = ffi::FindHandler(target_name_, "Host");
   if (!handler.ok()) {
-    // Overwrite the returned error code (kNotFound) to kInternal to match the
-    // original CPU implementation.
-    // TODO(penporn): Change this to kUnimplemented to match the GPU backend
-    // when thunks is the only runtime for CPU.
-    return Internal(
+    return NotFound(
         "No registered implementation for FFI custom call to %s for Host",
         target_name_);
   }
@@ -199,11 +196,11 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
 
   // Forward ExecutableRunOptions to the FFI handlers via the call options.
   CustomCallExecuteParams* custom_call_params = params.custom_call_params;
-  ffi::CallOptions call_options = {custom_call_params->device_ordinal,
-                                   custom_call_params->stream,
-                                   custom_call_params->allocator,
-                                   /*called_computation=*/nullptr,
-                                   custom_call_params->ffi_execution_context};
+  ffi::CallOptions call_options = {
+      custom_call_params->device_ordinal,
+      ffi::CallOptions::CpuOptions{custom_call_params->intra_op_thread_pool},
+      /*called_computation=*/nullptr,
+      custom_call_params->ffi_execution_context};
 
   // Call the function and check execution status.
   auto status = ffi::Call(handler->bundle.execute, call_frame, call_options);
@@ -224,10 +221,7 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
   void* call_target =
       CustomCallTargetRegistry::Global()->Lookup(target_name_, "Host");
   if (!call_target) {
-    // Use kInternal to match the original CPU implementation.
-    // TODO(penporn): Change this to kUnimplemented to match the GPU backend
-    // when thunks is the only runtime for CPU.
-    return Internal(
+    return NotFound(
         "No registered implementation for untyped custom call to %s for Host",
         target_name_);
   }
@@ -259,7 +253,8 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallUntypedAPI(
                                   op_buffers_.results_shapes[i].ToString(true),
                                   slice.ToString(), res.opaque());
   }
-  void* out_ptr = results.size() == 1 ? results[0] : results.data();
+
+  void* out_ptr = op_buffers_.is_tuple_result ? results.data() : results[0];
 
   // Set up the correct function type for each API version.
   CustomCallTarget custom_call_target;

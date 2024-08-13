@@ -27,6 +27,7 @@ limitations under the License.
 #include <vector>
 
 // placeholder for index annotation headers
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -152,6 +153,10 @@ class PyArray : public nanobind::object {
       bool weak_type, bool committed, bool skip_checks);
 
   static absl::Status RegisterTypes(nanobind::module_& m);
+
+  static PyArray borrow(PyObject* ptr) {
+    return nanobind::borrow<xla::PyArray>(ptr);
+  }
 
   using Storage = PyArray_Storage;
 

@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.pb.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_strategy.h"
-#include "tsl/platform/test.h"
+#include "tsl/platform/platform.h"
 
 namespace xla {
 namespace spmd {
@@ -249,10 +249,8 @@ TEST(CallORToolsSolverTest, SolvesOptimally) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {0, 0};
   const double objective_value = 7650.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -265,10 +263,8 @@ TEST(CallORToolsSolverTest, SolvesOverbudget) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {0, 0};
   const double objective_value = 9007650.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -280,10 +276,8 @@ TEST(CallORToolsSolverTest, SolvesMaxDepartures) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {1, 1};
   const double objective_value = 7872.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -297,10 +291,8 @@ TEST(CallORToolsSolverTest, AvoidsInfiniteNodeCosts) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {3, 0, 0, 0, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {12, 0};
   const double objective_value = 10683.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -312,10 +304,8 @@ TEST(CallORToolsSolverTest, AvoidsInfiniteEdgeCosts) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {1, 1};
   const double objective_value = 7872.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -339,10 +329,8 @@ TEST(CallORToolsSolverTest, HandlesFollowedEdges) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {0, 0, 0};
   const double objective_value = 12650.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -355,10 +343,8 @@ TEST(CallORToolsSolverTest, UsesHint) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {0, 0};
   const double objective_value = 7650.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -389,10 +375,8 @@ TEST(CallORToolsSolverTest, HandlesMemoryEdgeCosts) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {1, 1};
   const double objective_value = 7872.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -419,10 +403,8 @@ TEST(CallORToolsSolverTest, HandlesIntervals) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {1, 1};
   const double objective_value = 7872.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -453,10 +435,48 @@ TEST(CallORToolsSolverTest, HandlesReducedIntervalsAndGroups) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 1, 1, 0};
-  const std::vector<EdgeStrategyIdx> e_val = {1, 1};
   const double objective_value = 7872.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
+  const AutoShardingSolverResult expected_result = {expected_output, false};
+  EXPECT_EQ(result, expected_result);
+}
+
+TEST(CallORToolsSolverTest, HandlesGroupsWithTinyMemoryCosts) {
+  AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
+  const std::vector<std::pair<int64_t, int64_t>> node_intervals =
+      {{5, -1}, {5, -1}, {2, 3}, {3, 4}, {100, -1}, {0, 4}};
+  const std::vector<std::pair<int64_t, int64_t>> edge_intervals =
+      {{1, 2}, {2, 3}};
+  const std::vector<std::vector<int64_t>> node_groups = {{0, 1}};
+  const std::vector<std::vector<int64_t>> edge_groups = {};
+  const CostMatrix memory_costs = {{1, 1, 1, 1},  // These values are tiny and
+                                   {2, 2, 2},     // shouldn't be rounded up.
+                                   {300, 300, 300, 300, 300, 300, 300},
+                                   {4000, 4000, 4000, 4000, 4000, 4000, 4000},
+                                   {50000, 50000, 50000}};
+  const CostMatrix memory_edge_costs = {{0, 0, 0, 0,
+                                         0, 0, 0, 0,
+                                         0, 0, 0, 0,
+                                         0, 0, 0, 0},
+                                        {0, 0, 0, 0,
+                                         0, 0, 0, 0,
+                                         0, 0, 0, 0}};
+  request.clear_live();
+  request.clear_memory_costs();
+  AddIntervals(request.mutable_node_intervals(), node_intervals);
+  AddIntervals(request.mutable_edge_intervals(), edge_intervals);
+  AddGroups(request.mutable_node_groups(), node_groups);
+  AddGroups(request.mutable_edge_groups(), edge_groups);
+  AddCosts(request.mutable_memory_costs(), memory_costs);
+  AddCosts(request.mutable_memory_edge_costs(), memory_edge_costs);
+  request.set_enable_memory_edge_costs(true);
+  request.set_memory_budget(4321);
+
+  const AutoShardingSolverResult result = CallORToolsSolver(request);
+
+  const std::vector<NodeStrategyIdx> s_val = {0, 0, 0, 0, 0};
+  const double objective_value = 7650.0;
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -468,10 +488,8 @@ TEST(CallORToolsSolverTest, SolvesWithEquivalences) {
   const AutoShardingSolverResult result = CallORToolsSolver(request);
 
   const std::vector<NodeStrategyIdx> s_val = {0, 0, 5, 5, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {5, 5};
   const double objective_value = 7650.0;
-  const AutoShardingSolverOutput expected_output =
-          {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput expected_output = {s_val, objective_value};
   const AutoShardingSolverResult expected_result = {expected_output, false};
   EXPECT_EQ(result, expected_result);
 }
@@ -479,9 +497,8 @@ TEST(CallORToolsSolverTest, SolvesWithEquivalences) {
 TEST(AutoShardingEvaluatorTest, NoViolations) {
   const AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const std::vector<NodeStrategyIdx> s_val = {3, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {14, 6};
   const double objective_value = 12149.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -502,9 +519,8 @@ TEST(AutoShardingEvaluatorTest, EvaluatesOverbudget) {
   request.set_memory_budget(100000);
   request.mutable_overbudget_coeff()->set_coeff(10.0);
   const std::vector<NodeStrategyIdx> s_val = {2 /* violates */, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {10, 6};
   const double objective_value = 11138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -531,9 +547,8 @@ TEST(AutoShardingEvaluatorTest, EvaluatesOverbudgetWithIntervals) {
   request.clear_live();
   AddIntervals(request.mutable_node_intervals(), node_intervals);
   const std::vector<NodeStrategyIdx> s_val = {2 /* violates */, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {10, 6};
   const double objective_value = 11138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -563,9 +578,8 @@ TEST(AutoShardingEvaluatorTest,
   AddIntervals(request.mutable_node_intervals(), node_intervals);
   AddGroups(request.mutable_node_groups(), node_groups);
   const std::vector<NodeStrategyIdx> s_val = {2 /* violates */, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {10, 6};
   const double objective_value = 11138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -586,9 +600,8 @@ TEST(AutoShardingEvaluatorTest,
 TEST(AutoShardingEvaluatorTest, ViolatesFollower) {
   const AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const std::vector<NodeStrategyIdx> s_val = {3, 1, 2, 1 /* violates */, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {14, 6};
   const double objective_value = 12138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -608,9 +621,8 @@ TEST(AutoShardingEvaluatorTest, ViolatesFollower) {
 TEST(AutoShardingEvaluatorTest, ViolatesAlias) {
   const AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const std::vector<NodeStrategyIdx> s_val = {3, 1, 2, 2, 0 /* violates */};
-  const std::vector<EdgeStrategyIdx> e_val = {14, 6};
   const double objective_value = 12138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -630,9 +642,8 @@ TEST(AutoShardingEvaluatorTest, ViolatesAlias) {
 TEST(AutoShardingEvaluatorTest, ViolatesMemory) {
   const AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   const std::vector<NodeStrategyIdx> s_val = {2 /* violates */, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {10, 6};
   const double objective_value = 11138.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -655,9 +666,8 @@ TEST(AutoShardingEvaluatorTest, ViolatesInfiniteCostForNode) {
   request.mutable_computation_costs(0)->set_costs(1, kInfinityCost);
   request.mutable_computation_costs(0)->set_costs(2, kInfinityCost);
   const std::vector<NodeStrategyIdx> s_val = {0 /* violates */, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {2, 6};
   const double objective_value = 1e+20;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -678,9 +688,8 @@ TEST(AutoShardingEvaluatorTest, ViolatesInfiniteCostForEdge) {
   AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   request.mutable_resharding_costs(0)->set_costs(2, kInfinityCost);
   const std::vector<NodeStrategyIdx> s_val = {0, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {2 /* violates */, 6};
   const double objective_value = 1e+20;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -701,9 +710,8 @@ TEST(AutoShardingEvaluatorTest, ViolatesMaxDepartures) {
   AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
   request.mutable_max_departures()->set_coeff(2.0);
   const std::vector<NodeStrategyIdx> s_val = {3, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {14, 6};
   const double objective_value = 12149.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
+  const AutoShardingSolverOutput output = {s_val, objective_value};
   const AutoShardingSolverResult result = {output, false};
 
   const AutoShardingEvaluation evaluation = Evaluate(request, result);
@@ -718,31 +726,6 @@ TEST(AutoShardingEvaluatorTest, ViolatesMaxDepartures) {
   expected_evaluation.lower_bound.resharding_cost = 6000.0;
   expected_evaluation.total_departures = 3.0;
   EXPECT_EQ(evaluation, expected_evaluation);
-}
-
-TEST(AutoShardingRationalizerTest, RationalizesProperly) {
-  const AutoShardingSolverRequest request = DefaultAutoShardingSolverRequest();
-  const std::vector<NodeStrategyIdx> s_val = {0, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_val = {2, 6};
-  const double objective_value = 9116.0;
-  const AutoShardingSolverOutput output = {s_val, e_val, objective_value};
-  const AutoShardingSolverResult result = {output, false};
-  const std::vector<NodeStrategyIdx> s_subopt = {3, 1, 2, 2, 1};
-  const std::vector<EdgeStrategyIdx> e_subopt = {14, 6};
-  const double subopt_value = 12149.0;
-  const AutoShardingSolverOutput subopt_output =
-      {s_subopt, e_subopt, subopt_value};
-  const AutoShardingSolverResult subopt_result = {subopt_output, false};
-
-  const std::vector<std::string> rationales =
-      Rationalize(request, result, subopt_result);
-
-  const std::vector<std::string> expected_rationales = {
-      "strategy changes for A (0 -> 3)",
-      "communication cost increases for A (100 -> 130)",
-      "computation cost increases for A (10 -> 13)",
-      "resharding cost increases for A and C (1200 -> 4200)"};
-  EXPECT_EQ(rationales, expected_rationales);
 }
 
 TEST(ScaleRequest, ScalesProperly) {
@@ -847,8 +830,8 @@ TEST(ScaleRequest, SkipsScaling) {
   EXPECT_THAT(request, ::testing::EqualsProto(expected_request));
 }
 
-TEST(StableHashMap, IterationOrderDeterminism){
-  StableHashMap<int, int> map;
+TEST(StableMap, IterationOrderDeterminism){
+  StableMap<int, int> map;
   std::vector<int> insertion_order = {6, 3, 1, 2, 4, 5, 10, 0, 7, 9, 8};
   for (int key : insertion_order) {
     map[key] = key;
@@ -858,12 +841,8 @@ TEST(StableHashMap, IterationOrderDeterminism){
   for (const auto& [key, value] : map) {
     iteration_order.push_back(key);
   }
-  if (tsl::testing::kIsOpenSource) {
-    EXPECT_THAT(iteration_order,
-                ::testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
-  } else {
-    EXPECT_EQ(iteration_order, insertion_order);
-  }
+  EXPECT_THAT(iteration_order,
+              ::testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
 }
 
 TEST(ValidateRequest, AcceptsAutoShardingSolverRequest) {

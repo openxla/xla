@@ -24,6 +24,10 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compilation_environments.h"
@@ -231,6 +235,13 @@ class ExecutableBuildOptions {
     return *this;
   }
 
+  bool use_shardy_partitioner() const { return use_shardy_partitioner_; }
+  ExecutableBuildOptions& set_use_shardy_partitioner(
+      bool use_shardy_partitioner) {
+    use_shardy_partitioner_ = use_shardy_partitioner;
+    return *this;
+  }
+
   // Returns a string representation of the build options, suitable for
   // debugging.
   std::string ToString() const;
@@ -279,6 +290,7 @@ class ExecutableBuildOptions {
   LayoutCanonicalizationCallback layout_canonicalization_callback_;
   std::string fdo_profile_;
   int64_t device_memory_size_ = 0;
+  bool use_shardy_partitioner_ = false;
   int process_index_ = 0;
   int process_count_ = 1;
   std::shared_ptr<KeyValueStoreInterface> key_value_store_;

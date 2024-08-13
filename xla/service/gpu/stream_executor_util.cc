@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/kernel.h"
-#include "xla/stream_executor/kernel_factory.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -377,7 +376,7 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
   }
 
   TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                      se::KernelFactory::Create(stream_exec, loader_spec));
+                      stream_exec->LoadKernel(loader_spec));
 
   se::KernelMetadata m;
   m.set_shared_memory_bytes(shared_mem_bytes);
@@ -437,7 +436,7 @@ static void InitializeTypedBuffer(se::Stream* stream,
 
   // Use a large prime number to fragment the accesses.
   constexpr int host_buffer_size = 10069;
-  static std::vector<T>* host_buffer = [] {
+  static std::vector<T>* host_buffer = [&] {
     auto* ret = new std::vector<T>(host_buffer_size);
     // Default-seeded random numbers.
     std::mt19937 gen;
@@ -621,16 +620,8 @@ absl::StatusOr<se::dnn::DataType> GetDNNDataTypeFromPrimitiveType(
 }
 
 bool RequireDeterminism(const HloModuleConfig& config) {
-  static bool require_cudnn_determinism = [] {
-    // TODO(reedwm): Remove the TF_CUDNN_DETERMINISTIC env var.
-    bool cudnn_deterministic = false;
-    TF_CHECK_OK(tsl::ReadBoolFromEnvVar("TF_CUDNN_DETERMINISTIC",
-                                        /*default_val=*/false,
-                                        &cudnn_deterministic));
-    return cudnn_deterministic;
-  }();
-  return require_cudnn_determinism ||
-         config.debug_options().xla_gpu_deterministic_ops();
+  return config.debug_options().xla_gpu_deterministic_ops() ||
+         config.debug_options().xla_gpu_exclude_nondeterministic_ops();
 }
 
 namespace {

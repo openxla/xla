@@ -20,13 +20,37 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
+#include "xla/client/executable_build_options.h"
 #include "xla/client/xla_computation.h"
+#include "xla/debug_options_flags.h"
+#include "xla/executable_run_options.h"
+#include "xla/literal.h"
 #include "xla/service/backend.h"
+#include "xla/service/compiler.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/dump.h"
+#include "xla/service/executable.h"
+#include "xla/service/maybe_owning_device_memory.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/service/shaped_buffer.h"
 #include "xla/service/source_map_util.h"
 #include "xla/service/stream_pool.h"
+#include "xla/shape.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/device_memory_allocator.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 
 using xla::source_map_util::InvalidParameterArgument;
 
@@ -68,18 +92,35 @@ absl::Status LocalExecutable::ValidateExecutionOptions(
           stream_platform->Name(), backend_->platform()->Name());
     }
 
-    // Cannot specify device_ordinal with a stream. The stream determines these
-    // values.
-    if (run_options.device_ordinal() != -1) {
+    // The device ordinal (if provided) should match the ordinal of the device
+    // the stream belongs to.
+    int physical_device_ordinal = -1;
+    if (run_options.physical_device_ordinal() != -1) {
+      physical_device_ordinal = run_options.physical_device_ordinal();
+      if (run_options.device_ordinal() == -1) {
+        return InvalidArgument(
+            "The logical device ordinal is required if the physical device "
+            "ordinal is specified.");
+      }
+    } else if (run_options.device_ordinal() != -1) {
+      // If the physical device ordinal is not specified, it is the same as the
+      // logical device ordinal if it is given.
+      physical_device_ordinal = run_options.device_ordinal();
+    }
+    if (physical_device_ordinal != -1 &&
+        physical_device_ordinal !=
+            run_options.stream()->parent()->device_ordinal()) {
       return InvalidArgument(
-          "cannot set both device ordinal and stream options in "
-          "ExecutableRunOptions; the stream determines the device ordinal");
+          "The physical device ordinal does not match the ordinal of the "
+          "device the stream belongs to.");
     }
   }
 
   // Verify that the device the executable was built for is equivalent
   // to the device it will run on.
-  int run_device_ordinal = run_options.device_ordinal();
+  int run_device_ordinal = run_options.physical_device_ordinal() != -1
+                               ? run_options.physical_device_ordinal()
+                               : run_options.device_ordinal();
   if (run_device_ordinal == -1) {
     run_device_ordinal = run_options.stream() != nullptr
                              ? run_options.stream()->parent()->device_ordinal()
@@ -154,8 +195,11 @@ LocalExecutable::RunHelper(const absl::Span<const Shape* const> argument_shapes,
     // `service_options` (otherwise we will end up using a returned stream in
     // ExecuteOnStreamWrapper), which is why it isn't declared in the inner "if"
     // scope.
-    TF_ASSIGN_OR_RETURN(
-        stream, BorrowStreamForDevice(run_options.device_ordinal(), backend_));
+    TF_ASSIGN_OR_RETURN(stream, BorrowStreamForDevice(
+                                    run_options.physical_device_ordinal() != -1
+                                        ? run_options.physical_device_ordinal()
+                                        : run_options.device_ordinal(),
+                                    backend_));
     run_options.set_stream(stream.get());
   }
   if (run_options.allocator() == nullptr) {
