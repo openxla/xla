@@ -335,6 +335,7 @@ xla_cc_test(
             "@gloo//:transport_tcp",
         ],
     }),
+    linkstatic=True,
 )
 
 cc_library(
