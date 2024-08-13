@@ -36,16 +36,16 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/nb_defs.h"
-#include "nanobind/stl/function.h"  // IWYU pragma: keep
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // IWYU pragma: keep
-#include "nanobind/stl/set.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/function.h"     // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/pair.h"         // IWYU pragma: keep
+#include "nanobind/stl/set.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/variant.h"      // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
@@ -93,7 +93,7 @@ limitations under the License.
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/mlir.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/nb_absl_span.h"           // IWYU pragma: keep
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/ops.h"
 #include "xla/python/outfeed_receiver_py.h"
@@ -275,7 +275,7 @@ NB_MODULE(xla_extension, m_nb) {
         auto tcp_device = gloo::transport::tcp::CreateDevice(tcp_attrs);
         return std::make_shared<cpu::GlooCollectives>(std::move(gloo_kv_store),
                                                       std::move(tcp_device));
-#elifdef  __APPLE__
+#elifdef __APPLE__
         std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr;
         if (distributed_client != nullptr) {
           kv_store = GetDistributedKeyValueStore(distributed_client,

@@ -66,7 +66,7 @@ absl::StatusOr<std::shared_ptr<CollectivesCommunicator>> GetCommunicator(
 #elifdef __APPLE__
       gloo::transport::uv::CreateDevice(gloo::transport::uv::attr()));
 #endif  // __linux__
-     return collectives->GetCommunicator(global_devices, rank);
+  return collectives->GetCommunicator(global_devices, rank);
 }
 
 RendezvousKey MakeRendezvousKey(std::vector<GlobalDeviceId> global_devices) {
