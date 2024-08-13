@@ -25,8 +25,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#ifdef __linux__
 #include "gloo/transport/tcp/attr.h"
 #include "gloo/transport/tcp/device.h"
+#elif __APPLE__
+#include "gloo/transport/uv/device.h"
+#endif  // __linux__
 #include "xla/executable_run_options.h"
 #include "xla/pjrt/cpu/gloo_kv_store.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -57,8 +61,12 @@ absl::StatusOr<std::shared_ptr<CollectivesCommunicator>> GetCommunicator(
     const std::shared_ptr<xla::KeyValueStoreInterface>& kv_store, int rank) {
   auto collectives = std::make_shared<cpu::GlooCollectives>(
       std::make_unique<cpu::GlooKeyValueStore>(kv_store),
+#ifdef __linux__
       gloo::transport::tcp::CreateDevice(gloo::transport::tcp::attr()));
-  return collectives->GetCommunicator(global_devices, rank);
+#elifdef __APPLE__
+      gloo::transport::uv::CreateDevice(gloo::transport::uv::attr()));
+#endif  // __linux__
+     return collectives->GetCommunicator(global_devices, rank);
 }
 
 RendezvousKey MakeRendezvousKey(std::vector<GlobalDeviceId> global_devices) {
