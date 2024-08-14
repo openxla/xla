@@ -70,7 +70,7 @@ using hlo_sharding_util::GroupedSharding;
 absl::Status SpmdPartitioningVisitor::HandleDot(HloInstruction* hlo) {
   DotConvolutionDimsInfo mapping =
       dot_as_convolution_util::ParseDotGeneralFromDot(hlo);
-
+  VLOG(1) << "HandleDot...";
   HloDotInstruction* dot = Cast<HloDotInstruction>(hlo);
   std::vector<SparsityDescriptor> sparsity(dot->sparsity().begin(),
                                            dot->sparsity().end());

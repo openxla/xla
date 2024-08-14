@@ -141,6 +141,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloDataflowAnalysis::CanShareBuffer& can_share_buffer_function,
     const BufferValue::SizeFunction& buffer_size_bytes_function,
     bool split_constants_module) {
+  VLOG(1) << "CompileModuleToLlvmIr";
   CompileModuleResults results;
   results.llvm_module =
       std::make_unique<llvm::Module>(hlo_module->name(), *llvm_context);

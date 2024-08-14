@@ -121,7 +121,7 @@ absl::StatusOr<std::shared_ptr<Resource>> ThunkEmitter::GetTokenResource(
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloComputation(
     const HloComputation* computation) {
   ThunkSequence thunks;
-
+  VLOG(1) << "EmitHloComputation";
   const HloSchedule& schedule = computation->parent()->schedule();
   if (!schedule.is_computation_scheduled(computation)) {
     return absl::InternalError(
@@ -140,6 +140,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloComputation(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHloInstruction(
     const HloInstruction* instruction) {
+  VLOG(1) << "Emit HLO Instruction";
   switch (instruction->opcode()) {
     // Instructions that do not have a thunk implementation and instead fully
     // defined by the corresponding buffer assignment.
