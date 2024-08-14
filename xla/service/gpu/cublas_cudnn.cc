@@ -135,6 +135,14 @@ bool IsFwdCustomCallTofMHAF8(const HloInstruction& hlo) {
   return target == kCudnnfMHASoftmaxF8CallTarget;
 }
 
+bool IsBwdCustomCallTofMHAF8(const HloInstruction& hlo) {
+  if (hlo.opcode() != HloOpcode::kCustomCall) {
+    return false;
+  }
+  const auto& target = hlo.custom_call_target();
+  return target == kCudnnfMHASoftmaxBackwardF8CallTarget;
+}
+
 bool IsFwdCustomCallTofMHA(const HloInstruction& hlo) {
   if (hlo.opcode() != HloOpcode::kCustomCall) {
     return false;
@@ -169,7 +177,7 @@ bool IsCustomCallTofMHA(const HloInstruction& hlo) {
 }
 
 bool IsCustomCallTofMHAF8(const HloInstruction& hlo) {
-  return IsFwdCustomCallTofMHAF8(hlo);
+  return IsFwdCustomCallTofMHAF8(hlo) || IsBwdCustomCallTofMHAF8(hlo);
 }
 
 bool IsCubDeviceRadixSort(const HloInstruction& hlo) {

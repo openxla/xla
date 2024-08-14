@@ -199,7 +199,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             dnn_support, lhs_bmm1, rhs_bmm1, rhs_bmm2, output, activation,
             static_cast<float>(config.fmha_scale()), dnn_mask_type));
     return std::move(graph);
-  } else {
+  } else if (IsBwdCustomCallTofMHA(*custom_call)) {
     TF_ASSIGN_OR_RETURN(
         auto gpu_config,
         custom_call->backend_config<xla::gpu::GpuBackendConfig>());
@@ -313,6 +313,89 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
             d_bmm1_rhs, d_bmm2_rhs, bias, dropout_rate, config.seed(),
             config.fmha_scale(), dropout_rate > 0.0, bias != std::nullopt,
             dnn_mask_type, force_deterministic, sliding_window_length));
+    return std::move(graph);
+  } else {
+    TF_ASSIGN_OR_RETURN(
+        auto gpu_config,
+        custom_call->backend_config<xla::gpu::GpuBackendConfig>());
+    xla::gpu::CudnnfMHABackendConfig &config =
+        *gpu_config.mutable_cudnn_fmha_backend_config();
+
+    int input_index = 0;
+    Shape bmm1_grad_gemm1_rhs_shape =
+        custom_call->operand(input_index++)->shape();
+    Shape bmm1_grad_gemm2_rhs_shape =
+        custom_call->operand(input_index++)->shape();
+    Shape bmm2_grad_gemm2_rhs_shape =
+        custom_call->operand(input_index++)->shape();
+
+    Shape fwd_output_shape = custom_call->operand(input_index++)->shape();
+    Shape d_output_shape = custom_call->operand(input_index++)->shape();
+
+    Shape bmm2_grad_gemm1_lhs_shape(config.intermediate_tensor_shape());
+    input_index++;
+
+    TF_ASSIGN_OR_RETURN(const CudnnfMHAKind kind,
+                        GetCudnnfMHAKind(custom_call));
+    TF_RET_CHECK(input_index == 6);
+
+    int output_index = 0;
+    Shape d_bmm1_lhs_shape =
+        ShapeUtil::GetSubshape(custom_call->shape(), {output_index++});
+    Shape d_bmm1_rhs_shape =
+        ShapeUtil::GetSubshape(custom_call->shape(), {output_index++});
+    Shape d_bmm2_rhs_shape =
+        ShapeUtil::GetSubshape(custom_call->shape(), {output_index++});
+
+    TF_ASSIGN_OR_RETURN(
+        MatmulTensorDescriptor bmm1_grad_gemm1_rhs,
+        MatmulTensorDescriptorFor(
+            bmm1_grad_gemm1_rhs_shape,
+            config.bmm1_grad_gemm1_dot_dimension_numbers(), RHS));
+    TF_ASSIGN_OR_RETURN(
+        MatmulTensorDescriptor bmm1_grad_gemm2_rhs,
+        MatmulTensorDescriptorFor(
+            bmm1_grad_gemm2_rhs_shape,
+            config.bmm1_grad_gemm2_dot_dimension_numbers(), RHS));
+    TF_ASSIGN_OR_RETURN(
+        MatmulTensorDescriptor bmm2_grad_gemm1_lhs,
+        MatmulTensorDescriptorFor(
+            bmm2_grad_gemm1_lhs_shape,
+            config.bmm2_grad_gemm1_dot_dimension_numbers(), LHS));
+    TF_ASSIGN_OR_RETURN(
+        MatmulTensorDescriptor bmm2_grad_gemm2_rhs,
+        MatmulTensorDescriptorFor(
+            bmm2_grad_gemm2_rhs_shape,
+            config.bmm2_grad_gemm2_dot_dimension_numbers(), RHS));
+    TF_ASSIGN_OR_RETURN(
+        MatmulTensorDescriptor d_output,
+        MatmulTensorDescriptorFor(
+            d_output_shape, config.bmm2_grad_gemm1_dot_dimension_numbers(),
+            RHS));
+
+    TF_ASSIGN_OR_RETURN(TensorDescriptor d_bmm1_lhs,
+                        TensorDescriptorFor(d_bmm1_lhs_shape));
+    TF_ASSIGN_OR_RETURN(TensorDescriptor d_bmm1_rhs,
+                        TensorDescriptorFor(d_bmm1_rhs_shape));
+    TF_ASSIGN_OR_RETURN(TensorDescriptor d_bmm2_rhs,
+                        TensorDescriptorFor(d_bmm2_rhs_shape));
+
+    TF_RET_CHECK(output_index == custom_call->shape().tuple_shapes().size() -
+                                     5);  // 4 amaxs and a workspace
+
+    TF_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_config));
+
+    TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
+                        AsCudnnFmhaMaskKind(config.mask_type()));
+    TF_ASSIGN_OR_RETURN(
+        se::dnn::FMHAMaskKind dnn_mask_type,
+        GetDNNFmhaMaskKindFromCudnnFmhaMaskKind(cudnn_mask_type));
+    TF_ASSIGN_OR_RETURN(
+        se::gpu::CudnnGraph graph,
+        se::gpu::GetCudnnFlashAttentionBackwardF8OperationGraph(
+            dnn_support, bmm1_grad_gemm1_rhs, bmm1_grad_gemm2_rhs,
+            bmm2_grad_gemm1_lhs, bmm2_grad_gemm2_rhs, d_output, d_bmm1_lhs,
+            d_bmm1_rhs, d_bmm2_rhs, config.fmha_scale(), dnn_mask_type));
     return std::move(graph);
   }
 }

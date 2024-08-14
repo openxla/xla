@@ -1813,6 +1813,114 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxDropoutBMM,
            Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2) {
   TestImpl_Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2();
 }
+
+XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
+     Flash_Attention_Bwd_BMM1_NoMask_Softmax_BMM2_F8) {
+  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+  if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+      se::dnn::VersionInfo(9, 1, 0)) {
+    GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
+  }
+  XlaBuilder builder(TestName());
+  std::string hlo_string_ref = R"(
+HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, f32[1,1,128]{2,1,0})->bf16[1,1,128,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+
+    clip.33 {
+      Arg_2.36 = bf16[] parameter(2)
+      broadcast.39 = bf16[1,1,128,128]{3,2,1,0} broadcast(Arg_2.36), dimensions={}
+      Arg_1.35 = bf16[] parameter(1)
+      broadcast.37 = bf16[1,1,128,128]{3,2,1,0} broadcast(Arg_1.35), dimensions={}
+      Arg_0.34 = bf16[1,1,128,128]{3,2,1,0} parameter(0)
+      maximum.38 = bf16[1,1,128,128]{3,2,1,0} maximum(broadcast.37, Arg_0.34)
+      ROOT minimum.40 = bf16[1,1,128,128]{3,2,1,0} minimum(broadcast.39, maximum.38)
+    } // clip.33
+
+    ENTRY main.106 {
+      constant.99 = f32[] constant(1)
+      broadcast.99 = f32[1,1,1,1]{3,2,1,0} broadcast(constant.99), dimensions={}
+      Arg_0.1 = bf16[1,1,128,128]{3,2,1,0} parameter(0)
+      constant.6 = bf16[] constant(1)
+      broadcast.7 = bf16[1,1,128,128]{3,2,1,0} broadcast(constant.6), dimensions={}
+      divide.8 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_0.1, broadcast.7)
+      constant.5 = bf16[] constant(-448)
+      constant.4 = bf16[] constant(448)
+      call.17 = bf16[1,1,128,128]{3,2,1,0} call(divide.8, constant.5, constant.4), to_apply=clip.33
+      convert.18 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.17)
+      convert.19 = bf16[1,1,128,128]{3,2,1,0} convert(convert.18)
+      Arg_1.2 = bf16[1,1,128,128]{3,2,1,0} parameter(1)
+      divide.20 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_1.2, broadcast.7)
+      call.29 = bf16[1,1,128,128]{3,2,1,0} call(divide.20, constant.5, constant.4), to_apply=clip.33
+      convert.30 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.29)
+      convert.31 = bf16[1,1,128,128]{3,2,1,0} convert(convert.30)
+      Arg_2.3 = bf16[1,1,128,128]{3,2,1,0} parameter(2)
+      divide.32 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_2.3, broadcast.7)
+      call.41 = bf16[1,1,128,128]{3,2,1,0} call(divide.32, constant.5, constant.4), to_apply=clip.33
+      convert.42 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.41)
+      convert.43 = bf16[1,1,128,128]{3,2,1,0} convert(convert.42)
+      Arg_3.4 = bf16[1,1,128,128]{3,2,1,0} parameter(3)
+      divide.72 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_3.4, broadcast.7)
+      call.71 = bf16[1,1,128,128]{3,2,1,0} call(divide.72, constant.5, constant.4), to_apply=clip.33
+      convert.72 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.71)
+      convert.73 = bf16[1,1,128,128]{3,2,1,0} convert(convert.72)
+      Arg_4.5 = bf16[1,1,128,128]{3,2,1,0} parameter(4)
+      divide.82 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_4.5, broadcast.7)
+      call.81 = bf16[1,1,128,128]{3,2,1,0} call(divide.82, constant.5, constant.4), to_apply=clip.33
+      convert.82 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.81)
+      convert.83 = bf16[1,1,128,128]{3,2,1,0} convert(convert.82)
+      score.0 = f32[1,1,128]{2,1,0} parameter(5)
+      custom-call.7 = (bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, u8[0]{0}) custom-call(convert.19, convert.31, convert.43, score.0, convert.83, /*index=5*/convert.73), custom_call_target="__cudnn$fmhaSoftmaxBackward", operand_layout_constraints={bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, f32[1,1,128]{2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/dot_product_attention_bwd" source_file="/workspace/num_test.py" source_line=349}, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"cudnn_fmha_backend_config":{"algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"17":"1","24":"0"},"is_cudnn_frontend":true,"workspace_size":"0"},"fmha_scale":1,"dropout_rate":0,"intermediate_tensor_shape":{"element_type":"BF16","dimensions":["1","1","128","128"],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"tail_padding_alignment_in_elements":"0","element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0","split_configs":[]},"is_dynamic_dimension":[false,false,false,false]},"bmm1_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm1_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm2_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm2_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"seed":"42","is_flash_attention":true,"is_causal_mask":false,"mask_type":"NO_MASK","force_deterministic":false,"sliding_window_length":0},"force_earliest_schedule":false}
+      ROOT get-tuple-element.8 = bf16[1,1,128,128]{3,2,1,0} get-tuple-element(custom-call.7), index=0
+    })";
+
+    std::string hlo_string = R"(
+HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, f32[1,1,128]{2,1,0})->bf16[1,1,128,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
+
+    clip.33 {
+      Arg_2.36 = bf16[] parameter(2)
+      broadcast.39 = bf16[1,1,128,128]{3,2,1,0} broadcast(Arg_2.36), dimensions={}
+      Arg_1.35 = bf16[] parameter(1)
+      broadcast.37 = bf16[1,1,128,128]{3,2,1,0} broadcast(Arg_1.35), dimensions={}
+      Arg_0.34 = bf16[1,1,128,128]{3,2,1,0} parameter(0)
+      maximum.38 = bf16[1,1,128,128]{3,2,1,0} maximum(broadcast.37, Arg_0.34)
+      ROOT minimum.40 = bf16[1,1,128,128]{3,2,1,0} minimum(broadcast.39, maximum.38)
+    }
+
+    ENTRY main.106 {
+      constant.99 = f32[] constant(1)
+      broadcast.99 = f32[1,1,1,1]{3,2,1,0} broadcast(constant.99), dimensions={}
+      Arg_0.1 = bf16[1,1,128,128]{3,2,1,0} parameter(0)
+      constant.6 = bf16[] constant(1)
+      broadcast.7 = bf16[1,1,128,128]{3,2,1,0} broadcast(constant.6), dimensions={}
+      divide.8 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_0.1, broadcast.7)
+      constant.5 = bf16[] constant(-448)
+      constant.4 = bf16[] constant(448)
+      call.17 = bf16[1,1,128,128]{3,2,1,0} call(divide.8, constant.5, constant.4), to_apply=clip.33
+      convert.18 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.17)
+      Arg_1.2 = bf16[1,1,128,128]{3,2,1,0} parameter(1)
+      divide.20 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_1.2, broadcast.7)
+      call.29 = bf16[1,1,128,128]{3,2,1,0} call(divide.20, constant.5, constant.4), to_apply=clip.33
+      convert.30 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.29)
+      Arg_2.3 = bf16[1,1,128,128]{3,2,1,0} parameter(2)
+      divide.32 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_2.3, broadcast.7)
+      call.41 = bf16[1,1,128,128]{3,2,1,0} call(divide.32, constant.5, constant.4), to_apply=clip.33
+      convert.42 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.41)
+      Arg_3.4 = bf16[1,1,128,128]{3,2,1,0} parameter(3)
+      divide.72 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_3.4, broadcast.7)
+      call.71 = bf16[1,1,128,128]{3,2,1,0} call(divide.72, constant.5, constant.4), to_apply=clip.33
+      convert.72 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.71)
+      Arg_4.5 = bf16[1,1,128,128]{3,2,1,0} parameter(4)
+      divide.82 = bf16[1,1,128,128]{3,2,1,0} divide(Arg_4.5, broadcast.7)
+      call.81 = bf16[1,1,128,128]{3,2,1,0} call(divide.82, constant.5, constant.4), to_apply=clip.33
+      convert.82 = f8e4m3fn[1,1,128,128]{3,2,1,0} convert(call.81)
+      score.0 = f32[1,1,128]{2,1,0} parameter(5)
+      custom-call.9 = (f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, u8[0]{0}) custom-call(convert.18, convert.30, convert.42, convert.72, convert.82, score.0, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99, broadcast.99), custom_call_target="__cudnn$fmhaSoftmaxBackwardF8", operand_layout_constraints={f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f8e4m3fn[1,1,128,128]{3,2,1,0}, f32[1,1,128]{2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}, f32[1,1,1,1]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="jit(<unnamed wrapped function>)/jit(main)/dot_product_attention_fp8_bwd" source_file="/workspace/num_test.py" source_line=338}, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"cudnn_fmha_backend_config":{"algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"17":"1","24":"0"},"is_cudnn_frontend":true,"workspace_size":"0"},"fmha_scale":1,"dropout_rate":0,"intermediate_tensor_shape":{"element_type":"BF16","dimensions":["1","1","128","128"],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"tail_padding_alignment_in_elements":"0","element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0","split_configs":[]},"is_dynamic_dimension":[false,false,false,false]},"bmm1_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm1_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm2_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["2"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"bmm2_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","1"]},"seed":"0","is_flash_attention":true,"is_causal_mask":false,"mask_type":"NO_MASK","force_deterministic":false,"sliding_window_length":0},"force_earliest_schedule":false}
+      get-tuple-element.10 = f8e4m3fn[1,1,128,128]{3,2,1,0} get-tuple-element(custom-call.9), index=0
+      ROOT out.0 = bf16[1,1,128,128]{3,2,1,0} convert(get-tuple-element.10)
+    })";
+
+    EXPECT_TRUE(RunAndCompareTwoModules(hlo_string_ref, hlo_string,
+                                        ErrorSpec{2e-1, 2e-1}));
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
