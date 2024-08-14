@@ -20,6 +20,7 @@ cc_library(
     hdrs = ["histogram.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
@@ -58,6 +59,7 @@ tsl_cc_test(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
+        "@tsl//tsl/platform:types",
         "@tsl//tsl/protobuf:histogram_proto_cc",
     ],
 )
