@@ -168,16 +168,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     const xla::gpu::CudnnfMHABackendConfig& config =
         gpu_config.cudnn_fmha_backend_config();
     Shape intermediate_tensor_shape(config.intermediate_tensor_shape());
-    // output_shapes only holds output and activation but not amax_s or amax_o.
-    absl::InlinedVector<Shape, 2> output_shapes = {
-        ShapeUtil::GetSubshape(custom_call->shape(), {0})};
 
-    bool has_activation =
-        xla::ShapeUtil::TupleElementCount(custom_call->shape()) == 5;
-    if (has_activation) {
-      output_shapes.push_back(
-          ShapeUtil::GetSubshape(custom_call->shape(), {3}));
-    }
     TF_ASSIGN_OR_RETURN(CudnnfMHAMaskKind cudnn_mask_type,
                         AsCudnnFmhaMaskKind(config.mask_type()));
     TF_ASSIGN_OR_RETURN(
@@ -196,12 +187,16 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
         MatmulTensorDescriptorFor(custom_call->operand(2)->shape(),
                                   config.bmm2_dot_dimension_numbers(), RHS));
     TF_ASSIGN_OR_RETURN(TensorDescriptor output,
-                        TensorDescriptorFor(output_shapes[0]));
+                        TensorDescriptorFor(
+                            ShapeUtil::GetSubshape(custom_call->shape(), {0})));
                                         
     std::optional<se::dnn::TensorDescriptor> activation;
-    if (output_shapes.size() > 1) {
-      const Shape &activation_shape = output_shapes.back();
-      TF_ASSIGN_OR_RETURN(activation, TensorDescriptorFor(activation_shape));
+    bool has_activation =
+        xla::ShapeUtil::TupleElementCount(custom_call->shape()) == 5;    
+    if (has_activation) {
+      TF_ASSIGN_OR_RETURN(
+          activation,TensorDescriptorFor(
+                         ShapeUtil::GetSubshape(custom_call->shape(), {3})));
     }
     TF_ASSIGN_OR_RETURN(
         se::gpu::CudnnGraph graph,
