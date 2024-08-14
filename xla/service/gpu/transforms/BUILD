@@ -1362,6 +1362,9 @@ xla_cc_test(
     deps = [
         ":gemv_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/service/gpu/tests:gpu_codegen_test",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_absl//absl/status:statusor",
