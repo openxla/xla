@@ -87,7 +87,7 @@ class NcclCliqueCommunicators {
  public:
   class AsyncErrorChecker {
    public:
-    absl::Status Check();
+    absl::Status Check(const absl::Status& current_executable_status);
 
    private:
     friend class NcclCliqueCommunicators;
@@ -158,7 +158,7 @@ class NcclClique : public Lockable<NcclCliqueCommunicators, NcclCliqueName> {
   // Checks for async errors for all the communicators in the clique without
   // taking the lock. If at least one of the communicators has an async error,
   // it returns one of the errors.
-  absl::Status CheckAsyncErrors();
+  absl::Status CheckAsyncErrors(const absl::Status& current_status);
 
  private:
   NcclCliqueCommunicators::AsyncErrorChecker async_error_checker_;

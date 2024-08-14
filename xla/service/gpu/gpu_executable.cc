@@ -71,6 +71,8 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/event_based_timer.h"
+#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
@@ -336,6 +338,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
+                                 absl::Status& async_status,
                                  se::Stream* stream_to_sync);
 
 absl::Status RendezvousAfterInitialization(
@@ -483,9 +486,8 @@ absl::Status ExecuteThunks(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       std::move(additional_execution_streams));
-
   TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
-  return MaybeSyncAndProfile(run_options, execution_timer.get(),
+  return MaybeSyncAndProfile(run_options, execution_timer.get(), async_status,
                              block_host_until_done ? main_stream : nullptr);
 }
 
@@ -576,6 +578,7 @@ absl::Status RendezvousAfterInitialization(
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
+                                 absl::Status& async_status,
                                  se::Stream* stream_to_sync = nullptr) {
   // If we're measuring the execution time then it's important to queue the
   // stop event before triggering any synchronization.
@@ -593,6 +596,11 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   // TODO(b/30100571): we could potentially postpone deallocating the temp
   // buffers until a different computation is executed.
   if (stream_to_sync) {
+    while (!se::gpu::AsGpuStream(stream_to_sync)->IsIdle()) {
+      if (!async_status.ok()) {
+        return async_status;
+      }
+    }
     absl::Status block_status = stream_to_sync->BlockHostUntilDone();
     if (!block_status.ok()) {
       return Internal(
@@ -600,8 +608,7 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
           stream_to_sync, block_status.message());
     }
   }
-
-  return absl::OkStatus();
+  return async_status;
 }
 
 }  // namespace

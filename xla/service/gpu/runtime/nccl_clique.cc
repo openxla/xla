@@ -185,15 +185,17 @@ static absl::Status CheckComm(NcclApi::NcclCommHandle comm) {
 static void CheckClique(const NcclCliqueKey& clique_key,
                         NcclClique& lockable_clique,
                         absl::Status& async_status) {
-  absl::Status status = lockable_clique.CheckAsyncErrors();
+  absl::Status status = lockable_clique.CheckAsyncErrors(async_status);
   if (!status.ok()) {
     if (TerminateOnNcclError()) {
       LOG(FATAL) << "Terminating process due to async NCCL error: " << status;
       return;
     } else {
-      async_status = status;
-      async_status.SetPayload(kNcclAsyncErrorPrefix,
-                              absl::Cord(status.message()));
+      if (status.code() != async_status.code()) {
+        async_status = status;
+        async_status.SetPayload(kNcclAsyncErrorPrefix,
+                                absl::Cord(status.message()));
+      }
       return;
     }
   }
@@ -227,7 +229,7 @@ static void NcclCliqueHeartBeatMonitorThread(
           async_status = absl::DeadlineExceededError(kNcclAsyncTimeout);
           async_status.SetPayload(kNcclAsyncErrorPrefix,
                                   absl::Cord(kNcclAsyncTimeout));
-          return;
+          break;
         }
       }
 
@@ -239,7 +241,7 @@ static void NcclCliqueHeartBeatMonitorThread(
         async_status = absl::InternalError(kAsyncEventInvalidStatus);
         async_status.SetPayload(kNcclAsyncErrorPrefix,
                                 absl::Cord(kAsyncEventInvalidStatus));
-        return;
+        break;
       }
     }
     NcclCliques& cliques = GetNcclCliques();
@@ -586,21 +588,30 @@ absl::StatusOr<std::shared_ptr<NcclClique::Lock>> AcquireNcclClique(
                               async_events_queue, async_status);
 }
 
-absl::Status NcclClique::CheckAsyncErrors() {
-  return async_error_checker_.Check();
+absl::Status NcclClique::CheckAsyncErrors(const absl::Status& current_status) {
+  return async_error_checker_.Check(current_status);
 }
 
-absl::Status NcclCliqueCommunicators::AsyncErrorChecker::Check() {
+absl::Status NcclCliqueCommunicators::AsyncErrorChecker::Check(
+    const absl::Status& current_executable_status) {
   absl::Status status = absl::OkStatus();
-  communicators_.ForEachComm(
-      [&status](int32_t rank, NcclApi::NcclCommHandle comm) {
-        // Do not overwrite previous errors.
-        if (!status.ok()) return;
-        status = NcclApi::Default()->CommGetAsyncError(comm);
-        if (!status.ok()) {
-          LOG(ERROR) << "NCCL async error (rank " << rank << "): " << status;
-        }
-      });
+  if (!current_executable_status.ok()) {
+    communicators_.ForEachComm(
+        [&status](int32_t rank, NcclApi::NcclCommHandle comm) {
+          TF_RETURN_IF_ERROR(NcclApi::Default()->CommAbort(comm));
+        });
+    return current_executable_status;
+  }
+  communicators_.ForEachComm([&status](int32_t rank,
+                                       NcclApi::NcclCommHandle comm) {
+    // Do not overwrite previous errors.
+    if (!status.ok()) return;
+    status = NcclApi::Default()->CommGetAsyncError(comm);
+    if (!status.ok()) {
+      status.SetPayload(kNcclAsyncErrorPrefix, absl::Cord(status.message()));
+      LOG(ERROR) << "NCCL async error (rank " << rank << "): " << status;
+    }
+  });
   return status;
 }
 
