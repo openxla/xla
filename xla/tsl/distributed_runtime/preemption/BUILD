@@ -17,13 +17,17 @@ cc_library(
     hdrs = ["preemption_notifier.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:thread_annotations",
     ],
 )
 
@@ -33,14 +37,12 @@ tsl_cc_test(
     srcs = ["preemption_notifier_test.cc"],
     deps = [
         ":preemption_notifier",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
