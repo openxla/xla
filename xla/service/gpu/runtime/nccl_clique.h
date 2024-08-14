@@ -37,7 +37,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-inline constexpr absl::string_view kNcclAsyncErrorPrefix = "Nccl Async Error";
+inline constexpr absl::string_view kNcclAsyncErrorPrefix = "Nccl async error";
 
 inline constexpr absl::string_view kNcclAsyncTimeout = "Async event timeout";
 

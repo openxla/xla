@@ -46,9 +46,9 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/optional.h"     // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
-#include "nanobind/stl/string.h"       // IWYU pragma: keep
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/layout.h"
@@ -952,10 +952,11 @@ PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
     absl::StatusOr<nb::object> out =
         o->fun.Call(callable, args, nargs, kwnames);
     if (!out.ok()) {
+      const char* error_string = out.status().ToString().c_str();
       if (out.status().code() == absl::StatusCode::kDeadlineExceeded) {
-        PyErr_SetString(PyExc_TimeoutError, out.status().ToString().c_str());
+        PyErr_SetString(PyExc_TimeoutError, error_string);
       } else {
-        PyErr_SetString(PyExc_ValueError, out.status().ToString().c_str());
+        PyErr_SetString(PyExc_ValueError, error_string);
       }
       return nullptr;
     }

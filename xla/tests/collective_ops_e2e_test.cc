@@ -1305,8 +1305,7 @@ ENTRY test_computation {
         _xla_send_recv_pipeline="1"
       }
 
-    after-all.1 = token[] after-all()
-    recv.1 = (u32[2], u32[], token[]) recv(after-all.1), channel_id=2,
+    recv.1 = (u32[2], u32[], token[]) recv(after-all.0), channel_id=2,
       frontend_attributes={
         _xla_send_recv_source_target_pairs="{{0,1}}"
       }
@@ -1316,14 +1315,7 @@ ENTRY test_computation {
     recv-done.1 = (u32[2], token[]) recv-done(recv.1), channel_id=2
     recv-data.1 = u32[2] get-tuple-element(recv-done.1), index=0
 
-    replica = u32[] replica-id()
-    constant0 = u32[] constant(0)
-    compare0 = pred[] compare(replica, constant0), direction=EQ
-    compare = pred[2] broadcast(compare0), dimensions={}
-    recv-data = u32[2] select(compare, recv-data.0, recv-data.1)
-
-    r = u32[2] broadcast(replica), dimensions={}
-    ROOT s = u32[2] add(r, recv-data)
+    ROOT result = (u32[2], u32[2]) tuple(recv-data.0, recv-data.1)
 }
 )";
 
