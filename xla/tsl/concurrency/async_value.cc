@@ -199,7 +199,12 @@ void RunWhenReady(absl::Span<AsyncValue* const> values,
   }
 
   // If we can synchronously call 'callee', then do it and we're done.
-  if (unavailable_values.empty()) return callee();
+  if (unavailable_values.empty()) {
+    VLOG(2) << "[clin-async] Empty unavailable_values";
+    return callee();
+  }
+
+  VLOG(2) << "[clin-async] Not empty unavailable_values";
 
   // If there is exactly one unavailable value, then we can just AndThen it.
   if (unavailable_values.size() == 1) {
