@@ -280,6 +280,12 @@ def _custom_python_interpreter_impl(ctx):
 
     configure_params.append("--enable-optimizations")
     configure_params.append("--prefix=%s" % install_path.realpath)
+
+    configure_opts = ctx.attr.configure_opts
+    if configure_opts:
+        for param in ctx.attr.configure_opts:
+            configure_params.append(param)
+
     _exec_and_check(
         ctx,
         ["./configure"] + configure_params,
@@ -361,6 +367,7 @@ custom_python_interpreter = repository_rule(
         "strip_prefix": attr.string(),
         "binary_name": attr.string(mandatory = False),
         "version": attr.string(),
+        "configure_opts": attr.string_list(mandatory = False),
     },
 )
 
