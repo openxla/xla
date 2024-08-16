@@ -128,41 +128,6 @@ bool IsAnyOperandComplex(const HloInstruction* hlo) {
   return false;
 }
 
-bool IsPositive(const HloInstruction* hlo,
-                const AlgebraicSimplifierOptions& options) {
-  // Utility only handles real types.
-  if (IsAnyOperandComplex(hlo)) {
-    return false;
-  }
-  switch (hlo->opcode()) {
-    case HloOpcode::kGetTupleElement: {
-      const HloInstruction* gte_operand = hlo->operand(0);
-      switch (gte_operand->opcode()) {
-        case HloOpcode::kCustomCall: {
-          const auto& target = gte_operand->custom_call_target();
-          return target ==
-                     options.get_cudnn_batchnorm_forward_training_metadata() &&
-                 hlo->tuple_index() == 2;
-        }
-        default:
-          return false;
-      }
-    }
-    case HloOpcode::kPower:
-    case HloOpcode::kAbs:
-    case HloOpcode::kRsqrt:
-    case HloOpcode::kSqrt:
-      return IsPositive(hlo->operand(0), options);
-
-    case HloOpcode::kMultiply: {
-      return hlo->operand(0) == hlo->operand(1) &&
-             IsPositive(hlo->operand(0), options);
-    }
-    default:
-      return false;
-  }
-}
-
 static bool IsScalarConstant(const HloInstruction* hlo) {
   return hlo->opcode() == HloOpcode::kConstant &&
          ShapeUtil::IsEffectiveScalar(hlo->shape());
@@ -518,6 +483,53 @@ int64_t GetReduceFlops(const HloInstruction* reduce) {
 }
 
 }  // namespace
+
+bool AlgebraicSimplifierVisitor::IsPositive(
+    const HloInstruction* hlo, const AlgebraicSimplifierOptions& options) {
+  // Utility only handles real types.
+  if (IsAnyOperandComplex(hlo)) {
+    return false;
+  }
+  switch (hlo->opcode()) {
+    case HloOpcode::kGetTupleElement: {
+      const HloInstruction* gte_operand = hlo->operand(0);
+      switch (gte_operand->opcode()) {
+        case HloOpcode::kCustomCall: {
+          const auto& target = gte_operand->custom_call_target();
+          return target ==
+                     options.get_cudnn_batchnorm_forward_training_metadata() &&
+                 hlo->tuple_index() == 2;
+        }
+        default:
+          return false;
+      }
+    }
+    case HloOpcode::kExp:
+      return true;
+    case HloOpcode::kPower:
+    case HloOpcode::kAbs:
+    case HloOpcode::kRsqrt:
+    case HloOpcode::kSqrt:
+      return IsPositive(hlo->operand(0), options);
+
+    case HloOpcode::kMultiply: {
+      if (hlo->operand(0) == hlo->operand(1)) {
+        return IsPositive(hlo->operand(0), options);
+      }
+      if (IsPositive(hlo->operand(0), options) &&
+          IsPositive(hlo->operand(1), options)) {
+        return true;
+      }
+      if (!IsNonNegative(hlo->operand(0), options) &&
+          !IsNonNegative(hlo->operand(1), options)) {
+        return true;
+      }
+      return false;
+    }
+    default:
+      return false;
+  }
+}
 
 bool AlgebraicSimplifierVisitor::IsNonNegative(
     const HloInstruction* hlo, const AlgebraicSimplifierOptions& options) {
@@ -5674,8 +5686,9 @@ AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
         new_operands.push_back(operand);
       }
     }
-    VLOG(4) << "Sinking broadcast after user:" << "\n  old broadcast: "
-            << broadcast->ToString() << "\n  old user: " << user->ToString();
+    VLOG(4) << "Sinking broadcast after user:"
+            << "\n  old broadcast: " << broadcast->ToString()
+            << "\n  old user: " << user->ToString();
     changed_shape = ShapeUtil::ChangeElementType(operand->shape(),
                                                  user->shape().element_type());
     simplifier_->UpdateLayout(&changed_shape);

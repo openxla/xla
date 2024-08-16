@@ -496,6 +496,11 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   static bool IsNonNegative(const HloInstruction* hlo,
                             const AlgebraicSimplifierOptions& options);
 
+  // Checks if the output of a given instruction is guaranteed to be
+  // postive. e.g. power
+  static bool IsPositive(const HloInstruction* hlo,
+                         const AlgebraicSimplifierOptions& options);
+
   // Check if the opcode of a given instruction is a non-decreasing function
   // asymptotically satisfying |f(x)| <= |x|
   static bool IsNondecreasingSublinear(const HloInstruction* hlo);
