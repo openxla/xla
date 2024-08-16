@@ -4972,7 +4972,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     const dnn::TensorDescriptor& o_descriptor,
     const std::optional<dnn::TensorDescriptor> bias_descriptor,
     const std::optional<dnn::TensorDescriptor> stats_descriptor,
-    const float scale, const bool use_dropout,
+    double scale, const bool use_dropout,
     const std::optional<double> dropout_rate,
     const dnn::FMHAMaskKind mask_type) {
   using cudnn_frontend::graph::Tensor_attributes;
@@ -5013,7 +5013,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
                        .set_dim(q_descriptor.GetCudnnCompatibleDimensions(true))
                        .set_stride(q_descriptor.GetCudnnCompatibleStrides(true))
                        .set_uid(next_uid()));
-  auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
 
   std::shared_ptr<Tensor_attributes> k_tensor =
       graph.tensor(Tensor_attributes()
@@ -5147,7 +5146,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
     const dnn::MatmulTensorDescriptor& v_descriptor,
     const dnn::TensorDescriptor& o_descriptor,
     const std::optional<dnn::TensorDescriptor> stats_descriptor,
-    const float scale, const dnn::FMHAMaskKind mask_type) {
+    double scale, const dnn::FMHAMaskKind mask_type) {
   using cudnn_frontend::graph::Tensor_attributes;
 
 #if CUDNN_VERSION >= 90000
@@ -5185,7 +5184,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
                        .set_dim(q_descriptor.GetCudnnCompatibleDimensions(true))
                        .set_stride(q_descriptor.GetCudnnCompatibleStrides(true))
                        .set_uid(next_uid()));
-  auto dim = k_descriptor.GetCudnnCompatibleDimensions(true);
 
   std::shared_ptr<Tensor_attributes> k_tensor =
       graph.tensor(Tensor_attributes()
