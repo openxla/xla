@@ -223,13 +223,12 @@ absl::StatusOr<CudnnfMHAKind> GetCudnnfMHAKind(
     return CudnnfMHAKind::kScaleBiasSoftmax;
   if (target == kCudnnfMHAScaleBiasSoftmaxDropoutCallTarget)
     return CudnnfMHAKind::kScaleBiasSoftmaxDropout;
-  if (target == kCudnnfMHASoftmaxF8CallTarget)
-    return CudnnfMHAKind::kSoftmaxF8;  
+  if (target == kCudnnfMHASoftmaxF8CallTarget) return CudnnfMHAKind::kSoftmaxF8;
   // backward
   if (target == kCudnnfMHASoftmaxDropoutBackwardCallTarget)
     return CudnnfMHAKind::kBackwardSoftmaxDropout;
   if (target == kCudnnfMHASoftmaxBackwardF8CallTarget)
-    return CudnnfMHAKind::kBackwardSoftmaxF8;  
+    return CudnnfMHAKind::kBackwardSoftmaxF8;
   if (target == kCudnnfMHASoftmaxBackwardCallTarget)
     return CudnnfMHAKind::kBackwardSoftmax;
   if (target == kCudnnfMHAScaleBiasSoftmaxBackwardCallTarget)
@@ -242,7 +241,7 @@ absl::StatusOr<CudnnfMHAKind> GetCudnnfMHAKind(
 std::string CudnnfMHAKindToString(CudnnfMHAKind kind) {
   switch (kind) {
     case CudnnfMHAKind::kSoftmaxF8:
-      return "fmha_softmax_f8";    
+      return "fmha_softmax_f8";
     case CudnnfMHAKind::kSoftmax:
       return "fmha_softmax";
     case CudnnfMHAKind::kSoftmaxDropout:
@@ -253,7 +252,7 @@ std::string CudnnfMHAKindToString(CudnnfMHAKind kind) {
       return "fmha_bias_softmax";
     // backward
     case CudnnfMHAKind::kBackwardSoftmaxF8:
-      return "fmha_softmax_backward_f8";    
+      return "fmha_softmax_backward_f8";
     case CudnnfMHAKind::kBackwardSoftmax:
       return "fmha_softmax_backward";
     case CudnnfMHAKind::kBackwardSoftmaxDropout:
