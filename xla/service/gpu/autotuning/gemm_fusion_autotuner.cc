@@ -1201,7 +1201,7 @@ absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
         std::string autotune_results_str,
         key_value_store.Get(
             absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, i),
-            absl::InfiniteDuration()));
+            absl::Hours(24)));
     TF_RETURN_IF_ERROR(
         AutotunerUtil::LoadAutotuneResults(autotune_results_str, true));
   }
