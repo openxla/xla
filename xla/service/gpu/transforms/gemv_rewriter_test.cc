@@ -33,7 +33,7 @@ namespace {
 namespace m = ::xla::match;
 
 class GemvRewriterTest : public GpuCodegenTest {
-   const auto& device_desc() {
+  const auto& device_desc() {
     return backend().default_stream_executor()->GetDeviceDescription();
   }
 
@@ -44,7 +44,7 @@ class GemvRewriterTest : public GpuCodegenTest {
 
   bool IsCuda() {
     return std::holds_alternative<se::CudaComputeCapability>(Capability());
-  }  
+  }
 };
 
 TEST_F(GemvRewriterTest, RewriteMatrixVectorMultiplicationToGemmPipeline) {
