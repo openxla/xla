@@ -32,9 +32,26 @@ namespace {
 
 namespace m = ::xla::match;
 
-class GemvRewriterTest : public GpuCodegenTest {};
+class GemvRewriterTest : public GpuCodegenTest {
+   const auto& device_desc() {
+    return backend().default_stream_executor()->GetDeviceDescription();
+  }
+
+ protected:
+  const se::GpuComputeCapability& Capability() {
+    return device_desc().gpu_compute_capability();
+  }
+
+  bool IsCuda() {
+    return std::holds_alternative<se::CudaComputeCapability>(Capability());
+  }  
+};
 
 TEST_F(GemvRewriterTest, RewriteMatrixVectorMultiplicationToGemmPipeline) {
+  if (!IsCuda()) {
+    GTEST_SKIP() << "Only test on NVidia GPUs.";
+  }
+
   const char* hlo = R"(
   HloModule m
 
