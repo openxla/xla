@@ -1359,6 +1359,7 @@ cc_library(
 xla_cc_test(
     name = "gemv_rewriter_test",
     srcs = ["gemv_rewriter_test.cc"],
+    backends = ["gpu"],
     deps = [
         ":gemv_rewriter",
         "//xla/hlo/ir:hlo",
