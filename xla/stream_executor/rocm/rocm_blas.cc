@@ -356,13 +356,13 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
   }
 
   gpu::ScopedActivateExecutorContext sac{parent_};
-
+  rocblas_status ret;
   // set the atomics mode, leaving default to library
   bool allow_atomics = !OpDeterminismRequired();
   if (!allow_atomics) {
-    auto ret = wrap::rocblas_set_atomics_mode(blas_, rocblas_atomics_not_allowed);
+    ret = wrap::rocblas_set_atomics_mode(blas_, rocblas_atomics_not_allowed);
     if (err_on_failure && ret != rocblas_status_success) {
-      LOG(ERROR) << "Failed to set atomics mode before " << FuncT::kName
+      LOG(ERROR) << "failed to set atomics mode before " << FuncT::kName
                  << ": " << ToString(ret);
     }
   }
@@ -371,15 +371,15 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
     auto *workspace = GetWorkspace();
     auto *wptr = workspace != nullptr ? workspace->opaque() : nullptr;
     size_t wsize = workspace != nullptr ? workspace->size() : 0;
-    auto ret = wrap::rocblas_set_workspace(blas_, wptr, wsize); 
+    ret = wrap::rocblas_set_workspace(blas_, wptr, wsize); 
     if (err_on_failure && ret != rocblas_status_success) {
-      LOG(ERROR) << "Failed to set workspace before " << FuncT::kName
+      LOG(ERROR) << "failed to set workspace before " << FuncT::kName
                  << ": " << ToString(ret);
     }
   }
 #endif
 
-  auto ret = rocblas_func(blas_, std::forward<Args>(args)...);
+  ret = rocblas_func(blas_, std::forward<Args>(args)...);
   if (ret != rocblas_status_success) {
     auto err_str =
         absl::StrFormat("%s failed with: %s", FuncT::kName, ToString(ret));
