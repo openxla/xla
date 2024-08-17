@@ -167,11 +167,99 @@ PJRT_Error* PJRT_ExecuteContext_Create(PJRT_ExecuteContext_Create_Args* args) {
   return nullptr;
 }
 
+namespace {
+
+absl::StatusOr<std::unique_ptr<xla::StreamExecutorGpuTopologyDescription>>
+TryParseTopology(
+    xla::PjRtPlatformId platform_id, std::string platform_name,
+    absl::flat_hash_map<std::string, xla::PjRtValueType>& options) {
+  auto topology_it = options.find("topology");
+  if (topology_it == options.end()) {
+    return {nullptr};
+  }
+
+  std::string topology_string = std::get<std::string>(topology_it->second);
+
+  int num_slices;
+  int num_hosts_per_slice;
+  int num_devices_per_host;
+  std::vector<std::string> topology_components =
+      absl::StrSplit(topology_string, 'x');
+  if (topology_components.size() != 3 ||
+      !absl::SimpleAtoi(topology_components[0], &num_slices) ||
+      !absl::SimpleAtoi(topology_components[1], &num_hosts_per_slice) ||
+      !absl::SimpleAtoi(topology_components[2], &num_devices_per_host)) {
+    return absl::InternalError(
+        "topology must be of shape "
+        "\"<num-slices>x<num-hosts-per-slice>x<num-devices-per-host>\"");
+  }
+
+  std::string target_config_proto_string;
+  const auto& debug_options = xla::GetDebugOptionsFromFlags();
+
+  auto target_config_it = options.find("target_config");
+  if (target_config_it != options.end()) {
+    target_config_proto_string =
+        std::get<std::string>(target_config_it->second);
+  } else if (!debug_options.xla_gpu_target_config_filename().empty()) {
+    TF_RETURN_IF_ERROR(tsl::ReadFileToString(
+        tsl::Env::Default(), debug_options.xla_gpu_target_config_filename(),
+        &target_config_proto_string));
+  } else {
+    return absl::FailedPreconditionError("Missing 'target_config' argument");
+  }
+  tensorflow::se::GpuTargetConfigProto target_config_proto;
+  if (!tsl::protobuf::TextFormat::ParseFromString(target_config_proto_string,
+                                                  &target_config_proto)) {
+    return absl::FailedPreconditionError(
+        "Failed to parse GpuTargetConfigProto");
+  }
+
+  int num_devices = num_slices * num_hosts_per_slice * num_devices_per_host;
+  std::vector<int> device_ids;
+  device_ids.reserve(num_devices);
+  for (int i = 0; i < num_devices; ++i) {
+    device_ids.push_back(i);
+  }
+
+  auto gpu_topology = std::make_shared<const xla::GpuTopology>(
+      device_ids, target_config_proto.device_description_str(), num_slices,
+      num_hosts_per_slice, num_devices_per_host,
+      target_config_proto.gpu_device_info().core_count());
+
+  return std::make_unique<xla::StreamExecutorGpuTopologyDescription>(
+      platform_id, platform_name, std::move(gpu_topology),
+      absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>{
+          {"target_config", target_config_proto.SerializeAsString()}});
+}
+
+}  // namespace
+
 PJRT_Error* PJRT_GpuDeviceTopology_Create(
     PJRT_TopologyDescription_Create_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_TopologyDescription_Create_Args",
       PJRT_TopologyDescription_Create_Args_STRUCT_SIZE, args->struct_size));
+
+  // Determine the platform ID and name based on the platform.
+  xla::PjRtPlatformId platform_id =
+      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmId()
+                                                             : xla::CudaId();
+  std::string platform_name =
+      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmName()
+                                                             : xla::CudaName();
+
+  absl::flat_hash_map<std::string, xla::PjRtValueType> create_options =
+      pjrt::ConvertFromPjRtNamedValueList(args->create_options,
+                                          args->num_options);
+
+  PJRT_ASSIGN_OR_RETURN(
+      auto pjrt_topology,
+      TryParseTopology(platform_id, platform_name, create_options));
+  if (pjrt_topology) {
+    args->topology = CreateWrapperDeviceTopology(std::move(pjrt_topology));
+    return nullptr;
+  }
 
   PJRT_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
                         xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
@@ -195,20 +283,10 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
       /*num_hosts_per_slice=*/1,
       /*num_devices_per_host=*/device_ids.size());
 
-  // Determine the platform ID and name based on the platform.
-  xla::PjRtPlatformId platform_id =
-      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmId()
-                                                             : xla::CudaId();
-  std::string platform_name =
-      (std::string(PJRT_GPU_PLUGIN_PLATFORM_NAME) == "ROCM") ? xla::RocmName()
-                                                             : xla::CudaName();
-
-  auto pjrt_topology =
-      std::make_unique<xla::StreamExecutorGpuTopologyDescription>(
-          platform_id, platform_name, std::move(gpu_topology),
-          absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>{
-              {"target_config",
-               gpu_target_config.ToProto().SerializeAsString()}});
+  pjrt_topology = std::make_unique<xla::StreamExecutorGpuTopologyDescription>(
+      platform_id, platform_name, std::move(gpu_topology),
+      absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>{
+          {"target_config", gpu_target_config.ToProto().SerializeAsString()}});
   args->topology = CreateWrapperDeviceTopology(std::move(pjrt_topology));
   return nullptr;
 }
