@@ -1478,6 +1478,13 @@ TEST(StreamExecutorGpuClientTest,
       modules[0]->entry_computation_layout().result_layout().layout();
   EXPECT_EQ(result_layout,
             Layout({0, 1}).set_memory_space(Layout::kHostMemorySpace));
+
+  // Verify that the executable's layout callback is null.
+  // This is necessary for the executable to be serializable.
+  EXPECT_EQ(executable->GetCompileOptions()
+                .value()
+                .executable_build_options.layout_canonicalization_callback(),
+            nullptr);
 }
 
 }  // namespace

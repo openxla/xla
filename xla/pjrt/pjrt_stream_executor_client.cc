@@ -3497,6 +3497,11 @@ PjRtStreamExecutorClient::CompileInternal(
       client()->Compile(computation, argument_layout_pointers,
                         options.executable_build_options));
 
+  // Make sure that the options that are embedded in the executable
+  // do not have the layout canonicalization callback set
+  // (the executable's options must be serializable).
+  input_options.executable_build_options.set_layout_canonicalization_callback(
+      nullptr);
   auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
       std::move(local_executables), options.parameter_is_tupled_arguments,
       std::move(device_assignment), std::move(input_options),
