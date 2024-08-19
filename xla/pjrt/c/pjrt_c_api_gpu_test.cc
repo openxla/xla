@@ -278,8 +278,8 @@ TEST(PjrtCApiGpuAllocatorTest, ValidOptionsParsing) {
   for (const std::string& allocator_option : allocator_options) {
 #ifdef TENSORFLOW_USE_ROCM
     if (allocator_option == "cuda_async") {
-    VLOG(1) << "cuda_async allocator not available on ROCm!";
-    continue;
+      VLOG(1) << "cuda_async allocator not available on ROCm!";
+      continue;
     }
 #endif
     absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
