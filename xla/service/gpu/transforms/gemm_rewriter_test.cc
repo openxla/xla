@@ -8324,10 +8324,10 @@ ENTRY test {
   // Large lhs is fine for cuBLASlt.
   if (IsCuda()) {
     MatchOptimizedHlo(hlo_text,
-                    R"(; CHECK: custom_call_target="__cublas$lt$matmul")");
+                      R"(; CHECK: custom_call_target="__cublas$lt$matmul")");
   } else {
     MatchOptimizedHlo(hlo_text,
-                    R"(; CHECK: custom_call_target="__cublas$gemm")");
+                      R"(; CHECK: custom_call_target="__cublas$gemm")");
   }
 }
 
