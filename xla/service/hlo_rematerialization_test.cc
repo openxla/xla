@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/service/hlo_rematerialization_test_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tests/filecheck.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -193,6 +194,18 @@ class RecomputeAndCompressHloRematerializationTest
                                       kRematInstructionNameMustContain))
             << "[" << test_case_name << "] Instruction \"" << instruction_name
             << "\" must contain \"" << kRematInstructionNameMustContain << "\"";
+      }
+    }
+  }
+
+  void CheckForInstructionNameAndSchedulingName(HloModule* module) {
+    EXPECT_TRUE(module->has_schedule());
+    for (const auto* comp : module->computations()) {
+      for (const auto* instruction : comp->instructions()) {
+        if (!instruction->metadata().scheduling_name().empty()) {
+          EXPECT_EQ(instruction->name(),
+                    instruction->metadata().scheduling_name());
+        }
       }
     }
   }
@@ -982,7 +995,7 @@ ENTRY %mycomp (param: f32[1]) -> f32[1] {
   // Original all-gather.
   const HloInstruction* original_ag = FindInstruction(module.get(), "ag");
   // The all-gather should have been rematerialized
-  const HloInstruction* remat_ag = FindInstruction(module.get(), "ag.remat");
+  const HloInstruction* remat_ag = FindInstruction(module.get(), "ag.remat2");
 
   EXPECT_NE(remat_ag, nullptr);
   EXPECT_TRUE(original_ag->channel_id().has_value());
@@ -1070,8 +1083,8 @@ HloModule fusion, is_scheduled=true
   %p1 = f32[] parameter(1)
   %x = f32[1024]{0} broadcast(f32[] %p0), dimensions={}
   %y = f32[1024]{0} broadcast(f32[] %p1), dimensions={}
-  %add = f32[1024] add(%x, %y)
-  %mul = f32[1024] multiply(%x, %y)
+  %add = f32[1024] add(%x, %y), metadata={scheduling_name="add"}
+  %mul = f32[1024] multiply(%x, %y), metadata={scheduling_name="mul"}
   %c = f32[1024] custom-call(%mul), custom_call_target="SomeCall", called_computations={custom_call_comp}
   ROOT %out = (f32[1024], f32[1024]) tuple(%add, %c)
 }
@@ -1080,15 +1093,19 @@ ENTRY %entry {
   %param.0 = f32[] parameter(0)
   %param.1 = f32[] parameter(1)
   %fus = (f32[1024]{0}, f32[1024]{0}) fusion(%param.0, %param.1), kind=kLoop,
-    calls=%add_mul_comp
+    calls=%add_mul_comp, metadata={scheduling_name="fus"}
   %gte.1 = f32[1024]{0} get-tuple-element(%fus), index=0
-  %add = f32[1024]{0} add(f32[1024]{0} %gte.1, f32[1024]{0} %gte.1)
+  %add = f32[1024]{0} add(f32[1024]{0} %gte.1, f32[1024]{0} %gte.1),
+    metadata={scheduling_name="add"}
   %broadcast.1 = f32[1024]{0} broadcast(f32[] %param.0), dimensions={}
-  %mul = f32[1024]{0} multiply(f32[1024]{0} %add, f32[1024]{0} %broadcast.1)
-  %gte.2 = f32[1024]{0} get-tuple-element(%fus), index=1
-  %gte.3 = f32[1024]{0} get-tuple-element(%fus), index=0
-  %add.2 = f32[1024]{0} add(f32[1024]{0} %mul, f32[1024]{0} %gte.2)
-  ROOT %mul.2 = f32[1024]{0} multiply(f32[1024]{0} %add.2, f32[1024]{0} %gte.3)
+  %mul = f32[1024]{0} multiply(f32[1024]{0} %add, f32[1024]{0} %broadcast.1),
+    metadata={scheduling_name="mul"}
+  %gte.2 = f32[1024]{0} get-tuple-element(%fus), index=1, metadata={scheduling_name="gte.2"}
+  %gte.3 = f32[1024]{0} get-tuple-element(%fus), index=0, metadata={scheduling_name="gte.3"}
+  %add.2 = f32[1024]{0} add(f32[1024]{0} %mul, f32[1024]{0} %gte.2),
+    metadata={scheduling_name="add.2"}
+  ROOT %mul.2 = f32[1024]{0} multiply(f32[1024]{0} %add.2, f32[1024]{0} %gte.3),
+    metadata={scheduling_name="mul.2"}
 }
 )";
 
@@ -1129,6 +1146,22 @@ ENTRY %entry {
       (*it2)->called_computations()[0]));
   CheckForRematInInstructionNames(
       ::testing::UnitTest::GetInstance()->current_test_info()->name());
+  CheckForInstructionNameAndSchedulingName(module.get());
+  constexpr absl::string_view kExpectedSchedulingName = R"(
+// CHECK: %add_mul_comp
+// CHECK: %custom_call_comp.clone
+// CHECK: %add_mul_comp.clone
+// CHECK: %[[ADD:.+]] = f32[1024]{0} add
+// CHECK-SAME: metadata={scheduling_name="[[ADD]]"}
+// CHECK: %[[MUL:.+]] = f32[1024]{0} multiply
+// CHECK-SAME: metadata={scheduling_name="[[MUL]]"}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool filecheck_matches,
+      RunFileCheck(
+          module->ToString(HloPrintOptions().set_print_operand_shape(false)),
+          kExpectedSchedulingName));
+  EXPECT_TRUE(filecheck_matches);
 }
 
 class CompressingRematerializationTest : public RematerializationTestBase {
