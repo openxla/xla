@@ -5148,7 +5148,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
     const dnn::FMHAMaskKind mask_type) {
   using cudnn_frontend::graph::Tensor_attributes;
 
-#if CUDNN_VERSION >= 90000
+#if CUDNN_VERSION >= 90100
   if (VLOG_IS_ON(4)) {
     VLOG(4) << "\n bmm1_lhs(q): " << q_descriptor.ToString()
             << "\n bmm1_rhs(k): " << k_descriptor.ToString()
@@ -5271,7 +5271,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
   return cudnnGraph;
 #else
   return absl::UnimplementedError(
-      "Cudnn flash attention only supported with Cudnn >= 9.0.0");
+      "Cudnn flash attention only supported with Cudnn >= 9.1.0");
 #endif
 }
 

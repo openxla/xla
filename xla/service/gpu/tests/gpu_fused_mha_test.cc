@@ -1108,8 +1108,8 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
   void TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
+        se::dnn::VersionInfo(9, 1, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.1.0.";
     }
     XlaBuilder builder(TestName());
     std::string hlo_string_ref =
