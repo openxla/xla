@@ -15,16 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_performance_model.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -36,13 +39,12 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/instruction_fusion.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -99,6 +101,19 @@ class GpuPerformanceModelTest : public HloTestBase {
       &mlir_context_};
 
   GpuPerformanceModelTest() : HloTestBase() {}
+};
+
+// Subclass of InstructionFusion exposing the protected methods Fuse and
+// FuseIntoMultiOutput for testing.
+class InstructionFusionForTesting : public InstructionFusion {
+ public:
+  explicit InstructionFusionForTesting()
+      : InstructionFusion(InstructionFusion::IsExpensive) {}
+
+  HloInstruction* Fuse(HloInstruction* producer, HloInstruction* consumer,
+                       HloComputation* computation) override {
+    return InstructionFusion::Fuse(producer, consumer, computation);
+  }
 };
 
 TEST_F(GpuPerformanceModelTest, LargeWrite) {
@@ -708,6 +723,64 @@ ENTRY fusion {
   auto t = EstimateRunTimesForPriorityFusion(fusion, {reduce});
 
   EXPECT_LT(t.time_unfused, t.time_fused);
+}
+
+TEST_F(GpuPerformanceModelTest, IncrementalUpdate) {
+  constexpr absl::string_view kHlo = R"(
+HloModule testmodule
+
+max {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT max = f32[] maximum(p0, p1)
+}
+
+ENTRY fusion {
+  c = f32[] constant(-inf)
+  p0 = f32[1500,32,128]{1,2,0} parameter(0)
+  neg.1 = f32[1500,32,128]{1,2,0} negate(p0)
+  neg.2 = f32[1500,32,128]{1,2,0} negate(neg.1)
+  exp.1 = f32[1500,32,128]{1,2,0} exponential(neg.2)
+  transpose.1 = f32[1500,128,32]{2,0,1} transpose(neg.2), dimensions={0,2,1}
+  reduce.1 = f32[1500,32] reduce(transpose.1, c), dimensions={1}, to_apply=max
+  ROOT tuple = (f32[1500,32,128]{1,2,0}, f32[1500,32]) tuple(exp.1, reduce.1)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_IS_OK(module->entry_computation()->Accept(&analysis_));
+
+  auto* operand = module->entry_computation()->GetInstructionWithName("neg.2");
+  auto* producer =
+      module->entry_computation()->GetInstructionWithName("transpose.1");
+  std::vector<HloInstruction*> consumers{
+      module->entry_computation()->GetInstructionWithName("reduce.1")};
+
+  auto prio_t = EstimateRunTimesForPriorityFusion(operand, operand->users());
+
+  InstructionFusionForTesting instruction_fusion;
+  auto fusion = instruction_fusion.Fuse(producer, consumers[0],
+                                        module->entry_computation());
+  ASSERT_IS_OK(analysis_.RevisitInstruction(operand));
+  ASSERT_IS_OK(analysis_.RevisitInstruction(fusion));
+  producer->DetachFromOperandsAndUsers();
+  ASSERT_IS_OK(module->entry_computation()->RemoveInstruction(producer));
+
+  auto new_t = EstimateRunTimesForPriorityFusion(operand, operand->users());
+  // incremental update, only look at new consumers
+  auto diff_t = EstimateRunTimesForPriorityFusion(operand, {fusion});
+  diff_t.time_unfused += prio_t.time_unfused;
+  diff_t.time_fused += prio_t.time_fused;
+
+  auto p_runtime = gpu_performance_model_cache_.Get(*producer);
+  diff_t.time_unfused -= (*p_runtime).exec_time;
+  auto o_runtime = gpu_performance_model_cache_.Get(*operand);
+  diff_t.time_unfused -= (*o_runtime).exec_time;
+  diff_t.time_unfused -= GpuPerformanceModel::kKernelLaunchOverhead;
+  auto o_p_duration = gpu_performance_model_cache_.Get(*operand, *producer);
+  diff_t.time_fused -= *o_p_duration;
+  EXPECT_EQ(absl::ToInt64Microseconds(new_t.time_unfused - new_t.time_fused),
+            absl::ToInt64Microseconds(diff_t.time_unfused - diff_t.time_fused));
 }
 
 }  // namespace

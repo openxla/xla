@@ -109,6 +109,15 @@ std::optional<absl::Duration> GpuPerformanceModelCache::Get(
   return std::nullopt;
 }
 
+std::optional<absl::flat_hash_map<const HloInstruction*, absl::Duration>>
+GpuPerformanceModelCache::GetAll(const HloInstruction& producer) {
+  auto it = fusion_runtime_data_.find(&producer);
+  if (it != fusion_runtime_data_.end()) {
+    return it->second;
+  }
+  return std::nullopt;
+}
+
 void GpuPerformanceModelCache::Set(const HloInstruction& instruction,
                                    const EstimateRunTimeData& runtime_data) {
   instruction_runtime_data_[&instruction] = runtime_data;

@@ -67,7 +67,8 @@ class GpuPerformanceModelCache {
   std::optional<EstimateRunTimeData> Get(const HloInstruction& instruction);
   std::optional<absl::Duration> Get(const HloInstruction& producer,
                                     const HloInstruction& consumer);
-
+  std::optional<absl::flat_hash_map<const HloInstruction*, absl::Duration>>
+  GetAll(const HloInstruction& producer);
   // Sets cache value for the instruction or producer-consumer pair.
   void Set(const HloInstruction& instruction,
            const EstimateRunTimeData& runtime_data);
