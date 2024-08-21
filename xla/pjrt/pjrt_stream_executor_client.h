@@ -482,6 +482,7 @@ class PjRtStreamExecutorClient : public PjRtClient {
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> CompileInternal(
       const XlaComputation& computation,
       const std::vector<const Shape*>& argument_layout_pointers,
+      LayoutCanonicalizationCallback layout_canonicalization_callback,
       CompileOptions options);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> BufferFromHostBufferInternal(

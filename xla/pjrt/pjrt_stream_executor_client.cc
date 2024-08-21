@@ -3420,9 +3420,7 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
     return std::make_pair(*argument_layouts, result_layout);
   };
 
-  if (build_options.layout_canonicalization_callback() == nullptr) {
-    build_options.set_layout_canonicalization_callback(layout_callback);
-  }
+  build_options.set_layout_canonicalization_callback(layout_callback);
 
   int num_replicas;
   int num_partitions;
@@ -3473,6 +3471,7 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::CompileInternal(
     const XlaComputation& computation,
     const std::vector<const Shape*>& argument_layout_pointers,
+    LayoutCanonicalizationCallback layout_canonicalization_callback,
     CompileOptions options) {
   tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Compile");
   VLOG(1) << "PjRtStreamExecutorClient::Compile";
@@ -3492,16 +3491,19 @@ PjRtStreamExecutorClient::CompileInternal(
       addressable_device_logical_ids = extras.addressable_device_logical_ids;
   std::vector<PjRtDevice*>& addressable_devices = extras.addressable_devices;
 
+  // It is important to set the canonicalization callback after creating
+  // a copy of the options so that the executable's options remain without
+  // the callback - the callback would break the executable's serializability.
+  if (layout_canonicalization_callback) {
+    options.executable_build_options.set_layout_canonicalization_callback(
+        layout_canonicalization_callback);
+  }
+
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<LocalExecutable>> local_executables,
       client()->Compile(computation, argument_layout_pointers,
                         options.executable_build_options));
 
-  // Make sure that the options that are embedded in the executable
-  // do not have the layout canonicalization callback set
-  // (the executable's options must be serializable).
-  input_options.executable_build_options.set_layout_canonicalization_callback(
-      nullptr);
   auto executable = std::make_unique<PjRtStreamExecutorLoadedExecutable>(
       std::move(local_executables), options.parameter_is_tupled_arguments,
       std::move(device_assignment), std::move(input_options),
@@ -3517,7 +3519,8 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
                                   CompileOptions options) {
   XlaComputation xla_computation;
-  ExecutableBuildOptions& exec_build_options = options.executable_build_options;
+  const ExecutableBuildOptions& exec_build_options =
+      options.executable_build_options;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,
       /*use_tuple_args=*/options.parameter_is_tupled_arguments,
@@ -3555,7 +3558,6 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
               ->ChooseCompactLayoutForShape(shape);
         });
   };
-  exec_build_options.set_layout_canonicalization_callback(layout_callback);
 
   // This call will update result_layout in options.executable_build_options.
   TF_ASSIGN_OR_RETURN(auto arg_layouts_and_pointers,
@@ -3571,7 +3573,7 @@ PjRtStreamExecutorClient::Compile(mlir::ModuleOp module,
                           options.executable_build_options));
 
   return CompileInternal(xla_computation, arg_layouts_and_pointers.second,
-                         options);
+                         layout_callback, options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -3587,7 +3589,9 @@ PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
       },
       options.argument_layouts, &options.executable_build_options,
       &argument_layout_pointers));
-  return CompileInternal(computation, argument_layout_pointers, options);
+  return CompileInternal(computation, argument_layout_pointers,
+                         /* layout_canonicalization_callback = */ nullptr,
+                         options);
 }
 
 absl::StatusOr<std::string> PjRtStreamExecutorClient::SerializeExecutable(
