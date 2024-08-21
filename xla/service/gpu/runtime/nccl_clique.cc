@@ -221,7 +221,7 @@ static void NcclCliqueHeartBeatMonitorThread(
     absl::SleepFor(absl::Seconds(30));
     for (auto& event : async_events_queue) {
       auto start_timestamp = absl::Now();
-      while (async_events_queue.size() > 0 &&
+      while (!async_events_queue.empty() &&
              event->PollForStatus() == se::Event::Status::kPending) {
         if ((absl::Now() - start_timestamp) > WarnStuckTimeout()) {
           LOG(ERROR) << "Nccl heart beat monitor detected an async event "
@@ -596,10 +596,9 @@ absl::Status NcclCliqueCommunicators::AsyncErrorChecker::Check(
     const absl::Status& current_executable_status) {
   absl::Status status = absl::OkStatus();
   if (!current_executable_status.ok()) {
-    communicators_.ForEachComm(
-        [&status](int32_t rank, NcclApi::NcclCommHandle comm) {
-          TF_RETURN_IF_ERROR(NcclApi::Default()->CommAbort(comm));
-        });
+    communicators_.ForEachComm([](int32_t rank, NcclApi::NcclCommHandle comm) {
+      absl::Status abort_status = NcclApi::Default()->CommAbort(comm);
+    });
     return current_executable_status;
   }
   communicators_.ForEachComm([&status](int32_t rank,

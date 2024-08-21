@@ -596,11 +596,13 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   // TODO(b/30100571): we could potentially postpone deallocating the temp
   // buffers until a different computation is executed.
   if (stream_to_sync) {
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     while (!se::gpu::AsGpuStream(stream_to_sync)->IsIdle()) {
       if (!async_status.ok()) {
         return async_status;
       }
     }
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     absl::Status block_status = stream_to_sync->BlockHostUntilDone();
     if (!block_status.ok()) {
       return Internal(
