@@ -2271,7 +2271,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -2287,6 +2286,10 @@ xla_test(
         "//xla:error_spec",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
