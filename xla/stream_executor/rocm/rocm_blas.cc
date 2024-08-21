@@ -366,7 +366,10 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
                  << ": " << ToString(ret);
     }
   }
-#if TF_ROCM_VERSION >= 60000
+#if 0
+// pemeliya: the feature is disabled since rocblas does not perform well under
+// graph capture. rocblas_set_workspace seems to use blocking memory functions
+// like hipFree/hipMalloc which result in HIP_ERROR_StreamCaptureUnsupported 
   {
     auto *workspace = GetWorkspace();
     auto *wptr = workspace != nullptr ? workspace->opaque() : nullptr;
