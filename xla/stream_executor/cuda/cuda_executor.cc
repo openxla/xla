@@ -486,7 +486,12 @@ DeviceMemoryBase GpuExecutor::Allocate(uint64_t size, int64_t memory_space) {
 }
 
 void GpuExecutor::Deallocate(DeviceMemoryBase* mem) {
-  TF_ASSIGN_OR_RETURN(auto memory_space, GetPointerMemorySpace(mem->opaque()));
+  auto status_or_memory_space = GetPointerMemorySpace(mem->opaque());
+  if (!status_or_memory_space.ok()) {
+    LOG(ERROR) << status_or_memory_space.status();
+    return;
+  }
+  auto memory_space = status_or_memory_space.value();
   if (memory_space == MemoryType::kHost) {
     GpuDriver::HostDeallocate(context_, mem->opaque());
   } else {
