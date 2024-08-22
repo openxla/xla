@@ -229,25 +229,16 @@ CUDABlas::~CUDABlas() {
 }
 
 bool CUDABlas::SetStream(Stream *stream) {
-  CHECK(stream != nullptr);
-  CHECK(AsGpuStreamValue(stream) != nullptr);
   CHECK(blas_ != nullptr);
   gpu::ScopedActivateContext sac{parent_};
 
-  cublasStatus_t ret = cublasSetStream(blas_, AsGpuStreamValue(stream));
-  if (ret != CUBLAS_STATUS_SUCCESS) {
+  GpuStreamHandle handle = (stream != nullptr) ? AsGpuStreamValue(stream) : 0;
+  if (auto ret = cublasSetStream(blas_, handle); 
+      ret != CUBLAS_STATUS_SUCCESS) {
     LOG(ERROR) << "failed to set stream for cuBLAS calls: " << ToString(ret);
     return false;
   }
-
   return true;
-}
-
-cudaStream_t CUDABlas::CUDAStream(Stream *stream) {
-  CHECK(stream != nullptr);
-  CHECK(AsGpuStreamValue(stream) != nullptr);
-  gpu::ScopedActivateContext sac{parent_};
-  return AsGpuStreamValue(stream);
 }
 
 namespace {
