@@ -353,10 +353,10 @@ class PriorityFusionQueue {
     fusion_info_cache_.Invalidate(instruction);
   }
 
-  void UpdateRuntimes(GpuPerformanceModel::RunTimes& runtimes,
-                      const HloInstruction* consumer,
-                      const absl::flat_hash_map<const HloInstruction*,
-                                          absl::Duration>& original_consumers) {
+  void UpdateRuntimes(
+      GpuPerformanceModel::RunTimes& runtimes, const HloInstruction* consumer,
+      const absl::flat_hash_map<const HloInstruction*, absl::Duration>&
+          original_consumers) {
     auto it = original_consumers.find(consumer);
     if (it != original_consumers.end()) {
       runtimes.time_fused += it->second;
@@ -381,7 +381,8 @@ class PriorityFusionQueue {
         // bitcast/constant have priority calculated but not in the cache
         continue;
       }
-      auto original_consumers = gpu_performance_model_cache_.GetAllConsumers(*operand);
+      auto original_consumers =
+          gpu_performance_model_cache_.GetAllConsumers(*operand);
       GpuPerformanceModel::RunTimes runtimes;
       for (auto consumer : current_consumers()) {
         UpdateRuntimes(runtimes, consumer, original_consumers);
@@ -389,7 +390,7 @@ class PriorityFusionQueue {
       UpdateRuntimes(runtimes, current_producer(), original_consumers);
       auto operand_cache_result = gpu_performance_model_cache_.Get(*operand);
       runtimes.time_unfused += (*operand_cache_result).exec_time +
-                                GpuPerformanceModel::kKernelLaunchOverhead;
+                               GpuPerformanceModel::kKernelLaunchOverhead;
       operands_to_removed_consumers_runtimes.emplace(operand, runtimes);
     }
   }
