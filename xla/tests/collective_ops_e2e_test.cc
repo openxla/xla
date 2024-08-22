@@ -1325,7 +1325,6 @@ ENTRY test_computation {
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   auto opts = GetDebugOptionsForTest();
-  opts.set_xla_gpu_nccl_termination_timeout_seconds(5);
   config.set_debug_options(opts);
   config.set_num_partitions(kNumPartitions);
   TF_ASSERT_OK_AND_ASSIGN(

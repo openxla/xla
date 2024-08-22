@@ -599,6 +599,9 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     while (!se::gpu::AsGpuStream(stream_to_sync)->IsIdle()) {
       if (!async_status.ok()) {
+        // NCCL error has occurred, allow some time for NCCL
+        // to completely tear down before exiting the executable.
+        absl::SleepFor(absl::Seconds(15));
         return async_status;
       }
     }
