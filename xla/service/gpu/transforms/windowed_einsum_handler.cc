@@ -58,6 +58,7 @@ namespace m = match;
 // into
 //
 //   inputs --> while loop {dequant --> collective-permute/dot/etc}.
+// Returns whether the input computation has been changed.
 absl::StatusOr<bool> ShiftDequantizationF8(HloComputation* while_body) {
   HloInstruction* while_instr = while_body->WhileCallInstruction();
   // The input of the while loop will be modified and must have no other users.
@@ -285,10 +286,8 @@ absl::Status UpdateDotAndConsumerConfig(HloInstruction* dot,
   HloInstruction* updater = dot->users()[0];
   auto updater_gpu_config = updater->backend_config<gpu::GpuBackendConfig>();
   dot_gpu_config->set_operation_queue_id(stream_id);
-  const absl::flat_hash_set<int64_t> op_queue_id_set(
-      updater_gpu_config->wait_on_operation_queues().begin(),
-      updater_gpu_config->wait_on_operation_queues().end());
-  if (op_queue_id_set.find(stream_id) == op_queue_id_set.end()) {
+  if (!absl::c_linear_search(updater_gpu_config->wait_on_operation_queues(),
+                             stream_id)) {
     updater_gpu_config->mutable_wait_on_operation_queues()->Add(stream_id);
   }
 
@@ -305,37 +304,6 @@ absl::Status SetForceDelayForInstruction(HloInstruction* instr,
 
   TF_RETURN_IF_ERROR(instr->set_backend_config(gpu_config.value()));
   return absl::OkStatus();
-}
-
-absl::StatusOr<bool> HandleRsWindowedEinsumLoop(HloComputation* comp) {
-  bool changed = false;
-  // If we have a einsum loop with only 1 dot, this means either
-  // the loop is not unrolled or only 1 partition is available.
-  // It's a no-op in either case.
-  if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
-    return changed;
-  }
-  // If present, move the dequantization of FP8 operands of the dot into the
-  // while loop to allow e.g. gemm_rewriter.cc to fuse the dequantization and
-  // dot into an FP8 GEMM.
-  TF_ASSIGN_OR_RETURN(changed, ShiftDequantizationF8(comp));
-  return changed;
-}
-
-absl::StatusOr<bool> HandleAgWindowedEinsumLoop(HloComputation* comp) {
-  bool changed = false;
-  // If we have a einsum loop with only 1 dot, this means either
-  // the loop is not unrolled or only 1 partition is available.
-  // It's a no-op in either case.
-  if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
-    return changed;
-  }
-  // If present, move the dequantization of FP8 operands of the dot into the
-  // while loop to allow e.g. gemm_rewriter.cc to fuse the dequantization and
-  // dot into an FP8 GEMM.
-  TF_ASSIGN_OR_RETURN(changed, ShiftDequantizationF8(comp));
-
-  return changed;
 }
 
 static int64_t GetAgActivationCacheIndex(const HloInstruction* while_loop) {
@@ -1157,16 +1125,22 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
   std::vector<HloInstruction*> all_windowed_einsum_loops;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
-    if (comp->name().find(kWindowedEinsumRsLoopName) == 0) {
+    // If we have a einsum loop with less than 1 dot, it's not
+    // a loop of interest.
+    if (NumberOfInstructionsInComp(comp, HloOpcode::kDot) <= 1) {
+      continue;
+    }
+    if (comp->name().find(kWindowedEinsumRsLoopName) == 0 ||
+        comp->name().find(kWindowedEinsumAgLoopName) == 0) {
       VLOG(5) << "Processing computation: " << comp->name();
-      TF_ASSIGN_OR_RETURN(bool comp_result, HandleRsWindowedEinsumLoop(comp));
-      changed = comp_result;
-      all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
-    } else if (comp->name().find(kWindowedEinsumAgLoopName) == 0) {
-      VLOG(5) << "Processing computation: " << comp->name();
-      TF_ASSIGN_OR_RETURN(changed, HandleAgWindowedEinsumLoop(comp));
-      all_ag_loops_.push_back(
-          WindowedEinsumAgLoops(comp->WhileCallInstruction()));
+      // If present, move the dequantization of FP8 operands of the dot into the
+      // while loop to allow e.g. gemm_rewriter.cc to fuse the dequantization
+      // and dot into an FP8 GEMM.
+      TF_ASSIGN_OR_RETURN(changed, ShiftDequantizationF8(comp));
+      if (comp->name().find(kWindowedEinsumAgLoopName) == 0) {
+        all_ag_loops_.push_back(
+            WindowedEinsumAgLoops(comp->WhileCallInstruction()));
+      }
       all_windowed_einsum_loops.push_back(comp->WhileCallInstruction());
     }
   }
@@ -1179,6 +1153,11 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
   }
 
   if (all_windowed_einsum_loops.size() > 0) {
+    // This is to prepare the module for unrolling, WhileLoopUnroller
+    // looks for the iterator by matching specific patterns which expect
+    // AlgebraicSimplifier and HloConstantFolding to be applied.
+    // Since we get the loop directly from SPMD patitioner, the iterator
+    // pattern doesnt' confirm with what unroller expects.
     TF_ASSIGN_OR_RETURN(bool applied_algsimp,
                         AlgebraicSimplifier(AlgebraicSimplifierOptions())
                             .Run(module, execution_threads));
@@ -1193,6 +1172,15 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
     std::string original_cond_name =
         std::string(loop->while_condition()->name());
 
+    // We fully unroll the loop here to maximize overlap.
+    // Without unrolling, each iteration will end with a DUS and gemm,
+    // the gemm will not overlap with anything which means wave quantization
+    // overhead is fully exposed.
+    // With unrolling, all gemms and DUSes can overlap with each other together
+    // with collectives.
+    // We also need to keep the unrolled instructions in an isolated computation
+    // unit such as a trivial loop so instructions here won't be fused with
+    // other instructions later to disrupt the gemm-gemm overlap.
     TF_ASSIGN_OR_RETURN(
         UnrollResult result,
         WhileLoopUnroller::UnrollAndReturnReplacement(
@@ -1208,7 +1196,7 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
       // To prevent it from being inlined by while loop simplifier,
       // we add this attribute to it.
       xla::FrontendAttributes attributes;
-      (*attributes.mutable_map())["skip-simplify-while-loops/trip-count-one"] =
+      (*attributes.mutable_map())["skip-simplify-while-loops_trip-count-one"] =
           "true";
       result.new_while_op->add_frontend_attributes(attributes);
       TF_RETURN_IF_ERROR(

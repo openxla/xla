@@ -46,8 +46,9 @@ struct WhileLoopConfig {
 struct UnrollResult {
   // Whether it's unrolled.
   bool unrolled = false;
-  // New unrolled while op that replaced the old one.
-  // For non-trivially wrapped case, this would be nullptr.
+  // If the while-loop has been unrolled and replaced with a new unrolled
+  // while-loop with a trip count of 1, this is the new while-loop.
+  // Otherwise this is nullptr.
   HloInstruction* new_while_op = nullptr;
 };
 
