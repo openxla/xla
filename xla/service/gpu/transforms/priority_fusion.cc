@@ -355,7 +355,7 @@ class PriorityFusionQueue {
 
   void UpdateRuntimes(GpuPerformanceModel::RunTimes& runtimes,
                       const HloInstruction* consumer,
-                      absl::flat_hash_map<const HloInstruction*,
+                      const absl::flat_hash_map<const HloInstruction*,
                                           absl::Duration>& original_consumers) {
     auto it = original_consumers.find(consumer);
     if (it != original_consumers.end()) {
@@ -371,27 +371,26 @@ class PriorityFusionQueue {
     for (auto pair : operands_to_new_consumers_) {
       auto operand = pair.first;
       auto reverse_it = reverse_map_.find(operand);
-      if (reverse_it != reverse_map_.end()) {
-        // this operand has been calculated priority before, we can do
-        // incremental update
-        // get all of this operand's original consumers
-        auto cache_result = gpu_performance_model_cache_.GetAll(*operand);
-        if (!cache_result.has_value()) {
-          // bitcast/constant have priority calculated but not in the cache
-          continue;
-        }
-        absl::flat_hash_map<const HloInstruction*, absl::Duration>&
-            original_consumers = *cache_result;
-        GpuPerformanceModel::RunTimes runtimes;
-        for (auto consumer : current_consumers()) {
-          UpdateRuntimes(runtimes, consumer, original_consumers);
-        }
-        UpdateRuntimes(runtimes, current_producer(), original_consumers);
-        auto operand_cache_result = gpu_performance_model_cache_.Get(*operand);
-        runtimes.time_unfused += (*operand_cache_result).exec_time +
-                                 GpuPerformanceModel::kKernelLaunchOverhead;
-        operands_to_removed_consumers_runtimes.emplace(operand, runtimes);
+      if (reverse_it == reverse_map_.end()) {
+        continue;
       }
+      // this operand has been calculated priority before, we can do
+      // incremental update
+      // get all of this operand's original consumers
+      if (!gpu_performance_model_cache_.Contains(*operand)) {
+        // bitcast/constant have priority calculated but not in the cache
+        continue;
+      }
+      auto original_consumers = gpu_performance_model_cache_.GetAllConsumers(*operand);
+      GpuPerformanceModel::RunTimes runtimes;
+      for (auto consumer : current_consumers()) {
+        UpdateRuntimes(runtimes, consumer, original_consumers);
+      }
+      UpdateRuntimes(runtimes, current_producer(), original_consumers);
+      auto operand_cache_result = gpu_performance_model_cache_.Get(*operand);
+      runtimes.time_unfused += (*operand_cache_result).exec_time +
+                                GpuPerformanceModel::kKernelLaunchOverhead;
+      operands_to_removed_consumers_runtimes.emplace(operand, runtimes);
     }
   }
 
@@ -441,13 +440,7 @@ class PriorityFusionQueue {
       to_update_priority_.insert(operand);
       // update the consumers of this operand that we care about,
       // so we can do incremental update of the operand
-      auto it = operands_to_new_consumers_.find(operand);
-      if (it != operands_to_new_consumers_.end()) {
-        it->second.push_back(fusion);
-      } else {
-        operands_to_new_consumers_.emplace(
-            operand, std::vector<HloInstruction*>{fusion});
-      }
+      operands_to_new_consumers_[operand].push_back(fusion);
     }
     to_update_priority_.insert(fusion);
   }
@@ -514,10 +507,10 @@ class PriorityFusionQueue {
         operands_to_removed_consumers_runtimes.find(producer);
     bool is_incremental_update = removed_consumers_runtime_it !=
                                  operands_to_removed_consumers_runtimes.end();
-    std::vector<HloInstruction*> fused_consumers =
+    absl::Span<HloInstruction* const> fused_consumers =
         is_incremental_update
             ? operands_to_new_consumers_.find(producer)->second
-            : producer->users();
+            : absl::Span<HloInstruction* const>(producer->users());
     GpuPerformanceModel::RunTimes run_times =
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, *device_info_, &cost_analysis_,
@@ -527,7 +520,7 @@ class PriorityFusionQueue {
     Priority current_priority;
     if (is_incremental_update) {
       // subtract the runtimes of removed consumers
-      GpuPerformanceModel::RunTimes removed_consumers_runtime =
+      const GpuPerformanceModel::RunTimes& removed_consumers_runtime =
           removed_consumers_runtime_it->second;
       run_times.time_unfused -= removed_consumers_runtime.time_unfused;
       run_times.time_fused -= removed_consumers_runtime.time_fused;
