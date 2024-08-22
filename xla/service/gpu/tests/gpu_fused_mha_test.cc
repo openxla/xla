@@ -1108,90 +1108,117 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
   const std::string  // NOLINT
   GetModuleFlash_Attention_Training_BMM1_SlidingWindowMask_As_Bias_Softmax_BMM2_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
-    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
+  HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
 
-    region_0.30 {
-      Arg_0.31 = bf16[] parameter(0)
-      Arg_1.32 = bf16[] parameter(1)
-      ROOT maximum = bf16[] maximum(Arg_0.31, Arg_1.32)
-    }
+  region_0.30 {
+    Arg_0.31 = bf16[] parameter(0)
+    Arg_1.32 = bf16[] parameter(1)
+    ROOT maximum.33 = bf16[] maximum(Arg_0.31, Arg_1.32)
+  }
 
-    region_1.43 {
-      Arg_0.44 = f32[] parameter(0)
-      Arg_1.45 = f32[] parameter(1)
-      ROOT add.1 = f32[] add(Arg_0.44, Arg_1.45)
-    }
+  region_1.43 {
+    Arg_0.44 = f32[] parameter(0)
+    Arg_1.45 = f32[] parameter(1)
+    ROOT add.46 = f32[] add(Arg_0.44, Arg_1.45)
+  }
 
-    region_2.72 {
-      Arg_0.73 = bf16[] parameter(0)
-      Arg_1.74 = bf16[] parameter(1)
-      ROOT add.2 = bf16[] add(Arg_0.73, Arg_1.74)
-    }
+  integer_pow.54 {
+    constant.56 = bf16[] constant(1)
+    broadcast.57 = bf16[4,4,1024,1]{3,2,1,0} broadcast(constant.56), dimensions={}
+    Arg_0.55 = bf16[4,4,1024,1]{3,2,1,0} parameter(0)
+    multiply.58 = bf16[4,4,1024,1]{3,2,1,0} multiply(Arg_0.55, Arg_0.55)
+    ROOT divide.59 = bf16[4,4,1024,1]{3,2,1,0} divide(broadcast.57, multiply.58)
+  }
 
-    ENTRY main.98 {
-      Arg_2.3 = bf16[4,1024,4,64]{3,2,1,0} parameter(2)
-      transpose.12 = bf16[4,4,64,1024]{3,2,1,0} transpose(Arg_2.3), dimensions={0,2,3,1}
-      Arg_0.1 = bf16[4,1024,4,64]{3,2,1,0} parameter(0)
-      transpose.13 = bf16[4,4,1024,64]{3,2,1,0} transpose(Arg_0.1), dimensions={0,2,1,3}
-      Arg_1.2 = bf16[4,1024,4,64]{3,2,1,0} parameter(1)
-      transpose.15 = bf16[4,4,64,1024]{3,2,1,0} transpose(Arg_1.2), dimensions={0,2,3,1}
-      dot = bf16[4,4,1024,1024]{3,2,1,0} dot(transpose.13, transpose.15), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-      iota.2 = s32[1024,1024]{1,0} iota(), iota_dimension=0
-      iota.3 = s32[1024,1024]{1,0} iota(), iota_dimension=1
-      compare = pred[1024,1024]{1,0} compare(iota.2, iota.3), direction=LT
-      iota.4 = s32[1024]{0} iota(), iota_dimension=0
-      constant.2 = s32[] constant(-64)
-      broadcast.17 = s32[1024]{0} broadcast(constant.2), dimensions={}
-      add.3 = s32[1024]{0} add(iota.4, broadcast.17)
-      broadcast.19 = s32[1024,1024]{1,0} broadcast(add.3), dimensions={0}
-      compare.1 = pred[1024,1024]{1,0} compare(iota.3, broadcast.19), direction=LE
-      or = pred[1024,1024]{1,0} or(compare, compare.1)
-      constant.7 = bf16[] constant(-2.199e+12)
-      broadcast.20 = bf16[1024,1024]{1,0} broadcast(constant.7), dimensions={}
-      constant.11 = bf16[] constant(0)
-      broadcast.21 = bf16[1024,1024]{1,0} broadcast(constant.11), dimensions={}
-      select.1 = bf16[1024,1024]{1,0} select(or, broadcast.20, broadcast.21)
-      broadcast.22 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(select.1), dimensions={2,3}
-      add.4 = bf16[4,4,1024,1024]{3,2,1,0} add(dot, broadcast.22)
-      constant.13 = bf16[] constant(-inf)
-      reduce.34 = bf16[4,4,1024]{2,1,0} reduce(add.4, constant.13), dimensions={3}, to_apply=region_0.30
-      broadcast.23 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reduce.34), dimensions={0,1,2}
-      subtract.1 = bf16[4,4,1024,1024]{3,2,1,0} subtract(add.4, broadcast.23)
-      exponential = bf16[4,4,1024,1024]{3,2,1,0} exponential(subtract.1)
-      convert.5 = f32[4,4,1024,1024]{3,2,1,0} convert(exponential)
-      constant.12 = f32[] constant(0)
-      reduce.47 = f32[4,4,1024]{2,1,0} reduce(convert.5, constant.12), dimensions={3}, to_apply=region_1.43
-      convert.6 = bf16[4,4,1024]{2,1,0} convert(reduce.47)
-      broadcast.24 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(convert.6), dimensions={0,1,2}
-      divide.2 = bf16[4,4,1024,1024]{3,2,1,0} divide(exponential, broadcast.24)
-      dot.1 = bf16[4,4,64,1024]{3,2,1,0} dot(transpose.12, divide.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
-      transpose.22 = bf16[4,1024,4,64]{3,2,1,0} transpose(dot.1), dimensions={0,3,1,2}
-      Arg_3.4 = bf16[4,1024,4,64]{3,2,1,0} parameter(3)
-      transpose.17 = bf16[4,4,1024,64]{3,2,1,0} transpose(Arg_3.4), dimensions={0,2,1,3}
-      dot.2 = bf16[4,4,1024,1024]{3,2,1,0} dot(transpose.17, transpose.12), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-      divide.3 = bf16[4,4,1024,1024]{3,2,1,0} divide(dot.2, broadcast.24)
-      constant.0 = bf16[] constant(1)
-      broadcast.25 = bf16[4,4,1024]{2,1,0} broadcast(constant.0), dimensions={}
-      multiply.2 = bf16[4,4,1024]{2,1,0} multiply(convert.6, convert.6)
-      divide.4 = bf16[4,4,1024]{2,1,0} divide(broadcast.25, multiply.2)
-      broadcast.27 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(divide.4), dimensions={0,1,2}
-      multiply.3 = bf16[4,4,1024,1024]{3,2,1,0} multiply(dot.2, broadcast.27)
-      multiply.4 = bf16[4,4,1024,1024]{3,2,1,0} multiply(multiply.3, exponential)
-      reduce.76 = bf16[4,4,1024]{2,1,0} reduce(multiply.4, constant.11), dimensions={3}, to_apply=region_2.72
-      negate.2 = bf16[4,4,1024]{2,1,0} negate(reduce.76)
-      broadcast.29 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(negate.2), dimensions={0,1,2}
-      add.5 = bf16[4,4,1024,1024]{3,2,1,0} add(divide.3, broadcast.29)
-      multiply.5 = bf16[4,4,1024,1024]{3,2,1,0} multiply(add.5, exponential)
-      transpose.18 = bf16[4,4,1024,64]{3,2,1,0} transpose(Arg_1.2), dimensions={0,2,1,3}
-      dot.4 = bf16[4,4,1024,64]{3,2,1,0} dot(multiply.5, transpose.18), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-      transpose.23 = bf16[4,1024,4,64]{3,2,1,0} transpose(dot.4), dimensions={0,2,1,3}
-      dot.3 = bf16[4,4,1024,64]{3,2,1,0} dot(multiply.5, transpose.13), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-      transpose.24 = bf16[4,1024,4,64]{3,2,1,0} transpose(dot.3), dimensions={0,2,1,3}
-      transpose.20 = bf16[4,4,64,1024]{3,2,1,0} transpose(Arg_3.4), dimensions={0,2,3,1}
-      dot.65 = bf16[4,4,64,1024]{3,2,1,0} dot(transpose.20, divide.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-      transpose.25 = bf16[4,1024,4,64]{3,2,1,0} transpose(dot.65), dimensions={0,3,1,2}
-      ROOT tuple = (bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}) tuple(transpose.22, transpose.23, transpose.24, transpose.25)
-    } // main.98
+  region_2.72 {
+    Arg_0.73 = bf16[] parameter(0)
+    Arg_1.74 = bf16[] parameter(1)
+    ROOT add.75 = bf16[] add(Arg_0.73, Arg_1.74)
+  }
+
+  region_3.84 {
+    Arg_0.85 = f32[] parameter(0)
+    Arg_1.86 = f32[] parameter(1)
+    ROOT add.87 = f32[] add(Arg_0.85, Arg_1.86)
+  }
+
+  ENTRY main.98 {
+    Arg_2.3 = bf16[4,1024,4,64]{3,2,1,0} parameter(2)
+    Arg_0.1 = bf16[4,1024,4,64]{3,2,1,0} parameter(0)
+    Arg_1.2 = bf16[4,1024,4,64]{3,2,1,0} parameter(1)
+    dot.14 = bf16[4,4,1024,1024]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,2}, lhs_contracting_dims={3}, rhs_batch_dims={0,2}, rhs_contracting_dims={3}
+    iota.17 = s32[1024]{0} iota(), iota_dimension=0
+    broadcast.18 = s32[1024,1024]{1,0} broadcast(iota.17), dimensions={0}
+    iota.15 = s32[1024]{0} iota(), iota_dimension=0
+    broadcast.16 = s32[1024,1024]{1,0} broadcast(iota.15), dimensions={1}
+    compare.19 = pred[1024,1024]{1,0} compare(broadcast.18, broadcast.16), direction=LT
+    constant.9 = s32[] constant(64)
+    broadcast.10 = s32[1024,1024]{1,0} broadcast(constant.9), dimensions={}
+    subtract.20 = s32[1024,1024]{1,0} subtract(broadcast.18, broadcast.10)
+    compare.21 = pred[1024,1024]{1,0} compare(broadcast.16, subtract.20), direction=LE
+    or.22 = pred[1024,1024]{1,0} or(compare.19, compare.21)
+    convert.23 = bf16[1024,1024]{1,0} convert(or.22)
+    constant.7 = bf16[] constant(-2.199e+12)
+    broadcast.8 = bf16[1024,1024]{1,0} broadcast(constant.7), dimensions={}
+    multiply.24 = bf16[1024,1024]{1,0} multiply(convert.23, broadcast.8)
+    reshape.25 = bf16[1,1,1024,1024]{3,2,1,0} reshape(multiply.24)
+    broadcast.26 = bf16[1,1,1024,1024]{3,2,1,0} broadcast(reshape.25), dimensions={0,1,2,3}
+    reshape.27 = bf16[1024,1024]{1,0} reshape(broadcast.26)
+    broadcast.28 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reshape.27), dimensions={2,3}
+    add.29 = bf16[4,4,1024,1024]{3,2,1,0} add(dot.14, broadcast.28)
+    constant.13 = bf16[] constant(-inf)
+    reduce.34 = bf16[4,4,1024]{2,1,0} reduce(add.29, constant.13), dimensions={3}, to_apply=region_0.30
+    constant.5 = bf16[] constant(-inf)
+    broadcast.6 = bf16[4,4,1024]{2,1,0} broadcast(constant.5), dimensions={}
+    maximum.35 = bf16[4,4,1024]{2,1,0} maximum(reduce.34, broadcast.6)
+    reshape.36 = bf16[4,4,1024,1]{3,2,1,0} reshape(maximum.35)
+    broadcast.37 = bf16[4,4,1024,1]{3,2,1,0} broadcast(reshape.36), dimensions={0,1,2,3}
+    reshape.38 = bf16[4,4,1024]{2,1,0} reshape(broadcast.37)
+    broadcast.39 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reshape.38), dimensions={0,1,2}
+    subtract.40 = bf16[4,4,1024,1024]{3,2,1,0} subtract(add.29, broadcast.39)
+    exponential.41 = bf16[4,4,1024,1024]{3,2,1,0} exponential(subtract.40)
+    convert.42 = f32[4,4,1024,1024]{3,2,1,0} convert(exponential.41)
+    constant.12 = f32[] constant(0)
+    reduce.47 = f32[4,4,1024]{2,1,0} reduce(convert.42, constant.12), dimensions={3}, to_apply=region_1.43
+    reshape.48 = f32[4,4,1024,1]{3,2,1,0} reshape(reduce.47)
+    convert.49 = bf16[4,4,1024,1]{3,2,1,0} convert(reshape.48)
+    broadcast.50 = bf16[4,4,1024,1]{3,2,1,0} broadcast(convert.49), dimensions={0,1,2,3}
+    reshape.51 = bf16[4,4,1024]{2,1,0} reshape(broadcast.50)
+    broadcast.52 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reshape.51), dimensions={0,1,2}
+    divide.53 = bf16[4,4,1024,1024]{3,2,1,0} divide(exponential.41, broadcast.52)
+    dot.61 = bf16[4,4,64,1024]{3,2,1,0} dot(Arg_2.3, divide.53), lhs_batch_dims={0,2}, lhs_contracting_dims={1}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}
+    transpose.62 = bf16[4,1024,4,64]{1,3,2,0} transpose(dot.61), dimensions={0,3,1,2}
+    Arg_3.4 = bf16[4,1024,4,64]{3,2,1,0} parameter(3)
+    transpose.63 = bf16[4,4,64,1024]{2,1,3,0} transpose(Arg_3.4), dimensions={0,2,3,1}
+    dot.64 = bf16[4,4,1024,1024]{3,2,1,0} dot(transpose.63, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,2}, rhs_contracting_dims={3}
+    broadcast.79 = bf16[4,4,1024,1]{3,2,1,0} broadcast(convert.49), dimensions={0,1,2,3}
+    reshape.80 = bf16[4,4,1024]{2,1,0} reshape(broadcast.79)
+    broadcast.81 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reshape.80), dimensions={0,1,2}
+    divide.82 = bf16[4,4,1024,1024]{3,2,1,0} divide(dot.64, broadcast.81)
+    call.60 = bf16[4,4,1024,1]{3,2,1,0} call(convert.49), to_apply=integer_pow.54
+    broadcast.67 = bf16[4,4,1024,1]{3,2,1,0} broadcast(call.60), dimensions={0,1,2,3}
+    reshape.68 = bf16[4,4,1024]{2,1,0} reshape(broadcast.67)
+    broadcast.69 = bf16[4,4,1024,1024]{3,2,1,0} broadcast(reshape.68), dimensions={0,1,2}
+    multiply.70 = bf16[4,4,1024,1024]{3,2,1,0} multiply(dot.64, broadcast.69)
+    multiply.71 = bf16[4,4,1024,1024]{3,2,1,0} multiply(multiply.70, exponential.41)
+    constant.11 = bf16[] constant(0)
+    reduce.76 = bf16[4,4,1024]{2,1,0} reduce(multiply.71, constant.11), dimensions={3}, to_apply=region_2.72
+    reshape.77 = bf16[4,4,1024,1]{3,2,1,0} reshape(reduce.76)
+    negate.78 = bf16[4,4,1024,1]{3,2,1,0} negate(reshape.77)
+    convert.83 = f32[4,4,1024,1]{3,2,1,0} convert(negate.78)
+    reduce.88 = f32[4,4,1024]{2,1,0} reduce(convert.83, constant.12), dimensions={3}, to_apply=region_3.84
+    broadcast.89 = f32[4,4,1024,1024]{3,2,1,0} broadcast(reduce.88), dimensions={0,1,2}
+    convert.90 = bf16[4,4,1024,1024]{3,2,1,0} convert(broadcast.89)
+    add.91 = bf16[4,4,1024,1024]{3,2,1,0} add(divide.82, convert.90)
+    multiply.92 = bf16[4,4,1024,1024]{3,2,1,0} multiply(add.91, exponential.41)
+    dot.95 = bf16[4,4,1024,64]{3,2,1,0} dot(multiply.92, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,2}, rhs_contracting_dims={1}
+    transpose.96 = bf16[4,1024,4,64]{3,1,2,0} transpose(dot.95), dimensions={0,2,1,3}
+    dot.93 = bf16[4,4,1024,64]{3,2,1,0} dot(multiply.92, Arg_0.1), lhs_batch_dims={0,1}, lhs_contracting_dims={2}, rhs_batch_dims={0,2}, rhs_contracting_dims={1}
+    transpose.94 = bf16[4,1024,4,64]{3,1,2,0} transpose(dot.93), dimensions={0,2,1,3}
+    dot.65 = bf16[4,4,64,1024]{3,2,1,0} dot(transpose.63, divide.53), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    transpose.66 = bf16[4,1024,4,64]{1,3,2,0} transpose(dot.65), dimensions={0,3,1,2}
+    ROOT tuple.97 = (bf16[4,1024,4,64]{1,3,2,0}, bf16[4,1024,4,64]{3,1,2,0}, bf16[4,1024,4,64]{3,1,2,0}, bf16[4,1024,4,64]{1,3,2,0}) tuple(transpose.62, transpose.96, transpose.94, transpose.66)
+  } // main.98
   )";
     return hlo_text;
   }
@@ -1199,25 +1226,27 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
   const std::string  // NOLINT
   GetModuleFlash_Attention_Training_BMM1_SlidingWindowMask_Generation_Softmax_BMM2_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
-    HloModule jit__unnamed_wrapped_function_, is_scheduled=true, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}, frontend_attributes={fingerprint_before_lhs="498296799693f2334fa2757a293c2e51"}
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
 
     ENTRY main.19 {
-      Arg_2.3.0 = bf16[4,1024,4,64]{3,2,1,0} parameter(2)
-      Arg_1.2.0 = bf16[4,1024,4,64]{3,2,1,0} parameter(1)
-      Arg_0.1.0 = bf16[4,1024,4,64]{3,2,1,0} parameter(0)
-      Arg_3.4.0 = bf16[4,1024,4,64]{3,2,1,0} parameter(3)
-      custom-call.5.0 = (bf16[4,4,1024,64]{3,1,2,0}, f32[4,4,1024]{2,1,0}, u8[16]{0}) custom-call(Arg_0.1.0, Arg_1.2.0, Arg_2.3.0), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "1024", "1024"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "CAUSAL", "sliding_window_length": 64, "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}}}
-      get-tuple-element.7.0 = f32[4,4,1024]{2,1,0} get-tuple-element(custom-call.5.0), index=1
-      get-tuple-element.6.0 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.5.0), index=0
-      bitcast.57.0 = bf16[4,1024,4,64]{3,2,1,0} bitcast(get-tuple-element.6.0)
-      custom-call.10.0 = (bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, u8[4259856]{0}) custom-call(Arg_0.1.0, Arg_1.2.0, Arg_2.3.0, get-tuple-element.7.0, Arg_3.4.0, /*index=5*/bitcast.57.0), custom_call_target="__cudnn$fmhaSoftmaxBackward", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, f32[4,4,1024]{2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"cudnn_fmha_backend_config":{"algorithm":{"algo_id":"0","math_type":"TENSOR_OP_MATH","tuning_knobs":{"24":"0","17":"1"},"is_cudnn_frontend":true,"workspace_size":"0"},"fmha_scale":1,"dropout_rate":0,"intermediate_tensor_shape":{"element_type":"BF16","dimensions":["4","4","1024","1024"],"tuple_shapes":[],"layout":{"dim_level_types":[],"dim_unique":[],"dim_ordered":[],"minor_to_major":["3","2","1","0"],"tiles":[],"tail_padding_alignment_in_elements":"0","element_size_in_bits":"0","memory_space":"0","index_primitive_type":"PRIMITIVE_TYPE_INVALID","pointer_primitive_type":"PRIMITIVE_TYPE_INVALID","dynamic_shape_metadata_prefix_bytes":"0","split_configs":[]},"is_dynamic_dimension":[false,false,false,false]},"bmm1_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},"bmm1_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},"bmm2_grad_gemm1_dot_dimension_numbers":{"lhs_contracting_dimensions":["2"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":["0","1"],"rhs_batch_dimensions":["0","2"]},"bmm2_grad_gemm2_dot_dimension_numbers":{"lhs_contracting_dimensions":["3"],"rhs_contracting_dimensions":["3"],"lhs_batch_dimensions":["0","2"],"rhs_batch_dimensions":["0","2"]},"seed":"42","is_flash_attention":true,"is_causal_mask":false,"mask_type":"CAUSAL","force_deterministic":false,"sliding_window_length":64},"force_earliest_schedule":false}
-      get-tuple-element.12.0 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10.0), index=1
-      bitcast.65.0 = bf16[4,1024,4,64]{3,2,1,0} bitcast(get-tuple-element.12.0)
-      get-tuple-element.11.0 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10.0), index=0
-      get-tuple-element.13.0 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10.0), index=2
-      bitcast.69.0 = bf16[4,1024,4,64]{3,2,1,0} bitcast(get-tuple-element.13.0)
-      bitcast.61.0 = bf16[4,1024,4,64]{3,2,1,0} bitcast(get-tuple-element.11.0)
-      ROOT tuple.18.0 = (bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}) tuple(bitcast.57.0, bitcast.61.0, bitcast.65.0, bitcast.69.0)
+      Arg_0.1 = bf16[4,1024,4,64]{3,2,1,0} parameter(0)
+      Arg_1.2 = bf16[4,1024,4,64]{3,2,1,0} parameter(1)
+      Arg_2.3 = bf16[4,1024,4,64]{3,2,1,0} parameter(2)
+      custom-call.5 = (bf16[4,4,1024,64]{3,1,2,0}, f32[4,4,1024]{2,1,0}, u8[0]{0}) custom-call(Arg_0.1, Arg_1.2, Arg_2.3), custom_call_target="__cudnn$fmhaSoftmax", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "1024", "1024"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "CAUSAL", "sliding_window_length": 64, "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}}}
+      get-tuple-element.8 = u8[0]{0} get-tuple-element(custom-call.5), index=2
+      get-tuple-element.7 = f32[4,4,1024]{2,1,0} get-tuple-element(custom-call.5), index=1
+      Arg_3.4 = bf16[4,1024,4,64]{3,2,1,0} parameter(3)
+      get-tuple-element.6 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.5), index=0
+      transpose.9 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.6), dimensions={0,2,1,3}
+      custom-call.10 = (bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, u8[0]{0}) custom-call(Arg_0.1, Arg_1.2, Arg_2.3, get-tuple-element.7, Arg_3.4, /*index=5*/transpose.9), custom_call_target="__cudnn$fmhaSoftmaxBackward", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, f32[4,4,1024]{2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "1024", "1024"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "CAUSAL", "sliding_window_length": 64, "bmm1_grad_gemm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["2"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm1_grad_gemm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_grad_gemm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["2"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_grad_gemm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}}}
+      get-tuple-element.14 = u8[0]{0} get-tuple-element(custom-call.10), index=3
+      get-tuple-element.11 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10), index=0
+      transpose.15 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.11), dimensions={0,2,1,3}
+      get-tuple-element.12 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10), index=1
+      transpose.16 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.12), dimensions={0,2,1,3}
+      get-tuple-element.13 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.10), index=2
+      transpose.17 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.13), dimensions={0,2,1,3}
+      ROOT tuple.18 = (bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}) tuple(transpose.9, transpose.15, transpose.16, transpose.17)
     } // main.19
     )";
     return hlo_text;
