@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include "xla/client/lib/math.h"
-#include "xla/client/lib/math_impl.h"
 
 #include <algorithm>
 #include <array>
@@ -29,17 +28,18 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/client/lib/arithmetic.h"
 #include "xla/client/lib/constants.h"
 #include "xla/client/lib/loops.h"
+#include "xla/client/lib/math_impl.h"
 #include "xla/client/xla_builder.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -1193,17 +1193,20 @@ XlaOp Asin(XlaOp x) {
   auto do_it = [&](XlaOp z) -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(auto shape, b->GetShape(z));
     auto elem_ty = shape.element_type();
-    switch(elem_ty) {
-      case C128: return math_impl::AsinComplex<double>(z);
-      case C64: return math_impl::AsinComplex<float>(z);
-      case F64: return math_impl::AsinReal<double>(z);
-      case F32: return math_impl::AsinReal<float>(z);
+    switch (elem_ty) {
+      case C128:
+        return math_impl::AsinComplex<double>(z);
+      case C64:
+        return math_impl::AsinComplex<float>(z);
+      case F64:
+        return math_impl::AsinReal<double>(z);
+      case F32:
+        return math_impl::AsinReal<float>(z);
         // todo(pearu): add implementations for BF16 and F16 to avoid
         // the upcast below
       default:
-        return InvalidArgument(
-            "Asin got unsupported element type %s",
-            PrimitiveType_Name(elem_ty));
+        return InvalidArgument("Asin got unsupported element type %s",
+                               PrimitiveType_Name(elem_ty));
     }
   };
   // These upcasts are not strictly necessary on all platforms to get within our
