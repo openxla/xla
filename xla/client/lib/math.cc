@@ -1187,16 +1187,6 @@ XlaOp Acos(XlaOp x) {
   });
 }
 
-// hypot(x, y) = max(|x|, |y|) * sqrt(1 + (min(|x|, |y|) / max(|x|, |y|))^2)
-static XlaOp Hypot(XlaOp x, XlaOp y) {
-  auto ax = Abs(x);
-  auto ay = Abs(y);
-  auto mx = Select(Gt(ax, ay), ax, ay);
-  auto mn = Select(Gt(ax, ay), ay, ax);
-  auto mnomx = Div(mn, mx);
-  return Mul(mx, Sqrt(Add(ScalarLike(x, 1), Mul(mnomx, mnomx))));
-}
-
 // asin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))
 XlaOp Asin(XlaOp x) {
   XlaBuilder* b = x.builder();
