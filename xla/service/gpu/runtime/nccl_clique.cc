@@ -223,7 +223,7 @@ static void NcclCliqueHeartBeatMonitorThread(
       auto start_timestamp = absl::Now();
       while (!async_events_queue.empty() &&
              event->PollForStatus() == se::Event::Status::kPending) {
-        if ((absl::Now() - start_timestamp) > WarnStuckTimeout()) {
+        if ((absl::Now() - start_timestamp) > TerminateTimeout()) {
           LOG(ERROR) << "Nccl heart beat monitor detected an async event "
                         "timeout. Setting async error status";
           async_status = absl::DeadlineExceededError(kNcclAsyncTimeout);
@@ -232,8 +232,10 @@ static void NcclCliqueHeartBeatMonitorThread(
           break;
         }
       }
-
-      if (async_events_queue.size() > 0 &&
+      if (!async_status.ok()) {
+        break;
+      }
+      if (!async_events_queue.empty() &&
           (event->PollForStatus() == se::Event::Status::kError ||
            event->PollForStatus() == se::Event::Status::kUnknown)) {
         LOG(ERROR) << "Nccl heart beat monitor detected unexpected async event "
