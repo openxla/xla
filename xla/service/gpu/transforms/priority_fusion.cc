@@ -511,7 +511,7 @@ class PriorityFusionQueue {
     absl::Span<HloInstruction* const> fused_consumers =
         is_incremental_update
             ? operands_to_new_consumers_.find(producer)->second
-            : absl::Span<HloInstruction* const>(producer->users());
+            : absl::MakeConstSpan(producer->users());
     GpuPerformanceModel::RunTimes run_times =
         GpuPerformanceModel::EstimateRunTimesForPriorityFusion(
             producer, *device_info_, &cost_analysis_,
