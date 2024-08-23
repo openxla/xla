@@ -2405,6 +2405,19 @@ absl::Status IrEmitterUnnested::EmitCopyStartThunk(
         static_cast<int>(stream_executor::MemoryType::kHost)));
   }
   if (is_dst_host_memory) {
+    const ExecutionStreamAssignment& stream_assignment =
+        ir_emitter_context_->execution_stream_assignment();
+    TF_ASSIGN_OR_RETURN(
+        ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+        stream_assignment.GetAsyncExecutionStreamIds(copy_start_instr));
+    // Insert a waitFor() thunk for asynchronous memcpy only when the source
+    // and destination stream IDs differ. If the IDs are the same, the memcpy
+    // operation is synchronous within that stream.
+    if (streams.destination_stream_id != streams.source_stream_id) {
+      AddThunkToThunkSequence(std::make_unique<WaitForStreamsThunk>(
+          Thunk::ThunkInfo::WithProfileAnnotation(copy_start_instr),
+          streams.destination_stream_id, streams.source_stream_id));
+    }
     auto thunk = std::make_unique<DeviceToHostCopyThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(copy_start_instr),
         /*source_buffer=*/src_buffer,

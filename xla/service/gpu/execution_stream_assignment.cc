@@ -43,6 +43,7 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
   // each invocation of `async-start` will result in the target computation
   // being assigned a new `ExecutionStreamId`.
   ExecutionStreamId next_stream_id = ExecutionStreamId(1);
+  ExecutionStreamId copy_start_stream_id = ExecutionStreamId(0);
 
   // Each `Pending` item represents an `HloComputation` that needs to be
   // processed. We start with the entrypoint and add callees as we discover
@@ -70,6 +71,18 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
     }
   };
 
+  // Assigns source and destination streams to an instruction and records it in
+  // async_instructions_.
+  auto assign_async_execution_streams =
+      [&](HloInstruction* instruction, ExecutionStreamId source_stream_id,
+          ExecutionStreamId destination_stream_id) {
+        AsyncExecutionStreamIds streams;
+        streams.source_stream_id = source_stream_id;
+        streams.destination_stream_id = destination_stream_id;
+
+        CHECK(async_instructions_.try_emplace(instruction, streams).second);
+      };
+
   while (!queue.empty()) {
     Pending pending = queue.front();
     queue.pop_front();
@@ -78,8 +91,24 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
     // instructions. Asynchronous instructions will be handled afterwards.
     for (HloInstruction* instruction : pending.node->instructions()) {
       if (instruction->IsAsynchronous()) continue;
-      CHECK(sync_instructions_.try_emplace(instruction, pending.stream_id)
-                .second);
+      // The copy-start operation can only be in the main stream (stream 0).
+      if (instruction->opcode() == HloOpcode::kCopyStart) {
+        ExecutionStreamId destination_stream_id = pending.stream_id;
+        CHECK_EQ(pending.stream_id, ExecutionStreamId(0));
+        if (copy_start_stream_id == ExecutionStreamId(0)) {
+          copy_start_stream_id = next_stream_id;
+          next_stream_id++;
+          if (next_stream_id.value() > options.number_of_execution_streams) {
+            next_stream_id = ExecutionStreamId(1);
+          }
+        }
+        destination_stream_id = copy_start_stream_id;
+        assign_async_execution_streams(instruction, pending.stream_id,
+                                       destination_stream_id);
+      } else {
+        CHECK(sync_instructions_.try_emplace(instruction, pending.stream_id)
+                  .second);
+      }
     }
 
     // Next, we'll process all callsites in the current computation.
@@ -90,13 +119,8 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
         // dispensed for the called computations.
         CHECK_EQ(callsite.instruction()->opcode(), HloOpcode::kAsyncStart);
         enqueue_called_computations(callsite, next_stream_id);
-
-        AsyncExecutionStreamIds streams;
-        streams.source_stream_id = pending.stream_id;
-        streams.destination_stream_id = next_stream_id;
-        CHECK(async_instructions_.try_emplace(callsite.instruction(), streams)
-                  .second);
-
+        assign_async_execution_streams(callsite.instruction(),
+                                       pending.stream_id, next_stream_id);
         next_stream_id++;
         if (next_stream_id.value() > options.number_of_execution_streams) {
           next_stream_id = ExecutionStreamId(1);
@@ -151,7 +175,9 @@ ExecutionStreamAssignment::GetSyncExecutionStreamId(
 
 absl::StatusOr<ExecutionStreamAssignment::AsyncExecutionStreamIds>
 ExecutionStreamAssignment::GetAsyncExecutionStreamIds(
-    const HloAsyncInstruction* instruction) const {
+    const HloInstruction* instruction) const {
+  CHECK(instruction->IsAsynchronous() ||
+        instruction->opcode() == HloOpcode::kCopyStart);
   auto streams = async_instructions_.find(instruction);
   if (streams == async_instructions_.end()) {
     return StreamNotFoundError(instruction);
