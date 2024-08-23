@@ -992,12 +992,11 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
   }
 }
 
-TEST(StreamExecutorGpuClientTest, MockNcclClientProcessPerGpuTest) {
-  const int num_nodes = 8;
+TEST(StreamExecutorGpuClientTest, MockNcclClientWithGpuTopologyTest) {
   GpuClientOptions options;
-  options.num_nodes = num_nodes;
   options.enable_mock_nccl = true;
-  options.mock_num_hosts_per_slice = 4;
+  options.num_nodes = 8;
+  options.mock_gpu_topology = "2x4";
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
 
   TF_ASSERT_OK_AND_ASSIGN(const xla::PjRtTopologyDescription* topology,
@@ -1009,6 +1008,14 @@ TEST(StreamExecutorGpuClientTest, MockNcclClientProcessPerGpuTest) {
   EXPECT_EQ(gpu_topology.gpu_topology().num_slices(), 2);
   EXPECT_EQ(gpu_topology.gpu_topology().num_hosts_per_slice(), 4);
   EXPECT_EQ(gpu_topology.gpu_topology().num_devices_per_host(), 2);
+}
+
+TEST(StreamExecutorGpuClientTest, MockNcclClientWithGpuTopologyMismatchTest) {
+  GpuClientOptions options;
+  options.enable_mock_nccl = true;
+  options.num_nodes = 16;
+  options.mock_gpu_topology = "2x4";
+  EXPECT_FALSE(GetStreamExecutorGpuClient(options).ok());
 }
 
 TEST(StreamExecutorGpuClientTest, BufferFromHostBufferPinnedMemory) {

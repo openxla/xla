@@ -89,7 +89,7 @@ def make_gpu_client(
     platform_name=None,
     allowed_devices=None,
     mock=False,
-    mock_num_hosts_per_slice=1,
+    mock_gpu_topology=None,
 ):
   """Returns a GPU client. BFC allocator is used by default."""
   options = generate_pjrt_gpu_plugin_options()
@@ -121,7 +121,7 @@ def make_gpu_client(
       platform_name=platform_name,
       allowed_devices=allowed_devices,
       mock=mock,
-      mock_num_hosts_per_slice=mock_num_hosts_per_slice,
+      mock_gpu_topology=mock_gpu_topology,
   )
 
 

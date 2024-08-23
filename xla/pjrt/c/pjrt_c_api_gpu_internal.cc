@@ -83,8 +83,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
           {"node_id", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"num_nodes", PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
           {"enable_mock_nccl", PJRT_NamedValue_Type::PJRT_NamedValue_kBool},
-          {"mock_num_hosts_per_slice",
-           PJRT_NamedValue_Type::PJRT_NamedValue_kInt64},
+          {"mock_gpu_topology", PJRT_NamedValue_Type::PJRT_NamedValue_kString},
       });
   PJRT_RETURN_IF_ERROR(
       ValidateCreateOptions(create_options, kExpectedOptionNameAndTypes));
@@ -143,10 +142,10 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       it != create_options.end()) {
     enable_mock_nccl = std::get<bool>(it->second);
   }
-  int mock_num_hosts_per_slice = 1;
-  if (auto it = create_options.find("mock_num_hosts_per_slice");
+  std::string mock_gpu_topology;
+  if (auto it = create_options.find("mock_gpu_topology");
       it != create_options.end()) {
-    mock_num_hosts_per_slice = std::get<int64_t>(it->second);
+    mock_gpu_topology = std::get<std::string>(it->second);
   }
 
   xla::GpuClientOptions options;
@@ -159,7 +158,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       pjrt::ToCppKeyValueStore(args->kv_get_callback, args->kv_get_user_arg,
                                args->kv_put_callback, args->kv_put_user_arg);
   options.enable_mock_nccl = enable_mock_nccl;
-  options.mock_num_hosts_per_slice = mock_num_hosts_per_slice;
+  options.mock_gpu_topology = mock_gpu_topology;
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtClient> client,
                         xla::GetStreamExecutorGpuClient(options));
   args->client = pjrt::CreateWrapperClient(std::move(client));

@@ -65,8 +65,8 @@ void RegisterGpuClientAndDefineGpuAllocatorConfig(nanobind::module_& m_nb) {
          std::optional<std::set<int>> allowed_devices,
          std::optional<std::string> platform_name,
          std::optional<bool> mock = false,
-         std::optional<int> mock_num_hosts_per_slice =
-             1) -> nb_class_ptr<PyClient> {
+         std::optional<std::string> mock_gpu_topology =
+             "") -> nb_class_ptr<PyClient> {
         std::unique_ptr<ifrt::PjRtClient> ifrt_client;
         {
           nb::gil_scoped_release gil_release;
@@ -83,8 +83,7 @@ void RegisterGpuClientAndDefineGpuAllocatorConfig(nanobind::module_& m_nb) {
           options.platform_name = platform_name;
           options.kv_store = kv_store;
           options.enable_mock_nccl = mock.value_or(false);
-          options.mock_num_hosts_per_slice =
-              mock_num_hosts_per_slice.value_or(1);
+          options.mock_gpu_topology = mock_gpu_topology.value_or("");
           std::unique_ptr<PjRtClient> pjrt_client =
               xla::ValueOrThrow(GetStreamExecutorGpuClient(options));
           ifrt_client = ifrt::PjRtClient::Create(std::move(pjrt_client));
@@ -98,7 +97,7 @@ void RegisterGpuClientAndDefineGpuAllocatorConfig(nanobind::module_& m_nb) {
       nb::arg("allowed_devices").none() = std::nullopt,
       nb::arg("platform_name").none() = std::nullopt,
       nb::arg("mock").none() = std::nullopt,
-      nb::arg("mock_num_hosts_per_slice").none() = std::nullopt);
+      nb::arg("mock_gpu_topology").none() = std::nullopt);
 }
 
 }  // namespace xla
