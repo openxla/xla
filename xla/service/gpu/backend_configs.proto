@@ -263,6 +263,7 @@ message CudnnfMHABackendConfig {
   bool force_deterministic = 23;
 
   // Sliding window length
+  // ignored if the value <= 0
   int32 sliding_window_length = 24;
 }
 
