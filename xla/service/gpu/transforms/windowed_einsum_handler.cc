@@ -1153,11 +1153,12 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
   }
 
   if (all_windowed_einsum_loops.size() > 0) {
-    // This is to prepare the module for unrolling, WhileLoopUnroller
-    // looks for the iterator by matching specific patterns which expect
-    // AlgebraicSimplifier and HloConstantFolding to be applied.
-    // Since we get the loop directly from SPMD patitioner, the iterator
-    // pattern doesnt' confirm with what unroller expects.
+    // This is to prepare the module for unrolling. WhileLoopUnroller
+    // looks for the induction variable by matching specific patterns
+    // which expect AlgebraicSimplifier and HloConstantFolding to be applied.
+    // Since we get the loop directly from SPMD patitioner,
+    // the induction variable pattern doesn't conform to what unroller
+    // expects until the passes are applied.
     TF_ASSIGN_OR_RETURN(bool applied_algsimp,
                         AlgebraicSimplifier(AlgebraicSimplifierOptions())
                             .Run(module, execution_threads));
@@ -1173,11 +1174,11 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
         std::string(loop->while_condition()->name());
 
     // We fully unroll the loop here to maximize overlap.
-    // Without unrolling, each iteration will end with a DUS and gemm,
-    // the gemm will not overlap with anything which means wave quantization
+    // Without unrolling, each iteration will end with a DUS and gemm.
+    // The gemm will not overlap with anything which means wave quantization
     // overhead is fully exposed.
-    // With unrolling, all gemms and DUSes can overlap with each other together
-    // with collectives.
+    // After unrolling, all gemms, DUSes, and collectives can overlap
+    // with each other.
     // We also need to keep the unrolled instructions in an isolated computation
     // unit such as a trivial loop so instructions here won't be fused with
     // other instructions later to disrupt the gemm-gemm overlap.

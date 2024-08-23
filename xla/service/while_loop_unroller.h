@@ -122,12 +122,7 @@ class WhileLoopUnroller : public HloModulePass {
   // wrapped in a loop with trip count of one. Forcing unroll will not perform
   // soft checking of the conditions. If prepare is set, it will run the
   // necessary passes to prepare the module for unrolling.
-  static absl::StatusOr<bool> Unroll(HloInstruction* while_op,
-                                     int64_t unroll_factor = -1,
-                                     bool wrap_in_trivial_loop = false,
-                                     bool force_unroll = false,
-                                     bool prepare = true);
-  // Similar to above, but returns the unrolled flag and
+  // Returns the unrolled flag and
   // the new unrolled while instruction.
   static absl::StatusOr<UnrollResult> UnrollAndReturnReplacement(
       HloInstruction* while_op, int64_t unroll_factor = -1,

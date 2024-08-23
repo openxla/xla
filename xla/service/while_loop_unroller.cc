@@ -696,16 +696,6 @@ WhileLoopUnroller::GetUnrollableLoops(
   return while_loop_configs;
 }
 
-/*static*/ absl::StatusOr<bool> WhileLoopUnroller::Unroll(
-    HloInstruction* while_op, int64_t unroll_factor, bool wrap_in_trivial_loop,
-    bool force_unroll, bool prepare) {
-  TF_ASSIGN_OR_RETURN(
-      UnrollResult result,
-      WhileLoopUnroller::UnrollAndReturnReplacement(
-          while_op, unroll_factor, wrap_in_trivial_loop, force_unroll));
-  return result.unrolled;
-}
-
 /*static*/ absl::StatusOr<UnrollResult>
 WhileLoopUnroller::UnrollAndReturnReplacement(HloInstruction* while_op,
                                               int64_t unroll_factor,
