@@ -188,7 +188,7 @@ ENTRY main {
 
   const se::GpuComputeCapability& cc = GetCudaComputeCapability();
   bool changed;
-  TF_ASSERT_OK_AND_ASSIGN(changed, RunHloPass(GpuConvRewriter(cc), m.get()));
+  TF_ASSERT_OK_AND_ASSIGN(changed, RunHloPass(ConvRewriter(cc), m.get()));
   ASSERT_TRUE(changed);
   TF_ASSERT_OK_AND_ASSIGN(
       changed, RunHloPass(CudnnFusedConvRewriter(GetCudaComputeCapability(),
