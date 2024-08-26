@@ -313,7 +313,7 @@ class PriorityFusionQueue {
 
     to_update_priority_.clear();
     operands_to_new_consumers_.clear();
-    operands_to_removed_consumers_runtimes.clear();
+    operands_to_removed_consumers_runtimes_.clear();
     return absl::OkStatus();
   }
 
@@ -370,18 +370,17 @@ class PriorityFusionQueue {
   void ComputeRuntimesOfRemovedConsumers() {
     for (auto pair : operands_to_new_consumers_) {
       auto operand = pair.first;
-      auto reverse_it = reverse_map_.find(operand);
-      if (reverse_it == reverse_map_.end()) {
+      // Checks if this producer's priority was calculated before. If so, we can
+      // do incremental update here.
+      if (!reverse_map_.contains(operand)) {
         continue;
       }
-      // this operand has been calculated priority before, we can do
-      // incremental update
-      // get all of this operand's original consumers
-      if (!gpu_performance_model_cache_.Contains(*operand)) {
-        // bitcast/constant have priority calculated but not in the cache
+      // Get all of this producer's original consumers. Bitcast/constant have
+      // priority calculated but they don't have cache entries.
+      if (!gpu_performance_model_cache_.ContainsConsumers(*operand)) {
         continue;
       }
-      auto original_consumers =
+      const auto& original_consumers =
           gpu_performance_model_cache_.GetAllConsumers(*operand);
       GpuPerformanceModel::RunTimes runtimes;
       for (auto consumer : current_consumers()) {
@@ -391,7 +390,7 @@ class PriorityFusionQueue {
       auto operand_cache_result = gpu_performance_model_cache_.Get(*operand);
       runtimes.time_unfused += (*operand_cache_result).exec_time +
                                GpuPerformanceModel::kKernelLaunchOverhead;
-      operands_to_removed_consumers_runtimes.emplace(operand, runtimes);
+      operands_to_removed_consumers_runtimes_.emplace(operand, runtimes);
     }
   }
 
@@ -505,9 +504,9 @@ class PriorityFusionQueue {
     }
 
     auto removed_consumers_runtime_it =
-        operands_to_removed_consumers_runtimes.find(producer);
+        operands_to_removed_consumers_runtimes_.find(producer);
     bool is_incremental_update = removed_consumers_runtime_it !=
-                                 operands_to_removed_consumers_runtimes.end();
+                                 operands_to_removed_consumers_runtimes_.end();
     absl::Span<HloInstruction* const> fused_consumers =
         is_incremental_update
             ? operands_to_new_consumers_.find(producer)->second
@@ -526,9 +525,8 @@ class PriorityFusionQueue {
       run_times.time_unfused -= removed_consumers_runtime.time_unfused;
       run_times.time_fused -= removed_consumers_runtime.time_fused;
       // get the original priority
-      auto reverse_it = reverse_map_.find(producer);
-      CHECK(reverse_it != reverse_map_.end());
-      const PriorityQueue::iterator& queue_it = reverse_it->second;
+      const PriorityQueue::iterator& queue_it =
+          FindOrDie(reverse_map_, producer);
       current_priority = queue_it->first.first;
     }
 
@@ -799,7 +797,7 @@ class PriorityFusionQueue {
   absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
       operands_to_new_consumers_;
   absl::flat_hash_map<HloInstruction*, GpuPerformanceModel::RunTimes>
-      operands_to_removed_consumers_runtimes;
+      operands_to_removed_consumers_runtimes_;
   // Proto with structured logs of fusion decisions. Used only for debugging. If
   // null, logging is disabled.
   FusionProcessDumpProto* fusion_process_dump_;
