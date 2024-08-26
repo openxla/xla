@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/dump.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/tests/hlo_test_base.h"
@@ -113,8 +114,7 @@ results {
   static stream_executor::StreamExecutor* NewStreamExecutor() {
     stream_executor::Platform* platform =
         stream_executor::PlatformManager::PlatformWithName("Host").value();
-    stream_executor::StreamExecutorConfig config(/*ordinal=*/0);
-    return platform->GetExecutor(config).value();
+    return platform->ExecutorForDevice(/*ordinal=*/0).value();
   }
 
   absl::Status PopulateResultCache() {
@@ -278,8 +278,9 @@ class FileBasedCacheTest : public AutotunerUtilTest {
     return file_content;
   }
 
-  static void Write(const absl::string_view filepath,
-                    const absl::string_view content) {
+  void Write(const absl::string_view filepath,
+             const absl::string_view content) {
+    TF_CHECK_OK(CreateDirIfNeeded(cache_dir_, tsl::Env::Default()));
     TF_CHECK_OK(tsl::WriteStringToFile(tsl::Env::Default(),
                                        std::string(filepath), content));
   }
@@ -293,7 +294,6 @@ class FileBasedCacheTest : public AutotunerUtilTest {
     tsl::Env* default_env = tsl::Env::Default();
     std::string cache_dir;
     CHECK(default_env->LocalTempFilename(&cache_dir));
-    CHECK_OK(default_env->CreateDir(cache_dir));
     return cache_dir;
   }();
   AutotuneConfig config_ = AutotuneConfig(DeviceConfig{executor_}, [&] {

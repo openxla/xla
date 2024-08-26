@@ -202,15 +202,66 @@ cc_library(
 )
 
 cc_library(
+    name = "stream_finder",
+    srcs = ["stream_finder.cc"],
+    hdrs = ["stream_finder.h"],
+    deps = [
+        ":platform",
+        ":stream",
+        ":stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "mock_platform",
+    testonly = True,
+    hdrs = ["mock_platform.h"],
+    deps = [
+        ":device_description",
+        ":platform",
+        ":stream_executor_h",
+        "//xla:test",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "mock_stream",
+    testonly = True,
+    hdrs = ["mock_stream.h"],
+    deps = [
+        ":device_description",
+        ":device_memory",
+        ":event",
+        ":event_based_timer",
+        ":kernel",
+        ":launch_dim",
+        ":platform",
+        ":stream",
+        "//xla:test",
+        "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "mock_stream_executor",
     testonly = True,
     hdrs = ["mock_stream_executor.h"],
     deps = [
         ":allocator_stats",
+        ":blas",
         ":command_buffer",
         ":device_description",
         ":device_memory",
+        ":dnn",
         ":event",
+        ":fft",
         ":kernel",
         ":kernel_spec",
         ":launch_dim",
@@ -220,7 +271,6 @@ cc_library(
         ":stream",
         ":stream_executor_h",
         "//xla:test",
-        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
@@ -380,6 +430,7 @@ cc_library(
         ":device_memory",
         ":numeric_options",
         "//xla/stream_executor/platform",
+        "//xla/tsl/lib/strings:proto_serialization",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -391,7 +442,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",  # buildcleaner: keep
-        "@tsl//tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
@@ -449,12 +499,10 @@ cc_library(
         ":fft",
         ":kernel",
         ":kernel_spec",
-        ":launch_dim",
         ":memory_allocation",
         ":module_spec",
         ":platform",
         ":stream",
-        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -573,7 +621,6 @@ cc_library(
     srcs = ["executor_cache.cc"],
     hdrs = ["executor_cache.h"],
     deps = [
-        ":platform",
         ":stream_executor_h",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -613,7 +660,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -670,13 +716,10 @@ cc_library(
         ":blas",
         ":device_description",
         ":fft",
-        ":kernel",
-        ":launch_dim",
         ":platform",
         ":stream",
         ":stream_executor_h",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -818,10 +861,27 @@ xla_cc_test(
     deps = [
         ":executor_cache",
         ":mock_stream_executor",
-        ":platform",
         ":stream",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/log",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_cc_test(
+    name = "stream_finder_test",
+    srcs = ["stream_finder_test.cc"],
+    deps = [
+        ":mock_platform",
+        ":mock_stream",
+        ":mock_stream_executor",
+        ":stream_finder",
+        "//xla:test",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 

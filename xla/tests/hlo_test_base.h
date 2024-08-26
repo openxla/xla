@@ -425,7 +425,10 @@ class HloTestBase : public ManifestCheckingTest {
   }
 
   // Gets the computation/instruction from the given module with the given name.
-  //
+  // Note that it is encouraged to use these functions directly via the
+  // hlo_query.h header instead since they are independent from any test-time
+  // variables or contexts.
+
   // This is useful for tests which create HLOs from a string and then want to
   // inspect a particular computation or instruction.
   HloComputation* FindComputation(HloModule* module, absl::string_view name);
@@ -443,6 +446,8 @@ class HloTestBase : public ManifestCheckingTest {
 
   // Returns the backend owned by the test runner.
   Backend& backend();
+  const Backend& backend() const;
+
   int64_t num_devices() { return backend().device_count(); }
 
   HloRunner test_runner_;

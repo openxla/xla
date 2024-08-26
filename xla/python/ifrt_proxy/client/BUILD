@@ -103,7 +103,11 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:random",
         "@tsl//tsl/platform:status_to_from_proto",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
+        "@tsl//tsl/profiler/utils:xplane_schema",
     ] + if_google(["@com_google_absl//absl/types:source_location"]),
 )
 

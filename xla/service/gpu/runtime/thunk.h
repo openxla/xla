@@ -165,8 +165,6 @@ class Thunk {
     kSendDone,
     kTriangularSolve,
     kWhile,
-    kFusedMHA,
-    kFusedMHABackward,
     kWaitForStreams,
     kCuDnn
   };
@@ -326,6 +324,9 @@ class Thunk {
 
     // XLA FFI execution context.
     const ffi::ExecutionContext* ffi_execution_context = nullptr;
+
+    // Total local device count.
+    int local_device_count = 0;
   };
 
   //===--------------------------------------------------------------------===//

@@ -26,6 +26,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/log/check.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -235,9 +236,13 @@ HloSharding convertToHloSharding(
     ArrayRef<AxisRefAttr> manualAxes) {
   MeshAttr mesh = getMeshAttr(sdySharding);
 
-  // Convert to maximal sharding if the mesh only contains the device id.
-  if (std::optional<int64_t> deviceId = mesh.getDeviceId(); deviceId) {
-    return HloSharding::AssignDevice(*deviceId);
+  // If there are no axes, convert to:
+  // - maximal sharding if the mesh has a device id
+  // - else replicated sharding
+  if (mesh.getAxes().empty()) {
+    return mesh.getDeviceIds().empty()
+               ? HloSharding::Replicate()
+               : HloSharding::AssignDevice(mesh.getDeviceIds().front());
   }
 
   SmallVector<int64_t> tileAssignmentDims(sdySharding.getRank(), 1);
