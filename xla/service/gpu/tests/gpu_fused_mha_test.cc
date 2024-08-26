@@ -1256,8 +1256,8 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
   void TestImpl_Flash_Attention_Training_BMM1_SlidingWindowMask_Softmax_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
     if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
-        se::dnn::VersionInfo(9, 0, 0)) {
-      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
+        se::dnn::VersionInfo(9, 2, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.2.0.";
     }
     XlaBuilder builder(TestName());
     // pass sliding window mask as bias
