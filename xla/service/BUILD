@@ -5270,6 +5270,8 @@ cc_library(
         ":hlo_verifier",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:errors",
