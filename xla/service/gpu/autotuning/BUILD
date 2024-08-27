@@ -405,6 +405,7 @@ xla_test(
         "//xla/service:tuple_simplifier",
         "//xla/service/gpu:stream_executor_util",
         "//xla/service/gpu/transforms:conv_rewriter",
+        "//xla/service/gpu/transforms:cudnn_fused_conv_rewriter",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
         "//xla/tests:hlo_test_base",
@@ -413,7 +414,9 @@ xla_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-    ],
+    ] + if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]),
 )
 
 cc_library(
