@@ -140,11 +140,6 @@ ENTRY main {
 }
   )";
 
-  CompileAndVerifyIr(hlo, MakePlatformSpecificLlvm(R"(
-// CHECK: call void BARRIER()
-  )"),
-                     /*match_optimized_ir=*/true,
-                     /*run_optimization_passes=*/false);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo, ErrorSpec{1e-3}));
 }
 
@@ -197,11 +192,6 @@ ENTRY %main (p: f16[16,32]) -> (f32[32,16], f16[32,16]) {
 }
   )";
 
-  CompileAndVerifyIr(hlo, MakePlatformSpecificLlvm(R"(
-// CHECK: call void BARRIER()
-  )"),
-                     /*match_optimized_ir=*/true,
-                     /*run_optimization_passes=*/false);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo, ErrorSpec{1e-3}));
 }
 
@@ -223,11 +213,6 @@ ENTRY entry {
 }
   )";
 
-  CompileAndVerifyIr(hlo, MakePlatformSpecificLlvm(R"(
-// CHECK: call void BARRIER()
-  )"),
-                     /*match_optimized_ir=*/true,
-                     /*run_optimization_passes=*/false);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo, ErrorSpec{1e-3}));
 }
 

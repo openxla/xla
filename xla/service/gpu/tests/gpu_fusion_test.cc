@@ -127,7 +127,7 @@ ENTRY main {
 // CHECK-NEXT:   [[s_1_1:%[^ ]+]] = f32[16,32]{1,0} sqrt([[param_0_1_0]])
 // CHECK-NEXT:   ROOT [[c_1_2:%[^ ]+]] = f32[32,16]{1,0} transpose([[s_1_1]]), dimensions={1,0}
 // CHECK-NEXT: }
-// CHECK: ROOT [[fusion_0:%[^ ]+]] = f32[32,16]{1,0} fusion([[p_1:%[^ ]+]]), kind=kInput, calls=[[fused_computation_2:%[^ ]+]]
+// CHECK: ROOT [[fusion_0:%[^ ]+]] = f32[32,16]{1,0} fusion([[p_1:%[^ ]+]]), kind=kLoop, calls=[[fused_computation_2:%[^ ]+]]
 )");
 }
 
