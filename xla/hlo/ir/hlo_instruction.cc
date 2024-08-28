@@ -2654,16 +2654,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
   // The new instruction's name will be uniquified when it's added to a
   // computation.
   clone->SetAndSanitizeName(name());
-  // Add the context's suffix name to the cloned instruction
-  if (context != nullptr && !context->suffix().empty()) {
-    clone->AddSuffixToInstructionName(context->suffix());
-  }
   if (context != nullptr) {
-    // Fix the scheduling name for the cloned instruction
-    if (context->module()->has_schedule() &&
-        !clone->metadata_->scheduling_name().empty()) {
-      clone->set_metadata_scheduling_name(clone->name());
-    }
     context->MapInstruction(this, clone.get());
     clone->ReplaceCalledComputations([&](HloComputation* callee) {
       return callee->parent() != context->module()

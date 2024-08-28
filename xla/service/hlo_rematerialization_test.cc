@@ -33,9 +33,9 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_rematerialization_test_utils.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/statusor.h"
@@ -194,18 +194,6 @@ class RecomputeAndCompressHloRematerializationTest
                                       kRematInstructionNameMustContain))
             << "[" << test_case_name << "] Instruction \"" << instruction_name
             << "\" must contain \"" << kRematInstructionNameMustContain << "\"";
-      }
-    }
-  }
-
-  void CheckForInstructionNameAndSchedulingName(HloModule* module) {
-    EXPECT_TRUE(module->has_schedule());
-    for (const auto* comp : module->computations()) {
-      for (const auto* instruction : comp->instructions()) {
-        if (!instruction->metadata().scheduling_name().empty()) {
-          EXPECT_EQ(instruction->name(),
-                    instruction->metadata().scheduling_name());
-        }
       }
     }
   }
@@ -995,7 +983,7 @@ ENTRY %mycomp (param: f32[1]) -> f32[1] {
   // Original all-gather.
   const HloInstruction* original_ag = FindInstruction(module.get(), "ag");
   // The all-gather should have been rematerialized
-  const HloInstruction* remat_ag = FindInstruction(module.get(), "ag.remat2");
+  const HloInstruction* remat_ag = FindInstruction(module.get(), "ag.remat");
 
   EXPECT_NE(remat_ag, nullptr);
   EXPECT_TRUE(original_ag->channel_id().has_value());
@@ -1146,22 +1134,9 @@ ENTRY %entry {
       (*it2)->called_computations()[0]));
   CheckForRematInInstructionNames(
       ::testing::UnitTest::GetInstance()->current_test_info()->name());
-  CheckForInstructionNameAndSchedulingName(module.get());
-  constexpr absl::string_view kExpectedSchedulingName = R"(
-// CHECK: %add_mul_comp
-// CHECK: %custom_call_comp.clone
-// CHECK: %add_mul_comp.clone
-// CHECK: %[[ADD:.+]] = f32[1024]{0} add
-// CHECK-SAME: metadata={scheduling_name="[[ADD]]"}
-// CHECK: %[[MUL:.+]] = f32[1024]{0} multiply
-// CHECK-SAME: metadata={scheduling_name="[[MUL]]"}
-  )";
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool filecheck_matches,
-      RunFileCheck(
-          module->ToString(HloPrintOptions().set_print_operand_shape(false)),
-          kExpectedSchedulingName));
-  EXPECT_TRUE(filecheck_matches);
+  TF_ASSERT_OK(HloVerifier{HloVerifierOpts{}.VerifyInstructionNameUnchanged()}
+                   .Run(module.get())
+                   .status());
 }
 
 class CompressingRematerializationTest : public RematerializationTestBase {

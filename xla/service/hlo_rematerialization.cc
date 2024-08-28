@@ -2011,7 +2011,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       continue;
     }
 
-    HloCloneContext context(computation->parent(), "remat");
+    HloCloneContext context(computation->parent());
     HloInstruction* remat =
         computation->AddInstruction(best->Clone(/*suffix=*/"remat", &context));
     if (remat->opcode() == HloOpcode::kFusion) {
