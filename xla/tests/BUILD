@@ -1482,6 +1482,7 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:test",
         "//xla/client:xla_builder",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:ml_dtypes",
     ],
 )
