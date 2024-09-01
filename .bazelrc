@@ -686,7 +686,6 @@ build:unsupported_gpu_linux --crosstool_top=@ubuntu20.04-gcc9_manylinux2014-cuda
 build:release_cpu_macos --config=avx_linux
 
 # Base build configs for macOS
-build:release_macos_base --action_env  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 build:release_macos_base --define=no_nccl_support=true --output_filter=^$
 
 # Ensure release_base is set on mac
