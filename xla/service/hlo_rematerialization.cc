@@ -1989,6 +1989,14 @@ UsesList MemoryUsageTracker::GetItemUses(Item* item) const {
   return combined_users;
 }
 
+void UpdateMetadataSchedulingName(HloInstruction* instr) {
+  if (!instr->metadata().scheduling_name().empty() &&
+      instr->metadata().scheduling_name() != instr->name() &&
+      instr->opcode() != HloOpcode::kConstant) {
+    instr->set_metadata_scheduling_name(instr->name());
+  }
+}
+
 absl::StatusOr<int64_t> RematerializeInstructions(
     MemoryUsageTracker* memory_tracker, std::vector<Item*>* best_items,
     absl::flat_hash_set<const HloInstruction*>* remat_move_instructions,
@@ -2018,7 +2026,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // Update the scheduling names inside a cloned fused node
       for (HloInstruction* instr :
            remat->fused_instructions_computation()->instructions()) {
-        instr->set_metadata_scheduling_name(instr->name());
+        UpdateMetadataSchedulingName(instr);
       }
     }
     for (auto& cloned_computation_pair : context.cloned_computations()) {
@@ -2034,7 +2042,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       }
     }
     for (auto* instruction : computation->instructions()) {
-      instruction->set_metadata_scheduling_name(instruction->name());
+      UpdateMetadataSchedulingName(instruction);
     }
     // Increment channel_id on channel instructions with a channel id.
     if (DynCast<HloChannelInstruction>(best) &&
