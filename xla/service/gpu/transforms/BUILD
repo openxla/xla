@@ -2780,6 +2780,7 @@ cc_library(
     deps = [
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -2803,6 +2804,9 @@ xla_cc_test(
         ":transpose_dimension_grouper",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
