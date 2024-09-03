@@ -595,8 +595,7 @@ absl::Status RunSPMDPasses(
                   hlo_module->config().auto_spmd_partitioning_mesh_shape();
             } else {
               // Use a simple mesh shape if not specified.
-              option.device_mesh_shape = {
-                  gpu_target_config.device_description.core_count(), 1};
+              option.device_mesh_shape = {num_partitions, 1};
             }
             if (!hlo_module->config()
                      .auto_spmd_partitioning_mesh_ids()
