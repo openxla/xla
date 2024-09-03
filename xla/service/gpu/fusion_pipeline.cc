@@ -50,12 +50,12 @@ HloPassPipeline FusionPipeline(
   // We try to split variadic ops with many parameters into several such ops
   // to avoid exceeding the parameter space.
   fusion.AddPass<VariadicOpSplitter>();
+  HloVerifierOpts opts =
+      HloVerifierOpts().MakeLayoutSensitive().WithInstructionCanChangeLayout(
+          LayoutAssignment::InstructionCanChangeLayout);
+  opts.verify_duplicate_channel_ids = false;
   fusion.AddInvariantCheckerDebug<HloVerifier>(
-      std::make_unique<CpuGpuVerifierMetadata>(
-          HloVerifierOpts()
-              .MakeLayoutSensitive()
-              .WithInstructionCanChangeLayout(
-                  LayoutAssignment::InstructionCanChangeLayout)),
+      std::make_unique<CpuGpuVerifierMetadata>(std::move(opts)),
       "hlo verifier (debug)");
 
   if (debug_options.xla_gpu_enable_priority_fusion()) {

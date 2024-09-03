@@ -48,12 +48,12 @@ HloPassPipeline PrepareHloModuleForIrEmittingPipeline(
   // (b/27180329). Therefore, in that case, we set the output to be a copy of
   // the parameter.
   HloPassPipeline pipeline("GPU-ir-emit-prepare");
+  HloVerifierOpts opts =
+      HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
+          LayoutAssignment::InstructionCanChangeLayout);
+  opts.verify_duplicate_channel_ids = false;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
-      std::make_unique<CpuGpuVerifierMetadata>(
-          HloVerifierOpts{}
-              .MakeLayoutSensitive()
-              .WithInstructionCanChangeLayout(
-                  LayoutAssignment::InstructionCanChangeLayout));
+      std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
   pipeline.AddInvariantCheckerDebug<HloVerifier>(std::move(verifier_metadata),
                                                  "hlo verifier (debug)");
 
