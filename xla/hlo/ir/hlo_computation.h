@@ -953,16 +953,6 @@ class HloComputation {
   static_assert(static_cast<int>(InstructionType::kUnset) == 0,
                 "kUnset must be 0.");
 
-  InstructionType instruction_type() const {
-    return static_cast<InstructionType>(instruction_and_type_ &
-                                        kInstructionTypeMask);
-  }
-
-  HloInstruction* instruction() const {
-    return reinterpret_cast<HloInstruction*>(instruction_and_type_ &
-                                             ~kInstructionTypeMask);
-  }
-
   void SetInstruction(HloInstruction* instruction, InstructionType type);
 
   int64_t unique_id_;
@@ -1005,6 +995,17 @@ class HloComputation {
 
   HloComputation(const HloComputation&) = delete;
   HloComputation& operator=(const HloComputation&) = delete;
+
+ public:
+  InstructionType instruction_type() const {
+    return static_cast<InstructionType>(instruction_and_type_ &
+                                        kInstructionTypeMask);
+  }
+
+  HloInstruction* instruction() const {
+    return reinterpret_cast<HloInstruction*>(instruction_and_type_ &
+                                             ~kInstructionTypeMask);
+  }
 };
 
 template <typename HloInstructionPtr>
