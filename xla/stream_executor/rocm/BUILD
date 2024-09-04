@@ -71,6 +71,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hip",
         "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -146,9 +147,11 @@ cc_library(
         # keep sorted
         ":rocm_driver",
         "//xla/stream_executor",
+        "//xla/stream_executor/gpu:context",
         "//xla/stream_executor/gpu:gpu_event_header",
         "//xla/stream_executor/gpu:gpu_stream_header",
-    ]) + ["//xla/stream_executor/gpu:scoped_activate_context"],
+        "//xla/stream_executor/gpu:scoped_activate_context",
+    ]),
 )
 
 cc_library(
