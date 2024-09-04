@@ -51,7 +51,7 @@ HloPassPipeline PrepareHloModuleForIrEmittingPipeline(
   HloVerifierOpts opts =
       HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
           LayoutAssignment::InstructionCanChangeLayout);
-  opts.verify_duplicate_channel_ids = false;
+  opts.verify_unique_channel_ids = false;
   std::unique_ptr<TargetVerifierMetadata> verifier_metadata =
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts));
   pipeline.AddInvariantCheckerDebug<HloVerifier>(std::move(verifier_metadata),

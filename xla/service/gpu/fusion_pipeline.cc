@@ -53,7 +53,7 @@ HloPassPipeline FusionPipeline(
   HloVerifierOpts opts =
       HloVerifierOpts().MakeLayoutSensitive().WithInstructionCanChangeLayout(
           LayoutAssignment::InstructionCanChangeLayout);
-  opts.verify_duplicate_channel_ids = false;
+  opts.verify_unique_channel_ids = false;
   fusion.AddInvariantCheckerDebug<HloVerifier>(
       std::make_unique<CpuGpuVerifierMetadata>(std::move(opts)),
       "hlo verifier (debug)");

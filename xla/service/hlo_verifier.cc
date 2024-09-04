@@ -2534,7 +2534,7 @@ absl::Status VerifyChannels(const HloModule& module,
         } else {
           opcode_to_count[instr->opcode()] = 1;
         }
-        if (opts.verify_duplicate_channel_ids) {
+        if (opts.verify_unique_channel_ids) {
           TF_RET_CHECK(DynCast<HloSendRecvInstruction>(instr) != nullptr)
               << "channel " << pair.first
               << " is used for different types of channel instructions";
@@ -2574,7 +2574,7 @@ absl::Status VerifyChannels(const HloModule& module,
       }
     } else {
       for (const HloInstruction* instr : instructions) {
-        if (opts.verify_duplicate_channel_ids) {
+        if (opts.verify_unique_channel_ids) {
           TF_RET_CHECK(first->opcode() == instr->opcode())
               << "channel " << pair.first
               << " is used for different types of channel instructions";

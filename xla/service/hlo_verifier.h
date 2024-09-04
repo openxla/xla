@@ -150,7 +150,7 @@ struct HloVerifierOpts {
   bool verify_instruction_name_unchanged = false;
 
   // Check if channel instructions all have unique channel ids.
-  bool verify_duplicate_channel_ids = true;
+  bool verify_unique_channel_ids = true;
 
   HloPredicate instruction_can_change_layout;
 
