@@ -5127,6 +5127,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     offset_tensor->set_uid(next_uid());
   }
   CudnnGraph cudnnGraph(std::move(graph));
+
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
                                   /*allow_tf32=*/true}));
@@ -5499,6 +5500,7 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
   }
 
   CudnnGraph cudnnGraph(std::move(graph));
+
   TF_RETURN_IF_ERROR(
       cudnnGraph.Prepare(dnn_support, NumericOptions{force_deterministic,
                                                      /*allow_tf32=*/true}));
@@ -7162,19 +7164,6 @@ CudnnSupport::NormRunnerFromDesc(
 #endif  // CUDNN_VERSION >= 8905
 }
 
-// Returns the offset to increment for the dropout rng.
-// The offset is used by runner to increment by the offset_increment for
-// every call to cudnn fmha kernel to make sure dropout mask is evenly
-// distributed. The recommended offset value by cudnn is max_sequence_length
-// * max_sequence_length / number_of_threads_launched in kernel.
-int64_t GetDropoutRngOffset(std::vector<int64_t>& intermediate_shape) {
-  int64_t kv_seq_len = intermediate_shape[intermediate_shape.size() - 1];
-  int64_t q_seq_len = intermediate_shape[intermediate_shape.size() - 2];
-  int64_t max_seq_len = std::max(q_seq_len, kv_seq_len);
-  int64_t cudnn_mha_num_threads = 256;
-  return max_seq_len * max_seq_len / cudnn_mha_num_threads;
-}
-
 bool CudnnSupport::GetRnnAlgorithms(
     std::vector<dnn::AlgorithmDesc>* out_algorithms) {
   PreloadCudnnSubLibs(PreloadCudnnType::Rnn);
@@ -8255,7 +8244,8 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support,
 }
 
 absl::Status CudnnGraph::Execute(Stream& stream,
-                                 absl::Span<DeviceMemoryBase> operands) const {
+                                 absl::Span<DeviceMemoryBase> operands,
+                                 int64_t local_device_ordinal) const {
   std::unordered_map<int64_t, void*> tensor_to_ptr_map;
   absl::Span<DeviceMemoryBase> operands_without_workspace = operands;
   DeviceMemoryBase workspace;
@@ -8273,9 +8263,10 @@ absl::Status CudnnGraph::Execute(Stream& stream,
 
   if (dropout_rng_offset_increment_ > 0) {
 #if CUDNN_VERSION >= 8800
+    UpdateDropoutState(local_device_ordinal);
     tensor_to_ptr_map[next_uid()] = (void*)&dropout_rng_seed_;
-    current_dropout_rng_offset_ += dropout_rng_offset_increment_;
-    tensor_to_ptr_map[next_uid()] = (void*)&current_dropout_rng_offset_;
+    tensor_to_ptr_map[next_uid()] =
+        (void*)&current_dropout_rng_offset_[local_device_ordinal];
 #else
     return absl::UnimplementedError(
         "Cudnn dropout offset and seed are only supported with Cudnn >= "

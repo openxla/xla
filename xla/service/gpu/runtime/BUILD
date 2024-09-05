@@ -1235,7 +1235,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:kernel_arguments",
         "//xla/stream_executor",
-        "//xla/stream_executor:dnn",
+        "//xla/stream_executor/cuda:cudnn_plugin",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
