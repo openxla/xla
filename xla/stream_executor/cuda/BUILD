@@ -194,6 +194,7 @@ cuda_only_cc_library(
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
