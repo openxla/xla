@@ -473,20 +473,29 @@ def cudnn_redist_init_repository(
         cudnn_redist_path_prefix = cudnn_redist_path_prefix,
     )
 
-def detect_platform():
-    """Detect if platform is Jetson or generic ARM SBSA"""
-    # Assume an environment variable or platform-specific flag can help us distinguish
-    is_jetson = get_env_var("JETSON_PLATFORM")  # Custom environment variable
-    if is_jetson:
-        return "linux-aarch64"  # Jetson
-    else:
-        return "linux-sbsa"  # ARM Server (SBSA)
+def detect_platform(repository_ctx):
+    """Detect if the platform is x86_64, Jetson (aarch64), or generic ARM SBSA."""
+    # Use environment variables to distinguish between platforms
+    host_arch = repository_ctx.os.arch  # Using Bazel's built-in context to detect architecture
     
+    if host_arch == "x86_64":
+        return "linux-x86_64"  # x86_64 platform
+    
+    if host_arch == "aarch64":
+        # Check if the build is targeting Jetson using an environment variable
+        is_jetson = repository_ctx.os.environ.get("JETSON_PLATFORM", None)
+        if is_jetson:
+            return "linux-aarch64"  # Jetson platform
+        return "linux-sbsa"  # Default to SBSA if not Jetson
+    
+    # Default case, if something unexpected is encountered
+    fail("Unsupported architecture: {}".format(host_arch))
+
 def cuda_redist_init_repositories(
         cuda_redistributions,
         cuda_redist_path_prefix=CUDA_REDIST_PATH_PREFIX,
         redist_versions_to_build_templates=REDIST_VERSIONS_TO_BUILD_TEMPLATES):
-    """Initializes CUDA repositories, distinguishing between Jetson and SBSA"""
+    """Initializes CUDA repositories for multiple architectures, including Jetson and SBSA."""
     for redist_name in redist_versions_to_build_templates:
         if redist_name in ["cudnn", "cuda_nccl"]:
             continue
@@ -501,8 +510,8 @@ def cuda_redist_init_repositories(
             repo_data["version_to_template"]
         )
 
-        # Detect the platform (Jetson or SBSA)
-        arch_key = detect_platform()  # Call platform detection
+        # Detect the platform architecture (x86_64, Jetson, or SBSA)
+        arch_key = detect_platform(repository_ctx)
 
         # If the correct architecture is not found in url_dict, skip
         if arch_key not in url_dict:
