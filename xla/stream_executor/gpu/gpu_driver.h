@@ -659,8 +659,9 @@ class GpuDriver {
   // Returns the elapsed milliseconds between start and stop via
   // cuEventElapsedTime.
   // http://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EVENT.html#group__CUDA__EVENT_1gdfb1178807353bbcaa9e245da497cf97
-  static bool GetEventElapsedTime(Context* context, float* elapsed_milliseconds,
-                                  GpuEventHandle start, GpuEventHandle stop);
+  static absl::StatusOr<float> GetEventElapsedTime(Context* context,
+                                                   GpuEventHandle start,
+                                                   GpuEventHandle stop);
 
   // Records that an event occurred when execution reaches the current point in
   // thestream via cuEventRecord.
@@ -698,11 +699,6 @@ class GpuDriver {
   // (supported on ROCm only)
   static absl::Status GetGpuGCNArchName(GpuDeviceHandle device,
                                         std::string* gcnArchName);
-
-#if TENSORFLOW_USE_ROCM
-  // tests the current device for MFMA insn support (ROCm only)
-  static absl::StatusOr<bool> GetMFMASupport();
-#endif
 
   // Returns the number of multiprocessors on the device (note that the device
   // may be multi-GPU-per-board).
