@@ -29,6 +29,7 @@ OS_ARCH_DICT = {
 _REDIST_ARCH_DICT = {
     "linux-x86_64": "x86_64-unknown-linux-gnu",
     "linux-sbsa": "aarch64-unknown-linux-gnu",
+    "linux-aarch64": "aarch64-unknown-linux-gnu",
 }
 
 SUPPORTED_ARCHIVE_EXTENSIONS = [
