@@ -473,27 +473,46 @@ def cudnn_redist_init_repository(
         cudnn_redist_path_prefix = cudnn_redist_path_prefix,
     )
 
+def detect_platform():
+    """Detect if platform is Jetson or generic ARM SBSA"""
+    # Assume an environment variable or platform-specific flag can help us distinguish
+    is_jetson = get_env_var("JETSON_PLATFORM")  # Custom environment variable
+    if is_jetson:
+        return "linux-aarch64"  # Jetson
+    else:
+        return "linux-sbsa"  # ARM Server (SBSA)
+    
 def cuda_redist_init_repositories(
         cuda_redistributions,
-        cuda_redist_path_prefix = CUDA_REDIST_PATH_PREFIX,
-        redist_versions_to_build_templates = REDIST_VERSIONS_TO_BUILD_TEMPLATES):
-    # buildifier: disable=function-docstring-args
-    """Initializes CUDA repositories."""
-    for redist_name, _ in redist_versions_to_build_templates.items():
+        cuda_redist_path_prefix=CUDA_REDIST_PATH_PREFIX,
+        redist_versions_to_build_templates=REDIST_VERSIONS_TO_BUILD_TEMPLATES):
+    """Initializes CUDA repositories, distinguishing between Jetson and SBSA"""
+    for redist_name in redist_versions_to_build_templates:
         if redist_name in ["cudnn", "cuda_nccl"]:
             continue
-        if redist_name in cuda_redistributions.keys():
+        
+        if redist_name in cuda_redistributions:
             url_dict = _get_redistribution_urls(cuda_redistributions[redist_name])
         else:
             url_dict = {}
+
         repo_data = redist_versions_to_build_templates[redist_name]
         versions, templates = get_version_and_template_lists(
-            repo_data["version_to_template"],
+            repo_data["version_to_template"]
         )
+
+        # Detect the platform (Jetson or SBSA)
+        arch_key = detect_platform()  # Call platform detection
+
+        # If the correct architecture is not found in url_dict, skip
+        if arch_key not in url_dict:
+            print(f"Platform {arch_key} is not supported for {redist_name}. Skipping.")
+            continue
+
         cuda_repo(
-            name = repo_data["repo_name"],
-            versions = versions,
-            build_templates = templates,
-            url_dict = url_dict,
-            cuda_redist_path_prefix = cuda_redist_path_prefix,
+            name=repo_data["repo_name"],
+            versions=versions,
+            build_templates=templates,
+            url_dict=url_dict,
+            cuda_redist_path_prefix=cuda_redist_path_prefix,
         )
