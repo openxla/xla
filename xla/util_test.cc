@@ -343,5 +343,18 @@ TEST(UtilTest, MaybeOwningTestShared) {
   EXPECT_EQ(c1.get(), c2.get());
 }
 
+TEST(UtilTest, GetOrInitMappedValue) {
+  int call_count = 0;
+  auto get_or_init = [&](int key) {
+    ++call_count;
+    return key + 1;
+  };
+  EXPECT_EQ(SynchronizedGetOrInitMappedValue(1, get_or_init), 2);
+  EXPECT_EQ(SynchronizedGetOrInitMappedValue(1, get_or_init), 2);
+  EXPECT_EQ(call_count, 1);  // Second invocation doesn't call initialization.
+  EXPECT_EQ(SynchronizedGetOrInitMappedValue(10, get_or_init), 11);
+  EXPECT_EQ(call_count, 2);
+}
+
 }  // namespace
 }  // namespace xla

@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/base/log_severity.h"
 #include "absl/base/macros.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
 #include "absl/numeric/bits.h"
@@ -922,6 +923,34 @@ inline bool HloPredicateFalse(const HloInstruction*) { return false; }
 
 using Vector2 = std::array<int64_t, 2>;
 using Vector3 = std::array<int64_t, 3>;
+
+// Template function for creating a static key/value cache guarded by a mutex.
+// Each access locks the mutex to retrieve the existing value or create one.
+template <typename Func, typename Key,
+          typename Val = std::invoke_result_t<Func, Key>,
+          typename KeyImpl = Key>
+const Val& SynchronizedGetOrInitMappedValue(Key key, Func init) {
+  static absl::Mutex mutex(absl::kConstInit);
+  static absl::flat_hash_map<KeyImpl, Val>* cache = nullptr;
+
+  absl::MutexLock lock(&mutex);
+  if (cache == nullptr) {
+    cache = new absl::flat_hash_map<KeyImpl, Val>();
+  }
+  auto it = cache->find(key);
+  if (it == cache->end()) {
+    it = cache->emplace(key, init(key)).first;
+  }
+  return it->second;
+}
+
+// Specialization of the above function with string keys.
+template <typename Func, typename Key = std::string_view,
+          typename Val = std::invoke_result_t<Func, Key>>
+const Val& SynchronizedGetOrInitStringMappedValue(Key key, Func init) {
+  return SynchronizedGetOrInitMappedValue<Func, Key, Val, std::string>(key,
+                                                                       init);
+}
 
 }  // namespace xla
 

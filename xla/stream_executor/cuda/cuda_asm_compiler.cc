@@ -125,19 +125,8 @@ static absl::StatusOr<SemanticVersion> GetToolVersionImpl(
 absl::StatusOr<SemanticVersion> GetToolVersion(std::string_view tool_path) {
   // This is only implementing a static cache. `GetToolVersionImpl` has the
   // actual business logic.
-  static absl::Mutex mutex(absl::kConstInit);
-  static auto cache =
-      new absl::flat_hash_map<std::string, absl::StatusOr<SemanticVersion>>
-          ABSL_GUARDED_BY(mutex);
-
-  absl::MutexLock lock(&mutex);
-  auto it = cache->find(tool_path);
-  if (it != cache->end()) {
-    return it->second;
-  }
-
-  return cache->try_emplace(tool_path, GetToolVersionImpl(tool_path))
-      .first->second;
+  return xla::SynchronizedGetOrInitStringMappedValue(tool_path,
+                                                     GetToolVersionImpl);
 }
 
 absl::StatusOr<absl::Span<const uint8_t>> CompileGpuAsmOrGetCached(
@@ -305,9 +294,13 @@ static absl::StatusOr<std::string> FindPtxAsExecutable(
 
 absl::StatusOr<SemanticVersion> GetAsmCompilerVersion(
     std::string_view preferred_cuda_dir) {
-  TF_ASSIGN_OR_RETURN(std::string ptxas_path,
-                      FindPtxAsExecutable(preferred_cuda_dir));
-  return GetToolVersion(ptxas_path);
+  return xla::SynchronizedGetOrInitStringMappedValue(
+      preferred_cuda_dir,
+      [](std::string_view cuda_dir) -> absl::StatusOr<SemanticVersion> {
+        TF_ASSIGN_OR_RETURN(std::string ptxas_path,
+                            FindPtxAsExecutable(cuda_dir));
+        return GetToolVersion(ptxas_path);
+      });
 }
 
 absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingPtxAs(
@@ -508,11 +501,13 @@ static absl::StatusOr<std::string> FindNvlinkExecutable(
 
 absl::StatusOr<SemanticVersion> GetNvLinkVersion(
     std::string_view preferred_cuda_dir) {
-  // Make sure nvlink exists and is executable.
-  TF_ASSIGN_OR_RETURN(std::string bin_path,
-                      FindNvlinkExecutable(preferred_cuda_dir));
-
-  return GetToolVersion(bin_path);
+  return xla::SynchronizedGetOrInitStringMappedValue(
+      preferred_cuda_dir,
+      [](std::string_view cuda_dir) -> absl::StatusOr<SemanticVersion> {
+        TF_ASSIGN_OR_RETURN(std::string bin_path,
+                            FindNvlinkExecutable(cuda_dir));
+        return GetToolVersion(bin_path);
+      });
 }
 
 absl::StatusOr<std::vector<uint8_t>> LinkUsingNvlink(
