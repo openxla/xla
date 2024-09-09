@@ -39,9 +39,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -221,10 +221,10 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
   mlir::ImplicitLocOpBuilder b(entry_function.getLoc(), entry_function);
   b.setInsertionPointToStart(entry_function.addEntryBlock());
 
-  auto threads_and_blocks = EmitThreadAndBlockIds(b);
+  auto thread_and_block_ids = EmitThreadAndBlockIds(b);
   Value thread_id_to_index_id_value =
       mlir_converter::ApplyIndexing(thread_id_to_update_id_map,
-                                    threads_and_blocks, {}, b)
+                                    thread_and_block_ids, {}, b)
           .front();
 
   SmallVector<Value> result_tensors{entry_function.getArguments().back()};
@@ -262,24 +262,22 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
            [&](OpBuilder& then_builder, Location then_loc) -> void {
              mlir::ImplicitLocOpBuilder implicit_then_builder(then_loc,
                                                               then_builder);
-             auto scatter_result = EmitThreadLoopNest(
-                 implicit_then_builder, result_tensors, thread_id_to_update_map,
-                 [&](ValueRange output_tensors, ValueRange dim_values,
-                     ValueRange symbol_values) -> SmallVector<Value> {
-                   auto update_tensor_indices = mlir_converter::ApplyIndexing(
-                       thread_id_to_update_map, dim_values, symbol_values,
-                       implicit_then_builder);
+             auto scatter_result = mlir_converter::EmitXlaLoopOp(
+                 implicit_then_builder, thread_and_block_ids, result_tensors,
+                 thread_id_to_update_map,
+                 [&](ValueRange symbol_values, ValueRange map_results,
+                     ValueRange output_tensors) -> SmallVector<Value> {
                    // Extract update element.
                    auto update_elem = ProvideParameter(
                        root_computation, scatter, kScatterUpdateIndex,
-                       update_tensor_indices, call_targets, entry_function,
+                       map_results, call_targets, entry_function,
                        implicit_then_builder)[0];
 
                    auto output_indices = std::move(update_offsets);
                    for (int i = 0; i < output_indices.size(); ++i) {
                      output_indices[i] =
                          implicit_then_builder.create<ma::AddIOp>(
-                             update_tensor_indices[i + 1], output_indices[i]);
+                             map_results[i + 1], output_indices[i]);
                    }
                    Value output_tensor = output_tensors.front();
                    Value updated_output = EmitScatterComputation(

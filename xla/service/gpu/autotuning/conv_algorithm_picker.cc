@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/lazy_op_runner.h"
@@ -95,6 +96,16 @@ namespace {
 using se::DeviceMemoryBase;
 using se::dnn::AlgorithmDesc;
 using std::optional;
+
+// Returns the shape of the element with index tuple_idx from shape when shape
+// is a tuple shape. Returns shape when shape is not a tuple shape.
+Shape MaybeTupleElementShape(Shape shape, int64_t tuple_idx) {
+  if (shape.IsTuple()) {
+    return shape.tuple_shapes(tuple_idx);
+  } else {
+    return shape;
+  }
+}
 
 class ScratchAllocator : public se::ScratchAllocator {
  public:
@@ -734,9 +745,15 @@ absl::StatusOr<AutotuneResult> GpuConvAlgorithmPicker::AutotuneOneConvRunner(
 
     const DebugOptions& debug_options =
         runtime_arguments.hlo_module_config.debug_options();
-    BufferComparator comparator(runtime_arguments.rz_buffers.output_shape(),
-                                debug_options.xla_gpu_autotune_gemm_rtol());
     for (int i = 0; i < result_buffers.size(); ++i) {
+      // If there is one output, the output shape describes the shape of an
+      // array. If there are multiple outputs, the output shape is a tuple, in
+      // which case get the shape of the i-th element.
+      Shape output_shape = MaybeTupleElementShape(
+          runtime_arguments.rz_buffers.output_shape(), i);
+      XLA_SCOPED_LOGGING_TIMER_LEVEL("BufferComparator::CompareEqual", 2);
+      BufferComparator comparator(output_shape,
+                                  debug_options.xla_gpu_autotune_gemm_rtol());
       absl::StatusOr<bool> compare_result = comparator.CompareEqual(
           stream, (*reference_result)->buffers[i], result_buffers[i]);
       if (!compare_result.ok()) {

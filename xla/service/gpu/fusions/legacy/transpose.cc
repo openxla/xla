@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/llvm_ir/loop_emitter.h"
 #include "xla/shape_util.h"
-#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
@@ -66,12 +65,13 @@ Tiling ComputeTransposeTiling(const se::DeviceDescription& gpu_device_info,
   static_assert(WarpSize() % kNumRows == 0);
 
   // 3D view over the output shape.
-  Vector3 transposed_dims = tiled_transpose.dimensions;
-  Vector3 permutation = tiled_transpose.permutation;
+  absl::InlinedVector<int64_t, 3> transposed_dims = tiled_transpose.dimensions;
+  absl::InlinedVector<int64_t, 3> permutation = tiled_transpose.permutation;
 
   // Note: the supported permutations are their own inverses. Therefore we
   // always use the permutation, even when we want the inverse.
-  CHECK((permutation == Vector3{0, 2, 1}) || (permutation == Vector3{2, 1, 0}));
+  CHECK((permutation == absl::InlinedVector<int64_t, 3>{0, 2, 1}) ||
+        (permutation == absl::InlinedVector<int64_t, 3>{2, 1, 0}));
 
   absl::InlinedVector<int64_t, 4> input_dims{transposed_dims[permutation[0]],
                                              transposed_dims[permutation[1]],
@@ -133,8 +133,8 @@ TransposeFusion::TransposeFusion(const se::DeviceDescription& gpu_device_info,
           ComputeTransposeTiling(gpu_device_info, analysis.tiled_transpose())) {
   for (auto [root, hero] :
        llvm::zip(analysis_.fusion_roots(), analysis_.fusion_heroes())) {
-    if (auto transpose = GetDescriptionForTiledTransposeEmitter(
-            root.instruction(), hero.instruction())) {
+    if (auto transpose =
+            GetDescriptionForTiledTransposeEmitter(hero.instruction())) {
       permutation_ = transpose->permutation;
       break;
     }
@@ -171,8 +171,7 @@ absl::Status TransposeFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
 
   for (const auto& [output_idx, root] : llvm::enumerate(hlo_roots)) {
     const auto& hero = analysis_.fusion_hero(output_idx).instruction();
-    auto transpose_descr =
-        GetDescriptionForTiledTransposeEmitter(root.instruction(), hero);
+    auto transpose_descr = GetDescriptionForTiledTransposeEmitter(hero);
     if (transpose_descr.has_value()) {
       auto iterator_inserted = transposes_to_roots.insert(std::make_pair(
           &hero, std::vector<std::pair<int64_t, const HloInstruction*>>{
@@ -189,7 +188,7 @@ absl::Status TransposeFusion::EmitKernel(IrEmitterContext& ir_emitter_context,
   }
 
   absl::flat_hash_map<const HloInstruction*, llvm_ir::SharedMemoryTile> tiles;
-  Vector3 permutation;
+  absl::InlinedVector<int64_t, 3> permutation;
   for (const auto& [tile_idx, tr] : llvm::enumerate(transposes)) {
     permutation = tr.permutation;
     auto tile_size = tiling_.GetBlockTileSize();

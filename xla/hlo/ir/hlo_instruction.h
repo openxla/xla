@@ -25,6 +25,7 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -2063,7 +2064,7 @@ class HloInstruction {
   // match the regexp "[a-zA-Z_][a-zA-Z0-9_.-]*".
   //
   // See also HloModule::SetAndUniquifyInstrName(), which does this plus
-  // UniqufyName().
+  // UniquifyName().
   void SetAndSanitizeName(absl::string_view name) {
     name_ = NameUniquer::GetSanitizedName(name);
   }

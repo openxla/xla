@@ -82,6 +82,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_type_conversion_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -105,6 +106,11 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #endif
+
+#if TENSORFLOW_USE_SYCL
+#include "LLVMSPIRVLib.h"
+#include "LLVMSPIRVOpts.h"
+#endif  // TENSORFLOW_USE_SYCL
 
 namespace xla {
 namespace gpu {
@@ -290,39 +296,15 @@ absl::Status NVPTXTargetModuleLinker(llvm::Module* module,
   return absl::OkStatus();
 }
 
-#ifdef GOOGLE_CUDA
-namespace {
-constexpr int kFallbackPtxVersion = 65;
-
-int DetermineHighestSupportedPtxVersionFromCudaVersion(
-    stream_executor::ToolVersion cuda_version) {
-  if (cuda_version[0] < 11) {
-    // For everything below CUDA 11 we just fall back to PTX 6.5.
-    // We don't support CUDA below 11 anymore.
-    return kFallbackPtxVersion;
-  }
-
-  // Mapping determined from
-  // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#release-notes
-  // Examples:
-  // CUDA 11.0 -> PTX 7.0
-  // CUDA 11.1 -> PTX 7.1
-  // CUDA 12.0 -> PTX 8.0
-  // CUDA 12.4 -> PTX 8.4 etc.
-  return (cuda_version[0] - 4) * 10 + cuda_version[1];
-}
-}  // namespace
-#endif
-
 std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
     llvm::Triple target_triple, se::CudaComputeCapability compute_capability,
     const DebugOptions& debug_options) {
 #ifdef GOOGLE_CUDA
-  absl::StatusOr<stream_executor::ToolVersion> runtime_cuda_version =
+  absl::StatusOr<stream_executor::SemanticVersion> runtime_cuda_version =
       stream_executor::GetAsmCompilerVersion(
           debug_options.xla_gpu_cuda_data_dir());
 
-  const stream_executor::ToolVersion kCompileTimeCudaVersion{
+  constexpr stream_executor::SemanticVersion kCompileTimeCudaVersion{
       CUDA_VERSION / 1000, (CUDA_VERSION / 10) % 100, CUDA_VERSION % 10};
 
   auto highest_supported_cuda_version = [&] {
@@ -333,9 +315,11 @@ std::unique_ptr<llvm::TargetMachine> NVPTXGetTargetMachine(
     return kCompileTimeCudaVersion;
   }();
 
-  auto highest_supported_ptx_version =
-      DetermineHighestSupportedPtxVersionFromCudaVersion(
+  nvptx::Version ptx_version =
+      nvptx::DetermineHighestSupportedPtxVersionFromCudaVersion(
           highest_supported_cuda_version);
+  int highest_supported_ptx_version =
+      ptx_version.first * 10 + ptx_version.second;
 
   VLOG(1) << "Targeting PTX version: " << highest_supported_ptx_version;
   std::string feature_str =
@@ -418,7 +402,9 @@ absl::Status LinkAndOptimizeModule(
   llvm::CGSCCAnalysisManager cgam;
   llvm::ModuleAnalysisManager mam;
 
-  fam.registerPass([&] { return target_machine->getTargetIRAnalysis(); });
+  if (target_machine) {
+    fam.registerPass([&] { return target_machine->getTargetIRAnalysis(); });
+  }
 
   llvm::PipelineTuningOptions pto;
   pto.SLPVectorization = true;
@@ -514,6 +500,7 @@ void NVPTXBackendInit(const DebugOptions& debug_options) {
   FeedLLVMWithFlags({
       "-slp-vectorize-hor=false",
       "-slp-max-reg-size=32",
+      "-slp-max-vf=4",
   });
 
   llvm_ir::InitializeLLVMCommandLineOptions(
@@ -701,6 +688,34 @@ absl::StatusOr<std::string> CompileToPtx(
   return ptx;
 }
 
+namespace {
+constexpr nvptx::Version kFallbackPtxVersion{6, 5};
+constexpr nvptx::Version kMaxPtxVersion{8, 5};
+}  // namespace
+
+Version DetermineHighestSupportedPtxVersionFromCudaVersion(
+    stream_executor::SemanticVersion cuda_version) {
+  if (cuda_version < stream_executor::SemanticVersion{11, 0, 0}) {
+    // For everything below CUDA 11 we just fall back to PTX 6.5.
+    // We don't support CUDA below 11 anymore.
+    return kFallbackPtxVersion;
+  }
+
+  // Mapping determined from
+  // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#release-notes
+  // Examples:
+  // CUDA 11.0 -> PTX 7.0
+  // CUDA 11.1 -> PTX 7.1
+  // CUDA 12.0 -> PTX 8.0
+  // CUDA 12.4 -> PTX 8.4
+  // This versioning scheme is valid until CUDA 12.6
+  if (cuda_version < stream_executor::SemanticVersion{12, 6, 0}) {
+    return {cuda_version.major() - 4, cuda_version.minor()};
+  }
+
+  // Return maximum known PTX version.
+  return kMaxPtxVersion;
+}
 }  // namespace nvptx
 
 namespace {
@@ -1136,6 +1151,96 @@ absl::StatusOr<std::vector<uint8_t>> CompileToHsaco(
 }
 
 }  // namespace amdgpu
+
+namespace {
+
+std::unique_ptr<llvm::TargetMachine> SPIRGetTargetMachine(
+    llvm::Triple target_triple, se::GpuComputeCapability gpu_version,
+    const DebugOptions& debug_options) {
+  return nullptr;
+}
+
+absl::Status SPIRTargetModuleLinker(
+    llvm::Module* module, se::GpuComputeCapability gpu_version,
+    const DebugOptions& debug_options,
+    const std::string& device_bitcode_dir_path) {
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::string> EmitModuleToSpir(
+    llvm::Module* module, se::GpuComputeCapability gpu_version,
+    const DebugOptions& debug_options) {
+#if TENSORFLOW_USE_SYCL
+  SPIRV::TranslatorOpts::ExtensionsStatusMap ExtensionsStatus;
+  SPIRV::TranslatorOpts opts(SPIRV::VersionNumber::MaximumVersion,
+                             ExtensionsStatus);
+  opts.enableAllExtensions();  // enable all SPIR-V extension first
+
+  std::ostringstream oss;
+  std::string err;
+  bool success = llvm::writeSpirv(module, opts, oss, err);
+  if (!success) {
+    return xla::Internal("Fails to convert LLVM as SPIR-V: %s", err);
+  }
+  return oss.str();
+#else
+  return absl::UnimplementedError("Not implemented for SYCL");
+#endif
+}
+
+void SPIRBackendInit(const DebugOptions& debug_options) {
+  FeedLLVMWithFlags({
+      "-slp-vectorize-hor=false",
+      "-slp-min-reg-size=64",
+      "-slp-max-reg-size=64",
+  });
+
+  llvm_ir::InitializeLLVMCommandLineOptions(
+      debug_options.xla_backend_extra_options());
+
+  llvm::PassRegistry* registry = llvm::PassRegistry::getPassRegistry();
+  InitializePasses(registry);
+}
+
+}  // namespace
+
+namespace spir {
+
+absl::StatusOr<std::vector<uint8_t>> CompileToSpir(
+    llvm::Module* module, se::GpuComputeCapability gpu_version,
+    const DebugOptions& debug_options) {
+  std::string libdevice_dir_path;
+  static absl::once_flag backend_init_flag;
+  absl::call_once(backend_init_flag, SPIRBackendInit, debug_options);
+
+  std::string spir;
+  {
+    XLA_SCOPED_LOGGING_TIMER("Compile module " + module->getName().str());
+
+    // If the module has no functions or globals, there's nothing to compile.
+    if (module->empty() && module->global_empty()) {
+      VLOG(2) << "Module '" << module->getName().str()
+              << "' is empty. Skipping compilation.";
+      return std::vector<uint8_t>();
+    }
+
+    llvm::Triple default_target_triple("spir64-unknown-unknown");
+    std::unique_ptr<llvm::TargetMachine> target_machine =
+        SPIRGetTargetMachine(default_target_triple, gpu_version, debug_options);
+
+    TF_RETURN_IF_ERROR(LinkAndOptimizeModule(
+        module, gpu_version, debug_options, libdevice_dir_path,
+        SPIRTargetModuleLinker, default_target_triple, target_machine.get(),
+        kDefaultInlineThreshold));
+
+    // Lower optimized LLVM module to SPIR.
+    TF_ASSIGN_OR_RETURN(spir,
+                        EmitModuleToSpir(module, gpu_version, debug_options));
+  }
+  return std::vector<uint8_t>(spir.begin(), spir.end());
+}
+
+}  // namespace spir
 
 }  // namespace gpu
 }  // namespace xla

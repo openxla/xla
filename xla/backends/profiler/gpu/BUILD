@@ -100,8 +100,7 @@ xla_test(
     backends = ["gpu"],
     copts = tf_profiler_copts() + tsl_copts(),
     tags = [
-        "gpu_cupti",
-        "nomac",
+        "no_mac",
     ],
     deps = [
         ":cupti_interface",
@@ -311,7 +310,10 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/utils:xplane_builder",
         "@tsl//tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/profiler/utils:xplane_utils",
-    ] + if_cuda(["//xla/tsl/cuda:cupti"]),
+    ] + if_cuda([
+        "//xla/tsl/cuda:cupti",
+        "//xla/tsl/cuda",
+    ]),
 )
 
 tsl_gpu_library(

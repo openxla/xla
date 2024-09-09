@@ -151,14 +151,6 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
     return true;
   }
 
-  // A special case for jax-triton kernel while it is not ported to FFI.
-  if (hlo->custom_call_target() == "triton_kernel_call" &&
-      // TODO(b/327718087): This is an ugly hack to prevent capturing triton
-      // custom calls that might do autotuning at run time.
-      !absl::StrContains(hlo->metadata().op_name(), "Autotuner")) {
-    return true;
-  }
-
   // Check if FFI handler is compatible with command buffers.
   auto registration = ffi::FindHandler(hlo->custom_call_target(), "gpu");
   return registration.ok()
@@ -232,6 +224,12 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
   }
 
   if (hlo->opcode() == HloOpcode::kAsyncStart) {
+    if (IsCublasGemm(*hlo->async_wrapped_instruction())) {
+      return config.enabled_commands.contains(DebugOptions::CUBLAS);
+    }
+    if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
+      return config.enabled_commands.contains(DebugOptions::FUSION);
+    }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
       return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
     }
@@ -248,6 +246,12 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
   }
 
   if (hlo->opcode() == HloOpcode::kAsyncDone) {
+    if (IsCublasGemm(*hlo->async_wrapped_instruction())) {
+      return config.enabled_commands.contains(DebugOptions::CUBLAS);
+    }
+    if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
+      return config.enabled_commands.contains(DebugOptions::FUSION);
+    }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter) {
       return config.enabled_commands.contains(DebugOptions::COLLECTIVES);
     }

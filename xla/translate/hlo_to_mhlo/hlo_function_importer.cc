@@ -102,7 +102,7 @@ constexpr char kParameterReplicationAttr[] = "mhlo.parameter_replication";
 
 // Note: This sanitization function causes an irreversible many-to-one mapping
 // and any solution to mitigate this would cause issues with the reverse
-// direction. Longterm solution is to add a function attribute to maintain the
+// direction. Long-term solution is to add a function attribute to maintain the
 // original HLO naming.
 std::string SanitizeFunctionName(llvm::StringRef name) {
   std::string output(name);
@@ -751,7 +751,13 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
       attributes.push_back(builder_->getNamedAttr(
           "precision_config",
           ConvertPrecisionConfig(&instruction->precision_config(), builder_)));
-
+      if (instruction->precision_config().algorithm() !=
+          PrecisionConfig::ALG_UNSET) {
+        attributes.push_back(builder_->getNamedAttr(
+            "algorithm",
+            ConvertDotAlgorithm(instruction->precision_config().algorithm(),
+                                builder_)));
+      }
       // Consider consolidating DotOps together.
       if (DotIsDefault(instruction) && !dot->sparse_operands()) {
         return func_builder
