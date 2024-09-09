@@ -887,7 +887,8 @@ ENTRY main.12 {
   opts.set_xla_gpu_graph_min_graph_size(200);
   opts.set_xla_gpu_enable_triton_gemm(false);
   opts.add_xla_disable_hlo_passes("dot-merger");
-  CollectiveOpsVerifyF8Matmul(kModuleReplicatedStr, opts);
+  CollectiveOpsVerifyF8Matmul(
+      absl::StrReplaceAll(kModuleReplicatedStr, replacements_), opts);
 }
 
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed,
@@ -1085,7 +1086,8 @@ ENTRY entry {
   opts.set_xla_gpu_run_post_layout_collective_pipeliner(true);
   opts.set_xla_gpu_enable_pipelined_collectives(true);
   opts.set_xla_gpu_enable_triton_gemm(false);
-  CollectiveOpsVerifyF8Matmul(kModuleReplicatedStr, opts);
+  CollectiveOpsVerifyF8Matmul(
+      absl::StrReplaceAll(kModuleReplicatedStr, replacements_), opts);
 }
 
 TEST_F(CollectiveOpsTestE2E,
