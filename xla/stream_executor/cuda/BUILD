@@ -529,6 +529,10 @@ cc_library(
     name = "ptx_compiler_support",
     srcs = ["ptx_compiler_support.cc"],
     hdrs = ["ptx_compiler_support.h"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
     local_defines = select({
         ":libnvptxcompiler_support_enabled": [
             "LIBNVPTXCOMPILER_SUPPORT=true",
@@ -561,6 +565,7 @@ cc_library(
     ],
     tags = ["manual"],
     deps = [
+        ":ptx_compiler_support",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/algorithm:container",
@@ -670,6 +675,7 @@ cc_library(
     ],
     tags = ["manual"],
     deps = [
+        ":ptx_compiler_support",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
