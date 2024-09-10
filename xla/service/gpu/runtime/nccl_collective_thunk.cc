@@ -422,9 +422,10 @@ bool operator==(const FirstCallRendezvousKey& a,
 }  // namespace
 
 absl::Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
-  if ((*params.collective_params->async_status) != absl::OkStatus()) {
+  if (params.collective_params->async_status->async_op_status !=
+      absl::OkStatus()) {
     LOG(ERROR) << "Async status is not ok. Returning status.";
-    return (*params.collective_params->async_status);
+    return params.collective_params->async_status->async_op_status;
   }
 
   VLOG(1) << absl::StreamFormat("Starting %s %s.", IsAsync() ? "async" : "sync",

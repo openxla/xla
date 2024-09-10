@@ -225,7 +225,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
   absl::StatusOr<Thunk::CollectiveCliques> AcquireCollectiveCliques(
       const Thunk::CollectiveExecuteParams& params,
       std::vector<std::unique_ptr<se::Event>>& async_events_queue,
-      absl::Status& async_status) {
+      AsyncStatus& async_status) {
     if (cliques_.empty()) return Thunk::CollectiveCliques();
 
     VLOG(2) << "Acquire " << cliques_.size()
@@ -338,7 +338,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
-                                 absl::Status& async_status,
+                                 AsyncStatus& async_status,
                                  se::Stream* stream_to_sync);
 
 absl::Status RendezvousAfterInitialization(
@@ -353,7 +353,7 @@ absl::Status ExecuteThunks(
     const BufferAllocations& buffer_allocations, bool block_host_until_done,
     const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
     std::vector<std::unique_ptr<se::Event>>& async_events_queue,
-    absl::Status& async_status) {
+    AsyncStatus& async_status) {
   bool mock_collectives =
       run_options->run_options().gpu_executable_run_options()
           ? run_options->run_options()
@@ -578,7 +578,7 @@ absl::Status RendezvousAfterInitialization(
 
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
-                                 absl::Status& async_status,
+                                 AsyncStatus& async_status,
                                  se::Stream* stream_to_sync = nullptr) {
   // If we're measuring the execution time then it's important to queue the
   // stop event before triggering any synchronization.
@@ -598,11 +598,16 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   if (stream_to_sync) {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     while (!se::gpu::AsGpuStream(stream_to_sync)->IsIdle()) {
-      if (!async_status.ok()) {
-        // NCCL error has occurred, allow some time for NCCL
-        // to completely tear down before exiting the executable.
-        absl::SleepFor(absl::Seconds(15));
-        return async_status;
+      if (!async_status.async_op_status.ok()) {
+        // NCCL error has occurred, wait for all communicators
+        // to be aborted before returning.
+        while (async_status.is_all_comms_aborted == false) {
+          // Need to rendezvous while waiting for the signal in case
+          // any rank is stuck when aborting.
+          TF_RETURN_IF_ERROR(RendezvousAfterInitialization(run_options));
+        }
+
+        return async_status.async_op_status;
       }
     }
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
@@ -613,7 +618,7 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
           stream_to_sync, block_status.message());
     }
   }
-  return async_status;
+  return async_status.async_op_status;
 }
 
 }  // namespace

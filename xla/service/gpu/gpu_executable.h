@@ -243,7 +243,7 @@ class GpuExecutable : public Executable {
   // associated with this executable instance.
   // The status will be set to failure status the first time
   // an async error or timeout has occurred.
-  absl::Status async_status_ = absl::OkStatus();
+  AsyncStatus async_status_ = {absl::OkStatus(), false};
 
   // This queue captures all async events created by this executable.
   // Any thunk that records an async event will push the se::Event to
