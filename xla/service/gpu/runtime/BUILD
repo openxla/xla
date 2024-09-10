@@ -1230,15 +1230,18 @@ cc_library(
     name = "cudnn_thunk",
     srcs = ["cudnn_thunk.cc"],
     hdrs = ["cudnn_thunk.h"],
+    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":thunk",
         "//xla/service:buffer_assignment",
         "//xla/service/gpu:kernel_arguments",
         "//xla/stream_executor",
-        "//xla/stream_executor/cuda:cudnn_plugin",
+        "//xla/stream_executor:dnn",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:cudnn_plugin",
+    ]),
 )

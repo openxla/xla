@@ -5127,7 +5127,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionOperationGraph(
     offset_tensor->set_uid(next_uid());
   }
   CudnnGraph cudnnGraph(std::move(graph));
-
   TF_RETURN_IF_ERROR(cudnnGraph.Prepare(
       dnn_support, NumericOptions{/*require_determinism=*/false,
                                   /*allow_tf32=*/true}));
@@ -5500,7 +5499,6 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardOperationGraph(
   }
 
   CudnnGraph cudnnGraph(std::move(graph));
-
   TF_RETURN_IF_ERROR(
       cudnnGraph.Prepare(dnn_support, NumericOptions{force_deterministic,
                                                      /*allow_tf32=*/true}));
