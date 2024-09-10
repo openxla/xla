@@ -20,7 +20,7 @@ load(
 )
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_oss")
+load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -118,7 +118,7 @@ xla_cc_test(
     name = "async_kernel_launch_test",
     srcs = ["async_kernel_launch_test.cc"],
     # "requires-net:external" tag allows uploading `xprof` results.
-    tags = ["requires-net:external"] + tf_cuda_tests_tags(),
+    tags = if_google(["requires-net:external"]) + tf_cuda_tests_tags(),
     deps = [
         "//xla:debug_options_flags",
         "//xla:literal",
@@ -486,6 +486,7 @@ xla_test(
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu/transforms:instruction_fusion",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -621,14 +622,11 @@ lit_test_suite(
         [
             "add_preds.hlo",
             "calling_convention.hlo",
-            "copy.hlo",
             "dot_bf16.hlo",
             "dynamic_update_slice_inplace.hlo",
-            "element_wise_row_vectorization.hlo",
             "fused_scatter.hlo",
             "fused_slice.hlo",
             "kernel_reuse.hlo",
-            "launch_dimensions.hlo",
             "pad_to_static.hlo",
             "reduce_atomic_min.hlo",
             "reduce_column_layout_change.hlo",
@@ -647,6 +645,7 @@ lit_test_suite(
             "sorting.hlo",
             "transpose_021.hlo",
             "transpose_021_extra_output.hlo",
+            "transpose_10.hlo",
             "transpose_210.hlo",
             "transpose_210_extra_output.hlo",
             "triton_naming.hlo",
@@ -672,6 +671,7 @@ lit_test_suite(
         "//xla/tools/hlo_opt:gpu_specs/v100.txtpb",
     ],
     default_tags = tf_cuda_tests_tags(),
+    hermetic_cuda_data_dir = "%S/../../../../../cuda_nvcc",
     tags_override = {
         "element_wise_row_vectorization.hlo": ["no_rocm"],
         "scatter_bf16.hlo": ["no_rocm"],
@@ -828,16 +828,14 @@ xla_test(
 xla_test(
     name = "gpu_fused_mha_test",
     srcs = ["gpu_fused_mha_test.cc"],
-    backend_tags = {"gpu": [
-        "requires-gpu-sm80",
-    ]},
     backends = [
-        "gpu",
+        "gpu_a100",
+        "gpu_h100",
     ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     shard_count = 2,
     deps = [
         ":gpu_codegen_test",
+        "//xla:array3d",
         "//xla:array4d",
         "//xla:error_spec",
         "//xla:literal",
@@ -857,6 +855,8 @@ xla_test(
         "//xla/stream_executor",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
+        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/tests:client_library_test_base",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
@@ -869,9 +869,7 @@ xla_test(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ] + if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-    ]),
+    ],
 )
 
 # This library is here to be reused by tests.

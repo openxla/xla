@@ -17,6 +17,7 @@ package(
         "//tensorflow/core/util:__subpackages__",
         "//tensorflow/core:__pkg__",
         "//tensorflow/core/lib/io:__subpackages__",
+        "@xla//xla/tsl/profiler:__subpackages__",
         "//tsl/profiler:__subpackages__",
         "//tensorflow/core/profiler:__subpackages__",
     ]),

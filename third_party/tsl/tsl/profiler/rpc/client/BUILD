@@ -15,7 +15,7 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
-        "//tsl/profiler:internal",
+        "@xla//xla/tsl/profiler:internal",
     ]),
     licenses = ["notice"],
 )
@@ -29,7 +29,6 @@ cc_library(
         "@xla//xla/python:__pkg__",
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "//tensorflow/python/profiler/internal:__pkg__",
-        "//learning/pathways/data_parallel:__pkg__",
     ]),
     deps = [
         ":profiler_client_for_pybind",
@@ -39,8 +38,6 @@ cc_library(
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
         "//tsl/platform:types",
-        "//tsl/profiler/convert:trace_events_to_json",
-        "//tsl/profiler/convert:xplane_to_trace_events",
         "//tsl/profiler/protobuf:profiler_analysis_proto_cc",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:profiler_service_proto_cc",
@@ -49,6 +46,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@xla//xla/tsl/profiler/convert:trace_events_to_json",
+        "@xla//xla/tsl/profiler/convert:xplane_to_trace_events",
     ],
 )
 
@@ -60,8 +59,9 @@ cc_library(
     visibility = internal_visibility([
         "//tensorflow/core/profiler/rpc/client:__pkg__",
         "@xla//xla/python:__pkg__",
-        "//tsl/profiler:internal",
+        "@xla//xla/tsl/profiler:internal",
         "//tsl/profiler/rpc:__pkg__",
+        "//learning/pathways/data_parallel:__pkg__",
     ]),
     deps = [
         "//tsl/lib/io:zlib_compression_options",

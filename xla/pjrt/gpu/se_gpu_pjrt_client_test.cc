@@ -35,9 +35,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "xla/client/xla_computation.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
@@ -58,6 +60,7 @@ limitations under the License.
 #include "xla/test.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
@@ -403,6 +406,54 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsync) {
   ASSERT_TRUE(ShapeUtil::Compatible(src_literal.shape(), literal->shape()));
   ASSERT_EQ(src_literal.data<float>(),
             literal->Relayout(src_literal.shape().layout()).data<float>());
+}
+
+TEST(StreamExecutorGpuClientTest, ToLiteralAsyncWithNonCompactLayout) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  ASSERT_GE(client->addressable_devices().size(), 1);
+
+  xla::Shape transposed_shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
+      xla::S32, {2, 3}, /*minor_to_major=*/{0, 1});
+  xla::Literal src_literal = xla::LiteralUtil::CreateR2WithLayout<int32_t>(
+      {{3, 14, 25}, {36, 47, 58}}, transposed_shape.layout());
+
+  PjRtClient::ShapeSpec spec;
+  spec.element_type = src_literal.shape().element_type();
+  spec.dims = DimensionVector(src_literal.shape().dimensions().begin(),
+                              src_literal.shape().dimensions().end());
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto transfer_manager,
+      client->CreateBuffersForAsyncHostToDevice(
+          {spec},
+          std::make_optional<absl::Span<const Layout>>(
+              {transposed_shape.layout()}),
+          client->addressable_devices()[0]->memory_spaces()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+
+  absl::Mutex mu;
+  auto literal = std::make_shared<Literal>(
+      ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
+  bool got_literal = false;
+
+  TF_ASSERT_OK(
+      transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
+
+  buffer->ToLiteral(literal.get()).OnReady([&](absl::Status s) {
+    absl::MutexLock l(&mu);
+    TF_ASSERT_OK(s);
+    got_literal = true;
+  });
+  buffer.reset();
+
+  {
+    absl::MutexLock l(&mu);
+    mu.Await(absl::Condition(&got_literal));
+  }
+
+  ASSERT_TRUE(ShapeUtil::Compatible(src_literal.shape(), literal->shape()));
+  ASSERT_EQ(src_literal.data<int32_t>(),
+            literal->Relayout(src_literal.shape().layout()).data<int32_t>());
 }
 
 TEST(StreamExecutorGpuClientTest, ToLiteralAsyncBeforeBufferReady) {
@@ -818,15 +869,13 @@ TEST(GpuTopology, ToProto) {
                            /*platform_version=*/"platform_version",
                            /*num_slices=*/2,
                            /*num_hosts_per_slice=*/1,
-                           /*num_devices_per_host=*/3,
-                           /*core_count_per_chip=*/10);
+                           /*num_devices_per_host=*/3);
   GpuTopologyProto msg = gpu_topology.ToProto();
   EXPECT_THAT(msg.device_ids(), ElementsAre(3, 2, 1));
   EXPECT_THAT(msg.platform_version(), "platform_version");
   EXPECT_THAT(msg.num_slices(), 2);
   EXPECT_THAT(msg.num_hosts_per_slice(), 1);
   EXPECT_THAT(msg.num_devices_per_host(), 3);
-  EXPECT_THAT(msg.core_count_per_chip(), 10);
 }
 
 TEST(StreamExecutorGpuClientTest, DistributedInit) {
@@ -876,10 +925,6 @@ TEST(StreamExecutorGpuClientTest, GpuDeviceDescriptionTest) {
             .coords();
     EXPECT_EQ(coords[0], device_index);
   }
-  EXPECT_EQ(static_cast<PjRtStreamExecutorDevice*>(client->devices()[0])
-                ->description()
-                .core_on_chip(),
-            0);
 }
 
 TEST(StreamExecutorGpuClientTest, MockNcclClientTest) {
@@ -954,6 +999,36 @@ TEST(StreamExecutorGpuClientTest, CopyToPinnedHostMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
   std::vector<int32_t> expected{1, 2, 3, 4};
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
+                                     *literal));
+}
+
+TEST(StreamExecutorGpuClientTest, CopyToPinnedHostMemorySpaceInt4) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  std::vector<int8_t> data{1, 2, 3, 4};
+  Shape shape = ShapeUtil::MakeShape(S4, {4});
+  auto device = client->addressable_devices()[0];
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          device));
+
+  EXPECT_EQ(buffer->memory_space()->kind(), "device");
+
+  auto* pinned_memory_space = device->memory_spaces()[1];
+  EXPECT_EQ(pinned_memory_space->kind_id(), PinnedHostMemorySpace::kKindId);
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          buffer->CopyToMemorySpace(pinned_memory_space));
+
+  EXPECT_EQ(result->memory_space()->kind(), "pinned_host");
+  EXPECT_TRUE(result->IsOnCpu());
+
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, result->ToLiteralSync());
+  std::vector<xla::s4> expected{xla::s4(1), xla::s4(2), xla::s4(3), xla::s4(4)};
+  EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<xla::s4>(expected),
                                      *literal));
 }
 
@@ -1226,6 +1301,64 @@ TEST(StreamExecutorGpuClientTest, MlirResultHostMemorySpaceIsSetInHlo) {
   EXPECT_EQ(result_layout.memory_space(), Layout::kHostMemorySpace);
 }
 
+TEST(StreamExecutorGpuClientTest, MlirAutoResultLayoutIsSet) {
+  constexpr char kMlirWithParameterLayout[] =
+      R"(
+    func.func public @main(%arg0: tensor<2x4x2xi32> {
+            mhlo.layout_mode = "{2, 1, 0}"
+        }) -> (tensor<2x2x4xi32> {
+            jax.result_info = "",
+            mhlo.layout_mode = "auto"}) {
+      %0 = stablehlo.transpose %arg0, dims = [0, 2, 1]
+          : (tensor<2x4x2xi32>) -> tensor<2x2x4xi32>
+      return %0 : tensor<2x2x4xi32>
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(auto module, xla::ParseMlirModuleString(
+                                           kMlirWithParameterLayout, context));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
+
+  auto result_layout =
+      modules[0]->entry_computation_layout().result_layout().layout();
+  EXPECT_EQ(result_layout, Layout({1, 2, 0}));
+}
+
+TEST(StreamExecutorGpuClientTest, MlirAutoParameterLayoutIsSet) {
+  constexpr char kMlirWithParameterLayout[] =
+      R"(
+    func.func public @main(%arg0: tensor<2x4x2xi32> {
+            mhlo.layout_mode = "auto"
+        }) -> (tensor<2x2x4xi32> {
+            jax.result_info = "",
+            mhlo.layout_mode = "{2, 1, 0}"}) {
+      %0 = stablehlo.transpose %arg0, dims = [0, 2, 1]
+          : (tensor<2x4x2xi32>) -> tensor<2x2x4xi32>
+      return %0 : tensor<2x2x4xi32>
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(auto module, xla::ParseMlirModuleString(
+                                           kMlirWithParameterLayout, context));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable, client->Compile(*module, {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto modules, executable->GetHloModules());
+
+  auto first_param_layout =
+      modules[0]->entry_computation_layout().parameter_layout(0).layout();
+  EXPECT_EQ(first_param_layout, Layout({1, 2, 0}));
+}
+
 TEST(StreamExecutorGpuClientTest, MlirParameterLayoutIsSetInHlo) {
   constexpr char kMlirWithParameterLayout[] =
       R"(
@@ -1339,6 +1472,13 @@ TEST(StreamExecutorGpuClientTest,
       modules[0]->entry_computation_layout().result_layout().layout();
   EXPECT_EQ(result_layout,
             Layout({0, 1}).set_memory_space(Layout::kHostMemorySpace));
+
+  // Verify that the executable's layout callback is null.
+  // This is necessary for the executable to be serializable.
+  EXPECT_EQ(executable->GetCompileOptions()
+                .value()
+                .executable_build_options.layout_canonicalization_callback(),
+            nullptr);
 }
 
 }  // namespace

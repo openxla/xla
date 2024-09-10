@@ -47,13 +47,13 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
+#include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/gpu_collectives.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/host_memory_allocation.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
-#include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/module_spec.h"
 #include "xla/stream_executor/platform.h"
@@ -234,7 +234,7 @@ class GpuExecutor : public StreamExecutorCommon {
   std::unique_ptr<GpuCommandBuffer> CreateCommandBuffer(
       CommandBuffer::Mode mode, GpuGraphHandle graph, bool is_owned_graph);
 
-  GpuContext* gpu_context();
+  Context* gpu_context();
 
   // Provide a type-erased way of attaching arbitrary XLA specific state to the
   // GpuExecutor. XLA based execution will use this method to attach per-stream
@@ -313,8 +313,8 @@ class GpuExecutor : public StreamExecutorCommon {
   // Creates a GpuEvent for the given stream.
   absl::StatusOr<std::unique_ptr<GpuEvent>> CreateGpuEvent(bool allow_timing);
 
-  // Returns true if a delay kernel is supported for the given stream.
-  absl::StatusOr<bool> DelayKernelIsSupported(GpuStream* stream);
+  // Returns true if a delay kernel is supported.
+  absl::StatusOr<bool> DelayKernelIsSupported();
 
   // Guards the on-disk-module mapping.
   absl::Mutex disk_modules_mu_;
@@ -351,7 +351,7 @@ class GpuExecutor : public StreamExecutorCommon {
   GpuDeviceHandle device_;
 
   // Handle for session with the library/driver. Immutable post-initialization.
-  GpuContext* context_;
+  Context* context_;
 
   // The device ordinal value that this executor was initialized with; recorded
   // for use in getting device metadata. Immutable post-initialization.
@@ -368,6 +368,9 @@ class GpuExecutor : public StreamExecutorCommon {
 
   // Type erased XLA specific state attached to GpuExecutor.
   Object xla_state_;
+
+  // True if delay kernels are supported.
+  bool delay_kernels_supported_ = false;
 
   absl::Mutex alive_gpu_streams_mu_;
 

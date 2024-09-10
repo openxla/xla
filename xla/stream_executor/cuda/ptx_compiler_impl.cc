@@ -36,6 +36,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/nvPTXCompiler.h"
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
+#include "xla/stream_executor/semantic_version.h"
 
 namespace stream_executor {
 
@@ -153,6 +154,7 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
   // Print the verbose output of ptxas.
   if (!info_log.empty()) {
     if (absl::StrContains(info_log, "warning")) {
+      LOG(INFO) << info_log;
       if (cancel_if_reg_spill &&
           absl::StrContains(info_log, "Registers are spilled")) {
         return absl::CancelledError(
@@ -174,11 +176,11 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
   return cubin;
 }
 
-absl::StatusOr<LibNvPtxCompilerVersion> GetLibNvPtxCompilerVersion() {
+absl::StatusOr<SemanticVersion> GetLibNvPtxCompilerVersion() {
   unsigned major{}, minor{};
   RETURN_IF_NVPTXCOMPILER_ERROR(nvPTXCompilerGetVersion(&major, &minor));
 
-  return LibNvPtxCompilerVersion{major, minor, 0};
+  return SemanticVersion{major, minor, 0};
 }
 
 }  // namespace stream_executor

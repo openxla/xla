@@ -95,6 +95,7 @@ TEST_F(TransposeTest, ThreadIndexing021) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
   EXPECT_THAT(
       fusion->ComputeThreadIdToOutputIndexing(0, &mlir_context)->ToString(),
@@ -115,21 +116,22 @@ TEST_F(TransposeTest, ThreadIndexing021) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
 }
 
-TEST_F(TransposeTest, ThreadIndexing201) {
+TEST_F(TransposeTest, ThreadIndexing201_SimplifiedTo021) {
   auto module = ParseAndReturnVerifiedModule(R"(
     HloModule module
 
     fusion {
-      %input = f32[100,64,32] parameter(0)
-      ROOT transpose = f32[32,100,64] transpose(%input), dimensions={2,0,1}
+      %input = f32[1,6400,32] parameter(0)
+      ROOT transpose = f32[1,32,6400] transpose(%input), dimensions={0,2,1}
     }
 
     ENTRY entry {
-      %input = f32[100,64,32] parameter(0)
-      ROOT %fusion = f32[32,100,64] fusion(%input), kind=kInput, calls=fusion
+      %input = f32[1,6400,32] parameter(0)
+      ROOT %fusion = f32[1,32,6400] fusion(%input), kind=kInput, calls=fusion
     })")
                     .value();
 
@@ -142,8 +144,8 @@ TEST_F(TransposeTest, ThreadIndexing201) {
       fusion->ComputeThreadIdToInputIndexing(0, 0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
-          d3 floordiv 2,
-          (d3 mod 2) * 32 + s1 * 4 + d0 floordiv 32,
+          0,
+          d3  * 32 + s1 * 4 + d0 floordiv 32,
           d0 mod 32
         )
         domain:
@@ -157,14 +159,15 @@ TEST_F(TransposeTest, ThreadIndexing201) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
   EXPECT_THAT(
       fusion->ComputeThreadIdToOutputIndexing(0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
+          0,
           d0 floordiv 32 + s1 * 4,
-          d3 floordiv 2,
-          (d3 mod 2) * 32 + d0 mod 32
+          d3 * 32 + d0 mod 32
         )
         domain:
         d0 in [0, 127]
@@ -177,6 +180,7 @@ TEST_F(TransposeTest, ThreadIndexing201) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
 }
 
@@ -185,13 +189,13 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
     HloModule m
 
     fused_computation {
-      %p0 = f64[24,2,6,4] parameter(0)
-      ROOT %t = f64[6,4,2,24] transpose(%p0), dimensions={2,3,1,0}
+      %p0 = f64[24,2,24] parameter(0)
+      ROOT %t = f64[24,2,24] transpose(%p0), dimensions={2,1,0}
     }
 
     ENTRY main {
-      %p0 = f64[24,2,6,4] parameter(0)
-      ROOT %fusion = f64[6,4,2,24] fusion(%p0), kind=kInput,
+      %p0 = f64[24,2,24] parameter(0)
+      ROOT %fusion = f64[24,2,24] fusion(%p0), kind=kInput,
         calls=%fused_computation
     }
   )")
@@ -208,8 +212,7 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
           d0 floordiv 32 + s0 * 4,
           d3,
-          (d0 floordiv 4) mod 8,
-          d0 mod 4
+          d0 mod 32
         )
         domain:
         d0 in [0, 127]
@@ -222,13 +225,13 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
         s1 in [0, 0]
         s2 in [0, 0]
         d0 mod 32 in [0, 23]
+        is_simplified: true
       )"));
   EXPECT_THAT(
       fusion->ComputeThreadIdToOutputIndexing(0, &mlir_context)->ToString(),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2] -> (
-          s0,
-          d0 floordiv 32,
+          d0 floordiv 32 + s0 * 4,
           d3,
           d0 mod 32
         )
@@ -243,6 +246,7 @@ TEST_F(TransposeTest, ThreadIndexingPartialBlock) {
         s1 in [0, 0]
         s2 in [0, 0]
         d0 mod 32 in [0, 23]
+        is_simplified: true
       )"));
 }
 
@@ -318,6 +322,7 @@ TEST_F(TransposeTest, ThreadIndexingSideOutput) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
   EXPECT_THAT(
       fusion->ComputeThreadIdToOutputIndexing(1, &mlir_context)->ToString(),
@@ -338,6 +343,7 @@ TEST_F(TransposeTest, ThreadIndexingSideOutput) {
         s0 in [0, 0]
         s1 in [0, 7]
         s2 in [0, 0]
+        is_simplified: true
       )"));
 }
 

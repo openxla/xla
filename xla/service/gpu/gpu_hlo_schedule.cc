@@ -64,6 +64,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace gpu {
@@ -431,6 +432,7 @@ static int64_t GetSchedulerMemoryLimit(
 absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     HloModule* module, int64_t pointer_size,
     const se::DeviceDescription& gpu_device_info) {
+  tsl::profiler::TraceMe traceme("GpuCompiler::CompileToBackendResult");
   int64_t memory_limit =
       GetSchedulerMemoryLimit(module, gpu_device_info, pointer_size);
   if (module->has_schedule()) {
@@ -483,9 +485,8 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     auto pg_latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
         config, std::move(gpu_latency_estimator), profile.value(),
         std::move(aggregator));
-    LOG(INFO)
-        << "Found profile, using profile guided latency estimator. Profile:\n"
-        << profile->DebugString();
+    LOG(INFO) << "Found profile, using profile guided latency estimator";
+    VLOG(1) << "Profile:\n" << profile->DebugString();
     pipeline.AddPass<PGLEAccuracyChecker>(*pg_latency_estimator);
     latency_estimator = std::move(pg_latency_estimator);
   } else if (enable_analytical_latency_estimator) {

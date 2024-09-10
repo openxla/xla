@@ -59,32 +59,17 @@ CudaPlatform::DescriptionForDevice(int ordinal) const {
 }
 
 absl::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
-  StreamExecutorConfig config;
-  config.ordinal = ordinal;
-  return GetExecutor(config);
+  return executor_cache_.GetOrCreate(
+      ordinal, [this, ordinal]() { return GetUncachedExecutor(ordinal); });
 }
 
 absl::StatusOr<StreamExecutor*> CudaPlatform::FindExisting(int ordinal) {
-  StreamExecutorConfig config;
-  config.ordinal = ordinal;
-  return executor_cache_.Get(config);
-}
-
-absl::StatusOr<StreamExecutor*> CudaPlatform::GetExecutor(
-    const StreamExecutorConfig& config) {
-  if (config.gpu_stream) {
-    // If the GPU stream was provided, it's not possible to get-or-create a
-    // stream with a required pointer: so we are looking for previously
-    // allocated streams.
-    return executor_cache_.Get(config);
-  }
-  return executor_cache_.GetOrCreate(
-      config, [&]() { return GetUncachedExecutor(config); });
+  return executor_cache_.Get(ordinal);
 }
 
 absl::StatusOr<std::unique_ptr<StreamExecutor>>
-CudaPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
-  auto executor = std::make_unique<GpuExecutor>(this, config.ordinal);
+CudaPlatform::GetUncachedExecutor(int ordinal) {
+  auto executor = std::make_unique<GpuExecutor>(this, ordinal);
   TF_RETURN_IF_ERROR(executor->Init());
   return std::move(executor);
 }

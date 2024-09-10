@@ -100,12 +100,14 @@ cc_library(
     deps = [
         ":constants",
         "//xla/mlir_hlo",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@shardy//shardy/dialect/sdy/ir:dialect",
+        "@shardy//shardy/dialect/sdy/ir:register",
     ],
 )
 

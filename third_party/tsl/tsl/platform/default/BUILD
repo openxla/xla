@@ -2,6 +2,7 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load(
     "@xla//xla/tsl:tsl.bzl",
+    "if_cuda_tools",
     "if_not_fuchsia",
     "if_not_windows",
     "if_oss",
@@ -59,6 +60,9 @@ cc_library(
     srcs = ["cuda_libdevice_path.cc"],
     hdrs = ["//tsl/platform:cuda_libdevice_path.h"],
     compatible_with = [],
+    data = if_cuda_tools([
+        "@cuda_nvcc//:nvvm",
+    ]),
     tags = [
         "manual",
         "no_oss",
@@ -66,6 +70,7 @@ cc_library(
     ],
     deps = [
         "//tsl/platform",
+        "//tsl/platform:env",
         "//tsl/platform:logging",
         "//tsl/platform:path",
         "//tsl/platform:types",
@@ -468,7 +473,7 @@ cc_library(
         "//tsl/platform:strcat",
         "//tsl/platform:stringpiece",
         "//tsl/platform:types",
-        "//tsl/profiler/backends/cpu:threadpool_listener_state",
+        "@xla//xla/tsl/profiler/backends/cpu:threadpool_listener_state",
     ],
     alwayslink = True,
 )

@@ -329,15 +329,6 @@ void SortTiledHloInstructionsInPostOrder(
   while (!worklist.empty()) {
     auto tiled_hlo_instruction = worklist.back();
     worklist.pop_back();
-    std::optional<HloInstructionIndexing> operands_indexing =
-        ComputeOutputToInputIndexing(tiled_hlo_instruction->hlo(),
-                                     /*output_id=*/0, ctx);
-
-    if (!operands_indexing.has_value()) {
-      return FusionDecision{} << "Failed to compute operands indexing for "
-                              << tiled_hlo_instruction->hlo()->ToString();
-    }
-
     HloInstructionAdaptor instruction_adaptor(*tiled_hlo_instruction->hlo(),
                                               &fusion);
 
@@ -345,9 +336,13 @@ void SortTiledHloInstructionsInPostOrder(
       continue;
     }
 
+    HloInstructionIndexing operands_indexing =
+        ComputeOutputToInputIndexing(tiled_hlo_instruction->hlo(),
+                                     /*output_id=*/0, ctx);
+
     for (auto [operand, operand_indexing_map_set] :
          llvm::zip(instruction_adaptor.GetOperands(),
-                   operands_indexing->indexing_maps)) {
+                   operands_indexing.indexing_maps)) {
       CHECK_EQ(operand_indexing_map_set.size(), 1);  // Crash OK
 
       IndexingMap operand_indexing_map =
@@ -378,6 +373,9 @@ void SortTiledHloInstructionsInPostOrder(
   std::vector<std::unique_ptr<SymbolicTiledHloInstruction>>
       tiled_hlo_instructions = tiled_hlo_instructions_set.ExtractData();
 
+  // Order instructions in def-before-use order.
+  SortTiledHloInstructionsInPostOrder(tiled_hlo_instructions, root_tiled_hlo);
+
   // Set symbolic tiles for each tiled hlo instruction and compute combined
   // constraints.
   std::variant<ConstraintExpression, FusionDecision> constraints_or =
@@ -392,9 +390,6 @@ void SortTiledHloInstructionsInPostOrder(
     emitter_specific_constraints =
         emitter_specific_constraints_builder(tiled_hlo_instructions);
   }
-
-  // Order instructions in def-before-use order.
-  SortTiledHloInstructionsInPostOrder(tiled_hlo_instructions, root_tiled_hlo);
 
   return SymbolicTileAnalysis(
       std::move(tiled_hlo_instructions),
@@ -464,9 +459,9 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
     TF_ASSIGN_OR_RETURN(bool constraints_are_satisfied,
                         ParametersSatisfyConstraints(tile_parameters));
     if (!constraints_are_satisfied) {
-      return absl::InvalidArgumentError(absl::StrCat(
-          "Tile parameters ", absl::StrJoin(tile_parameters, ", "),
-          " do not satisfy the SymbolicTileAnalysis's constraints."));
+      return absl::InvalidArgumentError(
+          absl::StrCat("Tile parameters ", absl::StrJoin(tile_parameters, ", "),
+                       " do not satisfy constraints."));
     }
   }
 

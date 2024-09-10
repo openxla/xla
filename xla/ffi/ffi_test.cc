@@ -46,6 +46,31 @@ limitations under the License.
 
 namespace xla::ffi {
 
+struct PairOfI32AndF32 {
+  int32_t i32;
+  float f32;
+};
+
+struct TupleOfI32 {
+  int32_t i32_0;
+  int32_t i32_1;
+  int32_t i32_2;
+  int32_t i32_3;
+};
+
+}  // namespace xla::ffi
+
+XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(::xla::ffi::PairOfI32AndF32,
+                                      ::xla::ffi::StructMember<int32_t>("i32"),
+                                      ::xla::ffi::StructMember<float>("f32"));
+XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(
+    ::xla::ffi::TupleOfI32, ::xla::ffi::StructMember<int32_t>("i32_0"),
+    ::xla::ffi::StructMember<int32_t>("i32_1"),
+    ::xla::ffi::StructMember<int32_t>("i32_2"),
+    ::xla::ffi::StructMember<int32_t>("i32_3"));
+
+namespace xla::ffi {
+
 using ::testing::_;
 using ::testing::HasSubstr;
 using ::testing::Pair;
@@ -56,14 +81,14 @@ TEST(FfiTest, StaticHandlerRegistration) {
   static constexpr auto* noop = +[] { return absl::OkStatus(); };
 
   // Use explicit binding specification.
-  XLA_FFI_DEFINE_HANDLER(NoOp0, noop, Ffi::Bind());
+  XLA_FFI_DEFINE_HANDLER(NoOp0, noop, Ffi::Bind(),
+                         {Traits::kCmdBufferCompatible});
 
   // Automatically infer binding specification from function signature.
   XLA_FFI_DEFINE_HANDLER(NoOp1, noop);
 
   XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-0", "Host", NoOp0);
-  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-1", "Host", NoOp1,
-                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-1", "Host", NoOp1);
 
   auto handler0 = FindHandler("no-op-0", "Host");
   auto handler1 = FindHandler("no-op-1", "Host");
@@ -71,14 +96,24 @@ TEST(FfiTest, StaticHandlerRegistration) {
   TF_ASSERT_OK(handler0.status());
   TF_ASSERT_OK(handler1.status());
 
-  ASSERT_EQ(handler0->traits, 0);
-  ASSERT_EQ(handler1->traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  ASSERT_EQ(handler0->traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  ASSERT_EQ(handler1->traits, 0);
 
   // Check that platform name was canonicalized an we can find handlers
   // registered for "Host" platform as "Cpu" handlers.
   TF_ASSERT_OK_AND_ASSIGN(auto handlers, StaticRegisteredHandlers("Cpu"));
   EXPECT_THAT(handlers,
               UnorderedElementsAre(Pair("no-op-0", _), Pair("no-op-1", _)));
+}
+
+TEST(FfiTest, RegistrationTraitsBackwardsCompatibility) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind());
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "traits-bwd-compat", "Host", NoOp,
+                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  auto handler = FindHandler("traits-bwd-compat", "Host");
+  TF_ASSERT_OK(handler.status());
+  ASSERT_EQ(handler->traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
 }
 
 // Declare XLA FFI handler as a function (extern "C" declaration).
@@ -90,18 +125,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(NoOpHandler, NoOp, Ffi::Bind());
 
 TEST(FfiTest, StaticHandlerSymbolRegistration) {
   XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-sym-0", "Host", NoOpHandler);
-  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "no-op-sym-1", "Host", NoOpHandler,
-                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
 
   // Use "Cpu" platform to check that platform name was canonicalized.
   auto handler0 = FindHandler("no-op-sym-0", "Cpu");
-  auto handler1 = FindHandler("no-op-sym-1", "Cpu");
 
   TF_ASSERT_OK(handler0.status());
-  TF_ASSERT_OK(handler1.status());
-
   ASSERT_EQ(handler0->traits, 0);
-  ASSERT_EQ(handler1->traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
 }
 
 TEST(FfiTest, ForwardError) {
@@ -383,15 +412,6 @@ TEST(FfiTest, DictionaryAttr) {
 
   TF_ASSERT_OK(status);
 }
-
-struct PairOfI32AndF32 {
-  int32_t i32;
-  float f32;
-};
-
-XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(PairOfI32AndF32,
-                                      StructMember<int32_t>("i32"),
-                                      StructMember<float>("f32"));
 
 TEST(FfiTest, StructAttr) {
   CallFrameBuilder::FlatAttributesMap dict;
@@ -943,11 +963,12 @@ TEST(FfiTest, UpdateBufferArgumentsAndResults) {
 
 TEST(FfiTest, DuplicateHandlerTraits) {
   static constexpr auto* noop = +[] { return absl::OkStatus(); };
-  XLA_FFI_DEFINE_HANDLER(NoOp, noop, Ffi::Bind());
-  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "duplicate-traits", "Host", NoOp,
-                           XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  XLA_FFI_DEFINE_HANDLER(NoOp1, noop, Ffi::Bind());
+  XLA_FFI_DEFINE_HANDLER(NoOp2, noop, Ffi::Bind(),
+                         {Traits::kCmdBufferCompatible});
+  XLA_FFI_REGISTER_HANDLER(GetXlaFfiApi(), "duplicate-traits", "Host", NoOp1);
   auto status = TakeStatus(Ffi::RegisterStaticHandler(
-      GetXlaFfiApi(), "duplicate-traits", "Host", NoOp));
+      GetXlaFfiApi(), "duplicate-traits", "Host", NoOp2));
   EXPECT_TRUE(
       absl::StrContains(status.message(), "Duplicate FFI handler registration"))
       << "status.message():\n"
@@ -978,17 +999,27 @@ TEST(FfiTest, AllowRegisterDuplicateWhenEqual) {
   TF_ASSERT_OK(status);
 }
 
-TEST(FfiTest, ApiVersion) {
-  auto handler = Ffi::Bind().To([]() { return absl::OkStatus(); });
-  CallFrameBuilder builder(/*num_args=*/0, /*num_rets=*/0);
-  auto call_frame = builder.Build();
-  auto api = GetXlaFfiApi();
-  XLA_FFI_Api api_copy = *api;
-  api_copy.api_version.major_version += 1;
-  auto status = CallWithApi(&api_copy, *handler, call_frame);
-  EXPECT_TRUE(absl::StrContains(status.message(), "FFI handler's API version"))
-      << "status.message():\n"
-      << status.message() << "\n";
+TEST(FfiTest, Metadata) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(handler, noop, Ffi::Bind());
+  auto maybe_metadata = GetMetadata(handler);
+  EXPECT_TRUE(maybe_metadata.ok());
+  auto metadata = maybe_metadata.value();
+  EXPECT_EQ(metadata.traits, 0);
+  EXPECT_EQ(metadata.api_version.major_version, XLA_FFI_API_MAJOR);
+  EXPECT_EQ(metadata.api_version.minor_version, XLA_FFI_API_MINOR);
+}
+
+TEST(FfiTest, MetadataTraits) {
+  static constexpr auto* noop = +[] { return absl::OkStatus(); };
+  XLA_FFI_DEFINE_HANDLER(handler, noop, Ffi::Bind(),
+                         {Traits::kCmdBufferCompatible});
+  auto maybe_metadata = GetMetadata(handler);
+  EXPECT_TRUE(maybe_metadata.ok());
+  auto metadata = maybe_metadata.value();
+  EXPECT_EQ(metadata.traits, XLA_FFI_HANDLER_TRAITS_COMMAND_BUFFER_COMPATIBLE);
+  EXPECT_EQ(metadata.api_version.major_version, XLA_FFI_API_MAJOR);
+  EXPECT_EQ(metadata.api_version.minor_version, XLA_FFI_API_MINOR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1173,19 +1204,6 @@ BENCHMARK(BM_BufferArgX8);
 //===----------------------------------------------------------------------===//
 // BM_TupleOfI32Attrs
 //===----------------------------------------------------------------------===//
-
-struct TupleOfI32 {
-  int64_t i32_0;
-  int64_t i32_1;
-  int64_t i32_2;
-  int64_t i32_3;
-};
-
-XLA_FFI_REGISTER_STRUCT_ATTR_DECODING(TupleOfI32,
-                                      StructMember<int32_t>("i32_0"),
-                                      StructMember<int32_t>("i32_1"),
-                                      StructMember<int32_t>("i32_2"),
-                                      StructMember<int32_t>("i32_3"));
 
 void BM_TupleOfI32Attrs(benchmark::State& state) {
   CallFrameBuilder::AttributesBuilder attrs;

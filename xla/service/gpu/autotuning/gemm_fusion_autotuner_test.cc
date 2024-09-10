@@ -15,19 +15,17 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
-#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/autotuning.pb.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -52,6 +50,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
@@ -66,6 +65,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -159,7 +159,12 @@ class StatelessAutotunerTest : public HloTestBase {
       : HloTestBase(/*verifier_layout_sensitive=*/true,
                     /*allow_mixed_precision_in_hlo_verifier=*/false) {}
 
-  int32_t GetToolkitVersion() const { return CUDA_VERSION; }
+  se::SemanticVersion GetToolkitVersion() const {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .runtime_version();
+  }
 
   void SetUp() override {
     AutotunerUtil::ClearAutotuneResults();
@@ -245,7 +250,8 @@ class GemmFusionAutotunerTestWithMorePreciseReduction
 absl::StatusOr<std::vector<TritonGemmConfig>> GetPossibleMatmulAutotuneConfigs(
     const HloDotInstruction& dot,
     const se::CudaComputeCapability& compute_capability,
-    const int32_t toolkit_version, const DebugOptions& debug_options) {
+    const se::SemanticVersion& toolkit_version,
+    const DebugOptions& debug_options) {
   se::GpuDeviceInfoProto deviceless_proto;
   auto ccc = deviceless_proto.mutable_cuda_compute_capability();
   ccc->set_major(compute_capability.major);
@@ -468,23 +474,23 @@ ENTRY %e {
 })";
 
   auto module = ParseAndReturnVerifiedModule(kHloText).value();
-  EXPECT_THAT(
-      backend().compiler()->RunBackend(std::move(module),
-                                       backend().default_stream_executor(),
-                                       {/*device_allocator=*/nullptr,
-                                        /*thread_pool=*/nullptr,
-                                        /*layout_canonicalization_callback=*/{},
-                                        /*is_autotuning_compilation=*/true}),
-      ::testing::AnyOf(
-          tsl::testing::StatusIs(
-              tsl::error::CANCELLED,
-              absl::StrFormat(
-                  "Compilation result discarded due to register spilling")),
-          // Hopper can't spill registers since wgmma instructions are
-          // asynchronous, instead it just runs out of them.
-          tsl::testing::StatusIs(
-              tsl::error::RESOURCE_EXHAUSTED,
-              absl::StrFormat("Register allocation failed"))));
+  EXPECT_THAT(backend().compiler()->RunBackend(
+                  std::move(module), backend().default_stream_executor(),
+                  {/*device_allocator=*/nullptr,
+                   /*thread_pool=*/nullptr,
+                   /*layout_canonicalization_callback=*/{},
+                   /*is_autotuning_compilation=*/true}),
+              ::testing::AnyOf(
+                  tsl::testing::StatusIs(
+                      tsl::error::CANCELLED,
+                      "Compilation result discarded due to register spilling"),
+                  // Hopper can't spill registers since wgmma instructions are
+                  // asynchronous, instead it just runs out of them.
+                  tsl::testing::StatusIs(tsl::error::RESOURCE_EXHAUSTED,
+                                         "Register allocation failed"),
+                  tsl::testing::StatusIs(
+                      tsl::error::INTERNAL,
+                      ::testing::HasSubstr("Insufficient registers"))));
 }
 
 // Modify block_k back to 16 once b/337839570 is fixed.
