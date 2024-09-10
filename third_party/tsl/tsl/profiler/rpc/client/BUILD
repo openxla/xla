@@ -38,8 +38,6 @@ cc_library(
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
         "//tsl/platform:types",
-        "//tsl/profiler/convert:trace_events_to_json",
-        "//tsl/profiler/convert:xplane_to_trace_events",
         "//tsl/profiler/protobuf:profiler_analysis_proto_cc",
         "//tsl/profiler/protobuf:profiler_options_proto_cc",
         "//tsl/profiler/protobuf:profiler_service_proto_cc",
@@ -48,6 +46,8 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
+        "@xla//xla/tsl/profiler/convert:trace_events_to_json",
+        "@xla//xla/tsl/profiler/convert:xplane_to_trace_events",
     ],
 )
 
