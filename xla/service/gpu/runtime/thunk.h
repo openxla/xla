@@ -269,7 +269,7 @@ class Thunk {
     int64_t p2p_max_nchannels;
 
     // Global async status.
-    absl::Status* async_status = nullptr;
+    AsyncStatus* async_status = nullptr;
 
     // Global queue of async events.
     std::vector<std::unique_ptr<se::Event>>* async_events_queue = nullptr;
