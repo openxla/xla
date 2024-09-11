@@ -1,4 +1,4 @@
-/* Copyright 2019 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_GPU_RUNTIME_NCCL_COLLECTIVE_THUNK_H_
-#define XLA_BACKENDS_GPU_RUNTIME_NCCL_COLLECTIVE_THUNK_H_
+#ifndef XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
+#define XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -34,7 +34,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
-#include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -44,6 +43,7 @@ limitations under the License.
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/rendezvous.h"
 #include "xla/shape.h"
@@ -51,11 +51,12 @@ limitations under the License.
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
+#include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 
 namespace xla {
 namespace gpu {
 
-struct NcclCollectiveConfig {
+struct NvshmemCollectiveConfig {
   int64_t operand_count;
   std::vector<PrimitiveType> operand_element_type;
   std::vector<ReplicaGroup> replica_groups;
@@ -71,7 +72,7 @@ struct NcclCollectiveConfig {
 };
 
 template <typename OpT>
-void NcclCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
+void NvshmemCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
   if (op.getChannelId()) {
     collective_op_kind = RendezvousKey::kCrossModule;
     op_id = static_cast<int64_t>(op.getChannelId()->getHandle());
@@ -84,13 +85,13 @@ void NcclCollectiveConfig::SetCollectiveOpKindAndID(OpT op) {
   }
 }
 
-NcclCollectiveConfig GetNcclCollectiveConfig(
+NvshmemCollectiveConfig GetNvshmemCollectiveConfig(
     const HloInstruction* hlo, std::optional<bool> use_global_device_ids);
 
 template <typename OpT>
-NcclCollectiveConfig GetNcclCollectiveConfigForMlir(
+NvshmemCollectiveConfig GetNvshmemCollectiveConfigForMlir(
     OpT op, std::optional<bool> use_global_device_ids) {
-  NcclCollectiveConfig config;
+  NvshmemCollectiveConfig config;
   config.operand_count = op.getInputs().size();
   config.operand_element_type.reserve(config.operand_count);
   for (int i = 0; i < config.operand_count; i++) {
@@ -105,27 +106,17 @@ NcclCollectiveConfig GetNcclCollectiveConfigForMlir(
   return config;
 }
 
-// Handle to a communicator object with its `is_local` property.
-struct CommunicatorHandle {
-  CommunicatorHandle(Communicator* comm, bool is_local)
-      : comm(comm), is_local(is_local) {}
-
-  Communicator* comm;  // communicator object
-  bool is_local;       // whether this comm is a node-local comm
-};
-
 //===----------------------------------------------------------------------===//
-// NcclCollectiveThunk
+// NvshmemCollectiveThunk
 //===----------------------------------------------------------------------===//
 
 // Forward declare.
-class NcclCollectiveDoneThunk;
+class NvshmemCollectiveDoneThunk;
 
-// Thunk base class for NCCL collective operations.
-class NcclCollectiveThunk : public Thunk {
+// Thunk base class for NVSHMEM collective operations.
+class NvshmemCollectiveThunk : public Thunk {
  public:
-  NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
-                      AsyncStreamKind stream_kind);
+  NvshmemCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync);
 
   struct Buffer {
     int64_t element_count;
@@ -137,56 +128,42 @@ class NcclCollectiveThunk : public Thunk {
     mlir::Value destination_value;
   };
 
-  // Completion events for asynchronous collective operations (operations
-  // launched on a dedicated stream that is synchronized with main compute
-  // stream only when needed).
-  class AsyncEvents {
-   public:
-    absl::StatusOr<se::Event*> GetEvent(se::StreamExecutor* executor);
-    absl::Status Initialize(se::StreamExecutor* executor);
-
-   private:
-    friend class NcclCollectiveThunk;
-    friend class NcclCollectiveDoneThunk;
-    friend class NcclGroupThunk;
-
-   private:
-    absl::Mutex mu_;
-    absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Event>> events_
-        ABSL_GUARDED_BY(mu_);
-  };
-
   // Logging support.
   static std::string GetDeviceString(
       const Thunk::CollectiveExecuteParams& params);
 
   absl::Status Prepare(const PrepareParams& params,
-                       ResourceRequestsInterface& resource_requests) override;
+                       ResourceRequests& resource_requests) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
-  std::shared_ptr<AsyncEvents> async_events() const { return async_events_; }
-  void set_async_events(std::shared_ptr<AsyncEvents> async_events) {
+  std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events() const {
+    return async_events_;
+  }
+  void set_async_events(
+      std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events) {
     async_events_ = async_events;
   }
 
-  CollectiveStreamId nccl_stream_id() const {
+  CollectiveStreamId nvshmem_stream_id() const {
     return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamKind());
   }
 
-  ExecutionStreamId nccl_execution_stream_id() const {
+  ExecutionStreamId nvshmem_execution_stream_id() const {
     return ExecutionStreamId(execution_stream_id().value() +
-                             nccl_stream_id().value());
+                             nvshmem_stream_id().value());
   }
 
  protected:
-  virtual absl::Status RunNcclCollective(const ExecuteParams& params,
-                                         se::Stream& stream,
-                                         CommunicatorHandle comm) = 0;
-  virtual const NcclCollectiveConfig& config() const = 0;
-  virtual AsyncStreamKind GetAsyncStreamKind() const { return stream_kind_; }
+  virtual absl::Status RunNvshmemCollective(const ExecuteParams& params,
+                                            se::Stream& stream,
+                                            CommunicatorHandle comm) = 0;
+  virtual const NvshmemCollectiveConfig& config() const = 0;
+  virtual AsyncStreamKind GetAsyncStreamKind() const {
+    return AsyncStreamKind::kCollective;
+  }
 
   // A collective thunk is normally an independent operation in a sense that
   // different instances of the same collective thunk communicate each other.
@@ -199,10 +176,8 @@ class NcclCollectiveThunk : public Thunk {
   virtual bool NeedFirstCallRendzevous() const { return true; }
 
  private:
-  const AsyncStreamKind stream_kind_;
-
   bool IsAsync() const { return async_events_ != nullptr; }
-  std::shared_ptr<AsyncEvents> async_events_;
+  std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events_;
 
   // After a first call to this particular instance of a NCCL collective thunk
   // we do a round of rendezvous to make sure that all participants successfully
@@ -212,16 +187,16 @@ class NcclCollectiveThunk : public Thunk {
   //
   // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
   // sure that all NCCL resources are allocated just once.
-  RendezvousFlag first_call_rendezvous_flag_;
+  RendezvousSingleFlag first_call_rendezvous_flag_;
 };
 
 //===----------------------------------------------------------------------===//
-// NcclCollectiveDoneThunk
+// NvshmemCollectiveDoneThunk
 //===----------------------------------------------------------------------===//
 
-class NcclCollectiveDoneThunk : public Thunk {
+class NvshmemCollectiveDoneThunk : public Thunk {
  public:
-  NcclCollectiveDoneThunk(
+  NvshmemCollectiveDoneThunk(
       Thunk::Kind kind, ThunkInfo thunk_info,
       std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
       AsyncStreamKind async_stream_kind);
@@ -230,7 +205,7 @@ class NcclCollectiveDoneThunk : public Thunk {
 
   // return the execution stream id wheer previous async operator was launched
   // to.
-  ExecutionStreamId nccl_execution_stream_id() const {
+  ExecutionStreamId nvshmem_execution_stream_id() const {
     return ExecutionStreamId(
         execution_stream_id().value() +
         xla::gpu::GetCollectiveStreamId(true, async_stream_kind_).value());
@@ -243,17 +218,19 @@ class NcclCollectiveDoneThunk : public Thunk {
 
 //===----------------------------------------------------------------------===//
 
-absl::Status IsValidOperand(mlir::Value operand, Thunk::Kind reduction_op);
+absl::Status IsValidNvshmemOperand(mlir::Value operand,
+                                   Thunk::Kind reduction_op);
 
-absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op);
+absl::Status IsValidNvshmemOperand(Shape shape, Thunk::Kind reduction_op);
 
-template <typename NcclThunkType, typename OpT>
-absl::Status AddOpDescription(absl::Status status, OpT op,
-                              int64_t replica_count, int64_t partition_count) {
+template <typename NvshmemThunkType, typename OpT>
+absl::Status AddNvshmemOpDescription(absl::Status status, OpT op,
+                                     int64_t replica_count,
+                                     int64_t partition_count) {
   if (status.ok()) {
     return status;
   }
-  CollectiveOpGroupMode group_mode = NcclThunkType::GetGroupMode(op);
+  CollectiveOpGroupMode group_mode = NvshmemThunkType::GetGroupMode(op);
 
   int64_t operand_count = 0;
   std::string str;
@@ -272,61 +249,38 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
           "%s\n"
           "%s with replica_count: %d, partition_count: %d, group_mode: %s, "
           "operand_count: %d\n%s",
-          status.message(), NcclThunkType::GetHloOpName(), replica_count,
+          status.message(), NvshmemThunkType::GetHloOpName(), replica_count,
           partition_count, CollectiveOpGroupModeToString(group_mode),
           operand_count, str));
 }
 
 //===----------------------------------------------------------------------===//
 
-absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
+absl::StatusOr<GpuCliqueKey> GetGpuNvshmemCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
     AsyncStreamKind stream_kind);
 
-absl::StatusOr<size_t> GetNumLocalParticipants(
-    const Thunk::CollectiveExecuteParams& params,
-    const std::vector<ReplicaGroup>& replica_groups,
-    CollectiveOpGroupMode group_mode);
-
 // Returns a nccl comm and a flag indicating if it's a local communicator.
-absl::StatusOr<CommunicatorHandle> GetNcclComm(
+absl::StatusOr<CommunicatorHandle> GetNvshmemComm(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
     const Thunk::CollectiveCliques& collective_cliques,
     const std::vector<ReplicaGroup>& replica_groups,
     CollectiveOpGroupMode group_mode, CollectiveStreamId stream_id,
     AsyncStreamKind stream_kind);
 
-struct DeviceBufferPair {
-  PrimitiveType element_type;
-  int64_t element_count;
-  se::DeviceMemoryBase source_buffer;
-  se::DeviceMemoryBase destination_buffer;
-  int64_t source_memory_space;
-  int64_t destination_memory_space;
-};
-
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const Thunk::ExecuteParams& params,
-    const std::vector<NcclCollectiveThunk::Buffer>& buffers,
+    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types);
 
 absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
     const BufferAllocations* buffer_allocations,
-    const std::vector<NcclCollectiveThunk::Buffer>& buffers,
+    const std::vector<NvshmemCollectiveThunk::Buffer>& buffers,
     const std::vector<PrimitiveType>& element_types);
-
-// Registers buffers allocated in collective memory (see ncclMemAlloc) with a
-// communicator to enable zero-copy collectives.
-//
-// https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
-absl::Status MaybeRegisterBuffers(GpuCollectives* collectives,
-                                  se::StreamExecutor* executor,
-                                  const std::vector<DeviceBufferPair>& buffers,
-                                  Communicator* comm);
 
 }  // namespace gpu
 }  // namespace xla
 
-#endif  // XLA_BACKENDS_GPU_RUNTIME_NCCL_COLLECTIVE_THUNK_H_
+#endif  // XLA_SERVICE_GPU_RUNTIME_NVSHMEM_COLLECTIVE_THUNK_H_

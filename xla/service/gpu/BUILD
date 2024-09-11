@@ -373,6 +373,8 @@ cc_library(
         "//xla/backends/gpu/runtime:nccl_recv_thunk",
         "//xla/backends/gpu/runtime:nccl_send_thunk",
         "//xla/backends/gpu/runtime:norm_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_all_reduce_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_collective_thunk",
         "//xla/backends/gpu/runtime:outfeed_thunk",
         "//xla/backends/gpu/runtime:replica_id_thunk",
         "//xla/backends/gpu/runtime:send_recv_thunk",
