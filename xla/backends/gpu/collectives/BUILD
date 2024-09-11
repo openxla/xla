@@ -295,3 +295,31 @@ xla_cc_test(
         "@local_config_rocm//rocm:rccl",
     ]),
 )
+
+cc_library(
+    name = "nvshmem_collectives",
+    srcs = if_gpu_is_configured(["nvshmem_collectives.cc"]),
+    hdrs = if_gpu_is_configured(["nvshmem_collectives.h"]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    tags = ["requires-gpu-nvidia"],
+    deps = [
+        "//xla/core/collectives",
+        "//xla/core/collectives:collectives_registry",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_googlesource_code_re2//:re2",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ]+ if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+        "@nvshmem//:nvshmem",
+    ]),
+    alwayslink = True,  # registers collectives implementation
+)
