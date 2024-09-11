@@ -46,10 +46,11 @@ class ConstantsTest : public ClientLibraryTestBase {
 template <typename T>
 class ConstantsFloatTest : public ConstantsTest {};
 
-typedef ::testing::Types<float, half, tsl::float8_e4m3fn,
-                         tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fnuz,
-                         tsl::float8_e5m2, tsl::float8_e5m2fnuz>
-    FloatTypes;
+using FloatTypes =
+    ::testing::Types<float, half, tsl::float8_e3m4, tsl::float8_e4m3,
+                     tsl::float8_e4m3fn, tsl::float8_e4m3b11fnuz,
+                     tsl::float8_e4m3fnuz, tsl::float8_e5m2,
+                     tsl::float8_e5m2fnuz>;
 
 TYPED_TEST_SUITE(ConstantsFloatTest, FloatTypes);
 
