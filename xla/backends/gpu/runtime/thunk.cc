@@ -265,6 +265,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kCustomCall);
     CASE(kCustomKernel);
     CASE(kDynamicSlice);
+    CASE(kNvshmemAllReduceStart);
+    CASE(kNvshmemAllReduceDone);
     CASE(kFft);
     CASE(kGemm);
     CASE(kGroupDone);
@@ -318,7 +320,7 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kAllReduce || kind == Thunk::kAllReduceStart ||
-         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart;
+         kind == Thunk::kReduceScatter || kind == Thunk::kReduceScatterStart || kind == Thunk::kNvshmemAllReduceStart;
 }
 
 Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(

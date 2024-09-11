@@ -106,6 +106,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_tensorrt//:tensorrt_headers",
+        "@nvshmem//:nvshmem_config",
         "@tsl//tsl/platform:load_library",
         "@tsl//tsl/platform:path",
     ] + if_oss([

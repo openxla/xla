@@ -30,6 +30,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "third_party/tensorrt/tensorrt_config.h"
+#include "third_party/nvshmem/nvshmem_config.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"

@@ -368,6 +368,8 @@ cc_library(
         "//xla/backends/gpu/runtime:infeed_thunk",
         "//xla/backends/gpu/runtime:kernel_thunk",
         "//xla/backends/gpu/runtime:norm_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_all_reduce_thunk",
+        "//xla/backends/gpu/runtime:nvshmem_collective_thunk",
         "//xla/backends/gpu/runtime:outfeed_thunk",
         "//xla/backends/gpu/runtime:p2p_thunk_common",
         "//xla/backends/gpu/runtime:ragged_all_to_all_thunk",

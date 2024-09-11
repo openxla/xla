@@ -1721,6 +1721,126 @@ TEST(StreamExecutorGpuClientTest,
   auto memory_space = result_shape.layout().memory_space();
   EXPECT_EQ(memory_space, 1);
 }
+// Register a mock "mosaic_gpu" custom call op for NvshmemMemoryTest, since
+// mosaic_gpu is defined in JAX and won't be available to the unit test.
+static absl::Status MockMosaicGpu(ffi::AnyBuffer arg,
+                                  ffi::Result<ffi::AnyBuffer> ret,
+                                  absl::string_view module) {
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kMockMosaicGpu, MockMosaicGpu,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Attr<absl::string_view>("module"));
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu",
+                         PlatformUtil::CanonicalPlatformName("GPU").value(),
+                         kMockMosaicGpu);
+
+// Verify that the client can initialize NVSHMEM and that buffers used by
+// mosaic_gpu custom calls are assigned to the collective memory space.
+TEST(StreamExecutorGpuClientTest, NvshmemMemoryTest) {
+  static constexpr char const* kProgram = R"(
+    HloModule ffi_handler
+    ENTRY main {
+      param = s32[1,4]{1,0} parameter(0)
+      reshape = s32[4]{0} reshape(param)
+      ROOT %custom-call = s32[4] custom-call(param),
+          custom_call_target="mosaic_gpu",
+          api_version=API_VERSION_TYPED_FFI,
+          backend_config={"custom_call_backend_config": {"attributes": "{module = \"nvshmem\"}"}}
+    })";
+  // Nvshmem requires one gpu per process.
+  GpuClientOptions client_options;
+  client_options.node_id = 0;
+  client_options.allowed_devices = {0};
+  client_options.num_nodes = 1;
+  client_options.kv_store = std::make_shared<InMemoryKeyValueStore>();
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(client_options));
+  xla::CompileOptions options;
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_enable_nvshmem(true);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kProgram, *client, options));
+  std::vector<int32_t> data{1, 2, 3, 4};
+  Shape shape = ShapeUtil::MakeShapeWithDenseLayout(S32, {1, 4},
+                                                    /*minor_to_major=*/{1, 0});
+  shape.mutable_layout()->set_memory_space(Layout::kDefaultMemorySpace);
+
+  auto device = client->addressable_devices()[0];
+  TF_EXPECT_OK(device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto input, client->BufferFromHostBuffer(
+                      data.data(), shape.element_type(), shape.dimensions(),
+                      /*byte_strides=*/std::nullopt,
+                      PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+                      /*on_done_with_host_buffer=*/nullptr, device));
+  EXPECT_EQ(input->memory_space()->kind(), "device");
+
+  TF_ASSERT_OK_AND_ASSIGN(auto memory_kinds,
+                          executable->GetOutputMemoryKinds());
+  EXPECT_EQ(memory_kinds.size(), 1);
+  EXPECT_EQ(memory_kinds[0].size(), 1);
+  EXPECT_EQ(memory_kinds[0][0], "device");
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto result, executable->Execute({{input.get()}}, ExecuteOptions()));
+  std::vector<std::unique_ptr<xla::PjRtBuffer>>& result_buffers = result[0];
+  EXPECT_EQ(result_buffers[0]->memory_space()->kind(), "device");
+  Shape result_shape = result_buffers[0]->on_device_shape();
+  auto memory_space = result_shape.layout().memory_space();
+  EXPECT_EQ(memory_space, 1);
+}
+
+// Verify that nvshmem collective runs to produce expected results.
+TEST(StreamExecutorGpuClientTest, NvshmemCollectiveTest) {
+  static constexpr char const* kProgram = R"(
+    HloModule NvshmemAr
+      apply_op {
+        x = u32[] parameter(0)
+        y = u32[] parameter(1)
+        ROOT apply_op = u32[] add(x, y)
+      }
+
+      ENTRY test_computation {
+        id = u32[] constant(10)
+        start = u32[] all-reduce-start(id), to_apply=apply_op, backend_config={"collective_backend_config":{"backend":"NVSHMEM"}}
+        ROOT done = u32[] all-reduce-done(start)
+      })";
+  // Nvshmem requires one gpu per process.
+  GpuClientOptions client_options;
+  client_options.node_id = 0;
+  client_options.allowed_devices = {0};
+  client_options.num_nodes = 1;
+  client_options.kv_store = std::make_shared<InMemoryKeyValueStore>();
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(client_options));
+  xla::CompileOptions options;
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_experimental_enable_nvshmem(true);
+  options.executable_build_options.set_run_backend_only(true);
+  options.executable_build_options.set_use_spmd_partitioning(false);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kProgram, *client, options));
+
+  auto device = client->addressable_devices()[0];
+  TF_EXPECT_OK(device->default_memory_space());
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable->Execute({{}}, ExecuteOptions()));
+  std::vector<std::unique_ptr<xla::PjRtBuffer>>& result_buffers = result[0];
+  EXPECT_EQ(result_buffers[0]->memory_space()->kind(), "device");
+  TF_ASSERT_OK(result_buffers[0]->GetReadyFuture().Await());
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> literal,
+                          result_buffers[0]->ToLiteralSync());
+  std::vector<uint32_t> ref_data{10};
+
+  EXPECT_THAT(literal->data<uint32_t>(), ElementsAreArray(ref_data));
+}
 
 TEST(StreamExecutorGpuClientTest,
      ExecutablePinnedHostTupleOutputMemoryKindTest) {
