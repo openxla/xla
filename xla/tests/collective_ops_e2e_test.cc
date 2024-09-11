@@ -1976,5 +1976,47 @@ ENTRY main.49 {
     EXPECT_TRUE(LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
   }
 }
+
+XLA_TEST_P(AsyncCollectiveOps, NvshmemAr) {
+  const absl::string_view kModuleStr = R"(
+      HloModule NvshmemAr
+
+      apply_op {
+        x = u32[] parameter(0)
+        y = u32[] parameter(1)
+        ROOT apply_op = u32[] add(x, y)
+      }
+
+      ENTRY test_computation {
+        id = u32[] replica-id()
+        ROOT all-reduce = u32[] all-reduce(id), to_apply=apply_op, backend_config={"collective_backend_config":{"backend":1}}
+      }
+    )";
+
+  const int64_t kNumReplicas = 8;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas);
+  const bool enable_async_all_reduce = GetParam();
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(kModuleStr, kNumReplicas));
+  EXPECT_TRUE(executable->has_module());
+
+  HloInstruction* all_reduce_start =
+      FindInstruction(&executable->module(), HloOpcode::kAllReduceStart);
+  HloInstruction* all_reduce_done =
+      FindInstruction(&executable->module(), HloOpcode::kAllReduceDone);
+  EXPECT_THAT(all_reduce_start, NotNull());
+  EXPECT_THAT(all_reduce_done, NotNull());
+  EXPECT_EQ(IsAsync(all_reduce_start), enable_async_all_reduce);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+  ASSERT_EQ(results.size(), kNumReplicas);
+  // sum [0, num_devices)
+  const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
+  for (int i = 0; i < kNumReplicas; ++i) {
+    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
+  }
+}
+
 }  // namespace
 }  // namespace xla

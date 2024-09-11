@@ -161,6 +161,8 @@ class Thunk {
     kNcclSendDone,
     kNcclRecv,
     kNcclRecvDone,
+    kNvshmemAllReduceStart,
+    kNvshmemAllReduceDone,
     kNorm,
     kOutfeed,
     kPartitionId,

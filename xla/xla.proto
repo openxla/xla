@@ -852,6 +852,9 @@ message DebugOptions {
   // Enable NCCL user buffers.
   bool xla_gpu_enable_nccl_user_buffers = 267;
 
+  // Enable NVSHMEM.
+  bool xla_gpu_enable_nvshmem = 360;
+
   // Enable NCCL communicator splitting.
   bool xla_gpu_enable_nccl_comm_splitting = 272;
 
@@ -1101,7 +1104,7 @@ message DebugOptions {
   // be deterministic, although with additional overhead.
   bool xla_gpu_enable_scatter_determinism_expander = 345;
 
-  // Next id: 360
+  // Next id: 361
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

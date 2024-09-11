@@ -330,7 +330,8 @@ std::ostream& operator<<(std::ostream& os, Thunk::Kind kind) {
 bool IsReductionCollective(Thunk::Kind kind) {
   return kind == Thunk::kNcclAllReduce || kind == Thunk::kNcclAllReduceStart ||
          kind == Thunk::kNcclReduceScatter ||
-         kind == Thunk::kNcclReduceScatterStart;
+         kind == Thunk::kNcclReduceScatterStart ||
+         kind == Thunk::kNvshmemAllReduceStart;
 }
 
 Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
