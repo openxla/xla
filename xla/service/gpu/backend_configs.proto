@@ -127,6 +127,11 @@ message CollectiveBackendConfig {
   // Determines whether the collective op of interested has been pipelined
   // within a loop.
   bool is_pipelined = 3;
+  enum CollectiveBackend {
+    NCCL = 0;
+    NVSHMEM = 1;
+  }
+  CollectiveBackend backend = 4;
 }
 
 // Backend config for cost model estimates.

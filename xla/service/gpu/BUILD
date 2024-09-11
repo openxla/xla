@@ -388,6 +388,8 @@ cc_library(
         "//xla/service/gpu/runtime:nccl_recv_thunk",
         "//xla/service/gpu/runtime:nccl_send_thunk",
         "//xla/service/gpu/runtime:norm_thunk",
+        "//xla/service/gpu/runtime:nvshmem_all_reduce_thunk",
+        "//xla/service/gpu/runtime:nvshmem_collective_thunk",
         "//xla/service/gpu/runtime:outfeed_thunk",
         "//xla/service/gpu/runtime:replica_id_thunk",
         "//xla/service/gpu/runtime:send_recv_thunk",

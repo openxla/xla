@@ -166,6 +166,11 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       return absl::StrFormat("XlaBufferAssignment:#module=%s,program_id=%d#",
                              hlo_module->name(), hlo_module->unique_id());
     });
+    const bool use_user_buffers =
+        hlo_module->config().debug_options().xla_gpu_enable_nccl_user_buffers();
+    const bool use_nvshmem = hlo_module->config()
+                                 .debug_options()
+                                 .xla_gpu_experimental_enable_nvshmem();
     TF_ASSIGN_OR_RETURN(
         results.buffer_assignment,
         BufferAssigner::Run(
@@ -176,10 +181,8 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
             [](LogicalBuffer::Color) { return kXlaAllocatedBufferAlignBytes; },
             /*allocate_buffers_for_constants=*/true,
             /*colorer=*/
-            hlo_module->config()
-                    .debug_options()
-                    .xla_gpu_enable_nccl_user_buffers()
-                ? CollectiveColorer()
+            (use_user_buffers || use_nvshmem)
+                ? CollectiveColorer(use_user_buffers, use_nvshmem)
                 : BufferAssigner::DefaultColorer(),
             /*must_not_live_out=*/{},
             /*can_share_buffer*/ can_share_buffer_function,
