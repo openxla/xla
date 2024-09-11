@@ -29,6 +29,7 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "third_party/tensorrt/tensorrt_config.h"
+#include "third_party/nvshmem/nvshmem_config.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -48,6 +49,7 @@ std::string GetCufftVersion() { return TF_CUFFT_VERSION; }
 std::string GetCusparseVersion() { return TF_CUSPARSE_VERSION; }
 std::string GetNcclVersion() { return TF_NCCL_VERSION; }
 std::string GetTensorRTVersion() { return TF_TENSORRT_VERSION; }
+std::string GetNvshmemVersion() { return TF_NVSHMEM_VERSION; }
 std::string GetHipVersion() {
 #if TENSORFLOW_USE_ROCM
   return TF_HIPRUNTIME_SOVERSION;
@@ -139,6 +141,10 @@ absl::StatusOr<void*> GetCudnnDsoHandle() {
 
 absl::StatusOr<void*> GetNcclDsoHandle() {
   return GetDsoHandle("nccl", GetNcclVersion());
+}
+
+absl::StatusOr<void*> GetNvshmemDsoHandle() {
+  return GetDsoHandle("nvshmem_host", GetNvshmemVersion());
 }
 
 absl::StatusOr<void*> GetNvInferDsoHandle() {
