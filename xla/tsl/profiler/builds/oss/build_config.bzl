@@ -3,7 +3,7 @@
 TF profiler build macros for use in OSS.
 """
 
-load("@xla//xla/tsl:tsl.bzl", "cc_header_only_library")
+load("//xla/tsl:tsl.bzl", "cc_header_only_library")
 
 def tf_profiler_alias(target_dir, name):
     return target_dir + "oss:" + name

@@ -1,16 +1,16 @@
 load("@xla//xla/tsl:tsl.bzl", "internal_visibility")
 load("@xla//xla/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
 load(
+    "@xla//xla/tsl/profiler/builds:build_config.bzl",
+    "tf_profiler_copts",
+    "tf_profiler_pybind_cc_library_wrapper",
+)
+load(
     "//tsl/platform:build_config.bzl",
     "tf_protos_profiler_service",
     "tsl_cc_test",
 )
 load("//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "//tsl/profiler/builds:build_config.bzl",
-    "tf_profiler_copts",
-    "tf_profiler_pybind_cc_library_wrapper",
-)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
