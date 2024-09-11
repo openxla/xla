@@ -59,6 +59,8 @@ _version: int
 mlir_api_version: int
 
 bfloat16: type[numpy.generic]
+float8_e3m4: type[numpy.generic]
+float8_e4m3: type[numpy.generic]
 float8_e4m3fn: type[numpy.generic]
 float8_e4m3b11fnuz: type[numpy.generic]
 float8_e4m3fnuz: type[numpy.generic]

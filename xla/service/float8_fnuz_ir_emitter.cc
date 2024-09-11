@@ -39,6 +39,10 @@ namespace {
 absl::StatusOr<const llvm::fltSemantics*> PrimitiveTypeToAPFloatSemantics(
     PrimitiveType type) {
   switch (type) {
+    case F8E3M4:
+      return &llvm::APFloat::Float8E3M4();
+    case F8E4M3:
+      return &llvm::APFloat::Float8E4M3();
     case F8E4M3B11FNUZ:
       return &llvm::APFloat::Float8E4M3B11FNUZ();
     case F8E4M3FN:
@@ -67,6 +71,8 @@ absl::StatusOr<const llvm::fltSemantics*> PrimitiveTypeToAPFloatSemantics(
 absl::StatusOr<llvm::Type*> PrimitiveTypeToLLVMType(llvm::IRBuilder<>* b,
                                                     PrimitiveType type) {
   switch (type) {
+    case F8E3M4:
+    case F8E4M3:
     case F8E4M3B11FNUZ:
     case F8E4M3FN:
     case F8E4M3FNUZ:

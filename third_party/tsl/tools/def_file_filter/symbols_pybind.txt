@@ -62,12 +62,16 @@ tensorflow::grappler::graph_analyzer::GraphAnalyzerTool
 [//external/local_xla/xla/tsl/python/lib/core:ml_dtypes_lib] # bfloat16, float8
 tsl::ml_dtypes::RegisterTypes
 tsl::ml_dtypes::GetBfloat16Dtype
+tsl::ml_dtypes::GetFloat8E3m4Dtype
 tsl::ml_dtypes::GetFloat8E4m3b11fnuzDtype
 tsl::ml_dtypes::GetFloat8E4m3fnDtype
+tsl::ml_dtypes::GetFloat8E4m3Dtype
 tsl::ml_dtypes::GetFloat8E5m2Dtype
 tsl::ml_dtypes::GetBfloat16TypeNum
+tsl::ml_dtypes::GetFloat8E3m4TypeNum
 tsl::ml_dtypes::GetFloat8E4m3b11fnuzTypeNum
 tsl::ml_dtypes::GetFloat8E4m3fnTypeNum
+tsl::ml_dtypes::GetFloat8E4m3TypeNum
 tsl::ml_dtypes::GetFloat8E5m2TypeNum
 
 [//tensorflow/python:py_func_lib] # py_func

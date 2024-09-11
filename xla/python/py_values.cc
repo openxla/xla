@@ -34,7 +34,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/complex.h"  // IWYU pragma: keep
+#include "nanobind/stl/complex.h"      // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
@@ -185,6 +185,12 @@ absl::StatusOr<DevicePutResultFn> HandleNumpyScalar(
   } else if (std::is_same<T, bfloat16>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = BF16;
+  } else if (std::is_same<T, tsl::float8_e3m4>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = F8E3M4;
+  } else if (std::is_same<T, tsl::float8_e4m3>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = F8E4M3;
   } else if (std::is_same<T, tsl::float8_e4m3fn>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = F8E4M3FN;
@@ -394,6 +400,8 @@ absl::StatusOr<DevicePutResultFn> DevicePut(nb::handle arg,
         (*p)[dtypes.np_uint16.ptr()] = HandleNumpyScalar<uint16_t>;
         (*p)[dtypes.np_uint32.ptr()] = HandleNumpyScalar<uint32_t>;
         (*p)[dtypes.np_uint64.ptr()] = HandleNumpyScalar<uint64_t, uint32_t>;
+        (*p)[dtypes.np_float8_e3m4.ptr()] = HandleNumpyScalar<tsl::float8_e3m4>;
+        (*p)[dtypes.np_float8_e4m3.ptr()] = HandleNumpyScalar<tsl::float8_e4m3>;
         (*p)[dtypes.np_float8_e4m3fn.ptr()] =
             HandleNumpyScalar<tsl::float8_e4m3fn>;
         (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] =
@@ -583,6 +591,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_uint16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint64.ptr()] = np_uint64_handler;
+        (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e5m2.ptr()] = numpy_array_handler;
