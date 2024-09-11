@@ -129,6 +129,11 @@ message CollectiveBackendConfig {
   bool is_pipelined = 3;
   // Cost model prediction.
   ReificationCost reification_cost = 4;
+  enum CollectiveBackend {
+    NCCL = 0;
+    NVSHMEM = 1;
+  }
+  CollectiveBackend backend = 5;
 }
 
 // Backend config for cost model estimates.
