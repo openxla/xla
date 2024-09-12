@@ -1236,7 +1236,7 @@ TEST(StreamExecutorGpuClientTest,
 
   auto device = client->addressable_devices()[0];
   TF_EXPECT_OK(device->default_memory_space());
-  TF_ASSIGN_OR_RETURN(
+  TF_ASSERT_OK_AND_ASSIGN(
       auto input, client->BufferFromHostBuffer(
                       data.data(), shape.element_type(), shape.dimensions(),
                       /*byte_strides=*/std::nullopt,
