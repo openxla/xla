@@ -339,6 +339,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
                                  AsyncStatus& async_status,
+                                 const DebugOptions* debug_options,
                                  se::Stream* stream_to_sync);
 
 absl::Status RendezvousAfterInitialization(
@@ -488,6 +489,7 @@ absl::Status ExecuteThunks(
       std::move(additional_execution_streams));
   TF_RETURN_IF_ERROR(thunk_sequence.ExecuteOnStream(execute_params));
   return MaybeSyncAndProfile(run_options, execution_timer.get(), async_status,
+                             debug_options,
                              block_host_until_done ? main_stream : nullptr);
 }
 
@@ -579,6 +581,7 @@ absl::Status RendezvousAfterInitialization(
 absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
                                  AsyncStatus& async_status,
+                                 const DebugOptions* debug_options,
                                  se::Stream* stream_to_sync = nullptr) {
   // If we're measuring the execution time then it's important to queue the
   // stop event before triggering any synchronization.
@@ -604,7 +607,8 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
         while (async_status.is_all_comms_aborted == false) {
           // Need to rendezvous while waiting for the signal in case
           // any rank is stuck when aborting.
-          TF_RETURN_IF_ERROR(RendezvousAfterInitialization(run_options));
+          TF_RETURN_IF_ERROR(
+              RendezvousAfterInitialization(run_options, debug_options));
         }
 
         return async_status.async_op_status;
