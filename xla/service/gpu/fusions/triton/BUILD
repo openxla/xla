@@ -73,6 +73,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
+        "//xla/tools:hlo_decomposer_lib",
         "//xla/translate/hlo_to_mhlo:hlo_function_importer",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -296,6 +297,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:float_normalization",
         "//xla/service:hlo_pass_pipeline",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:gpu_float_support",
         "//xla/service/gpu:ir_emission_utils",
@@ -389,6 +391,7 @@ xla_test(
     tags = ["no_mac"],
     deps = [
         ":triton_support",
+        ":triton_test_utils",
         "//xla:comparison_util",
         "//xla:error_spec",
         "//xla:xla_data_proto_cc",

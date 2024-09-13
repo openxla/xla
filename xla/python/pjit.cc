@@ -471,7 +471,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
       continue;
     }
 
-    if (py_array.num_shards() != num_global_devices) {
+    if (sharding_num_devices != num_global_devices) {
       CallShardArgFallback(arg.ptr(), in_shardings[dce_index],
                            in_device_local_layout, shard_arg_fallback,
                            num_args_arrays, keep_alive_objects);

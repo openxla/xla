@@ -78,7 +78,6 @@ ENTRY main {
   ROOT triton_reduction = f32[8] fusion(param_0), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["4"],"num_warps":"1"}}}
 })";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({4}),
                                           "triton_reduction_computation", R"(
 CHECK:  "tt.reduce"(%[[LOAD:.*]]) <{axis = 1 : i32}>
 )"));
@@ -107,7 +106,6 @@ ENTRY main {
   ROOT triton_reduction = f32[4] fusion(param_0), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["4"],"num_warps":"1"}}}
 })";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({4}),
                                           "triton_reduction_computation", R"(
 CHECK:  "tt.reduce"(%[[LOAD:.*]]) <{axis = 0 : i32}>
 )"));
@@ -136,7 +134,6 @@ ENTRY main {
   ROOT triton_reduction = f32[5,5,5,3] fusion(param_0), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["4", "2", "5", "1"],"num_warps":"1"}}}
 })";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({4, 2, 5, 1}),
                                           "triton_reduction_computation", R"(
 CHECK:  tt.make_range
 CHECK-COUNT-4:  tt.expand_dims
@@ -167,7 +164,6 @@ ENTRY main {
   ROOT triton_reduction = f32[3] fusion(param_0), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["3"],"num_warps":"1"}}}
 })";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({3}),
                                           "triton_reduction_computation", R"(
 ; Make sure input reduction tile is padded with a neutral value.
 CHECK:  %[[LOAD:.*]] = tt.load
@@ -209,17 +205,27 @@ triton_softmax_computation {
 
 ENTRY main {
   param_0 = f32[125,127]{1,0} parameter(0)
-  ROOT triton_softmax = f32[125,127]{1,0} fusion(param_0), kind=kCustom, calls=triton_softmax_computation, backend_config={"fusion_backend_config": {"kind":"__triton"}}
-})";
+  ROOT triton_softmax = f32[125,127]{1,0} fusion(param_0),
+    kind=kCustom, calls=triton_softmax_computation,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{"output_tile_sizes":["1", "128"],
+                                   "num_warps":"1"}}}})";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({1, 127}),
                                           "triton_softmax_computation", R"(
+CHECK:        #indexing_map = #xla_gpu.indexing_map<(d0) -> (d0 * 127), domain: d0 in [0, 124], is_simplified: true>
 CHECK:        tt.func @triton_fn(%[[P0:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[P1:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
 CHECK-DAG:        %[[ZERO:.*]] = arith.constant 0 : i32
+CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
+CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
-CHECK-DAG:        %[[PID_I32:.*]] = arith.index_cast %[[PID_INDEX]] : index to i32
-CHECK-DAG:        tt.make_tensor_ptr %[[P0]], {{.*}} [%[[PID_I32]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
+CHECK-DAG:        %[[PID_I64:.*]] = arith.index_cast %[[PID_INDEX]] : index to i64
+CHECK-DAG:        %[[SUB:.*]] = arith.subi %[[C125]], %[[PID_I64]] : i64
+CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla_gpu.apply_indexing #indexing_map(%[[PID_INDEX]])
+CHECK-DAG:        %[[OFFSET_I64:.*]] = arith.index_castui %[[OFFSET_IDX]] : index to i64
+CHECK-DAG:        %[[BASE_PTR_LOAD:.*]] = tt.addptr %[[P0]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR_LOAD]], [%[[SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
 CHECK-NEXT:       tt.load
 CHECK-SAME:       {boundaryCheck = array<i32: 1>, padding = 1 : i32} : !tt.ptr<tensor<1x128xf32>>
 CHECK:            tt.reduce
@@ -229,7 +235,8 @@ CHECK-NEXT:           tt.reduce.return %[[ADD]] : f32
 CHECK-NEXT:       }) : (tensor<1x128xf32>) -> tensor<1xf32>
 CHECK:            arith.mulf
 CHECK-SAME:       tensor<1x128xf32>
-CHECK:            tt.make_tensor_ptr %[[P1]], {{.*}} [%[[PID_I32]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
+CHECK-DAG:        %[[BASE_PTR_STORE:.*]] = tt.addptr %[[P1]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK:            tt.make_tensor_ptr %[[BASE_PTR_STORE]], [%[[SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
 CHECK-NEXT:       tt.store
 CHECK-SAME:       {boundaryCheck = array<i32: 1>} : !tt.ptr<tensor<1x128xf32>>
 CHECK:            tt.return
@@ -263,31 +270,43 @@ triton_softmax_computation {
 ENTRY main {
   param_0 = f32[125,127]{1,0} parameter(0)
   param_1 = f32[127]{0} parameter(1)
-  ROOT triton_softmax = f32[125,127]{1,0} fusion(param_0, param_1), kind=kCustom, calls=triton_softmax_computation, backend_config={"fusion_backend_config": {"kind":"__triton"}}
-}
-)";
+  ROOT triton_softmax = f32[125,127]{1,0} fusion(param_0, param_1),
+    kind=kCustom, calls=triton_softmax_computation,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{"output_tile_sizes":["1", "128"],
+                                   "num_warps":"1"}}}})";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({1, 127}),
                                           "triton_softmax_computation", R"(
-CHECK-LABEL:  tt.func @triton_fn(
+CHECK:         #indexing_map = #xla_gpu.indexing_map<(d0) -> (d0 * 127), domain: d0 in [0, 124], is_simplified: true>
+CHECK:         tt.func @triton_fn(
 CHECK-SAME:                      %[[P0:[A-Za-z0-9_]*]]: !tt.ptr<f32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: !tt.ptr<f32>
 CHECK-SAME:                      %[[P2:[A-Za-z0-9_]*]]: !tt.ptr<f32>
 CHECK-DAG:        %[[ZERO:.*]] = arith.constant 0 : i32
-CHECK:            %[[PID:.*]] = tt.get_program_id x : i32
-CHECK:            %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
-CHECK:            %[[PID_I32:.*]] = arith.index_cast %[[PID_INDEX]] : index to i32
-CHECK:            tt.make_tensor_ptr %[[P0]], {{.*}} [%[[PID_I32]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
+CHECK-DAG:        %[[ZERO_64:.*]] = arith.constant 0 : i64
+CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
+CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
+CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
+CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
+CHECK-DAG:        %[[PID_I64:.*]] = arith.index_cast %[[PID_INDEX]] : index to i64
+CHECK-DAG:        %[[SUB:.*]] = arith.subi %[[C125]], %[[PID_I64]] : i64
+CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla_gpu.apply_indexing #indexing_map(%[[PID_INDEX]])
+CHECK-DAG:        %[[OFFSET_I64:.*]] = arith.index_castui %[[OFFSET_IDX]] : index to i64
+CHECK-DAG:        %[[BASE_PTR0_LOAD:.*]] = tt.addptr %[[P0]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR0_LOAD]], [%[[SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<1x128xf32>>
-CHECK:            tt.make_tensor_ptr %[[P1]], {{.*}} [%[[ZERO]]] {order = array<i32: 0>} : <tensor<128xf32>>
+CHECK-DAG:        %[[BASE_PTR1_LOAD:.*]] = tt.addptr %[[P1]], %[[ZERO_64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR1_LOAD]], [%[[C127]]], {{.*}} [%[[ZERO]]] {order = array<i32: 0>} : <tensor<128xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<128xf32>>
 CHECK:            tt.reduce
 CHECK-NEXT:       ^bb0(%[[ARG3:[^:]*]]: f32, %[[ARG4:[^:]*]]: f32):
 CHECK-NEXT:           %[[ADD:.*]] = arith.addf %[[ARG3]], %[[ARG4]] : f32
 CHECK-NEXT:           tt.reduce.return %[[ADD]] : f32
 CHECK-NEXT:       }) : (tensor<1x128xf32>) -> tensor<1xf32>
-CHECK-DAG:        arith.mulf
-CHECK-DAG:        tt.make_tensor_ptr %[[P2]], {{.*}} [%[[PID_I32]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
+CHECK:            arith.mulf
+CHECK-DAG:        %[[BASE_PTR2_LOAD:.*]] = tt.addptr %[[P2]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR2_LOAD]], [%[[SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x128xf32>>
 CHECK-DAG:        tt.store {{.*}} : !tt.ptr<tensor<1x128xf32>>
 )"));
 }
@@ -329,30 +348,43 @@ ENTRY main {
 })";
 
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({1, 1, 127}),
                                           "triton_softmax_computation", R"(
 CHECK:        #[[MAP:.*]] = #xla_gpu.indexing_map<(d0) -> (d0 floordiv 125), domain: d0 in [0, 1249], is_simplified: true>
 CHECK:        #[[MAP1:.*]] = #xla_gpu.indexing_map<(d0) -> (d0 mod 125), domain: d0 in [0, 1249], is_simplified: true>
+CHECK:        #[[MAP2:.*]] = #xla_gpu.indexing_map<(d0) -> (d0 * 127), domain: d0 in [0, 1249], is_simplified: true>
 CHECK:        tt.func @triton_fn(%[[P0:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[P1:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[P2:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %[[P3:[^:]*]]: !tt.ptr<f32> {tt.divisibility = 16 : i32}) {
 CHECK-DAG:        %[[ZERO:.*]] = arith.constant 0 : i32
+CHECK-DAG:        %[[ZERO_64:.*]] = arith.constant 0 : i64
+CHECK-DAG:        %[[C10:.*]] = arith.constant 10 : i64
+CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
+CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
 CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
 CHECK-DAG:        %[[ROW_INDEX:.*]] = xla_gpu.apply_indexing #[[MAP]](%[[PID_INDEX]]
 CHECK-DAG:        %[[COL_INDEX:.*]] = xla_gpu.apply_indexing #[[MAP1]](%[[PID_INDEX]]
-CHECK-DAG:        %[[ROW_I32:.*]] = arith.index_cast %[[ROW_INDEX]] : index to i32
-CHECK-DAG:        %[[COL_I32:.*]] = arith.index_cast %[[COL_INDEX]] : index to i32
-CHECK-DAG:        tt.make_tensor_ptr %[[P0]], {{.*}} [%[[ROW_I32]], %[[COL_I32]], %[[ZERO]]] {order = array<i32: 2, 1, 0>} : <tensor<1x1x128xf32>>
+CHECK-DAG:        %[[ROW_64:.*]] = arith.index_cast %[[ROW_INDEX]] : index to i64
+CHECK-DAG:        %[[COL_64:.*]] = arith.index_cast %[[COL_INDEX]] : index to i64
+CHECK-DAG:        %[[ROW_SUB:.*]] = arith.subi %[[C10]], %[[ROW_64]] : i64
+CHECK-DAG:        %[[COL_SUB:.*]] = arith.subi %[[C125]], %[[COL_64]] : i64
+CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla_gpu.apply_indexing #[[MAP2]](%[[PID_INDEX]])
+CHECK-DAG:        %[[OFFSET_I64:.*]] = arith.index_castui %[[OFFSET_IDX]] : index to i64
+CHECK-DAG:        %[[BASE_PTR0_LOAD:.*]] = tt.addptr %[[P0]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR0_LOAD]], [%[[ROW_SUB]], %[[COL_SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]], %[[ZERO]]] {order = array<i32: 2, 1, 0>} : <tensor<1x1x128xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<1x1x128xf32>>
-CHECK-DAG:        tt.make_tensor_ptr %[[P1]], {{.*}} [%c0_i32] {order = array<i32: 0>} : <tensor<128xf32>>
+CHECK-DAG:        %[[BASE_PTR1_LOAD:.*]] = tt.addptr %[[P1]], %[[ZERO_64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR1_LOAD]], [%[[C127]]], {{.*}} [%[[ZERO]]] {order = array<i32: 0>} : <tensor<128xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<128xf32>>
-CHECK-DAG:        tt.make_tensor_ptr %[[P2]], {{.*}} [%[[ROW_I32]], %[[COL_I32]]] {order = array<i32: 1, 0>} : <tensor<1x1xf32>>
+CHECK-DAG:        %[[PID_I64:.*]] = arith.index_castui %[[PID_INDEX]] : index to i64
+CHECK-DAG:        %[[BASE_PTR2_LOAD:.*]] = tt.addptr %[[P2]], %[[PID_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR2_LOAD]], [%[[ROW_SUB]], %[[COL_SUB]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x1xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<1x1xf32>>
 CHECK:            tt.reduce
 CHECK-NEXT:       ^bb0(%[[ARG4:[^:]*]]: f32, %[[ARG5:[^:]*]]: f32):
 CHECK-NEXT:           %[[MAX:.*]] = arith.maximumf %[[ARG4]], %[[ARG5]] : f32
 CHECK-NEXT:           tt.reduce.return %[[MAX]] : f32
 CHECK-NEXT:       }) : (tensor<1x1x128xf32>) -> tensor<1x1xf32>
-CHECK-DAG:        tt.make_tensor_ptr %[[P3]], {{.*}} [%[[ROW_I32]], %[[COL_I32]], %[[ZERO]]] {order = array<i32: 2, 1, 0>} : <tensor<1x1x128xf32>>
+CHECK-DAG:        %[[BASE_PTR3_STORE:.*]] = tt.addptr %[[P3]], %[[OFFSET_I64]] : !tt.ptr<f32>, i64
+CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR3_STORE]], [%[[ROW_SUB]], %[[COL_SUB]], %[[C127]]], {{.*}} [%[[ZERO]], %[[ZERO]], %[[ZERO]]] {order = array<i32: 2, 1, 0>} : <tensor<1x1x128xf32>>
 CHECK-NEXT:       tt.store {{.*}} : !tt.ptr<tensor<1x1x128xf32>>
 )"));
 
@@ -509,7 +541,6 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kHloText));
 
   TF_ASSERT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({1, 1, 16}),
                                           "triton_softmax_computation", R"(
 // CHECK:         #xla_gpu.indexing_map<(d0) -> (d0 floordiv 32), domain: d0 in [0, 2047], is_simplified: true>
 // CHECK:         #xla_gpu.indexing_map<(d0) -> (d0 mod 32), domain: d0 in [0, 2047], is_simplified: true>
@@ -683,10 +714,13 @@ triton_reduction_computation {
 ENTRY main {
   param_0 = f32[125,127]{1,0} parameter(0)
   param_1 = f32[125]{0} parameter(1)
-  ROOT triton_reduction = f32[125]{0} fusion(param_0, param_1), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config": {"kind":"__triton"}}
-})";
+  ROOT triton_reduction = f32[125]{0} fusion(param_0, param_1),
+    kind=kCustom, calls=triton_reduction_computation,
+    backend_config={"fusion_backend_config": {
+      "kind":"__triton",
+      "block_level_fusion_config": {"output_tile_sizes": ["1"],
+                                    "num_warps": "1"}}}})";
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({1}),
                                           "triton_reduction_computation", R"(
 CHECK:        tt.func @triton_fn(%[[P0:[A-Za-z0-9_]*]]: !tt.ptr<f32>
 CHECK-SAME:                      %[[P1:[A-Za-z0-9_]*]]: !tt.ptr<f32>
@@ -778,9 +812,6 @@ ENTRY entry_computation {
 }
 
 TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguous) {
-  // TODO(b/363166438) Reenable this test after proper support is implemented.
-  GTEST_SKIP() << "Slice is not currently supported.";
-
   const std::string kHloText = R"(
 HloModule m
 
@@ -797,6 +828,29 @@ ENTRY entry_computation {
 })";
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/1e-6,
                                                            /*arel=*/1e-6}));
+}
+
+TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguousUnaligned) {
+  const std::string kHloText = R"(
+HloModule m
+
+fused_computation {
+  p = f32[7,7,75] parameter(0)
+  ROOT slice = f32[3,2,14] slice(p), slice={[1:6:2], [2:6:3], [35:75:3]}
+}
+
+ENTRY entry_computation {
+  p = f32[7,7,75] parameter(0)
+  ROOT fusion = f32[3,2,14] fusion(p),
+    kind=kCustom, calls=fused_computation, backend_config={
+      "fusion_backend_config": {
+        "kind":"__triton","block_level_fusion_config": {
+          "output_tile_sizes":["2","2","8"],"num_warps":"1"
+        }
+      }
+    }
+})";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{0, 0}));
 }
 
 TEST_F(TritonEmitterTest, ReshapeIntoBroadcastIsLoweredCorrectly) {
@@ -816,9 +870,7 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["2","2","2","2"],
                                    "num_warps":"1"}}}
 })";
-  // TODO(b/353490600): parse output tile sizes from backend config.
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({4, 2, 8, 2}),
                                           "triton_computation", R"(
 CHECK: tt.reshape
 )"));
@@ -844,9 +896,7 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["4","2","8","2"],
                                    "num_warps":"1"}}}
 })";
-  // TODO(b/353490600): parse output tile sizes from backend config.
   TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
-                                          FromOutputTileSizes({2, 2, 2, 2}),
                                           "triton_computation", R"(
 CHECK: tt.reshape
 )"));
@@ -875,8 +925,8 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["8","4"],
                                    "num_warps":"1"}}}
 })";
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, kHloText, FromOutputTileSizes({8, 4}), "triton_computation", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
 CHECK:       tt.broadcast
 CHECK-SAME:    tensor<1x1xf32> -> tensor<8x4xf32>
 )"));
@@ -904,9 +954,8 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["4"],
                                    "num_warps":"1"}}}
 })";
-  // TODO(b/353490600): parse output tile sizes from backend config.
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, kHloText, FromOutputTileSizes({4}), "triton_computation", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
 CHECK:      %[[CASTED_OUT:.*]] = arith.extui
 CHECK-SAME:   tensor<4xi1> to tensor<4xi8>
 CHECK:      tt.store {{.*}} %[[CASTED_OUT]]
@@ -944,9 +993,8 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["4"],
                                    "num_warps":"1"}}}
 })";
-  // TODO(b/353490600): parse output tile sizes from backend config.
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, kHloText, FromOutputTileSizes({4}), "triton_computation", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
 CHECK:      %[[I8_PARAM:.*]] = tt.load {{.*}} : !tt.ptr<tensor<4xi8>>
 CHECK:      arith.trunci %[[I8_PARAM]] : tensor<4xi8> to tensor<4xi1>
 )"));
@@ -973,13 +1021,36 @@ ENTRY main {
       "block_level_fusion_config":{"output_tile_sizes":["1","8","4"],
                                    "num_warps":"1"}}}
 })";
-  // TODO(b/353490600): parse output tile sizes from backend config.
-  TF_EXPECT_OK(CreateTritonIrAndFileCheck(
-      this, kHloText, FromOutputTileSizes({1, 8, 4}), "triton_computation", R"(
+  TF_EXPECT_OK(
+      CreateTritonIrAndFileCheck(this, kHloText, "triton_computation", R"(
 CHECK:      %[[TILE:.*]] = tt.load {{.*}} : !tt.ptr<tensor<8x4x1xf32>>
 CHECK:      tt.trans %[[TILE]] {order = array<i32: 2, 0, 1>} : tensor<8x4x1xf32> -> tensor<1x8x4xf32>
 )"));
 
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
+}
+
+// TODO(b/353484968): Delete this test once we have constraints to only
+// propagate tile sizes that are a power of 2.
+TEST_F(TritonEmitterTest, Transpose3D_TileFullDimThatIsNotPowerOf2) {
+  const std::string kHloText = R"(
+HloModule m
+
+triton_computation {
+  param_0 = f32[3,8,20] parameter(0)
+  ROOT transpose = f32[8,3,20] transpose(param_0), dimensions={1,0,2}
+}
+
+ENTRY main {
+  param_0 = f32[3,8,20] parameter(0)
+  ROOT triton_fusion = f32[8,3,20] fusion(param_0),
+    kind=kCustom, calls=triton_computation,
+    backend_config={"fusion_backend_config":
+      {"kind":"__triton",
+      "block_level_fusion_config":{"output_tile_sizes":["1","1", "20"],
+                                   "num_warps":"4"}}}
+})";
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
 }

@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <new>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/optimization.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
@@ -46,6 +46,10 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/tsl/concurrency/async_value.h"
+#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/concurrency/chain.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
@@ -59,6 +63,10 @@ limitations under the License.
 
 struct XLA_FFI_Error {
   absl::Status status;
+};
+
+struct XLA_FFI_Future {
+  tsl::AsyncValueRef<tsl::Chain> async_value;
 };
 
 struct XLA_FFI_ExecutionContext {
@@ -134,13 +142,31 @@ absl::Status Call(Ffi& handler, CallFrame& call_frame,
   XLA_FFI_ExecutionContext ctx = CreateExecutionContext(options);
   XLA_FFI_CallFrame ffi_call_frame = call_frame.Build(
       GetXlaFfiApi(), &ctx, static_cast<XLA_FFI_ExecutionStage>(stage));
-  XLA_FFI_Error* status = nullptr;
+  XLA_FFI_Error* error = nullptr;
   try {
-    status = handler.Call(&ffi_call_frame);
+    error = handler.Call(&ffi_call_frame);
   } catch (std::exception& e) {
     return Unknown("XLA FFI call failed: %s", e.what());
   }
-  return TakeStatus(status);
+
+  // If FFI handler returned synchronous error, it must not launch any
+  // asynchronous work that can also return an error.
+  if (error != nullptr) {
+    DCHECK_EQ(ffi_call_frame.future, nullptr)
+        << "Error must not be used together with a future";
+  }
+
+  // Wait for the completion of asynchronous work launched by the handler.
+  if (XLA_FFI_Future* future = ffi_call_frame.future;
+      ABSL_PREDICT_FALSE(future != nullptr)) {
+    absl::Cleanup delete_future = [&] { delete future; };
+    tsl::BlockUntilReady(future->async_value);
+    if (ABSL_PREDICT_FALSE(future->async_value.IsError())) {
+      return future->async_value.GetError();
+    }
+  }
+
+  return TakeStatus(error);
 }
 
 absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
@@ -148,75 +174,90 @@ absl::Status Call(XLA_FFI_Handler* handler, CallFrame& call_frame,
   XLA_FFI_ExecutionContext ctx = CreateExecutionContext(options);
   XLA_FFI_CallFrame ffi_call_frame =
       call_frame.Build(GetXlaFfiApi(), &ctx, stage);
-  XLA_FFI_Error* status = nullptr;
+  XLA_FFI_Error* error = nullptr;
   try {
-    status = (*handler)(&ffi_call_frame);
+    error = (*handler)(&ffi_call_frame);
   } catch (std::exception& e) {
     return Unknown("XLA FFI call failed: %s", e.what());
   }
-  return TakeStatus(status);
+
+  // If FFI handler returned synchronous error, it must not launch any
+  // asynchronous work that can also return an error.
+  if (error != nullptr) {
+    DCHECK_EQ(ffi_call_frame.future, nullptr)
+        << "Error must not be used together with a future";
+  }
+
+  // Wait for the completion of asynchronous work launched by the handler.
+  if (XLA_FFI_Future* future = ffi_call_frame.future;
+      ABSL_PREDICT_FALSE(future != nullptr)) {
+    absl::Cleanup delete_future = [&] { delete future; };
+    tsl::BlockUntilReady(future->async_value);
+    if (ABSL_PREDICT_FALSE(future->async_value.IsError())) {
+      return future->async_value.GetError();
+    }
+  }
+
+  return TakeStatus(error);
+}
+
+static XLA_FFI_Metadata BuildMetadata() {
+  return XLA_FFI_Metadata{XLA_FFI_Metadata_STRUCT_SIZE,
+                          XLA_FFI_Api_Version{XLA_FFI_Api_Version_STRUCT_SIZE}};
+}
+
+static XLA_FFI_Metadata_Extension BuildMetadataExtension(
+    XLA_FFI_Metadata* metadata) {
+  return XLA_FFI_Metadata_Extension{
+      XLA_FFI_Extension_Base{XLA_FFI_Metadata_Extension_STRUCT_SIZE,
+                             XLA_FFI_Extension_Metadata},
+      metadata};
+}
+
+static XLA_FFI_CallFrame BuildMetadataCallFrame(
+    XLA_FFI_Metadata_Extension* extension) {
+  return XLA_FFI_CallFrame{
+      XLA_FFI_CallFrame_STRUCT_SIZE,
+      &extension->extension_base,
+      /*api=*/nullptr,
+      /*context=*/nullptr,
+      /*stage=*/XLA_FFI_ExecutionStage_EXECUTE,
+      /*args=*/XLA_FFI_Args{XLA_FFI_Args_STRUCT_SIZE},
+      /*rets=*/XLA_FFI_Rets{XLA_FFI_Rets_STRUCT_SIZE},
+      /*attrs=*/XLA_FFI_Attrs{XLA_FFI_Attrs_STRUCT_SIZE},
+  };
 }
 
 absl::StatusOr<XLA_FFI_Metadata> GetMetadata(Ffi& handler) {
-  auto metadata = BuildMetadata();
-  auto extension = BuildMetadataExtension(&metadata);
-  auto call_frame = BuildMetadataCallFrame(&extension);
-  XLA_FFI_Error* status = nullptr;
+  XLA_FFI_Metadata metadata = BuildMetadata();
+  XLA_FFI_Metadata_Extension extension = BuildMetadataExtension(&metadata);
+  XLA_FFI_CallFrame call_frame = BuildMetadataCallFrame(&extension);
+  XLA_FFI_Error* error = nullptr;
   try {
-    status = handler.Call(&call_frame);
+    error = handler.Call(&call_frame);
   } catch (std::exception& e) {
     return Unknown("Fetching XLA FFI metadata failed: %s", e.what());
   }
-  if (status != nullptr) {
-    return TakeStatus(status);
+  if (error != nullptr) {
+    return TakeStatus(error);
   }
   return metadata;
 }
 
 absl::StatusOr<XLA_FFI_Metadata> GetMetadata(XLA_FFI_Handler* handler) {
-  auto metadata = BuildMetadata();
-  auto extension = BuildMetadataExtension(&metadata);
-  auto call_frame = BuildMetadataCallFrame(&extension);
-  XLA_FFI_Error* status = nullptr;
+  XLA_FFI_Metadata metadata = BuildMetadata();
+  XLA_FFI_Metadata_Extension extension = BuildMetadataExtension(&metadata);
+  XLA_FFI_CallFrame call_frame = BuildMetadataCallFrame(&extension);
+  XLA_FFI_Error* error = nullptr;
   try {
-    status = (*handler)(&call_frame);
+    error = (*handler)(&call_frame);
   } catch (std::exception& e) {
     return Unknown("Fetching XLA FFI metadata failed: %s", e.what());
   }
-  if (status != nullptr) {
-    return TakeStatus(status);
+  if (error != nullptr) {
+    return TakeStatus(error);
   }
   return metadata;
-}
-
-XLA_FFI_Metadata BuildMetadata() {
-  return XLA_FFI_Metadata{
-      XLA_FFI_Metadata_STRUCT_SIZE,
-      XLA_FFI_Api_Version{XLA_FFI_Api_Version_STRUCT_SIZE, nullptr, 0, 0}, 0};
-}
-
-XLA_FFI_Metadata_Extension BuildMetadataExtension(XLA_FFI_Metadata* metadata) {
-  return XLA_FFI_Metadata_Extension{XLA_FFI_Metadata_Extension_STRUCT_SIZE,
-                                    XLA_FFI_Extension_Metadata,
-                                    /*next=*/nullptr, metadata};
-}
-
-XLA_FFI_CallFrame BuildMetadataCallFrame(
-    XLA_FFI_Metadata_Extension* extension) {
-  XLA_FFI_CallFrame call_frame = {
-      XLA_FFI_CallFrame_STRUCT_SIZE,
-      reinterpret_cast<XLA_FFI_Extension_Base*>(extension),
-      /*api=*/nullptr,
-      /*context=*/nullptr,
-      /*stage=*/XLA_FFI_ExecutionStage_EXECUTE,
-  };
-  call_frame.args =
-      XLA_FFI_Args{XLA_FFI_Args_STRUCT_SIZE, nullptr, 0, nullptr, nullptr};
-  call_frame.rets =
-      XLA_FFI_Rets{XLA_FFI_Rets_STRUCT_SIZE, nullptr, 0, nullptr, nullptr};
-  call_frame.attrs = XLA_FFI_Attrs{
-      XLA_FFI_Attrs_STRUCT_SIZE, nullptr, 0, nullptr, nullptr, nullptr};
-  return call_frame;
 }
 
 namespace internal {
@@ -459,6 +500,40 @@ static void XLA_FFI_Error_Destroy(XLA_FFI_Error_Destroy_Args* args) {
   delete args->error;
 }
 
+static XLA_FFI_Error* XLA_FFI_Future_Create(XLA_FFI_Future_Create_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Future_Create", XLA_FFI_Future_Create_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->future =
+      new XLA_FFI_Future{tsl::MakeConstructedAsyncValueRef<tsl::Chain>()};
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_Future_SetAvailable(
+    XLA_FFI_Future_SetAvailable_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Future_SetAvailable",
+      XLA_FFI_Future_SetAvailable_Args_STRUCT_SIZE, args->struct_size));
+  args->future->async_value.SetStateConcrete();
+  return nullptr;
+}
+
+static XLA_FFI_Error* XLA_FFI_Future_SetError(
+    XLA_FFI_Future_SetError_Args* args) {
+  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "XLA_FFI_Future_SetError", XLA_FFI_Future_SetError_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  if (args->error == nullptr || args->error->status.ok()) {
+    return new XLA_FFI_Error{InvalidArgument("Error must not be null or OK")};
+  }
+
+  absl::Status error = TakeStatus(args->error);
+  args->future->async_value.SetError(std::move(error));
+
+  return nullptr;
+}
+
 static XLA_FFI_Error* XLA_FFI_Handler_Register(
     XLA_FFI_Handler_Register_Args* args) {
   XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
@@ -677,6 +752,14 @@ static XLA_FFI_Error* XLA_FFI_INTERNAL_Error_Forward(void* status) {
   return new XLA_FFI_Error{std::move(*absl_status)};
 }
 
+static XLA_FFI_Future* XLA_FFI_INTERNAL_Future_Forward(void* async_value) {
+  auto* tsl_async_value = reinterpret_cast<tsl::AsyncValue*>(async_value);
+  DCHECK(tsl_async_value) << "Async value must not be null";
+
+  return new XLA_FFI_Future{
+      tsl::AsyncValueRef<tsl::Chain>(tsl::FormRef(tsl_async_value))};
+}
+
 static void* XLA_FFI_INTERNAL_Stream_Get(XLA_FFI_ExecutionContext* ctx) {
   if (auto* gpu = std::get_if<XLA_FFI_ExecutionContext::GpuContext>(
           &ctx->backend_context)) {
@@ -736,6 +819,7 @@ extern "C" const XLA_FFI_Api* XLA_FFI_GetApi() { return GetXlaFfiApi(); }
 
 static XLA_FFI_InternalApi internal_api = {
     XLA_FFI_INTERNAL_Error_Forward,
+    XLA_FFI_INTERNAL_Future_Forward,
     XLA_FFI_INTERNAL_Stream_Get,
     XLA_FFI_INTERNAL_DeviceOrdinal_Get,
     XLA_FFI_INTERNAL_DeviceMemoryAllocator_Get,
@@ -770,6 +854,9 @@ static XLA_FFI_Api api = {
     XLA_FFI_DeviceMemory_Allocate,
     XLA_FFI_DeviceMemory_Free,
     XLA_FFI_ThreadPool_Schedule,
+    XLA_FFI_Future_Create,
+    XLA_FFI_Future_SetAvailable,
+    XLA_FFI_Future_SetError,
 };
 
 const XLA_FFI_Api* GetXlaFfiApi() { return &api; }

@@ -311,6 +311,11 @@ class IndexingMap {
               std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
               const llvm::DenseMap<mlir::AffineExpr, Interval>& constraints);
 
+  IndexingMap(const IndexingMap&) = default;
+  IndexingMap(IndexingMap&&) = default;
+  IndexingMap& operator=(const IndexingMap&) = default;
+  IndexingMap& operator=(IndexingMap&&) = default;
+
   // Returns an undefined indexing map.
   static IndexingMap GetUndefined() { return IndexingMap(); }
 
@@ -431,6 +436,14 @@ class IndexingMap {
     return {affine_map_.getSubMap({result_index}), dim_vars_, range_vars_,
             rt_vars_, constraints_};
   }
+
+  // Returns a new indexing map with all RangeVars and RTVars converted to
+  // DimVars.
+  // For example,
+  // (d0, d1, d2)[s0, s1] -> (d0, d1, d2, s0, s1)
+  // will be converted to
+  // (d0, d1, d2, d3, d4) -> (d0, d1, d2, d3, d4)
+  IndexingMap ConvertSymbolsToDimensions() const;
 
  private:
   IndexingMap() = default;

@@ -77,11 +77,19 @@ def _get_lib_name_and_version(path):
     lib_version = path[extension_index + len(LIB_EXTENSION):]
     return (lib_name, lib_version)
 
+def _get_main_lib_name(repository_ctx):
+    if repository_ctx.name == "cuda_driver":
+        return "libcuda"
+    else:
+        return "lib{}".format(
+            repository_ctx.name.split("_")[1],
+        ).lower()
+
 def _get_libraries_by_redist_name_in_dir(repository_ctx):
     lib_dir_path = repository_ctx.path("lib")
     if not lib_dir_path.exists:
         return []
-    main_lib_name = "lib{}".format(repository_ctx.name.split("_")[1]).lower()
+    main_lib_name = _get_main_lib_name(repository_ctx)
     lib_dir_content = lib_dir_path.readdir()
     return [
         str(f)
@@ -114,9 +122,11 @@ def get_lib_name_to_version_dict(repository_ctx):
             if (major_version_key not in lib_name_to_version_dict or
                 len(lib_name_to_version_dict[major_version_key].split(".")) > 2):
                 lib_name_to_version_dict[major_version_key] = lib_version
-        if (len(lib_version.split(".")) >= 3 and
-            minor_version_key not in lib_name_to_version_dict):
-            lib_name_to_version_dict[minor_version_key] = lib_version
+        if len(lib_version.split(".")) >= 3:
+            if major_version_key not in lib_name_to_version_dict:
+                lib_name_to_version_dict[major_version_key] = lib_version
+            if minor_version_key not in lib_name_to_version_dict:
+                lib_name_to_version_dict[minor_version_key] = lib_version
     return lib_name_to_version_dict
 
 def create_dummy_build_file(repository_ctx, use_comment_symbols = True):
@@ -150,7 +160,7 @@ def get_major_library_version(repository_ctx, lib_name_to_version_dict):
     major_version = ""
     if len(lib_name_to_version_dict) == 0:
         return major_version
-    main_lib_name = "lib{}".format(repository_ctx.name.split("_")[1])
+    main_lib_name = _get_main_lib_name(repository_ctx)
     key = "%%{%s_version}" % main_lib_name
     major_version = lib_name_to_version_dict[key]
     return major_version
@@ -185,13 +195,25 @@ def create_build_file(
 
 def _create_symlinks(repository_ctx, local_path, dirs):
     for dir in dirs:
-        repository_ctx.symlink(
-            "{path}/{dir}".format(
-                path = local_path,
-                dir = dir,
-            ),
-            dir,
+        dir_path = "{path}/{dir}".format(
+            path = local_path,
+            dir = dir,
         )
+        if not repository_ctx.path(local_path).exists:
+            fail("%s directory doesn't exist!" % dir_path)
+        repository_ctx.symlink(dir_path, dir)
+
+def _create_libcuda_symlinks(
+        repository_ctx,
+        lib_name_to_version_dict):
+    if repository_ctx.name == "cuda_driver":
+        nvidia_driver_path = "lib/libcuda.so.{}".format(
+            lib_name_to_version_dict["%{libcuda_version}"],
+        )
+        if not repository_ctx.path(nvidia_driver_path).exists:
+            fail("%s doesn't exist!" % nvidia_driver_path)
+        repository_ctx.symlink(nvidia_driver_path, "lib/libcuda.so.1")
+        repository_ctx.symlink("lib/libcuda.so.1", "lib/libcuda.so")
 
 def use_local_path(repository_ctx, local_path, dirs):
     # buildifier: disable=function-docstring-args
@@ -210,6 +232,10 @@ def use_local_path(repository_ctx, local_path, dirs):
         repository_ctx,
         lib_name_to_version_dict,
         major_version,
+    )
+    _create_libcuda_symlinks(
+        repository_ctx,
+        lib_name_to_version_dict,
     )
     repository_ctx.file("version.txt", major_version)
 
@@ -295,6 +321,10 @@ def _use_downloaded_cuda_redistribution(repository_ctx):
         repository_ctx,
         lib_name_to_version_dict,
         major_version,
+    )
+    _create_libcuda_symlinks(
+        repository_ctx,
+        lib_name_to_version_dict,
     )
     repository_ctx.file("version.txt", major_version)
 
