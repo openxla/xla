@@ -140,13 +140,13 @@ ScopedShapedBuffer::ScopedShapedBuffer(ShapedBuffer shaped_buffer,
                                        se::DeviceMemoryAllocator* allocator)
     : ShapedBuffer(std::move(shaped_buffer)), allocator_(allocator) {}
 
-ScopedShapedBuffer::ScopedShapedBuffer(ScopedShapedBuffer&& s)
+ScopedShapedBuffer::ScopedShapedBuffer(ScopedShapedBuffer&& s) noexcept
     : ShapedBuffer(static_cast<ShapedBuffer&&>(s)), allocator_(s.allocator_) {
   // Null out s.allocator_ so it doesn't try to free anything in its destructor.
   s.allocator_ = nullptr;
 }
 
-ScopedShapedBuffer& ScopedShapedBuffer::operator=(ScopedShapedBuffer&& s) {
+ScopedShapedBuffer& ScopedShapedBuffer::operator=(ScopedShapedBuffer&& s) noexcept {
   Deallocate();
 
   *static_cast<ShapedBuffer*>(this) = std::move(static_cast<ShapedBuffer&>(s));

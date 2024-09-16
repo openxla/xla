@@ -170,8 +170,8 @@ class ScopedShapedBuffer : public ShapedBuffer {
                               se::DeviceMemoryAllocator* allocator);
 
   // Movable, but not copyable.
-  ScopedShapedBuffer(ScopedShapedBuffer&& s);
-  ScopedShapedBuffer& operator=(ScopedShapedBuffer&&);
+  ScopedShapedBuffer(ScopedShapedBuffer&& s) noexcept;
+  ScopedShapedBuffer& operator=(ScopedShapedBuffer&&) noexcept;
   ScopedShapedBuffer(const ScopedShapedBuffer&) = delete;
   ScopedShapedBuffer& operator=(const ScopedShapedBuffer&) = delete;
 
