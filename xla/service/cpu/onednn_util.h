@@ -30,6 +30,14 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
+inline bool IsNativeConvertSupportedOnThisCPU() {
+  if (TestCPUFeature(tsl::port::CPUFeature::AMX_BF16) ||
+      TestCPUFeature(tsl::port::CPUFeature::AVX_NE_CONVERT)) {
+        return true;
+  }
+  return false;
+}
+
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
   using tsl::port::CPUFeature;
   // TODO(intel-tf): Enable more types.

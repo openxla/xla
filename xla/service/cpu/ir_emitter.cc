@@ -97,6 +97,7 @@ limitations under the License.
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_util.h"
 #endif
 
 namespace xla {
@@ -115,7 +116,13 @@ class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
                         IrEmitter* ir_emitter, llvm::Module* module)
       : ElementalIrEmitter(
             module, ir_emitter->b(),
-            Options{/*xla_cpu_use_truncate_f32_to_bf16_conversion=*/true}),
+            Options { /*xla_cpu_use_truncate_f32_to_bf16_conversion=*/
+#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+                      !IsNativeConvertSupportedOnThisCPU()
+#else
+                      true
+#endif
+            }),
         hlo_module_config_(module_config),
         ir_emitter_(ir_emitter) {}
 
