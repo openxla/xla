@@ -1038,7 +1038,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     int node_id, int num_nodes,
     gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
-    std::string_view mock_gpu_topology,
+    std::optional<std::string_view> mock_gpu_topology,
     absl::Duration get_local_topology_timeout,
     absl::Duration get_global_topology_timeout) {
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
@@ -1070,29 +1070,34 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
 
   GlobalTopologyProto global_topology;
   if (enable_mock_nccl) {
-    int num_slices = num_nodes;
-    int num_hosts_per_slice = 1;
-    if (!mock_gpu_topology.empty()) {
-      std::vector<std::string> topology_components =
-          absl::StrSplit(mock_gpu_topology, 'x');
-      if (topology_components.size() != 2 ||
-          !absl::SimpleAtoi(topology_components[0], &num_slices) ||
-          !absl::SimpleAtoi(topology_components[1], &num_hosts_per_slice)) {
-        return absl::InternalError(
-            "mock_gpu_topology must be of shape "
-            "\"<num-slices>x<num-hosts-per-slice>\"");
-      }
+    TopologySizes sizes;
+    if (mock_gpu_topology.has_value()) {
+      TF_ASSIGN_OR_RETURN(sizes, TopologySizes::FromString(*mock_gpu_topology));
+    } else {
+      // If there is no topology spec, we assume that each node is a slice,
+      // there is one process (host) on each slice and each host
+      // has all the local devices.
+      sizes.num_slices = num_nodes;
+      sizes.num_hosts_per_slice = 1;
+      sizes.num_devices_per_host = local_topology.devices().size();
     }
 
-    if (num_slices * num_hosts_per_slice != num_nodes) {
+    if (sizes.num_devices_per_host != local_topology.devices().size()) {
       return absl::InternalError(
-          "The size of mock_gpu_topology must by the same as num_nodes");
+          "The number of devices per host in 'mock_gpu_topology' "
+          "must be the same as the number of devices in the local topology");
+    }
+
+    if (sizes.num_slices * sizes.num_hosts_per_slice != num_nodes) {
+      return absl::InternalError(
+          "The number of hosts in 'mock_gpu_topology' "
+          "must be the same as 'num_nodes'");
     }
 
     std::vector<LocalTopologyProto> local_topologies(num_nodes, local_topology);
-    for (int i = 0; i < num_slices; ++i) {
-      for (int j = 0; j < num_hosts_per_slice; j++) {
-        int node_id = i * num_hosts_per_slice + j;
+    for (int i = 0; i < sizes.num_slices; ++i) {
+      for (int j = 0; j < sizes.num_hosts_per_slice; j++) {
+        int node_id = i * sizes.num_hosts_per_slice + j;
         local_topologies[node_id].set_node_id(node_id);
         local_topologies[node_id].set_boot_id(absl::StrCat(i));
       }

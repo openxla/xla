@@ -83,7 +83,7 @@ void RegisterGpuClientAndDefineGpuAllocatorConfig(nanobind::module_& m_nb) {
           options.platform_name = platform_name;
           options.kv_store = kv_store;
           options.enable_mock_nccl = mock.value_or(false);
-          options.mock_gpu_topology = mock_gpu_topology.value_or("");
+          options.mock_gpu_topology = mock_gpu_topology;
           std::unique_ptr<PjRtClient> pjrt_client =
               xla::ValueOrThrow(GetStreamExecutorGpuClient(options));
           ifrt_client = ifrt::PjRtClient::Create(std::move(pjrt_client));

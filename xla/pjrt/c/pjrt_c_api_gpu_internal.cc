@@ -142,7 +142,7 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       it != create_options.end()) {
     enable_mock_nccl = std::get<bool>(it->second);
   }
-  std::string mock_gpu_topology;
+  std::optional<std::string> mock_gpu_topology;
   if (auto it = create_options.find("mock_gpu_topology");
       it != create_options.end()) {
     mock_gpu_topology = std::get<std::string>(it->second);
@@ -215,33 +215,6 @@ absl::StatusOr<TargetConfigAndDevices> GetTargetConfigFromOptions(
   return {{gpu_target_config.ToProto(), device_ids}};
 }
 
-struct TopologySizes {
-  int num_slices = 0;
-  int num_hosts_per_slice = 0;
-  int num_devices_per_host = 0;
-
-  int GetDeviceCount() {
-    return num_slices * num_hosts_per_slice * num_devices_per_host;
-  }
-
-  static absl::StatusOr<TopologySizes> FromString(
-      std::string_view topology_string) {
-    TopologySizes sizes;
-    std::vector<std::string> topology_components =
-        absl::StrSplit(topology_string, 'x');
-    if (topology_components.size() != 3 ||
-        !absl::SimpleAtoi(topology_components[0], &sizes.num_slices) ||
-        !absl::SimpleAtoi(topology_components[1], &sizes.num_hosts_per_slice) ||
-        !absl::SimpleAtoi(topology_components[2],
-                          &sizes.num_devices_per_host)) {
-      return absl::InternalError(
-          "topology must be of shape "
-          "\"<num-slices>x<num-hosts-per-slice>x<num-devices-per-host>\"");
-    }
-    return sizes;
-  }
-};
-
 }  // namespace
 
 PJRT_Error* PJRT_GpuDeviceTopology_Create(
@@ -268,12 +241,13 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
   std::vector<int>& device_ids = target_config_and_devices.device_ids;
   stream_executor::GpuTargetConfigProto& target_config_proto =
       target_config_and_devices.target_config_proto;
-  TopologySizes sizes{1, 1, static_cast<int>(device_ids.size())};
+  xla::TopologySizes sizes{1, 1, static_cast<int>(device_ids.size())};
 
   if (auto topology_it = create_options.find("topology");
       topology_it != create_options.end()) {
     std::string topology_string = std::get<std::string>(topology_it->second);
-    PJRT_ASSIGN_OR_RETURN(sizes, TopologySizes::FromString(topology_string));
+    PJRT_ASSIGN_OR_RETURN(sizes,
+                          xla::TopologySizes::FromString(topology_string));
   }
 
   if (sizes.GetDeviceCount() == 0) {
