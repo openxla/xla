@@ -46,7 +46,7 @@ ShapedBuffer::ShapedBuffer(Shape on_host_shape, Shape on_device_shape,
                            int device_ordinal, int physical_device_ordinal)
     : ShapedBuffer(on_device_shape, device_ordinal, physical_device_ordinal) {}
 
-ShapedBuffer::ShapedBuffer(ShapedBuffer&& s)
+ShapedBuffer::ShapedBuffer(ShapedBuffer&& s) noexcept
     : on_host_shape_(std::move(s.on_host_shape_)),
       on_device_shape_(std::move(s.on_device_shape_)),
       device_ordinal_(s.device_ordinal_),
@@ -58,7 +58,7 @@ ShapedBuffer::ShapedBuffer(ShapedBuffer&& s)
   buffers_.replace_shape_ptr(on_device_shape_);
 }
 
-ShapedBuffer& ShapedBuffer::operator=(ShapedBuffer&& s) {
+ShapedBuffer& ShapedBuffer::operator=(ShapedBuffer&& s) noexcept {
   on_device_shape_ = std::move(s.on_device_shape_);
   on_host_shape_ = std::move(s.on_host_shape_);
   device_ordinal_ = s.device_ordinal_;

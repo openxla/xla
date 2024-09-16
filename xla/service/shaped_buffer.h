@@ -52,8 +52,8 @@ class ShapedBuffer {
                int physical_device_ordinal = -1);
 
   // Movable, but not copyable.
-  ShapedBuffer(ShapedBuffer&& s);
-  ShapedBuffer& operator=(ShapedBuffer&&);
+  ShapedBuffer(ShapedBuffer&& s) noexcept;
+  ShapedBuffer& operator=(ShapedBuffer&&) noexcept;
   ShapedBuffer(const ShapedBuffer&) = delete;
   ShapedBuffer& operator=(const ShapedBuffer&) = delete;
 
