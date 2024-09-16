@@ -1352,9 +1352,8 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
 class FlashAttentionBMMScaleSoftmaxDropoutBMM
     : public MultiHeadedAttentionTest {
  protected:
-  const std::string  // NOLINT
-  GetModuleFlash_Attention_Training_BMM1_Softmax_Dropout_BMM2_HloString_BF16() {  // NOLINT
-    const std::string hlo_text = R"(
+  static constexpr absl::string_view
+      kModuleFlashAttentionTrainingBMM1SoftmaxDropoutBMM2HloStringBF16 = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
 
     ENTRY main.21 {
@@ -1380,8 +1379,6 @@ class FlashAttentionBMMScaleSoftmaxDropoutBMM
       ROOT tuple.20 = (bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}) tuple(transpose.11, transpose.17, transpose.18, transpose.19)
     } // main.21
     )";
-    return hlo_text;
-  }
 
   void TestImpl_Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2() {
     if (skip_reason_) GTEST_SKIP() << *skip_reason_;
@@ -1390,9 +1387,6 @@ class FlashAttentionBMMScaleSoftmaxDropoutBMM
       GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
     }
     XlaBuilder builder(TestName());
-    //
-    std::string hlo_string =
-        GetModuleFlash_Attention_Training_BMM1_Softmax_Dropout_BMM2_HloString_BF16();  // NOLINT
 
     auto lhs_bmm1_literal =
         GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
@@ -1403,8 +1397,10 @@ class FlashAttentionBMMScaleSoftmaxDropoutBMM
     auto do_literal =
         GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
 
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_string));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(
+            kModuleFlashAttentionTrainingBMM1SoftmaxDropoutBMM2HloStringBF16));
     ExecuteAndTransfer(std::move(module), {&lhs_bmm1_literal, &rhs_bmm1_literal,
                                            &rhs_bmm2_literal, &do_literal});
   }

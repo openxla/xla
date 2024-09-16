@@ -1238,6 +1238,8 @@ class DnnGraph {
   virtual absl::Status Execute(Stream& stream,
                                absl::Span<DeviceMemoryBase> operands,
                                int64_t local_device_ordinal) const = 0;
+  virtual void InitDropoutState(int64_t local_device_count, int64_t seed,
+                                int64_t increment) = 0;
 };
 
 using LazyDnnGraph = std::unique_ptr<DnnGraph>;

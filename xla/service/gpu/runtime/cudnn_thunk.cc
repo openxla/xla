@@ -30,10 +30,6 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "tsl/platform/errors.h"
 
-#if GOOGLE_CUDA
-#include "xla/stream_executor/cuda/cuda_dnn.h"
-#endif
-
 namespace xla {
 namespace gpu {
 
@@ -58,13 +54,10 @@ absl::Status CuDnnThunk::Initialize(const InitializeParams& params) {
     std::string().swap(fingerprint_);
     if (result.ok()) {
       graph_->swap(*result);
-#if GOOGLE_CUDA
       if (sdpa_dropout_seed_.has_value()) {
-        dynamic_cast<stream_executor::gpu::CudnnGraph*>(graph_->get())
-            ->InitDropoutState(params.local_device_count, *sdpa_dropout_seed_,
-                               16);
+        graph_->get()->InitDropoutState(params.local_device_count,
+                                        *sdpa_dropout_seed_, 16);
       }
-#endif
     }
     ret = result.status();
   });
