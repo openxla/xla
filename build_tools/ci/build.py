@@ -29,7 +29,7 @@ import logging
 import os
 import subprocess
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # TODO(ddunleavy): move this to the bazelrc
@@ -50,6 +50,9 @@ _XLA_DEFAULT_TARGET_PATTERNS = (
     "//build_tools/...",
     "@tsl//tsl/...",
 )
+_KOKORO_ARTIFACTS_DIR = os.environ.get(
+    "KOKORO_ARTIFACTS_DIR", "$KOKORO_ARTIFACTS_DIR"
+)
 
 
 def sh(args, check=True, **kwargs):
@@ -68,10 +71,13 @@ def _write_to_sponge_config(key, value) -> None:
 
 
 class BuildType(enum.Enum):
+  """Enum representing all types of builds."""
   CPU_X86 = enum.auto()
   CPU_ARM64 = enum.auto()
   GPU = enum.auto()
   GPU_CONTINUOUS = enum.auto()
+
+  MACOS_CPU_X86 = enum.auto()
 
   JAX_CPU = enum.auto()
   JAX_GPU = enum.auto()
@@ -86,7 +92,7 @@ class Build:
 
   type_: BuildType
   repo: str
-  image_url: str
+  image_url: Optional[str]
   target_patterns: Tuple[str, ...]
   configs: Tuple[str, ...] = ()
   build_tag_filters: Tuple[str, ...] = ()
@@ -115,6 +121,7 @@ class Build:
     return ["bazel", "test", *all_options, "--", *self.target_patterns]
 
   def docker_run_command(self, *, command: str, **kwargs: Any) -> List[str]:
+    assert self.image_url, "`docker run` has no meaning without an image."
     options = _dict_to_cli_options(kwargs)
 
     return ["docker", "run", *options, self.image_url, command]
@@ -122,7 +129,10 @@ class Build:
   def commands(self) -> List[List[str]]:
     """Returns list of commands for a build."""
     cmds = []
-    cmds.append(["./github/xla/.kokoro/generate_index_html.sh", "index.html"])
+    cmds.append([
+        f"{_KOKORO_ARTIFACTS_DIR}/github/xla/.kokoro/generate_index_html.sh",
+        "index.html",
+    ])
     if self.repo != "openxla/xla":
       _, repo_name = self.repo.split("/")
 
@@ -133,13 +143,15 @@ class Build:
 
     cmds.extend(self.extra_setup_commands)
 
+    using_docker = self.image_url is not None
+
     # pyformat:disable
 
     if self.type_ == BuildType.CPU_ARM64:
       # We would need to install parallel, but `apt` hangs regularly on Kokoro
       # VMs due to yaqs/eng/q/4506961933928235008
       cmds.append(["docker", "pull", self.image_url])
-    else:
+    elif using_docker:
       # This is a slightly odd use of parallel, we aren't doing anything besides
       # retrying after 15 seconds up to 3 times if `docker pull` fails.
       cmds.append(["parallel", "--ungroup", "--retries", "3", "--delay", "15",
@@ -148,16 +160,26 @@ class Build:
     container_name = "xla_ci"
     _, repo_name = self.repo.split("/")
 
-    cmds.append(
-        self.docker_run_command(command="bash", detach=True,
-                                name=container_name, rm=True, interactive=True,
-                                tty=True, volume="./github:/github",
-                                workdir=f"/github/{repo_name}"))
+    if using_docker:
+      cmds.append(
+          self.docker_run_command(command="bash", detach=True,
+                                  name=container_name, rm=True,
+                                  interactive=True, tty=True,
+                                  volume="./github:/github",
+                                  workdir=f"/github/{repo_name}"))
     # pyformat:enable
-    docker_exec = lambda cmd: ["docker", "exec", container_name, *cmd]
-    cmds.append(docker_exec(self.bazel_test_command()))
-    cmds.append(docker_exec(["bazel", "analyze-profile", "profile.json.gz"]))
-    cmds.append(["docker", "stop", container_name])
+
+    # Prepend `docker exec <container_name>` iff we are using docker.
+    maybe_docker_exec = (
+        ["docker", "exec", container_name] if using_docker else []
+    )
+    cmds.append(maybe_docker_exec + self.bazel_test_command())
+    cmds.append(
+        maybe_docker_exec + ["bazel", "analyze-profile", "profile.json.gz"]
+    )
+
+    if using_docker:
+      cmds.append(["docker", "stop", container_name])
 
     return cmds
 
@@ -194,14 +216,13 @@ def nvidia_gpu_build_with_compute_capability(
       test_tag_filters=("-no_oss", "requires-gpu-nvidia", "gpu")
       + extra_gpu_tags,
       build_tag_filters=("-no_oss", "requires-gpu-nvidia", "gpu"),
-      options=dict(
-          run_under="//tools/ci_build/gpu_build:parallel_gpu_execute",
-          repo_env=f"TF_CUDA_COMPUTE_CAPABILITIES={compute_capability/10}",
+      options={
+          "run_under": "//tools/ci_build/gpu_build:parallel_gpu_execute",
+          "repo_env": f"TF_CUDA_COMPUTE_CAPABILITIES={compute_capability/10}",
+          "@cuda_driver//:enable_forward_compatibility": "true",
           **_DEFAULT_BAZEL_OPTIONS,
-      ),
-      extra_setup_commands=(
-          ["nvidia-smi"],
-      ),
+      },
+      extra_setup_commands=(["nvidia-smi"],),
   )
 
 
@@ -244,6 +265,49 @@ _GPU_BUILD = nvidia_gpu_build_with_compute_capability(
     type_=BuildType.GPU,
     configs=("warnings", "rbe_linux_cuda_nvcc"),
     compute_capability=75,
+)
+
+macos_tag_filter = (
+    "-no_oss",
+    "-gpu",
+    "-no_mac",
+    "-mac_excluded",
+    "-requires-gpu-nvidia",
+    "-requires-gpu-amd",
+)
+
+_MACOS_X86_BUILD = Build(
+    type_=BuildType.MACOS_CPU_X86,
+    repo="openxla/xla",
+    image_url=None,
+    configs=("nonccl",),
+    target_patterns=(
+        "//xla/...",
+        "-//xla/hlo/experimental/...",
+        "-//xla/python_api/...",
+        "-//xla/python/...",
+        "-//xla/service/gpu/...",
+    ),
+    options=dict(
+        **_DEFAULT_BAZEL_OPTIONS,
+        macos_minimum_os="10.15",
+        test_tmpdir="/Volumes/BuildData/bazel_output",
+    ),
+    build_tag_filters=macos_tag_filter,
+    test_tag_filters=macos_tag_filter,
+    extra_setup_commands=(
+        [
+            "sudo",
+            "wget",
+            "--no-verbose",
+            "-O",
+            "/usr/local/bin/bazel",
+            "https://github.com/bazelbuild/bazelisk/releases/download/v1.11.0/bazelisk-darwin-amd64",
+        ],
+        ["chmod", "+x", "/usr/local/bin/bazel"],
+        ["bazel", "--version"],  # Sanity check due to strange failures
+        ["mkdir", "-p", "/Volumes/BuildData/bazel_output"],
+    ),
 )
 
 _JAX_CPU_BUILD = Build(
@@ -346,6 +410,7 @@ _KOKORO_JOB_NAME_TO_BUILD_MAP = {
     "tensorflow/xla/linux/github_continuous/arm64/build_cpu": _CPU_ARM64_BUILD,
     "tensorflow/xla/linux/github_continuous/build_gpu": _GPU_BUILD,
     "tensorflow/xla/linux/github_continuous/build_cpu": _CPU_X86_BUILD,
+    "tensorflow/xla/macos/github_continuous/cpu_py39_full": _MACOS_X86_BUILD,
     "tensorflow/xla/jax/cpu/build_cpu": _JAX_CPU_BUILD,
     "tensorflow/xla/jax/gpu/build_gpu": _JAX_GPU_BUILD,
     "tensorflow/xla/tensorflow/cpu/build_cpu": _TENSORFLOW_CPU_BUILD,
@@ -353,10 +418,27 @@ _KOKORO_JOB_NAME_TO_BUILD_MAP = {
 }
 
 
+def dump_all_build_commands():
+  """Used to generate what commands are run for each build."""
+  # Awkward workaround b/c Build instances are not hashable
+  type_to_build = {b.type_: b for b in _KOKORO_JOB_NAME_TO_BUILD_MAP.values()}
+  for t in sorted(type_to_build.keys(), key=str):
+    build = type_to_build[t]
+    sys.stdout.write(f"# BEGIN {build.type_}\n")
+    for cmd in build.commands():
+      sys.stdout.write(" ".join(cmd) + "\n")
+    sys.stdout.write(f"# END {build.type_}\n")
+
+
 def main():
   logging.basicConfig()
   logging.getLogger().setLevel(logging.INFO)
   kokoro_job_name = os.getenv("KOKORO_JOB_NAME")
+
+  if kokoro_job_name == "GOLDENS":  # HACK!!
+    dump_all_build_commands()
+    return
+
   build = _KOKORO_JOB_NAME_TO_BUILD_MAP[kokoro_job_name]
 
   for cmd in build.commands():

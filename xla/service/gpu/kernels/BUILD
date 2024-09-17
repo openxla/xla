@@ -3,7 +3,6 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
-    "if_cuda_newer_than",
 )
 load("//xla:xla.bzl", "xla_cc_binary")
 load("//xla/service/gpu:build_defs.bzl", "gpu_kernel_library")
@@ -73,10 +72,7 @@ cc_library(
 # a single dependency.
 cc_library(
     name = "custom_fusion_library",
-    tags = [
-        "gpu",
-        "no_rocm",
-    ],
+    tags = ["gpu"],
     visibility = [":friends"],
     deps = if_cuda_is_configured([":cutlass_gemm_fusion"]),
 )
@@ -278,6 +274,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/stream_executor",
         "//xla/stream_executor:kernel_spec",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -379,15 +376,11 @@ cc_library(
     ],
     deps = [
         ":cutlass_gemm_kernel_bf16xbf16_to_bf16",
-        ":cutlass_gemm_kernel_bf16xbf16_to_bf16_sm80",
         ":cutlass_gemm_kernel_bf16xbf16_to_f32",
         ":cutlass_gemm_kernel_bf16xs8_to_f32",
         ":cutlass_gemm_kernel_f32xbf16_to_f32",
         ":cutlass_gemm_kernel_f32xf32_to_f32",
-    ] + if_cuda_newer_than(
-        "12_0",
-        [":cutlass_gemm_kernel_bf16xbf16_to_bf16_sm90"],
-    ),
+    ],
 )
 
 # CUTLASS requires all loops to be unrolled, and in some kernels defined below we force Clang/LLVM
@@ -409,46 +402,6 @@ cuda_library(
     tags = ["no_rocm"],
     deps = [
         ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-cuda_library(
-    name = "cutlass_gemm_kernel_bf16xbf16_to_bf16_sm80",
-    srcs = ["cutlass_gemm_kernel_bf16xbf16_to_bf16_sm80.cu.cc"],
-    copts = [
-        "-mllvm",
-        "-unroll-threshold=100000",
-    ] + if_windows(
-        [],
-        ["-Wno-unknown-attributes"],
-    ),
-    tags = ["no_rocm"],
-    deps = [
-        ":cutlass_gemm_adaptor",
-        "@cutlass_archive//:cutlass",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-cuda_library(
-    name = "cutlass_gemm_kernel_bf16xbf16_to_bf16_sm90",
-    srcs = ["cutlass_gemm_kernel_bf16xbf16_to_bf16_sm90.cu.cc"],
-    copts = [
-        "-mllvm",
-        "-unroll-threshold=100000",
-    ] + if_windows(
-        [],
-        [
-            "-Wno-ctad-maybe-unsupported",
-            "-Wno-unknown-attributes",
-        ],
-    ),
-    tags = ["no_rocm"],
-    deps = [
-        ":cutlass_gemm_adaptor",
-        ":cutlass_gemm_epilogue",
         "@cutlass_archive//:cutlass",
         "@local_config_cuda//cuda:cuda_headers",
     ],

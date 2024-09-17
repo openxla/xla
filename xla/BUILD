@@ -25,7 +25,7 @@ package(
 
 exports_files([
     "lit.cfg.py",
-])
+] + if_google(["lit_google_cfg.py"]))
 
 xla_package_groups()
 
@@ -310,6 +310,7 @@ xla_cc_test(
     name = "fp_util_test",
     srcs = ["fp_util_test.cc"],
     deps = [
+        ":bit_cast",
         ":fp_util",
         ":test",
         ":util",
@@ -572,6 +573,7 @@ xla_cc_test(
         ":shape_util",
         ":test",
         ":xla_data_proto_cc",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -638,6 +640,7 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
@@ -691,6 +694,7 @@ xla_cc_test(
         ":literal_comparison",
         ":literal_util",
         ":test_helpers",
+        ":xla_data_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:ml_dtypes",
@@ -719,7 +723,6 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -729,6 +732,7 @@ cc_library(
     hdrs = ["metric_table_report.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",

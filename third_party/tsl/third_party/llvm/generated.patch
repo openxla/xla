@@ -1,97 +1,28 @@
 Auto generated patch. Do not edit or delete it, even if empty.
-diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/MachineConvergenceVerifier.cpp b/llvm/lib/CodeGen/MachineConvergenceVerifier.cpp
---- a/llvm/lib/CodeGen/MachineConvergenceVerifier.cpp
-+++ b/llvm/lib/CodeGen/MachineConvergenceVerifier.cpp
-@@ -51,7 +51,9 @@
-   const MachineRegisterInfo &MRI = Context.getFunction()->getRegInfo();
-   const MachineInstr *TokenDef = nullptr;
+diff -ruN --strip-trailing-cr a/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-errors.c b/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-errors.c
+--- a/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-errors.c
++++ b/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-errors.c
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=i386-unknown-unknown -target-feature +avx10.2-512 -emit-llvm -Wall -Werror -verify
++// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=i386-unknown-unknown -target-feature +avx10.2-512 -Wall -Werror -verify
  
--  for (const MachineOperand &MO : MI.all_uses()) {
-+  for (const MachineOperand &MO : MI.operands()) {
-+    if (!MO.isReg() || !MO.isUse())
-+      continue;
-     Register OpReg = MO.getReg();
-     if (!OpReg.isVirtual())
-       continue;
-diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/MachineInstr.cpp b/llvm/lib/CodeGen/MachineInstr.cpp
---- a/llvm/lib/CodeGen/MachineInstr.cpp
-+++ b/llvm/lib/CodeGen/MachineInstr.cpp
-@@ -1041,9 +1041,10 @@
- /// Returns true if the MachineInstr has an implicit-use operand of exactly
- /// the given register (not considering sub/super-registers).
- bool MachineInstr::hasRegisterImplicitUseOperand(Register Reg) const {
--  for (const MachineOperand &MO : all_uses())
--    if (MO.isImplicit() && MO.getReg() == Reg)
-+  for (const MachineOperand &MO : operands()) {
-+    if (MO.isReg() && MO.isUse() && MO.isImplicit() && MO.getReg() == Reg)
-       return true;
-+  }
-   return false;
- }
+ #include <immintrin.h>
+ #include <stddef.h>
+diff -ruN --strip-trailing-cr a/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-x64-error.c b/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-x64-error.c
+--- a/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-x64-error.c
++++ b/clang/test/CodeGen/X86/avx10_2_512satcvtds-builtins-x64-error.c
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=x86_64-unknown-unknown -target-feature +avx10.2-512 -emit-llvm -Wall -Werror -verify
++// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=x86_64-unknown-unknown -target-feature +avx10.2-512 -Wall -Werror -verify
  
-@@ -1263,8 +1264,10 @@
- /// clearKillInfo - Clears kill flags on all operands.
- ///
- void MachineInstr::clearKillInfo() {
--  for (MachineOperand &MO : all_uses())
--    MO.setIsKill(false);
-+  for (MachineOperand &MO : operands()) {
-+    if (MO.isReg() && MO.isUse())
-+      MO.setIsKill(false);
-+  }
- }
+ #include <immintrin.h>
+ #include <stddef.h>
+diff -ruN --strip-trailing-cr a/clang/test/CodeGen/X86/avx10_2satcvtds-builtins-errors.c b/clang/test/CodeGen/X86/avx10_2satcvtds-builtins-errors.c
+--- a/clang/test/CodeGen/X86/avx10_2satcvtds-builtins-errors.c
++++ b/clang/test/CodeGen/X86/avx10_2satcvtds-builtins-errors.c
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=i386-unknown-unknown -target-feature +avx10.2-256 -emit-llvm -Wall -Werror -verify
++// RUN: %clang_cc1 -flax-vector-conversions=none -ffreestanding %s -triple=i386-unknown-unknown -target-feature +avx10.2-256 -Wall -Werror -verify
  
- void MachineInstr::substituteRegister(Register FromReg, Register ToReg,
-@@ -1546,9 +1549,12 @@
- /// allDefsAreDead - Return true if all the defs of this instruction are dead.
- ///
- bool MachineInstr::allDefsAreDead() const {
--  for (const MachineOperand &MO : all_defs())
-+  for (const MachineOperand &MO : operands()) {
-+    if (!MO.isReg() || MO.isUse())
-+      continue;
-     if (!MO.isDead())
-       return false;
-+  }
-   return true;
- }
- 
-@@ -2057,8 +2063,8 @@
-                                       const TargetRegisterInfo *RegInfo) {
-   if (!Reg.isPhysical())
-     RegInfo = nullptr;
--  for (MachineOperand &MO : all_uses()) {
--    if (!MO.isKill())
-+  for (MachineOperand &MO : operands()) {
-+    if (!MO.isReg() || !MO.isUse() || !MO.isKill())
-       continue;
-     Register OpReg = MO.getReg();
-     if ((RegInfo && RegInfo->regsOverlap(Reg, OpReg)) || Reg == OpReg)
-diff -ruN --strip-trailing-cr a/llvm/lib/CodeGen/RegAllocFast.cpp b/llvm/lib/CodeGen/RegAllocFast.cpp
---- a/llvm/lib/CodeGen/RegAllocFast.cpp
-+++ b/llvm/lib/CodeGen/RegAllocFast.cpp
-@@ -1563,7 +1563,9 @@
-   bool ReArrangedImplicitMOs = true;
-   while (ReArrangedImplicitMOs) {
-     ReArrangedImplicitMOs = false;
--    for (MachineOperand &MO : MI.all_uses()) {
-+    for (MachineOperand &MO : MI.operands()) {
-+      if (!MO.isReg() || !MO.isUse())
-+        continue;
-       Register Reg = MO.getReg();
-       if (!Reg.isVirtual() || !shouldAllocateRegister(Reg))
-         continue;
-diff -ruN --strip-trailing-cr a/mlir/include/mlir/IR/Block.h b/mlir/include/mlir/IR/Block.h
---- a/mlir/include/mlir/IR/Block.h
-+++ b/mlir/include/mlir/IR/Block.h
-@@ -27,8 +27,8 @@
- class ValueTypeRange;
- 
- /// `Block` represents an ordered list of `Operation`s.
--class Block : public IRObjectWithUseList<BlockOperand>,
--              public llvm::ilist_node_with_parent<Block, Region> {
-+class alignas(8) Block : public IRObjectWithUseList<BlockOperand>,
-+                         public llvm::ilist_node_with_parent<Block, Region> {
- public:
-   explicit Block() = default;
-   ~Block();
+ unsigned long long test_mm_cvttssd(unsigned long long __A) {
+   return _mm_cvttssd(__A); // expected-error {{call to undeclared function '_mm_cvttssd'}}

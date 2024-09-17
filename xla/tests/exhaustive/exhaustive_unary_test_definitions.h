@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
+#include "xla/tests/exhaustive/exhaustive_op_test_base.h"
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"
 #include "xla/tests/test_macros.h"
 #include "tsl/platform/test.h"
@@ -67,6 +68,8 @@ class Exhaustive32BitOrLessUnaryTest
 
     auto [begin, end] = GetParam();
     if (VLOG_IS_ON(2)) {
+      // N.B.: Use INFO directly instead of doing another thread-safe VLOG
+      // check.
       LOG(INFO) << this->SuiteName() << this->TestName() << " Range:";
       LOG(INFO) << "\tfrom=" << begin << "; hex=" << std::hex << begin
                 << "; float=" << *reinterpret_cast<float*>(&begin)
@@ -109,6 +112,8 @@ class ExhaustiveF64UnaryTest : public ExhaustiveUnaryTest<F64>,
     FpValues fp_values = GetParam();
     int64_t input_size = (*input_literal)[0].element_count();
     if (VLOG_IS_ON(2)) {
+      // N.B.: Use INFO directly instead of doing another thread-safe VLOG
+      // check.
       LOG(INFO) << this->SuiteName() << this->TestName() << " Values:";
       LOG(INFO) << "\t" << fp_values.ToString();
       LOG(INFO) << "\ttotal values to test=" << input_size;

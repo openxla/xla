@@ -8,7 +8,7 @@ load("//tsl/platform:build_config.bzl", "tf_proto_library")
 package_group(
     name = "friends",
     includes = [
-        "//tsl/profiler:friends",
+        "@xla//xla/tsl/profiler:friends",
     ],
 )
 
@@ -91,7 +91,7 @@ tf_proto_library(
     srcs = ["profile.proto"],
     visibility = internal_visibility([
         "@xla//xla/python:__pkg__",
-        "//tsl/profiler:internal",
+        "@xla//xla/tsl/profiler:internal",
     ]),
 )
 

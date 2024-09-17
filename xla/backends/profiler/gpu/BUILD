@@ -8,7 +8,6 @@ load(
     "@tsl//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
-load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
@@ -16,6 +15,7 @@ load(
     "tsl_copts",
     "tsl_gpu_library",
 )
+load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -171,6 +171,7 @@ tsl_gpu_library(
         ":cupti_interface",
         ":cupti_utils",
         ":nvtx_utils",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
@@ -182,7 +183,6 @@ tsl_gpu_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/utils:lock_free_queue",
         "@tsl//tsl/profiler/utils:per_thread",
     ],
@@ -196,6 +196,7 @@ tsl_gpu_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cupti_interface",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -208,7 +209,6 @@ tsl_gpu_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
@@ -221,6 +221,7 @@ tsl_gpu_library(
     visibility = ["//visibility:public"],
     deps = [
         "//xla/stream_executor/rocm:roctracer_wrapper",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -238,7 +239,6 @@ tsl_gpu_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/utils:parse_annotation",
@@ -257,6 +257,7 @@ tsl_gpu_library(
     deps = [
         ":rocm_collector",
         "//xla/stream_executor/rocm:roctracer_wrapper",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -270,7 +271,6 @@ tsl_gpu_library(
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/backends/cpu:annotation_stack",
         "@tsl//tsl/profiler/utils:time_utils",
     ],
 )
@@ -355,4 +355,20 @@ tsl_gpu_library(
     ],
     visibility = ["//visibility:public"],
     alwayslink = 1,
+)
+
+xla_test(
+    name = "cupti_buffer_events_test",
+    size = "small",
+    srcs = ["cupti_buffer_events_test.cc"],
+    backends = ["cpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "no_mac",
+    ],
+    deps = [
+        ":cupti_buffer_events",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
 )

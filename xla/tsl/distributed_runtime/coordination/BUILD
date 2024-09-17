@@ -60,6 +60,7 @@ cc_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/protobuf:coordination_config_proto_cc",
+        "@tsl//tsl/protobuf:coordination_service_proto_cc",
     ],
 )
 
