@@ -401,6 +401,19 @@ class Thunk {
   };
 
   //===--------------------------------------------------------------------===//
+  // CleanupParams
+  //===--------------------------------------------------------------------===//
+
+  // Parameters passed to Cleanup. Before returning from executable execution,
+  // thunks may need to clean up any resource allocated or registered through
+  // run time APIs.
+  struct CleanupParams {
+    se::StreamExecutor* executor = nullptr;
+    // Parameters for executing collective operations.
+    CollectiveExecuteParams* collective_params = nullptr;
+  };
+
+  //===--------------------------------------------------------------------===//
 
   // The hlo_instruction argument is meant to be the instruction this thunk was
   // generated from, but Thunk never uses this argument other than to save it
@@ -443,6 +456,14 @@ class Thunk {
   //
   // Precondition: Initialize(initialize_params) has been called.
   virtual absl::Status ExecuteOnStream(const ExecuteParams& params) = 0;
+
+// Cleans up any resources after thunk execution.
+  //
+  // This may be called multiple times. Its main purpose is to free up
+  // any resources occupied after initialization and execution.
+  virtual absl::Status Cleanup(const CleanupParams& params) {
+    return absl::OkStatus();
+  }
 
   static absl::string_view KindToString(Thunk::Kind kind);
 
