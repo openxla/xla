@@ -2203,20 +2203,23 @@ class Fp8CollectiveOpsTest : public CollectiveOpsTest {
  public:
   Fp8CollectiveOpsTest() {
     replacements_[kF8E4M3DatatypePlaceholder] =
-#if GOOGLE_CUDA
-        "f8e4m3fn";
-#else
-        "f8e4m3fnuz";
-#endif
+        IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
     replacements_[kF8E5M2DatatypePlaceholder] =
-#if GOOGLE_CUDA
-        "f8e5m2";
-#else
-        "f8e5m2fnuz";
-#endif
+        IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
   }
 
  protected:
+  bool IsCuda() {
+    return std::holds_alternative<se::CudaComputeCapability>(Capability());
+  }
+
+  const se::GpuComputeCapability& Capability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
   absl::flat_hash_map<absl::string_view, absl::string_view> replacements_;
 
  private:

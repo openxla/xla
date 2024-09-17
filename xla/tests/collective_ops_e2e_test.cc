@@ -57,17 +57,9 @@ class CollectiveOpsTestE2E : public HloTestBase {
  public:
   CollectiveOpsTestE2E() {
     replacements_[kF8E4M3DatatypePlaceholder] =
-#if GOOGLE_CUDA
-        "f8e4m3fn";
-#else
-        "f8e4m3fnuz";
-#endif
+        IsCuda() ? "f8e4m3fn" : "f8e4m3fnuz";
     replacements_[kF8E5M2DatatypePlaceholder] =
-#if GOOGLE_CUDA
-        "f8e5m2";
-#else
-        "f8e5m2fnuz";
-#endif
+        IsCuda() ? "f8e5m2" : "f8e5m2fnuz";
   }
 
   bool IsCuda() {
