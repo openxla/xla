@@ -406,11 +406,15 @@ class Thunk {
 
   // Parameters passed to Cleanup. Before returning from executable execution,
   // thunks may need to clean up any resource allocated or registered through
-  // run time APIs.
+  // runtime APIs.
   struct CleanupParams {
     se::StreamExecutor* executor = nullptr;
+
     // Parameters for executing collective operations.
     CollectiveExecuteParams* collective_params = nullptr;
+
+    // Collective cliques acquired based on resource requests.
+    CollectiveCliques* collective_cliques = nullptr;
   };
 
   //===--------------------------------------------------------------------===//

@@ -74,9 +74,9 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
   const std::vector<Buffer> buffers_;
   int64_t device_count_ = 1;
   bool p2p_memcpy_enabled_ = false;
-  std::unordered_map<int64_t, std::unordered_map<int64_t, uint64_t>>
+  absl::node_hash_map<int64_t, absl::node_hash_map<int64_t, uint64_t>>
       send_pointer_maps_;
-  std::unordered_map<int64_t, std::unordered_map<int64_t, uint64_t>>
+  absl::node_hash_map<int64_t, absl::node_hash_map<int64_t, uint64_t>>
       receive_pointer_maps_;
 };
 
@@ -87,9 +87,9 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
 absl::Status RunMemCpyAllToAll(
     NcclApi* nccl_api, bool has_split_dimension,
     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
-    NcclApi::NcclCommHandle comm, int64_t current_id,
-    std::unordered_map<int64_t, uint64_t>& send_pointer_map,
-    std::unordered_map<int64_t, uint64_t>& receive_pointer_map);
+    NcclApi::NcclCommHandle comm,
+    absl::node_hash_map<int64_t, uint64_t>& send_pointer_map,
+    absl::node_hash_map<int64_t, uint64_t>& receive_pointer_map);
 
 }  // namespace gpu
 }  // namespace xla
