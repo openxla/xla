@@ -1204,6 +1204,11 @@ ENTRY entry {
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+
+  auto opts = GetDebugOptionsForTest();
+  opts.set_xla_experimental_ignore_channel_id(true);
+  config.set_debug_options(opts);
+
   config.set_num_partitions(kNumPartitions);
   TF_ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
