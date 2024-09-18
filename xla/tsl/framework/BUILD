@@ -317,7 +317,7 @@ cc_library(
     srcs = ["metrics.cc"],
     hdrs = ["metrics.h"],
     deps = [
-        "@tsl//tsl/lib/monitoring:counter",
+        "//xla/tsl/lib/monitoring:counter",
     ],
 )
 
