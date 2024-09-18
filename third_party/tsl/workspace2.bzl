@@ -402,9 +402,9 @@ def _tf_repositories():
     tf_http_archive(
         name = "nvtx_archive",
         build_file = "//third_party:nvtx/BUILD",
-        sha256 = "6b946b70a9d2d01871842cbd15ec56488d358abe9a0f3767e372fddc3e241ba7",
-        strip_prefix = "nccl-2.23.4-1/src/include/nvtx3",
-        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.23.4-1.tar.gz"),
+        sha256 = "1923596984d85e310b5b6c52b2c72a1b93da57218f2bc5a5c7ac3d59297a3303",
+        strip_prefix = "nccl-2.21.5-1/src/include/nvtx3",
+        urls = tf_mirror_urls("https://github.com/nvidia/nccl/archive/v2.21.5-1.tar.gz"),
     )
 
     java_import_external(
