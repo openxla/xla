@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -361,14 +362,11 @@ std::optional<MatchedFp8Param> MatchFp8Param(HloInstruction *instr) {
 // dimension. There must be only one contracting and only one non-contracting
 // dimension. Keeps the layout the same.
 HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
-                                absl::Span<const int64_t> batch_dims) {
+                                absl::Span<const int64_t> batch_dims,
+                                bool col_maj = false) {
   // Identify the dimensional order which describes a transpose of the
   // contracting and non-contracting dimensions of the GEMM.
   std::vector<int64_t> permutation(instr->shape().dimensions_size(), -1);
-  // Discard the batch dimensions.
-  for (int64_t batch_dim : batch_dims) {
-    permutation[batch_dim] = batch_dim;
-  }
   // Identify the non-contracting dimension.
   int non_contracting_dim;
   for (int i = 0; i < instr->shape().dimensions_size(); ++i) {
@@ -376,13 +374,55 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
       non_contracting_dim = i;
     }
   }
-  permutation[non_contracting_dim] = contracting_dim;
-  permutation[contracting_dim] = non_contracting_dim;
+  if (!col_maj) {
+    // Discard the batch dimensions.
+    for (int64_t batch_dim : batch_dims) {
+      permutation[batch_dim] = batch_dim;
+    }
 
-  Shape new_shape = ShapeUtil::PermuteDimensions(permutation, instr->shape());
-  *new_shape.mutable_layout() = instr->shape().layout();
-  return instr->AddInstruction(
-      HloInstruction::CreateTranspose(new_shape, instr, permutation));
+    permutation[non_contracting_dim] = contracting_dim;
+    permutation[contracting_dim] = non_contracting_dim;
+
+    Shape new_shape = ShapeUtil::PermuteDimensions(permutation, instr->shape());
+    *new_shape.mutable_layout() = instr->shape().layout();
+
+    return instr->AddInstruction(
+        HloInstruction::CreateTranspose(new_shape, instr, permutation));
+  }
+
+  Shape normalized_input_shape =
+      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(instr->shape());
+  auto a0 = MakeBitcastHlo(instr, normalized_input_shape);
+
+  int new_contracting_dim = -1;
+  int new_non_contracting_dim = -1;
+  for (int i = 0; i < instr->shape().dimensions_size(); ++i) {
+    auto dim = LayoutUtil::Major(instr->shape().layout(), i);
+    if (dim == contracting_dim) {
+      new_contracting_dim = i;
+    } else if (dim == non_contracting_dim) {
+      new_non_contracting_dim = i;
+    } else {
+      // Discard the batch dimensions.
+      permutation[i] = i;
+    }
+  }
+
+  permutation[new_non_contracting_dim] = new_contracting_dim;
+  permutation[new_contracting_dim] = new_non_contracting_dim;
+
+  Shape transpose_shape =
+      ShapeUtil::PermuteDimensions(permutation, a0->shape());
+  *transpose_shape.mutable_layout() = a0->shape().layout();
+  HloInstruction *normalized_transpose = instr->AddInstruction(
+      HloInstruction::CreateTranspose(transpose_shape, a0, permutation));
+  std::vector<int64_t> layout_permuation(instr->shape().layout().minor_to_major().begin(),
+                           instr->shape().layout().minor_to_major().end());
+  absl::c_reverse(layout_permuation);
+  auto inv_perm = InversePermutation(layout_permuation);
+  Shape final_shape = ShapeUtil::PermuteDimensions(inv_perm, transpose_shape);
+  *final_shape.mutable_layout() = instr->shape().layout();
+  return MakeBitcastHlo(normalized_transpose, final_shape);
 }
 
 // If the bias is a sequence of ops that depend only on broadcasts of
@@ -1223,8 +1263,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       } else {
         dim_nums->set_lhs_contracting_dimensions(0, num_batch_dims);
       }
+
       a.fp8_input =
           TransposeMatrix(a.fp8_input, a_contracting_dims[0], a_batch_dims);
+
+      a.fp8_input = RegulateColMajorTransposeMatrixF8(
+          a.fp8_input, a_contracting_dims[0], a_batch_dims);
     }
 
     // Similarly, cuBLASLt requires the second operand to be column-major, so
