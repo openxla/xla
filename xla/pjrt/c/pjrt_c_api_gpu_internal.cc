@@ -170,19 +170,23 @@ PJRT_Error* PJRT_ExecuteContext_Create(PJRT_ExecuteContext_Create_Args* args) {
 namespace {
 
 struct TargetConfigAndDevices {
-  tensorflow::se::GpuTargetConfigProto target_config_proto;
+  stream_executor::GpuTargetConfigProto target_config_proto;
   std::vector<int> device_ids;
 };
 
+// Parses the 'target_config' entry in 'options'. The option is
+// parsed as GpuTargetConfigProto. If there is no 'target_config' in
+// 'options', the function falls back to creating a local client,
+// returning the local client's target config.
 absl::StatusOr<TargetConfigAndDevices> GetTargetConfigFromOptions(
-    absl::flat_hash_map<std::string, xla::PjRtValueType>& options) {
-  tensorflow::se::GpuTargetConfigProto target_config_proto;
+    const absl::flat_hash_map<std::string, xla::PjRtValueType>& options) {
+  stream_executor::GpuTargetConfigProto target_config_proto;
   std::vector<int> device_ids;
   std::string target_config_proto_string;
   const auto& debug_options = xla::GetDebugOptionsFromFlags();
 
-  auto target_config_it = options.find("target_config");
-  if (target_config_it != options.end()) {
+  if (auto target_config_it = options.find("target_config");
+      target_config_it != options.end()) {
     target_config_proto_string =
         std::get<std::string>(target_config_it->second);
     if (!tsl::protobuf::TextFormat::ParseFromString(target_config_proto_string,
@@ -191,33 +195,22 @@ absl::StatusOr<TargetConfigAndDevices> GetTargetConfigFromOptions(
           "Failed to parse GpuTargetConfigProto "
           "from the 'target_config' parameter.");
     }
-  } else if (!debug_options.xla_gpu_target_config_filename().empty()) {
-    TF_RETURN_IF_ERROR(tsl::ReadFileToString(
-        tsl::Env::Default(), debug_options.xla_gpu_target_config_filename(),
-        &target_config_proto_string));
-    if (!tsl::protobuf::TextFormat::ParseFromString(target_config_proto_string,
-                                                    &target_config_proto)) {
-      return absl::FailedPreconditionError(
-          "Failed to parse GpuTargetConfigProto "
-          "from the 'xla_gpu_target_config_filename' flag.");
-    }
-  } else {
-    TF_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
-                        xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
-                                             /*allowed_devices=*/std::nullopt));
-    stream_executor::StreamExecutor* executor =
-        xla_client->backend().default_stream_executor();
-    const stream_executor::DeviceDescription& description =
-        executor->GetDeviceDescription();
-    device_ids.reserve(xla_client->backend().stream_executors().size());
-    for (stream_executor::StreamExecutor* executor :
-         xla_client->backend().stream_executors()) {
-      device_ids.push_back(executor->device_ordinal());
-    }
-    auto gpu_target_config = xla::Compiler::TargetConfig(executor);
-    target_config_proto = gpu_target_config.ToProto();
+    return {{target_config_proto, device_ids}};
   }
-  return {{target_config_proto, device_ids}};
+  TF_ASSIGN_OR_RETURN(xla::LocalClient * xla_client,
+                      xla::GetGpuXlaClient(/*platform_name=*/std::nullopt,
+                                           /*allowed_devices=*/std::nullopt));
+  stream_executor::StreamExecutor* executor =
+      xla_client->backend().default_stream_executor();
+  const stream_executor::DeviceDescription& description =
+      executor->GetDeviceDescription();
+  device_ids.reserve(xla_client->backend().stream_executors().size());
+  for (stream_executor::StreamExecutor* executor :
+       xla_client->backend().stream_executors()) {
+    device_ids.push_back(executor->device_ordinal());
+  }
+  auto gpu_target_config = xla::Compiler::TargetConfig(executor);
+  return {{gpu_target_config.ToProto(), device_ids}};
 }
 
 struct TopologySizes {
@@ -281,7 +274,7 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
                         GetTopologyFromOptions(create_options));
 
   std::vector<int>& device_ids = target_config_and_devices.device_ids;
-  tensorflow::se::GpuTargetConfigProto& target_config_proto =
+  stream_executor::GpuTargetConfigProto& target_config_proto =
       target_config_and_devices.target_config_proto;
   TopologySizes sizes = parsed_topology_opt.value_or(
       TopologySizes{1, 1, static_cast<int>(device_ids.size())});
