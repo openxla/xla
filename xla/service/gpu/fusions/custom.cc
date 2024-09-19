@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/gemm_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
+#include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
@@ -782,12 +783,18 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
     bool use_global_device_ids) {
   Thunk::Kind collective_done_thunk_kind;
   switch (instr->opcode()) {
-    case HloOpcode::kReduceScatter:
-      collective_done_thunk_kind = Thunk::kNcclReduceScatterDone;
+    case HloOpcode::kReduceScatter: {
+      collective_done_thunk_kind = Thunk::Kind::kNcclReduceScatterDone;
       break;
+    }
+    case HloOpcode::kAllGather: {
+      collective_done_thunk_kind = Thunk::Kind::kNcclAllGatherDone;
+      break;
+    }
     default:
-      return absl::InternalError(
-          "Unexpected operation in dynamic slice fusion");
+      return absl::UnimplementedError(
+          "Dynamic slice fusion with collectives only works for reduce-scatter "
+          "instruction");
   }
 
   const BufferAssignment& buffer_assignment =
@@ -849,8 +856,8 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
   const std::string fusion_name =
       backend_config.fusion_backend_config().custom_fusion_config().name();
   TF_RET_CHECK(isDynamic == (fusion_name == "dynamic_address_computation"))
-      << "Dynamic index operation found in a fusion instruction that is not "
-         "labelled dynamic_address_computation";
+      << "fusion is named " << fusion_name
+      << ". Mismatch with the operations within the fusion";
 
   int64_t replica_count = instr->GetModule()->config().replica_count();
   int64_t partition_count = instr->GetModule()->config().num_partitions();
@@ -1000,22 +1007,39 @@ absl::StatusOr<FusionEmissionResult> DynamicSliceFusion::Emit(
   auto maybe_collective =
       HloBfsFindIf(/*roots=*/adaptor.GetRoots(), /*fusion=*/adaptor,
                    /*visit=*/[](HloInstructionAdaptor node) -> bool {
-                     return node.opcode() == HloOpcode::kReduceScatter;
+                     return node.opcode() == HloOpcode::kReduceScatter ||
+                            node.opcode() == HloOpcode::kAllGather;
                    });
   if (maybe_collective != std::nullopt) {
-    const HloReduceScatterInstruction* rs =
-        Cast<const HloReduceScatterInstruction>(
+    const HloInstruction& instr = maybe_collective->instruction();
+    switch (instr.opcode()) {
+      case HloOpcode::kReduceScatter: {
+        const HloReduceScatterInstruction* rs =
+            Cast<const HloReduceScatterInstruction>(
+                &maybe_collective->instruction());
+        return EmitCollective<NcclReduceScatterStartThunk,
+                              HloReduceScatterInstruction>(
+            ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/rs,
+            /*use_global_device_ids=*/rs->use_global_device_ids());
+      }
+      case HloOpcode::kAllGather: {
+        const HloAllGatherInstruction* ag = Cast<const HloAllGatherInstruction>(
             &maybe_collective->instruction());
-    return EmitCollective<NcclReduceScatterStartThunk,
-                          HloReduceScatterInstruction>(
-        ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/rs,
-        /*use_global_device_ids=*/rs->use_global_device_ids());
+        return EmitCollective<NcclAllGatherStartThunk, HloAllGatherInstruction>(
+            ir_emitter_context, adaptor, /*fusion_instr=*/fusion, /*instr=*/ag,
+            /*use_global_device_ids=*/ag->use_global_device_ids());
+      }
+      default:
+        break;
+    }
   }
   auto maybe_custom_call_adaptor = HloBfsFindIf(
       adaptor.GetRoots(), adaptor,
       [](auto node) { return node.opcode() == HloOpcode::kCustomCall; });
   if (maybe_custom_call_adaptor == std::nullopt) {
-    return absl::InternalError("DynamicSliceFusion requires a CustomCall hero");
+    return absl::InternalError(
+        "DynamicSliceFusion requires a CustomCall, reduce-scatter or "
+        "all-gather hero");
   }
 
   const auto& custom_call = *static_cast<const HloCustomCallInstruction*>(

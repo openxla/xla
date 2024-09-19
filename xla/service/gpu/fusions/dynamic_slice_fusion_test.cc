@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/sequential_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/runtime/while_thunk.h"
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -3648,6 +3649,416 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDegenerateSlice) {
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(module_ref_opt),
                                                 std::move(module_new_opt),
                                                 false, true, error));
+}
+
+TEST_F(DynamicSliceFusionTest, AllGatherDUS) {
+  const char* hlo = R"(
+  HloModule test, replica_count=2
+
+  dynamic-slice-fusion {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    offset1 = u32[] parameter(2)
+    offset2 = u32[] parameter(3)
+    ag = s64[32,16]{1,0} all-gather(param_0), dimensions={0}, replica_groups={{0,1}}
+    ROOT dynamic-update-slice = s64[64,16]{1,0} dynamic-update-slice(param_1, ag, offset1, offset2)
+  }
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    constant_20 = u32[] constant(20)
+    constant_0 = u32[] constant(0)
+    ROOT %dynamic-slice-fusion = s64[64,16]{1,0} fusion(param_0, param_1, constant_20, constant_0), kind=kCustom,
+      calls=%dynamic-slice-fusion,
+      backend_config={
+        "fusion_backend_config":{
+          "kind":"__custom_fusion",
+          "custom_fusion_config":{
+            "name":"dynamic_address_computation"
+          }
+        },
+      }
+  })";
+  const char* ref = R"(
+  HloModule test, replica_count=2
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    constant_20 = u32[] constant(20)
+    constant_0 = u32[] constant(0)
+    ag = s64[32,16]{1,0} all-gather(param_0), dimensions={0}, replica_groups={{0,1}}
+    ROOT dynamic-update-slice = s64[64,16]{1,0} dynamic-update-slice(param_1, ag, constant_20, constant_0)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo));
+  {
+    std::unique_ptr<HloModule> module_clone = module->Clone();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> exec,
+        CreateExecutable(std::move(module_clone), /*run_hlo_passes=*/false));
+    GpuExecutable* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+    const SequentialThunk& thunk = gpu_exec->GetThunk();
+    auto dynamic_slice_thunk = llvm::find_if(
+        thunk.thunks(), [](const std::unique_ptr<Thunk>& thunk) -> bool {
+          return thunk->kind() == Thunk::kDynamicSlice;
+        });
+    ASSERT_NE(dynamic_slice_thunk, thunk.thunks().end());
+    ASSERT_EQ((*dynamic_slice_thunk)->kind(), Thunk::kDynamicSlice);
+    const Thunk* embedded_thunk =
+        static_cast<DynamicSliceThunk*>((*dynamic_slice_thunk).get())
+            ->embedded_thunk();
+    ASSERT_EQ(embedded_thunk->kind(), Thunk::kSequential);
+    const SequentialThunk* embedded_seq_thunk =
+        static_cast<const SequentialThunk*>(embedded_thunk);
+    ASSERT_EQ(embedded_seq_thunk->thunks().size(), 2lu);
+    EXPECT_EQ(embedded_seq_thunk->thunks()[0]->kind(),
+              Thunk::kNcclAllGatherStart);
+    EXPECT_EQ(embedded_seq_thunk->thunks()[1]->kind(),
+              Thunk::kNcclAllGatherDone);
+  }
+
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
+                          ParseAndReturnVerifiedModule(ref, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref_opt,
+                          GetOptimizedModule(std::move(module_ref)));
+  RunAndCompareTwoModulesReplicated(
+      std::move(module), std::move(module_ref_opt), /*run_hlo_passes=*/false,
+      /*use_threads=*/true, /*error=*/std::nullopt);
+}
+
+TEST_F(DynamicSliceFusionTest, AllGatherSlice) {
+  const char* hlo = R"(
+  HloModule test, replica_count=2
+
+  dynamic-slice-fusion {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    slice = s64[8,16] slice(param_0), slice={[1:9], [0:16]}
+    ROOT ag = s64[16,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0,1}}
+  }
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    ROOT %dynamic-slice-fusion = s64[16,16]{1,0} fusion(param_0), kind=kCustom,
+      calls=%dynamic-slice-fusion,
+      backend_config={
+        "fusion_backend_config":{
+          "kind":"__custom_fusion",
+          "custom_fusion_config":{
+            "name":"address_computation"
+          }
+        },
+      }
+  })";
+  const char* ref = R"(
+  HloModule test, replica_count=2
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    slice = s64[8,16] slice(param_0), slice={[1:9], [0:16]}
+    ROOT ag = s64[16,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0,1}}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo));
+  {
+    std::unique_ptr<HloModule> module_clone = module->Clone();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> exec,
+        CreateExecutable(std::move(module_clone), /*run_hlo_passes=*/false));
+    GpuExecutable* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+    const SequentialThunk& thunk = gpu_exec->GetThunk();
+    ASSERT_EQ(thunk.thunks().size(), 2lu);
+    EXPECT_EQ(thunk.thunks()[0]->kind(), Thunk::kNcclAllGatherStart);
+    EXPECT_EQ(thunk.thunks()[1]->kind(), Thunk::kNcclAllGatherDone);
+  }
+
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
+                          ParseAndReturnVerifiedModule(ref, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref_opt,
+                          GetOptimizedModule(std::move(module_ref)));
+  RunAndCompareTwoModulesReplicated(
+      std::move(module), std::move(module_ref_opt), /*run_hlo_passes=*/false,
+      /*use_threads=*/true, /*error=*/std::nullopt);
+}
+
+TEST_F(DynamicSliceFusionTest, AllGatherLoop) {
+  const char* hlo = R"(
+  HloModule test, replica_count=2
+
+  dynamic-slice-fusion {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[32,16] parameter(1)
+    offset2 = s32[] parameter(2)
+    loop_iter = s32[] parameter(3)
+    offset_values = s32[8] constant({3,4,5,6,7,8,9,1})
+    offset_as_arr = s32[1] dynamic-slice(offset_values, loop_iter), dynamic_slice_sizes={1}
+    offset = s32[] reshape(offset_as_arr)
+    slice = s64[8,16] dynamic-slice(param_0, offset, offset2), dynamic_slice_sizes={8,16}
+    ag = s64[16,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0,1}}
+    ROOT dus = s64[32,16] dynamic-update-slice(param_1, ag, offset, offset2)
+  }
+
+  Body {
+    param = (s32[], s64[16,16], s64[32,16]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    p0 = s64[16,16] get-tuple-element(param), index=1
+    p1 = s64[32,16] get-tuple-element(param), index=2
+    one = s32[] constant(1)
+    zero = s32[] constant(0)
+    dynamic-slice-fusion = s64[32,16] fusion(p0,p1,zero,i), kind=kCustom, calls=%dynamic-slice-fusion, backend_config={
+        "fusion_backend_config":{
+          "kind":"__custom_fusion",
+          "custom_fusion_config":{
+            "name":"dynamic_address_computation"
+          }
+        },
+      }
+    i_plus_one = add(i, one)
+    ROOT tuple = tuple(i_plus_one, p0, dynamic-slice-fusion)
+  }
+  
+  Cond {
+    param = (s32[], s64[16,16], s64[32,16]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    upper = s32[] constant(8)
+    ROOT compare = pred[] compare(i, upper), direction=LT
+  }
+
+  ENTRY main {
+    p0 = s64[16,16] parameter(0)
+    p1 = s64[32,16] parameter(1)
+    c0 = s32[] constant(0)
+    tuple = tuple(c0, p0, p1)
+    ROOT while = while(tuple), body=Body, condition=Cond
+  })";
+  const char* ref = R"(
+  HloModule test, replica_count=2
+
+  Body {
+    param = (s32[], s64[16,16], s64[32,16]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    p0 = s64[16,16] get-tuple-element(param), index=1
+    p1 = s64[32,16] get-tuple-element(param), index=2
+    one = s32[] constant(1)
+    zero = s32[] constant(0)
+    offset_values = s32[8] constant({3,4,5,6,7,8,9,1})
+    offset_as_arr = s32[1] dynamic-slice(offset_values, i), dynamic_slice_sizes={1}
+    offset = s32[] reshape(offset_as_arr)
+    slice = s64[8,16] dynamic-slice(p0, offset, zero), dynamic_slice_sizes={8,16}
+    ag = s64[16,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0,1}}
+    dus = s64[32,16] dynamic-update-slice(p1, ag, offset, zero)
+    i_plus_one = add(i, one)
+    ROOT tuple = tuple(i_plus_one, p0, dus)
+  }
+  
+  Cond {
+    param = (s32[], s64[16,16], s64[32,16]) parameter(0)
+    i = s32[] get-tuple-element(param), index=0
+    upper = s32[] constant(8)
+    ROOT compare = pred[] compare(i, upper), direction=LT
+  }
+
+  ENTRY %main.9 {
+    p0 = s64[16,16] parameter(0)
+    p1 = s64[32,16] parameter(1)
+    c0 = s32[] constant(0)
+    tuple = tuple(c0, p0, p1)
+    ROOT while = while(tuple), body=Body, condition=Cond
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo));
+  {
+    std::unique_ptr<HloModule> module_clone = module->Clone();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> exec,
+        CreateExecutable(std::move(module_clone), /*run_hlo_passes=*/false));
+    GpuExecutable* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+    const SequentialThunk& thunk = gpu_exec->GetThunk();
+    auto while_thunk = llvm::find_if(
+        thunk.thunks(), [](const std::unique_ptr<Thunk>& thunk) -> bool {
+          return thunk->kind() == Thunk::kWhile;
+        });
+    SequentialThunk* body_thunk =
+        static_cast<WhileThunk*>(&(**while_thunk))->body_thunk_sequence();
+    auto dynamic_slice_thunk = llvm::find_if(
+        body_thunk->thunks(), [](std::unique_ptr<Thunk>& thunk) -> bool {
+          return thunk->kind() == Thunk::kDynamicSlice;
+        });
+    ASSERT_NE(dynamic_slice_thunk, body_thunk->thunks().end());
+    const Thunk* embedded_thunk =
+        static_cast<DynamicSliceThunk*>(&(**dynamic_slice_thunk))
+            ->embedded_thunk();
+    ASSERT_EQ(embedded_thunk->kind(), Thunk::kSequential);
+    const SequentialThunk* embedded_seq_thunk =
+        static_cast<const SequentialThunk*>(embedded_thunk);
+    ASSERT_EQ(embedded_seq_thunk->thunks().size(), 2);
+    EXPECT_EQ(embedded_seq_thunk->thunks()[0]->kind(),
+              Thunk::kNcclAllGatherStart);
+    EXPECT_EQ(embedded_seq_thunk->thunks()[1]->kind(),
+              Thunk::kNcclAllGatherDone);
+  }
+
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
+                          ParseAndReturnVerifiedModule(ref, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref_opt,
+                          GetOptimizedModule(std::move(module_ref)));
+  RunAndCompareTwoModulesReplicated(
+      std::move(module), std::move(module_ref_opt), /*run_hlo_passes=*/false,
+      /*use_threads=*/true, /*error=*/std::nullopt);
+}
+
+TEST_F(DynamicSliceFusionTest, AllGatherDUSDegenerate) {
+  const char* hlo = R"(
+  HloModule test, replica_count=2
+
+  dynamic-slice-fusion {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    offset1 = u32[] parameter(2)
+    offset2 = u32[] parameter(3)
+    ag = s64[16,16]{1,0} all-gather(param_0), dimensions={0}, replica_groups={{0},{1}}
+    ROOT dynamic-update-slice = s64[64,16]{1,0} dynamic-update-slice(param_1, ag, offset1, offset2)
+  }
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    constant_20 = u32[] constant(20)
+    constant_0 = u32[] constant(0)
+    ROOT %dynamic-slice-fusion = s64[64,16]{1,0} fusion(param_0, param_1, constant_20, constant_0), kind=kCustom,
+      calls=%dynamic-slice-fusion,
+      backend_config={
+        "fusion_backend_config":{
+          "kind":"__custom_fusion",
+          "custom_fusion_config":{
+            "name":"dynamic_address_computation"
+          }
+        },
+      }
+  })";
+  const char* ref = R"(
+  HloModule test, replica_count=2
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    param_1 = s64[64,16]{1,0} parameter(1)
+    constant_20 = u32[] constant(20)
+    constant_0 = u32[] constant(0)
+    ag = s64[16,16]{1,0} all-gather(param_0), dimensions={0}, replica_groups={{0},{1}}
+    ROOT dynamic-update-slice = s64[64,16]{1,0} dynamic-update-slice(param_1, ag, constant_20, constant_0)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo));
+  {
+    std::unique_ptr<HloModule> module_clone = module->Clone();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> exec,
+        CreateExecutable(std::move(module_clone), /*run_hlo_passes=*/false));
+    GpuExecutable* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+    const SequentialThunk& thunk = gpu_exec->GetThunk();
+    auto dynamic_slice_thunk = llvm::find_if(
+        thunk.thunks(), [](const std::unique_ptr<Thunk>& thunk) -> bool {
+          return thunk->kind() == Thunk::kDynamicSlice;
+        });
+    ASSERT_NE(dynamic_slice_thunk, thunk.thunks().end());
+    ASSERT_EQ((*dynamic_slice_thunk)->kind(), Thunk::kDynamicSlice);
+    const Thunk* embedded_thunk =
+        static_cast<DynamicSliceThunk*>((*dynamic_slice_thunk).get())
+            ->embedded_thunk();
+    ASSERT_EQ(embedded_thunk->kind(), Thunk::kSequential);
+    const SequentialThunk* embedded_seq_thunk =
+        static_cast<const SequentialThunk*>(embedded_thunk);
+    VLOG(0) << embedded_seq_thunk->ToString(1);
+    ASSERT_EQ(embedded_seq_thunk->thunks().size(), 1lu);
+    EXPECT_EQ(embedded_seq_thunk->thunks()[0]->kind(), Thunk::kCopy);
+  }
+
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
+                          ParseAndReturnVerifiedModule(ref, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref_opt,
+                          GetOptimizedModule(std::move(module_ref)));
+  RunAndCompareTwoModulesReplicated(
+      std::move(module), std::move(module_ref_opt), /*run_hlo_passes=*/false,
+      /*use_threads=*/true, /*error=*/std::nullopt);
+}
+
+TEST_F(DynamicSliceFusionTest, AllGatherSliceDegenerate) {
+  const char* hlo = R"(
+  HloModule test, replica_count=2
+
+  dynamic-slice-fusion {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    slice = s64[8,16] slice(param_0), slice={[1:9], [0:16]}
+    ROOT ag = s64[8,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0},{1}}
+  }
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    ROOT %dynamic-slice-fusion = s64[8,16]{1,0} fusion(param_0), kind=kCustom,
+      calls=%dynamic-slice-fusion,
+      backend_config={
+        "fusion_backend_config":{
+          "kind":"__custom_fusion",
+          "custom_fusion_config":{
+            "name":"address_computation"
+          }
+        },
+      }
+  })";
+  const char* ref = R"(
+  HloModule test, replica_count=2
+
+  ENTRY %main.9 {
+    param_0 = s64[16,16]{1,0} parameter(0)
+    slice = s64[8,16] slice(param_0), slice={[1:9], [0:16]}
+    ROOT ag = s64[8,16]{1,0} all-gather(slice), dimensions={0}, replica_groups={{0},{1}}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(hlo));
+  {
+    std::unique_ptr<HloModule> module_clone = module->Clone();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Executable> exec,
+        CreateExecutable(std::move(module_clone), /*run_hlo_passes=*/false));
+    GpuExecutable* gpu_exec = static_cast<GpuExecutable*>(exec.get());
+    const SequentialThunk& thunk = gpu_exec->GetThunk();
+    ASSERT_EQ(thunk.thunks().size(), 1lu);
+    EXPECT_EQ(thunk.thunks()[0]->kind(), Thunk::kCopy);
+  }
+
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(false);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
+                          ParseAndReturnVerifiedModule(ref, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref_opt,
+                          GetOptimizedModule(std::move(module_ref)));
+  RunAndCompareTwoModulesReplicated(
+      std::move(module), std::move(module_ref_opt), /*run_hlo_passes=*/false,
+      /*use_threads=*/true, /*error=*/std::nullopt);
 }
 
 }  // namespace
