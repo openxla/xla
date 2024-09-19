@@ -28,6 +28,7 @@ load(
     "tsl_gpu_library",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -616,6 +617,23 @@ xla_cc_binary(
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:status",
+    ],
+)
+
+lit_test_suite(
+    name = "compute_cost_test",
+    srcs = enforce_glob(
+        [
+            "compute_cost_test.hlo",
+        ],
+        include = [
+            "*.hlo",
+        ],
+    ),
+    cfg = "//xla:lit.cfg.py",
+    tools = [
+        "//xla/tools:compute_cost",
+        "@llvm-project//llvm:FileCheck",
     ],
 )
 
