@@ -999,10 +999,9 @@ ENTRY main.9_spmd {
   CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr);
 }
 
-TEST_F(CollectiveOpsTestE2E, PostLayoutCollectivePipeliner) {
-  // We need fp8 support to test the post-layout collective pipeliner. This will
-  // preserve the desired fp8 patterns and so the gemm rewriter can correctly
-  // recognize them and rewrite to custom fp8 gemm calls.
+TEST_F(CollectiveOpsTestE2E, CollectivePipelinerF8) {
+  // Verify that FP8 patterns are preserved when collectives are pipelined so
+  // the GEMM rewriter can create FP8 matmuls.
   if (!HasFp8Support()) {
     GTEST_SKIP() << "Test requires a post-Ada GPU.";
   }
@@ -1075,7 +1074,6 @@ ENTRY entry {
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   auto opts = GetDebugOptionsForTest();
-  opts.set_xla_gpu_run_post_layout_collective_pipeliner(true);
   opts.set_xla_gpu_enable_pipelined_collectives(true);
   opts.set_xla_gpu_enable_triton_gemm(false);
   CollectiveOpsVerifyF8Matmul(
