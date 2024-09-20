@@ -64,10 +64,10 @@ cc_library(
         "//learning/pathways/data_parallel:__pkg__",
     ]),
     deps = [
+        "//xla/tsl/lib/io:zlib_compression_options",
+        "//xla/tsl/lib/io:zlib_outputbuffer",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/lib/io:zlib_compression_options",
-        "@tsl//tsl/lib/io:zlib_outputbuffer",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
