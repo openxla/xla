@@ -882,7 +882,7 @@ absl::Status CpuCompiler::RunHloPasses(HloModule* module, bool is_aot_compile,
 
 namespace {
 
-// Align buffers to XLA:CPU minimal alignment.
+// Align buffers to XLA:CPU minimal alignment of 64 bytes.
 int64_t memory_alignment(LogicalBuffer::Color) {
   return cpu_function_runtime::MinAlign();
 }

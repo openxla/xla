@@ -723,9 +723,7 @@ AbstractTfrtCpuBuffer::BufferFromHostBufferHelper(
   bool is_packed = primitive_util::IsSubByteNonPredType(type);
 
   // If the input buffer has a default layout and is sufficiently aligned, we
-  // can simply point to the input array's data without any further copies. At
-  // the time of writing we require a 16-byte alignment because XLA may generate
-  // code which requires it.
+  // can simply point to the input array's data without any further copies.
   bool is_aligned_data = ((absl::bit_cast<std::uintptr_t>(data) &
                            (cpu_function_runtime::MinAlign() - 1)) == 0);
 

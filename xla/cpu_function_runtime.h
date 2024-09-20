@@ -179,7 +179,8 @@ class BufferInfo {
 inline constexpr size_t Align() { return 64; }
 
 // The minimum alignment of buffers passed to XLA:CPU.
-inline constexpr size_t MinAlign() { return 16; }
+// Aligning to 64 byte cacheline.
+inline constexpr size_t MinAlign() { return 64; }
 
 // When declaring variables that will be passed to an XLA instance as input via
 // set_arg_data(), be it a regular input or a resource variable in the graph,
