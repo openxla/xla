@@ -37,6 +37,18 @@ namespace xla::gpu {
 // NcclCliqueKey
 //===----------------------------------------------------------------------===//
 
+namespace {
+
+// Compare by the first element.
+bool CompareGroups(const std::vector<GlobalDeviceId>& lhs,
+                   const std::vector<GlobalDeviceId>& rhs) {
+  if (rhs.empty()) return false;
+  if (lhs.empty()) return true;
+  return lhs[0] < rhs[0];
+}
+
+}  // namespace
+
 NcclCliqueKey::NcclCliqueKey(
     std::vector<GlobalDeviceId> devices, NcclStreamId stream_id,
     AsyncStreamKind stream_kind,
@@ -44,7 +56,13 @@ NcclCliqueKey::NcclCliqueKey(
     : devices_(std::move(devices)),
       stream_id_(stream_id),
       stream_kind_(stream_kind),
-      participant_groups_(std::move(participant_groups)) {}
+      participant_groups_(std::move(participant_groups)) {
+  for (std::vector<GlobalDeviceId>& group : participant_groups_) {
+    std::sort(group.begin(), group.end());
+  }
+  std::sort(participant_groups_.begin(), participant_groups_.end(),
+            CompareGroups);
+}
 
 absl::Span<const GlobalDeviceId> NcclCliqueKey::devices() const {
   return devices_;
