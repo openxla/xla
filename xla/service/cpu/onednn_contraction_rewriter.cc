@@ -600,19 +600,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     if (Match(instr, pattern)) {
       if (!IsSupportedType(dot->shape().element_type()))
         return absl::OkStatus();
-      // TODO(intel-tf): Remove the condition below when the fusion Dot +
-      // Add(bias) + Add(e.g., residual) is enabled.
-      if (!dot->backend_config<BackendConfig>()
-               ->mutable_onednn_matmul_config()
-               ->mutable_fusions()
-               ->ops()
-               .empty() &&
-          dot->backend_config<BackendConfig>()
-                  ->mutable_onednn_matmul_config()
-                  ->mutable_fusions()
-                  ->ops(0) == OneDnnFusionConfig::BIAS) {
-        return absl::OkStatus();
-      }
+
       std::vector<HloInstruction*> new_operands;
       for (auto operand : dot->operands()) {
         new_operands.push_back(operand);
