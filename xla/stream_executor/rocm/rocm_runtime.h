@@ -18,10 +18,12 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCM_RUNTIME_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_RUNTIME_H_
 
+
 #include <cstdint>
 
 #include "absl/status/statusor.h"
-#include "rocm/include/hip/hip_runtime.h"
+
+#include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 
 namespace stream_executor::gpu {
 
