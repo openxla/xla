@@ -996,6 +996,9 @@ absl::Status RunLayoutAssignmentPasses(HloModule* hlo_module,
   pipeline.AddPass<SubByteNormalization>(
       SubByteNormalization::SET_ELEMENT_SIZE);
   pipeline.AddPass<OptimizeInputOutputBufferAlias>(true);
+  // Run HostOffloadLegalize before LayoutNormalization to prevent
+  // the creation of invalid transpose/bitcast operations within
+  // host memory offloading segments.
   pipeline.AddPass<HostOffloadLegalize>(
       static_cast<int64_t>(stream_executor::MemoryType::kHost),
       /* after_layout= */ true);
