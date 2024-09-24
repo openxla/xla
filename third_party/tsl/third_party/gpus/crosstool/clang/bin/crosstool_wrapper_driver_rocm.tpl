@@ -32,6 +32,7 @@ HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
 ROCR_RUNTIME_PATH = '%{rocr_runtime_path}'
 ROCR_RUNTIME_LIBRARY = '%{rocr_runtime_library}'
 VERBOSE = '%{crosstool_verbose}'=='1'
+ROCM_AMDGPU_TARGETS = '%{rocm_amdgpu_targets}'
 
 def Log(s):
   print('gpus/crosstool: {0}'.format(s))
@@ -96,6 +97,29 @@ def GetHostCompilerOptions(argv):
 
   return opts
 
+def GetHipccOptions(argv):
+  """Collect the -hipcc_options values from argv.
+
+  Args:
+    argv: A list of strings, possibly the argv passed to main().
+
+  Returns:
+    The string that can be passed directly to hipcc.
+  """
+
+  parser = ArgumentParser()
+  parser.add_argument('--offload-arch', nargs='*', action='append')
+  # TODO find a better place for this
+  parser.add_argument('-gline-tables-only', action='store_true')
+
+  args, _ = parser.parse_known_args(argv)
+
+  hipcc_opts = ' -gline-tables-only ' if args.gline_tables_only else ''
+  if args.offload_arch:
+    hipcc_opts = hipcc_opts + ' '.join(['--offload-arch=' + a for a in sum(args.offload_arch, [])])
+
+  return hipcc_opts
+
 def system(cmd):
   """Invokes cmd with os.system().
 
@@ -112,7 +136,6 @@ def system(cmd):
   else:
     return -os.WTERMSIG(retv)
 
-
 def InvokeHipcc(argv, log=False):
   """Call hipcc with arguments assembled from argv.
 
@@ -125,6 +148,7 @@ def InvokeHipcc(argv, log=False):
   """
 
   host_compiler_options = GetHostCompilerOptions(argv)
+  hipcc_compiler_options = GetHipccOptions(argv)
   opt_option = GetOptionValue(argv, 'O')
   m_options = GetOptionValue(argv, 'm')
   m_options = ''.join([' -m' + m for m in m_options if m in ['32', '64']])
@@ -163,7 +187,7 @@ def InvokeHipcc(argv, log=False):
   srcs = ' '.join(src_files)
   out = ' -o ' + out_file[0]
 
-  hipccopts = ' '
+  hipccopts = hipcc_compiler_options + ' '
   # In hip-clang environment, we need to make sure that hip header is included
   # before some standard math header like <complex> is included in any source.
   # Otherwise, we get build error.
@@ -219,6 +243,7 @@ def main():
 
   if VERBOSE: print('PWD=' + os.getcwd())
   if VERBOSE: print('HIPCC_ENV=' + HIPCC_ENV)
+  if VERBOSE: print('ROCM_AMDGPU_TARGETS= ' + ROCM_AMDGPU_TARGETS)
 
   if args.x and args.x[0] == 'rocm':
     # compilation for GPU objects
