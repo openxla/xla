@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
 #include "xla/service/global_device_id.h"
 
 namespace xla::gpu {
@@ -36,18 +37,6 @@ namespace xla::gpu {
 //===----------------------------------------------------------------------===//
 // NcclCliqueKey
 //===----------------------------------------------------------------------===//
-
-namespace {
-
-// Compare by the first element.
-bool CompareGroups(const std::vector<GlobalDeviceId>& lhs,
-                   const std::vector<GlobalDeviceId>& rhs) {
-  if (rhs.empty()) return false;
-  if (lhs.empty()) return true;
-  return lhs[0] < rhs[0];
-}
-
-}  // namespace
 
 NcclCliqueKey::NcclCliqueKey(
     std::vector<GlobalDeviceId> devices, NcclStreamId stream_id,
@@ -58,10 +47,16 @@ NcclCliqueKey::NcclCliqueKey(
       stream_kind_(stream_kind),
       participant_groups_(std::move(participant_groups)) {
   for (std::vector<GlobalDeviceId>& group : participant_groups_) {
-    std::sort(group.begin(), group.end());
+    absl::c_sort(group);
   }
-  std::sort(participant_groups_.begin(), participant_groups_.end(),
-            CompareGroups);
+  // Compare the groups by their first element.
+  auto compare_groups = [](const std::vector<GlobalDeviceId>& lhs,
+                           const std::vector<GlobalDeviceId>& rhs) {
+    CHECK(!lhs.empty());
+    CHECK(!rhs.empty());
+    return lhs[0] < rhs[0];
+  };
+  absl::c_sort(participant_groups_, compare_groups);
 }
 
 absl::Span<const GlobalDeviceId> NcclCliqueKey::devices() const {
