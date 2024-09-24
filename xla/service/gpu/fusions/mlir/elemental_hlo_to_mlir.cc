@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/translate/hlo_to_mhlo/hlo_utils.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -1528,6 +1529,9 @@ ValueRange EmitLoopNestImpl(
   };
   scf::LoopNest loop_nest =
       scf::buildLoopNest(b, b.getLoc(), lbs, ubs, steps, iter_args_inits, bb);
+  if (loop_nest.results.empty()) {
+    return {};
+  }
   ValueRange result_range =
       loop_nest.results.front().getDefiningOp()->getResults();
   CHECK_EQ(result_range.size(), loop_nest.results.size())

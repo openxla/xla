@@ -60,6 +60,7 @@ package(
         "//tensorflow/core:__subpackages__",
         "//third_party/sparse_conv:__subpackages__",
         "//waymo/ml/compiler/triton:__subpackages__",
+        "//waymo/research/representation/threed:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -220,6 +221,7 @@ gpu_only_cc_library(
         ":gpu_kernel_header",
         ":gpu_stream",
         ":gpu_types_header",
+        "//xla:util",
         "//xla/stream_executor",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:kernel_spec",
@@ -577,6 +579,7 @@ gpu_only_cc_library(
         "//xla/stream_executor:device_memory_handle",
         "//xla/stream_executor:scratch_allocator",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -584,7 +587,6 @@ gpu_only_cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_rocm_is_configured([

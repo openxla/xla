@@ -366,15 +366,6 @@ void GpuDriver::DestroyContext(Context* context) {
   GetContextMap()->Remove(gpu_context->context());
 }
 
-absl::Status GpuDriver::FuncGetAttribute(hipFunction_attribute attribute,
-                                         hipFunction_t func,
-                                         int* attribute_value) {
-  RETURN_IF_ROCM_ERROR(
-      wrap::hipFuncGetAttribute(attribute_value, attribute, func),
-      "Failed to query kernel attribute: ", attribute);
-  return absl::OkStatus();
-}
-
 absl::Status GpuDriver::CreateGraph(hipGraph_t* graph) {
   VLOG(2) << "Create new HIP graph";
   RETURN_IF_ROCM_ERROR(wrap::hipGraphCreate(graph, /*flags=*/0),
@@ -1594,12 +1585,16 @@ bool GetReservedMemory(uint64_t* reserve) {
   const uint64_t RESERVED_GFX908 = 1048576 * 512;
   const uint64_t RESERVED_GFX9_X = 1048576 * 1024;
   const uint64_t RESERVED_GFX10_X = 1048576 * 512;
-  if (compute_capability.gfx_version() == "gfx908") {
+  const uint64_t RESERVED_GFX11_X = 1048576 * 512;
+  if (compute_capability.gfx9_mi100()) {
     *reserve = RESERVED_GFX908;
   } else if (compute_capability.gfx9_mi200_or_later()) {
     *reserve = RESERVED_GFX9_X;
-  } else if (compute_capability.navi21() || compute_capability.navi31()) {
+  } else if (compute_capability.gfx10_rx68xx() ||
+             compute_capability.gfx10_rx69xx()) {
     *reserve = RESERVED_GFX10_X;
+  } else if (compute_capability.gfx11_rx7900()) {
+    *reserve = RESERVED_GFX11_X;
   }
 
   return true;

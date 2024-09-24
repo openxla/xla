@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -85,6 +84,13 @@ class GpuCompilerTest : public HloTestBase {
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info).status());
     return tensorflow::down_cast<GpuCompiler*>(compiler)
         ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
+  }
+
+  const stream_executor::GpuComputeCapability& GpuComputeComp() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
   }
 };
 
@@ -971,6 +977,10 @@ using GpuCompilerPassTest = GpuCompilerTest;
 
 TEST_F(GpuCompilerPassTest,
        GpuCompilerRunsTritonGemmRewriterByDefaultFromAmpere) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "TritonGemmRewriter disabled for ROCm until autotuner "
+                 << "is included.";
+  }
   auto cc = backend()
                 .default_stream_executor()
                 ->GetDeviceDescription()
@@ -1014,9 +1024,8 @@ TEST_F(GpuCompilerPassTest,
                 ->GetDeviceDescription()
                 .cuda_compute_capability();
 
-  if (cc.major != se::CudaComputeCapability::VOLTA) {
-    GTEST_SKIP();
-  }
+  bool expect_custom_kernel_fusion_rewriter_has_run =
+      cc.major == se::CudaComputeCapability::VOLTA;
 
   constexpr absl::string_view constant_module = R"(
 HloModule noop
@@ -1038,7 +1047,8 @@ ENTRY main {
         pass_metadata.pass_name() == "custom-kernel-fusion-rewriter";
   }
 
-  EXPECT_EQ(custom_kernel_fusion_rewriter_has_run, true);
+  EXPECT_EQ(custom_kernel_fusion_rewriter_has_run,
+            expect_custom_kernel_fusion_rewriter_has_run);
 }
 
 }  // namespace

@@ -178,7 +178,7 @@ gpu_kernel_library(
     deps = [
         "//xla:types",
         "//xla/stream_executor/gpu:gpu_types_header",
-        "@tsl//tsl/lib/math:math_util",
+        "//xla/tsl/lib/math:math_util",
     ],
 )
 

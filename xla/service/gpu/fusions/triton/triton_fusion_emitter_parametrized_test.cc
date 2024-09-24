@@ -53,6 +53,21 @@ struct MixTypeParams {
 class MixedTypeTest : public GpuCodegenTest,
                       public ::testing::WithParamInterface<MixTypeParams> {
  public:
+  se::GpuComputeCapability GetGpuComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
+  }
+
+  void SetUp() override {
+    if (std::holds_alternative<se::RocmComputeCapability>(
+            GetGpuComputeCapability())) {
+      GTEST_SKIP()
+          << "Related fusions are not performed on ROCm without Triton.";
+    }
+  }
+
   DebugOptions GetDebugOptionsForTest() override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // We are testing Triton, remove cuBLAS fallback for these tests.
@@ -2211,8 +2226,7 @@ ENTRY main {
 ; CHECK:      ENTRY
 ; CHECK-DAG:    %[[P0:.*]] = f32[125,127]{1,0} parameter(0)
 ; CHECK-DAG:    %[[P1:.*]] = f32[10,125,127]{2,1,0} parameter(1)
-; CHECK-DAG:    %[[C0:.*]] = f32[] constant(0)
-; CHECK:        ROOT %[[FUSION:.*]] = f32[125,127]{1,0} fusion(%[[P0]], %[[P1]], %[[C0]])
+; CHECK:        ROOT %[[FUSION:.*]] = f32[125,127]{1,0} fusion(%[[P0]], %[[P1]])
 ; CHECK-SAME:       kind=kCustom
 ; CHECK-SAME:       __triton
 )";

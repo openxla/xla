@@ -117,6 +117,9 @@ message DebugOptions {
   // Specifies the behavior of per kernel autotuning cache.
   AutotuneCacheMode xla_gpu_experimental_autotune_cache_mode = 324;
 
+  // Experimentally disables binary libraries in GPU compiler passes.
+  bool xla_gpu_experimental_disable_binary_libraries = 329;
+
   // Gates the experimental feature coupling the Triton Softmax pattern matcher
   // with priority fusion.
   bool xla_gpu_experimental_enable_triton_softmax_priority_fusion = 325;
@@ -971,7 +974,11 @@ message DebugOptions {
   int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
   int32 xla_gpu_executable_terminate_timeout_seconds = 328;
 
-  // Next id: 329
+  // Whether to ignore channel ids(including verifier channel id checks)
+  // for collectives in the given HLO.
+  bool xla_experimental_ignore_channel_id = 330;
+
+  // Next id: 331
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
@@ -1126,7 +1133,7 @@ message ExecutionOptions {
 // Serialization of HloModuleConfig. See the C++ class definition for
 // descriptions of each field.
 // There are no guarantees of backwards or forwards compatibility.
-// Next id: 35.
+// Next id: 36.
 message HloModuleConfigProto {
   enum FusionConfigCollection {
     OFF = 0;       // Do not collect configuration.
@@ -1160,6 +1167,10 @@ message HloModuleConfigProto {
 
   DebugOptions debug_options = 14;
   DeviceAssignmentProto static_device_assignment = 15;
+  // The original device assignment before being changed by a simulator.
+  // Simulators, like HybridSim, may change the device assignment to a smaller
+  // topology, to make simulation easier.
+  DeviceAssignmentProto pre_simulation_device_assignment = 35;
   bool allow_separate_sharding_programs = 30;
   repeated ShardableValueUpdatePairProto shardable_value_update_pairs = 16;
   bool alias_passthrough_params = 17;
