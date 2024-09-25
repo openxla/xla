@@ -5675,8 +5675,9 @@ AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
         new_operands.push_back(operand);
       }
     }
-    VLOG(4) << "Sinking broadcast after user:" << "\n  old broadcast: "
-            << broadcast->ToString() << "\n  old user: " << user->ToString();
+    VLOG(4) << "Sinking broadcast after user:"
+            << "\n  old broadcast: " << broadcast->ToString()
+            << "\n  old user: " << user->ToString();
     changed_shape = ShapeUtil::ChangeElementType(operand->shape(),
                                                  user->shape().element_type());
     simplifier_->UpdateLayout(&changed_shape);
