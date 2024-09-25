@@ -1099,6 +1099,19 @@ ENTRY main {
   VerifyPassOrder(passes, "layout-assignment", "layout_normalization");
 }
 
+TEST_F(GpuCompilerTest, IndexZeroClampingWorksCorrectly) {
+  EXPECT_TRUE(RunAndCompare(R"(e {
+  p0 = s32[7] parameter(0)
+  p1 = s32[5] parameter(1)
+  abs = s32[5] abs(p1)
+  r = s32[5,1] reshape(abs)
+  ROOT g = s32[5] gather(p0, r),
+    offset_dims={}, collapsed_slice_dims={0},
+    start_index_map={0}, index_vector_dim=1, slice_sizes={1}
+})",
+                            ErrorSpec{0, 0}));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

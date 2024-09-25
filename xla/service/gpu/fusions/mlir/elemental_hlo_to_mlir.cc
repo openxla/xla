@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
+#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
@@ -332,6 +333,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicSlice(
         ClampIndex(offset,
                    primitive_util::IsUnsignedIntegralType(
                        instr->operand(i + 1)->shape().element_type()),
+                   IsNonNegative(*instr->operand(i + 1)),
                    input_shape.dimensions(i) - instr->shape().dimensions(i), b);
     input_indices[i] = b.create<arith::AddIOp>(input_indices[i], offset);
   }
@@ -355,6 +357,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
     start_index = ClampIndex(start_index,
                              primitive_util::IsUnsignedIntegralType(
                                  instr->operand(i + 2)->shape().element_type()),
+                             IsNonNegative(*instr->operand(i + 2)),
                              instr->shape().dimensions(i) - update_size, b);
 
     auto end_index = b.create<arith::AddIOp>(
@@ -416,11 +419,11 @@ absl::StatusOr<SmallVector<Value, 1>> EmitGather(
                                                    : ValueRange{row, i_val}));
     TF_RET_CHECK(input_index.size() == 1)
         << "Expected operand to be a single value.";
-    operand_indices[i] =
-        ClampIndex(input_index.front(),
-                   primitive_util::IsUnsignedIntegralType(
-                       instr->operand(1)->shape().element_type()),
-                   input_size - slice_size, b);
+    operand_indices[i] = ClampIndex(
+        input_index.front(),
+        primitive_util::IsUnsignedIntegralType(
+            instr->operand(1)->shape().element_type()),
+        IsNonNegative(*instr->operand(1)), input_size - slice_size, b);
   }
 
   // Add offsets.
@@ -1665,8 +1668,8 @@ absl::StatusOr<ValueRange> EmitLoopNestWithStatus(
   return result;
 }
 
-Value ClampIndex(Value index, bool is_unsigned, int64_t high,
-                 ImplicitLocOpBuilder& b) {
+Value ClampIndex(Value index, bool is_unsigned, bool is_non_negative,
+                 int64_t high, ImplicitLocOpBuilder& b) {
   auto zero = b.create<ConstantOp>(b.getIndexAttr(0));
   if (high <= 0) {
     return zero;
@@ -1684,9 +1687,20 @@ Value ClampIndex(Value index, bool is_unsigned, int64_t high,
     }
     index = b.create<arith::MinSIOp>(
         index, b.create<ConstantOp>(b.getIndexAttr(high)));
-    index = b.create<arith::MaxSIOp>(index, zero);
+    if (!is_non_negative) {
+      index = b.create<arith::MaxSIOp>(index, zero);
+    }
   }
   return index;
+}
+
+bool IsNonNegative(const HloInstruction& hlo) {
+  if (hlo.opcode() == HloOpcode::kBitcast ||
+      hlo.opcode() == HloOpcode::kReshape) {
+    return IsNonNegative(*hlo.operand(0));
+  }
+  return AlgebraicSimplifierVisitor::IsNonNegative(
+      &hlo, AlgebraicSimplifierOptions{});
 }
 
 SmallVector<Value, 2> InlineBlock(OpBuilder& builder, Block& src_block,

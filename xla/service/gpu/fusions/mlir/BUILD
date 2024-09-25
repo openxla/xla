@@ -78,6 +78,7 @@ cc_library(
         "//xla/mlir_hlo:map_mhlo_to_scalar_op",
         "//xla/mlir_hlo:type_conversion",
         "//xla/service:algorithm_util",
+        "//xla/service:algebraic_simplifier",
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/model:indexing_analysis",

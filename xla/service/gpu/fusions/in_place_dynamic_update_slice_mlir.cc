@@ -149,6 +149,8 @@ absl::Status MlirInPlaceDynamicUpdateSliceFusion::EmitEntryFunction(
                         ->operand(i + dus_instr->first_index_operand_number())
                         ->shape()
                         .element_type()),
+                mlir_converter::IsNonNegative(*dus_instr->operand(
+                    i + dus_instr->first_index_operand_number())),
                 dus_instr->shape().dimensions(i) - update_size, b);
 
             update_indices.push_back(

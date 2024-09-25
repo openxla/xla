@@ -137,8 +137,13 @@ absl::StatusOr<mlir::ValueRange> EmitLoopNestWithStatus(
         create_body);
 
 // Clamps `index` to [0, high] boundaries.
-mlir::Value ClampIndex(mlir::Value index, bool is_unsigned, int64_t high,
+mlir::Value ClampIndex(mlir::Value index, bool is_unsigned,
+                       bool is_non_negative, int64_t high,
                        mlir::ImplicitLocOpBuilder& b);
+
+// Tells that outputs of an instruction or its bitcast / reshape are known
+// to be always non-negative.
+bool IsNonNegative(const HloInstruction&);
 
 // Inlines `src_block` using `mapped_args` to initialize IRMapping from the
 // block arguments of `src_block` to `mapped_args`. Return remapped values of
