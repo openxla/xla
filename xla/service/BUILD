@@ -8476,7 +8476,7 @@ tf_proto_library(
     make_default_target_header_only = True,
     protodeps = [
         ":hlo_proto",
-        "@tsl//tsl/protobuf:status_proto",
+        "//xla/tsl/protobuf:status_proto",
     ] + if_google(["@com_google_protobuf//:duration"]),
     visibility = ["//visibility:public"],
 )
