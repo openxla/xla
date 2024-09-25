@@ -390,7 +390,8 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
   }
 
   Shape normalized_input_shape =
-      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(instr->shape());
+      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+          instr->shape());
   auto a0 = MakeBitcastHlo(instr, normalized_input_shape);
 
   int new_contracting_dim = -1;
@@ -415,8 +416,9 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
   *transpose_shape.mutable_layout() = a0->shape().layout();
   HloInstruction *normalized_transpose = instr->AddInstruction(
       HloInstruction::CreateTranspose(transpose_shape, a0, permutation));
-  std::vector<int64_t> layout_permuation(instr->shape().layout().minor_to_major().begin(),
-                                         instr->shape().layout().minor_to_major().end());
+  std::vector<int64_t> layout_permuation(
+      instr->shape().layout().minor_to_major().begin(),
+      instr->shape().layout().minor_to_major().end());
   absl::c_reverse(layout_permuation);
   auto inv_perm = InversePermutation(layout_permuation);
   Shape final_shape = ShapeUtil::PermuteDimensions(inv_perm, transpose_shape);
