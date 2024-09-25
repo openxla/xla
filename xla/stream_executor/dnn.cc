@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/util.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "tsl/protobuf/dnn.pb.h"
 
@@ -627,16 +628,9 @@ std::string TensorDescriptor::ToString() const {
 
 absl::StatusOr<std::vector<int64_t>>
 MatmulTensorDescriptor::GetNonContractingDims() const {
-  std::vector<int64_t> non_contracting_dims;
-  for (int64_t dim = 0; dim < tensor_.dimensions().size(); ++dim) {
-    bool is_batch = absl::c_count(batch_dimension_numbers_, dim) != 0;
-    bool is_contracting = absl::c_count(contracting_dim_, dim) != 0;
-    if (is_batch && is_contracting)
-      return absl::InternalError(
-          "A dimension cannot be both a batch dimension and a contracting "
-          "dimension.");
-    if (!(is_batch || is_contracting)) non_contracting_dims.push_back(dim);
-  }
+  auto nc = xla::GetNonContractingDims(
+      tensor_.dimensions().size(), contracting_dim_, batch_dimension_numbers_);
+  std::vector<int64_t> non_contracting_dims(nc.begin(), nc.end());
 
   if (batch_dimension_numbers_.size() + contracting_dim_.size() +
           non_contracting_dims.size() !=
