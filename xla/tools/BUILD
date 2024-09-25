@@ -477,10 +477,12 @@ cc_library(
         "//xla/service:hlo_parser",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_googlesource_code_re2//:re2",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
