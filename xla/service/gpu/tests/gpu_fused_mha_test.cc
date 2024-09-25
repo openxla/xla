@@ -17,7 +17,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -25,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
+#include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
@@ -38,8 +38,10 @@ limitations under the License.
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/test_helpers.h"
 #include "xla/tests/hlo_test_base.h"
@@ -50,10 +52,6 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 
-#if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cuda.h"
-#endif
-
 namespace xla {
 namespace gpu {
 namespace {
@@ -61,10 +59,15 @@ namespace {
 class MultiHeadedAttentionTest : public GpuCodegenTest {
  public:
   MultiHeadedAttentionTest() {
-#if !defined(GOOGLE_CUDA) || CUDA_VERSION < 12000
-    skip_reason_ = "cuDNN Fused MHA requires CUDA 12 or later.";
-    return;
-#endif
+    if (backend().platform()->id() != stream_executor::cuda::kCudaPlatformId ||
+        backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .runtime_version() <
+            stream_executor::SemanticVersion{12, 0, 0}) {
+      skip_reason_ = "cuDNN Fused MHA requires CUDA 12 or later.";
+      return;
+    }
     stream_executor::CudaComputeCapability cc = GetCudaComputeCapability();
     // Enforce capability minor == 0 because hardware with a non-zero minor
     // number typically has insufficient shared memory for cuDNN FMHA.
@@ -1349,6 +1352,63 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8
   }
 };
 
+class FlashAttentionBMMScaleSoftmaxDropoutBMM
+    : public MultiHeadedAttentionTest {
+ protected:
+  static constexpr absl::string_view
+      kModuleFlashAttentionTrainingBMM1SoftmaxDropoutBMM2HloStringBF16 = R"(
+    HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})->(bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
+
+    ENTRY main.21 {
+      Arg_0.1 = bf16[4,1024,4,64]{3,2,1,0} parameter(0)
+      Arg_1.2 = bf16[4,1024,4,64]{3,2,1,0} parameter(1)
+      Arg_2.3 = bf16[4,1024,4,64]{3,2,1,0} parameter(2)
+      constant.5 = s32[] constant(512)
+      broadcast.6 = s32[4]{0} broadcast(constant.5), dimensions={}
+      custom-call.7 = (bf16[4,4,1024,64]{3,1,2,0}, f32[4,4,1024]{2,1,0}, u8[0]{0}) custom-call(Arg_0.1, Arg_1.2, Arg_2.3, broadcast.6, broadcast.6), custom_call_target="__cudnn$fmhaSoftmaxDropout", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, s32[4]{0}, s32[4]{0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0.5, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "1024", "1024"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "PADDING", "bmm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}}}
+      get-tuple-element.9 = u8[0]{0} get-tuple-element(custom-call.7), index=2
+      get-tuple-element.10 = f32[4,4,1024]{2,1,0} get-tuple-element(custom-call.7), index=1
+      Arg_3.4 = bf16[4,1024,4,64]{3,2,1,0} parameter(3)
+      get-tuple-element.8 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.7), index=0
+      transpose.11 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.8), dimensions={0,2,1,3}
+      custom-call.12 = (bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, bf16[4,4,1024,64]{3,1,2,0}, u8[0]{0}) custom-call(Arg_0.1, Arg_1.2, Arg_2.3, get-tuple-element.10, Arg_3.4, /*index=5*/transpose.11, broadcast.6, broadcast.6), custom_call_target="__cudnn$fmhaSoftmaxDropoutBackward", operand_layout_constraints={bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, f32[4,4,1024]{2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, s32[4]{0}, s32[4]{0}}, api_version=API_VERSION_STATUS_RETURNING, backend_config={"operation_queue_id": "0", "wait_on_operation_queues": [], "cudnn_fmha_backend_config": {"algorithm": {"algo_id": "0", "math_type": "TENSOR_OP_MATH", "tuning_knobs": {"17": "1", "24": "0"}, "is_cudnn_frontend": true, "workspace_size": "0"}, "fmha_scale": 1.0, "dropout_rate": 0.5, "intermediate_tensor_shape": {"element_type": "BF16", "dimensions": ["4", "4", "1024", "1024"], "tuple_shapes": [], "layout": {"dim_level_types": [], "dim_unique": [], "dim_ordered": [], "minor_to_major": ["3", "2", "1", "0"], "tiles": [], "element_size_in_bits": "0", "memory_space": "0", "index_primitive_type": "PRIMITIVE_TYPE_INVALID", "pointer_primitive_type": "PRIMITIVE_TYPE_INVALID", "dynamic_shape_metadata_prefix_bytes": "0"}, "is_dynamic_dimension": [false, false, false, false]}, "seed": 42, "is_flash_attention": true, "mask_type": "PADDING", "bmm1_grad_gemm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["2"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm1_grad_gemm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_grad_gemm1_dot_dimension_numbers": {"lhs_contracting_dimensions": ["2"], "rhs_contracting_dimensions": ["1"], "lhs_batch_dimensions": ["0", "1"], "rhs_batch_dimensions": ["0", "2"]}, "bmm2_grad_gemm2_dot_dimension_numbers": {"lhs_contracting_dimensions": ["3"], "rhs_contracting_dimensions": ["3"], "lhs_batch_dimensions": ["0", "2"], "rhs_batch_dimensions": ["0", "2"]}}}
+      get-tuple-element.16 = u8[0]{0} get-tuple-element(custom-call.12), index=3
+      get-tuple-element.13 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.12), index=0
+      transpose.17 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.13), dimensions={0,2,1,3}
+      get-tuple-element.14 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.12), index=1
+      transpose.18 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.14), dimensions={0,2,1,3}
+      get-tuple-element.15 = bf16[4,4,1024,64]{3,1,2,0} get-tuple-element(custom-call.12), index=2
+      transpose.19 = bf16[4,1024,4,64]{3,2,1,0} transpose(get-tuple-element.15), dimensions={0,2,1,3}
+      ROOT tuple.20 = (bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}, bf16[4,1024,4,64]{3,2,1,0}) tuple(transpose.11, transpose.17, transpose.18, transpose.19)
+    } // main.21
+    )";
+
+  void TestImpl_Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2() {
+    if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+    if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
+        se::dnn::VersionInfo(9, 0, 0)) {
+      GTEST_SKIP() << "Flash Attention requires cuDNN >= 9.0.0.";
+    }
+    XlaBuilder builder(TestName());
+
+    auto lhs_bmm1_literal =
+        GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
+    auto rhs_bmm1_literal =
+        GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
+    auto rhs_bmm2_literal =
+        GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
+    auto do_literal =
+        GetInput4DLiteral<bfloat16>({4, 1024, 4, 64}, {3, 2, 1, 0});
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(
+            kModuleFlashAttentionTrainingBMM1SoftmaxDropoutBMM2HloStringBF16));
+    ExecuteAndTransfer(std::move(module), {&lhs_bmm1_literal, &rhs_bmm1_literal,
+                                           &rhs_bmm2_literal, &do_literal});
+  }
+};
+
 // BMM1 - Scale - CausalMask - Softmax - BMM2
 XLA_TEST_F(FlashAttentionBMMScaleCausalMaskSoftmaxBMM,
            Flash_Attention_BMM1_CausalMask_Softmax_BMM2_BF16) {
@@ -1409,6 +1469,12 @@ XLA_TEST_F(FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM,
 XLA_TEST_F(FlashAttentionBMMScalePaddingMaskSoftmaxBMMF8,
            Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8) {
   TestImpl_Flash_Attention_Inference_BMM1_NoMask_Softmax_BMM2_F8();
+}
+
+// BMM1 - Scale - Softmax - BMM2 fp8
+XLA_TEST_F(FlashAttentionBMMScaleSoftmaxDropoutBMM,
+           Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2) {
+  TestImpl_Flash_Attention_Training_BMM1_Softmax_Dropout_BMM2();
 }
 }  // namespace
 }  // namespace gpu

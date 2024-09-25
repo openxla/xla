@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor::gpu {
 
@@ -179,7 +178,7 @@ class GpuCommandBuffer : public CommandBuffer {
                   GpuGraphConditionalHandle, GpuGraphConditionalHandle,
                   GpuGraphConditionalHandle, GpuGraphConditionalHandle,
                   GpuGraphConditionalHandle, GpuGraphConditionalHandle,
-                  DeviceMemory<int32_t>, int32_t>;
+                  DeviceMemory<int32_t>, int32_t, int32_t, bool>;
 
   using SetForConditionKernel =
       TypedKernel<GpuGraphConditionalHandle, DeviceMemory<int32_t>, int32_t>;

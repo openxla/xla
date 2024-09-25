@@ -110,14 +110,13 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_cudnn_frontend(true);
 
-  // Note: CublasLt will be used for FP8 GEMMs regardless of the value of this
-  // flag.
   opts.set_xla_gpu_enable_cublaslt(false);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONALS);
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_graph_enable_concurrent_region(false);
   opts.set_xla_cmd_buffer_trace_cache_size(16);
@@ -168,9 +167,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_highest_priority_async_stream(true);
 
   opts.set_xla_gpu_enable_pipelined_collectives(false);
-  opts.set_xla_gpu_enable_pipelined_all_reduce(true);
-  opts.set_xla_gpu_enable_pipelined_all_gather(true);
-  opts.set_xla_gpu_enable_pipelined_reduce_scatter(true);
+  opts.set_xla_gpu_enable_pipelined_all_reduce(false);
+  opts.set_xla_gpu_enable_pipelined_all_gather(false);
+  opts.set_xla_gpu_enable_pipelined_reduce_scatter(false);
   opts.set_xla_gpu_enable_pipelined_p2p(false);
 
   opts.set_xla_gpu_run_post_layout_collective_pipeliner(false);
@@ -287,6 +286,13 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_cudnn_gemm_max_plans(5);
 
   opts.set_xla_gpu_enable_triton_gemm_int4(false);
+
+  opts.set_xla_gpu_enable_pgle_accuracy_checker(false);
+
+  opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
+  opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
+  opts.set_xla_gpu_experimental_disable_binary_libraries(false);
+  opts.set_xla_experimental_ignore_channel_id(false);
   return opts;
 }
 
@@ -659,6 +665,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
             autotune_cache_mode);
         return true;
       };
+
+  // Custom "sub-parser" lambda for xla_step_marker_location.
+  auto setter_for_xla_step_marker_location = [debug_options](
+                                                 const std::string& value) {
+    DebugOptions::StepMarkerLocation step_marker_location;
+    if (!DebugOptions::StepMarkerLocation_Parse(value, &step_marker_location)) {
+      return false;
+    }
+    debug_options->set_xla_step_marker_location(step_marker_location);
+    return true;
+  };
 
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
@@ -1477,11 +1494,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_enable_pipelined_collectives",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_pipelined_collectives),
       debug_options->xla_gpu_enable_pipelined_collectives(),
-      "Enable pipelinling of collective instructions. It has the same effect "
-      "as setting xla_gpu_enable_pipelined_all_reduce, "
-      "xla_gpu_enable_pipelined_all_gather, "
-      "xla_gpu_enable_pipelined_reduce_scatter and  "
-      "xla_gpu_enable_pipelined_p2p flags to true."));
+      "Enable pipelinling of collective instructions (all-reduce, all-gather, "
+      "and reduce-scatter)."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_pipelined_all_reduce",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_pipelined_all_reduce),
@@ -1879,12 +1893,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Experimental: Enable command buffers while a profiling active. "
       "By default, enabling profiling switches from command buffers to "
       "op-by-op mode."));
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_cudnn_gemm_max_plans",
       int32_setter_for(&DebugOptions::set_xla_gpu_cudnn_gemm_max_plans),
       debug_options->xla_gpu_cudnn_gemm_max_plans(),
       "Limit for the number of kernel configurations (plans) to use during "
       "autotuning of cuDNN GEMM fusions."));
+
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_triton_gemm_int4",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_gemm_int4),
@@ -1896,6 +1912,45 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_async_dot(),
                 "Wrap `dot` operations into async computations in an effort to "
                 "parallelize matrix operations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_step_marker_location", setter_for_xla_step_marker_location,
+      DebugOptions::StepMarkerLocation_Name(
+          debug_options->xla_step_marker_location()),
+      "Option to emit a target-specific marker to indicate the start of "
+      "a training. The location of the marker (if any) is determined "
+      "by the option value of type DebugOptions::StepMarkerLocation."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_pgle_accuracy_checker",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_pgle_accuracy_checker),
+      debug_options->xla_gpu_enable_pgle_accuracy_checker(),
+      "Enables strict PGLE checking. If an FDO profile is specified and "
+      "latency hiding scheduler encounters missing instructions in the profile "
+      "compilation will halt."));
+
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_executable_warn_stuck_timeout",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_executable_warn_stuck_timeout_seconds),
+      debug_options->xla_gpu_executable_warn_stuck_timeout_seconds(),
+      "Set timeout for RendezvousSingle stuck warning"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_executable_terminate_timeout",
+      int32_setter_for(
+          &DebugOptions::set_xla_gpu_executable_terminate_timeout_seconds),
+      debug_options->xla_gpu_executable_terminate_timeout_seconds(),
+      "Set timeout for RendezvousSingle termination"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_disable_binary_libraries",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_disable_binary_libraries),
+      debug_options->xla_gpu_experimental_disable_binary_libraries(),
+      "Disable XLA GPU passes that depend on non-open source binary "
+      "libraries"));
+  flag_list->push_back(tsl::Flag(
+      "xla_experimental_ignore_channel_id",
+      bool_setter_for(&DebugOptions::set_xla_experimental_ignore_channel_id),
+      debug_options->xla_experimental_ignore_channel_id(),
+      "Experimental: ignore channel ids for collective operations."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

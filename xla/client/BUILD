@@ -48,10 +48,10 @@ cc_library(
     deps = [
         "//xla:types",
         "//xla:util",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
     ],

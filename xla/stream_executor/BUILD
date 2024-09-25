@@ -100,12 +100,14 @@ cc_library(
         ":module_spec",
         ":numeric_options",
         ":platform",
+        ":semantic_version",
         ":stream_common",
         ":stream_executor_common",
         ":stream_executor_h",
         "//xla/stream_executor/platform",
         "//xla/tsl/framework:device_id",
         "//xla/tsl/framework:device_type",
+        "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
@@ -120,7 +122,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -155,9 +156,10 @@ cc_library(
     deps = [
         ":device_description_proto_cc",
         ":launch_dim",
+        ":semantic_version",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:logging",
     ],
 )
@@ -590,10 +592,10 @@ cc_library(
         ":kernel",
         ":launch_dim",
         ":platform",
+        "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/lib/gtl:int_type",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -880,6 +882,7 @@ xla_cc_test(
     srcs = ["device_description_test.cc"],
     deps = [
         ":device_description",
+        ":semantic_version",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
@@ -922,14 +925,25 @@ xla_cc_test(
 alias(
     name = "cuda_platform",
     actual = "//xla/stream_executor/cuda:all_runtime",
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
 )
 
 alias(
     name = "rocm_platform",
     actual = "//xla/stream_executor/rocm:all_runtime",
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
 )
 
 alias(
     name = "sycl_platform",
     actual = "//xla/stream_executor/sycl:all_runtime",
+    tags = [
+        "gpu",
+    ],
 )

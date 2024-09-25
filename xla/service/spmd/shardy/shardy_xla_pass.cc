@@ -45,6 +45,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
+#include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/map_util.h"
@@ -62,8 +64,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
-#include "xla/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "xla/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -322,6 +322,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
 
   mlir::PassManager pm(mlirContext.get());
   pm.enableVerifier(enableVerifier);
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
+                                               "sdy_module_before_xla_import"));
   bool useTupleArgs = false;
   mlir::DictionaryAttr moduleFrontendAttrs = getFrontendAttrs(*mlirModule);
   if (moduleFrontendAttrs && moduleFrontendAttrs.get(kUseTupleArgs)) {
@@ -366,8 +368,6 @@ absl::StatusOr<bool> ShardyXLA::Run(
                                      originalParamIndexToFlattenedNum,
                                      useTupleArgs);
 
-  pm.addPass(
-      mlir::sdy::createSaveModuleOpPass(shardyDir, "sdy_module_after_import"));
   if (runSdyShardingPropagation) {
     // Shardy is currently operating on stablehlo, since this is what JAX
     // emits. Long term shardy will be fully dialect agnostic, and both mhlo
@@ -381,8 +381,8 @@ absl::StatusOr<bool> ShardyXLA::Run(
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
   }
   addMhloExportPipeline(pm);
-  pm.addPass(
-      mlir::sdy::createSaveModuleOpPass(shardyDir, "sdy_module_after_export"));
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
+                                               "sdy_module_after_xla_export"));
   tsl::StatusScopedDiagnosticHandler diagnosticHandler(mlirContext.get());
   TF_RETURN_IF_ERROR(diagnosticHandler.consumeStatus(pm.run(*mlirModule)));
 

@@ -299,6 +299,72 @@ ENTRY e {
                             ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+TEST_F(CuDnnFusionFileCheckTest, VectorTensorMultiplicationWorksCorrectly) {
+  const std::string kHloText = R"(
+f {
+  p0 = bf16[64,1] parameter(0)
+  p1 = s8[64,128] parameter(1)
+  p1c = bf16[64,128] convert(p1)
+  ROOT out = bf16[1,128] dot(p0, p1c),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = bf16[64,1] parameter(0)
+  p1 = s8[64,128] parameter(1)
+  ROOT r = bf16[1,128] fusion(p0, p1), kind=kCustom, calls=f,
+    backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
+})";
+
+  EXPECT_TRUE(*RunCuDnnFileCheck(kHloText, R"(
+CHECK: "tensors"
+CHECK: "out"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}128{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}128,{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK: "p0"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}64{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}64,{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK: "p1"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}64,{{[[:space:]]*}}128{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}128,{{[[:space:]]*}}1{{[[:space:]]*}}]
+  )"));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_F(CuDnnFusionFileCheckTest, TensorVectorMultiplicationWorksCorrectly) {
+  const std::string kHloText = R"(
+f {
+  p0 = bf16[64,256] parameter(0)
+  p1 = s8[64,1] parameter(1)
+  p1c = bf16[64,1] convert(p1)
+  ROOT out = bf16[256,1] dot(p0, p1c),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = bf16[64,256] parameter(0)
+  p1 = s8[64,1] parameter(1)
+  ROOT r = bf16[256,1] fusion(p0, p1), kind=kCustom, calls=f,
+    backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
+})";
+
+  EXPECT_TRUE(*RunCuDnnFileCheck(kHloText, R"(
+CHECK: "tensors"
+CHECK: "out"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}256,{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}256{{[[:space:]]*}}]
+CHECK: "p0"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}256,{{[[:space:]]*}}64{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}256{{[[:space:]]*}}]
+CHECK: "p1"
+CHECK: "dim": [{{[[:space:]]*}}1,{{[[:space:]]*}}64,{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK: "stride": [{{[[:space:]]*}}1,{{[[:space:]]*}}1,{{[[:space:]]*}}64{{[[:space:]]*}}]
+  )"));
+
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 TEST_F(CuDnnFusionExecutionTest, DotBF16WithCopyExecutesCorrectly) {
   EXPECT_TRUE(RunAndCompare(R"(
 fusion1 {

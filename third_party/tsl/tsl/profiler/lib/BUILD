@@ -1,16 +1,16 @@
 load("@xla//xla/tsl:tsl.bzl", "if_not_android", "internal_visibility", "nvtx_headers")
 load("@xla//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "@xla//xla/tsl/profiler/builds:build_config.bzl",
+    "tf_profiler_copts",
+    "tf_profiler_pybind_cc_library_wrapper",
+)
 load("//tsl/platform:build_config.bzl", "tsl_cc_test")
 load("//tsl/platform:build_config_root.bzl", "if_static")
 load("//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
-)
-load(
-    "//tsl/profiler/builds:build_config.bzl",
-    "tf_profiler_copts",
-    "tf_profiler_pybind_cc_library_wrapper",
 )
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
@@ -220,7 +220,7 @@ cc_library(
         "//tsl/platform",
         "//tsl/platform:platform_port",
         "//tsl/platform:status",
-        "//tsl/profiler/convert:post_process_single_host_xplane",
+        "@xla//xla/tsl/profiler/convert:post_process_single_host_xplane",
         "//tsl/profiler/utils:time_utils",
     ]),
     alwayslink = True,
@@ -271,7 +271,7 @@ cc_library(
         "//tsl/profiler/utils:no_init",
         "@com_google_absl//absl/strings",
     ] + if_not_android([
-        "//tsl/profiler/backends/cpu:traceme_recorder",
+        "@xla//xla/tsl/profiler/backends/cpu:traceme_recorder",
         "//tsl/profiler/utils:time_utils",
     ]),
 )
@@ -324,7 +324,7 @@ cc_library(
         "//tsl/platform:types",
         "@com_google_absl//absl/strings",
     ] + if_not_android([
-        "//tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
     ]),
 )
 
@@ -337,9 +337,9 @@ tsl_cc_test(
         "//tsl/platform:test",
         "//tsl/platform:test_benchmark",
         "//tsl/platform:test_main",
-        "//tsl/profiler/backends/cpu:annotation_stack",
-        "//tsl/profiler/backends/cpu:annotation_stack_impl",
         "@com_google_absl//absl/strings",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@xla//xla/tsl/profiler/backends/cpu:annotation_stack_impl",
     ],
 )
 

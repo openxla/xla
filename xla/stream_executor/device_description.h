@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/semantic_version.h"
 
 namespace stream_executor {
 
@@ -183,16 +184,19 @@ class RocmComputeCapability {
     return absl::c_count(kList, gfx_version()) != 0;
   }
 
-  bool navi21() const { return gfx_version() == "gfx1030"; }
+  bool gfx10_rx68xx() const { return gfx_version() == "gfx1030"; }
 
-  bool navi31() const { return gfx_version() == "gfx1100"; }
+  bool gfx10_rx69xx() const { return gfx_version() == "gfx1030"; }
+
+  bool gfx11_rx7900() const { return gfx_version() == "gfx1100"; }
 
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
   bool has_bf16_dtype_support() const { return gfx9_mi100_or_later(); }
 
   bool has_fast_fp16_support() const {
-    return gfx9_mi100_or_later() || navi21() || navi31();
+    return gfx9_mi100_or_later() || gfx10_rx68xx() || gfx10_rx69xx() ||
+           gfx11_rx7900();
   }
 
   bool has_mfma_instr_support() const { return gfx9_mi100_or_later(); }
@@ -234,8 +238,8 @@ class RocmComputeCapability {
       "gfx908",                       // MI100
       "gfx90a",                       // MI200
       "gfx940",  "gfx941", "gfx942",  // MI300
-      "gfx1030",                      // Navi21
-      "gfx1100"                       // Navi31
+      "gfx1030",                      // RX68xx / RX69xx
+      "gfx1100"                       // RX7900
   };
 };
 
@@ -255,13 +259,17 @@ class DeviceDescription {
   // 3.5".
   const std::string &platform_version() const { return platform_version_; }
 
-  // Returns the driver version interfacing with the underlying platform. Vendor
-  // dependent format.
-  const std::string &driver_version() const { return driver_version_; }
+  // Returns the driver version interfacing with the underlying platform.
+  // Note for CUDA this returns the CUDA Toolkit version the driver ships with.
+  SemanticVersion driver_version() const { return driver_version_; }
 
-  // Return the runtime version, if one is provided by the underlying platform.
-  // Vendor dependent format / usefulness.
-  const std::string &runtime_version() const { return runtime_version_; }
+  // Returns the runtime version.
+  SemanticVersion runtime_version() const { return runtime_version_; }
+
+  // Returns the toolkit version that the application was compiled against.
+  SemanticVersion compile_time_toolkit_version() const {
+    return compile_time_toolkit_version_;
+  }
 
   // Returns the name that the device reports. Vendor dependent.
   const std::string &name() const { return name_; }
@@ -472,11 +480,14 @@ class DeviceDescription {
   void set_platform_version(std::string value) {
     platform_version_ = std::move(value);
   }
-  void set_driver_version(std::string value) {
-    driver_version_ = std::move(value);
+  void set_driver_version(const SemanticVersion &value) {
+    driver_version_ = value;
   }
-  void set_runtime_version(std::string value) {
-    runtime_version_ = std::move(value);
+  void set_runtime_version(const SemanticVersion &value) {
+    runtime_version_ = value;
+  }
+  void set_compile_time_toolkit_version(const SemanticVersion &value) {
+    compile_time_toolkit_version_ = value;
   }
   void set_pci_bus_id(std::string value) { pci_bus_id_ = std::move(value); }
   void set_name(std::string value) { name_ = std::move(value); }
@@ -539,8 +550,6 @@ class DeviceDescription {
   // N.B. If another field is added, update ToMap() above.
   std::string device_vendor_ = kUndefinedString;
   std::string platform_version_ = kUndefinedString;
-  std::string driver_version_ = kUndefinedString;
-  std::string runtime_version_ = kUndefinedString;
   std::string pci_bus_id_ = kUndefinedString;
   std::string name_ = kUndefinedString;
   std::string model_str_ = kUndefinedString;
@@ -579,6 +588,10 @@ class DeviceDescription {
   int core_count_ = kUninitialized<int>;
   int fpus_per_core_ = kUninitialized<int>;
   bool ecc_enabled_ = false;
+
+  SemanticVersion driver_version_{0, 0, 0};
+  SemanticVersion runtime_version_{0, 0, 0};
+  SemanticVersion compile_time_toolkit_version_{0, 0, 0};
 };
 
 // Returns whether the given thread_dim is acceptable given the limits described

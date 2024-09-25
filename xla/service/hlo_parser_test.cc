@@ -1530,11 +1530,11 @@ ENTRY %test (p: f32[100]) -> u32[100] {
 R"(HloModule test, entry_computation_layout={(f32[], f32[3]{0}, f32[2,3]{1,0})->((f32[], f32[3]{0}), f32[2,3]{1,0})}
 
 ENTRY %test (v1: f32[], v2: f32[3], v3: f32[2,3]) -> ((f32[], f32[3]), f32[2,3]) {
-  %v1 = f32[] parameter(0), original_value={{"v1"}}
-  %v2 = f32[3]{0} parameter(1), original_value={{"v2"}}
-  %tuple = (f32[], f32[3]{0}) tuple(f32[] %v1, f32[3]{0} %v2), original_value={({"v1"}, {"v2"})}
-  %v3 = f32[2,3]{1,0} parameter(2), original_value={{"v3"}}
-  ROOT %nested_tuple = ((f32[], f32[3]{0}), f32[2,3]{1,0}) tuple((f32[], f32[3]{0}) %tuple, f32[2,3]{1,0} %v3), original_value={(({"v1"}, {"v2"}), {"v3"})}
+  %v1 = f32[] parameter(0), origin={{"v1"}}
+  %v2 = f32[3]{0} parameter(1), origin={{"v2"}}
+  %tuple = (f32[], f32[3]{0}) tuple(f32[] %v1, f32[3]{0} %v2), origin={({"v1"}, {"v2"})}
+  %v3 = f32[2,3]{1,0} parameter(2), origin={{"v3"}}
+  ROOT %nested_tuple = ((f32[], f32[3]{0}), f32[2,3]{1,0}) tuple((f32[], f32[3]{0}) %tuple, f32[2,3]{1,0} %v3), origin={(({"v1"}, {"v2"}), {"v3"})}
 }
 
 )"
@@ -3385,8 +3385,10 @@ ENTRY %CustomCall () -> f32[1] {
                   "with that of its root instruction foo, f32[1,2,3]");
 }
 
-TEST_F(HloParserTest, EntryComputationWithLayout) {
-  const std::string original = R"(HloModule layout:
+TEST_F(HloParserTest, EntryComputationLayoutNotDefined) {
+  const std::string original = R"(
+HloModule layout_not_defined
+
 add_F32.v3 {
   lhs = f32[] parameter(0)
   rhs = f32[] parameter(1)
@@ -3412,6 +3414,30 @@ ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
   EXPECT_TRUE(LayoutUtil::Equal(LayoutUtil::MakeLayout({0, 1}), result_layout))
       << "actual layout of result is "
       << LayoutUtil::HumanString(result_layout);
+}
+
+TEST_F(HloParserTest, EntryComputationLayoutDefined) {
+  const std::string original = R"(
+HloModule layout_defined, entry_computation_layout={(f32[8,16,256]) -> f32[8,16]}
+
+add_F32.v3 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY %Reduce (input: f32[8,16,256]) -> f32[8,16] {
+  input = f32[8,16,256]{0,1,2} parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce = f32[8,16]{0,1} reduce(input, constant), dimensions={2}, to_apply=add_F32.v3
+})";
+
+  absl::StatusOr<std::unique_ptr<HloModule>> module =
+      ParseAndReturnUnverifiedModule(
+          original, /*set_to_default_entry_computation_layout=*/false);
+  TF_ASSERT_OK(module.status());
+  // Do not set the default layout.
+  EXPECT_FALSE(module.value()->entry_computation_layout().AnyLayoutSet());
 }
 
 TEST_F(HloParserTest, NoEntry) {
@@ -5511,8 +5537,8 @@ TEST_F(HloParserTest, OriginalValueWithoutShape) {
   const std::string hlo_string = R"(HloModule test
 
 ENTRY %test {
-  %a = f32[2,10]{1,0} parameter(0), original_value={{"a"}}
-  ROOT %v = abs(%a), original_value={{"v"}}
+  %a = f32[2,10]{1,0} parameter(0), origin={{"a"}}
+  ROOT %v = abs(%a), origin={{"v"}}
 }
 
 

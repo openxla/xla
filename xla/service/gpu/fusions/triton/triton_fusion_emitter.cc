@@ -100,11 +100,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/translate/hlo_to_mhlo/hlo_function_importer.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
+#include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/dump.h"
@@ -134,7 +136,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/translate/hlo_to_mhlo/hlo_function_importer.h"
+#include "xla/tools/hlo_decomposer.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -167,6 +169,18 @@ using ::mlir::Value;
 using mlir::ValueRange;
 
 namespace {
+
+// Triton requires that all block dimensions are a power of 2.
+// TODO(b/353484968): Delete this function once we have constraints to only
+// propagate tile sizes that are a power of 2.
+llvm::SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
+  llvm::SmallVector<int64_t> result;
+  result.reserve(tile_sizes.size());
+  for (int64_t value : tile_sizes) {
+    result.push_back(llvm::PowerOf2Ceil(value));
+  }
+  return result;
+}
 
 // XLA -> Triton type conversions.
 absl::StatusOr<Type> TritonType(mlir::OpBuilder b, PrimitiveType t) {
@@ -774,16 +788,13 @@ absl::StatusOr<Value> EmitReduce(
     input = b.create<ma::SelectOp>(mask, input, neutral);
   }
 
-  // Triton actually only performs reductions on float32 inputs, and we must
-  // thus upcast/downcast our input if its data type is different.
-  input = Cast(b, input, b.getF32Type());
-
   mt::ReduceOp reduction = b.create<mt::ReduceOp>(input, reduction_dimension);
   {
+    TF_ASSIGN_OR_RETURN(Type result_ty,
+                        TritonType(b, hlo_reduce.shape().element_type()));
     mlir::Location loc = b.getLoc();
-    mlir::Block* reducer =
-        b.createBlock(&reduction->getRegion(0), {},
-                      {b.getF32Type(), b.getF32Type()}, {loc, loc});
+    mlir::Block* reducer = b.createBlock(&reduction->getRegion(0), {},
+                                         {result_ty, result_ty}, {loc, loc});
 
     HloComputation* reduction_computation = hlo_reduce.to_apply();
 
@@ -817,16 +828,13 @@ absl::StatusOr<Value> EmitReduce(
 
   Value result = reduction.getResult().front();
 
-  // We want to return a tensor of float32, but the ReturnReduceOp produces an
-  // f32 constant when reducing a single dim. To convert to a tensor we splat
-  // the result.
+  // We want to return a tensor, but the ReturnReduceOp produces a raw scalar
+  // when reducing a single dim. To convert to a tensor we splat the result.
   if (!mlir::dyn_cast<TensorValue>(reduction.getResult().front())) {
     result = Splat(b, result, {});
   }
 
-  TF_ASSIGN_OR_RETURN(Type result_ty,
-                      TritonType(b, hlo_reduce.shape().element_type()));
-  return Cast(b, result, result_ty);
+  return result;
 }
 
 // Emit code corresponding to a fusion instruction somehow nested within the
@@ -870,17 +878,14 @@ absl::StatusOr<Value> EmitNestedFusion(
 Value EmitTiledBroadcast(
     ImplicitLocOpBuilder& b, const TiledHloInstruction& tiled_broadcast,
     absl::flat_hash_map<const TiledHloInstruction*, Value>& values) {
-  auto input_tile_shape = tiled_broadcast.operand(0)->tile_sizes();
-  auto output_tile_shape = tiled_broadcast.tile_sizes();
+  const llvm::SmallVector<int64_t>& input_tile_shape =
+      tiled_broadcast.operand(0)->tile_sizes();
+  const llvm::SmallVector<int64_t>& output_tile_shape =
+      tiled_broadcast.tile_sizes();
+  SmallVector<int64_t> padded_output_tile_shape =
+      GetPaddedTileSizes(output_tile_shape);
 
   Value expanded_input = values[tiled_broadcast.operand(0)];
-
-  SmallVector<int64_t> padded_output_tile_shape;
-  padded_output_tile_shape.reserve(output_tile_shape.size());
-
-  for (int64_t tile_dim : output_tile_shape) {
-    padded_output_tile_shape.push_back(llvm::PowerOf2Ceil(tile_dim));
-  }
 
   // Returns true if `dim_id` is broadcasted.
   auto is_broadcasted_dim = [&](int64_t dim_id) {
@@ -923,12 +928,9 @@ Value EmitTiledBroadcast(
                    padded_output_tile_shape);
 }
 
-Value EmitTiledReshape(ImplicitLocOpBuilder& b,
-                       const TiledHloInstruction& tiled_reshape_or_bitcast,
+Value EmitTiledReshape(ImplicitLocOpBuilder& b, ArrayRef<int64_t> tile_sizes,
                        Value input) {
-  SmallVector<int64_t> padded_tile_sizes = llvm::to_vector(llvm::map_range(
-      tiled_reshape_or_bitcast.tile_sizes(),
-      [](int64_t size) { return (int64_t)llvm::PowerOf2Ceil(size); }));
+  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
 
   Type input_element_type =
       mlir::cast<ShapedType>(input.getType()).getElementType();
@@ -942,20 +944,66 @@ Value EmitTiledReshape(ImplicitLocOpBuilder& b,
       .getResult();
 }
 
-Value EmitTiledTranspose(ImplicitLocOpBuilder& b,
-                         const TiledHloInstruction& tiled_transpose,
-                         Value input) {
+Value EmitTiledTranspose(ImplicitLocOpBuilder& b, ArrayRef<int64_t> tile_sizes,
+                         SmallVector<int64_t> dimensions, Value input) {
+  SmallVector<int64_t> padded_tile_sizes = GetPaddedTileSizes(tile_sizes);
+
   Type input_element_type =
       mlir::cast<ShapedType>(input.getType()).getElementType();
-  Type output_tensor_type = mlir::RankedTensorType::get(
-      tiled_transpose.tile_sizes(), input_element_type);
+  Type output_tensor_type =
+      mlir::RankedTensorType::get(padded_tile_sizes, input_element_type);
 
-  auto transpose =
-      ::xla::Cast<const HloTransposeInstruction>(tiled_transpose.hlo());
-  SmallVector<int32_t> order =
-      llvm::to_vector_of<int32_t>(transpose->dimensions());
+  SmallVector<int32_t> order = llvm::to_vector_of<int32_t>(dimensions);
 
   return b.create<mt::TransOp>(output_tensor_type, input, order);
+}
+
+Value EmitTiledBitcast(ImplicitLocOpBuilder& b,
+                       const TiledHloInstruction& tiled_bitcast, Value input) {
+  // Any Bitcast is decomposable to a transpose+reshape+transpose.
+  auto trt = ShapeUtil::DecomposeBitcastToTrt(
+      tiled_bitcast.hlo()->operand(0)->shape(), tiled_bitcast.hlo()->shape());
+
+  // When replacing the `bitcast` with `transpose` + `reshape` + `transpose` we
+  // need to provide the tile sizes at output of each op. We already have the
+  // tiling of the `input` (before the first transpose) and the tiling of the
+  // final output (after the second transpose), so what's missing are the two
+  // tilings in between - after the first transpose and after the reshape. In
+  // the case of arbitrary ops, we would need to run the tiling analysis to
+  // compute this, but in the case of bitcast we can trivially compute the
+  // needed tile sizes from the input and output.
+
+  // The tiles sizes we need to use for the output of the first transpose
+  // are the permuted tiles sizes of the input. Note that these are
+  // different, even in rank, compared to the tile sizes of the final shape of
+  // the bitcast, so it's not possible to easily propagate them from the output.
+  std::vector<int64_t> transpose1_tile_sizes =
+      Permute(tiled_bitcast.operand(0)->tile_sizes(), trt.transpose1_dims);
+  Value normalized_input =
+      trt.IsTranspose1Identity()
+          ? input
+          : EmitTiledTranspose(b, transpose1_tile_sizes,
+                               llvm::to_vector(trt.transpose1_dims), input);
+
+  // Like the first transpose above, the tile sizes after the second transpose
+  // are a permutation (according to transpose2_dims) of the tile sizes of
+  // the reshape. Since we know the tile sizes of the final transpose and need
+  // the tile sizes of the reshape, we compute the tile sizes backwards, taking
+  // the inreverse permutation.
+  std::vector<int64_t> reshape_tile_sizes =
+      PermuteInverse(tiled_bitcast.tile_sizes(), trt.transpose2_dims);
+  Value normalized_reshape =
+      ShapeUtil::Equal(trt.transpose1_shape, trt.reshape_shape)
+          ? normalized_input
+          : EmitTiledReshape(b, reshape_tile_sizes, normalized_input);
+
+  // The final transpose simply uses the tile sizes computed for the original
+  // bitcast by the tiling analysis.
+  return trt.IsTranspose2Identity()
+             ? normalized_reshape
+             : EmitTiledTranspose(b, tiled_bitcast.tile_sizes(),
+                                  llvm::to_vector(trt.transpose2_dims),
+                                  normalized_reshape);
 }
 
 absl::StatusOr<Value> EmitTiledHloInstruction(
@@ -1027,18 +1075,26 @@ absl::StatusOr<Value> EmitTiledHloInstruction(
     return EmitElementwise(b, libdevice_path, device_info, *hlo, operands);
   }
 
-  if (hlo->opcode() == HloOpcode::kReshape ||
-      hlo->opcode() == HloOpcode::kBitcast) {
-    return EmitTiledReshape(b, tiled_hlo, values[tiled_hlo.operand(0)]);
+  if (hlo->opcode() == HloOpcode::kReshape) {
+    return EmitTiledReshape(b, tiled_hlo.tile_sizes(),
+                            values[tiled_hlo.operand(0)]);
+  }
+
+  if (hlo->opcode() == HloOpcode::kBitcast) {
+    return EmitTiledBitcast(b, tiled_hlo, values[tiled_hlo.operand(0)]);
   }
 
   if (hlo->opcode() == HloOpcode::kTranspose) {
-    return EmitTiledTranspose(b, tiled_hlo, values[tiled_hlo.operand(0)]);
+    auto transpose =
+        ::xla::Cast<const HloTransposeInstruction>(tiled_hlo.hlo());
+    return EmitTiledTranspose(b, tiled_hlo.tile_sizes(),
+                              llvm::to_vector(transpose->dimensions()),
+                              values[tiled_hlo.operand(0)]);
   }
 
   // Slice is currently supported only as an operation on indices
   // which is pushed to loads and stores. We don't generate any further code.
-  if (IsSliceWithUnitStrides(hlo)) {
+  if (hlo->opcode() == HloOpcode::kSlice) {
     return values[tiled_hlo.operand(0)];
   }
 
@@ -2602,6 +2658,18 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
           IsTf32Allowed(dot_instr) && !is_unsupported_bitwidth
               ? mt::InputPrecision::TF32
               : mt::InputPrecision::IEEE;
+
+      // Cast F32 inputs to BF16 if the algorithm is BF16_BF16_F32.
+      if (dot_instr->precision_config().algorithm() ==
+          PrecisionConfig::ALG_DOT_BF16_BF16_F32) {
+        if (dot_instr->operand(0)->shape().element_type() == F32) {
+          dot_input_lhs = Cast(b, dot_input_lhs, b.getBF16Type());
+        }
+        if (dot_instr->operand(1)->shape().element_type() == F32) {
+          dot_input_rhs = Cast(b, dot_input_rhs, b.getBF16Type());
+        }
+      }
+
       // For fp8 matmuls, disable accumulator promotion, as it's what cublas
       // does. It may make sense to enable frequent accumulator promotion at
       // higher matmul precisions set in the config.
@@ -2690,6 +2758,32 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
   return absl::OkStatus();
 }
 
+// Computes the base pointer offset for the given tile multi-index and hlo shape
+// taking into account the physical layout of the hlo buffer.
+absl::StatusOr<Value> ComputeBasePtrOffset(
+    ImplicitLocOpBuilder b, ValueRange tile_multi_index,
+    const TiledHloInstruction& tiled_hlo) {
+  const Shape& shape = tiled_hlo.hlo()->shape();
+  Shape linear_shape = ShapeUtil::MakeShape(shape.element_type(),
+                                            {ShapeUtil::ElementsIn(shape)});
+
+  // Bitcast map gives an indexing map from the parameter shape (multi-index) to
+  // a linear index respecting physical layout of the memory.
+  auto bitcast_map = GetBitcastMap(shape, linear_shape, b.getContext());
+
+  TF_ASSIGN_OR_RETURN(IndexingMap tile_offsets_indexing,
+                      tiled_hlo.tile_offsets_indexing());
+
+  auto compose_indexing_maps =
+      ComposeIndexingMaps(tile_offsets_indexing, bitcast_map);
+  compose_indexing_maps.Simplify();
+
+  return b.create<ma::IndexCastUIOp>(
+      b.getI64Type(), mlir_converter::ApplyIndexing(compose_indexing_maps,
+                                                    /*dims=*/tile_multi_index,
+                                                    /*symbols=*/{}, b)[0]);
+}
+
 namespace ir_emitter_triton_internal {
 
 SmallVector<Value, 3> ComputeDelinearizedTileIndex(
@@ -2740,39 +2834,62 @@ absl::StatusOr<MakeTensorPtrOpAndBoundaryChecks> CreateMakeTensorPtrOp(
                                     /*dims=*/tile_multi_index,
                                     /*symbols=*/{}, b);
 
-  llvm::SmallVector<Value> parent_shape;
+  // Triton requires that all block dimensions are a power of 2.
+  SmallVector<int64_t> padded_tile_sizes =
+      GetPaddedTileSizes(tiled_hlo.tile_sizes());
+
+  llvm::SmallVector<Value> residual_shape;
   llvm::SmallVector<Value> offsets;
-  llvm::SmallVector<int32_t> power2_sizes;
   llvm::SmallVector<int32_t> order;
   llvm::SmallVector<int32_t> boundary_checks;
-  for (auto size : tiled_hlo.tile_sizes()) {
-    int dimension_index = offsets.size();
 
-    parent_shape.push_back(
-        CreateConst(b, b.getI64Type(), shape.dimensions(dimension_index)));
-    offsets.push_back(b.create<ma::IndexCastOp>(
-        b.getI32Type(), tile_offsets_as_indices[dimension_index]));
-
-    // Triton requires that all block dimensions are a power of 2.
-    power2_sizes.push_back(llvm::PowerOf2Ceil(size));
+  for (int dim_idx = 0; dim_idx < padded_tile_sizes.size(); ++dim_idx) {
+    // In general, there are two options for computing a block:
+    //
+    //   - Output a TensorPtr whose base pointer is the base pointer of the
+    //     TiledHloInstruction and provide the necessary offsets so that Triton
+    //     can compute the pointer to the block specific to the given pid. This
+    //     option yields simpler code, but has limitations. Triton cannot handle
+    //     many combinations of strides and offsets. E.g., if we want to slice
+    //     [10] with [1:5:2], we have no way of specifying this: Triton
+    //     always multiplies the stride by the offset, and with a stride of 2
+    //     it's not possible to start reading from element 1.
+    //
+    //   - Output a TensorPtr that points directly to the tile specific to the
+    //     pid. All offset computation is done in advance. MakeTensorPtrOp
+    //     sees 0 offsets. This allows Triton to read any block regardless of
+    //     strides size or offsets. To make sure that masking is correct, we
+    //     compute a "residual shape" which is the original parent shape minus
+    //     the offsets.
+    Value parent_size =
+        CreateConst(b, b.getI64Type(), shape.dimensions(dim_idx));
+    Value offset = b.create<ma::IndexCastOp>(b.getI64Type(),
+                                             tile_offsets_as_indices[dim_idx]);
+    residual_shape.push_back(b.create<ma::SubIOp>(parent_size, offset));
+    offsets.push_back(CreateConst(b, b.getI32Type(), 0));
 
     // TODO(b/342989850): Clarify and comment what `order` exactly is. It's not
     // entirely clear from the Triton docs.
-    order.insert(order.begin(), dimension_index);
+    order.insert(order.begin(), dim_idx);
 
-    if (shape.dimensions(dimension_index) % power2_sizes.back() != 0) {
-      boundary_checks.push_back(dimension_index);
+    if (shape.dimensions(dim_idx) % padded_tile_sizes[dim_idx] != 0) {
+      boundary_checks.push_back(dim_idx);
     }
   }
 
-  return MakeTensorPtrOpAndBoundaryChecks{b.create<mt::MakeTensorPtrOp>(
-                                              /*base=*/parent_base_ptr,
-                                              /*shape=*/parent_shape,
-                                              /*strides=*/strides,
-                                              /*offsets=*/offsets,
-                                              /*tensorShape=*/power2_sizes,
-                                              /*order=*/order),
-                                          boundary_checks};
+  TF_ASSIGN_OR_RETURN(Value ptr_offset,
+                      ComputeBasePtrOffset(b, tile_multi_index, tiled_hlo));
+  auto tile_ptr = AddPtr(b, parent_base_ptr, ptr_offset);
+
+  return MakeTensorPtrOpAndBoundaryChecks{
+      b.create<mt::MakeTensorPtrOp>(
+          /*base=*/tile_ptr,
+          /*shape=*/residual_shape,
+          /*strides=*/strides,
+          /*offsets=*/offsets,
+          /*tensorShape=*/llvm::to_vector_of<int32_t>(padded_tile_sizes),
+          /*order=*/order),
+      boundary_checks};
 }
 
 }  // namespace ir_emitter_triton_internal
@@ -2879,7 +2996,9 @@ absl::Status CreateInternalError(std::string_view message,
   std::string err;
   llvm::raw_string_ostream os(err);
   os << message << "\n";
-  os << fusion->fused_instructions_computation()->ToString() << "\n";
+  os << "fusion instruction: " << fusion->ToString() << "\n";
+  os << "HLO module to reproduce:\n"
+     << ExtractInstructionIntoNewModule(*fusion)->ToString();
   os << "triton_module: \n";
   triton_module->print(os, mlir::OpPrintingFlags().enableDebugInfo(true, true));
   return absl::InternalError(err);

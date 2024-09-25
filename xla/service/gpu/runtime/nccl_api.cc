@@ -35,8 +35,8 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
-#include "xla/stream_executor/gpu/gpu_activation.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
+#include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/xla_data.pb.h"
@@ -112,6 +112,8 @@ static absl::StatusOr<ncclDataType_t> ToNcclDataType(PrimitiveType dtype,
     case S8:
     case F8E5M2:
     case F8E4M3FN:
+    case F8E5M2FNUZ:
+    case F8E4M3FNUZ:
       return ncclInt8;
     case PRED:
     case U8:
@@ -347,6 +349,8 @@ NcclApi* NcclApi::Default() {
   return nccl_api;
 }
 
+bool NcclApi::HasNcclSupport() { return true; }
+
 static_assert(NCCL_UNIQUE_ID_BYTES == NcclCliqueId::kSize,
               "size of nccl unique id must match the clique id size");
 
@@ -392,7 +396,7 @@ DefaultNcclApi::CommInitRanks(int32_t nranks, const NcclCliqueId& clique_id,
             << " of " << nranks
             << "; fingerprint(id)=" << clique_id.fingerprint();
 
-    se::gpu::ScopedActivateExecutorContext activate_context(ranks[i].device);
+    se::gpu::ScopedActivateContext activate_context(ranks[i].device);
 
     XLA_NCCL_RETURN_IF_ERROR(ncclCommInitRankConfig(
         &comm_handles[i], nranks, AsNcclUniqueId(clique_id), ranks[i].rank,

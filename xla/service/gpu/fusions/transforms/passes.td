@@ -158,6 +158,17 @@ def ExpandFloatOpsPass : Pass<"xla-gpu-expand-float-ops", "mlir::ModuleOp"> {
   let constructor = "CreateExpandFloatOpsPass()";
 }
 
+def ConvertFloatNvidiaPass : Pass<"xla-gpu-convert-float-nvidia", "mlir::ModuleOp"> {
+  let summary = "Convert floating point types using NVidia intrinsics.";
+
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+    "mlir::arith::ArithDialect",
+  ];
+
+  let constructor = "CreateConvertFloatNvidiaPass()";
+}
+
 def LowerXlaGpuToScfPass :
    Pass<"xla-gpu-lower-xla-gpu-to-scf", "mlir::func::FuncOp"> {
   let summary = "Lowers xla_gpu to SCF.";
@@ -221,6 +232,28 @@ def LowerToLLVMPass :
     Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
            "True if AMD GPU.">,
   ];
+}
+
+def RewriteReductionsPass : Pass<
+    "xla-gpu-rewrite-reductions", "mlir::func::FuncOp"> {
+  let summary = "Rewrites reductions to pieces that can efficiently be emitted.";
+
+  let description = [{
+    This pass rewrites reductions so they can be emitted efficiently.
+
+    For example, a row reduction of 1024 elements to one may be rewritten to two
+    reductions, the first one to 32 elements, the second one to one element.
+    This way, the reduction can be emitted as two warp shuffle reduces.
+
+    A column reduction will be rewritten to a transpose followed by a row
+    reduction.
+  }];
+
+  let dependentDialects = [
+    "xla::gpu::XlaGpuDialect",
+  ];
+
+  let constructor = "CreateRewriteReductionsPass()";
 }
 
 def VectorizeLoadsAndStoresPass :
