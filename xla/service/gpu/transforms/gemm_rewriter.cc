@@ -367,6 +367,10 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
   // Identify the dimensional order which describes a transpose of the
   // contracting and non-contracting dimensions of the GEMM.
   std::vector<int64_t> permutation(instr->shape().dimensions_size(), -1);
+  // Discard the batch dimensions.
+  for (int64_t batch_dim : batch_dims) {
+    permutation[batch_dim] = batch_dim;
+  }
   // Identify the non-contracting dimension.
   int non_contracting_dim;
   for (int i = 0; i < instr->shape().dimensions_size(); ++i) {
@@ -375,11 +379,6 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
     }
   }
   if (!col_maj) {
-    // Discard the batch dimensions.
-    for (int64_t batch_dim : batch_dims) {
-      permutation[batch_dim] = batch_dim;
-    }
-
     permutation[non_contracting_dim] = contracting_dim;
     permutation[contracting_dim] = non_contracting_dim;
 
@@ -417,7 +416,7 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
   HloInstruction *normalized_transpose = instr->AddInstruction(
       HloInstruction::CreateTranspose(transpose_shape, a0, permutation));
   std::vector<int64_t> layout_permuation(instr->shape().layout().minor_to_major().begin(),
-                           instr->shape().layout().minor_to_major().end());
+                                         instr->shape().layout().minor_to_major().end());
   absl::c_reverse(layout_permuation);
   auto inv_perm = InversePermutation(layout_permuation);
   Shape final_shape = ShapeUtil::PermuteDimensions(inv_perm, transpose_shape);
