@@ -1808,7 +1808,7 @@ absl::Status AllToAllCmd::Record(const Thunk::ExecuteParams& execute_params,
 
   ExecutionScopeId execution_scope_id = GetExecutionScope(record_params);
   VLOG(5) << "AllToAllCmd, " << " has_split_dimension=" << has_split_dimension_
-          << "execution_scope_id=" << execution_scope_id.value();
+          << ", execution_scope_id=" << execution_scope_id.value();
 
   for (size_t i = 0; i < device_buffers.size(); ++i) {
     VLOG(5) << "  Src: " << buffers_[i].source_buffer << " ("
