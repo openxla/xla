@@ -231,12 +231,13 @@ struct RewriteTruncExtShuffle : public OpRewritePattern<mlir::gpu::ShuffleOp> {
 
 static std::optional<Interval> GetSelectRange(mlir::Operation* sel) {
   // Match |x| implemented as (x >= 0) ? x : (0 - x).
-  auto x = mlir::matchers::m_Val(sel->getOperand(1));
-  if (!sel->getOperand(1).getType().isInteger(32) ||
+  mlir::Value x = sel->getOperand(1);
+  auto m_x = mlir::matchers::m_Val(x);
+  if (!x.getType().isSignlessIntOrIndex() ||
       !mlir::matchPattern(
           sel, mlir::m_Op<mlir::arith::SelectOp>(
-                   mlir::m_Op<mlir::arith::CmpIOp>(x, mlir::m_Zero()), x,
-                   mlir::m_Op<mlir::arith::SubIOp>(mlir::m_Zero(), x)))) {
+                   mlir::m_Op<mlir::arith::CmpIOp>(m_x, mlir::m_Zero()), m_x,
+                   mlir::m_Op<mlir::arith::SubIOp>(mlir::m_Zero(), m_x)))) {
     return std::nullopt;
   }
   if (sel->getOperand(0).getDefiningOp<mlir::arith::CmpIOp>().getPredicate() !=
@@ -244,7 +245,17 @@ static std::optional<Interval> GetSelectRange(mlir::Operation* sel) {
     return std::nullopt;
   }
   // Annotate |x| as >= 0.
-  return std::make_optional<Interval>({0, std::numeric_limits<int32_t>::max()});
+  Interval result{0,
+                  static_cast<int64_t>(
+                      (1ull << (x.getType().getIntOrFloatBitWidth() - 1)) - 1)};
+  std::optional<Interval> x_range = GetRange(x);
+  if (x_range.has_value()) {
+    Interval positive_range = x_range->max({0, 0});
+    Interval negative_range = -x_range->min({0, 0});
+    Interval abs_range = positive_range.Union(negative_range);
+    return result.Intersect(abs_range);
+  }
+  return result;
 }
 
 void AnnotateRanges(mlir::func::FuncOp func) {
