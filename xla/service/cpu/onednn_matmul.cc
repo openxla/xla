@@ -145,16 +145,11 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
       case OneDnnFusionConfig::SIGMOID:
         post_ops.append_eltwise(dnnl::algorithm::eltwise_logistic, 0.f, 0.f);
         break;
+      case OneDnnFusionConfig::SUM:
+        post_ops.append_sum();
+        break;
       case OneDnnFusionConfig::BIAS: {
         bias_md = fused_mds.at(fused_operand_idx);
-        // Extend bias rank to match result rank.
-        auto missed_rank = output_md.get_ndims() - bias_md.get_ndims();
-        XLA_LIGHTWEIGHT_CHECK(missed_rank >= 0);
-        if (missed_rank > 0) {
-          auto bias_dims = bias_md.get_dims();
-          bias_dims.insert(bias_dims.begin(), missed_rank, 1);
-          bias_md = bias_md.reshape(bias_dims);
-        }
         if (fused_operands_ref) {
           fused_operands_ref->postop_args.emplace_back(
               DNNL_ARG_BIAS,
@@ -168,14 +163,6 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
         break;
       case OneDnnFusionConfig::BINARY_ADD: {
         auto binary_md = fused_mds.at(fused_operand_idx);
-        // Extend addend rank to match result rank.
-        auto missed_rank = output_md.get_ndims() - binary_md.get_ndims();
-        XLA_LIGHTWEIGHT_CHECK(missed_rank >= 0);
-        if (missed_rank > 0) {
-          auto binary_dims = binary_md.get_dims();
-          binary_dims.insert(binary_dims.begin(), missed_rank, 1);
-          binary_md = binary_md.reshape(binary_dims);
-        }
         if (fused_operands_ref) {
           auto arg_idx =
               DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops.len()) | DNNL_ARG_SRC_1;
@@ -309,6 +296,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
+    if (matmul_config.fusions().ops(i) == OneDnnFusionConfig::SUM) {
+      arg_indx++;
+      continue;
+    }
     MemrefInfo operand_minfo(args[arg_indx++]);
     fused_mds.push_back(operand_minfo.GetOneDnnMemDesc());
     fused_bufs.push_back(operand_minfo.Data());

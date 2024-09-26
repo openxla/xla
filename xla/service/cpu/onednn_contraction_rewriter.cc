@@ -640,7 +640,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
           m::Op(&addend));
       if (!Match(addend_intermediate, addend_pattern)) return absl::OkStatus();
 
-      if (optional_addend_broadcast && addend->shape().rank() != 1) {
+      if (optional_addend_broadcast) {
         auto new_shape =
             AdjustBiasShape(optional_addend_broadcast, dot->shape());
         if (new_shape.ok()) {
@@ -653,17 +653,28 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       }
 
       // Validate addend for fusion.
+      auto addend_user_count = addend->user_count();
+      auto addend_idx = -1;
       if (IsSupportedType(addend->shape().element_type()) &&
           IsOperandFusible(addend, dot)) {
+        addend_idx = new_operands.size();
         new_operands.push_back(addend);
       } else {
         return absl::OkStatus();
       }
 
+      auto matmul_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
+          dot->CloneWithNewOperands(dot->shape(), new_operands)));
+      auto backend_config = matmul_call->backend_config<BackendConfig>();
+      bool can_fuse_sum =
+          (ShapeUtil::Equal(matmul_call->shape(), addend->shape()) &&
+           addend_user_count == 1 &&
+           matmul_call->output_operand_aliasing().empty());
+
       // TODO(intel-tf): Remove this restriction once oneDNN has an optimized
       // implementation for broadcasted add across all dimensions.
       OneDnnFusionConfig_FusionKind kind = OneDnnFusionConfig::UNDEFINED;
-      kind = (addend->shape().rank() == 1)
+      kind = (ShapeUtil::TrueRank(addend->shape()) == 1)
                  ? (dot->backend_config<BackendConfig>()
                             ->mutable_onednn_matmul_config()
                             ->fusions()
@@ -671,13 +682,14 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                             .empty()
                         ? OneDnnFusionConfig::BIAS
                         : OneDnnFusionConfig::UNDEFINED)
-                 : OneDnnFusionConfig::BINARY_ADD;
+             : can_fuse_sum ? OneDnnFusionConfig::SUM
+                            : OneDnnFusionConfig::BINARY_ADD;
       if (kind == OneDnnFusionConfig::UNDEFINED) return absl::OkStatus();
 
-      auto matmul_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
-          dot->CloneWithNewOperands(dot->shape(), new_operands)));
+      if (kind == OneDnnFusionConfig::SUM) {
+        matmul_call->set_output_to_operand_aliasing({{{}, {addend_idx, {}}}});
+      }
 
-      auto backend_config = matmul_call->backend_config<BackendConfig>();
       backend_config->mutable_onednn_matmul_config()
           ->mutable_fusions()
           ->add_ops(kind);
@@ -1089,6 +1101,11 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
     auto scratch_add = AddScratch<PrimDesc>(custom_call);
     if (scratch_add.ok()) {
       custom_call = *scratch_add;
+      auto aliases = custom_call->output_operand_aliasing();
+      if (!aliases.empty()) {
+        custom_call->set_output_to_operand_aliasing(
+            {{{0}, {aliases[0].second.first, {}}}});
+      }
     } else {
       VLOG(2) << scratch_add.status();
     }
