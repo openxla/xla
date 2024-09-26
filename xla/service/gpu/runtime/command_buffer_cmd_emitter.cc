@@ -299,6 +299,7 @@ static absl::Status AppendCommands(
     case Thunk::Kind::kNcclAllGatherDone:
     case Thunk::Kind::kNcclAllReduceDone:
     case Thunk::Kind::kNcclReduceScatterDone:
+    case Thunk::Kind::kNcclAllToAllDone:
       return append(Convert<NcclCollectiveDoneThunk>(thunk));
 
     case Thunk::Kind::kWaitForStreams:
