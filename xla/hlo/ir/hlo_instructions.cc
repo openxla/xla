@@ -2180,6 +2180,16 @@ HloFusionInstruction::HloFusionInstruction(const Shape& shape,
   set_parent(fused_root->parent());
   set_metadata(fused_root->metadata());
   set_frontend_attributes(fused_root->frontend_attributes());
+  // TODO(366269249): adds the original value for fusion instructions. This is
+  // redundant to the original value of the fused root, but is needed for
+  // compare_hlo_output tool to work as intended, which compares device log
+  // files to find differences. Device log files currently only print out the
+  // value of a fusion instruction, but not instructions in the fused
+  // computation. Therefore we need to make this copy to compare fused
+  // computations. This can be removed once device logging supports fusion.
+  if (auto original_value = fused_root->original_value()) {
+    set_original_value(original_value);
+  }
   CHECK(fused_root->IsFusible()) << fused_root->ToString();
   CloneAndAppendInstructionIntoCalledComputation(fused_root);
 }
