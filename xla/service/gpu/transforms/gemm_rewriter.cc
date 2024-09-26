@@ -394,33 +394,23 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
           instr->shape());
   auto a0 = MakeBitcastHlo(instr, normalized_input_shape);
 
-  int new_contracting_dim = -1;
-  int new_non_contracting_dim = -1;
-  for (int i = 0; i < instr->shape().dimensions_size(); ++i) {
-    auto dim = LayoutUtil::Major(instr->shape().layout(), i);
-    if (dim == contracting_dim) {
-      new_contracting_dim = i;
-    } else if (dim == non_contracting_dim) {
-      new_non_contracting_dim = i;
-    } else {
-      // Discard the batch dimensions.
-      permutation[i] = i;
-    }
-  }
+  std::vector<int64_t> layout_permuation(
+      instr->shape().layout().minor_to_major().begin(),
+      instr->shape().layout().minor_to_major().end());
+  absl::c_reverse(layout_permuation);
+  auto inv_perm = InversePermutation(layout_permuation);
 
-  permutation[new_non_contracting_dim] = new_contracting_dim;
-  permutation[new_contracting_dim] = new_non_contracting_dim;
+  int new_contracting_dim = inv_perm[contracting_dim];
+  int new_non_contracting_dim = inv_perm[non_contracting_dim];
+  absl::c_iota(permutation, 0);
+  std::swap(permutation[new_contracting_dim],
+            permutation[new_non_contracting_dim]);
 
   Shape transpose_shape =
       ShapeUtil::PermuteDimensions(permutation, a0->shape());
   *transpose_shape.mutable_layout() = a0->shape().layout();
   HloInstruction *normalized_transpose = instr->AddInstruction(
       HloInstruction::CreateTranspose(transpose_shape, a0, permutation));
-  std::vector<int64_t> layout_permuation(
-      instr->shape().layout().minor_to_major().begin(),
-      instr->shape().layout().minor_to_major().end());
-  absl::c_reverse(layout_permuation);
-  auto inv_perm = InversePermutation(layout_permuation);
   Shape final_shape = ShapeUtil::PermuteDimensions(inv_perm, transpose_shape);
   *final_shape.mutable_layout() = instr->shape().layout();
   return MakeBitcastHlo(normalized_transpose, final_shape);
@@ -1266,10 +1256,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
 
       a.fp8_input =
-          TransposeMatrix(a.fp8_input, a_contracting_dims[0], a_batch_dims);
-
-      a.fp8_input = RegulateColMajorTransposeMatrixF8(
-          a.fp8_input, a_contracting_dims[0], a_batch_dims);
+          TransposeMatrix(a.fp8_input, a_contracting_dims[0],
+                          a_batch_dims, /*col_maj*/true);
     }
 
     // Similarly, cuBLASLt requires the second operand to be column-major, so
