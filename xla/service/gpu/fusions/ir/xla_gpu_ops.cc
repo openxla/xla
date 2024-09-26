@@ -47,6 +47,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "xla/service/gpu/fusions/ir/xla_gpu_dialect.cc.inc"
 #include "xla/service/gpu/model/indexing_map.h"
+#include "xla/service/gpu/model/indexing_map_serialization.h"
 
 namespace xla {
 namespace gpu {
@@ -834,13 +835,13 @@ LogicalResult LoopOp::verify() {
     return emitOpError() << "mismatch in number of induction variables "
                          << getNumInductionVars()
                          << " and RangeVars in the indexing map "
-                         << indexing_map.ToString();
+                         << ToString(indexing_map);
   }
   if (indexing_map.GetDimVarsCount() != getDims().size()) {
     return emitOpError() << "mismatch in number of dims operands "
                          << getDims().size()
                          << " and DimVars in the indexing map "
-                         << indexing_map.ToString();
+                         << ToString(indexing_map);
   }
   for (auto [bb_arg, result_type, init] :
        llvm::zip(getRegionIterArgs(), getResultTypes(), getInits())) {
@@ -957,9 +958,9 @@ VariableConstraints GetConstraintsForVariables(const IndexingMap& map) {
   for (const auto& constraint : map.GetConstraints()) {
     constraint.first.walk([&](mlir::AffineExpr leaf) {
       if (auto dim = mlir::dyn_cast<mlir::AffineDimExpr>(leaf)) {
-        result.constraints_for_dims[dim.getPosition()].push_back(constraint);
+        result.constraints_for_dims[dim.getPosition()].insert(constraint);
       } else if (auto sym = mlir::dyn_cast<mlir::AffineSymbolExpr>(leaf)) {
-        result.constraints_for_symbols[sym.getPosition()].push_back(constraint);
+        result.constraints_for_symbols[sym.getPosition()].insert(constraint);
       }
     });
   }
