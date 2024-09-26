@@ -111,7 +111,9 @@ absl::Status NcclAllToAllStartThunk::Initialize(
     TF_ASSIGN_OR_RETURN(int32_t num_participants,
                         nccl_api()->CommCount(comm_wrapper.comm_handle));
     int local_id = params.stream->parent()->device_ordinal() % num_participants;
+    absl::MutexLock send_lock(&send_mutex_);
     if (!send_pointer_maps_.count(local_id)) {
+      absl::MutexLock receive_lock(&receive_mutex_);
       for (int i = 0; i < num_participants; ++i) {
         if (!params.stream->parent()->HostMemoryRegister(
                 &send_pointer_maps_[local_id][i], sizeof(void*))) {
@@ -141,6 +143,7 @@ absl::Status NcclAllToAllStartThunk::Cleanup(const CleanupParams& params) {
                         nccl_api()->CommCount(comm_wrapper.comm_handle));
 
     int local_id = params.executor->device_ordinal() % num_participants;
+    absl::MutexLock send_lock(&send_mutex_);
     if (send_pointer_maps_.count(local_id)) {
       for (auto& [id, value] : send_pointer_maps_[local_id]) {
         if (!params.executor->HostMemoryUnregister((void*)value)) {
@@ -148,6 +151,7 @@ absl::Status NcclAllToAllStartThunk::Cleanup(const CleanupParams& params) {
         }
       }
     }
+    absl::MutexLock receive_lock(&receive_mutex_);
     if (receive_pointer_maps_.count(local_id)) {
       for (auto& [id, value] : receive_pointer_maps_[local_id]) {
         if (!params.executor->HostMemoryUnregister((void*)value)) {
