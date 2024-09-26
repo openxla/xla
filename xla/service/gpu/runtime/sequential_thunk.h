@@ -29,7 +29,7 @@ namespace gpu {
 // require multiple kernel launches or library calls.
 class SequentialThunk : public Thunk {
  public:
-    SequentialThunk(ThunkInfo thunk_info, ThunkSequence thunks);
+  SequentialThunk(ThunkInfo thunk_info, ThunkSequence thunks);
   SequentialThunk(const SequentialThunk&) = delete;
   SequentialThunk& operator=(const SequentialThunk&) = delete;
 
