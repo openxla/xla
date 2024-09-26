@@ -110,19 +110,15 @@ absl::Status NcclAllToAllStartThunk::Initialize(
                     stream_kind));
     TF_ASSIGN_OR_RETURN(int32_t num_participants,
                         nccl_api()->CommCount(comm_wrapper.comm_handle));
-
-    for (int i = 0; i < num_participants; ++i) {
-      for (int j = 0; j < num_participants; ++j) {
-        if (send_pointer_maps_.count(i) && send_pointer_maps_.at(i).count(j)) {
-          continue;
-        }
+    int local_id = params.stream->parent()->device_ordinal() % num_participants;
+    if (!send_pointer_maps_.count(local_id)) {
+      for (int i = 0; i < num_participants; ++i) {
         if (!params.stream->parent()->HostMemoryRegister(
-                &send_pointer_maps_[i][j], sizeof(void*))) {
+                &send_pointer_maps_[local_id][i], sizeof(void*))) {
           VLOG(5) << "Registering host send pointer for memcpy failed.";
         }
-
         if (!params.stream->parent()->HostMemoryRegister(
-                &receive_pointer_maps_[i][j], sizeof(void*))) {
+                &receive_pointer_maps_[local_id][i], sizeof(void*))) {
           VLOG(5) << "Registering host recv pointer for memcpy failed.";
         }
       }
