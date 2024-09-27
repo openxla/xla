@@ -769,7 +769,6 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/service/llvm_ir:tuple_ops",
-        "//xla/service/cpu:onednn_util",
         "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",

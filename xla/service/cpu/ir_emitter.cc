@@ -97,7 +97,6 @@ limitations under the License.
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 #include "xla/service/cpu/onednn_memory_util.h"
-#include "xla/service/cpu/onednn_util.h"
 #endif
 
 namespace xla {
@@ -117,12 +116,7 @@ class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
       : ElementalIrEmitter(
             module, ir_emitter->b(),
             Options { /*xla_cpu_use_truncate_f32_to_bf16_conversion=*/
-#if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
-                      !IsNativeConvertSupportedOnThisCPU()
-#else
-                      true
-#endif
-            }),
+                      !IsNativeConvertSupportedOnThisCPU(ir_emitter)}),
         hlo_module_config_(module_config),
         ir_emitter_(ir_emitter) {}
 
@@ -152,6 +146,16 @@ class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
 
   bool fast_min_max() override {
     return hlo_module_config_.debug_options().xla_cpu_enable_fast_min_max();
+  }
+
+  bool IsNativeConvertSupportedOnThisCPU(IrEmitter* ir_emitter) {
+    std::string feature_string =
+        ir_emitter->target_machine_features_.get_target_feature_string();
+    if (absl::StrContains(feature_string, "+avxneconvert") ||
+        absl::StrContains(feature_string, "+amx-bf16")) {
+      return true;
+    }
+    return false;
   }
 
   const HloModuleConfig& hlo_module_config_;
