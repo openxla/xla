@@ -222,6 +222,10 @@ class BlasSupport {
 
   virtual gpu::BlasLt *GetBlasLt() = 0;
 
+  // For tests only: sets *is_main_stream to true if the underlying Blas library 
+  // has stream 0 set as its current stream.
+  virtual bool IsMainStreamSet(bool *is_main_stream) = 0;
+
   // Computes the product of a vector by a scalar: x <- a*x.
   virtual bool DoBlasScal(Stream *stream, uint64_t elem_count, float alpha,
                           DeviceMemory<float> *x, int incx) = 0;
@@ -727,6 +731,7 @@ class BlasSupport {
 // Macro used to quickly declare overrides for abstract virtuals in the
 // BlasSupport base class.
 #define TENSORFLOW_STREAM_EXECUTOR_GPU_BLAS_SUPPORT_OVERRIDES                  \
+  bool IsMainStreamSet(bool *is_main_stream) override;                         \
   bool DoBlasScal(Stream *stream, uint64_t elem_count, float alpha,            \
                   DeviceMemory<float> *x, int incx) override;                  \
   bool DoBlasScal(Stream *stream, uint64_t elem_count, double alpha,           \

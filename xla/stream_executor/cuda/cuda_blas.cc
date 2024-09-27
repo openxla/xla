@@ -241,6 +241,19 @@ bool CUDABlas::SetStream(Stream *stream) {
   return true;
 }
 
+bool CUDABlas::IsMainStreamSet(bool *is_main_stream) {
+  CHECK(blas_ != nullptr);
+  absl::MutexLock lock{&mu_};
+  GpuStreamHandle handle{};
+  if (auto ret = cublasGetStream(blas_, &handle); 
+      ret != CUBLAS_STATUS_SUCCESS) {
+    LOG(ERROR) << "failed to get the current stream value: " << ToString(ret);
+    return false;
+  }
+  *is_main_stream = (handle == 0);
+  return true;
+}
+
 namespace {
 
 // Helper functions transforming blas arguments into cuBLAS arguments.
