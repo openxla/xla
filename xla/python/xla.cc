@@ -36,16 +36,16 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/nb_defs.h"
-#include "nanobind/stl/function.h"  // IWYU pragma: keep
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"  // IWYU pragma: keep
-#include "nanobind/stl/set.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/function.h"     // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/pair.h"         // IWYU pragma: keep
+#include "nanobind/stl/set.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/variant.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/variant.h"      // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
@@ -72,8 +72,8 @@ limitations under the License.
 #elif defined(__APPLE__)
 #include "gloo/transport/uv/device.h"
 #include "xla/pjrt/cpu/gloo_collectives.h"  // NOLINT
-#include "xla/pjrt/cpu/gloo_kv_store.h"  // NOLINT
-#endif  // defined(__linux__)
+#include "xla/pjrt/cpu/gloo_kv_store.h"     // NOLINT
+#endif                                      // defined(__linux__)
 
 #if !defined(_WIN32) && !defined(PLATFORM_GOOGLE)
 #include "xla/pjrt/cpu/mpi_collectives.h"
@@ -94,7 +94,7 @@ limitations under the License.
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/mlir.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
-#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/python/nb_absl_span.h"           // IWYU pragma: keep
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/ops.h"
 #include "xla/python/pjit.h"
@@ -780,8 +780,10 @@ NB_MODULE(xla_extension, m_nb) {
          std::optional<std::function<void(absl::Status,
                                           bool coordinator_reported_failure)>>
              missed_heartbeat_callback,
-         std::optional<bool> shutdown_on_destruction)
+         std::optional<bool> shutdown_on_destruction,
+         std::optional<bool> use_compression)
           -> std::shared_ptr<DistributedRuntimeClient> {
+        bool compression = use_compression.value_or(false);
         DistributedRuntimeClient::Options options;
         options.node_id = node_id;
         if (rpc_timeout.has_value()) {
@@ -806,7 +808,7 @@ NB_MODULE(xla_extension, m_nb) {
         if (shutdown_on_destruction.has_value()) {
           options.shutdown_on_destruction = *shutdown_on_destruction;
         }
-        return GetDistributedRuntimeClient(address, options);
+        return GetDistributedRuntimeClient(address, options, compression);
       },
       nb::arg("address"), nb::arg("node_id"),
       nb::arg("rpc_timeout").none() = std::nullopt,
@@ -815,7 +817,8 @@ NB_MODULE(xla_extension, m_nb) {
       nb::arg("heartbeat_interval").none() = std::nullopt,
       nb::arg("max_missing_heartbeats").none() = std::nullopt,
       nb::arg("missed_heartbeat_callback").none() = std::nullopt,
-      nb::arg("shutdown_on_destruction").none() = std::nullopt);
+      nb::arg("shutdown_on_destruction").none() = std::nullopt,
+      nb::arg("use_compression").none() = std::nullopt);
 
   m_nb.def("collect_garbage", []() { GlobalPyRefManager()->CollectGarbage(); });
 
