@@ -1254,9 +1254,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       } else {
         dim_nums->set_lhs_contracting_dimensions(0, num_batch_dims);
       }
-      a.fp8_input =
-          TransposeMatrix(a.fp8_input, a_contracting_dims[0],
-                          a_batch_dims, /*col_maj*/true);
+      a.fp8_input = TransposeMatrix(a.fp8_input, a_contracting_dims[0],
+                                    a_batch_dims, /*col_maj*/ true);
     }
 
     // Similarly, cuBLASLt requires the second operand to be column-major, so
