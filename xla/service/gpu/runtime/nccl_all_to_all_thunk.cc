@@ -111,22 +111,23 @@ absl::Status NcclAllToAllStartThunk::Initialize(
     TF_ASSIGN_OR_RETURN(int32_t num_participants,
                         nccl_api()->CommCount(comm_wrapper.comm_handle));
     int local_id = params.stream->parent()->device_ordinal() % num_participants;
-    absl::MutexLock send_lock(&send_mutex_);
-    if (!send_pointer_maps_.count(local_id)) {
+    {
+      absl::MutexLock send_lock(&send_mutex_);
       absl::MutexLock receive_lock(&receive_mutex_);
-      for (int i = 0; i < num_participants; ++i) {
-        if (!params.stream->parent()->HostMemoryRegister(
-                &send_pointer_maps_[local_id][i], sizeof(void*))) {
-          VLOG(5) << "Registering host send pointer for memcpy failed.";
-        }
-        if (!params.stream->parent()->HostMemoryRegister(
-                &receive_pointer_maps_[local_id][i], sizeof(void*))) {
-          VLOG(5) << "Registering host recv pointer for memcpy failed.";
+      if (!send_pointer_maps_.count(local_id)) {
+        for (int i = 0; i < num_participants; ++i) {
+          if (!params.stream->parent()->HostMemoryRegister(
+                  &send_pointer_maps_[local_id][i], sizeof(void*))) {
+            VLOG(5) << "Registering host send pointer for memcpy failed.";
+          }
+          if (!params.stream->parent()->HostMemoryRegister(
+                  &receive_pointer_maps_[local_id][i], sizeof(void*))) {
+            VLOG(5) << "Registering host recv pointer for memcpy failed.";
+          }
         }
       }
     }
   }
-
   return absl::OkStatus();
 }
 
@@ -143,19 +144,21 @@ absl::Status NcclAllToAllStartThunk::Cleanup(const CleanupParams& params) {
                         nccl_api()->CommCount(comm_wrapper.comm_handle));
 
     int local_id = params.executor->device_ordinal() % num_participants;
-    absl::MutexLock send_lock(&send_mutex_);
-    if (send_pointer_maps_.count(local_id)) {
-      for (auto& [id, value] : send_pointer_maps_[local_id]) {
-        if (!params.executor->HostMemoryUnregister((void*)value)) {
-          VLOG(5) << "Unregistering host send pointer for memcpy failed.";
+    {
+      absl::MutexLock send_lock(&send_mutex_);
+      absl::MutexLock receive_lock(&receive_mutex_);
+      if (send_pointer_maps_.count(local_id)) {
+        for (auto& [id, value] : send_pointer_maps_[local_id]) {
+          if (!params.executor->HostMemoryUnregister((void*)value)) {
+            VLOG(5) << "Unregistering host send pointer for memcpy failed.";
+          }
         }
       }
-    }
-    absl::MutexLock receive_lock(&receive_mutex_);
-    if (receive_pointer_maps_.count(local_id)) {
-      for (auto& [id, value] : receive_pointer_maps_[local_id]) {
-        if (!params.executor->HostMemoryUnregister((void*)value)) {
-          VLOG(5) << "Unregistering host recv pointer for memcpy failed.";
+      if (receive_pointer_maps_.count(local_id)) {
+        for (auto& [id, value] : receive_pointer_maps_[local_id]) {
+          if (!params.executor->HostMemoryUnregister((void*)value)) {
+            VLOG(5) << "Unregistering host recv pointer for memcpy failed.";
+          }
         }
       }
     }
