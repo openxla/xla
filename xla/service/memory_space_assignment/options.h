@@ -215,6 +215,8 @@ struct Options {
   // ones. If it fails to replace the copy, it keeps the sync version.
   bool enable_sync_copy_replacement = false;
 
+  bool enable_sync_slice_replacement = true;
+
   // The ratio of use bytes to copy bytes for a given allocation site below
   // which we consider the site to be inefficient. A value of 0 would treat all
   // sites as efficient and a value of 1 would require the amount of bytes used
