@@ -178,10 +178,17 @@ absl::Status NcclAllToAllStartThunk::RunNcclCollective(
 
   if (is_local() && p2p_memcpy_enabled_) {
     int local_id = stream.parent()->device_ordinal() % num_participants;
+    absl::node_hash_map<int64_t, uint64_t>* send_pointer_map = nullptr;
+    absl::node_hash_map<int64_t, uint64_t>* receive_pointer_map = nullptr;
+    {
+      absl::MutexLock send_lock(&send_mutex_);
+      absl::MutexLock receive_lock(&receive_mutex_);
+      send_pointer_map = &send_pointer_maps_[local_id];
+      receive_pointer_map = &receive_pointer_maps_[local_id];
+    }
     return xla::gpu::RunMemCpyAllToAll(
         nccl_api(), config_.has_split_dimension, device_buffers, stream,
-        comm_wrapper.comm_handle, send_pointer_maps_[local_id],
-        receive_pointer_maps_[local_id]);
+        comm_wrapper.comm_handle, *send_pointer_map, *receive_pointer_map);
   }
   return xla::gpu::RunAllToAll(nccl_api(), config_.has_split_dimension,
                                device_buffers, stream,
