@@ -499,7 +499,7 @@ class GpuDriver {
   static absl::Status AsynchronousMemsetUint8(Context* context,
                                               GpuDevicePtr location,
                                               uint8_t value,
-                                              size_t uint32_count,
+                                              size_t uint8_count,
                                               GpuStreamHandle stream);
 
   // Performs an asynchronous memset of the device memory segment via
