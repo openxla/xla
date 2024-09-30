@@ -185,7 +185,7 @@ class ROCMBlas : public blas::BlasSupport {
       ScratchAllocator *scratch_allocator);
 
   // mutex that guards the rocBLAS handle for this device.
-  absl::Mutex mu_;
+  mutable absl::Mutex mu_;
 
   // GpuExecutor which instantiated this ROCMBlas.
   // Immutable post-initialization.

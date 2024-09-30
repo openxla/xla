@@ -148,8 +148,7 @@ ENTRY main {
     // Test that the function to get current stream value works fine:
     auto* blas = stream_exec()->AsBlas();
     ASSERT_TRUE(blas != nullptr);
-    bool is_main_stream = false;
-    ASSERT_TRUE(blas->IsMainStreamSet(&is_main_stream));
+    TF_ASSERT_OK_AND_ASSIGN(bool is_main_stream, blas->IsMainStreamSet());
     // ROCM only: CUDA blas API does not reset stream after each blas call.
     if (std::holds_alternative< se::RocmComputeCapability >(gpu_comp())) {
       ASSERT_TRUE(is_main_stream);

@@ -111,7 +111,7 @@ class CUDABlas : public blas::BlasSupport {
       ScratchAllocator *scratch_allocator);
 
   // Guards the cuBLAS handle for this device.
-  absl::Mutex mu_;
+  mutable absl::Mutex mu_;
 
   // GpuExecutor which instantiated this CUDABlas.
   // Immutable post-initialization.

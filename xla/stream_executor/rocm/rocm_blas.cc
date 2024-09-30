@@ -164,17 +164,15 @@ bool ROCMBlas::SetStream(Stream *stream) {
   return true;
 }
 
-bool ROCMBlas::IsMainStreamSet(bool *is_main_stream) {
+absl::StatusOr<bool> ROCMBlas::IsMainStreamSet() const {
   CHECK(blas_ != nullptr);
   absl::MutexLock lock{&mu_};
   GpuStreamHandle handle{};
   if (auto ret = wrap::rocblas_get_stream(blas_, &handle); 
       ret != rocblas_status_success) {
-    LOG(ERROR) << "failed to get the current stream value: " << ToString(ret);
-    return false;
+    return absl::InternalError("failed to get the current stream value");
   }
-  *is_main_stream = (handle == 0);
-  return true;
+  return (handle == 0);
 }
 
 namespace {
