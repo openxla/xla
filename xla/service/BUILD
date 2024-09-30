@@ -2575,6 +2575,7 @@ cc_library(
     srcs = ["triangular_solve_expander.cc"],
     hdrs = ["triangular_solve_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":hlo_module_config",
         ":op_expander_pass",
         "//xla:shape_util",
@@ -2617,6 +2618,7 @@ cc_library(
     srcs = ["cholesky_expander.cc"],
     hdrs = ["cholesky_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":op_expander_pass",
         "//xla:literal",
         "//xla:shape_util",
@@ -2640,6 +2642,7 @@ cc_library(
     srcs = ["qr_expander.cc"],
     hdrs = ["qr_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":op_expander_pass",
         "//xla:literal",
         "//xla:shape_util",
@@ -2695,6 +2698,7 @@ cc_library(
     srcs = ["eigh_expander.cc"],
     hdrs = ["eigh_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":op_expander_pass",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -3071,6 +3075,7 @@ cc_library(
     srcs = ["bitcast_dtypes_expander.cc"],
     hdrs = ["bitcast_dtypes_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":hlo_module_config",
         ":op_expander_pass",
         "//xla:literal_util",
@@ -7483,6 +7488,7 @@ cc_library(
     srcs = ["rng_bit_generator_expander.cc"],
     hdrs = ["rng_bit_generator_expander.h"],
     deps = [
+        ":hlo_creation_utils",
         ":op_expander_pass",
         "//xla:shape_util",
         "//xla:util",
@@ -7597,6 +7603,7 @@ cc_library(
     srcs = ["topk_rewriter.cc"],
     hdrs = ["topk_rewriter.h"],
     deps = [
+        ":hlo_creation_utils",
         ":pattern_matcher",
         "//xla:shape_util",
         "//xla:util",
