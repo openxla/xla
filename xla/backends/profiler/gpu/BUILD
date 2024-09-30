@@ -11,6 +11,7 @@ load(
 load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
+    "if_google",
     "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
@@ -26,14 +27,6 @@ tsl_gpu_library(
     name = "device_tracer",
     srcs = tf_additional_device_tracer_srcs(),
     copts = tf_profiler_copts() + tsl_copts(),
-    cuda_deps = [
-        ":cupti_buffer_events",
-        ":cupti_collector",
-        ":cupti_tracer",
-        ":cupti_wrapper",
-        ":rocm_collector",
-        ":rocm_tracer",
-    ],
     deps = [
         ":cupti_utils",
         "//xla/tsl/util:env_var",
@@ -47,7 +40,17 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
         "@tsl//tsl/profiler/utils:time_utils",
-    ],
+    ] + if_cuda([
+        # keep sorted
+        ":cupti_buffer_events",
+        ":cupti_collector",
+        ":cupti_tracer",
+        ":cupti_wrapper",
+    ]) + if_rocm([
+        # keep sorted
+        ":rocm_collector",
+        ":rocm_tracer",
+    ]),
     alwayslink = 1,
 )
 
@@ -218,6 +221,13 @@ tsl_gpu_library(
     srcs = if_rocm(["rocm_collector.cc"]),
     hdrs = if_rocm(["rocm_collector.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # TODO(b/360374983): Remove this tag once the target can be built without --config=rocm.
+        "manual",
+    ]),
     visibility = ["//visibility:public"],
     deps = [
         "//xla/stream_executor/rocm:roctracer_wrapper",
@@ -253,6 +263,13 @@ tsl_gpu_library(
     srcs = if_rocm(["rocm_tracer.cc"]),
     hdrs = if_rocm(["rocm_tracer.h"]),
     copts = tf_profiler_copts() + tsl_copts(),
+    tags = [
+        "gpu",
+        "rocm-only",
+    ] + if_google([
+        # TODO(b/360374983): Remove this tag once the target can be built without --config=rocm.
+        "manual",
+    ]),
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_collector",

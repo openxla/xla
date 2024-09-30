@@ -70,6 +70,7 @@ TF_CONST_INIT extern const absl::string_view kTensorFlowNameScopeLineName;
 TF_CONST_INIT extern const absl::string_view kTensorFlowOpLineName;
 TF_CONST_INIT extern const absl::string_view kXlaModuleLineName;
 TF_CONST_INIT extern const absl::string_view kXlaOpLineName;
+TF_CONST_INIT extern const absl::string_view kSparseCoreStepLineName;
 TF_CONST_INIT extern const absl::string_view kXlaAsyncOpLineName;
 TF_CONST_INIT extern const absl::string_view kKernelLaunchLineName;
 TF_CONST_INIT extern const absl::string_view kSourceLineName;
@@ -277,6 +278,7 @@ enum StatType {
   kHloProto,
   // Device capability related.
   kDevCapClockRateKHz,
+  // For GPU, this is the number of SMs.
   kDevCapCoreCount,
   kDevCapMemoryBandwidth,
   kDevCapMemorySize,
@@ -328,7 +330,9 @@ enum StatType {
   // on the GPU device when tracing is in graph level.
   kCudaGraphExecId,
   kCudaGraphOrigId,
-  kLastStatType = kCudaGraphOrigId,
+  kStepIdleTimePs,
+  kGpuDeviceName,
+  kLastStatType = kGpuDeviceName,
 };
 
 enum MegaScaleStatType : uint8_t {

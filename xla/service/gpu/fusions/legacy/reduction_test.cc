@@ -19,15 +19,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/ir_emitter_context.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
+#include "xla/service/gpu/model/indexing_map_serialization.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
@@ -73,7 +69,7 @@ TEST_F(ReductionTest, ThreadIndexingRowReduction) {
   ReductionFusion fusion(analysis);
 
   EXPECT_THAT(
-      fusion.ComputeThreadIdToInputIndexing(0, 0, &mlir_context_)->ToString(),
+      ToString(*fusion.ComputeThreadIdToInputIndexing(0, 0, &mlir_context_)),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5)[s0, s1, s2, s3] -> (
           d3 floordiv 8,
@@ -90,11 +86,10 @@ TEST_F(ReductionTest, ThreadIndexingRowReduction) {
         s0 in [0, 0],
         s1 in [0, 0],
         s2 in [0, 7],
-        s3 in [0, 1],
-        is_simplified: true
+        s3 in [0, 1]
       )"));
   EXPECT_THAT(
-      fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)->ToString(),
+      ToString(*fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_)),
       MatchIndexingString(R"(
         (d0, d1, d2, d3, d4, d5) -> (
           d3 floordiv 8,
@@ -107,8 +102,7 @@ TEST_F(ReductionTest, ThreadIndexingRowReduction) {
         d3 in [0, 799],
         d4 in [0, 0],
         d5 in [0, 0],
-        d0 mod 32 in [0, 0],
-        is_simplified: true
+        d0 mod 32 in [0, 0]
       )"));
 }
 

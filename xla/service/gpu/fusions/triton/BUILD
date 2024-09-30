@@ -1,4 +1,5 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
@@ -66,7 +67,6 @@ cc_library(
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/transforms:passes",
         "//xla/service/gpu/llvm_gpu_backend",
-        "//xla/service/gpu/model:affine_map_printer",
         "//xla/service/gpu/model:indexing_analysis",
         "//xla/service/gpu/model:symbolic_tile_analysis",
         "//xla/service/gpu/model:symbolic_tiled_hlo_instruction",
@@ -207,6 +207,7 @@ xla_test(
         "no_mac",
     ],
     deps = [
+        ":kernel_name_tracer",
         ":triton_fusion_emitter",
         ":triton_test_utils",
         "//xla:autotuning_proto_cc",
@@ -224,13 +225,10 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cublas_plugin",
         "//xla/tests:filecheck",
-        "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//llvm:ir_headers",
         "@llvm-project//mlir:IR",
@@ -238,7 +236,6 @@ xla_test(
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
@@ -261,6 +258,8 @@ xla_test(
         ":triton_test_utils",
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
@@ -283,6 +282,37 @@ xla_test(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
+)
+
+cc_library(
+    name = "kernel_name_tracer_cuda",
+    testonly = True,
+    srcs = if_cuda(["kernel_name_tracer_cuda.cc"]),
+    hdrs = ["kernel_name_tracer.h"],
+    tags = ["manual"],  # Need to exclude this from wildcard builds
+    deps = [
+        "//xla/backends/profiler/gpu:cupti_collector",
+        "//xla/backends/profiler/gpu:cupti_tracer",
+        "@tsl//tsl/profiler/utils:time_utils",
+    ],
+)
+
+cc_library(
+    name = "kernel_name_tracer_noop",
+    testonly = True,
+    srcs = ["kernel_name_tracer_noop.cc"],
+    hdrs = ["kernel_name_tracer.h"],
+    tags = ["manual"],  # Need to exclude this from wildcard builds
+)
+
+cc_library(
+    name = "kernel_name_tracer",
+    testonly = True,
+    hdrs = ["kernel_name_tracer.h"],
+    deps = if_cuda(
+        [":kernel_name_tracer_cuda"],
+        [":kernel_name_tracer_noop"],
+    ),
 )
 
 cc_library(
@@ -320,6 +350,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/utils:time_utils",
     ],
 )
 
@@ -433,6 +464,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:tensor_float_32_utils",
     ],
 )
@@ -477,6 +509,7 @@ xla_test(
     ],
     tags = ["no_mac"],
     deps = [
+        ":kernel_name_tracer",
         ":triton_fusion_emitter",
         ":triton_support",
         ":triton_test_utils",

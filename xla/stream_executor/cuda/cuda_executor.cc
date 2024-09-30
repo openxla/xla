@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_collectives.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
+#include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_runtime.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
@@ -191,7 +192,7 @@ absl::Status CudaExecutor::LoadModuleFromHsaco(const char* hsaco,
 
 absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
     const MultiKernelLoaderSpec& spec) {
-  auto cuda_kernel = std::make_unique<GpuKernel>(this);
+  auto cuda_kernel = std::make_unique<CudaKernel>(this);
   CUmodule module;
   const std::string* kernel_name;
 
@@ -471,6 +472,19 @@ void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
 
 bool CudaExecutor::SynchronizeAllActivity() {
   return GpuDriver::SynchronizeContext(gpu_context()).ok();
+}
+
+bool CudaExecutor::HostMemoryRegister(void* location, uint64_t size) {
+  VLOG(1) << "Called StreamExecutor::HostMemoryRegister(data=" << location
+          << ")";
+
+  return GpuDriver::HostRegister(gpu_context(), location, size);
+}
+
+bool CudaExecutor::HostMemoryUnregister(void* location) {
+  VLOG(1) << "Called StreamExecutor::HostUnregister(data=" << location << ")";
+
+  return GpuDriver::HostUnregister(gpu_context(), location);
 }
 
 absl::Status CudaExecutor::SynchronousMemZero(DeviceMemoryBase* location,

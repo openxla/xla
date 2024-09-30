@@ -26,7 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
@@ -37,7 +36,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/model/affine_map_printer.h"
 
 namespace xla {
 namespace gpu {
@@ -61,8 +59,6 @@ std::ostream& operator<<(std::ostream& out, VariableKind var_type);
 // Interval represents a closed interval [lower_bound, upper_bound].
 struct Interval {
   std::string ToString() const;
-  void Print(std::ostream& out) const;
-
   bool IsPoint() const { return lower == upper; }
   bool IsFeasible() const { return lower <= upper; }
 
@@ -161,12 +157,9 @@ struct Interval {
   int64_t upper = 0;
 };
 
-std::ostream& operator<<(std::ostream& out, const Interval& range);
+std::ostream& operator<<(std::ostream& out, const Interval& interval);
 inline llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
-                                     const Interval& interval) {
-  os << absl::StrFormat("[%d, %d]", interval.lower, interval.upper);
-  return os;
-}
+                                     const Interval& interval);
 
 template <typename H>
 H AbslHashValue(H h, const Interval& range) {
@@ -304,8 +297,7 @@ class IndexingMap {
   IndexingMap(
       mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
       std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
-      absl::Span<std::pair<mlir::AffineExpr, Interval> const> constraints = {},
-      bool is_simplified = false);
+      absl::Span<std::pair<mlir::AffineExpr, Interval> const> constraints = {});
 
   IndexingMap(mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
               std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
@@ -321,13 +313,10 @@ class IndexingMap {
 
   static IndexingMap FromTensorSizes(
       mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
-      absl::Span<const int64_t> symbol_upper_bounds,
-      bool is_simplified = false);
+      absl::Span<const int64_t> symbol_upper_bounds);
 
-  std::string ToString(
-      const AffineMapPrinter& printer = AffineMapPrinter()) const;
-
-  void Print(std::ostream& out, const AffineMapPrinter& printer) const;
+  // Returns true if the indexing map is valid.
+  bool Verify(std::ostream& out) const;
 
   // Returns true if the map was simplified.
   bool Simplify();
@@ -406,10 +395,6 @@ class IndexingMap {
   // satisfies both constraints.
   bool IsKnownEmpty() const { return is_known_empty_; }
 
-  // Returns true if the indexing map is simplified.
-  void SetIsSimplified(bool is_simplified) { is_simplified_ = is_simplified; }
-  bool IsSimplified() const { return is_simplified_; }
-
   bool IsUndefined() const { return affine_map_ == mlir::AffineMap(); }
 
   // Removes unused symbols from the `affine_map_` and constraints.
@@ -483,8 +468,6 @@ class IndexingMap {
   llvm::DenseMap<mlir::AffineExpr, Interval> constraints_;
   // Flag to indicate that the domain is empty.
   bool is_known_empty_ = false;
-  // Flag to indicate that the indexing map is simplified.
-  bool is_simplified_ = false;
 };
 std::ostream& operator<<(std::ostream& out, const IndexingMap& indexing_map);
 bool operator==(const IndexingMap& lhs, const IndexingMap& rhs);
@@ -496,21 +479,6 @@ IndexingMap operator*(const IndexingMap& lhs, const IndexingMap& rhs);
 // Composes affine maps, i.e. second ∘ first.
 IndexingMap ComposeIndexingMaps(const IndexingMap& first,
                                 const IndexingMap& second);
-
-// Prints the RTVars.
-//
-// This is exposed to allow SymbolicTile to reuse it.
-//
-// `first_rt_var_symbol_index`: The index of the symbol associated with the
-// first RTVar. The RTVars will be printed with consequent symbol indices
-// starting with `first_rt_var_symbol_index`. For example, if `rt_vars.size()
-// == 3` and `first_rt_var_symbol_index == 4`, then the symbol names "s4",
-// "s5" and "s6" will be used.
-//
-// TODO(b/334043862): Unexpose this function if possible.
-void PrintRTVars(const std::vector<RTVar>& rt_vars,
-                 int first_rt_var_symbol_index, std::ostream& out,
-                 const AffineMapPrinter& printer);
 
 template <typename H>
 H AbslHashValue(H h, const IndexingMap& indexing_map) {

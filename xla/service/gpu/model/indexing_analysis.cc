@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/service/gather_simplifier.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/matmul_utils.h"
-#include "xla/service/gpu/model/affine_map_printer.h"
 #include "xla/service/gpu/model/indexing_map.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -529,7 +528,7 @@ HloInstructionIndexing ComputeOutputToInputReduceOpIndexing(
       output_shape.dimensions(), parallel_dims_sizes);
   IndexingMap inits_indexing_map = IndexingMap::FromTensorSizes(
       AffineMap::get(output_shape.rank(), /*symbolCount=*/0, {}, mlir_context),
-      output_shape.dimensions(), {}, /*is_simplified=*/true);
+      output_shape.dimensions(), {});
 
   HloInstructionIndexing instr_indexing;
   instr_indexing.indexing_maps.resize(reduce->operand_count());
@@ -662,8 +661,7 @@ HloInstructionIndexing ComputeOutputToInputReduceWindowOpIndexing(
   // Indexing map for the init value.
   IndexingMap inits_indexing_map = IndexingMap::FromTensorSizes(
       AffineMap::get(output_shape.rank(), /*symbolCount=*/0, {}, mlir_context),
-      output_shape.dimensions(), /*symbol_upper_bounds=*/{},
-      /*is_simplified=*/true);
+      output_shape.dimensions(), /*symbol_upper_bounds=*/{});
 
   HloInstructionIndexing instr_indexing;
   instr_indexing.indexing_maps.resize(reduce_window->operand_count());
@@ -1151,18 +1149,20 @@ std::vector<int64_t> ToTransposeDimensions(const Layout& l) {
 
 }  // namespace
 
+IndexingMap CreateIdentityMap(absl::Span<const int64_t> dimensions,
+                              mlir::MLIRContext* mlir_context) {
+  return IndexingMap::FromTensorSizes(
+      AffineMap::getMultiDimIdentityMap(dimensions.size(), mlir_context),
+      /*dim_upper_bounds=*/dimensions, /*symbol_upper_bounds=*/{});
+}
+
 IndexingMap CreateIdentityMap(const Shape& shape, MLIRContext* mlir_context) {
   if (shape.IsTuple()) {
     // Should happen only for variadic reduce. In that case all tuple shapes are
     // equal.
     return CreateIdentityMap(shape.tuple_shapes(0), mlir_context);
   }
-
-  auto dimensions = shape.dimensions();
-  IndexingMap identity_map = IndexingMap::FromTensorSizes(
-      AffineMap::getMultiDimIdentityMap(dimensions.size(), mlir_context),
-      dimensions, {}, /*is_simplified=*/dimensions.empty());
-  return identity_map;
+  return CreateIdentityMap(shape.dimensions(), mlir_context);
 }
 
 llvm::SmallVector<AffineExpr, 4> DelinearizeInBoundsIndex(
@@ -1254,33 +1254,25 @@ HloInstructionIndexing HloInstructionIndexing::FromIndexingMaps(
   return instr_indexing;
 }
 
-std::string HloInstructionIndexing::ToString(
-    const AffineMapPrinter& printer) const {
-  std::string s;
-  std::stringstream ss(s);
-  Print(ss, printer);
+std::string HloInstructionIndexing::ToString() const {
+  std::stringstream ss;
+  ss << *this;
   return ss.str();
 }
 
-void HloInstructionIndexing::Print(std::ostream& out,
-                                   const AffineMapPrinter& printer) const {
+std::ostream& operator<<(std::ostream& out,
+                         const HloInstructionIndexing& instr_indexing) {
   for (const auto& [operand_id, indexing_maps] :
-       llvm::enumerate(indexing_maps)) {
+       llvm::enumerate(instr_indexing.indexing_maps)) {
     out << "operand id = " << operand_id << ' ';
     for (const auto& indexing_map : indexing_maps) {
       if (indexing_map.IsUndefined()) {
         out << "unknown indexing";
         continue;
       }
-      indexing_map.Print(out, printer);
+      out << indexing_map;
     }
   }
-}
-
-std::ostream& operator<<(std::ostream& out,
-                         const HloInstructionIndexing& instr_indexing) {
-  AffineMapPrinter printer;
-  instr_indexing.Print(out, printer);
   return out;
 }
 
