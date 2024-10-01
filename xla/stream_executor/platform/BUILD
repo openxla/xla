@@ -25,7 +25,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
-    ] + tf_stream_executor_deps("platform", "//xla/stream_executor/platform/"),
+    ],
 )
 
 cc_library(
