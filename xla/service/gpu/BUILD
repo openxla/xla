@@ -2264,11 +2264,15 @@ xla_cc_test(
     ],
 )
 
-cuda_library(
+gpu_kernel_library(
     name = "stream_executor_util_kernel",
     srcs = ["stream_executor_util_kernel.cu.cc"],
-    tags = ["cuda-only"],
-    deps = ["@local_config_cuda//cuda:cuda_headers"],
+    tags = ["gpu"],
+    deps = if_cuda_is_configured([
+        "@local_config_cuda//cuda:cuda_headers",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+    ]),
 )
 
 cc_library(
@@ -2309,7 +2313,7 @@ cc_library(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ] + if_cuda_is_configured([
+    ] + if_gpu_is_configured([
         ":stream_executor_util_kernel",
     ]),
 )
