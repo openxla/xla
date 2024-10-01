@@ -244,9 +244,9 @@ class MockExecutable : public llvm::RTTIExtends<MockExecutable, Executable> {
               (const, final));
   MOCK_METHOD(std::optional<std::vector<OpSharding>>, GetOutputShardings, (),
               (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetParameterLayouts, (), (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>,
               GetHloModules, (), (const, final));
@@ -273,9 +273,9 @@ class MockLoadedExecutable
               (const, final));
   MOCK_METHOD(std::optional<std::vector<OpSharding>>, GetOutputShardings, (),
               (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetParameterLayouts, (), (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::vector<absl::string_view>>>,
               GetOutputMemoryKinds, (), (const, final));
@@ -323,6 +323,11 @@ class MockSharding : public llvm::RTTIExtends<MockSharding, Sharding> {
       : llvm::RTTIExtends<MockSharding, Sharding>(
             BasicDeviceList::Create({}), MemoryKind(),
             /*is_fully_replicated=*/false) {}
+
+  MockSharding(tsl::RCReference<DeviceList> devices, MemoryKind memory_kind,
+               bool is_fully_replicated)
+      : llvm::RTTIExtends<MockSharding, Sharding>(devices, memory_kind,
+                                                  is_fully_replicated) {}
 
   MOCK_METHOD(
       (absl::StatusOr<

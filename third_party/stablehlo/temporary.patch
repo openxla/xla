@@ -1,385 +1,902 @@
-diff --ruN a/stablehlo/BUILD.bazel b/stablehlo/BUILD.bazel
---- stablehlo/BUILD.bazel
-+++ stablehlo/BUILD.bazel
-@@ -1112,11 +1112,13 @@
-         "stablehlo/transforms/StablehloRefineShapes.cpp",
-         "stablehlo/transforms/VhloLegalizeToStablehlo.cpp",
-         "stablehlo/transforms/VhloToVersion.cpp",
-+        "stablehlo/transforms/passes_utils.cpp",
-     ],
-     hdrs = [
-         "stablehlo/transforms/MapStablehloToVhlo.h",
-         "stablehlo/transforms/Passes.h",
-         "stablehlo/transforms/StablehloRefineShapes.h",
-+        "stablehlo/transforms/passes_utils.h",
-     ],
-     strip_include_prefix = ".",
-     deps = [
-diff --ruN a/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir b/stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
---- stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
-+++ stablehlo/stablehlo/conversions/tosa/tests/unary.mlir
-@@ -121,8 +121,8 @@
+diff --ruN a/stablehlo/examples/c++/ExampleAdd.cpp b/stablehlo/examples/c++/ExampleAdd.cpp
+--- stablehlo/examples/c++/ExampleAdd.cpp
++++ stablehlo/examples/c++/ExampleAdd.cpp
+@@ -18,7 +18,7 @@
+ #include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/LogicalResult.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/Block.h"
+ #include "mlir/IR/Builders.h"
+@@ -43,7 +43,7 @@
+       mlir::ModuleOp::create(mlir::UnknownLoc::get(&context));
+   module->getContext()->loadDialect<mlir::func::FuncDialect>();
+   module->getContext()->loadDialect<mlir::stablehlo::StablehloDialect>();
+-  module->getContext()->loadDialect<mlir::quant::QuantizationDialect>();
++  module->getContext()->loadDialect<mlir::quant::QuantDialect>();
+   module->setName("test_module");
  
- // CHECK-LABEL: @transpose
- func.func @transpose(%arg0: tensor<1x2x3xf32>) -> tensor<3x2x1xf32> {
--  // CHECK-DAG: %[[VAR0:.*]] = "tosa.const"() <{value = dense<[2, 1, 0]> : tensor<3xi64>}> : () -> tensor<3xi64>
--  // CHECK-DAG: %[[VAR1:.*]] = tosa.transpose %arg0, %[[VAR0]]
-+  // CHECK: %[[VAR0:.*]] = "tosa.const"() <{value = dense<[2, 1, 0]> : tensor<3xi32>}> : () -> tensor<3xi32>
-+  // CHECK: %[[VAR1:.*]] = tosa.transpose %arg0, %[[VAR0]]
-   %0 = "stablehlo.transpose"(%arg0) {permutation = array<i64: 2, 1, 0>} : (tensor<1x2x3xf32>) -> tensor<3x2x1xf32>
-   return %0 : tensor<3x2x1xf32>
- }
-diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp b/stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
---- stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
-+++ stablehlo/stablehlo/conversions/tosa/transforms/StablehloLegalizeToTosa.cpp
-@@ -451,9 +451,10 @@
+   /** create function **/
+diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp b/stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
+--- stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
++++ stablehlo/stablehlo/conversions/tosa/transforms/StablehloQuantLegalizeToTosaRescale.cpp
+@@ -17,7 +17,7 @@
+ #include <utility>
  
-     auto perms = op.getPermutation();
-     auto type = RankedTensorType::get({static_cast<int64_t>(perms.size())},
--                                      rewriter.getI64Type());
-+                                      rewriter.getI32Type());
-+    std::vector<int32_t> perms_int32(perms.begin(), perms.end());
-     auto constOp = rewriter.create<tosa::ConstOp>(
--        op->getLoc(), type, DenseIntElementsAttr::get(type, perms));
-+        op->getLoc(), type, DenseIntElementsAttr::get(type, perms_int32));
-     rewriter.replaceOpWithNewOp<tosa::TransposeOp>(op, op.getType(),
-                                                    op.getOperand(), constOp);
-     return success();
-diff --ruN a/stablehlo/stablehlo/dialect/Version.cpp b/stablehlo/stablehlo/dialect/Version.cpp
---- stablehlo/stablehlo/dialect/Version.cpp
-+++ stablehlo/stablehlo/dialect/Version.cpp
-@@ -80,9 +80,9 @@
-     case CompatibilityRequirement::NONE:
-       return Version::getCurrentVersion();
-     case CompatibilityRequirement::WEEK_4:
--      return Version(1, 3, 0);  // v1.3.0 - Jul 15, 2024
-+      return Version(1, 5, 0);  // v1.3.0 - Aug 1, 2024
-     case CompatibilityRequirement::WEEK_12:
--      return Version(1, 0, 0);  // v1.0.0 - May 14, 2024
-+      return Version(1, 1, 0);  // v1.1.0 - May 30, 2024
-     case CompatibilityRequirement::MAX:
-       return Version::getMinimumVersion();
-   }
-diff --ruN a/stablehlo/stablehlo/tests/chlo/chlo_legalize_to_stablehlo.mlir b/stablehlo/stablehlo/tests/chlo/chlo_legalize_to_stablehlo.mlir
---- stablehlo/stablehlo/tests/chlo/chlo_legalize_to_stablehlo.mlir
-+++ stablehlo/stablehlo/tests/chlo/chlo_legalize_to_stablehlo.mlir
-@@ -3029,28 +3029,11 @@
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/Dialect/Tosa/IR/TosaOps.h"
+ #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
+ #include "mlir/Dialect/Tosa/Utils/QuantUtils.h"
+diff --ruN a/stablehlo/stablehlo/conversions/tosa/transforms/TosaRescaleLegalizeToStablehlo.cpp b/stablehlo/stablehlo/conversions/tosa/transforms/TosaRescaleLegalizeToStablehlo.cpp
+--- stablehlo/stablehlo/conversions/tosa/transforms/TosaRescaleLegalizeToStablehlo.cpp
++++ stablehlo/stablehlo/conversions/tosa/transforms/TosaRescaleLegalizeToStablehlo.cpp
+@@ -18,7 +18,7 @@
+ #include <utility>
+ 
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/Dialect/Tosa/IR/TosaOps.h"
+ #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
+ #include "mlir/Dialect/Tosa/Utils/QuantUtils.h"
+diff --ruN a/stablehlo/stablehlo/dialect/Base.cpp b/stablehlo/stablehlo/dialect/Base.cpp
+--- stablehlo/stablehlo/dialect/Base.cpp
++++ stablehlo/stablehlo/dialect/Base.cpp
+@@ -31,7 +31,7 @@
+ #include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/Debug.h"
+ #include "llvm/Support/ErrorHandling.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/IR/Builders.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+diff --ruN a/stablehlo/stablehlo/dialect/ChloOps.h b/stablehlo/stablehlo/dialect/ChloOps.h
+--- stablehlo/stablehlo/dialect/ChloOps.h
++++ stablehlo/stablehlo/dialect/ChloOps.h
+@@ -20,7 +20,7 @@
+ #include "llvm/ADT/APFloat.h"
+ #include "llvm/ADT/StringRef.h"
+ #include "mlir/Bytecode/BytecodeOpInterface.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/Builders.h"
+ #include "mlir/IR/BuiltinTypes.h"
+diff --ruN a/stablehlo/stablehlo/dialect/Register.cpp b/stablehlo/stablehlo/dialect/Register.cpp
+--- stablehlo/stablehlo/dialect/Register.cpp
++++ stablehlo/stablehlo/dialect/Register.cpp
+@@ -17,7 +17,7 @@
+ #include "stablehlo/dialect/Register.h"
+ 
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
+ #include "mlir/IR/DialectRegistry.h"
+ #include "stablehlo/dialect/ChloOps.h"
+@@ -30,7 +30,7 @@
+ void registerAllDialects(mlir::DialectRegistry &registry) {
+   // clang-format off
+   registry.insert<mlir::func::FuncDialect,
+-                  mlir::quant::QuantizationDialect,
++                  mlir::quant::QuantDialect,
+                   mlir::sparse_tensor::SparseTensorDialect>();
+   registry.insert<mlir::chlo::ChloDialect,
+                   mlir::stablehlo::StablehloDialect,
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.cpp b/stablehlo/stablehlo/dialect/StablehloOps.cpp
+--- stablehlo/stablehlo/dialect/StablehloOps.cpp
++++ stablehlo/stablehlo/dialect/StablehloOps.cpp
+@@ -52,7 +52,7 @@
+ #include "llvm/Support/Regex.h"
+ #include "mlir/Dialect/Arith/IR/Arith.h"
+ #include "mlir/Dialect/Complex/IR/Complex.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
+ #include "mlir/Dialect/Tensor/IR/Tensor.h"
+diff --ruN a/stablehlo/stablehlo/dialect/StablehloOps.h b/stablehlo/stablehlo/dialect/StablehloOps.h
+--- stablehlo/stablehlo/dialect/StablehloOps.h
++++ stablehlo/stablehlo/dialect/StablehloOps.h
+@@ -21,7 +21,7 @@
+ #include <optional>
+ 
+ #include "llvm/ADT/StringRef.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/Builders.h"
+diff --ruN a/stablehlo/stablehlo/dialect/TypeInference.cpp b/stablehlo/stablehlo/dialect/TypeInference.cpp
+--- stablehlo/stablehlo/dialect/TypeInference.cpp
++++ stablehlo/stablehlo/dialect/TypeInference.cpp
+@@ -52,7 +52,7 @@
+ #include "llvm/Support/Regex.h"
+ #include "llvm/Support/raw_ostream.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/Builders.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+diff --ruN a/stablehlo/stablehlo/dialect/VhloTypes.cpp b/stablehlo/stablehlo/dialect/VhloTypes.cpp
+--- stablehlo/stablehlo/dialect/VhloTypes.cpp
++++ stablehlo/stablehlo/dialect/VhloTypes.cpp
+@@ -20,7 +20,7 @@
+ #include "llvm/ADT/SmallVectorExtras.h"
+ #include "llvm/ADT/StringRef.h"
+ #include "llvm/ADT/TypeSwitch.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/BuiltinTypes.h"
+diff --ruN a/stablehlo/stablehlo/reference/Api.cpp b/stablehlo/stablehlo/reference/Api.cpp
+--- stablehlo/stablehlo/reference/Api.cpp
++++ stablehlo/stablehlo/reference/Api.cpp
+@@ -31,7 +31,7 @@
+ #include "llvm/Support/Path.h"
+ #include "llvm/Support/SourceMgr.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/BuiltinTypeInterfaces.h"
+diff --ruN a/stablehlo/stablehlo/tests/CheckOps.h b/stablehlo/stablehlo/tests/CheckOps.h
+--- stablehlo/stablehlo/tests/CheckOps.h
++++ stablehlo/stablehlo/tests/CheckOps.h
+@@ -17,7 +17,7 @@
+ #define STABLEHLO_DIALECT_CHECKOPS_H_
+ 
+ #include "mlir/Bytecode/BytecodeOpInterface.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinTypes.h"
+ #include "mlir/IR/Dialect.h"
+diff --ruN a/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir b/stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
+--- stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
++++ stablehlo/stablehlo/tests/ops_stablehlo_quantized.mlir
+@@ -1338,24 +1338,24 @@
  
  // -----
  
--// CHECK-LABEL: @tan_f16
--// CHECK-SAME: (%[[ARG:.*]]: tensor<f16>)
--func.func @tan_f16(%arg : tensor<f16>) -> tensor<f16> {
--  // %[[TMP_0:.*]] = stablehlo.convert [[ARG]] : (tensor<f16>) -> tensor<f32>
--  // %[[TMP_1:.*]] = stablehlo.sine %[[TMP_0]]
--  // %[[TMP_2:.*]] = stablehlo.cosine %[[TMP_0]]
--  // %[[TMP_3:.*]] = stablehlo.divide %[[TMP_1]], %[[TMP_2]]
--  // %[[TMP_4:.*]] = stablehlo.convert %[[TMP_3]] : (tensor<f32>) -> tensor<f16>
--  // return %[[TMP_4]] : tensor<f16>
--  %1 = chlo.tan %arg : tensor<f16> -> tensor<f16>
--  func.return %1 : tensor<f16>
--}
--
--// -----
--
- // CHECK-LABEL: @tan_f32
- // CHECK-SAME: (%[[ARG:.*]]: tensor<f32>)
- func.func @tan_f32(%arg : tensor<f32>) -> tensor<f32> {
--  // %[[TMP_0:.*]] = stablehlo.sine %[[ARG]]
--  // %[[TMP_1:.*]] = stablehlo.cosine %[[ARG]]
--  // %[[TMP_2:.*]] = stablehlo.divide %[[TMP_0]], %[[TMP_1]]
--  // return %[[TMP_2]] : tensor<f32>
-+  // CHECK: %[[TMP_0:.*]] = stablehlo.tan %[[ARG]] : tensor<f32>
-+  // CHECK: return %[[TMP_0]] : tensor<f32>
-   %1 = chlo.tan %arg : tensor<f32> -> tensor<f32>
-   func.return %1 : tensor<f32>
++// expected-error@+1 {{scale out of expressed type range}}
+ func.func @quantized_element_type_c6(%arg0: tensor<1x2x!quant.uniform<i4:f16, 10.550400e+04>>) {
+-  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}} 2/4/8/16/32-bit uniform quantized signed integer or 2/4/8/16/32-bit uniform quantized unsigned integer or 2/4/8/16/32-bit uniform quantized per axis signed integer or 2/4/8/16/32-bit uniform quantized per axis unsigned integer values, but got 'tensor<1x2x!quant.uniform<i4:f16, 1.055040e+05>>'}}
+    %0 = stablehlo.add %arg0,  %arg0 : tensor<1x2x!quant.uniform<i4:f16, 10.550400e+04>>
+    func.return
  }
-@@ -3060,22 +3043,11 @@
- // CHECK-LABEL: @tan_complexf32
- // CHECK-SAME: %[[ARG0:.+]]: tensor<1xf32>, %[[ARG1:.+]]: tensor<1xf32>
- func.func @tan_complexf32(%arg0 : tensor<1xf32>, %arg1 : tensor<1xf32>) -> (tensor<1xf32>, tensor<1xf32>) {
--  // CHECK: %[[COMPLEX:.+]] = stablehlo.complex %[[ARG0]], %[[ARG1]] : tensor<1xcomplex<f32>>
--  // CHECK: %[[REAL:.+]] = stablehlo.real %[[COMPLEX]] : (tensor<1xcomplex<f32>>) -> tensor<1xf32>
--  // CHECK: %[[SINE:.+]] = stablehlo.sine %[[REAL]]
--  // CHECK: %[[COS:.+]] = stablehlo.cosine %[[REAL]]
--  // CHECK: %[[TAN:.+]] = stablehlo.divide %[[SINE]], %[[COS]]
--  // CHECK: %[[IMAG:.+]] = stablehlo.imag %[[COMPLEX]] : (tensor<1xcomplex<f32>>) -> tensor<1xf32>
--  // CHECK: %[[TANH:.+]] = stablehlo.tanh %[[IMAG]]
--  // CHECK: %[[NUM:.+]] = stablehlo.complex %[[TAN]], %[[TANH]]
--  // CHECK: %[[ONE:.+]] = stablehlo.constant dense<1.000000e+00> : tensor<1xf32>
--  // CHECK: %[[MUL:.+]] = stablehlo.multiply %[[TAN]], %[[TANH]]
--  // CHECK: %[[NEG:.+]] = stablehlo.negate %[[MUL]]
--  // CHECK: %[[DEN:.+]] = stablehlo.complex %[[ONE]], %[[NEG]]
--  // CHECK: %[[RES:.+]] = stablehlo.divide %[[NUM]], %[[DEN]]
--  // CHECK: %[[REAL:.+]] = stablehlo.real %[[RES]]
--  // CHECK: %[[IMAG:.+]] = stablehlo.imag %[[RES]]
--  // CHECK: return %[[REAL]], %[[IMAG]]
-+  // CHECK: %[[TMP_0:.*]] = stablehlo.complex %[[ARG0]], %[[ARG1]] : tensor<1xcomplex<f32>>
-+  // CHECK: %[[TMP_1:.*]] = stablehlo.tan %[[TMP_0]] : tensor<1xcomplex<f32>>
-+  // CHECK: %[[TMP_2:.*]] = stablehlo.real %[[TMP_1]] :  (tensor<1xcomplex<f32>>) -> tensor<1xf32>
-+  // CHECK: %[[TMP_3:.*]] = stablehlo.imag %[[TMP_1]] : (tensor<1xcomplex<f32>>) -> tensor<1xf32>
-+  // CHECK: return %[[TMP_2]], %[[TMP_3]] : tensor<1xf32>, tensor<1xf32>
-   %0 = stablehlo.complex %arg0, %arg1 : tensor<1xcomplex<f32>>
-   %1 = chlo.tan %0 : tensor<1xcomplex<f32>> -> tensor<1xcomplex<f32>>
-   %2 = stablehlo.real %1 : (tensor<1xcomplex<f32>>) -> tensor<1xf32>
+ 
+ // -----
+ 
++// expected-error@+1 {{scale out of expressed type range}}
+ func.func @quantized_element_type_c6(%arg0: tensor<1x2x!quant.uniform<i4:f16, 4.960464e-08>>) {
+-  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}} 2/4/8/16/32-bit uniform quantized signed integer or 2/4/8/16/32-bit uniform quantized unsigned integer or 2/4/8/16/32-bit uniform quantized per axis signed integer or 2/4/8/16/32-bit uniform quantized per axis unsigned integer values, but got 'tensor<1x2x!quant.uniform<i4:f16, 4.9604639999999998E-8>>'}}
+    %0 = stablehlo.add %arg0,  %arg0 : tensor<1x2x!quant.uniform<i4:f16, 4.960464e-08>>
+    func.return
+ }
+ 
+ // -----
+ 
++// expected-error@+1 {{illegal quantized dimension: -1}}
+ func.func @quantized_element_type_c11(%arg0: tensor<1x5x2x!quant.uniform<i8<-128:127>:f32:-1, {0.1:-30, 0.1:-30}>>) {
+-  // expected-error-re@+1 {{operand #0 must be ranked tensor of {{.*}} 2/4/8/16/32-bit uniform quantized signed integer or 2/4/8/16/32-bit uniform quantized unsigned integer or 2/4/8/16/32-bit uniform quantized per axis signed integer or 2/4/8/16/32-bit uniform quantized per axis unsigned integer values, but got 'tensor<1x5x2x!quant.uniform<i8:f32:-1, {1.000000e-01:-30,1.000000e-01:-30}>>'}}
+   %0 = stablehlo.add %arg0,  %arg0 : tensor<1x5x2x!quant.uniform<i8<-128:127>:f32:-1, {0.1:-30, 0.1:-30}>>
+   func.return
+ }
 diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_create_compatibility_expander.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_create_compatibility_expander.mlir
 --- stablehlo/stablehlo/tests/transforms/stablehlo_create_compatibility_expander.mlir
 +++ stablehlo/stablehlo/tests/transforms/stablehlo_create_compatibility_expander.mlir
-@@ -1,5 +1,5 @@
--// RUN: stablehlo-opt %s -verify-diagnostics -split-input-file -allow-unregistered-dialect --stablehlo-create-compatibility-expander='target=1.0.0' | FileCheck %s --check-prefixes=CHECK
--// RUN: stablehlo-opt %s -verify-diagnostics -split-input-file --stablehlo-create-compatibility-expander='target=1.6.0' | FileCheck %s --check-prefixes=CHECK-NO-DOWNGRADE
-+// RUN: stablehlo-opt %s -verify-diagnostics -split-input-file --stablehlo-create-compatibility-expander='target=1.0.0' --chlo-legalize-to-stablehlo | FileCheck %s --check-prefixes=CHECK
-+// RUN: stablehlo-opt %s -verify-diagnostics -split-input-file --stablehlo-create-compatibility-expander='target=1.6.0' --chlo-legalize-to-stablehlo | FileCheck %s --check-prefixes=CHECK-NO-DOWNGRADE
- 
+@@ -69,7 +69,7 @@
+       index_vector_dim = 3
+     >,
+     slice_sizes = array<i64: 1, 1, 1, 1, 8>,
+-    indices_are_sorted = true
++    indices_are_sorted = false
+   } : (tensor<3x2x4x7x9xi32>, tensor<4x3x5x2xi32>) -> tensor<4x3x5x8xi32>
+   func.return %0 : tensor<4x3x5x8xi32>
+ }
+@@ -77,9 +77,9 @@
  // -----
  
-diff --ruN a/stablehlo/stablehlo/transforms/CMakeLists.txt b/stablehlo/stablehlo/transforms/CMakeLists.txt
---- stablehlo/stablehlo/transforms/CMakeLists.txt
-+++ stablehlo/stablehlo/transforms/CMakeLists.txt
-@@ -53,6 +53,7 @@
-   StablehloRefineShapes.cpp
-   VhloLegalizeToStablehlo.cpp
-   VhloToVersion.cpp
-+  passes_utils.cpp
- 
-   DEPENDS
-   ChloDecompositionPatternsIncGen
-diff --ruN a/stablehlo/stablehlo/transforms/ChloDecompositionPatterns.td b/stablehlo/stablehlo/transforms/ChloDecompositionPatterns.td
---- stablehlo/stablehlo/transforms/ChloDecompositionPatterns.td
-+++ stablehlo/stablehlo/transforms/ChloDecompositionPatterns.td
-@@ -109,26 +109,9 @@
-     (STABLEHLO_DEFAULT_COMPARISON_TYPE)
-   )>;
- 
--// Express `tan` as
--//   sine(x) / cosine(x)
--def : Pat<(CHLO_TanOp NonComplexElementType:$input),
--  (StableHLO_DivOp
--    (StableHLO_SineOp $input),
--    (StableHLO_CosineOp $input)
--  )>;
- 
--
--// Express `tan(a + bi)` as
--//   (tan(a) + i tanh(b)) / (1 - i tan(a) * tanh(b))
--def : Pat<(CHLO_TanOp ComplexElementType:$input),
--  (StableHLO_DivOp
--    (StableHLO_ComplexOp
--      (CHLO_TanOp:$tan (StableHLO_RealOp $input)),
--      (StableHLO_TanhOp:$tanh (StableHLO_ImagOp $input))),
--    (StableHLO_ComplexOp
--      (StableHLO_ConstantLike<"1.0"> $tan),
--      (StableHLO_NegOp (StableHLO_MulOp $tan, $tanh)))
--  )>;
-+def : Pat<(CHLO_TanOp $input),
-+          (StableHLO_TanOp $input)>;
- 
- def : Pat<(CHLO_ConstantOp $v),
-           (StableHLO_ConstantOp $v)>;
-diff --ruN a/stablehlo/stablehlo/transforms/ChloLegalizeToStablehlo.cpp b/stablehlo/stablehlo/transforms/ChloLegalizeToStablehlo.cpp
---- stablehlo/stablehlo/transforms/ChloLegalizeToStablehlo.cpp
-+++ stablehlo/stablehlo/transforms/ChloLegalizeToStablehlo.cpp
-@@ -49,6 +49,7 @@
- #include "stablehlo/dialect/ChloOps.h"
- #include "stablehlo/dialect/StablehloOps.h"
- #include "stablehlo/transforms/Passes.h"
-+#include "stablehlo/transforms/passes_utils.h"
- 
- namespace mlir {
- namespace stablehlo {
-@@ -169,29 +170,6 @@
-   patterns->add<Pattern<mlir::chlo::BroadcastCompareOp,
-                         mlir::stablehlo::CompareOp, HloCompareAdaptor>>(
-       context, args...);
--}
--
--template <typename T>
--static Value getConstantLike(OpBuilder &b, Location loc, T constant,
--                             Value val) {
--  Type ty = getElementTypeOrSelf(val.getType());
--  auto getAttr = [&]() -> Attribute {
--    if (isa<IntegerType>(ty)) return b.getIntegerAttr(ty, constant);
--    if (isa<FloatType>(ty)) return b.getFloatAttr(ty, constant);
--    if (auto complexTy = dyn_cast<ComplexType>(ty)) {
--      return complex::NumberAttr::get(complexTy, constant, 0);
--    }
--    llvm_unreachable("unhandled element type");
--  };
--  return b.create<mlir::chlo::ConstantLikeOp>(loc, cast<TypedAttr>(getAttr()),
--                                              val);
--}
--
--static Value getConstantLike(OpBuilder &b, Location loc,
--                             const APFloat &constant, Value val) {
--  Type ty = getElementTypeOrSelf(val.getType());
--  return b.create<mlir::chlo::ConstantLikeOp>(loc, b.getFloatAttr(ty, constant),
--                                              val);
+ // CHECK-LABEL: @gather_with_batching_no_index_vector_dim
++// CHECK-NEXT: %[[reshape:.*]] = stablehlo.reshape %arg1 : (tensor<4x3x5xi32>) -> tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x3x5x1xi32>
+-// CHECK-NEXT: %[[reshape:.*]] = stablehlo.reshape %arg1 : (tensor<4x3x5xi32>) -> tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %[[reshape]], dim = 3 : (tensor<4x3x5x1xi32>, tensor<4x3x5x1xi32>, tensor<4x3x5x1xi32>) -> tensor<4x3x5x3xi32>
+ // CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
+ // CHECK-SAME:   dimension_numbers = #stablehlo.gather<
+@@ -102,7 +102,7 @@
+       index_vector_dim = 3
+     >,
+     slice_sizes = array<i64: 1, 1, 1, 8>,
+-    indices_are_sorted = true
++    indices_are_sorted = false
+   }> : (tensor<3x2x4x9xi32>, tensor<4x3x5xi32>) -> tensor<4x3x5x8xi32>
+   func.return %0 : tensor<4x3x5x8xi32>
+ }
+@@ -133,9 +133,305 @@
+       index_vector_dim = 3
+     >,
+     slice_sizes = array<i64: 0, 1, 8>,
+-    indices_are_sorted = true
++    indices_are_sorted = false
+   }> : (tensor<0x2x9xi32>, tensor<0x3x5x1xi32>) -> tensor<0x3x5x8xi32>
+   func.return %0 : tensor<0x3x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dims_indices_become_unsorted
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 0 : tensor<3x4x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 1 : tensor<3x4x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<3x4x5x1xi32>, tensor<3x4x5x1xi32>, tensor<3x4x5x2xi32>) -> tensor<3x4x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 2, 1, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<3x2x4x7x9xi32>, tensor<3x4x5x4xi32>) -> tensor<3x4x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<3x4x5x8xi32>
++func.func @gather_batching_dims_indices_become_unsorted(%arg0: tensor<3x2x4x7x9xi32>, %arg1: tensor<3x4x5x2xi32>) -> tensor<3x4x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [0, 1],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = true
++  } : (tensor<3x2x4x7x9xi32>, tensor<3x4x5x2xi32>) -> tensor<3x4x5x8xi32>
++  func.return %0 : tensor<3x4x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dims_indices_become_unsorted_2
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<2x3x5x1xi32>, tensor<2x3x5x1xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 1, 2, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<3x2x4x7x9xi32>, tensor<2x3x5x4xi32>) -> tensor<2x3x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<2x3x5x8xi32>
++func.func @gather_batching_dims_indices_become_unsorted_2(%arg0: tensor<3x2x4x7x9xi32>, %arg1: tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [2, 3],
++      operand_batching_dims = [0, 1],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [2, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = true
++  } : (tensor<3x2x4x7x9xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32>
++  func.return %0 : tensor<2x3x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dims_indices_remain_sorted
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 0 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 2 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<2x3x5x1xi32>, tensor<2x3x5x1xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 1, 2, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = true,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<2x5x4x7x9xi32>, tensor<2x3x5x4xi32>) -> tensor<2x3x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<2x3x5x8xi32>
++func.func @gather_batching_dims_indices_remain_sorted(%arg0: tensor<2x5x4x7x9xi32>, %arg1: tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [2, 3],
++      operand_batching_dims = [0, 1],
++      start_indices_batching_dims = [0, 2],
++      start_index_map = [2, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = true
++  } : (tensor<2x5x4x7x9xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32>
++  func.return %0 : tensor<2x3x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dims_indices_remain_unsorted
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 0 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 2 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<2x3x5x1xi32>, tensor<2x3x5x1xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 1, 2, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<2x5x4x7x9xi32>, tensor<2x3x5x4xi32>) -> tensor<2x3x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<2x3x5x8xi32>
++func.func @gather_batching_dims_indices_remain_unsorted(%arg0: tensor<2x5x4x7x9xi32>, %arg1: tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [2, 3],
++      operand_batching_dims = [0, 1],
++      start_indices_batching_dims = [0, 2],
++      start_index_map = [2, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<2x5x4x7x9xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x8xi32>
++  func.return %0 : tensor<2x3x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dims_does_not_overflow_indices_type
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x127x5x1xi8>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x127x5x1xi8>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<4x127x5x1xi8>, tensor<4x127x5x1xi8>, tensor<4x127x5x2xi8>) -> tensor<4x127x5x4xi8>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 2, 1, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<127x2x4x7x9xi32>, tensor<4x127x5x4xi8>) -> tensor<4x127x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<4x127x5x8xi32>
++func.func @gather_batching_dims_does_not_overflow_indices_type(%arg0: tensor<127x2x4x7x9xi32>, %arg1: tensor<4x127x5x2xi8>) -> tensor<4x127x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<127x2x4x7x9xi32>, tensor<4x127x5x2xi8>) -> tensor<4x127x5x8xi32>
++  func.return %0 : tensor<4x127x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dim_overflows_signless_indices_type
++// CHECK-NEXT: %[[convert:.*]] = stablehlo.convert %arg1 : (tensor<4x128x5x2xi8>) -> tensor<4x128x5x2xi32>
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x128x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x128x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %[[convert]], dim = 3 : (tensor<4x128x5x1xi32>, tensor<4x128x5x1xi32>, tensor<4x128x5x2xi32>) -> tensor<4x128x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 2, 1, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<128x2x4x7x9xi32>, tensor<4x128x5x4xi32>) -> tensor<4x128x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<4x128x5x8xi32>
++func.func @gather_batching_dim_overflows_signless_indices_type(%arg0: tensor<128x2x4x7x9xi32>, %arg1: tensor<4x128x5x2xi8>) -> tensor<4x128x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<128x2x4x7x9xi32>, tensor<4x128x5x2xi8>) -> tensor<4x128x5x8xi32>
++  func.return %0 : tensor<4x128x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dim_overflows_unsigned_indices_type
++// CHECK-NEXT: %[[convert:.*]] = stablehlo.convert %arg1 : (tensor<256x4x5x2xui8>) -> tensor<256x4x5x2xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<256x4x5x1xi32>
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<256x4x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim0]], %[[iota_dim1]], %[[convert]], dim = 3 : (tensor<256x4x5x1xi32>, tensor<256x4x5x1xi32>, tensor<256x4x5x2xi32>) -> tensor<256x4x5x4xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 2, 1, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<256x2x4x7x9xi32>, tensor<256x4x5x4xi32>) -> tensor<256x4x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<256x4x5x8xi32>
++func.func @gather_batching_dim_overflows_unsigned_indices_type(%arg0: tensor<256x2x4x7x9xi32>, %arg1: tensor<256x4x5x2xui8>) -> tensor<256x4x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [0, 1],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<256x2x4x7x9xi32>, tensor<256x4x5x2xui8>) -> tensor<256x4x5x8xi32>
++  func.return %0 : tensor<256x4x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dim_overflows_indices_type_and_i32
++// CHECK-NEXT: %[[convert:.*]] = stablehlo.convert %arg1 : (tensor<4x2147483648x5x2xi8>) -> tensor<4x2147483648x5x2xi64>
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x2147483648x5x1xi64>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x2147483648x5x1xi64>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %[[convert]], dim = 3 : (tensor<4x2147483648x5x1xi64>, tensor<4x2147483648x5x1xi64>, tensor<4x2147483648x5x2xi64>) -> tensor<4x2147483648x5x4xi64>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2, 3],
++// CHECK-SAME:     start_index_map = [0, 2, 1, 3], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<2147483648x2x4x7x9xi32>, tensor<4x2147483648x5x4xi64>) -> tensor<4x2147483648x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<4x2147483648x5x8xi32>
++func.func @gather_batching_dim_overflows_indices_type_and_i32(%arg0: tensor<2147483648x2x4x7x9xi32>, %arg1: tensor<4x2147483648x5x2xi8>) -> tensor<4x2147483648x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<2147483648x2x4x7x9xi32>, tensor<4x2147483648x5x2xi8>) -> tensor<4x2147483648x5x8xi32>
++  func.return %0 : tensor<4x2147483648x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dim_dynamic_size
++// CHECK: operand_batching_dims = [0, 2]
++// CHECK: start_indices_batching_dims = [1, 0]
++func.func @gather_batching_dim_dynamic_size(%arg0: tensor<?x2x4x7x9xi32>, %arg1: tensor<4x?x5x2xi8>) -> tensor<4x?x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1, 3],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [1, 3],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<?x2x4x7x9xi32>, tensor<4x?x5x2xi8>) -> tensor<4x?x5x8xi32>
++  func.return %0 : tensor<4x?x5x8xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @gather_batching_dim_overflows_and_no_index_vector_dim
++// CHECK-NEXT: %[[convert:.*]] = stablehlo.convert %arg1 : (tensor<4x128x5xi8>) -> tensor<4x128x5xi32>
++// CHECK-NEXT: %[[reshape:.*]] = stablehlo.reshape %[[convert]] : (tensor<4x128x5xi32>) -> tensor<4x128x5x1xi32>
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x128x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x128x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %[[reshape]], dim = 3 : (tensor<4x128x5x1xi32>, tensor<4x128x5x1xi32>, tensor<4x128x5x1xi32>) -> tensor<4x128x5x3xi32>
++// CHECK-NEXT: %[[gather:.*]] = "stablehlo.gather"(%arg0, %[[concat]]) <{
++// CHECK-SAME:   dimension_numbers = #stablehlo.gather<
++// CHECK-SAME:     offset_dims = [3], collapsed_slice_dims = [0, 1, 2],
++// CHECK-SAME:     start_index_map = [0, 2, 1], index_vector_dim = 3>,
++// CHECK-SAME:   indices_are_sorted = false,
++// CHECK-SAME:   slice_sizes = array<i64: 1, 1, 1, 8>
++// CHECK-SAME: }> : (tensor<128x2x4x9xi32>, tensor<4x128x5x3xi32>) -> tensor<4x128x5x8xi32>
++// CHECK-NEXT: return %[[gather]] : tensor<4x128x5x8xi32>
++func.func @gather_batching_dim_overflows_and_no_index_vector_dim(%arg0: tensor<128x2x4x9xi32>, %arg1: tensor<4x128x5xi8>) -> tensor<4x128x5x8xi32> {
++  %0 = "stablehlo.gather"(%arg0, %arg1) {
++    dimension_numbers = #stablehlo.gather<
++      offset_dims = [3],
++      collapsed_slice_dims = [1],
++      operand_batching_dims = [0, 2],
++      start_indices_batching_dims = [1, 0],
++      start_index_map = [1],
++      index_vector_dim = 3
++    >,
++    slice_sizes = array<i64: 1, 1, 1, 8>,
++    indices_are_sorted = false
++  } : (tensor<128x2x4x9xi32>, tensor<4x128x5xi8>) -> tensor<4x128x5x8xi32>
++  func.return %0 : tensor<4x128x5x8xi32>
  }
  
- static Value getConstantLikeMaxFiniteValue(OpBuilder &b, Location loc,
+ // -----
+@@ -156,7 +452,7 @@
+   // CHECK-NO-DOWNGRADE: input_batching_dims = [0, 2]
+   // CHECK-NO-DOWNGRADE: scatter_indices_batching_dims = [1, 0]
+   %0 = "stablehlo.scatter"(%arg0, %arg1, %arg2) <{
+-    indices_are_sorted = true,
++    indices_are_sorted = false,
+     scatter_dimension_numbers = #stablehlo.scatter<
+       update_window_dims = [3],
+       inserted_window_dims = [1, 3],
+@@ -176,9 +472,9 @@
+ // -----
+ 
+ // CHECK-LABEL: @scatter_with_batching_no_index_vector_dim
++// CHECK-NEXT: %[[reshape:.*]] = stablehlo.reshape %arg1 : (tensor<4x3x5xi32>) -> tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 1 : tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 0 : tensor<4x3x5x1xi32>
+-// CHECK-NEXT: %[[reshape:.*]] = stablehlo.reshape %arg1 : (tensor<4x3x5xi32>) -> tensor<4x3x5x1xi32>
+ // CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %[[reshape]], dim = 3 : (tensor<4x3x5x1xi32>, tensor<4x3x5x1xi32>, tensor<4x3x5x1xi32>) -> tensor<4x3x5x3xi32>
+ // CHECK-NEXT: %[[scatter:.*]] = "stablehlo.scatter"(%arg0, %[[concat]], %arg2) <{
+ // CHECK-SAME:   indices_are_sorted = false,
+@@ -192,7 +488,7 @@
+   // CHECK-NO-DOWNGRADE: input_batching_dims = [0, 2]
+   // CHECK-NO-DOWNGRADE: scatter_indices_batching_dims = [1, 0]
+   %0 = "stablehlo.scatter"(%arg0, %arg1, %arg2) <{
+-    indices_are_sorted = true,
++    indices_are_sorted = false,
+     scatter_dimension_numbers = #stablehlo.scatter<
+       update_window_dims = [3],
+       inserted_window_dims = [1],
+@@ -208,3 +504,60 @@
+   }) : (tensor<3x2x4x9xi32>, tensor<4x3x5xi32>, tensor<4x3x5x8xi32>) -> tensor<3x2x4x9xi32>
+   func.return %0 : tensor<3x2x4x9xi32>
+ }
++
++// -----
++
++// CHECK-LABEL: @scatter_batching_dims_indices_remain_sorted
++// CHECK-NEXT: %[[iota_dim1:.*]] = stablehlo.iota dim = 0 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[iota_dim0:.*]] = stablehlo.iota dim = 2 : tensor<2x3x5x1xi32>
++// CHECK-NEXT: %[[concat:.*]] = stablehlo.concatenate %[[iota_dim1]], %[[iota_dim0]], %arg1, dim = 3 : (tensor<2x3x5x1xi32>, tensor<2x3x5x1xi32>, tensor<2x3x5x2xi32>) -> tensor<2x3x5x4xi32>
++// CHECK-NEXT: %[[scatter:.*]] = "stablehlo.scatter"(%arg0, %[[concat]], %arg2) <{
++// CHECK-SAME:   indices_are_sorted = true,
++// CHECK-SAME:   dimension_numbers = #stablehlo.scatter<
++// CHECK-SAME:     update_window_dims = [3], inserted_window_dims = [0, 1, 2, 3],
++// CHECK-SAME:     scatter_dims_to_operand_dims = [0, 1, 2, 3], index_vector_dim = 3>,
++// CHECK-SAME:   unique_indices = false}>
++// CHECK:      (tensor<2x5x4x7x9xi32>, tensor<2x3x5x4xi32>, tensor<2x3x5x8xi32>) -> tensor<2x5x4x7x9xi32>
++// CHECK-NEXT: return %[[scatter]] : tensor<2x5x4x7x9xi32>
++func.func @scatter_batching_dims_indices_remain_sorted(%arg0: tensor<2x5x4x7x9xi32>, %arg1: tensor<2x3x5x2xi32>, %arg2: tensor<2x3x5x8xi32>) -> tensor<2x5x4x7x9xi32> {
++  %0 = "stablehlo.scatter"(%arg0, %arg1, %arg2) <{
++    indices_are_sorted = true,
++    scatter_dimension_numbers = #stablehlo.scatter<
++      update_window_dims = [3],
++      inserted_window_dims = [2, 3],
++      input_batching_dims = [0, 1],
++      scatter_indices_batching_dims = [0, 2],
++      scatter_dims_to_operand_dims = [2, 3],
++      index_vector_dim = 3
++    >,
++    unique_indices = false
++  }> ({
++  ^bb0(%arg3: tensor<i32>, %arg4: tensor<i32>):
++    stablehlo.return %arg4 : tensor<i32>
++  }) : (tensor<2x5x4x7x9xi32>, tensor<2x3x5x2xi32>, tensor<2x3x5x8xi32>) -> tensor<2x5x4x7x9xi32>
++  func.return %0 : tensor<2x5x4x7x9xi32>
++}
++
++// -----
++
++// CHECK-LABEL: @scatter_batching_dim_dynamic_scatter_indices
++// CHECK: input_batching_dims = [0, 2]
++// CHECK: scatter_indices_batching_dims = [1, 0]
++func.func @scatter_batching_dim_dynamic_scatter_indices(%arg0: tensor<?x2x4x7x9xi32>, %arg1: tensor<4x?x5x2xi32>, %arg2: tensor<4x?x5x8xi32>) -> tensor<?x2x4x7x9xi32> {
++  %0 = "stablehlo.scatter"(%arg0, %arg1, %arg2) <{
++    indices_are_sorted = false,
++    scatter_dimension_numbers = #stablehlo.scatter<
++      update_window_dims = [3],
++      inserted_window_dims = [1, 3],
++      input_batching_dims = [0, 2],
++      scatter_indices_batching_dims = [1, 0],
++      scatter_dims_to_operand_dims = [1, 3],
++      index_vector_dim = 3
++    >,
++    unique_indices = false
++  }> ({
++  ^bb0(%arg3: tensor<i32>, %arg4: tensor<i32>):
++    stablehlo.return %arg4 : tensor<i32>
++  }) : (tensor<?x2x4x7x9xi32>, tensor<4x?x5x2xi32>, tensor<4x?x5x8xi32>) -> tensor<?x2x4x7x9xi32>
++  func.return %0 : tensor<?x2x4x7x9xi32>
++}
+diff --ruN a/stablehlo/stablehlo/tools/StablehloTranslateMain.cpp b/stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
+--- stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
++++ stablehlo/stablehlo/tools/StablehloTranslateMain.cpp
+@@ -24,7 +24,7 @@
+ #include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/LogicalResult.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/DialectRegistry.h"
+@@ -237,7 +237,7 @@
+     },
+     [](DialectRegistry &registry) {
+       registry.insert<func::FuncDialect>();
+-      registry.insert<quant::QuantizationDialect>();
++      registry.insert<quant::QuantDialect>();
+       registry.insert<stablehlo::check::CheckDialect>();
+       registry.insert<stablehlo::interpreter::InterpreterDialect>();
+       registry.insert<stablehlo::StablehloDialect>();
+diff --ruN a/stablehlo/stablehlo/transforms/Passes.h b/stablehlo/stablehlo/transforms/Passes.h
+--- stablehlo/stablehlo/transforms/Passes.h
++++ stablehlo/stablehlo/transforms/Passes.h
+@@ -19,7 +19,7 @@
+ #include <memory>
+ 
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
+ #include "mlir/Dialect/Shape/IR/Shape.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/Pass/Pass.h"
 diff --ruN a/stablehlo/stablehlo/transforms/Passes.td b/stablehlo/stablehlo/transforms/Passes.td
 --- stablehlo/stablehlo/transforms/Passes.td
 +++ stablehlo/stablehlo/transforms/Passes.td
-@@ -338,5 +338,6 @@
-   ];
+@@ -68,7 +68,7 @@
+   let summary = "Legalize VHLO to StableHLO.";
    let dependentDialects = [
+     "mlir::func::FuncDialect",
+-    "mlir::quant::QuantizationDialect",
++    "mlir::quant::QuantDialect",
+     "mlir::shape::ShapeDialect",
      "mlir::stablehlo::StablehloDialect",
--  ];
--}
-+    "mlir::chlo::ChloDialect",
-+  ];
-+}
+   ];
 diff --ruN a/stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpander.cpp b/stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpander.cpp
 --- stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpander.cpp
 +++ stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpander.cpp
-@@ -26,6 +26,7 @@
- #include "stablehlo/dialect/StablehloOps.h"
- #include "stablehlo/dialect/Version.h"
- #include "stablehlo/transforms/Passes.h"
-+#include "stablehlo/transforms/passes_utils.h"
- 
- namespace mlir {
- namespace stablehlo {
-@@ -37,21 +38,6 @@
- //===----------------------------------------------------------------------===//
- // Helpers.
- //===----------------------------------------------------------------------===//
--
--// Creates a constant with all ones.
--static Value createConstantWithAllOnes(OpBuilder &b, Location loc, Value val) {
--  if (!isa<FloatType>(getElementTypeOrSelf(val)))
--    llvm_unreachable("Unsupported element type, expecting float");
--
--  auto shapedTy = dyn_cast<mlir::ShapedType>(val.getType());
--  if (!shapedTy) llvm_unreachable("Unsupported shaped type.");
--
--  mlir::DenseElementsAttr elementsAttr =
--      mlir::DenseElementsAttr::get(shapedTy, 1.0);
--
--  return b.create<mlir::stablehlo::ConstantOp>(loc, val.getType(),
--                                               elementsAttr);
--}
- 
- // Check user-specified target version.
- vhlo::Version validateTargetVersion(llvm::StringRef versionRef) {
-diff --ruN a/stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpanderPatterns.td b/stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpanderPatterns.td
---- stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpanderPatterns.td
-+++ stablehlo/stablehlo/transforms/StablehloCreateCompatibilityExpanderPatterns.td
-@@ -24,7 +24,8 @@
-   CPred<"!isa<ComplexType>(cast<ShapedType>($_self).getElementType())">,
-   "Non-complex element type">;
- 
--def createConstantWithAllOnes : NativeCodeCall<"createConstantWithAllOnes($_builder, $_loc, $0)">;
-+class StableHLO_ConstantLike<string value> : NativeCodeCall<
-+    "::mlir::stablehlo::getConstantLike($_builder, $_loc, " # value # ", $0)">;
- 
- // Express `tan` as
- //   sine(x) / cosine(x)
-@@ -42,6 +43,6 @@
-       (StableHLO_TanOp:$tan (StableHLO_RealOp $input)),
-       (StableHLO_TanhOp:$tanh (StableHLO_ImagOp $input))),
-     (StableHLO_ComplexOp
--      (createConstantWithAllOnes $tan),
-+      (StableHLO_ConstantLike<"1.0"> $tan),
-       (StableHLO_NegOp (StableHLO_MulOp $tan, $tanh)))
-   )>;
-diff --ruN a/stablehlo/stablehlo/transforms/passes_utils.cpp b/stablehlo/stablehlo/transforms/passes_utils.cpp
---- stablehlo/stablehlo/transforms/passes_utils.cpp
-+++ stablehlo/stablehlo/transforms/passes_utils.cpp
-@@ -0,0 +1,34 @@
-+/* Copyright 2024 The StableHLO Authors. All Rights Reserved.
-+Licensed under the Apache License, Version 2.0 (the "License");
-+you may not use this file except in compliance with the License.
-+You may obtain a copy of the License at
-+    http://www.apache.org/licenses/LICENSE-2.0
-+Unless required by applicable law or agreed to in writing, software
-+distributed under the License is distributed on an "AS IS" BASIS,
-+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+See the License for the specific language governing permissions and
-+limitations under the License.
-+==============================================================================*/
-+
-+#include "stablehlo/transforms/passes_utils.h"
-+
+@@ -22,8 +22,11 @@
+ #include "llvm/ADT/STLExtras.h"
+ #include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/ErrorHandling.h"
++#include "llvm/Support/MathExtras.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
 +#include "mlir/IR/Builders.h"
-+#include "mlir/IR/Location.h"
-+#include "mlir/IR/TypeUtilities.h"
-+#include "mlir/IR/Types.h"
-+#include "mlir/IR/Value.h"
-+#include "mlir/Support/LLVM.h"
-+#include "stablehlo/dialect/ChloOps.h"
-+
-+namespace mlir {
-+namespace stablehlo {
-+
-+Value getConstantLike(OpBuilder &b, Location loc, const APFloat &constant,
-+                      Value val) {
-+  Type ty = getElementTypeOrSelf(val.getType());
-+  return b.create<mlir::chlo::ConstantLikeOp>(loc, b.getFloatAttr(ty, constant),
-+                                              val);
+ #include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/BuiltinTypeInterfaces.h"
+ #include "mlir/IR/BuiltinTypes.h"
+ #include "mlir/IR/Diagnostics.h"
+ #include "mlir/IR/PatternMatch.h"
+@@ -75,6 +78,42 @@
+   return result;
+ }
+ 
++bool fitsInIntegralType(int64_t size, IntegerType type) {
++  if (type.isUnsigned()) {
++    return llvm::isUIntN(type.getWidth(), size);
++  } else {
++    return llvm::isIntN(type.getWidth(), size);
++  }
 +}
 +
-+}  // namespace stablehlo
-+}  // namespace mlir
-diff --ruN a/stablehlo/stablehlo/transforms/passes_utils.h b/stablehlo/stablehlo/transforms/passes_utils.h
---- stablehlo/stablehlo/transforms/passes_utils.h
-+++ stablehlo/stablehlo/transforms/passes_utils.h
-@@ -0,0 +1,57 @@
-+/* Copyright 2024 The StableHLO Authors. All Rights Reserved.
-+Licensed under the Apache License, Version 2.0 (the "License");
-+you may not use this file except in compliance with the License.
-+You may obtain a copy of the License at
-+    http://www.apache.org/licenses/LICENSE-2.0
-+Unless required by applicable law or agreed to in writing, software
-+distributed under the License is distributed on an "AS IS" BASIS,
-+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+See the License for the specific language governing permissions and
-+limitations under the License.
-+==============================================================================*/
++// If `type` is an integer type in which `size` doesn't fit, promote it to i32
++// or i64 (depending on `size`).
++Type promoteTypeForSize(Type type, int64_t size, OpBuilder &builder) {
++  // Gather/Scatter should have an integer type, but we check just in case.
++  auto intType = dyn_cast<IntegerType>(type);
++  if (!intType || fitsInIntegralType(size, intType)) {
++    return type;
++  }
++  if (fitsInIntegralType(size, builder.getI32Type())) {
++    return builder.getI32Type();
++  }
++  return builder.getI64Type();
++}
 +
-+#ifndef THIRD_PARTY_STABLEHLO_STABLEHLO_TRANSFORMS_PASSES_UTILS_H_
-+#define THIRD_PARTY_STABLEHLO_STABLEHLO_TRANSFORMS_PASSES_UTILS_H_
++// If `indices_batching_dims` and `updated_index_map` are both sorted, then the
++// `indices_are_sorted` property is preserved.
++//
++// This is because each concatenated iota is monotonically increasing, sorted
++// indices batching dims mean their order corresponds to the order of batching
++// dims in the operand, and a sorted updated start index map means the order of
++// the index vector dim corresponds to the order of operand dims.
++bool getUpdatedIndicesAreSorted(bool indices_are_sorted,
++                                ArrayRef<int64_t> indices_batching_dims,
++                                ArrayRef<int64_t> updated_index_map) {
++  return indices_are_sorted && llvm::is_sorted(indices_batching_dims) &&
++         llvm::is_sorted(updated_index_map);
++}
 +
-+#include "llvm/Support/ErrorHandling.h"
-+#include "mlir/Dialect/Complex/IR/Complex.h"
-+#include "mlir/IR/Builders.h"
-+#include "mlir/IR/BuiltinAttributeInterfaces.h"
-+#include "mlir/IR/BuiltinTypes.h"
-+#include "mlir/IR/Location.h"
-+#include "mlir/IR/TypeUtilities.h"
-+#include "mlir/IR/Types.h"
-+#include "mlir/IR/Value.h"
-+#include "mlir/Support/LLVM.h"
-+#include "stablehlo/dialect/ChloOps.h"
+ // Returns an updated indices tensor such that an `IotaOp` is prepended for each
+ // dim in `indicesBatchingDims` with a `ConcatenateOp`.
+ //
+@@ -85,16 +124,31 @@
+                           PatternRewriter &rewriter) {
+   Location loc = indices.getLoc();
+   auto indicesType = cast<RankedTensorType>(indices.getType());
++  Type elementType = indicesType.getElementType();
 +
-+namespace mlir {
-+namespace stablehlo {
-+// Add utility functions common across passes.
++  // The batching dim sizes might not fit in the existing element type,
++  // in which case we need to promote it.
++  for (int64_t batchingDim : indicesBatchingDims) {
++    elementType = promoteTypeForSize(
++        elementType, indicesType.getDimSize(batchingDim), rewriter);
++  }
++  if (elementType != indicesType.getElementType()) {
++    indicesType = RankedTensorType::get(indicesType.getShape(), elementType);
++    indices = rewriter.create<ConvertOp>(loc, indicesType, indices);
++  }
 +
-+// Creates a chlo::ConstantLikeOp using a splat `constant` of the same shape
-+// as `val`.
-+template <typename T>
-+Value getConstantLike(OpBuilder &b, Location loc, T constant, Value val) {
-+  Type ty = getElementTypeOrSelf(val.getType());
-+  auto getAttr = [&]() -> Attribute {
-+    if (isa<IntegerType>(ty)) return b.getIntegerAttr(ty, constant);
-+    if (isa<FloatType>(ty)) return b.getFloatAttr(ty, constant);
-+    if (auto complexTy = dyn_cast<ComplexType>(ty)) {
-+      return complex::NumberAttr::get(complexTy, constant, 0);
+   bool indexVectorDimOnLastDim = indexVectorDim == indicesType.getRank();
+-
+   SmallVector<int64_t> iotaShape(indicesType.getShape());
+   if (indexVectorDimOnLastDim) {
+     iotaShape.push_back(1);
+   } else {
+     iotaShape[indexVectorDim] = 1;
+   }
+-  auto iotaType =
+-      RankedTensorType::get(iotaShape, indicesType.getElementType());
++  auto iotaType = RankedTensorType::get(iotaShape, elementType);
++
++  if (indexVectorDimOnLastDim) {
++    indices = rewriter.create<ReshapeOp>(loc, iotaType, indices);
++  }
+ 
+   SmallVector<Value> indicesToConcat;
+   indicesToConcat.reserve(indicesBatchingDims.size() + 1);
+@@ -102,12 +156,7 @@
+     indicesToConcat.push_back(
+         rewriter.create<IotaOp>(loc, iotaType, batchingDim));
+   }
+-  if (indexVectorDimOnLastDim) {
+-    indicesToConcat.push_back(
+-        rewriter.create<ReshapeOp>(loc, iotaType, indices));
+-  } else {
+-    indicesToConcat.push_back(indices);
+-  }
++  indicesToConcat.push_back(indices);
+   return rewriter.create<ConcatenateOp>(loc, indicesToConcat, indexVectorDim);
+ }
+ 
+@@ -125,9 +174,17 @@
+                                 PatternRewriter &rewriter) const override {
+     GatherDimensionNumbersAttr dimNumbers = op.getDimensionNumbers();
+     ArrayRef<int64_t> operandBatchingDims = dimNumbers.getOperandBatchingDims();
++    ArrayRef<int64_t> startIndicesBatchingDims =
++        dimNumbers.getStartIndicesBatchingDims();
+     if (operandBatchingDims.empty()) {
+       return rewriter.notifyMatchFailure(op, [](Diagnostic &diag) {
+         diag << "gather op has no batching dims";
++      });
 +    }
-+    llvm_unreachable("unhandled element type");
-+  };
-+  return b.create<mlir::chlo::ConstantLikeOp>(loc, cast<TypedAttr>(getAttr()),
-+                                              val);
-+}
 +
-+// Creates a chlo::ConstantLikeOp using a APFloat splat `constant` of the
-+// same shape as `val`.
-+Value getConstantLike(OpBuilder &b, Location loc, const APFloat &constant,
-+                      Value val);
++    if (!op.getStartIndices().getType().hasStaticShape()) {
++      return rewriter.notifyMatchFailure(op, [](Diagnostic &diag) {
++        diag << "gather op has start indices with dynamic shape, can't expand";
+       });
+     }
+ 
+@@ -136,16 +193,18 @@
+     SmallVector<int64_t> newStartIndexMap =
+         llvm::to_vector(llvm::concat<const int64_t>(
+             operandBatchingDims, dimNumbers.getStartIndexMap()));
+-    Value newIndices = createConcatIndices(
+-        op.getStartIndices(), dimNumbers.getIndexVectorDim(),
+-        dimNumbers.getStartIndicesBatchingDims(), rewriter);
++    Value newIndices = createConcatIndices(op.getStartIndices(),
++                                           dimNumbers.getIndexVectorDim(),
++                                           startIndicesBatchingDims, rewriter);
+     rewriter.replaceOpWithNewOp<GatherOp>(
+         op, op.getOperand(), newIndices,
+         GatherDimensionNumbersAttr::get(
+             op.getContext(), dimNumbers.getOffsetDims(), newCollapsedSliceDims,
+             /*operandBatchingDims=*/{}, /*startIndicesBatchingDims=*/{},
+             newStartIndexMap, dimNumbers.getIndexVectorDim()),
+-        op.getSliceSizes(), /*indicesAreSorted=*/false);
++        op.getSliceSizes(),
++        getUpdatedIndicesAreSorted(op.getIndicesAreSorted(),
++                                   startIndicesBatchingDims, newStartIndexMap));
+ 
+     return success();
+   }
+@@ -161,9 +220,17 @@
+                                 PatternRewriter &rewriter) const override {
+     ScatterDimensionNumbersAttr dimNumbers = op.getScatterDimensionNumbers();
+     ArrayRef<int64_t> inputBatchingDims = dimNumbers.getInputBatchingDims();
++    ArrayRef<int64_t> scatterIndicesBatchingDims =
++        dimNumbers.getScatterIndicesBatchingDims();
+     if (inputBatchingDims.empty()) {
+       return rewriter.notifyMatchFailure(op, [](Diagnostic &diag) {
+         diag << "scatter op has no batching dims";
++      });
++    }
 +
-+}  // namespace stablehlo
-+}  // namespace mlir
-+
-+#endif  // THIRD_PARTY_STABLEHLO_STABLEHLO_TRANSFORMS_PASSES_UTILS_H_
++    if (!op.getScatterIndices().getType().hasStaticShape()) {
++      return rewriter.notifyMatchFailure(op, [](Diagnostic &diag) {
++        diag << "gather op has start indices with dynamic shape, can't expand";
+       });
+     }
+ 
+@@ -174,7 +241,7 @@
+             inputBatchingDims, dimNumbers.getScatterDimsToOperandDims()));
+     Value newIndices = createConcatIndices(
+         op.getScatterIndices(), dimNumbers.getIndexVectorDim(),
+-        dimNumbers.getScatterIndicesBatchingDims(), rewriter);
++        scatterIndicesBatchingDims, rewriter);
+     auto newScatterOp = rewriter.create<ScatterOp>(
+         op.getLoc(), op->getResultTypes(), op.getInputs(), newIndices,
+         op.getUpdates(),
+@@ -183,7 +250,10 @@
+             newInsertedWindowDims,
+             /*inputBatchingDims=*/{}, /*scatterIndicesBatchingDims=*/{},
+             newScatterDimsToOperandDims, dimNumbers.getIndexVectorDim()),
+-        /*indicesAreSorted=*/false, op.getUniqueIndices());
++        getUpdatedIndicesAreSorted(op.getIndicesAreSorted(),
++                                   scatterIndicesBatchingDims,
++                                   newScatterDimsToOperandDims),
++        op.getUniqueIndices());
+ 
+     newScatterOp.getUpdateComputation().takeBody(op.getUpdateComputation());
+     rewriter.replaceOp(op, newScatterOp.getResults());
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeQDQToQuantizedOp.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeQDQToQuantizedOp.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeQDQToQuantizedOp.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeQDQToQuantizedOp.cpp
+@@ -15,7 +15,7 @@
+ 
+ #include "llvm/ADT/SmallVector.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/Operation.h"
+ #include "mlir/IR/PatternMatch.h"
+ #include "mlir/Transforms/DialectConversion.h"  // Include for TypeConverter
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
+@@ -24,8 +24,8 @@
+ #include "llvm/ADT/SmallVector.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+ #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+-#include "mlir/Dialect/Quant/QuantOps.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/Quant.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/Attributes.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinTypeInterfaces.h"
+@@ -1331,7 +1331,7 @@
+     populateReturnOpTypeConversionPattern(patterns, converter);
+ 
+     ConversionTarget target(*op->getContext());
+-    target.addIllegalDialect<quant::QuantizationDialect>();
++    target.addIllegalDialect<quant::QuantDialect>();
+     auto isLegal = [&converter](Operation *op) {
+       return converter.isLegal(op);
+     };
+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeQuantizedOpToQDQ.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeQuantizedOpToQDQ.cpp
+--- stablehlo/stablehlo/transforms/StablehloLegalizeQuantizedOpToQDQ.cpp
++++ stablehlo/stablehlo/transforms/StablehloLegalizeQuantizedOpToQDQ.cpp
+@@ -17,7 +17,7 @@
+ 
+ #include "llvm/ADT/STLExtras.h"
+ #include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Quant/QuantTypes.h"
++#include "mlir/Dialect/Quant/IR/QuantTypes.h"
+ #include "mlir/IR/BuiltinTypeInterfaces.h"
+ #include "mlir/IR/PatternMatch.h"
+ #include "mlir/IR/TypeRange.h"
 

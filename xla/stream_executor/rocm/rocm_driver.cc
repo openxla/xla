@@ -366,15 +366,6 @@ void GpuDriver::DestroyContext(Context* context) {
   GetContextMap()->Remove(gpu_context->context());
 }
 
-absl::Status GpuDriver::FuncGetAttribute(hipFunction_attribute attribute,
-                                         hipFunction_t func,
-                                         int* attribute_value) {
-  RETURN_IF_ROCM_ERROR(
-      wrap::hipFuncGetAttribute(attribute_value, attribute, func),
-      "Failed to query kernel attribute: ", attribute);
-  return absl::OkStatus();
-}
-
 absl::Status GpuDriver::CreateGraph(hipGraph_t* graph) {
   VLOG(2) << "Create new HIP graph";
   RETURN_IF_ROCM_ERROR(wrap::hipGraphCreate(graph, /*flags=*/0),
@@ -964,12 +955,11 @@ absl::Status GpuDriver::SynchronousMemsetUint32(Context* context,
 
 absl::Status GpuDriver::AsynchronousMemsetUint8(Context* context,
                                                 hipDeviceptr_t location,
-                                                uint8 value,
-                                                size_t uint32_count,
+                                                uint8 value, size_t uint8_count,
                                                 GpuStreamHandle stream) {
   ScopedActivateContext activation{context};
   RETURN_IF_ROCM_ERROR(
-      wrap::hipMemsetAsync(location, value, uint32_count, stream),
+      wrap::hipMemsetAsync(location, value, uint8_count, stream),
       "Failed to enqueue async memset operation");
   return absl::OkStatus();
 }

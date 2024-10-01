@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/client/xla_builder.h"
 #include "xla/client/xla_computation.h"
 #include "xla/executable_run_options.h"
+#include "xla/fp_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/shaped_buffer.h"
@@ -60,10 +61,6 @@ limitations under the License.
 namespace xla {
 namespace exhaustive_op_test {
 
-int eup_version = 0;
-
-int GetEupVersion() { return eup_version; }
-
 bool dump_values = false;
 
 bool ShouldDumpValues() { return dump_values; }
@@ -77,24 +74,46 @@ void AddExhaustiveFlags(std::vector<tsl::Flag>& flag_list) {
 
 namespace {
 
-template <typename Type, typename FuncPtr>
-ErrorSpec CallErrorSpec(FuncPtr* func, const std::array<Type, 1>& in) {
-  return func(in[0]);
+template <typename Traits>
+XlaOp CallEnqueueOperation(typename Traits::EnqueueOp enqueue_op,
+                           typename Traits::XlaInputs inputs) {
+  if constexpr (Traits::kN == 1) {
+    return enqueue_op(inputs[0]);
+  } else if constexpr (Traits::kN == 2) {
+    return enqueue_op(inputs[0], inputs[1]);
+  } else {
+    static_assert(
+        Traits::kN == 1 || Traits::kN == 2,
+        "CallEnqueueOperation only supports N == 1 or N == 2 currently.");
+  }
 }
 
-template <typename Type, typename FuncPtr>
-ErrorSpec CallErrorSpec(FuncPtr* func, const std::array<Type, 2>& in) {
-  return func(in[0], in[1]);
+template <typename Traits>
+typename Traits::NativeRefT CallEvaluateOperation(
+    typename Traits::EvaluateOp evaluate_op,
+    const typename Traits::NativeRefInputs& inputs) {
+  if constexpr (Traits::kN == 1) {
+    return evaluate_op(inputs[0]);
+  } else if constexpr (Traits::kN == 2) {
+    return evaluate_op(inputs[0], inputs[1]);
+  } else {
+    static_assert(
+        Traits::kN == 1 || Traits::kN == 2,
+        "CallEvaluateOperation only supports N == 1 or N == 2 currently.");
+  }
 }
 
-template <typename Type, typename FuncPtr>
-Type CallOperation(FuncPtr* func, const std::array<Type, 1>& in) {
-  return func(in[0]);
-}
-
-template <typename Type, typename FuncPtr>
-Type CallOperation(FuncPtr* func, const std::array<Type, 2>& in) {
-  return func(in[0], in[1]);
+template <typename Traits>
+ErrorSpec CallErrorSpecGen(typename Traits::ErrorSpecGen error_spec_gen,
+                           const typename Traits::NativeInputs& inputs) {
+  if constexpr (Traits::kN == 1) {
+    return error_spec_gen(inputs[0]);
+  } else if constexpr (Traits::kN == 2) {
+    return error_spec_gen(inputs[0], inputs[1]);
+  } else {
+    static_assert(Traits::kN == 1 || Traits::kN == 2,
+                  "CallErrorSpecGen only supports N == 1 or N == 2 currently.");
+  }
 }
 
 // The number of values that can be substituted for subnormal inputs.
@@ -176,7 +195,6 @@ int GetCacheLocation(const std::array<NativeRefT, N>& input) {
 }
 
 // The inverse function of GetCacheLocation.
-
 template <typename RetT,
           typename std::enable_if<!is_complex_t<RetT>::value>::type* = nullptr>
 RetT FromCacheLocationComponent(int cache_loc) {
@@ -448,7 +466,7 @@ void ExhaustiveOpTestBase<T, N>::Run(EnqueueOp enqueue_op,
   for (int i = 0; i < N; ++i) {
     xla_inputs[i] = Parameter(&builder, i, input_literals[i].shape(), "input");
   }
-  Traits::BuildFromInputs(xla_inputs, enqueue_op);
+  CallEnqueueOperation<Traits>(enqueue_op, xla_inputs);
 
   TF_ASSERT_OK_AND_ASSIGN(XlaComputation comp, builder.Build());
   TF_ASSERT_OK_AND_ASSIGN(Literal result_literal,
@@ -546,11 +564,11 @@ ExhaustiveOpTestBase<T, N>::GetTestValuesWithSubnormalSubstitutions(
     ComponentNativeRefT value) {
   std::vector<ComponentNativeRefT> test_values;
   if (std::fpclassify(value) == FP_SUBNORMAL) {
-    test_values.reserve(relaxed_denormal_signs_ ? 3 : 2);
+    test_values.reserve(RelaxedDenormalSigns() ? 3 : 2);
     test_values.push_back(std::copysign(0, value));
     test_values.push_back(
         std::copysign(std::numeric_limits<ComponentNativeRefT>::min(), value));
-    if (relaxed_denormal_signs_) {
+    if (RelaxedDenormalSigns()) {
       test_values.push_back(std::copysign(0, -value));
     }
   } else {
@@ -659,7 +677,7 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
         pow(kNumSubnormalSubstitutionValues, N * (Traits::kIsComplex ? 2 : 1));
     pure_subnormal_cache.reserve(max_cache_size);
     for (int i = 0; i < max_cache_size; ++i) {
-      pure_subnormal_cache.push_back(CallOperation(
+      pure_subnormal_cache.push_back(CallEvaluateOperation<Traits>(
           evaluate_op,
           FromCacheLocation<Traits::kIsComplex, NativeRefT, N>(i)));
     }
@@ -710,8 +728,8 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
     }
 
     NativeT actual = result_arr[i];
-    NativeT expected =
-        static_cast<NativeT>(CallOperation(evaluate_op, inputs_ref_ty));
+    NativeT expected = static_cast<NativeT>(
+        CallEvaluateOperation<Traits>(evaluate_op, inputs_ref_ty));
 
     // Dump input, actual, and expected values _before_ we do error checking to
     // avoid the continues.
@@ -728,7 +746,7 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
       TF_EXPECT_OK(dump_file->Append(result_string));
     }
 
-    ErrorSpec error_spec = CallErrorSpec(error_spec_gen, inputs);
+    ErrorSpec error_spec = CallErrorSpecGen<Traits>(error_spec_gen, inputs);
     ASSERT_GE(error_spec.abs_err, 0.0);
     ASSERT_GE(error_spec.rel_err, 0.0);
     ASSERT_GE(error_spec.distance_err, 0.0);
@@ -789,12 +807,12 @@ void ExhaustiveOpTestBase<T, N>::ExpectNear(
                              typename NativeRefInputs::value_type, N>(
                 test_value);
         if (cache_loc == kInvalidCacheIndex) {
-          result = CallOperation(evaluate_op, test_value);
+          result = CallEvaluateOperation<Traits>(evaluate_op, test_value);
         } else {
           result = pure_subnormal_cache[cache_loc];
         }
       } else {
-        result = CallOperation(evaluate_op, test_value);
+        result = CallEvaluateOperation<Traits>(evaluate_op, test_value);
       }
 
       if (IsClose(result, static_cast<NativeRefT>(actual), error_spec)) {
@@ -847,11 +865,15 @@ template class ExhaustiveOpTestBase<F64, 1>;
 template class ExhaustiveOpTestBase<F32, 1>;
 template class ExhaustiveOpTestBase<F16, 1>;
 template class ExhaustiveOpTestBase<BF16, 1>;
+template class ExhaustiveOpTestBase<F8E5M2, 1>;
+template class ExhaustiveOpTestBase<F8E4M3FN, 1>;
 
 template class ExhaustiveOpTestBase<F64, 2>;
 template class ExhaustiveOpTestBase<F32, 2>;
 template class ExhaustiveOpTestBase<F16, 2>;
 template class ExhaustiveOpTestBase<BF16, 2>;
+template class ExhaustiveOpTestBase<F8E5M2, 2>;
+template class ExhaustiveOpTestBase<F8E4M3FN, 2>;
 
 }  // namespace exhaustive_op_test
 }  // namespace xla

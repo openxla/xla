@@ -80,6 +80,8 @@ xla_cc_test(
         ":plugin_tracer_impl",
         ":profiler_c_api_hdrs",
         ":profiler_error",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_visitor",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:logging",
@@ -87,7 +89,5 @@ xla_cc_test(
         "@tsl//tsl/profiler/lib:profiler_interface",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:xplane_builder",
-        "@tsl//tsl/profiler/utils:xplane_visitor",
     ],
 )

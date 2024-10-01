@@ -437,7 +437,6 @@ def tf_proto_library_cc(
         visibility = None,
         testonly = 0,
         cc_libs = [],
-        cc_stubby_versions = None,
         cc_grpc_version = None,
         use_grpc_namespace = False,
         j2objc_api_version = 1,
@@ -573,7 +572,6 @@ def tf_proto_library(
         visibility = None,
         testonly = 0,
         cc_libs = [],
-        cc_stubby_versions = None,
         cc_grpc_version = None,
         use_grpc_namespace = False,
         j2objc_api_version = 1,
@@ -596,7 +594,6 @@ def tf_proto_library(
         create_service,
         create_java_proto,
         create_kotlin_proto,
-        cc_stubby_versions,
         create_go_proto,
     )
 
@@ -729,7 +726,7 @@ def tf_lib_proto_parsing_deps():
     return [
         ":protos_all_cc",
         clean_dep("@eigen_archive//:eigen3"),
-        clean_dep("//tsl/protobuf:protos_all_cc"),
+        clean_dep("@xla//xla/tsl/protobuf:protos_all_cc"),
     ]
 
 def tf_py_clif_cc(name, visibility = None, **kwargs):
@@ -782,8 +779,8 @@ def tsl_cc_test(
                 # TODO(ddunleavy) remove these and add proto deps to tests
                 # granularly
                 clean_dep("//tsl/protobuf:error_codes_proto_impl_cc_impl"),
-                clean_dep("//tsl/protobuf:histogram_proto_cc_impl"),
-                clean_dep("//tsl/protobuf:status_proto_cc_impl"),
+                clean_dep("@xla//xla/tsl/protobuf:histogram_proto_cc_impl"),
+                clean_dep("@xla//xla/tsl/protobuf:status_proto_cc_impl"),
                 clean_dep("//tsl/profiler/protobuf:xplane_proto_cc_impl"),
                 clean_dep("//tsl/profiler/protobuf:profiler_options_proto_cc_impl"),
             ],
@@ -792,7 +789,7 @@ def tsl_cc_test(
     )
 
 def tf_portable_proto_lib():
-    return ["//tensorflow/core:protos_all_cc_impl", clean_dep("//tsl/protobuf:protos_all_cc_impl")]
+    return ["//tensorflow/core:protos_all_cc_impl", clean_dep("@xla//xla/tsl/protobuf:protos_all_cc_impl")]
 
 def tf_protobuf_compiler_deps():
     return if_static(
@@ -848,5 +845,5 @@ def tf_google_mobile_srcs_no_runtime():
 def tf_google_mobile_srcs_only_runtime():
     return []
 
-def tf_cuda_libdevice_path_deps():
-    return tf_platform_deps("cuda_libdevice_path")
+def tf_cuda_root_path_deps():
+    return tf_platform_deps("cuda_root_path")

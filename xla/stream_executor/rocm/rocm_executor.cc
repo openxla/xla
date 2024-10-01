@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_version.h"
 #include "rocm/rocm_config.h"
 #include "xla/stream_executor/blas.h"
@@ -47,14 +48,12 @@ limitations under the License.
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/gpu/context.h"
-#include "xla/stream_executor/gpu/gpu_collectives.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_event.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_kernel.h"
-#include "xla/stream_executor/gpu/gpu_runtime.h"
 #include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_timer.h"
 #include "xla/stream_executor/gpu/gpu_types.h"
@@ -71,8 +70,11 @@ limitations under the License.
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/rocm/rocm_diagnostics.h"
 #include "xla/stream_executor/rocm/rocm_driver.h"
+#include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 #include "xla/stream_executor/rocm/rocm_event.h"
+#include "xla/stream_executor/rocm/rocm_kernel.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/rocm/rocm_runtime.h"
 #include "xla/stream_executor/rocm/rocm_version_parser.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
@@ -82,6 +84,19 @@ limitations under the License.
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
+
+#define RETURN_IF_ROCM_ERROR(expr, ...)                                  \
+  do {                                                                   \
+    hipError_t _res = (expr);                                            \
+    if (TF_PREDICT_FALSE(_res != hipSuccess)) {                          \
+      if (_res == hipErrorOutOfMemory)                                   \
+        return absl::ResourceExhaustedError(absl::StrCat(                \
+            __VA_ARGS__, ":", ::stream_executor::gpu::ToString(_res)));  \
+      else                                                               \
+        return absl::InternalError(absl::StrCat(                         \
+            __VA_ARGS__, ": ", ::stream_executor::gpu::ToString(_res))); \
+    }                                                                    \
+  } while (0)
 
 namespace stream_executor {
 namespace gpu {
@@ -134,6 +149,14 @@ int fpus_per_core(std::string gcn_arch_name) {
     n = 64;
   }
   return n;
+}
+
+absl::Status FuncGetAttribute(hipFunction_attribute attribute,
+                              hipFunction_t func, int* attribute_value) {
+  RETURN_IF_ROCM_ERROR(
+      wrap::hipFuncGetAttribute(attribute_value, attribute, func),
+      "Failed to query kernel attribute: ", attribute);
+  return absl::OkStatus();
 }
 }  // namespace
 
@@ -252,7 +275,7 @@ absl::Status RocmExecutor::Init() {
 
 absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
     const MultiKernelLoaderSpec& spec) {
-  auto rocm_kernel = std::make_unique<GpuKernel>(this);
+  auto rocm_kernel = std::make_unique<RocmKernel>(this);
   hipModule_t module = nullptr;
   const std::string* kernel_name;
 
@@ -278,7 +301,7 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
 #if TF_ROCM_VERSION >= 60200
     TF_ASSIGN_OR_RETURN(
         GpuFunctionHandle function,
-        GpuRuntime::GetFuncBySymbol(spec.in_process_symbol().symbol()));
+        RocmRuntime::GetFuncBySymbol(spec.in_process_symbol().symbol()));
     rocm_kernel->set_gpu_function(function);
 #else
     rocm_kernel->set_gpu_function(
@@ -317,13 +340,12 @@ absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
 absl::Status RocmExecutor::GetKernelMetadata(GpuKernel* rocm_kernel,
                                              KernelMetadata* kernel_metadata) {
   int value = 0;
-  TF_RETURN_IF_ERROR(GpuDriver::FuncGetAttribute(
-      HIP_FUNC_ATTRIBUTE_NUM_REGS, rocm_kernel->gpu_function(), &value));
+  TF_RETURN_IF_ERROR(FuncGetAttribute(HIP_FUNC_ATTRIBUTE_NUM_REGS,
+                                      rocm_kernel->gpu_function(), &value));
   kernel_metadata->set_registers_per_thread(value);
 
-  TF_RETURN_IF_ERROR(
-      GpuDriver::FuncGetAttribute(HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
-                                  rocm_kernel->gpu_function(), &value));
+  TF_RETURN_IF_ERROR(FuncGetAttribute(HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
+                                      rocm_kernel->gpu_function(), &value));
   kernel_metadata->set_shared_memory_bytes(value);
   return absl::OkStatus();
 }
@@ -580,7 +602,7 @@ absl::Status RocmExecutor::TrimGraphMemory() {
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
-GpuExecutor::CreateDeviceDescription(int device_ordinal) {
+RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   GpuDeviceHandle device;
   auto status = GpuDriver::GetDevice(device_ordinal, &device);
   if (!status.ok()) {
@@ -683,7 +705,7 @@ GpuExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_compile_time_toolkit_version(
       SemanticVersion{HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH});
   desc.set_runtime_version(
-      ParseRocmVersion(GpuRuntime::GetRuntimeVersion().value_or(0))
+      ParseRocmVersion(RocmRuntime::GetRuntimeVersion().value_or(0))
           .value_or(SemanticVersion{0, 0, 0}));
   desc.set_driver_version(
       ParseRocmVersion(GpuDriver::GetDriverVersion().value_or(0))

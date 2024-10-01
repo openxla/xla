@@ -60,6 +60,7 @@ package(
         "//tensorflow/core:__subpackages__",
         "//third_party/sparse_conv:__subpackages__",
         "//waymo/ml/compiler/triton:__subpackages__",
+        "//waymo/research/representation/threed:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -160,16 +161,6 @@ gpu_only_cc_library(
 )
 
 gpu_only_cc_library(
-    name = "gpu_collectives_header",
-    hdrs = ["gpu_collectives.h"],
-    deps = [
-        ":context",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-gpu_only_cc_library(
     name = "gpu_driver_header",
     hdrs = ["gpu_driver.h"],
     visibility = internal_visibility([
@@ -195,19 +186,6 @@ gpu_only_cc_library(
 )
 
 gpu_only_cc_library(
-    name = "gpu_runtime_header",
-    hdrs = ["gpu_runtime.h"],
-    visibility = internal_visibility([
-        "//xla/service/gpu:__subpackages__",
-        "//xla/stream_executor:__subpackages__",
-    ]),
-    deps = [
-        ":gpu_types_header",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-gpu_only_cc_library(
     name = "gpu_command_buffer",
     srcs = ["gpu_command_buffer.cc"],
     hdrs = ["gpu_command_buffer.h"],
@@ -220,6 +198,7 @@ gpu_only_cc_library(
         ":gpu_kernel_header",
         ":gpu_stream",
         ":gpu_types_header",
+        "//xla:util",
         "//xla/stream_executor",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:kernel_spec",
@@ -519,7 +498,11 @@ cc_library(
         "redzone_allocator_kernel.h",
         "redzone_allocator_kernel_cuda.cc",
     ],
-    tags = ["manual"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "manual",
+    ],
     deps = [
         ":gpu_asm_opts",
         "//xla/stream_executor",
@@ -577,6 +560,7 @@ gpu_only_cc_library(
         "//xla/stream_executor:device_memory_handle",
         "//xla/stream_executor:scratch_allocator",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -584,7 +568,6 @@ gpu_only_cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ] + if_rocm_is_configured([
@@ -617,9 +600,12 @@ xla_test(
 
 cc_library(
     name = "gpu_cudamallocasync_allocator",
-    srcs = if_cuda_is_configured(["gpu_cudamallocasync_allocator.cc"]),
-    hdrs = if_cuda_is_configured(["gpu_cudamallocasync_allocator.h"]),
-    tags = ["gpu"],
+    srcs = ["gpu_cudamallocasync_allocator.cc"],
+    hdrs = ["gpu_cudamallocasync_allocator.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     deps = [
         ":gpu_init_impl",
         "//xla/stream_executor:stream_executor_h",
@@ -643,7 +629,7 @@ xla_test(
     name = "gpu_cudamallocasync_allocator_test",
     srcs = ["gpu_cudamallocasync_allocator_test.cc"],
     backends = ["gpu_any"],
-    tags = ["no_rocm"],
+    tags = ["cuda-only"],
     deps = [
         ":gpu_cudamallocasync_allocator",
         ":gpu_stream",
@@ -678,6 +664,7 @@ cc_library(
         "//xla/stream_executor",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:host_or_device_scalar",
+        "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -685,7 +672,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
     ] + if_cuda_is_configured([
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ]) + if_static([

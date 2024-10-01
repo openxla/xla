@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/primitive_util.h"
 #include "xla/service/float_normalization.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
-#include "xla/service/hlo_pass_pipeline.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
@@ -70,9 +70,10 @@ bool SupportsBF16(const stream_executor::GpuComputeCapability& cc) {
   CHECK(false);
 }
 
-absl::Status CreateTritonIrAndFileCheck(
-    HloTestBase* test, absl::string_view hlo_text,
-    absl::string_view triton_fusion_name, absl::string_view filecheck_pattern) {
+absl::Status CreateTritonIrAndFileCheck(HloTestBase* test,
+                                        absl::string_view hlo_text,
+                                        absl::string_view triton_fusion_name,
+                                        absl::string_view filecheck_pattern) {
   TF_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> verified_module,
                       test->ParseAndReturnVerifiedModule(hlo_text));
   auto* comp = verified_module->GetComputationWithName(triton_fusion_name);

@@ -58,7 +58,6 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Quant/QuantTypes.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -5884,9 +5883,9 @@ LogicalResult ScatterOp::fold(
     // value.
     indexIndex.clear();
     if (indexVectorDim == 0) indexIndex.push_back(0);
+    auto updateWindowDims = getScatterDimensionNumbers().getUpdateWindowDims();
     for (int64_t i = 0; i < static_cast<int64_t>(updateIndex.size()); ++i) {
-      if (llvm::count(getScatterDimensionNumbers().getUpdateWindowDims(), i) ==
-          0)
+      if (!llvm::is_contained(updateWindowDims, i))
         indexIndex.push_back(updateIndex[i]);
       if (static_cast<int64_t>(indexIndex.size()) == indexVectorDim)
         indexIndex.push_back(0);
@@ -5894,6 +5893,14 @@ LogicalResult ScatterOp::fold(
 
     // Compute the index for the given update value in the base tensor.
     baseIndex.assign(baseType.getRank(), 0);
+    auto inputBatchingDims =
+        getScatterDimensionNumbers().getInputBatchingDims();
+    auto scatterIndicesBatchingDims =
+        getScatterDimensionNumbers().getScatterIndicesBatchingDims();
+    for (auto [operandDim, indicesDim] :
+         llvm::zip_equal(inputBatchingDims, scatterIndicesBatchingDims)) {
+      baseIndex[operandDim] = indexIndex[indicesDim];
+    }
     uint64_t indexCount = indexType.getShape()[indexVectorDim];
     for (uint64_t i = 0; i < indexCount; ++i) {
       uint64_t operandDim =
@@ -5905,9 +5912,10 @@ LogicalResult ScatterOp::fold(
     uint64_t updateWindowDimIndex = 0;
     auto insertedWindowDims =
         getScatterDimensionNumbers().getInsertedWindowDims();
-    auto updateWindowDims = getScatterDimensionNumbers().getUpdateWindowDims();
     for (uint64_t i = 0; i < baseIndex.size(); ++i) {
-      if (llvm::count(insertedWindowDims, i)) continue;
+      if (llvm::is_contained(insertedWindowDims, i) ||
+          llvm::is_contained(inputBatchingDims, i))
+        continue;
       baseIndex[i] += updateIndex[updateWindowDims[updateWindowDimIndex]];
       updateWindowDimIndex++;
     }
