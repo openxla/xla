@@ -640,6 +640,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
+        "@stablehlo//:stablehlo_portable_api",
         "@tsl//tsl/platform:statusor",
     ],
 )
