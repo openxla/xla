@@ -745,13 +745,11 @@ cc_library(
     deps = [
         ":hipblas_lt_header",
         ":rocblas_plugin",
-        "//xla/stream_executor",
         "//xla/stream_executor:blas",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
     ],
 )
 
