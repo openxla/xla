@@ -75,8 +75,6 @@ using llvm_ir::SetToFirstInsertPoint;
 using xla::float8_fnuz_ir_emitter::EmitF8fnuzToFloating;
 using xla::float8_fnuz_ir_emitter::EmitFloatingToF8fnuz;
 
-namespace {
-
 absl::StatusOr<llvm::Value*> EmitReducePrecisionIR(
     PrimitiveType src_ty, llvm::Value* x, int64_t dest_exponent_bits,
     int64_t dest_mantissa_bits, bool quiet_nans, llvm::IRBuilder<>* b) {
@@ -219,6 +217,8 @@ absl::StatusOr<llvm::Value*> EmitReducePrecisionIR(
 
   return result;
 }
+
+namespace {
 
 absl::StatusOr<llvm::Value*> EmitF16ToF8e5m2(llvm::Value* f16_value,
                                              llvm::IRBuilder<>* b) {
@@ -408,7 +408,7 @@ llvm::Value* EmitF8e4m3fnToF16(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
       b->CreateLShr(f8_exponent_bits, i8_const(f8_mantissa_bits));
 
   // Adjust the exponent by adding the difference in exponent bias:
-  //   f16_exponent = (f8_exopnent + exponent_bias_difference)
+  //   f16_exponent = (f8_exponent + exponent_bias_difference)
   //                  << f16_mantissa_bits
   Value* f16_exponent =
       b->CreateAdd(f8_exponent, i8_const(exponent_bias_difference));
