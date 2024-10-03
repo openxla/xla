@@ -13,16 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "xla/stream_executor/rocm/rocm_runtime.h"
 #include "xla/stream_executor/rocm/rocm_kernel.h"
 
 #include <gtest/gtest.h>
-#include "rocm/include/hip/hip_runtime.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
-#include "xla/stream_executor/rocm/rocm_runtime.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
