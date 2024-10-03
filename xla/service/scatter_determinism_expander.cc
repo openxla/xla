@@ -33,51 +33,6 @@ limitations under the License.
 
 namespace xla {
 
-// Canonicalizes the scatter_indices tensor in order to keep them uniform while
-// performing the scatter operation.
-static StatusOr<HloInstruction*> CanonicalizeScatterIndices(
-    HloInstruction* scatter_indices, int64_t index_vector_dim) {
-  // Transpose the non-index-vector dimensions to the front.
-  TF_ASSIGN_OR_RETURN(
-      HloInstruction * transposed_scatter_indices,
-      TransposeIndexVectorDimToLast(scatter_indices, index_vector_dim));
-  if (scatter_indices->shape().rank() - 1 == index_vector_dim &&
-      scatter_indices->shape().dimensions(index_vector_dim) == 1) {
-    auto new_shape =
-        ShapeUtil::DeleteDimension(index_vector_dim, scatter_indices->shape());
-    TF_ASSIGN_OR_RETURN(scatter_indices,
-                        MakeReshapeHlo(new_shape, scatter_indices));
-  }
-  bool indices_are_scalar =
-      index_vector_dim == scatter_indices->shape().dimensions_size();
-
-  // The number of dimensions in scatter_indices that are index dimensions.
-  const int64_t index_dims_in_scatter_indices = indices_are_scalar ? 0 : 1;
-
-  // If there is only one index (i.e. scatter_indices has rank 1 and this
-  // scatter is really just a dynamic update slice) add a leading degenerate
-  // dimension for uniformity.  Otherwise create a "collapsed" leading dimension
-  // that subsumes all of the non-index-vector dimensions.
-  const Shape& shape = transposed_scatter_indices->shape();
-  if (shape.dimensions_size() == index_dims_in_scatter_indices) {
-    return PrependDegenerateDims(transposed_scatter_indices, 1);
-  }
-  // Collapse all but the dimensions (0 or 1) in scatter_indices containing
-  // the index vectors.
-  auto indices = CollapseFirstNDims(
-      transposed_scatter_indices,
-      shape.dimensions_size() - index_dims_in_scatter_indices);
-  bool has_scalar_indices = scatter_indices->shape().dimensions_size() == 1;
-  if (has_scalar_indices) {
-    scatter_indices =
-        scatter_indices->AddInstruction(HloInstruction::CreateReshape(
-            ShapeUtil::MakeShape(scatter_indices->shape().element_type(),
-                                 {scatter_indices->shape().dimensions(0), 1}),
-            scatter_indices));
-  }
-  return scatter_indices;
-}
-
 // Canonicalizes the scatter_updates in order to keep them uniform while
 // performing the scatter operation.
 static StatusOr<std::vector<HloInstruction*>> CanonicalizeScatterUpdates(
@@ -104,25 +59,23 @@ static StatusOr<std::vector<HloInstruction*>> CanonicalizeScatterUpdates(
 HloInstruction* CreateOutOfBoundTensor(HloComputation* parent,
                                        HloInstruction* scatter_indices,
                                        const Shape& scatter_shape) {
-  // Create a constant with the dimensions of the scatter output shape
-  auto* output_dimensions_constant =
-      parent->AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::CreateR1<int64_t>(scatter_shape.dimensions())));
-
-  // Convert the constant to match the element type of scatter_indices
-  output_dimensions_constant =
-      parent->AddInstruction(HloInstruction::CreateConvert(
-          ShapeUtil::MakeShape(
-              scatter_indices->shape().element_type(),
-              output_dimensions_constant->shape().dimensions()),
-          output_dimensions_constant));
-
-  // Broadcast the converted constant to match the shape of scatter_indices
-  auto* out_of_bound_tensor =
-      parent->AddInstruction(HloInstruction::CreateBroadcast(
-          scatter_indices->shape(), output_dimensions_constant, {1}));
-
-  return out_of_bound_tensor;
+  if (scatter_indices->shape().rank() == 1) {
+    CHECK(scatter_shape.dimensions_size() == 1);
+    Array<int32_t> out_of_bound_array({scatter_indices->shape().dimensions(0)},
+                                      scatter_shape.dimensions(0));
+    return parent->AddInstruction(HloInstruction::CreateConstant(
+        LiteralUtil::CreateFromArray(out_of_bound_array)));
+  }
+  // More than one dimension in scatter_indices
+  Array2D<int32_t> out_of_ound_array(scatter_indices->shape().dimensions(0),
+                                     scatter_indices->shape().dimensions(1));
+  for (int i = 0; i < scatter_indices->shape().dimensions(0); ++i) {
+    for (int j = 0; j < scatter_indices->shape().dimensions(1); ++j) {
+      out_of_ound_array(i, j) = scatter_shape.dimensions(j);
+    }
+  }
+  return parent->AddInstruction(HloInstruction::CreateConstant(
+      LiteralUtil::CreateR2FromArray2D<int>(out_of_ound_array)));
 }
 
 // Computation for sorting the scalar scatter indices and updates together
@@ -160,9 +113,7 @@ static std::vector<HloInstruction*> SortIndicesAndUpdates(
   // Since we canonicalized the scatter updates, the first dim will always be
   // the number of updates and the rest will be the shape of each update
 
-  auto scalar_indices = parent->AddInstruction(HloInstruction::CreateReshape(
-      ShapeUtil::MakeShape(indices_shape.element_type(), {num_indices}),
-      scatter_indices));
+  HloInstruction* scalar_indices = scatter_indices;
 
   std::vector<int64_t> single_update_dimensions(updates_dims.begin() + 1,
                                                 updates_dims.end());
@@ -323,12 +274,7 @@ static HloInstruction* FindLastOccurrenceIndices(
     HloInstruction* scatter_indices, HloInstruction* sorted_scalar_indices,
     HloInstruction* scatter, HloComputation* parent, int64_t num_indices) {
   int64_t indices_len = sorted_scalar_indices->shape().dimensions(0);
-  auto sorted_expanded_indices =
-      parent->AddInstruction(HloInstruction::CreateReshape(
-          ShapeUtil::MakeShape(sorted_scalar_indices->shape().element_type(),
-                               {num_indices, 1}),
-          sorted_scalar_indices));
-
+  HloInstruction* sorted_indices = sorted_scalar_indices;
   auto* sorted_indices_preceding_part =
       parent->AddInstruction(HloInstruction::CreateSlice(
           ShapeUtil::MakeShape(scatter_indices->shape().element_type(),
@@ -356,15 +302,15 @@ static HloInstruction* FindLastOccurrenceIndices(
 
   // Mask the indices
   indices_mask = parent->AddInstruction(HloInstruction::CreateBroadcast(
-      ShapeUtil::MakeShape(PRED, sorted_expanded_indices->shape().dimensions()),
+      ShapeUtil::MakeShape(PRED, scatter_indices->shape().dimensions()),
       indices_mask, {0}));
 
   auto* out_of_bound_tensor =
       CreateOutOfBoundTensor(parent, scatter_indices, scatter->shape());
 
   auto* masked_indices = parent->AddInstruction(HloInstruction::CreateTernary(
-      sorted_expanded_indices->shape(), HloOpcode::kSelect, indices_mask,
-      sorted_expanded_indices, out_of_bound_tensor));
+      sorted_indices->shape(), HloOpcode::kSelect, indices_mask, sorted_indices,
+      out_of_bound_tensor));
   return masked_indices;
 }
 

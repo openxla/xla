@@ -38,6 +38,11 @@ StatusOr<HloInstruction*> AdjustScatterDims(const Shape& scatter_indices_shape,
                                             HloInstruction* updates,
                                             int64_t index_vector_dim);
 
+// Canonicalizes the scatter_indices tensor in order to keep them uniform while
+// performing the scatter operation.
+StatusOr<HloInstruction*> CanonicalizeScatterIndices(
+    HloInstruction* scatter_indices, int64_t index_vector_dim);
+
 StatusOr<HloComputation*> CallAndGetOutput(HloComputation* original,
                                            int output_index);
 StatusOr<HloComputation*> CallComputationAndGetIthOutputWithBinaryParams(

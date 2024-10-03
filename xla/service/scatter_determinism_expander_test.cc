@@ -179,15 +179,13 @@ TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
   const char* const kExpectedPattern = R"(
     CHECK: ENTRY %scatter_add_computation () -> f32[2] {
     CHECK-DAG:   %[[INDICES:.*]] = s32[3,1]{1,0} constant({ {0}, {1}, {1} })
-    CHECK-DAG:   %[[RESHAPE1:.*]] = s32[3]{0} reshape(%[[INDICES]])
+    CHECK-DAG:   %[[RESHAPE:.*]] = s32[3]{0} reshape(%[[INDICES]])
     CHECK-DAG:   %[[OPERAND:.*]] = f32[2]{0} constant({0, 0})
-    CHECK-DAG:   %[[RESHAPE2:.*]] = s32[3]{0} reshape(%[[INDICES]])
-    CHECK-DAG:   %[[RESHAPE3:.*]] = s32[3,1]{1,0} reshape(%[[RESHAPE2]])
-    CHECK-DAG:   %[[RESHAPE4:.*]] = s32[3]{0} reshape(%[[RESHAPE3]])
+    CHECK-DAG:   %[[RESHAPE1:.*]] = s32[3]{0} reshape(%[[INDICES]])
     CHECK-DAG:   %[[UPDATES:.*]] = f32[3]{0} constant({2, 1, 5})
     CHECK-DAG:   %[[TRANSPOSE:.*]] = f32[3]{0} transpose(%[[UPDATES]]), dimensions={0}
-    CHECK-DAG:   %[[RESHAPE_UPDATES:.*]] = f32[3]{0} reshape(%[[TRANSPOSE]])
-    CHECK-DAG:   %[[SORT:.*]] = (s32[3]{0}, f32[3]{0}) sort(%[[RESHAPE4]], %[[RESHAPE_UPDATES]]), dimensions={0}, to_apply=%sorting_computation
+    CHECK-DAG:   %[[RESHAPE2:.*]] = f32[3]{0} reshape(%[[TRANSPOSE]])
+    CHECK-DAG:   %[[SORT:.*]] = (s32[3]{0}, f32[3]{0}) sort(%[[RESHAPE1]], %[[RESHAPE2]]), dimensions={0}, to_apply=%sorting_computation
     CHECK-DAG:   %[[GET_TUPLE_ELEMENT:.*]] = s32[3]{0} get-tuple-element(%[[SORT]]), index=0
     CHECK-DAG:   %[[SLICE4:.*]] = s32[2]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:2]}
     CHECK-DAG:   %[[SLICE5:.*]] = s32[2]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[1:3]}
@@ -195,12 +193,9 @@ TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
     CHECK-DAG:   %[[CONSTANT4:.*]] = pred[] constant(true)
     CHECK-DAG:   %[[BROADCAST4:.*]] = pred[1]{0} broadcast(%[[CONSTANT4]]), dimensions={}
     CHECK-DAG:   %[[CONCAT_COMPARE4:.*]] = pred[3]{0} concatenate(%[[COMPARE3]], %[[BROADCAST4]]), dimensions={0}
-    CHECK-DAG:   %[[BROADCAST5:.*]] = pred[3,1]{1,0} broadcast(%[[CONCAT_COMPARE4]]), dimensions={0}
-    CHECK-DAG:   %[[RESHAPE5:.*]] = s32[3,1]{1,0} reshape(%[[GET_TUPLE_ELEMENT]])
-    CHECK-DAG:   %[[CONSTANT5:.*]] = s64[1]{0} constant({2})
-    CHECK-DAG:   %[[CONVERT:.*]] = s32[1]{0} convert(%[[CONSTANT5]])
-    CHECK-DAG:   %[[BROADCAST6:.*]] = s32[3,1]{1,0} broadcast(%[[CONVERT]]), dimensions={1}
-    CHECK-DAG:   %[[SELECT2:.*]] = s32[3,1]{1,0} select(%[[BROADCAST5]], %[[RESHAPE5]], %[[BROADCAST6]])
+    CHECK-DAG:   %[[BROADCAST5:.*]] = pred[3]{0} broadcast(%[[CONCAT_COMPARE4]]), dimensions={0}
+    CHECK-DAG:   %[[CONSTANT5:.*]] = s32[3]{0} constant({2, 2, 2})
+    CHECK-DAG:   %[[SELECT2:.*]] = s32[3]{0} select(%[[BROADCAST5]], %[[GET_TUPLE_ELEMENT]], %[[CONSTANT5]])
     CHECK-DAG:   %[[CONSTANT3:.*]] = s32[] constant(0)
     CHECK-DAG:   %[[BROADCAST3:.*]] = s32[2]{0} broadcast(%[[CONSTANT3]]), dimensions={}
     CHECK-DAG:   %[[SLICE3:.*]] = s32[1]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:1]}

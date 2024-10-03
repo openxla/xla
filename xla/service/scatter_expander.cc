@@ -30,43 +30,6 @@ limitations under the License.
 
 namespace xla {
 
-// Canonicalizes the scatter_indices tensor in order to keep them uniform while
-// performing the scatter operation.
-static absl::StatusOr<HloInstruction*> CanonicalizeScatterIndices(
-    HloInstruction* scatter_indices, int64_t index_vector_dim) {
-  // Transpose the non-index-vector dimensions to the front.
-  TF_ASSIGN_OR_RETURN(
-      HloInstruction * transposed_scatter_indices,
-      TransposeIndexVectorDimToLast(scatter_indices, index_vector_dim));
-  if (scatter_indices->shape().rank() == index_vector_dim + 1 &&
-      scatter_indices->shape().dimensions(index_vector_dim) == 1) {
-    auto new_shape =
-        ShapeUtil::DeleteDimension(index_vector_dim, scatter_indices->shape());
-    TF_ASSIGN_OR_RETURN(scatter_indices,
-                        MakeReshapeHlo(new_shape, scatter_indices));
-  }
-  bool indices_are_scalar =
-      index_vector_dim == scatter_indices->shape().dimensions_size();
-
-  // The number of dimensions in scatter_indices that are index dimensions.
-  const int64_t index_dims_in_scatter_indices = indices_are_scalar ? 0 : 1;
-
-  // If there is only one index (i.e. scatter_indices has rank 1 and this
-  // scatter is really just a dynamic update slice) add a leading degenerate
-  // dimension for uniformity.  Otherwise create a "collapsed" leading dimension
-  // that subsumes all of the non-index-vector dimensions.
-  const Shape& shape = transposed_scatter_indices->shape();
-  if (shape.dimensions_size() == index_dims_in_scatter_indices) {
-    return PrependDegenerateDims(transposed_scatter_indices, 1);
-  } else {
-    // Collapse all but the dimensions (0 or 1) in scatter_indices containing
-    // the index vectors.
-    return CollapseFirstNDims(
-        transposed_scatter_indices,
-        shape.dimensions_size() - index_dims_in_scatter_indices);
-  }
-}
-
 // Expands an index vector from the scatter_indices tensor into a vector that
 // can be used to dynamic-update-slice to perform the scatter update.
 static absl::StatusOr<HloInstruction*> ExpandIndexVectorIntoOperandSpace(
