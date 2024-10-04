@@ -464,16 +464,6 @@ auto OptionalSupportedTransform(Pattern pattern) {
       SupportedBitcastOrReshape(shared_subpattern), shared_subpattern);
 }
 
-// Broadcast with optional supported type conversion.
-template <typename Pattern>
-auto Broadcast(HloInstruction** bcast, Pattern pattern) {
-  auto shared_subpattern = m::SharedSubpattern(pattern);
-  return m::AnyOf<HloInstruction>(
-      SupportedConvert(m::Broadcast(bcast, pattern)),
-      m::Broadcast(bcast, SupportedConvert(pattern)),
-      m::Broadcast(bcast, pattern));
-}
-
 // Bitcast or reshape with optional supported type conversion and/or addition or
 // removal of degenerate dimensions.
 template <typename Pattern>
@@ -914,8 +904,8 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
                             OptionalSupportedTransform(
                                 m::Op().WithPredicate(x.CaptureOrVerifyFn()))),
                 NormFactor(&norm_factor, &x, &variance, &expectation, &epsilon),
-                Broadcast(&broadcast_scale, m::Op(&scale)),
-                Broadcast(&broadcast_bias, m::Op(&bias))))) {
+                m::Broadcast(&broadcast_scale, m::Op(&scale)),
+                m::Broadcast(&broadcast_bias, m::Op(&bias))))) {
 #if CUDNN_VERSION < 8905
       // Layer norm kernels are available with cuDNN 8.9.5 and above.
       VLOG(1) << "Layer norm Custom Calls require cuDNN 8.9.5.";
@@ -958,27 +948,33 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Verify the element types. The element types of input and output and the
       // shapes of scale and bias must match. If a conversion to the type of the
       // input is the only user of the output, set the output to the conversion.
-      // Similarly, if one of the users of the scale/bias is a conversion to the
-      // type of the bias/scale, set the scale/bias to the conversion.
+      // Similarly, to ensure the scale and bias have the same type, if the
+      // scale/bias is a conversion from the type of the bias/scale, set the
+      // scale/bias to the operand of the conversion. If scale and bias are type
+      // conversions from the same type, set both to the operands of the
+      // conversions.
       if (instr->user_count() == 1 &&
           instr->users()[0]->opcode() == HloOpcode::kConvert &&
           ShapeUtil::SameElementType(instr->users()[0]->shape(),
                                      x.Instr()->shape())) {
         instr = instr->users()[0];
       }
-      for (HloInstruction* scale_user : scale->users()) {
-        if (scale_user->opcode() == HloOpcode::kConvert &&
-            ShapeUtil::SameElementType(scale_user->shape(), bias->shape())) {
-          scale = scale_user;
-          break;
-        }
+      if (scale->opcode() == HloOpcode::kConvert &&
+          ShapeUtil::SameElementType(scale->operand(0)->shape(),
+                                     bias->shape())) {
+        scale = scale->mutable_operand(0);
       }
-      for (HloInstruction* bias_user : bias->users()) {
-        if (bias_user->opcode() == HloOpcode::kConvert &&
-            ShapeUtil::SameElementType(bias_user->shape(), scale->shape())) {
-          bias = bias_user;
-          break;
-        }
+      if (bias->opcode() == HloOpcode::kConvert &&
+          ShapeUtil::SameElementType(bias->operand(0)->shape(),
+                                     scale->shape())) {
+        bias = bias->mutable_operand(0);
+      }
+      if (scale->opcode() == HloOpcode::kConvert &&
+          bias->opcode() == HloOpcode::kConvert &&
+          ShapeUtil::SameElementType(scale->operand(0)->shape(),
+                                     bias->operand(0)->shape())) {
+        scale = scale->mutable_operand(0);
+        bias = bias->mutable_operand(0);
       }
       if (!CompatibleElementType(instr) || !CompatibleElementType(scale) ||
           !CompatibleElementType(bias) ||
