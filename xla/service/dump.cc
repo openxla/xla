@@ -847,7 +847,7 @@ void DumpHloSnapshotIfEnabled(const HloSnapshot& snapshot,
 
   // We don't have a unique id for an HloSnapshot, so in this overload we just
   // have to use its name.
-  int64_t execution_count;
+  int64_t execution_count{};
   {
     static auto& module_name_to_execution_count ABSL_GUARDED_BY(mu) =
         *new absl::flat_hash_map<std::string, int64_t>();
