@@ -344,6 +344,7 @@ cc_library(
     deps = [
         ":ifrt",
         ":test_util",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
     alwayslink = True,
