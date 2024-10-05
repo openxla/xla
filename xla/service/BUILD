@@ -1992,7 +1992,6 @@ cc_library(
     deps = [
         ":buffer_assignment_proto_cc",
         ":buffer_value",
-        ":buffer_value_containers",
         ":call_graph",
         ":hlo_alias_analysis",
         ":hlo_buffer",
@@ -2003,7 +2002,6 @@ cc_library(
         ":logical_buffer",
         "//xla:shape_util",
         "//xla:status_macros",
-        "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_live_range",
@@ -2013,6 +2011,7 @@ cc_library(
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
@@ -2023,6 +2022,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
