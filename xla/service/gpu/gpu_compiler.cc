@@ -1255,7 +1255,7 @@ absl::Status RunLayoutNormalizationPasses(
 absl::Status RunAsyncDotPasses(HloModule* hlo_module) {
   HloPassPipeline pipeline("async-wrapper");
   const DebugOptions& debug_options = hlo_module->config().debug_options();
-  if (debug_options.xla_gpu_async_dot()) {
+  if (true) {
     pipeline.AddPass<AsyncWrapper>([](HloInstruction* instruction) {
       // TODO(b/339654953): Use a better heuristic to determine whether a
       // `dot` operation should be wrapped in an async computation.
@@ -1265,6 +1265,10 @@ absl::Status RunAsyncDotPasses(HloModule* hlo_module) {
       if (instruction->called_computations().size() == 1 &&
           IsTritonFusedComputation(
               *instruction->called_computations().front())) {
+        return true;
+      }
+      auto it = instruction->frontend_attributes().map().find("_nv_stream_annotation");
+      if (it != instruction->frontend_attributes().map().end()) {
         return true;
       }
       return false;

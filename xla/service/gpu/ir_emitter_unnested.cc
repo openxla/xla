@@ -2640,6 +2640,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
         case HloOpcode::kFusion:
+        case HloOpcode::kCall:
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
@@ -2653,6 +2654,13 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
               streams.source_stream_id, streams.destination_stream_id));
           return absl::OkStatus();
         }
+        // We don't need to emit thunks for these operations because their semantics
+        // are encoded by buffers.
+        case HloOpcode::kBitcast:
+        case HloOpcode::kGetTupleElement:
+        case HloOpcode::kParameter:
+        case HloOpcode::kTuple:
+          return absl::OkStatus();
         default:
           return Internal("Unsupported async done wrapped instruction: %s",
                           HloOpcodeString(wrapped->opcode()));
@@ -2701,6 +2709,17 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
         case HloOpcode::kCustomCall: {
           return EmitAsyncCustomCallStart(instr);
         }
+        case HloOpcode::kCall:
+        {
+          return EmitCommandBufferThunk(wrapped);
+        }
+        // We don't need to emit thunks for these operations because their semantics
+        // are encoded by buffers.
+        case HloOpcode::kBitcast:
+        case HloOpcode::kGetTupleElement:
+        case HloOpcode::kParameter:
+        case HloOpcode::kTuple:
+          return absl::OkStatus();
         default:
           return Internal("Unsupported async start wrapped instruction: %s",
                           HloOpcodeString(wrapped->opcode()));

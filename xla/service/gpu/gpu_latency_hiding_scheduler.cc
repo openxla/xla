@@ -212,6 +212,7 @@ int64_t GpuAsyncTracker::GetNumTargetDefinedResources() const {
 
 // Returns how many instructions using the given resource_type we can overlap
 int64_t GpuAsyncTracker::GetNumAvailableResources(int64_t resource_type) const {
+  return 4;
   const int64_t first_target_resource = GetFirstTargetDefinedResource();
   if (resource_type < first_target_resource) {
     return GpuAsyncTrackerBase::GetNumAvailableResources(resource_type);

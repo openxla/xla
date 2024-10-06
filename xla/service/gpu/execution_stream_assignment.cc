@@ -18,6 +18,8 @@ limitations under the License.
 #include <deque>
 #include <memory>
 #include <utility>
+#include <optional>
+#include <string> 
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -73,16 +75,20 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
   // Assigns source and destination streams to an instruction and records it in
   // async_instructions_.
   auto assign_async_execution_streams =
-      [&](HloInstruction* instruction, ExecutionStreamId source_stream_id) {
+      [&](HloInstruction* instruction, 
+      ExecutionStreamId source_stream_id, 
+      std::optional<ExecutionStreamId> dest_stream_id) {
         AsyncExecutionStreamIds streams;
         streams.source_stream_id = source_stream_id;
-        streams.destination_stream_id = next_stream_id;
+        streams.destination_stream_id = dest_stream_id.value_or(next_stream_id);
 
         CHECK(async_instructions_.try_emplace(instruction, streams).second);
-
-        next_stream_id++;
-        if (next_stream_id.value() > options.number_of_execution_streams) {
-          next_stream_id = ExecutionStreamId(1);
+        if (!dest_stream_id.has_value())
+        {
+          next_stream_id++;
+          if (next_stream_id.value() > options.number_of_execution_streams) {
+            next_stream_id = ExecutionStreamId(1);
+          }
         }
       };
 
@@ -97,7 +103,7 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
       if (instruction->opcode() == HloOpcode::kCopyStart) {
         // CopyStart is morally an async instruction, let us treat it
         // as an async instruction.
-        assign_async_execution_streams(instruction, pending.stream_id);
+        assign_async_execution_streams(instruction, pending.stream_id, std::nullopt);
       } else {
         CHECK(sync_instructions_.try_emplace(instruction, pending.stream_id)
                   .second);
@@ -109,11 +115,21 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
          call_graph->GetNode(pending.node).callsites()) {
       if (callsite.instruction()->IsAsynchronous()) {
         // Asynchronous calls will result in a new `ExecutionStreamId` being
-        // dispensed for the called computations.
+        // dispensed for the called computations
         CHECK_EQ(callsite.instruction()->opcode(), HloOpcode::kAsyncStart);
-        enqueue_called_computations(callsite, next_stream_id);
+        // Special logic for explicit stream annotations.
+        std::optional<ExecutionStreamId> optional_stream_id = std::nullopt;
+        auto instr_opcode =
+          callsite.instruction()->async_wrapped_instruction()->opcode();
+        auto instruction = callsite.instruction()->async_wrapped_instruction();
+        auto it = instruction->frontend_attributes().map().find("_nv_stream_annotation");
+        if (it != instruction->frontend_attributes().map().end()) {
+          optional_stream_id = ExecutionStreamId(stoi((*it).second));
+        }
+        enqueue_called_computations(callsite, optional_stream_id.value_or(next_stream_id));
         assign_async_execution_streams(callsite.instruction(),
-                                       pending.stream_id);
+                                       pending.stream_id, 
+                                       optional_stream_id);
       } else {
         // Synchronous calls will result in the called computations being
         // invoked using the same `ExecutionStreamId`.
