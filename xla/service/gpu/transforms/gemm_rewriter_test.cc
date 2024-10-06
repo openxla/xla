@@ -5055,16 +5055,15 @@ HloModule test
       R"(
 ; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[2,64,32], {{.*}}: <<F8E4M3>>[2,32,16], {{.*}}: f32[], {{.*}}: f32[]) -> f32[2,64,16] {
 ; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[2,64,32]{1,2,0} parameter(0)
-; CHECK-NEXT:    [[P0_BT:%[^ ]+]] = <<F8E4M3>>[2,32,64]{2,1,0} bitcast([[P0]])
-; CHECK-NEXT:    [[P0_TR:%[^ ]+]] = <<F8E4M3>>[2,64,32]{2,1,0} transpose([[P0_BT]]), dimensions={0,2,1}
-; CHECK-NEXT:    [[P0_BT1:%[^ ]+]] = <<F8E4M3>>[2,32,64]{1,2,0} bitcast([[P0_TR]])
+; CHECK-NEXT:    [[P0_CP:%[^ ]+]] = <<F8E4M3>>[2,64,32]{2,1,0} copy([[P0]])
+; CHECK-NEXT:    [[P0_BT1:%[^ ]+]] = <<F8E4M3>>[2,32,64]{1,2,0} bitcast([[P0_CP]])
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[2,32,16]{2,1,0} parameter(1)
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[2,16,32]{2,1,0} transpose([[P1]]), dimensions={0,2,1}
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[DQ:%[^ ]+]] = f32[] multiply([[P2]], [[P3]])
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,64,16]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BT1]], [[P1_TRANSPOSE]], [[DQ]], [[C1]]),
+; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,64,16]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BT1]], [[P1_TRANSPOSE]], [[DQ]], [[C1]], [[C1]], /*index=5*/[[C1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1

@@ -380,45 +380,29 @@ HloInstruction *TransposeMatrix(HloInstruction *instr, int64_t contracting_dim,
     }
   }
 
+  permutation[non_contracting_dim] = contracting_dim;
+  permutation[contracting_dim] = non_contracting_dim;
+
+  Shape new_shape = ShapeUtil::PermuteDimensions(permutation, input_shape);
+  *new_shape.mutable_layout() = input_shape.layout();
+
   if (Layout::Equal()(input_shape.layout(),
                       LayoutUtil::GetDefaultLayoutForShape(input_shape))) {
-    permutation[non_contracting_dim] = contracting_dim;
-    permutation[contracting_dim] = non_contracting_dim;
-
-    Shape new_shape = ShapeUtil::PermuteDimensions(permutation, input_shape);
-    *new_shape.mutable_layout() = input_shape.layout();
-
     return instr->AddInstruction(
         HloInstruction::CreateTranspose(new_shape, instr, permutation));
   }
-
-  Shape normalized_input_shape =
-      ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
-          input_shape);
-  auto a0 = MakeBitcastHlo(instr, normalized_input_shape);
-
   std::vector<int64_t> layout_permuation(
       input_shape.layout().minor_to_major().begin(),
       input_shape.layout().minor_to_major().end());
   absl::c_reverse(layout_permuation);
   auto inv_perm = InversePermutation(layout_permuation);
 
-  int new_contracting_dim = inv_perm[contracting_dim];
-  int new_non_contracting_dim = inv_perm[non_contracting_dim];
-  absl::c_iota(permutation, 0);
-  std::swap(permutation[new_contracting_dim],
-            permutation[new_non_contracting_dim]);
-
-  Shape transpose_shape =
-      ShapeUtil::PermuteDimensions(permutation, a0->shape());
-  *transpose_shape.mutable_layout() = a0->shape().layout();
-
-  HloInstruction *normalized_transpose = instr->AddInstruction(
-      HloInstruction::CreateTranspose(transpose_shape, a0, permutation));
-
-  Shape final_shape = ShapeUtil::PermuteDimensions(inv_perm, transpose_shape);
-  *final_shape.mutable_layout() = input_shape.layout();
-  return MakeBitcastHlo(normalized_transpose, final_shape);
+  Shape copy_shape = ShapeUtil::MakeShapeWithDescendingLayout(
+      input_shape.element_type(),
+      ShapeUtil::PermuteDimensions(inv_perm, new_shape).dimensions());
+  HloInstruction *copy = instr->AddInstruction(HloInstruction::CreateUnary(
+      copy_shape, HloOpcode::kCopy, instr));
+  return MakeBitcastHlo(copy, new_shape);
 }
 
 // If the bias is a sequence of ops that depend only on broadcasts of
