@@ -2848,6 +2848,7 @@ cc_library(
     srcs = ["stream_attribute_annotator.cc"],
     hdrs = ["stream_attribute_annotator.h"],
     deps = [
+        "//xla:side_effect_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -2862,6 +2863,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:statusor",
     ],
 )

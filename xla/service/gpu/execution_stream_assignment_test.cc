@@ -209,6 +209,47 @@ TEST_F(ExecutionStreamAssignmentTest, FusionComputations) {
   }
 }
 
+TEST_F(ExecutionStreamAssignmentTest, CalledComputations) {
+  const char* kModuleStr = R"(
+  HloModule m
+
+  %stream1.3 (Arg_0.4: f32[2048,2048], Arg_1.5: f32[2048,2048]) -> f32[2048,2048] {
+    %Arg_1.5 = f32[2048,2048]{1,0} parameter(1)
+    %Arg_0.4 = f32[2048,2048]{1,0} parameter(0)
+    %custom-call.1 = (f32[2048,2048]{1,0}, s8[33554432]{0}) custom-call(f32[2048,2048]{1,0} %Arg_0.4, f32[2048,2048]{1,0} %Arg_1.5), custom_call_target="__cublas$gemm", backend_config={"gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,"dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],"rhs_batch_dimensions":[]},"precision_config":{"operand_precision":["DEFAULT","DEFAULT"],"algorithm":"ALG_UNSET"},"epilogue":"DEFAULT","damax_output":false,"lhs_stride":"4194304","rhs_stride":"4194304","grad_x":false,"grad_y":false},"force_earliest_schedule":false}
+    ROOT %get-tuple-element = f32[2048,2048]{1,0} get-tuple-element((f32[2048,2048]{1,0}, s8[33554432]{0}) %custom-call.1), index=0, metadata={op_name="jit(test)/jit(main)/jit(stream1)/dot_general" source_file="/mounted/hacking/stream_setting_demo.py" source_line=7 scheduling_name="get-tuple-element"}
+  }, execution_thread="parallel"
+
+  ENTRY %entry (Arg_0.1.0: f32[2048,2048], Arg_1.2.0: f32[2048,2048]) -> f32[2048,2048] {
+    %Arg_1.2.0 = f32[2048,2048]{1,0} parameter(1), metadata={op_name="b" scheduling_name="Arg_1.2.0"}
+    %Arg_0.1.0 = f32[2048,2048]{1,0} parameter(0), metadata={op_name="a" scheduling_name="Arg_0.1.0"}
+    %call-start = ((f32[2048,2048]{1,0}, f32[2048,2048]{1,0}), f32[2048,2048]{1,0}) call-start(f32[2048,2048]{1,0} %Arg_0.1.0, f32[2048,2048]{1,0} %Arg_1.2.0), async_execution_thread="parallel", to_apply=%stream1.3, frontend_attributes={_xla_stream_annotation="1"}, metadata={scheduling_name="call-start"}, backend_config={"operation_queue_id":"1","wait_on_operation_queues":[],"force_earliest_schedule":false}
+    ROOT %call-done = f32[2048,2048]{1,0} call-done(((f32[2048,2048]{1,0}, f32[2048,2048]{1,0}), f32[2048,2048]{1,0}) %call-start), frontend_attributes={_xla_stream_annotation="1"}, metadata={scheduling_name="call-done"}, backend_config={"operation_queue_id":"1","wait_on_operation_queues":[],"force_earliest_schedule":false}
+}
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  ExecutionStreamAssignment assignment(module.get());
+
+  // The outermost computation should run on `ExecutionStreamId(0)`.
+  ExpectExecutionStreamForSyncInstructions(
+      assignment, FindComputation(module.get(), "entry"), ExecutionStreamId(0));
+
+  // Called computations should run on the respective asynchronous
+  // `ExecutionStreamIds`.
+  ExpectExecutionStreamForSyncInstructions(
+      assignment,
+      Cast<HloAsyncInstruction>(FindInstruction(module.get(), "call-start"))
+          ->async_wrapped_computation(),
+      ExecutionStreamId(1));
+  // Computations within the async-called computation should also be on the
+  // the asynchronous stream.
+  EXPECT_THAT(assignment.GetSyncExecutionStreamId(
+                  FindInstruction(module.get(), "custom-call.1")),
+              IsOkAndHolds(ExecutionStreamId(1)));
+}
+
 TEST_F(ExecutionStreamAssignmentTest, UnreachableComputation) {
   // We'll create an `HloModule` with two computations: the ENTRY computation,
   // and another unreachable embedded computation.

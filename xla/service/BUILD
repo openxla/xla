@@ -1219,6 +1219,7 @@ cc_library(
         ":call_graph",
         ":hlo_dce",
         ":hlo_domain_isolator",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",

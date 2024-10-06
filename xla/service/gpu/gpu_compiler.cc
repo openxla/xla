@@ -1171,7 +1171,10 @@ absl::Status RunPostFusionSimplificationPasses(
 
   if (hlo_module->config()
           .debug_options()
-          .xla_gpu_multi_streamed_windowed_einsum()) {
+          .xla_gpu_multi_streamed_windowed_einsum() ||
+      hlo_module->config()
+          .debug_options()
+          .xla_gpu_experimental_stream_annotation()) {
     pipeline.AddPass<StreamAttributeAnnotator>();
     pipeline.AddPass<StreamAttributeAsyncWrapper>();
   }

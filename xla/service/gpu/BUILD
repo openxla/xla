@@ -1680,6 +1680,7 @@ xla_test(
         "//xla:autotune_results_proto_cc",
         "//xla:error_spec",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
@@ -2942,6 +2943,7 @@ cc_library(
     srcs = ["execution_stream_assignment.cc"],
     hdrs = ["execution_stream_assignment.h"],
     deps = [
+        "//xla:side_effect_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:call_graph",
         "//xla/service/gpu/runtime:thunk",
