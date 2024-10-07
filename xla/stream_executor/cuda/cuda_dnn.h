@@ -738,8 +738,8 @@ absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionF8OperationGraph(
     const dnn::MatmulTensorDescriptor& k_descriptor,
     const dnn::MatmulTensorDescriptor& v_descriptor,
     const dnn::TensorDescriptor& o_descriptor,
-    const std::optional<dnn::TensorDescriptor> stats_descriptor,
-    double scale, const dnn::FMHAMaskKind mask_type);
+    const std::optional<dnn::TensorDescriptor> stats_descriptor, double scale,
+    const dnn::FMHAMaskKind mask_type);
 
 absl::StatusOr<CudnnGraph> GetCudnnFlashAttentionBackwardF8OperationGraph(
     dnn::DnnSupport& dnn_support, const dnn::MatmulTensorDescriptor& q_desc,

@@ -128,11 +128,13 @@ bool IsCustomCallToDnnNorm(const HloInstruction& hlo) {
 }
 
 bool IsFwdCustomCallTofMHAF8(const HloInstruction& hlo) {
-  return hlo.opcode() == HloOpcode::kCustomCall && hlo.custom_call_target() == kCudnnfMHASoftmaxF8CallTarget;
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kCudnnfMHASoftmaxF8CallTarget;
 }
 
 bool IsBwdCustomCallTofMHAF8(const HloInstruction& hlo) {
-  return hlo.opcode() == HloOpcode::kCustomCall && hlo.custom_call_target() == kCudnnfMHASoftmaxBackwardF8CallTarget;
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == kCudnnfMHASoftmaxBackwardF8CallTarget;
 }
 
 bool IsFwdCustomCallTofMHA(const HloInstruction& hlo) {

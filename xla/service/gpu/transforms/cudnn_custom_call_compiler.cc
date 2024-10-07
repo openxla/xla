@@ -321,12 +321,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     xla::gpu::CudnnfMHABackendConfig &config =
         *gpu_config.mutable_cudnn_fmha_backend_config();
 
-    Shape bmm1_grad_gemm1_rhs_shape =
-        custom_call->operand(0)->shape();
-    Shape bmm1_grad_gemm2_rhs_shape =
-        custom_call->operand(1)->shape();
-    Shape bmm2_grad_gemm2_rhs_shape =
-        custom_call->operand(2)->shape();
+    Shape bmm1_grad_gemm1_rhs_shape = custom_call->operand(0)->shape();
+    Shape bmm1_grad_gemm2_rhs_shape = custom_call->operand(1)->shape();
+    Shape bmm2_grad_gemm2_rhs_shape = custom_call->operand(2)->shape();
 
     Shape fwd_output_shape = custom_call->operand(3)->shape();
     Shape d_output_shape = custom_call->operand(4)->shape();
@@ -336,12 +333,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
     TF_ASSIGN_OR_RETURN(const CudnnfMHAKind kind,
                         GetCudnnfMHAKind(custom_call));
 
-    Shape d_bmm1_lhs_shape =
-        ShapeUtil::GetSubshape(custom_call->shape(), {0});
-    Shape d_bmm1_rhs_shape =
-        ShapeUtil::GetSubshape(custom_call->shape(), {1});
-    Shape d_bmm2_rhs_shape =
-        ShapeUtil::GetSubshape(custom_call->shape(), {2});
+    Shape d_bmm1_lhs_shape = ShapeUtil::GetSubshape(custom_call->shape(), {0});
+    Shape d_bmm1_rhs_shape = ShapeUtil::GetSubshape(custom_call->shape(), {1});
+    Shape d_bmm2_rhs_shape = ShapeUtil::GetSubshape(custom_call->shape(), {2});
 
     TF_ASSIGN_OR_RETURN(
         MatmulTensorDescriptor bmm1_grad_gemm1_rhs,

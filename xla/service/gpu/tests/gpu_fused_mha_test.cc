@@ -1815,7 +1815,7 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxDropoutBMM,
 }
 
 XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
-     Flash_Attention_Bwd_BMM1_NoMask_Softmax_BMM2_F8) {
+           Flash_Attention_Bwd_BMM1_NoMask_Softmax_BMM2_F8) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
   if (GetDnnVersionInfoOrDefault(backend().default_stream_executor()) <
       se::dnn::VersionInfo(9, 1, 0)) {
@@ -1872,7 +1872,7 @@ HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,1,12
       ROOT get-tuple-element.8 = bf16[1,1,128,128]{3,2,1,0} get-tuple-element(custom-call.7), index=0
     })";
 
-    std::string hlo_string = R"(
+  std::string hlo_string = R"(
 HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, bf16[1,1,128,128]{3,2,1,0}, f32[1,1,128]{2,1,0})->bf16[1,1,128,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true}
 
     clip.33 {
@@ -1918,8 +1918,8 @@ HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[1,1,12
       ROOT out.0 = bf16[1,1,128,128]{3,2,1,0} convert(get-tuple-element.10)
     })";
 
-    EXPECT_TRUE(RunAndCompareTwoModules(hlo_string_ref, hlo_string,
-                                        ErrorSpec{2e-1, 2e-1}));
+  EXPECT_TRUE(RunAndCompareTwoModules(hlo_string_ref, hlo_string,
+                                      ErrorSpec{2e-1, 2e-1}));
 }
 }  // namespace
 }  // namespace gpu
