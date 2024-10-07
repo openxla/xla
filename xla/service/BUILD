@@ -8656,4 +8656,9 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "collective_utils",
+    hdrs = ["collective_utils.h"],
+)
+
 exports_files(["xla_aot_compile_test_gpu_target_config.prototxt"])
