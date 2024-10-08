@@ -259,7 +259,7 @@ SchedulerConfig GetSchedulerConfig(int64_t memory_limit,
   config.aggressive_scheduling_policies = true;
   config.schedule_send_recvs = true;
   config.memory_limit = memory_limit;
-  config.global_collective_scheduling_resource = collective_resource;
+  config.parallel_collective_overlap_limit = collective_resource;
   return config;
 }
 
@@ -459,9 +459,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   }
 
   SchedulerConfig config = GetSchedulerConfig(
-      memory_limit, module->config()
-                        .debug_options()
-                        .xla_gpu_scheduler_parallel_collective_resource());
+      memory_limit,
+      module->config()
+          .debug_options()
+          .xla_gpu_experimental_parallel_collective_overlap_limit());
   auto gpu_latency_estimator =
       std::make_unique<GpuLatencyEstimator>(pointer_size);
 

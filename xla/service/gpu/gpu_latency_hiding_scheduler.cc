@@ -241,7 +241,7 @@ int64_t GpuAsyncTracker::GetNumAvailableResources(int64_t resource_type) const {
 
   if ((resource_type - first_target_resource) ==
       static_cast<int64_t>(GpuResourceType::kGpuAsyncStreamCollectives)) {
-    return config_.global_collective_scheduling_resource;
+    return config_.parallel_collective_overlap_limit;
   }
 
   return 1;

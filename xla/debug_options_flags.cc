@@ -297,7 +297,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_experimental_ignore_channel_id(false);
   opts.set_xla_gpu_dot_merger_threshold_mb(32);
   opts.set_xla_enable_fast_math(false);
-  opts.set_xla_gpu_scheduler_parallel_collective_resource(1);
+  opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
   return opts;
 }
 
@@ -2011,10 +2011,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_enable_fast_math(),
                 "Enable optimizations that assume finite math, i.e., no NaN."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_scheduler_parallel_collective_resource",
+      "xla_gpu_experimental_parallel_collective_overlap_limit",
       int32_setter_for(
-          &DebugOptions::set_xla_gpu_scheduler_parallel_collective_resource),
-      debug_options->xla_gpu_scheduler_parallel_collective_resource(),
+          &DebugOptions::
+              set_xla_gpu_experimental_parallel_collective_overlap_limit),
+      debug_options->xla_gpu_experimental_parallel_collective_overlap_limit(),
       "This controls how many in-flight collectives "
       "latency hiding scheduler can schedule."));
 }  // NOLINT(readability/fn_size)
