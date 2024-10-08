@@ -78,9 +78,10 @@ namespace xla::gpu {
   V(kCollectiveCmd, "CollectiveCmd")                     \
   V(kAllReduceCmd, "AllReduceCmd")                       \
   V(kReduceScatter, "ReduceScatterCmd")                  \
-  V(kAllToAll, "AllToAllCmd")                  \
+  V(kAllToAll, "AllToAllCmd")                            \
   V(kAllGatherCmd, "AllGatherCmd")                       \
   V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")   \
+  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")     \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -367,6 +368,17 @@ class CommandBufferCmdSequence {
     });
   }
 
+  // We track read and write sets of commands recorded into the command
+  // sequence to detect conflicts and insert explicit barriers. These are the
+  // buffer allocation slices used by commands appended since the last barrier.
+  struct ReadWriteSet {
+    absl::flat_hash_set<BufferAllocation::Slice> read;
+    absl::flat_hash_set<BufferAllocation::Slice> write;
+  };
+
+  std::optional<const ReadWriteSet> GetReadWriteSet(
+      ExecutionStreamId execution_scope_id);
+
  private:
   struct CommandInfo {
     std::unique_ptr<CommandBufferCmd> cmd;
@@ -389,14 +401,6 @@ class CommandBufferCmdSequence {
 
   // Buffer allocations indices referenced by commands in this sequence.
   absl::flat_hash_set<BufferAllocation::Index> allocs_indices_;
-
-  // We track read and write sets of commands recorded into the command
-  // sequence to detect conflicts and insert explicit barriers. These are the
-  // buffer allocation slices used by commands appended since the last barrier.
-  struct ReadWriteSet {
-    absl::flat_hash_set<BufferAllocation::Slice> read;
-    absl::flat_hash_set<BufferAllocation::Slice> write;
-  };
 
   absl::flat_hash_map<ExecutionStreamId, ReadWriteSet> read_write_sets_;
 };
@@ -1144,6 +1148,49 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
 
  private:
   std::vector<NcclCollectiveThunk::Buffer> buffers_;
+};
+
+//===----------------------------------------------------------------------===//
+// DynamicSliceFusionCmd
+//===----------------------------------------------------------------------===//
+
+class DynamicSliceFusionCmd : public CommandBufferCmd {
+ public:
+  DynamicSliceFusionCmd(
+      ExecutionStreamId execution_stream_id,
+      CommandBufferCmdSequence embedded_commands,
+      std::vector<std::optional<BufferAllocation::Slice>> arguments,
+      std::vector<std::optional<std::vector<Offset>>> offsets,
+      std::vector<std::optional<Shape>> orig_shapes,
+      std::vector<std::optional<Shape>> sliced_shapes,
+      std::vector<std::optional<uint64_t>> offset_byte_sizes);
+
+  absl::Status Prepare(const Thunk::PrepareParams& params,
+                       Thunk::ResourceRequests& resource_requests) final;
+
+  bool force_update() override;
+
+  bool IsNestedCommandBuffer() const final { return true; }
+
+ private:
+  CommandBufferCmdSequence embedded_commands_;
+  std::vector<DynamicSliceThunk::SliceDef> slices_;
+
+  // Pinned host memory for transferring offset values from device to host.
+  absl::Mutex mutex_;
+  absl::flat_hash_map<se::StreamExecutor*,
+                      std::unique_ptr<se::MemoryAllocation>>
+      offsets_allocs_ ABSL_GUARDED_BY(mutex_);
+
+  // Pre-computed size requirement for `offsets_allocs_`.
+  int64_t offsets_allocs_size_ = 0;
+
+  // A mapping from argument index to the base offset in the `offsets_allocs_`.
+  std::vector<int64_t> offsets_allocs_base_;
+
+  // mapping from original allocation index to allocation index of embedded
+  // command sequences.
+  absl::flat_hash_map<int64_t, int64_t> embeded_to_origin_allocation_map_;
 };
 
 }  // namespace xla::gpu

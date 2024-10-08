@@ -78,10 +78,6 @@ class DynamicSliceThunk : public Thunk {
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
- private:
-  std::unique_ptr<SequentialThunk> embedded_thunk_;
-  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_;
-
   // Definition of a dynamic slice that extract a slice from the original buffer
   // defined by `embedded_thunk_argument` at given `offsets`.
   struct SliceDef {
@@ -91,6 +87,10 @@ class DynamicSliceThunk : public Thunk {
     std::optional<Shape> sliced_shape;
     std::optional<uint64_t> offset_byte_size;
   };
+
+ private:
+  std::unique_ptr<SequentialThunk> embedded_thunk_;
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_;
 
   std::vector<SliceDef> slices_;
 
