@@ -59,6 +59,8 @@ cc_library(
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
         ":nccl_all_to_all_thunk",
+        ":while_thunk",
+        ":dynamic_slice_thunk",
         ":nccl_api",
         ":nccl_clique_key",
         ":nccl_collective_broadcast_thunk",
