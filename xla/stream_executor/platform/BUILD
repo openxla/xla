@@ -15,19 +15,6 @@ package_group(
 )
 
 cc_library(
-    name = "platform",
-    textual_hdrs = [
-        "initialize.h",
-    ],
-    deps = [
-        "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
-    ] + tf_stream_executor_deps("platform", "//xla/stream_executor/platform/"),
-)
-
-cc_library(
     name = "initialize",
     hdrs = [
         "initialize.h",
