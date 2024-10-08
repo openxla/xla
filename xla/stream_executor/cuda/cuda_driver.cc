@@ -1040,6 +1040,21 @@ void GpuDriver::DestroyStream(Context* context, GpuStreamHandle stream) {
   }
 }
 
+bool GpuDriver::IsStreamIdle(Context* context, CUstream stream) {
+  ScopedActivateContext activated{context};
+  CHECK(stream != nullptr);
+  CUresult res = cuStreamQuery(stream);
+  if (res == CUDA_SUCCESS) {
+    return true;
+  }
+
+  if (res != CUDA_ERROR_NOT_READY) {
+    LOG(ERROR) << "stream in bad state on status query: "
+               << cuda::ToStatus(res);
+  }
+  return false;
+}
+
 void* GpuDriver::DeviceAllocate(Context* context, uint64_t bytes) {
   if (bytes == 0) {
     return nullptr;
