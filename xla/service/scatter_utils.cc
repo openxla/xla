@@ -9,12 +9,7 @@ namespace xla {
 StatusOr<HloInstruction*> TransposeIndexVectorDimToLast(
     HloInstruction* scatter_indices, int64_t index_vector_dim) {
   const Shape& scatter_indices_shape = scatter_indices->shape();
-
-  if (scatter_indices_shape.dimensions_size() == index_vector_dim) {
-    return scatter_indices;
-  }
-
-  if (index_vector_dim == (scatter_indices_shape.dimensions_size() - 1)) {
+  if (index_vector_dim >= (scatter_indices_shape.dimensions_size() - 1)) {
     return scatter_indices;
   }
 

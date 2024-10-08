@@ -230,8 +230,7 @@ TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
   )";
 
   RunAndFilecheckHloRewrite(kModuleStr, ScatterDeterminismExpander(),
-                            kExpectedPattern, nullptr /*after_pass_checks*/,
-                            nullptr /*config*/);
+                            kExpectedPattern, nullptr, nullptr);
 }
 
 TEST_F(ScatterDeterminismExpanderTest, ScatterAddOutOfBoundCorrectnessTest) {
