@@ -369,7 +369,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloCustomCallToCuDnnGraph(
                         TensorDescriptorFor(d_bmm1_rhs_shape));
     TF_ASSIGN_OR_RETURN(TensorDescriptor d_bmm2_rhs,
                         TensorDescriptorFor(d_bmm2_rhs_shape));
-    // 4 gradients, 4 amaxs and one workspace
+    // 3 gradients, 4 amaxs and one workspace
     TF_RET_CHECK(8 == custom_call->shape().tuple_shapes().size());
 
     TF_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_config));
