@@ -1056,67 +1056,74 @@ ENTRY main {
             expect_custom_kernel_fusion_rewriter_has_run);
 }
 
-struct PassRunIndex {
-  int first_run = std::numeric_limits<int>::max();
-  int last_run = std::numeric_limits<int>::min();
-};
+class PassOrderTest : public GpuCompilerTest {
+ public:
+  PassOrderTest() { SetModuleConfig(GetModuleConfigForTest()); }
 
-// Checks that both passes have actually run and that the first run of the
-// `after` pass is after the last run of the `before` pass.
-void VerifyPassOrder(
-    const absl::flat_hash_map<std::string, PassRunIndex>& passes,
-    absl::string_view before, absl::string_view after) {
-  ASSERT_TRUE(passes.contains(before))
-      << "Expected pass did not run: " << before;
-  ASSERT_TRUE(passes.contains(after)) << "Expected pass did not run: " << after;
-  EXPECT_LT(passes.at(before).last_run, passes.at(after).first_run)
-      << "Pass " << before << " ran after " << after;
-}
-
-// Traverses the module's pass metadata and gathers, for each pass, its smallest
-// and largest run index.  If a pass p0's run index is smaller than another pass
-// p1's run index, then p0 ran before p1.
-absl::flat_hash_map<std::string, PassRunIndex> GatherPassOrderInformation(
-    const HloModule& module) {
-  // Maps a pass name to its first and last index.
-  absl::flat_hash_map<std::string, PassRunIndex> passes;
-  int run_index = 0;
-  for (const HloPassMetadata& pass_metadata :
-       module.metadata().proto().pass_metadata()) {
-    auto& pass = passes[pass_metadata.pass_name()];
-    pass.first_run = std::min(pass.first_run, run_index);
-    pass.last_run = std::max(pass.last_run, run_index);
-    ++run_index;
+  void SetDebugOptions(const DebugOptions& options) {
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.set_debug_options(options);
+    SetModuleConfig(config);
   }
 
-  return passes;
-}
-
-TEST_F(GpuCompilerPassTest, PassesAreRunInCorrectOrder) {
-  constexpr absl::string_view constant_module = R"(
+  void SetModuleConfig(const HloModuleConfig& config) {
+    constexpr absl::string_view constant_module = R"(
 ENTRY main {
   ROOT constant = f32[] constant(0)
 })";
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<VerifiedHloModule> module,
+        ParseAndReturnVerifiedModule(constant_module, config));
+    TF_ASSERT_OK_AND_ASSIGN(optimized_module_,
+                            GetOptimizedModule(std::move(module)));
+  }
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(constant_module));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(module)));
+  // Fails if any of the passes with names matching the regular expression
+  // first_regex run after any of the passes matching last_regex or if
+  // first_regex or last_regex matches none of the executed passes.
+  void VerifyPassOrder(absl::string_view first_regex,
+                       absl::string_view last_regex) {
+    int first_last_run = -1;
+    int last_first_run = std::numeric_limits<int>::max();
+    int run_index = 0;
+    for (const HloPassMetadata& pass_metadata :
+         optimized_module_->metadata()->proto().pass_metadata()) {
+      if (RE2::FullMatch(pass_metadata.pass_name(), first_regex)) {
+        VLOG(2) << "Pass " << pass_metadata.pass_name()
+                << "matches first_regex." << std::endl;
+        first_last_run = std::max(first_last_run, run_index);
+      }
+      if (RE2::FullMatch(pass_metadata.pass_name(), last_regex)) {
+        VLOG(2) << "Pass " << pass_metadata.pass_name() << "matches last_regex."
+                << std::endl;
+        last_first_run = std::min(last_first_run, run_index);
+      }
+      ++run_index;
+    }
 
-  // Maps a pass name to its first and last index.
-  absl::flat_hash_map<std::string, PassRunIndex> passes =
-      GatherPassOrderInformation(*optimized_module);
+    EXPECT_TRUE(first_last_run > -1)
+        << "Did not run a pass matching " << first_regex;
+    EXPECT_TRUE(last_first_run < std::numeric_limits<int>::max())
+        << "Did not run a pass matching " << last_regex;
+    EXPECT_LE(first_last_run, last_first_run)
+        << "One or more passes matching " << first_regex
+        << " ran after passes matching " << last_regex;
+  }
 
-  // This test captures known dependencies between passes.
-  VerifyPassOrder(passes, /*before=*/"layout-assignment",
-                  /*after=*/"priority-fusion");
-  VerifyPassOrder(passes, /*before=*/"layout-assignment",
-                  /*after=*/"layout_normalization");
-  VerifyPassOrder(passes, /*before=*/"host-offload-legalize",
-                  /*after=*/"layout_normalization");
+ private:
+  std::unique_ptr<HloModule> optimized_module_;
+};
+
+TEST_F(PassOrderTest, PassesAreRunInCorrectOrder) {
+  VerifyPassOrder(/*first_regex=*/"layout-assignment",
+                  /*last_regex=*/"priority-fusion");
+  VerifyPassOrder(/*first_regex=*/"layout-assignment",
+                  /*last_regex=*/"layout_normalization");
+  VerifyPassOrder(/*first_regex=*/"host-offload-legalize",
+                  /*last_regex=*/"layout_normalization");
 }
 
-TEST_F(GpuCompilerPassTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
+TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
   auto cc = backend()
                 .default_stream_executor()
                 ->GetDeviceDescription()
@@ -1125,38 +1132,22 @@ TEST_F(GpuCompilerPassTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
     GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ to run.";
   }
 
-  constexpr absl::string_view constant_module = R"(
-ENTRY main {
-  ROOT constant = f32[] constant(0)
-})";
-
-  HloModuleConfig config;
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(
       true);
-  config.set_debug_options(debug_options);
+  SetDebugOptions(debug_options);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<VerifiedHloModule> module,
-      ParseAndReturnVerifiedModule(constant_module, config));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                          GetOptimizedModule(std::move(module)));
+  VerifyPassOrder(/*first_regex=*/".*fusion.*",
+                  /*last_regex=*/"fusion-block-level-rewriter");
+}
 
-  absl::flat_hash_map<std::string, PassRunIndex> passes =
-      GatherPassOrderInformation(*optimized_module);
+TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
+  DebugOptions options = GetDebugOptionsForTest();
+  options.set_xla_gpu_enable_pipelined_collectives(true);
+  SetDebugOptions(options);
 
-  absl::string_view kFusionBlockLevelRewriterName =
-      "fusion-block-level-rewriter";
-
-  for (const auto& [pass_name, _] : passes) {
-    if (pass_name != kFusionBlockLevelRewriterName &&
-        absl::StrContains(pass_name, "fusion")) {
-      VerifyPassOrder(passes, /*before=*/pass_name,
-                      /*after=*/kFusionBlockLevelRewriterName);
-      VLOG(2) << "Verified pass order: " << pass_name << " -> "
-              << kFusionBlockLevelRewriterName;
-    }
-  }
+  VerifyPassOrder(/*first_regex=*/"collective-quantizer",
+                  /*last_regex=*/"collective-pipeliner-forward");
 }
 
 }  // namespace
