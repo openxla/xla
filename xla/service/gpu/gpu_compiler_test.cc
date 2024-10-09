@@ -1058,8 +1058,6 @@ ENTRY main {
 
 class PassOrderTest : public GpuCompilerTest {
  public:
-  PassOrderTest() { SetModuleConfig(GetModuleConfigForTest()); }
-
   void SetDebugOptions(const DebugOptions& options) {
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_debug_options(options);
@@ -1079,33 +1077,36 @@ ENTRY main {
   }
 
   // Fails if any of the passes with names matching the regular expression
-  // first_regex run after any of the passes matching last_regex or if
-  // first_regex or last_regex matches none of the executed passes.
+  // first_regex run after any of the passes matching last_regex or if none of
+  // the executed passes matches first_regex or last_regex.
   void VerifyPassOrder(absl::string_view first_regex,
                        absl::string_view last_regex) {
-    int first_last_run = -1;
-    int last_first_run = std::numeric_limits<int>::max();
+    if (!optimized_module_) {
+      SetModuleConfig(GetModuleConfigForTest());
+    }
+    int first_latest_run = -1;
+    int last_earliest_run = std::numeric_limits<int>::max();
     int run_index = 0;
     for (const HloPassMetadata& pass_metadata :
          optimized_module_->metadata()->proto().pass_metadata()) {
       if (RE2::FullMatch(pass_metadata.pass_name(), first_regex)) {
         VLOG(2) << "Pass " << pass_metadata.pass_name()
-                << "matches first_regex." << std::endl;
-        first_last_run = std::max(first_last_run, run_index);
+                << " matches first_regex." << std::endl;
+        first_latest_run = std::max(first_latest_run, run_index);
       }
       if (RE2::FullMatch(pass_metadata.pass_name(), last_regex)) {
-        VLOG(2) << "Pass " << pass_metadata.pass_name() << "matches last_regex."
-                << std::endl;
-        last_first_run = std::min(last_first_run, run_index);
+        VLOG(2) << "Pass " << pass_metadata.pass_name()
+                << " matches last_regex." << std::endl;
+        last_earliest_run = std::min(last_earliest_run, run_index);
       }
       ++run_index;
     }
 
-    EXPECT_TRUE(first_last_run > -1)
+    EXPECT_GT(first_latest_run, -1)
         << "Did not run a pass matching " << first_regex;
-    EXPECT_TRUE(last_first_run < std::numeric_limits<int>::max())
+    EXPECT_LT(last_earliest_run, std::numeric_limits<int>::max())
         << "Did not run a pass matching " << last_regex;
-    EXPECT_LE(first_last_run, last_first_run)
+    EXPECT_LE(first_latest_run, last_earliest_run)
         << "One or more passes matching " << first_regex
         << " ran after passes matching " << last_regex;
   }
@@ -1147,7 +1148,7 @@ TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
   SetDebugOptions(options);
 
   VerifyPassOrder(/*first_regex=*/"collective-quantizer",
-                  /*last_regex=*/"collective-pipeliner-forward");
+                  /*last_regex=*/"collective-pipeliner.*");
 }
 
 }  // namespace
