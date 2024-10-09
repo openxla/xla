@@ -44,7 +44,6 @@ namespace hlo_sharding_util {
 struct GatherScatterParallelDims {
   absl::InlinedVector<int64_t, 1> indices_parallel_dims;
   absl::InlinedVector<int64_t, 1> operand_parallel_dims;
-  std::vector<int64_t> index_parallel_in_dim;
 };
 
 // Determines if the first operand 'potential_subsharding' is a subsharding of
@@ -122,7 +121,7 @@ HloSharding TransposeSharding(const HloSharding& sharding,
 // maximal sharding returns the original sharding.
 std::optional<HloSharding> ReshapeSharding(const Shape& source_shape,
                                            const Shape& target_shape,
-                                           const HloSharding& sharding);
+                                           const HloSharding& source_sharding);
 
 // Propagates sharding through reshape. It tries to find partial matches on
 // subsets of dimensions that could satisfy ReshapeSharding() constraints, then
@@ -359,16 +358,9 @@ GetGatherScatterIndexPassthroughOutputOrUpdateDims(
 // Infer output sharding on index parallel dimensions for gather/scatter from
 // gather operand/indices or scatter operands/indices/updates.
 HloSharding InferGatherScatterParallelShardingFromOperandSharding(
-    const HloSharding& operand_sharding, const Shape& operand_shape,
-    const Shape& shape,
+    const HloSharding& operand_sharding, const Shape& shape,
     absl::Span<const int64_t> output_aligned_operand_parallel_dims,
     absl::Span<const int64_t> output_parallel_dims);
-
-// Returns the parallel dimensions of the data operand of a gather/scatter with
-// the order of the parallel dimensions matching that of the parallel dimensions
-// of the indices.
-absl::InlinedVector<int64_t, 1> IndexAlignedOperandParallelDims(
-    const GatherScatterParallelDims& parallel_dims);
 
 // Represents grouping devices in a tiled sharding along certain dimensions.
 // Elements in group dimensions define different device groups, and the sharding

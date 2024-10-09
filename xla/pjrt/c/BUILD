@@ -17,9 +17,13 @@ load(
     "//xla/tsl:tsl.bzl",
     "if_google",
     "if_macos",
+    "internal_visibility",
 )
 
-# copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
+package(
+    # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = internal_visibility(["//xla:internal"]),
+)
 
 cc_library(
     name = "pjrt_c_api_hdrs",
@@ -189,6 +193,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
@@ -416,6 +421,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
@@ -450,11 +456,11 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/client:executable_build_options",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_future",
         "//xla/service:computation_placer_hdr",
-        "//xla/service:hlo_parser",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
         "@com_google_absl//absl/base:core_headers",

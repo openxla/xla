@@ -42,13 +42,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/hlo_creation_utils.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/pattern_matcher.h"
@@ -397,6 +397,81 @@ TEST_F(AlgebraicSimplifierTest, MultiplyBroadcastReassoc) {
               GmockMatch(m::MultiplyAnyOrder(
                   m::Parameter(0), m::Broadcast(m::MultiplyAnyOrder(
                                        m::Parameter(1), m::Constant())))));
+}
+
+// Mul(Add(Conv(input, filter), bias), Broadcast(constant)) => Conv(input,
+// Mul(filter, Broadcast(constant))), Mul(bias, Broadcast(constant)))
+TEST_F(AlgebraicSimplifierTest, ReorderConvAddMul) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      input = f32[5,4,4,1] parameter(0)
+      filter = f32[2,2,1,2] constant({{{{1.1, 1.2}}, {{2.1, 2.2}}},
+                                      {{{3.1, 3.2}}, {{4.1, 4.2}}}})
+      conv = f32[5,3,3,2] convolution(input, filter),
+               window={size=2x2}, dim_labels=b01f_01io->b01f
+      bias = f32[5,3,3,2] parameter(1)
+      add = f32[5,3,3,2] add(conv, bias)
+      constant = f32[2] constant({1.0, 1.1})
+      bcast = f32[5,3,3,2] broadcast(constant), dimensions={3}
+      ROOT multiply = f32[5,3,3,2] multiply(add, bcast)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions opts = default_options_;
+  opts.set_enable_conv_add_multiply_reorder(true);
+  ASSERT_TRUE(AlgebraicSimplifier(opts).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::AddAnyOrder(
+                  m::Convolution(
+                      m::Parameter(0),
+                      m::Multiply(m::Constant(), m::Broadcast(m::Constant()))),
+                  m::Multiply(m::Parameter(1), m::Broadcast(m::Constant())))));
+}
+
+TEST_F(AlgebraicSimplifierTest, DoNotReorderConvAddMulWhenDisabled) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      input = f32[5,4,4,1] parameter(0)
+      filter = f32[2,2,1,2] constant({{{{1.1, 1.2}}, {{2.1, 2.2}}},
+                                      {{{3.1, 3.2}}, {{4.1, 4.2}}}})
+      conv = f32[5,3,3,2] convolution(input, filter),
+               window={size=2x2}, dim_labels=b01f_01io->b01f
+      bias = f32[5,3,3,2] parameter(1)
+      add = f32[5,3,3,2] add(conv, bias)
+      constant = f32[2] constant({1.0, 1.1})
+      bcast = f32[5,3,3,2] broadcast(constant), dimensions={3}
+      ROOT multiply = f32[5,3,3,2] multiply(add, bcast)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions opts = default_options_;
+  opts.set_enable_conv_add_multiply_reorder(false);
+  EXPECT_FALSE(AlgebraicSimplifier(opts).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoNotReorderConvAddMulWithUnmatchingOutputFeatureDimension) {
+  const char* kModuleStr = R"(
+    HloModule m
+    test {
+      input = f32[5,3,3,1] parameter(0)
+      filter = f32[2,2,1,2] constant({{{{1.1, 1.2}}, {{2.1, 2.2}}},
+                                      {{{3.1, 3.2}}, {{4.1, 4.2}}}})
+      conv = f32[5,2,2,2] convolution(input, filter),
+               window={size=2x2}, dim_labels=b01f_01io->b01f
+      bias = f32[5,2,2,2] parameter(1)
+      add = f32[5,2,2,2] add(conv, bias)
+      constant = f32[2] constant({1.0, 1.1})
+      bcast = f32[5,2,2,2] broadcast(constant), dimensions={2}
+      ROOT multiply = f32[5,2,2,2] multiply(add, bcast)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions opts = default_options_;
+  opts.set_enable_conv_add_multiply_reorder(true);
+  EXPECT_FALSE(AlgebraicSimplifier(opts).Run(m.get()).value());
 }
 
 // A*C + B*C => (A+B)*C if C is a broadcast of a floating-point power of 2.
@@ -8985,6 +9060,21 @@ TEST_F(AlgebraicSimplifierTest, CompareIota) {
               GmockMatch(m::Broadcast(m::ConstantScalar(false))));
 }
 
+TEST_F(AlgebraicSimplifierTest, CompareAbsLtZeroBecomesFalse) {
+  // |x| < 0  ->  false
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+m {
+  p = s32[5] parameter(0)
+  a = s32[5] abs(p)
+  z = s32[] constant(0)
+  b = s32[5] broadcast(z)
+  ROOT r = pred[5] compare(a, b), direction=LT
+})"));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast(m::ConstantScalar(false))));
+}
+
 TEST_F(AlgebraicSimplifierTest, CompareLtZero) {
   const char* kModuleStr = R"(
     HloModule m
@@ -10559,6 +10649,18 @@ TEST_F(AlgebraicSimplifierTest, AbsEliminationSelMaxBcast) {
                   m::Parameter(1), m::Broadcast(m::ConstantScalar()),
                   m::MaximumAnyOrder(m::Parameter(0),
                                      m::Broadcast(m::ConstantScalar())))));
+}
+
+TEST_F(AlgebraicSimplifierTest, AbsEliminationIota) {
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+    e {
+      i = s32[3,2] iota(), iota_dimension=0
+      ROOT a = s32[3,2] abs(i)
+    }
+  )"));
+  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Iota()));
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyRedundantBitcastConvert) {

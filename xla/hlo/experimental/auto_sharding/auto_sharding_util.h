@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -300,8 +301,7 @@ std::optional<HloSharding> GetInputSharding(const HloInstruction* ins,
 // instruction. We also assign a much larger distance to heavy operators (e.g.,
 // dot, convolution).
 InstructionDepthMap BuildInstructionDepthMap(
-    const HloInstructionSequence& sequence,
-    const InstructionBatchDimMap& batch_dim_map);
+    const HloInstructionSequence& sequence);
 
 std::string GetBatchDimMapKey(const HloInstruction* ins, int64_t idx = -1);
 
@@ -472,6 +472,15 @@ absl::StatusOr<int64_t> CheckArithmeticSequence(
 // Checks if the number of sharded dimensions in the tile assignment matches the
 // device mesh.
 bool TileAssignmentMatchesMesh(const HloSharding& spec, const DeviceMesh& mesh);
+
+absl::StatusOr<std::vector<int64_t>> GetMeshDimPermutationOrderInShardingSpec(
+    const HloSharding& spec, const Array<int64_t>& device_mesh,
+    bool consider_reverse_device_meshes);
+
+absl::StatusOr<std::vector<absl::btree_set<int64_t>>>
+GetTensorDimToMeshDimMixedMeshSharding(
+    int64_t tensor_shape_rank, const HloSharding& sharding,
+    const DeviceMesh& device_mesh, bool consider_reverse_device_meshes = false);
 
 // Get the mapped mesh dimension for every tensor dimension.
 // The returned value maps ith tensor dim to one mesh dim. -1 means the tensor

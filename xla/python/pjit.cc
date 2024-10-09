@@ -135,7 +135,10 @@ class PjitFunctionCache {
 
   int Size() const { return lru_list_.Size(); }
   int Capacity() const { return lru_list_.Capacity(); }
-  void Clear() { lru_list_.Clear(); }
+  void Clear() {
+    lru_list_.Clear();
+    functions_.clear();
+  }
 
  private:
   struct Key {
@@ -164,7 +167,7 @@ class PjitFunctionCache {
     h = H::combine(std::move(h), key.function.ptr());
     Py_hash_t hash;
     try {
-      hash = xla::nb_hash(key.global_cache_key);
+      hash = nb::hash(key.global_cache_key);
     } catch (const nanobind::python_error& e) {
       if (!e.matches(PyExc_TypeError)) throw;
       throw std::invalid_argument(absl::StrCat(
@@ -347,6 +350,7 @@ class PjitFunctionStore {
     for (auto* function : compiled_functions_) {
       function->ClearCache();
     }
+    compiled_functions_.clear();
   }
 
  private:

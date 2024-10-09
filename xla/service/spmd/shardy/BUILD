@@ -24,30 +24,6 @@ package_group(
 )
 
 cc_library(
-    name = "shardy_call_inliner",
-    srcs = ["shardy_call_inliner.cc"],
-    hdrs = ["shardy_call_inliner.h"],
-    deps = [
-        "//xla/hlo/ir:hlo",
-        "//xla/service:call_inliner",
-        "@com_google_absl//absl/strings",
-    ],
-)
-
-xla_cc_test(
-    name = "shardy_call_inliner_test",
-    srcs = ["shardy_call_inliner_test.cc"],
-    deps = [
-        ":shardy_call_inliner",
-        "//xla/hlo/ir:hlo",
-        "//xla/tests:hlo_test_base",
-        "@com_google_absl//absl/log",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
     name = "shardy_xla_pass",
     srcs = ["shardy_xla_pass.cc"],
     hdrs = ["shardy_xla_pass.h"],
@@ -60,6 +36,8 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
+        "//xla/hlo/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/service:computation_layout",
@@ -70,8 +48,6 @@ cc_library(
         "//xla/service/spmd/shardy/mhlo_round_trip:mhlo_export",
         "//xla/service/spmd/shardy/mhlo_round_trip:mhlo_import",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
-        "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "//xla/translate/mhlo_to_hlo:mlir_hlo_to_hlo",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -147,12 +123,15 @@ xla_cc_binary(
         "//xla/service/spmd/shardy/mhlo_round_trip:shard_map_export",
         "//xla/service/spmd/shardy/mhlo_round_trip:shard_map_import",
         "//xla/service/spmd/shardy/round_trip_common:convert_sharding_custom_calls",
+        "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
+        "//xla/service/spmd/shardy/round_trip_common:import_backend_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
         "//xla/service/spmd/shardy/sdy_round_trip:export_ops",
-        "//xla/service/spmd/shardy/sdy_round_trip:export_shardings",
-        "//xla/service/spmd/shardy/sdy_round_trip:import_shardings",
+        "//xla/service/spmd/shardy/sdy_round_trip:export_shardy_attrs",
+        "//xla/service/spmd/shardy/sdy_round_trip:import_shardy_attrs",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
+        "//xla/service/spmd/shardy/sdy_round_trip:remove_size_one_axes",
         "//xla/service/spmd/shardy/sdy_round_trip:shard_map_export",
         "//xla/service/spmd/shardy/sdy_round_trip:shard_map_import",
         "//xla/service/spmd/shardy/sdy_round_trip/test_utils:mhlo_to_hlo_to_mhlo",

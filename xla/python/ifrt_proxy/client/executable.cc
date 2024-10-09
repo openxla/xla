@@ -355,12 +355,12 @@ std::optional<std::vector<OpSharding>> LoadedExecutable::GetOutputShardings()
   return (*info)->output_shardings;
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<Layout>>>
+absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
 LoadedExecutable::GetParameterLayouts() const {
   TF_ASSIGN_OR_RETURN(auto info, metadata_future_.Await());
   TF_RETURN_IF_ERROR(info->parameter_layouts.status());
 
-  std::vector<std::unique_ptr<Layout>> result;
+  std::vector<std::unique_ptr<xla::PjRtLayout>> result;
   result.reserve(info->parameter_layouts->size());
   for (const xla::Layout& layout : *info->parameter_layouts) {
     result.push_back(std::make_unique<xla::PjRtXlaLayout>(layout));
@@ -368,12 +368,12 @@ LoadedExecutable::GetParameterLayouts() const {
   return result;
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<Layout>>>
+absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
 LoadedExecutable::GetOutputLayouts() const {
   TF_ASSIGN_OR_RETURN(auto info, metadata_future_.Await());
   TF_RETURN_IF_ERROR(info->output_layouts.status());
 
-  std::vector<std::unique_ptr<Layout>> result;
+  std::vector<std::unique_ptr<xla::PjRtLayout>> result;
   result.reserve(info->output_layouts->size());
   for (const xla::Layout& layout : *info->output_layouts) {
     result.push_back(std::make_unique<xla::PjRtXlaLayout>(layout));
@@ -432,7 +432,12 @@ LoadedExecutable::Execute(
 
   // Populate the execution status future. `CheckFuture` deletes the server-side
   // futures after its completion.
-  result.status = rpc_helper_->CheckFuture(response->status_handle());
+  //
+  // Starting version 6, the server populates the status future only if it was
+  // explicitly requested via `options.fill_status`.
+  if (rpc_helper_->version().protocol_version() < 6 || options.fill_status) {
+    result.status = rpc_helper_->CheckFuture(response->status_handle());
+  }
 
   // Create output arrays. The cleanup logic ensures that all handles are
   // properly cleaned up on early return.

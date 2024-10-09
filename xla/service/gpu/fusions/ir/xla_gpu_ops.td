@@ -169,39 +169,35 @@ def XLAGPU_ShuffleReduceOp : XLAGPU_Op<"shuffle_reduce",
     function. The function is invoked with the operands from the low lanes,
     followed by the operands from the high lanes. For example:
 
-   // TODO: update the syntax to make it similar to xla_gpu.reduce.
     ```
-    shuffle_reduce @argmax(%value, %idx) : (f32, index)
+    %result:2 = xla_gpu.shuffle_reduce (%in0, %in1) to 16 combiner=@argmax
     ```
 
     Will perform shuffles with distance 16, 8, 4, 2 and 1, and will invoke
     @argmax five times. The first invocations will be
 
     ```
-    @argmax(%value[i], %idx[i], %value[16+i], %idx[16+i])
+    @argmax(%in0[i], %in1[i], %in0[16+i], %in1[16+i])
     ```
   }];
   let builders = [
-    OpBuilder<(ins "mlir::func::FuncOp":$reducer, "mlir::ValueRange":$operands, "int64_t":$max_distance), [{
+    OpBuilder<(ins "mlir::func::FuncOp":$combiner, "mlir::ValueRange":$operands, "int64_t":$max_distance), [{
       $_state.addOperands(operands);
-      $_state.addAttribute("reducer", mlir::SymbolRefAttr::get(reducer));
+      $_state.addAttribute("combiner", mlir::SymbolRefAttr::get(combiner));
       $_state.addAttribute("max_distance",
           mlir::IntegerAttr::get(
-              mlir::IntegerType::get(reducer.getContext(), 64),
+              mlir::IntegerType::get(combiner.getContext(), 64),
               max_distance));
-      $_state.addTypes(reducer.getFunctionType().getResults());
+      $_state.addTypes(combiner.getFunctionType().getResults());
     }]>];
-  let arguments = (ins FlatSymbolRefAttr:$reducer,
+  let arguments = (ins FlatSymbolRefAttr:$combiner,
                    Variadic<AnyType>:$operands,
                    I64Attr:$max_distance);
   let results = (outs Variadic<AnyType>:$results);
 
-  let assemblyFormat = [{
-    $reducer `(` $operands `)` `to` $max_distance attr-dict `:` type($operands)
-  }];
   let extraClassDeclaration = [{
     mlir::CallInterfaceCallable getCallableForCallee() {
-      return (*this)->getAttrOfType<mlir::SymbolRefAttr>("reducer");
+      return (*this)->getAttrOfType<mlir::SymbolRefAttr>("combiner");
     }
     operand_range getArgOperands() {
       return getOperands();
@@ -213,6 +209,7 @@ def XLAGPU_ShuffleReduceOp : XLAGPU_Op<"shuffle_reduce",
       (*this)->setAttr("reducer", callee.get<mlir::SymbolRefAttr>());
     }
   }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def XLAGPU_PredicatedInsertOp : XLAGPU_Op<"predicated_insert",
@@ -277,8 +274,8 @@ def ApplyIndexingOp : XLAGPU_Op<"apply_indexing", [Pure]> {
     OpBuilder<(ins "mlir::ValueRange":$operands,
                    "const IndexingMap&":$indexing_map)>,
     OpBuilder<(ins "mlir::ValueRange":$operands, "mlir::AffineMap":$affine_map,
-               "llvm::ArrayRef<DimVar>":$dim_vars,
-               "llvm::ArrayRef<RangeVar>":$range_vars)>,
+               "llvm::ArrayRef<IndexingMap::Variable>":$dim_vars,
+               "llvm::ArrayRef<IndexingMap::Variable>":$range_vars)>,
   ];
   let extraClassDeclaration = [{
     // Returns the indexing map constructed from IndexingMapAttr.
@@ -431,7 +428,8 @@ def XLAGPU_ReduceOp : XLAGPU_Op<"reduce", [
       func.return %0, %1 : f32, i32
     }
     %sum:2 = xla_gpu.reduce (%in0, %in1) inits(%init0, %init1) dimensions=[0, 2]
-      combiner=@add
+      combiner=@add : tensor<16x8x4xf32>, tensor<16x8x4xi32>
+        to tensor<8xf32>, tensor<8xi32>
     ```
   }];
   let arguments = (ins
@@ -458,6 +456,38 @@ def XLAGPU_ReduceOp : XLAGPU_Op<"reduce", [
   }];
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+}
+
+def XLAGPU_ReindexOp : XLAGPU_Op<"reindex", [
+    Pure,
+    OptionalTypesMatchWith<
+        "scalar padding type matches element type operand",
+        "operand", "padding",
+        "::llvm::cast<::mlir::ShapedType>($_self).getElementType()">
+  ]> {
+  let summary = "Reindexes a tensor.";
+  let description = [{
+    The `xla_gpu.reindex` op models a general index transformation on a tensor.
+    Examples are transposes, broadcasts and reshapes. However, any index
+    transformation that is expressible as an indexing map is allowed.
+  }];
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    Optional<AnyTypeOf<[AnySignlessInteger, AnyFloat, AnyComplex]>>:$padding,
+    XLAGPU_IndexingMapAttr:$map);
+  let results = (outs AnyRankedTensor:$result);
+
+  let builders = [
+    OpBuilder<(ins "mlir::Type":$type, "mlir::Value":$operand,
+                   "mlir::Value":$padding,
+                   "const IndexingMap&":$indexing_map)>,
+  ];
+
+  // TODO(jreiffers): Add a verifier.
+  let assemblyFormat = [{
+    $operand `at` $map (`default` $padding^)? attr-dict
+      `:` type($operand) `->` type($result)
+  }];
 }
 
 #endif // XLA_SERVICE_GPU_FUSIONS_MLIR_OPS

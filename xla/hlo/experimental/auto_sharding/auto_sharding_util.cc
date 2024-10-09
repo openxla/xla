@@ -157,8 +157,7 @@ std::optional<HloSharding> PropagateReduceWindowSharding(
 // We also assign a much larger distance to heavy operators (e.g., dot,
 // convolution).
 InstructionDepthMap BuildInstructionDepthMap(
-    const HloInstructionSequence& sequence,
-    const InstructionBatchDimMap& batch_dim_map) {
+    const HloInstructionSequence& sequence) {
   const std::vector<HloInstruction*>& instructions = sequence.instructions();
 
   InstructionDepthMap depth_map;
@@ -841,16 +840,19 @@ void RemoveDuplicatedStrategy(StrategyGroup& strategy_group) {
       deduped_replicated_strategies;
   absl::flat_hash_set<std::string> added;
   size_t num_skipped_due_to_infinity_costs = 0;
-  for (size_t sid = 0; sid < strategy_group.GetStrategies().size(); ++sid) {
-    const ShardingStrategy& strategy = strategy_group.GetStrategy(sid);
+  const auto& strategy_input_shardings =
+      strategy_group.GetStrategyInputShardings();
+  for (size_t iid = 0; iid < strategy_input_shardings.size(); ++iid) {
+    const InputShardings& input_shardings = strategy_input_shardings[iid];
+    const ShardingStrategy& strategy =
+        strategy_group.GetStrategyForInputShardings(iid);
     if (AllInfinityCosts(strategy.communication_resharding_costs)) {
       num_skipped_due_to_infinity_costs++;
       continue;
     }
     std::string key = strategy.output_sharding.ToString();
-    const auto& input_shardings = strategy_group.GetInputShardings(sid);
-    if (!input_shardings.empty()) {
-      for (const auto& sharding : input_shardings) {
+    if (!input_shardings.shardings.empty()) {
+      for (const auto& sharding : input_shardings.shardings) {
         key += "/" + (sharding.has_value() ? sharding->ToString() : "none");
       }
     }
@@ -864,8 +866,7 @@ void RemoveDuplicatedStrategy(StrategyGroup& strategy_group) {
       deduped_replicated_strategies.push_back({strategy, input_shardings});
     }
   }
-  CHECK_LT(num_skipped_due_to_infinity_costs,
-           strategy_group.GetStrategies().size())
+  CHECK_LT(num_skipped_due_to_infinity_costs, strategy_input_shardings.size())
       << "All strategies removed due to infinite resharding costs";
   // Keeps replicated strategies as the last ones.
   if (!deduped_replicated_strategies.empty()) {
@@ -1190,6 +1191,55 @@ absl::StatusOr<std::vector<int64_t>> GetTensorDimToMeshDimNoCrash(
     }
   }
   return tensor_dim_to_device_dim;
+}
+
+absl::StatusOr<std::vector<absl::btree_set<int64_t>>>
+GetTensorDimToMeshDimMixedMeshSharding(int64_t tensor_shape_rank,
+                                       const HloSharding& sharding,
+                                       const DeviceMesh& device_mesh,
+                                       bool consider_reverse_device_meshes) {
+  CHECK(!sharding.IsReplicated());
+  // Check the compatibility of tensor_shape_rank and spec
+  if (tensor_shape_rank != sharding.TiledDataRank()) {
+    return absl::InvalidArgumentError(
+        "Tensor shape rank should be equal to the tiled data rank of the input "
+        "spec.");
+  }
+  if (!TileAssignmentMatchesMesh(sharding, device_mesh)) {
+    return absl::InvalidArgumentError(
+        "Device mesh and tile assignment need to have the same number of "
+        "sharded dims.");
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      std::vector<int64_t> axes,
+      GetMeshDimPermutationOrderInShardingSpec(sharding, device_mesh,
+                                               consider_reverse_device_meshes));
+
+  std::vector<absl::btree_set<int64_t>> tensor_dim_to_mesh_axis_mapping;
+  int mesh_axis_idx = 0;
+  for (int i = 0; i < sharding.tile_assignment().num_dimensions(); ++i) {
+    if (sharding.tile_assignment().dim(i) == 1) {
+      tensor_dim_to_mesh_axis_mapping.push_back({});
+      continue;
+    }
+
+    absl::btree_set<int64_t> mesh_axes_for_this_tensor_dim;
+    int product = 1;
+    do {
+      if (mesh_axis_idx >= device_mesh.num_dimensions()) {
+        return absl::InternalError(
+            "Mismatched mesh shapes encountered. This can happen when the "
+            "sharding does not map well to the mesh shape provided");
+      }
+      product *= device_mesh.dim(axes[mesh_axis_idx]);
+      mesh_axes_for_this_tensor_dim.insert(axes[mesh_axis_idx]);
+      mesh_axis_idx++;
+    } while (product < sharding.tile_assignment().dim(i));
+    CHECK(!mesh_axes_for_this_tensor_dim.empty());
+    tensor_dim_to_mesh_axis_mapping.push_back(mesh_axes_for_this_tensor_dim);
+  }
+  return tensor_dim_to_mesh_axis_mapping;
 }
 
 std::vector<int64_t> GetTensorDimToMeshDim(

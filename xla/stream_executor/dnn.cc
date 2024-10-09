@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/numeric_options.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "tsl/platform/ml_dtypes.h"
-#include "tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor {
 namespace dnn {
@@ -66,6 +66,8 @@ bool ProtoMapsEqual(const google::protobuf::Map<int64_t, int64_t>& x,
 
 }  // namespace
 
+constexpr DataType ToDataType<tsl::float8_e3m4>::value;
+constexpr DataType ToDataType<tsl::float8_e4m3>::value;
 constexpr DataType ToDataType<tsl::float8_e4m3fn>::value;
 constexpr DataType ToDataType<tsl::float8_e4m3fnuz>::value;
 constexpr DataType ToDataType<tsl::float8_e5m2>::value;

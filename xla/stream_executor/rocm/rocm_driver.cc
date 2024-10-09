@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_diagnostics.h"
 #include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
-#include "xla/stream_executor/platform/port.h"
 #include "xla/stream_executor/rocm/rocm_driver_wrapper.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "tsl/platform/casts.h"
@@ -187,17 +186,6 @@ absl::StatusOr<hipDevice_t> DeviceFromContext(Context* context) {
 
   return absl::InternalError(
       absl::StrCat("failed to get device for context: ", ToString(result)));
-}
-
-// ROCM driver routines may require a large amount of stack (particularly
-// hipModuleLoadDataEx, in our experience). To avoid stack overflow when using
-// stack-limited threads (such as those spawned by a default-argument
-// thread::ThreadPool on some platforms), we run certain routines in this pool
-// and wait for completion.
-tsl::thread::ThreadPool* GetDriverExecutor() {
-  static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "rocm_driver", 1);
-  return thread_pool;
 }
 
 }  // namespace
@@ -364,15 +352,6 @@ void GpuDriver::DestroyContext(Context* context) {
   }
 
   GetContextMap()->Remove(gpu_context->context());
-}
-
-absl::Status GpuDriver::FuncGetAttribute(hipFunction_attribute attribute,
-                                         hipFunction_t func,
-                                         int* attribute_value) {
-  RETURN_IF_ROCM_ERROR(
-      wrap::hipFuncGetAttribute(attribute_value, attribute, func),
-      "Failed to query kernel attribute: ", attribute);
-  return absl::OkStatus();
 }
 
 absl::Status GpuDriver::CreateGraph(hipGraph_t* graph) {
@@ -905,46 +884,9 @@ absl::Status GpuDriver::LaunchKernel(
                       shared_mem_bytes, stream, kernel_params, extra);
 }
 
-absl::Status GpuDriver::LoadPtx(Context* context, const char* ptx_contents,
-                                hipModule_t* module) {
-  return absl::InternalError(
-      "Feature not supported on ROCm platform (LoadPtx)");
-}
-
-absl::Status GpuDriver::LoadCubin(Context* context, const char* cubin_bytes,
-                                  hipModule_t* module) {
-  return absl::InternalError(
-      "Feature not supported on ROCm platform (LoadCubin)");
-}
-
-absl::Status GpuDriver::LoadHsaco(Context* context, const char* hsaco_contents,
-                                  hipModule_t* module) {
-  absl::Notification notification;
-  absl::Status ret = absl::OkStatus();
-  GetDriverExecutor()->Schedule(
-      [context, hsaco_contents, module, &ret, &notification]() {
-        ScopedActivateContext activation{context};
-        void* hsaco_data = const_cast<char*>(hsaco_contents);
-
-        hipError_t res = wrap::hipModuleLoadData(module, hsaco_data);
-
-        if (res != hipSuccess) {
-          ret = absl::InternalError(
-              absl::StrCat("Failed to load HSACO: ", ToString(res)));
-          notification.Notify();
-        }
-
-        CHECK(module != nullptr);
-        notification.Notify();
-      });
-  notification.WaitForNotification();
-
-  return ret;
-}
-
 absl::Status GpuDriver::SynchronousMemsetUint8(Context* context,
                                                hipDeviceptr_t location,
-                                               uint8 value, size_t size) {
+                                               uint8_t value, size_t size) {
   ScopedActivateContext activation{context};
   RETURN_IF_ROCM_ERROR(wrap::hipMemsetD8(location, value, size),
                        "Failed to memset memory");
@@ -953,7 +895,7 @@ absl::Status GpuDriver::SynchronousMemsetUint8(Context* context,
 
 absl::Status GpuDriver::SynchronousMemsetUint32(Context* context,
                                                 hipDeviceptr_t location,
-                                                uint32 value,
+                                                uint32_t value,
                                                 size_t uint32_count) {
   ScopedActivateContext activation{context};
   void* pointer = absl::bit_cast<void*>(location);
@@ -964,19 +906,19 @@ absl::Status GpuDriver::SynchronousMemsetUint32(Context* context,
 
 absl::Status GpuDriver::AsynchronousMemsetUint8(Context* context,
                                                 hipDeviceptr_t location,
-                                                uint8 value,
-                                                size_t uint32_count,
+                                                uint8_t value,
+                                                size_t uint8_count,
                                                 GpuStreamHandle stream) {
   ScopedActivateContext activation{context};
   RETURN_IF_ROCM_ERROR(
-      wrap::hipMemsetAsync(location, value, uint32_count, stream),
+      wrap::hipMemsetAsync(location, value, uint8_count, stream),
       "Failed to enqueue async memset operation");
   return absl::OkStatus();
 }
 
 absl::Status GpuDriver::AsynchronousMemsetUint32(Context* context,
                                                  hipDeviceptr_t location,
-                                                 uint32 value,
+                                                 uint32_t value,
                                                  size_t uint32_count,
                                                  GpuStreamHandle stream) {
   ScopedActivateContext activation{context};

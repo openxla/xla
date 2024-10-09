@@ -50,10 +50,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_proto_util.h"
+#include "xla/tsl/lib/io/zlib_compression_options.h"
+#include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
-#include "tsl/lib/io/zlib_compression_options.h"
-#include "tsl/lib/io/zlib_outputbuffer.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/file_system.h"
@@ -460,13 +460,17 @@ static std::vector<std::string> DumpHloModuleImpl(
     file_paths.push_back(DumpToFileInDirOrStdoutImpl(
         StrCat(filename, ".txt"), module.ToString(print_options), opts));
     if (buffer_assn) {
-      DataProducer data_producer;
-      data_producer.Append([&] { return buffer_assn->ToString(); });
-      data_producer.Append([&] { return "\n\n"; });
-      data_producer.Append(
+      DataProducer buffer_assignment;
+      buffer_assignment.Append([&] { return buffer_assn->ToString(); });
+      buffer_assignment.Append([&] { return "\n\n"; });
+      buffer_assignment.Append(
           [&] { return buffer_assn->hlo_live_range().ToString(); });
       file_paths.push_back(DumpToFileInDirOrStdoutImpl(
-          StrCat(filename, "-buffer-assignment.txt"), data_producer, opts));
+          StrCat(filename, "-buffer-assignment.txt"), buffer_assignment, opts));
+      DataProducer summary_report;
+      summary_report.Append([&] { return buffer_assn->MemoryUsageReport(); });
+      file_paths.push_back(DumpToFileInDirOrStdoutImpl(
+          StrCat(filename, "-memory-usage-report.txt"), summary_report, opts));
     }
   }
 

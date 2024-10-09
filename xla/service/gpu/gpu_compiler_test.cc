@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_compiler.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,9 +27,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/autotune_results.pb.h"
@@ -55,6 +59,7 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
@@ -84,6 +89,13 @@ class GpuCompilerTest : public HloTestBase {
     TF_RETURN_IF_ERROR(ScheduleGpuModule(module, 4, gpu_device_info).status());
     return tensorflow::down_cast<GpuCompiler*>(compiler)
         ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
+  }
+
+  const stream_executor::GpuComputeCapability& GpuComputeComp() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
   }
 };
 
@@ -970,6 +982,10 @@ using GpuCompilerPassTest = GpuCompilerTest;
 
 TEST_F(GpuCompilerPassTest,
        GpuCompilerRunsTritonGemmRewriterByDefaultFromAmpere) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "TritonGemmRewriter disabled for ROCm until autotuner "
+                 << "is included.";
+  }
   auto cc = backend()
                 .default_stream_executor()
                 ->GetDeviceDescription()
@@ -1038,6 +1054,109 @@ ENTRY main {
 
   EXPECT_EQ(custom_kernel_fusion_rewriter_has_run,
             expect_custom_kernel_fusion_rewriter_has_run);
+}
+
+struct PassRunIndex {
+  int first_run = std::numeric_limits<int>::max();
+  int last_run = std::numeric_limits<int>::min();
+};
+
+// Checks that both passes have actually run and that the first run of the
+// `after` pass is after the last run of the `before` pass.
+void VerifyPassOrder(
+    const absl::flat_hash_map<std::string, PassRunIndex>& passes,
+    absl::string_view before, absl::string_view after) {
+  ASSERT_TRUE(passes.contains(before))
+      << "Expected pass did not run: " << before;
+  ASSERT_TRUE(passes.contains(after)) << "Expected pass did not run: " << after;
+  EXPECT_LT(passes.at(before).last_run, passes.at(after).first_run)
+      << "Pass " << before << " ran after " << after;
+}
+
+// Traverses the module's pass metadata and gathers, for each pass, its smallest
+// and largest run index.  If a pass p0's run index is smaller than another pass
+// p1's run index, then p0 ran before p1.
+absl::flat_hash_map<std::string, PassRunIndex> GatherPassOrderInformation(
+    const HloModule& module) {
+  // Maps a pass name to its first and last index.
+  absl::flat_hash_map<std::string, PassRunIndex> passes;
+  int run_index = 0;
+  for (const HloPassMetadata& pass_metadata :
+       module.metadata().proto().pass_metadata()) {
+    auto& pass = passes[pass_metadata.pass_name()];
+    pass.first_run = std::min(pass.first_run, run_index);
+    pass.last_run = std::max(pass.last_run, run_index);
+    ++run_index;
+  }
+
+  return passes;
+}
+
+TEST_F(GpuCompilerPassTest, PassesAreRunInCorrectOrder) {
+  constexpr absl::string_view constant_module = R"(
+ENTRY main {
+  ROOT constant = f32[] constant(0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(constant_module));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                          GetOptimizedModule(std::move(module)));
+
+  // Maps a pass name to its first and last index.
+  absl::flat_hash_map<std::string, PassRunIndex> passes =
+      GatherPassOrderInformation(*optimized_module);
+
+  // This test captures known dependencies between passes.
+  VerifyPassOrder(passes, /*before=*/"layout-assignment",
+                  /*after=*/"priority-fusion");
+  VerifyPassOrder(passes, /*before=*/"layout-assignment",
+                  /*after=*/"layout_normalization");
+  VerifyPassOrder(passes, /*before=*/"host-offload-legalize",
+                  /*after=*/"layout_normalization");
+}
+
+TEST_F(GpuCompilerPassTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
+  auto cc = backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .cuda_compute_capability();
+  if (!cc.IsAtLeastAmpere()) {
+    GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ to run.";
+  }
+
+  constexpr absl::string_view constant_module = R"(
+ENTRY main {
+  ROOT constant = f32[] constant(0)
+})";
+
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(
+      true);
+  config.set_debug_options(debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(constant_module, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                          GetOptimizedModule(std::move(module)));
+
+  absl::flat_hash_map<std::string, PassRunIndex> passes =
+      GatherPassOrderInformation(*optimized_module);
+
+  absl::string_view kFusionBlockLevelRewriterName =
+      "fusion-block-level-rewriter";
+
+  for (const auto& [pass_name, _] : passes) {
+    if (pass_name != kFusionBlockLevelRewriterName &&
+        absl::StrContains(pass_name, "fusion")) {
+      VerifyPassOrder(passes, /*before=*/pass_name,
+                      /*after=*/kFusionBlockLevelRewriterName);
+      VLOG(2) << "Verified pass order: " << pass_name << " -> "
+              << kFusionBlockLevelRewriterName;
+    }
+  }
 }
 
 }  // namespace

@@ -35,6 +35,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -206,6 +207,8 @@ Future<BackendInterface::Response> IfrtBackend::Process(
       return Future<Response>(
           HandleGetDefaultDeviceAssignmentRequest(std::move(request)));
     default:
+      LOG(ERROR) << "Got unimplemented request type: "
+                 << request->DebugString();
       return Future<Response>(absl::UnimplementedError(absl::StrCat(
           "Got unimplemented request type: ", request->request_case())));
   }
@@ -263,8 +266,14 @@ absl::StatusOr<BackendInterface::Response> IfrtBackend::HandleInit(
   init_resp->set_runtime_type(AsProtoStringData(client_->runtime_type()));
   init_resp->set_process_index(client_->process_index());
 
-  for (auto* device : client_->devices()) {
-    InitResponse::Device* d = init_resp->add_devices();
+  absl::Span<xla::ifrt::Device* const> all_devices;
+  if (version_.protocol_version() < 7) {
+    all_devices = client_->devices();
+  } else {
+    all_devices = client_->GetAllDevices();
+  }
+  for (auto* device : all_devices) {
+    InitResponse::Device* d = init_resp->add_all_devices();
     d->set_id(device->Id().value());
     d->set_device_kind(AsProtoStringData(device->Kind()));
     if (auto default_memory = device->DefaultMemory(); default_memory.ok()) {
@@ -286,13 +295,17 @@ absl::StatusOr<BackendInterface::Response> IfrtBackend::HandleInit(
     } else {
       *d->mutable_attributes() = device->Attributes().ToProto();
     }
+
+    if (device->IsAddressable()) {
+      init_resp->add_addressable_device_ids(device->Id().value());
+    }
   }
-  for (auto* addressable_device : client_->addressable_devices()) {
-    init_resp->add_addressable_device_ids(addressable_device->Id().value());
+  for (auto* device : client_->devices()) {
+    init_resp->add_primary_device_ids(device->Id().value());
   }
 
   absl::flat_hash_map<int, xla::ifrt::Memory*> memories;
-  for (auto* device : client_->devices()) {
+  for (auto* device : all_devices) {
     for (xla::ifrt::Memory* memory : device->Memories()) {
       const auto [it, inserted] =
           memories.insert({memory->Id().value(), memory});
@@ -764,14 +777,32 @@ IfrtBackend::HandleFullyReplicatedShardRequest(
 
 absl::StatusOr<BackendInterface::Response>
 IfrtBackend::HandleDeleteArrayRequest(std::unique_ptr<IfrtRequest> request) {
-  TF_ASSIGN_OR_RETURN(auto array,
-                      GetArray(request->delete_array_request().array_handle()));
+  std::vector<uint64_t> bad_handles;
+  std::vector<Future<>> deletion_futures;
 
-  auto deletion_future = array->Delete();
+  auto delete_handle = [&](uint64_t handle) {
+    auto array = GetArray(handle);
+    if (array.ok()) {
+      deletion_futures.push_back(array.value()->Delete());
+    } else {
+      deletion_futures.push_back(Future<>(array.status()));
+    }
+  };
+
+  if (request->delete_array_request().has_array_handle_deprecated()) {
+    // TODO(b/296144873): After removing array_handle_deprecated(), move
+    // delete_handle's definition to the single place it is used.
+    delete_handle(request->delete_array_request().array_handle_deprecated());
+  }
+
+  for (auto array_handle : request->delete_array_request().array_handle()) {
+    delete_handle(array_handle);
+  }
+
   uint64_t future_handle = handle_generator_.New();
   {
     absl::MutexLock lock(&futures_mutex_);
-    futures_.insert({future_handle, std::move(deletion_future)});
+    futures_.insert({future_handle, JoinFutures(deletion_futures)});
   }
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
@@ -793,16 +824,30 @@ IfrtBackend::HandleIsArrayDeletedRequest(std::unique_ptr<IfrtRequest> request) {
 
 absl::StatusOr<BackendInterface::Response>
 IfrtBackend::HandleDestructArrayRequest(std::unique_ptr<IfrtRequest> request) {
+  std::vector<uint64_t> bad_handles;
   {
     absl::MutexLock lock(&arrays_mutex_);
-    bool deleted =
-        arrays_.erase(request->destruct_array_request().array_handle());
-    if (!deleted) {
-      return absl::NotFoundError(
-          absl::StrCat("Unknown array handle: ",
-                       request->destruct_array_request().array_handle()));
+    for (const uint64_t array_handle :
+         request->destruct_array_request().array_handle()) {
+      if (!arrays_.erase(array_handle)) {
+        bad_handles.push_back(array_handle);
+      }
+    }
+
+    if (request->destruct_array_request().has_array_handle_deprecated()) {
+      const uint64_t array_handle =
+          request->destruct_array_request().array_handle_deprecated();
+      if (!arrays_.erase(array_handle)) {
+        bad_handles.push_back(array_handle);
+      }
     }
   }
+
+  if (!bad_handles.empty()) {
+    return absl::NotFoundError(absl::StrCat("Unknown array handle(s): ",
+                                            absl::StrJoin(bad_handles, ",")));
+  }
+
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
 
   // Currently DestructArrayResponse is an empty message, but proxy clients may
@@ -1023,6 +1068,12 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
   TF_ASSIGN_OR_RETURN(auto execute_options,
                       xla::ifrt::LoadedExecutable::ExecuteOptions::FromProto(
                           execute.execute_options()));
+  // Force the old behavior where `fill_status` was implicitly true before
+  // protocol version 6. Can be cleaned up once version 6 is outside the
+  // compatibility window.
+  if (version_.protocol_version() < 6) {
+    execute_options.fill_status = true;
+  }
 
   std::optional<tsl::RCReference<DeviceList>> devices;
   if (!execute.device_ids().empty()) {
@@ -1047,7 +1098,10 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
   // `CheckFuture` exactly once to check for its status and erase it. In future,
   // we may introduce separate mechanisms to remove futures from `futures_`
   // without checking its status for situations where futures are not used.
-  {
+  //
+  // Starting protocol version 6, the client tells the server whether the status
+  // future needs to be populated or not.
+  if (version_.protocol_version() < 6 || execute_options.fill_status) {
     absl::MutexLock lock(&futures_mutex_);
     execute_response->set_status_handle(handle_generator_.New());
     futures_.insert(

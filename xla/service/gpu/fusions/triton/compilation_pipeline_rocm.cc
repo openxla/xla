@@ -70,6 +70,7 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSymbolDCEPass());
+  pm.addPass(mt::createLoopUnrollPass());
 
   // Based on make_ttgir() in
   // @triton//:third_party/amd/backend/compiler.py
@@ -90,12 +91,15 @@ absl::Status CreateTritonPipeline(
     pm.addPass(mlir::createTritonAMDGPUStreamPipelinePass());
     pm.addPass(mlir::createCanonicalizerPass());
   }
+  pm.addPass(mt::createInsertInstructionSchedHintsPass());
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
   pm.addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mt::gpu::createTritonGPUReduceDataDuplication());
   if (block_level_parameters.num_stages != kAmdDoubleBuffering) {
     pm.addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
+  pm.addPass(mlir::createTritonAMDGPUCanonicalizePointersPass());
+  pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createSymbolDCEPass());
 
@@ -119,6 +123,7 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createSymbolDCEPass());
+  pm.addPass(mt::createLowerInstructionSchedHintsPass("default"));
   pm.addPass(mt::createConvertBuiltinFuncToLLVMPass());
   // There is no clusters in ROCm for now.
   out_cluster_info.clusterDimX = 1;

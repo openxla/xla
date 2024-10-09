@@ -72,7 +72,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
     absl::flat_hash_map<int64_t, absl::flat_hash_set<HloInstruction*>>*
         shard_group_id_to_shard_like_group = nullptr,
     const std::vector<bool>*
-        allow_spmd_sharding_propagation_to_parameters_vector = nullptr);
+        allow_spmd_sharding_propagation_to_parameters_vector = nullptr,
+    bool remove_unknown_shardings = false);
 
 int64_t ComputeNonRootUsers(const HloInstruction* instr);
 
@@ -168,6 +169,15 @@ class ShardingPropagation : public HloModulePass {
       absl::flat_hash_map<int64_t, absl::flat_hash_set<HloInstruction*>>&
           shard_group_id_to_shard_like_group,
       int64_t& iterations);
+
+  // If instruction is a while, or the root or a parameter of a while body,
+  // then propagate its sharding to the while instruction, to its body root,
+  // and to its condition parameter.
+  void MaybeComputationPropagation(
+      const ComputationMap& computation_map,
+      const absl::flat_hash_set<const HloInstruction*>& provided_shardings,
+      HloInstruction* instruction,
+      absl::flat_hash_set<HloInstruction*>* changed);
 
   // Gets instructions that are related through a computation and need to share
   // the same sharding.

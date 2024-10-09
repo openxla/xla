@@ -81,6 +81,7 @@ filegroup(
         "runtime_single_threaded_matmul_c128.cc",
         "runtime_single_threaded_matmul_c64.cc",
         "runtime_single_threaded_matmul_common.h",
+        "runtime_single_threaded_matmul_f8.cc",
         "runtime_single_threaded_matmul_f16.cc",
         "runtime_single_threaded_matmul_f32.cc",
         "runtime_single_threaded_matmul_f64.cc",
@@ -244,6 +245,8 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
+        "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:mhlo_passes",
@@ -336,9 +339,8 @@ cc_library(
         "//xla/service/spmd/shardy:shardy_xla_pass",
         "//xla/stream_executor",
         "//xla/stream_executor/host:host_platform_id",
-        "//xla/translate/hlo_to_mhlo:hlo_to_mlir_hlo",
-        "//xla/translate/hlo_to_mhlo:hlo_utils",
         "//xla/tsl/concurrency:async_value",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -393,7 +395,6 @@ cc_library(
         "@tsl//tsl/platform:threadpool_async_executor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ] + if_llvm_aarch64_available([
         "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
     ]) + if_llvm_powerpc_available([
@@ -497,6 +498,7 @@ cc_library(
         "//xla:util",
         "//xla/service:custom_call_target_registry",
         "//xla/service:llvm_compiler",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/memory",
@@ -512,6 +514,7 @@ cc_library(
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:mlir_c_runner_utils",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
     ] + xla_internal(["service/cpu:named_orc_jit_memory_mapper"]),
 )
 
@@ -768,6 +771,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/service/llvm_ir:tuple_ops",
+        "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -782,7 +786,6 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/lib/math:math_util",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
@@ -1281,6 +1284,7 @@ cc_library(
         "runtime_single_threaded_matmul_f16.cc",
         "runtime_single_threaded_matmul_f32.cc",
         "runtime_single_threaded_matmul_f64.cc",
+        "runtime_single_threaded_matmul_f8.cc",
         "runtime_single_threaded_matmul_s32.cc",
         "runtime_single_threaded_matmul_u8.cc",
     ],
@@ -1293,6 +1297,7 @@ cc_library(
         "//xla/tsl/framework/contraction:eigen_contraction_kernel_no_mkl",
         "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -1305,6 +1310,7 @@ cc_library(
     deps = [
         ":runtime_single_threaded_matmul_impl",
         "@eigen_archive//:eigen3",
+        "@tsl//tsl/platform:ml_dtypes",
     ],
 )
 
@@ -1757,6 +1763,7 @@ cc_library(
     copts = runtime_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
+        ":backend_config_proto_cc",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@eigen_archive//:eigen3",

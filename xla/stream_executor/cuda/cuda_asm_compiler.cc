@@ -57,7 +57,7 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/cuda_libdevice_path.h"
+#include "tsl/platform/cuda_root_path.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
@@ -382,10 +382,9 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingPtxAs(
           "%s ptxas too old. Falling back to the driver to compile.",
           ptxas_path));
     }
-    if (absl::StrContains(stderr_output, "ptxas fatal") &&
-        absl::StrContains(stderr_output, "Register allocation failed")) {
+    if (IsPtxRegisterAllocationError(stderr_output)) {
       LOG(INFO) << stderr_output;
-      return absl::ResourceExhaustedError("Register allocation failed");
+      return absl::ResourceExhaustedError(stderr_output);
     }
 
     return absl::InternalError(

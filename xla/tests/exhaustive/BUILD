@@ -4,6 +4,7 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tests/exhaustive:build_defs.bzl", "exhaustive_xla_test")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,18 +22,41 @@ package_group(
     ],
 )
 
-cc_library(
-    name = "exhaustive_op_test_utils",
+filegroup(
+    name = "exhaustive_op_test_utils_shared_hdrs",
+    testonly = True,
+    srcs = [
+        "error_spec.h",
+        "exhaustive_op_test_base.h",
+        "exhaustive_op_test_utils.h",
+    ],
+    compatible_with = get_compatible_with_portable(),
+)
+
+filegroup(
+    name = "exhaustive_op_test_utils_shared_srcs",
     testonly = True,
     srcs = [
         "exhaustive_op_test_base.cc",
         "exhaustive_op_test_utils.cc",
     ],
-    hdrs = [
-        "error_spec.h",
-        "exhaustive_op_test_base.h",
-        "exhaustive_op_test_utils.h",
+    compatible_with = get_compatible_with_portable(),
+)
+
+cc_library(
+    name = "exhaustive_op_test_utils",
+    testonly = True,
+    srcs = [
+        "platform.cc",
+        ":exhaustive_op_test_utils_shared_srcs",
     ],
+    hdrs = [
+        "exhaustive_op_test.h",
+        "platform.h",
+        "test_op.h",
+        ":exhaustive_op_test_utils_shared_hdrs",
+    ],
+    visibility = ["//visibility:private"],
     deps = [
         "//xla:bit_cast",
         "//xla:executable_run_options",
@@ -43,9 +67,11 @@ cc_library(
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/client:executable_build_options",
-        "//xla/client:xla_builder",
-        "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder:xla_computation",
         "//xla/service:shaped_buffer",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:platform",
         "//xla/tests:client_library_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/util:command_line_flags",
@@ -64,25 +90,14 @@ cc_library(
     ],
 )
 
-filegroup(
-    name = "exhaustive_unary_test_srcs",
-    testonly = True,
-    srcs = [
-        "exhaustive_unary_test_definitions.h",
-        "exhaustive_unary_test_functions.cc",
+cc_library(
+    name = "exhaustive_unary_test_textual_hdrs",
+    textual_hdrs = [
+        "exhaustive_unary_test_definitions.inc",
+        "exhaustive_unary_test_f32_and_smaller_instantiation.inc",
+        "exhaustive_unary_test_f64_instantiation.inc",
+        "exhaustive_unary_test_ops.inc",
     ],
-)
-
-filegroup(
-    name = "exhaustive_unary_test_f32_and_smaller_srcs",
-    testonly = True,
-    srcs = ["exhaustive_unary_test_f32_and_smaller_instantiation.cc"],
-)
-
-filegroup(
-    name = "exhaustive_unary_test_f64_srcs",
-    testonly = True,
-    srcs = ["exhaustive_unary_test_f64_instantiation.cc"],
 )
 
 exhaustive_xla_test(
@@ -90,7 +105,8 @@ exhaustive_xla_test(
     timeout = "long",
     srcs = [
         "exhaustive_test_main.cc",
-        ":exhaustive_unary_test_srcs",
+        "exhaustive_unary_test_definitions.h",
+        "exhaustive_unary_test_functions.cc",
     ],
     # Nvidia close-sourced libraries are not TSAN friendly, but are doing their own synchronization.
     # This can lead to TSAN false positives that are hard to track down.
@@ -107,8 +123,12 @@ exhaustive_xla_test(
     # exhaustive_xla_test needs to have all partition names added to allow other build tools to
     # function.
     partitions = {
-        "f32_and_smaller": [":exhaustive_unary_test_f32_and_smaller_srcs"],
-        "f64": [":exhaustive_unary_test_f64_srcs"],
+        "f32_and_smaller": [
+            "exhaustive_unary_test_f32_and_smaller_instantiation.cc",
+        ],
+        "f64": [
+            ":exhaustive_unary_test_f64_instantiation.cc",
+        ],
     },
     real_hardware_only = True,  # Very slow on the interpreter.
     shard_count = 50,
@@ -120,11 +140,12 @@ exhaustive_xla_test(
     ],
     deps = [
         ":exhaustive_op_test_utils",
+        ":exhaustive_unary_test_textual_hdrs",
         "//xla:literal",
         "//xla:types",
-        "//xla/client:xla_builder",
-        "//xla/client/lib:constants",
-        "//xla/client/lib:math",
+        "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/builder/lib:constants",
+        "//xla/hlo/builder/lib:math",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -161,7 +182,7 @@ xla_test(
         ":exhaustive_op_test_utils",
         "//xla:literal",
         "//xla:types",
-        "//xla/client:xla_builder",
+        "//xla/hlo/builder:xla_builder",
         "//xla/tests:test_macros_header",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/util:command_line_flags",
@@ -172,39 +193,24 @@ xla_test(
     ],
 )
 
-filegroup(
-    name = "exhaustive_binary_test_srcs",
-    testonly = True,
-    srcs = [
-        "exhaustive_binary_test_definitions.h",
-        "exhaustive_binary_test_functions.cc",
+cc_library(
+    name = "exhaustive_binary_test_textual_hdrs",
+    textual_hdrs = [
+        "exhaustive_binary_test_definitions.inc",
+        "exhaustive_binary_test_f16_and_smaller_instantiation.inc",
+        "exhaustive_binary_test_f32_instantiation.inc",
+        "exhaustive_binary_test_f64_instantiation.inc",
+        "exhaustive_binary_test_ops.inc",
     ],
-)
-
-filegroup(
-    name = "exhaustive_binary_test_f16_and_smaller_srcs",
-    testonly = True,
-    srcs = ["exhaustive_binary_test_f16_and_smaller_instantiation.cc"],
-)
-
-filegroup(
-    name = "exhaustive_binary_test_f32_srcs",
-    testonly = True,
-    srcs = ["exhaustive_binary_test_f32_instantiation.cc"],
-)
-
-filegroup(
-    name = "exhaustive_binary_test_f64_srcs",
-    testonly = True,
-    srcs = ["exhaustive_binary_test_f64_instantiation.cc"],
 )
 
 exhaustive_xla_test(
     name = "exhaustive_binary_test",
     timeout = "long",
     srcs = [
+        "exhaustive_binary_test_definitions.h",
+        "exhaustive_binary_test_functions.cc",
         "exhaustive_test_main.cc",
-        ":exhaustive_binary_test_srcs",
     ],
     # Nvidia close-sourced libraries are not TSAN friendly, but are doing their own synchronization.
     # This can lead to TSAN false positives that are hard to track down.
@@ -221,9 +227,15 @@ exhaustive_xla_test(
     # exhasutive_xla_test needs to have all partition names added to allow other build tools to
     # function.
     partitions = {
-        "f16_and_smaller": [":exhaustive_binary_test_f16_and_smaller_srcs"],
-        "f32": [":exhaustive_binary_test_f32_srcs"],
-        "f64": [":exhaustive_binary_test_f64_srcs"],
+        "f16_and_smaller": [
+            "exhaustive_binary_test_f16_and_smaller_instantiation.cc",
+        ],
+        "f32": [
+            "exhaustive_binary_test_f32_instantiation.cc",
+        ],
+        "f64": [
+            "exhaustive_binary_test_f64_instantiation.cc",
+        ],
     },
     shard_count = 50,
     tags = [
@@ -233,10 +245,11 @@ exhaustive_xla_test(
         "no_oss",
     ],
     deps = [
+        ":exhaustive_binary_test_textual_hdrs",
         ":exhaustive_op_test_utils",
         "//xla:literal",
         "//xla:types",
-        "//xla/client:xla_builder",
+        "//xla/hlo/builder:xla_builder",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log",

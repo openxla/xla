@@ -36,6 +36,7 @@ cc_library(
         ":save_profile",
         "//xla/tsl/profiler/convert:trace_events_to_json",
         "//xla/tsl/profiler/convert:xplane_to_trace_events",
+        "//xla/tsl/profiler/utils:session_manager",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
@@ -47,7 +48,6 @@ cc_library(
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiler_service_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:session_manager",
     ],
 )
 
@@ -64,10 +64,11 @@ cc_library(
         "//learning/pathways/data_parallel:__pkg__",
     ]),
     deps = [
+        "//xla/tsl/lib/io:zlib_compression_options",
+        "//xla/tsl/lib/io:zlib_outputbuffer",
+        "//xla/tsl/profiler/utils:file_system_utils",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/lib/io:zlib_compression_options",
-        "@tsl//tsl/lib/io:zlib_outputbuffer",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -75,7 +76,6 @@ cc_library(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:profiler_service_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:file_system_utils",
     ],
 )
 
@@ -121,6 +121,7 @@ cc_library(
         "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     deps = [
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
@@ -130,7 +131,6 @@ cc_library(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:profiler_analysis_cc_grpc_proto",
         "@tsl//tsl/profiler/protobuf:profiler_service_cc_grpc_proto",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ] + tsl_grpc_cc_dependencies(),
     alwayslink = True,
 )
@@ -161,6 +161,7 @@ tsl_cc_test(
         ":profiler_client_test_util",
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc:profiler_service_impl",
+        "//xla/tsl/profiler/utils:time_utils_impl",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:errors",
@@ -170,7 +171,6 @@ tsl_cc_test(
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:profiler_factory_impl",
         "@tsl//tsl/profiler/lib:profiler_session_impl",
-        "@tsl//tsl/profiler/utils:time_utils_impl",
     ] + tf_protos_profiler_service(),
 )
 
@@ -181,6 +181,7 @@ cc_library(
     copts = tf_profiler_copts(),
     deps = [
         ":profiler_client_for_pybind",
+        "//xla/tsl/profiler/utils:time_utils",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
@@ -192,7 +193,6 @@ cc_library(
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/profiler/utils:time_utils",
     ],
 )
 
@@ -205,6 +205,7 @@ tsl_cc_test(
         ":remote_profiler_session_manager",
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc:profiler_service_impl",
+        "//xla/tsl/profiler/utils:time_utils_impl",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
         "@tsl//tsl/platform:env_impl",
@@ -216,6 +217,5 @@ tsl_cc_test(
         "@tsl//tsl/profiler/lib:profiler_factory_impl",
         "@tsl//tsl/profiler/lib:profiler_session_impl",
         "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
-        "@tsl//tsl/profiler/utils:time_utils_impl",
     ] + tf_protos_profiler_service(),
 )

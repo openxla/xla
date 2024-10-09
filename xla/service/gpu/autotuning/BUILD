@@ -30,8 +30,8 @@ cc_library(
     srcs = ["gemm_fusion_autotuner.cc"],
     hdrs = ["gemm_fusion_autotuner.h"],
     tags = [
+        "cuda-only",
         "gpu",
-        "no_rocm",
     ],
     deps = [
         ":autotuner_compile_util",
@@ -45,9 +45,11 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/utils:hlo_query",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:algorithm_util",
+        "//xla/service:call_inliner",
         "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:float_normalization",
@@ -63,7 +65,11 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu:split_k_gemm_rewriter",
         "//xla/service/gpu:stream_executor_util",
+        "//xla/service/gpu/kernels:custom_kernel",
+        "//xla/service/gpu/kernels:custom_kernel_fusion",
+        "//xla/service/gpu/kernels:custom_kernel_fusion_pattern",
         "//xla/service/gpu/transforms:cudnn_fusion_compiler",
+        "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:fusion_wrapper",
         "//xla/service/gpu/transforms:gemm_rewriter",
         "//xla/service/gpu/transforms:priority_fusion",
@@ -109,8 +115,8 @@ xla_test(
         "gpu_h100",
     ],
     tags = [
+        "cuda-only",
         "no_mac",
-        "no_rocm",
     ],
     deps = [
         ":autotuner_compile_util",
@@ -137,6 +143,7 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
         "//xla/tests:test_utils",
@@ -146,6 +153,7 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:env",
@@ -320,12 +328,12 @@ xla_test(
         "//xla/stream_executor:semantic_version",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/protobuf:dnn_proto_cc",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:dnn_proto_cc",
     ],
 )
 
@@ -398,7 +406,7 @@ xla_test(
         "gpu_amd_any",
     ],
     tags = [
-        "no_rocm",
+        "cuda-only",
         "noasan",
         "nomsan",
     ],
@@ -473,7 +481,7 @@ xla_test(
     backends = [
         "gpu",
     ],
-    tags = ["no_rocm"],
+    tags = ["cuda-only"],
     deps = [
         ":autotuner_util",
         ":custom_kernel_fusion_autotuner",
@@ -509,7 +517,6 @@ xla_cc_test(
     ],
     tags = [
         "gpu",
-        "no_rocm",
     ],
     deps = [
         ":autotuner_util",

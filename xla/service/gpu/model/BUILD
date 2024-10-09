@@ -86,7 +86,7 @@ xla_cc_test(
     srcs = ["fusion_analysis_cache_test.cc"],
     deps = [
         ":fusion_analysis_cache",
-        "//xla/service:hlo_parser",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/stream_executor:device_description",
@@ -107,9 +107,9 @@ cc_library(
         ":gpu_performance_model",
         ":gpu_performance_model_base",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_graph_dumper",
-        "//xla/service:hlo_pass",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status:statusor",
@@ -414,32 +414,6 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "affine_map_printer",
-    srcs = ["affine_map_printer.cc"],
-    hdrs = ["affine_map_printer.h"],
-    deps = [
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-xla_cc_test(
-    name = "affine_map_printer_test",
-    srcs = ["affine_map_printer_test.cc"],
-    deps = [
-        ":affine_map_printer",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_googletest//:gtest",
-        "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-cc_library(
     name = "affine_map_evaluator",
     srcs = ["affine_map_evaluator.cc"],
     hdrs = ["affine_map_evaluator.h"],
@@ -469,13 +443,14 @@ cc_library(
     srcs = [
         "indexing_analysis.cc",
         "indexing_map.cc",
+        "indexing_map_serialization.cc",
     ],
     hdrs = [
         "indexing_analysis.h",
         "indexing_map.h",
+        "indexing_map_serialization.h",
     ],
     deps = [
-        ":affine_map_printer",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:util",
@@ -491,9 +466,11 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/numeric:int128",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:AsmParser",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:logging",
@@ -504,19 +481,32 @@ xla_cc_test(
     name = "indexing_map_test",
     srcs = ["indexing_map_test.cc"],
     deps = [
-        ":affine_map_printer",
         ":indexing_analysis",
         ":indexing_test_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "//xla/tests:verified_hlo_module",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/hash:hash_testing",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+xla_cc_test(
+    name = "indexing_map_serialization_test",
+    srcs = ["indexing_map_serialization_test.cc"],
+    deps = [
+        ":indexing_analysis",
+        ":indexing_test_utils",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+        "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -571,7 +561,6 @@ cc_library(
     hdrs = ["symbolic_tile.h"],
     deps = [
         ":affine_map_evaluator",
-        ":affine_map_printer",
         ":indexing_analysis",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -650,6 +639,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:name_uniquer",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/tsl/lib/gtl:iterator_range",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
@@ -660,7 +650,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
-        "@tsl//tsl/lib/gtl:iterator_range",
         "@tsl//tsl/platform:errors",
     ],
 )
@@ -697,7 +686,6 @@ cc_library(
     hdrs = ["symbolic_tile_analysis.h"],
     deps = [
         ":affine_map_evaluator",
-        ":affine_map_printer",
         ":indexing_analysis",
         ":symbolic_tile",
         ":symbolic_tiled_hlo_instruction",
@@ -749,6 +737,7 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -805,16 +794,16 @@ cc_library(
     deps = [
         ":affine_map_evaluator",
         ":indexing_analysis",
+        ":tiled_hlo_instruction_or_computation",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu/fusions:fusion_emitter",
+        "//xla/stream_executor:device_description",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -827,6 +816,9 @@ xla_cc_test(
     srcs = ["coalescing_analysis_test.cc"],
     deps = [
         ":coalescing_analysis",
+        ":symbolic_tile",
+        ":symbolic_tile_analysis",
+        ":tiled_hlo_instruction_or_computation",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
@@ -838,8 +830,10 @@ xla_cc_test(
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )

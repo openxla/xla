@@ -145,6 +145,8 @@ class MockClient : public llvm::RTTIExtends<MockClient, Client> {
   MOCK_METHOD(absl::Span<Device* const>, addressable_devices, (),
               (const, final));
   MOCK_METHOD(int, process_index, (), (const, final));
+  MOCK_METHOD(absl::Span<xla::ifrt::Device* const>, GetAllDevices, (),
+              (const, final));
   MOCK_METHOD(absl::StatusOr<DeviceAssignment>, GetDefaultDeviceAssignment,
               (int num_replicas, int num_partitions), (const, final));
   MOCK_METHOD(absl::StatusOr<Device*>, LookupDevice, (DeviceId device_id),
@@ -244,9 +246,9 @@ class MockExecutable : public llvm::RTTIExtends<MockExecutable, Executable> {
               (const, final));
   MOCK_METHOD(std::optional<std::vector<OpSharding>>, GetOutputShardings, (),
               (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetParameterLayouts, (), (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>,
               GetHloModules, (), (const, final));
@@ -273,9 +275,9 @@ class MockLoadedExecutable
               (const, final));
   MOCK_METHOD(std::optional<std::vector<OpSharding>>, GetOutputShardings, (),
               (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetParameterLayouts, (), (const, final));
-  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<Layout>>>,
+  MOCK_METHOD(absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>,
               GetOutputLayouts, (), (const, final));
   MOCK_METHOD(absl::StatusOr<std::vector<std::vector<absl::string_view>>>,
               GetOutputMemoryKinds, (), (const, final));

@@ -25,17 +25,10 @@ limitations under the License.
 #include "xla/stream_executor/gpu/context.h"
 #include "xla/stream_executor/gpu/gpu_event.h"
 #include "xla/stream_executor/gpu/gpu_semaphore.h"
-
-namespace xla {
-namespace gpu {
-class DeterminismTest;
-}
-}  // namespace xla
+#include "xla/stream_executor/gpu/gpu_stream.h"
 
 namespace stream_executor {
 namespace gpu {
-
-class GpuStream;
 
 // When a timer is created it launches a delay kernel into the given stream and
 // queues a start event immediately afterwards. This delay kernel blocks
@@ -86,11 +79,6 @@ class GpuTimer : public EventBasedTimer {
 
   GpuTimer(const GpuTimer&) = delete;
   void operator=(const GpuTimer&) = delete;
-
-  // If called, all timers will return random durations instead of the actual
-  // duration the timer took. Used for testing only.
-  static void ReturnRandomDurationsForTesting();
-  friend class ::xla::gpu::DeterminismTest;
 };
 
 }  // namespace gpu

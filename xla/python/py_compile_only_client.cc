@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
@@ -294,6 +295,9 @@ class CompileOnlyIfRtClient final
     return {};
   }
   int process_index() const override { return 0; }
+  absl::Span<xla::ifrt::Device* const> GetAllDevices() const override {
+    return devices_;
+  }
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override {
     return Unimplemented(

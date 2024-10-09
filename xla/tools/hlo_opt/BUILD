@@ -75,7 +75,7 @@ cc_library(
         "//xla/service/gpu:gpu_hlo_schedule",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/stream_executor",
-        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -105,7 +105,7 @@ cc_library(
         "//xla/service:hlo_graph_dumper",
         "//xla/service/cpu:cpu_executable",
         "//xla/stream_executor/host:host_platform",
-        "//xla/stream_executor/platform",
+        "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:statusor",
@@ -177,7 +177,7 @@ lit_test_suite(
     default_tags = tf_cuda_tests_tags(),
     hermetic_cuda_data_dir = "%S/../../../../cuda_nvcc",
     tags_override = {
-        "gpu_hlo_ptx.hlo": ["no_rocm"],
+        "gpu_hlo_ptx.hlo": ["cuda-only"],
     },
     tools = [
         "//xla/tools:hlo-opt",

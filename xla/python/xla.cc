@@ -97,7 +97,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/ops.h"
-#include "xla/python/outfeed_receiver_py.h"
 #include "xla/python/pjit.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
@@ -182,6 +181,10 @@ NB_MODULE(xla_extension, m_nb) {
   // Exceptions
   nb::exception<XlaRuntimeError> xla_runtime_error(m_nb, "XlaRuntimeError",
                                                    PyExc_RuntimeError);
+  xla_runtime_error.attr("__doc__") = nb::str(
+      "Runtime errors thrown by the JAX runtime. While the JAX runtime may "
+      "raise other exceptions as well, most exceptions thrown by the runtime "
+      "are instances of this class.");
 
   // Types
   nb::enum_<PrimitiveType>(m_nb, "PrimitiveType", nb::is_arithmetic())
@@ -198,6 +201,9 @@ NB_MODULE(xla_extension, m_nb) {
       .value("U32", U32)
       .value("U64", U64)
       .value("F16", F16)
+      // TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
+      // .value("F8E3M4", F8E3M4)
+      // .value("F8E4M3", F8E4M3)
       .value("F8E4M3FN", F8E4M3FN)
       .value("F8E4M3B11FNUZ", F8E4M3B11FNUZ)
       .value("F8E4M3FNUZ", F8E4M3FNUZ)
@@ -584,7 +590,6 @@ NB_MODULE(xla_extension, m_nb) {
   BuildIfrtProgramsSubmodule(m_nb);
   BuildProfilerSubmodule(m_nb);
   BuildOpsSubmodule(m_nb);
-  BuildOutfeedReceiverSubmodule(m_nb);
   BuildPytreeSubmodule(m_nb);
   jax::BuildJaxjitSubmodule(m_nb);
   jax::BuildPmapSubmodule(m_nb);
