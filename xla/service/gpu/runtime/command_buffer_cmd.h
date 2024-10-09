@@ -369,6 +369,10 @@ class CommandBufferCmdSequence {
     });
   }
 
+  CommandBufferCmd::BufferUsageVector buffers();
+
+ private:
+
   // We track read and write sets of commands recorded into the command
   // sequence to detect conflicts and insert explicit barriers. These are the
   // buffer allocation slices used by commands appended since the last barrier.
@@ -377,10 +381,7 @@ class CommandBufferCmdSequence {
     absl::flat_hash_set<BufferAllocation::Slice> write;
   };
 
-  std::optional<const ReadWriteSet> GetReadWriteSet(
-      ExecutionStreamId execution_scope_id);
 
- private:
   struct CommandInfo {
     std::unique_ptr<CommandBufferCmd> cmd;
     bool requires_barrier;
@@ -1159,7 +1160,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
  public:
   DynamicSliceFusionCmd(
       ExecutionStreamId execution_stream_id,
-      CommandBufferCmdSequence embedded_commands,
+      CommandBufferCmdSequence&& embedded_commands,
       std::vector<std::optional<BufferAllocation::Slice>> arguments,
       std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>
           offsets,
@@ -1201,7 +1202,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
 
   // mapping from original allocation index to allocation index of embedded
   // command sequences.
-  absl::flat_hash_map<int64_t, int64_t> embeded_to_origin_allocation_map_;
+  absl::flat_hash_map<int64_t, BufferAllocation::Slice> embeded_to_origin_slice_map_;
 };
 
 }  // namespace xla::gpu

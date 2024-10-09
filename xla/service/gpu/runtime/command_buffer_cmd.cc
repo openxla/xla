@@ -283,13 +283,14 @@ bool CommandBufferCmdSequence::HasConflicts(
   });
 }
 
-std::optional<const CommandBufferCmdSequence::ReadWriteSet>
-    CommandBufferCmdSequence::GetReadWriteSet(
-    ExecutionStreamId scope_id) {
-  if (read_write_sets_.find(scope_id) != read_write_sets_.end()) {
-    return read_write_sets_[scope_id];
+CommandBufferCmd::BufferUsageVector CommandBufferCmdSequence::buffers() {
+  CommandBufferCmd::BufferUsageVector buffers;
+  for (auto& cmd_info : commands_) {
+    for (auto buffer : cmd_info.cmd->buffers()) {
+      buffers.push_back(buffer);
+    }
   }
-  return std::nullopt;
+  return buffers;
 }
 
 void CommandBufferCmdSequence::TrackBuffers(
@@ -2006,7 +2007,7 @@ CommandBufferCmd::BufferUsageVector CollectiveBroadcastCmd::buffers() {
 
 DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     ExecutionStreamId execution_stream_id,
-    CommandBufferCmdSequence embedded_commands,
+    CommandBufferCmdSequence&& embedded_commands,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
@@ -2014,7 +2015,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     std::vector<std::optional<uint64_t>> offset_byte_sizes)
     : CommandBufferCmd(CommandBufferCmdType::kDynamicSliceFusionCmd,
                        execution_stream_id),
-      embedded_commands_(embedded_commands) {
+      embedded_commands_(std::move(embedded_commands)) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
@@ -2034,8 +2035,8 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     if (!slice.embedded_thunk_argument.has_value()) {
       continue;
     }
-    embeded_to_origin_allocation_map_[embed_alloc_idx++] =
-        slice.embedded_thunk_argument->index();
+    embeded_to_origin_slice_map_[embed_alloc_idx++] =
+        slice.embedded_thunk_argument.value();
   }
 
   // Find how many offsets we might have to transfer from device to host and
@@ -2051,10 +2052,12 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
 bool DynamicSliceFusionCmd::force_update() {
   return llvm::any_of(slices_, [](DynamicSliceThunk::SliceDef& slice) {
     if (slice.offsets.has_value()) {
-      return llvm::all_of(slice.offsets, [](DynamicSliceThunk::Offset offset) {
-        if (std::holds_alternative<uint64_t>(offset)) return false;
-        return true;
-      });
+      return llvm::all_of(slice.offsets.value(),
+                          [](DynamicSliceThunk::Offset offset) {
+                            if (std::holds_alternative<uint64_t>(offset))
+                              return false;
+                            return true;
+                          });
     }
     return false;
   });
@@ -2072,6 +2075,27 @@ absl::Status DynamicSliceFusionCmd::Initialize(
       std::unique_ptr<se::MemoryAllocation> allocation,
       params.executor->HostMemoryAllocate(offsets_allocs_size_));
   offsets_allocs_.emplace(params.executor, std::move(allocation));
+  return absl::OkStatus();
+}
+
+absl::Status DynamicSliceFusionCmd::Prepare(
+    const Thunk::PrepareParams& params,
+    Thunk::ResourceRequests& resource_requests) {
+  for (DynamicSliceThunk::SliceDef& slice : slices_) {
+    if (slice.offsets.has_value()) {
+      TF_RET_CHECK(slice.embedded_thunk_argument.has_value());
+      TF_RET_CHECK(slice.orig_shape.has_value());
+      TF_RET_CHECK(slice.sliced_shape.has_value());
+      TF_RET_CHECK(slice.offset_byte_size.has_value());
+
+      TF_RET_CHECK(slice.orig_shape->IsArray());
+      TF_RET_CHECK(slice.sliced_shape->IsArray());
+
+      TF_RET_CHECK(slice.offsets->size() == slice.orig_shape->rank());
+      TF_RET_CHECK(slice.sliced_shape->rank() == slice.orig_shape->rank());
+    }
+  }
+  TF_RETURN_IF_ERROR(embedded_commands_.Prepare(params, resource_requests));
   return absl::OkStatus();
 }
 
@@ -2219,16 +2243,11 @@ absl::Status DynamicSliceFusionCmd::Record(
 
 CommandBufferCmd::BufferUsageVector DynamicSliceFusionCmd::buffers() {
   CommandBufferCmd::BufferUsageVector buffers;
-  auto rdwt_set = embedded_commands_.GetReadWriteSet(execution_stream_id());
-  if (rdwt_set.has_value()) {
-    for (auto item : rdwt_set.value().read) {
-      buffers.emplace_back(embeded_to_origin_allocation_map_[item.index()],
-                           MemoryAccess::kRead);
-    }
-    for (auto item : rdwt_set.value().write) {
-      buffers.emplace_back(embeded_to_origin_allocation_map_[item.index()],
-                           MemoryAccess::kWrite);
-    }
+  auto embed_buffers = embedded_commands_.buffers();
+  for (auto buffer_usage : embed_buffers) {
+    buffers.emplace_back(
+        embeded_to_origin_slice_map_[buffer_usage.slice.index()],
+        buffer_usage.access);
   }
   return buffers;
 }
