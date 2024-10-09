@@ -1125,11 +1125,16 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionDynamicSlicing) {
     ROOT dus = s32[8,32] dynamic-update-slice(p1, rs, c0, c0)
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto parsed, ParseAndReturnVerifiedModule(hlo));
 
-  HloModuleConfig config(m->config());
+  HloModuleConfig config(parsed->config());
   DebugOptions options(config.debug_options());
   options.set_xla_gpu_graph_min_graph_size(0);
+  options.set_xla_gpu_enable_dynamic_slice_fusion(true);
+  config.set_debug_options(options);
+  parsed->set_config(config);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(std::move(parsed)));
 
   auto check = [&m, this](DebugOptions options) -> absl::Status {
     auto m_clone = m->Clone();
@@ -1191,10 +1196,14 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
     ROOT rs = s32[4,32] reduce-scatter(input), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto parsed, ParseAndReturnVerifiedModule(hlo));
 
-  HloModuleConfig config(m->config());
+  HloModuleConfig config(parsed->config());
   DebugOptions options(config.debug_options());
+  options.set_xla_gpu_enable_dynamic_slice_fusion(true);
+  config.set_debug_options(options);
+  parsed->set_config(config);
+  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(std::move(parsed)));
 
   options.set_xla_gpu_graph_min_graph_size(0);
 
