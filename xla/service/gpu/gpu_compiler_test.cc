@@ -1061,10 +1061,46 @@ class PassOrderTest : public GpuCompilerTest {
   void SetDebugOptions(const DebugOptions& options) {
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_debug_options(options);
-    SetModuleConfig(config);
+    CompileModule(config);
   }
 
-  void SetModuleConfig(const HloModuleConfig& config) {
+  // Fails if any of the passes with names matching the regular expression
+  // first_pass_regex run after any of the passes matching last_pass_regex or if
+  // none of the executed passes matches first_pass_regex or last_pass_regex.
+  void VerifyPassOrder(absl::string_view first_pass_regex,
+                       absl::string_view last_pass_regex) {
+    if (!optimized_module_) {
+      CompileModule(GetModuleConfigForTest());
+    }
+    int first_pass_latest_run = -1;
+    int last_pass_earliest_run = std::numeric_limits<int>::max();
+    int run_index = 0;
+    for (const HloPassMetadata& pass_metadata :
+         optimized_module_->metadata()->proto().pass_metadata()) {
+      if (RE2::FullMatch(pass_metadata.pass_name(), first_pass_regex)) {
+        VLOG(2) << "Pass " << pass_metadata.pass_name()
+                << " matches first_pass_regex." << std::endl;
+        first_pass_latest_run = std::max(first_pass_latest_run, run_index);
+      }
+      if (RE2::FullMatch(pass_metadata.pass_name(), last_pass_regex)) {
+        VLOG(2) << "Pass " << pass_metadata.pass_name()
+                << " matches last_pass_regex." << std::endl;
+        last_pass_earliest_run = std::min(last_pass_earliest_run, run_index);
+      }
+      ++run_index;
+    }
+
+    EXPECT_GT(first_pass_latest_run, -1)
+        << "Did not run a pass matching " << first_pass_regex;
+    EXPECT_LT(last_pass_earliest_run, std::numeric_limits<int>::max())
+        << "Did not run a pass matching " << last_pass_regex;
+    EXPECT_LE(first_pass_latest_run, last_pass_earliest_run)
+        << "One or more passes matching " << first_pass_regex
+        << " ran after passes matching " << last_pass_regex;
+  }
+
+ private:
+  void CompileModule(const HloModuleConfig& config) {
     constexpr absl::string_view constant_module = R"(
 ENTRY main {
   ROOT constant = f32[] constant(0)
@@ -1076,52 +1112,16 @@ ENTRY main {
                             GetOptimizedModule(std::move(module)));
   }
 
-  // Fails if any of the passes with names matching the regular expression
-  // first_regex run after any of the passes matching last_regex or if none of
-  // the executed passes matches first_regex or last_regex.
-  void VerifyPassOrder(absl::string_view first_regex,
-                       absl::string_view last_regex) {
-    if (!optimized_module_) {
-      SetModuleConfig(GetModuleConfigForTest());
-    }
-    int first_latest_run = -1;
-    int last_earliest_run = std::numeric_limits<int>::max();
-    int run_index = 0;
-    for (const HloPassMetadata& pass_metadata :
-         optimized_module_->metadata()->proto().pass_metadata()) {
-      if (RE2::FullMatch(pass_metadata.pass_name(), first_regex)) {
-        VLOG(2) << "Pass " << pass_metadata.pass_name()
-                << " matches first_regex." << std::endl;
-        first_latest_run = std::max(first_latest_run, run_index);
-      }
-      if (RE2::FullMatch(pass_metadata.pass_name(), last_regex)) {
-        VLOG(2) << "Pass " << pass_metadata.pass_name()
-                << " matches last_regex." << std::endl;
-        last_earliest_run = std::min(last_earliest_run, run_index);
-      }
-      ++run_index;
-    }
-
-    EXPECT_GT(first_latest_run, -1)
-        << "Did not run a pass matching " << first_regex;
-    EXPECT_LT(last_earliest_run, std::numeric_limits<int>::max())
-        << "Did not run a pass matching " << last_regex;
-    EXPECT_LE(first_latest_run, last_earliest_run)
-        << "One or more passes matching " << first_regex
-        << " ran after passes matching " << last_regex;
-  }
-
- private:
   std::unique_ptr<HloModule> optimized_module_;
 };
 
 TEST_F(PassOrderTest, PassesAreRunInCorrectOrder) {
-  VerifyPassOrder(/*first_regex=*/"layout-assignment",
-                  /*last_regex=*/"priority-fusion");
-  VerifyPassOrder(/*first_regex=*/"layout-assignment",
-                  /*last_regex=*/"layout_normalization");
-  VerifyPassOrder(/*first_regex=*/"host-offload-legalize",
-                  /*last_regex=*/"layout_normalization");
+  VerifyPassOrder(/*first_pass_regex=*/"layout-assignment",
+                  /*last_pass_regex=*/"priority-fusion");
+  VerifyPassOrder(/*first_pass_regex=*/"layout-assignment",
+                  /*last_pass_regex=*/"layout_normalization");
+  VerifyPassOrder(/*first_pass_regex=*/"host-offload-legalize",
+                  /*last_pass_regex=*/"layout_normalization");
 }
 
 TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
@@ -1138,8 +1138,8 @@ TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
       true);
   SetDebugOptions(debug_options);
 
-  VerifyPassOrder(/*first_regex=*/".*fusion.*",
-                  /*last_regex=*/"fusion-block-level-rewriter");
+  VerifyPassOrder(/*first_pass_regex=*/".*fusion.*",
+                  /*last_pass_regex=*/"fusion-block-level-rewriter");
 }
 
 TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
@@ -1147,8 +1147,8 @@ TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
   options.set_xla_gpu_enable_pipelined_collectives(true);
   SetDebugOptions(options);
 
-  VerifyPassOrder(/*first_regex=*/"collective-quantizer",
-                  /*last_regex=*/"collective-pipeliner.*");
+  VerifyPassOrder(/*first_pass_regex=*/"collective-quantizer",
+                  /*last_pass_regex=*/"collective-pipeliner.*");
 }
 
 }  // namespace
