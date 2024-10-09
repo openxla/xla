@@ -829,11 +829,11 @@ TEST_F(DotMergerTest, NoMergeWithFalseCompatibility) {
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(module_string));
-  std::function<bool(const HloInstruction* a, const HloInstruction* b)>
-      is_compatible = [&](const HloInstruction* a,
-                          const HloInstruction* b) -> bool { return false; };
+  std::function<bool(const HloInstruction* dot_a, const HloInstruction* dot_b)>
+      can_merge = [&](const HloInstruction* dot_a,
+                      const HloInstruction* dot_b) -> bool { return false; };
   DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max(),
-                 is_compatible);
+                 can_merge);
   TF_ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
   EXPECT_FALSE(changed);
 }
