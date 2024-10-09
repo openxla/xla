@@ -16,7 +16,9 @@ limitations under the License.
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
 
 #include <utility>
+#include <string>
 
+#include "absl/strings/str_replace.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
@@ -1584,77 +1586,57 @@ TEST_F(MatmulTest, BroadcastedAddAfterFusion) {
   )");
 }
 
-// Test MM + BiasAdd + Add fusion : F32
-TEST_F(MatmulTest, SimpleTestF32WithBiasAndAddFusion) {
-  const char* matmul_module_str = R"(
-  HloModule matmul.bias.add.test.f32
-  ENTRY matmul.bias.add.test.f32 {
-    arg0.1 = f32[32,32,40,30] parameter(0), parameter_replication={false}
-    arg0.2 = f32[32,32,30,40]parameter(1), parameter_replication={false}
-    dot.7 = f32[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    const.0 = f32[40] constant(15)
-    bcast.1 = f32[32,32,40,40] broadcast(const.0), dimensions={3}
-    add.0 = f32[32,32,40,40] add(dot.7,bcast.1)
-    const.1 = f32[32,32,40,40] constant(0.65)
-    add.1 = f32[32,32,40,40] add(add.0, const.1)
-    tuple.12 = (f32[32,32,40,40]) tuple(add.1)
-    ROOT get-tuple-element.13 = f32[32,32,40,40] get-tuple-element(tuple.12), index=0
+std::string CreateMatmulBiasAddAndAddModuleText(std::string dtype1,
+                                                std::string dtype2) {
+  const std::string matmul_module_str = R"(
+  HloModule matmul.bias.add.test
+  ENTRY matmul.bias.add.test {
+    arg0.1 = DTYPE1[32,32,40,30] parameter(0), parameter_replication={false}
+    convert.0 = DTYPE2[32,32,40,30] convert(arg0.1)
+    arg0.2 = DTYPE1[32,32,30,40]parameter(1), parameter_replication={false}
+    convert.1 = DTYPE2[32,32,30,40] convert(arg0.2)
+    dot.7 = DTYPE2[32,32,40,40] dot(convert.0, convert.1), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+    convert.2 = DTYPE1[32,32,40,40] convert(dot.7)
+    const.0 = DTYPE1[40] constant(15)
+    bcast.1 = DTYPE1[32,32,40,40] broadcast(const.0), dimensions={3}
+    add.0 = DTYPE1[32,32,40,40] add(convert.2,bcast.1)
+    const.1 = DTYPE1[32,32,40,40] constant(0.65)
+    add.1 = DTYPE1[32,32,40,40] add(add.0, const.1)
+    convert.3 = DTYPE2[32,32,40,40] convert(add.1)
+    tuple.12 = (DTYPE2[32,32,40,40]) tuple(convert.3)
+    ROOT get-tuple-element.13 = DTYPE2[32,32,40,40] get-tuple-element(tuple.12), index=0
   })";
+  const std::string module_with_type = absl::StrReplaceAll(
+      matmul_module_str, {{"DTYPE1", dtype1}, {"DTYPE2", dtype2}});
+  return module_with_type;
+}
 
+// Test Matmul + BiasAdd + Add fusion : F32
+TEST_F(MatmulTest, SimpleTestF32WithBiasAndAddFusion) {
+  const std::string matmul_module_str =
+      CreateMatmulBiasAddAndAddModuleText("f32", "f32");
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
   MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_str_);
 }
 
-// Test MM + BiasAdd + Add fusion : BF16
+// Test Matmul + BiasAdd + Add fusion : BF16
 TEST_F(MatmulTest, SimpleTestBF16WithBiasAndAddFusion) {
   if (!IsSupportedType(PrimitiveType::BF16)) {
     GTEST_SKIP() << "CPU does not support BF16.";
   }
-
-  const char* matmul_module_str = R"(
-  HloModule matmul.bias.add.test.bf16
-  ENTRY matmul.bias.add.test.bf16 {
-    arg0.1 = f32[32,32,40,30] parameter(0), parameter_replication={false}
-    convert.0 = bf16[32,32,40,30] convert(arg0.1)
-    arg0.2 = f32[32,32,30,40]parameter(1), parameter_replication={false}
-    convert.1 = bf16[32,32,30,40] convert(arg0.2)
-    dot.7 = bf16[32,32,40,40] dot(convert.0, convert.1), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    convert.2 = f32[32,32,40,40] convert(dot.7)
-    const.0 = f32[40] constant(15)
-    bcast.1 = f32[32,32,40,40] broadcast(const.0), dimensions={3}
-    add.0 = f32[32,32,40,40] add(convert.2,bcast.1)
-    const.1 = f32[32,32,40,40] constant(0.65)
-    add.1 = f32[32,32,40,40] add(add.0, const.1)
-    convert.3 = bf16[32,32,40,40] convert(add.1)
-    tuple.12 = (bf16[32,32,40,40]) tuple(convert.3)
-    ROOT get-tuple-element.13 = bf16[32,32,40,40] get-tuple-element(tuple.12), index=0
-  })";
-
+  const std::string matmul_module_str =
+      CreateMatmulBiasAddAndAddModuleText("f32", "bf16");
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-2}));
   MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_str_);
 }
 
-// Test MM + BiasAdd + Add fusion : F16
+// Test Matmul + BiasAdd + Add fusion : F16
 TEST_F(MatmulTest, SimpleTestF16WithBiasAndAddFusion) {
   if (!IsSupportedType(PrimitiveType::F16)) {
     GTEST_SKIP() << "CPU does not support F16.";
   }
-
-  const char* matmul_module_str = R"(
-  HloModule matmul.bias.add.test.f16
-  ENTRY matmul.bias.add.test.f16 {
-    arg0.1 = f16[32,32,40,30] parameter(0), parameter_replication={false}
-    arg0.2 = f16[32,32,30,40]parameter(1), parameter_replication={false}
-    dot.7 = f16[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    const.0 = f16[40] constant(15)
-    bcast.1 = f16[32,32,40,40] broadcast(const.0), dimensions={3}
-    add.0 = f16[32,32,40,40] add(dot.7,bcast.1)
-    const.1 = f16[32,32,40,40] constant(0.65)
-    add.1 = f16[32,32,40,40] add(add.0, const.1)
-    tuple.12 = (f16[32,32,40,40]) tuple(add.1)
-    ROOT get-tuple-element.13 = f16[32,32,40,40] get-tuple-element(tuple.12), index=0
-  })";
-
+  const std::string matmul_module_str =
+      CreateMatmulBiasAddAndAddModuleText("f16", "f16");
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-4}));
   MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_add_str_);
 }
