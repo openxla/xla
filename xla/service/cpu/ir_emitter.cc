@@ -110,11 +110,8 @@ using llvm_ir::SetToFirstInsertPoint;
 namespace cpu {
 
 bool IsNativeConvertSupportedOnTargetCPU(std::string feature_string) {
-  if (absl::StrContains(feature_string, "+avxneconvert") ||
-      absl::StrContains(feature_string, "+amx-bf16")) {
-    return true;
-  }
-  return false;
+  return (absl::StrContains(feature_string, "+avxneconvert") ||
+          absl::StrContains(feature_string, "+amx-bf16"));
 }
 
 class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
