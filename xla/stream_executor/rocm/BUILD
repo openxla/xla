@@ -246,6 +246,7 @@ cc_library(
     ]),
     visibility = ["//visibility:public"],
     deps = [
+        ":rocm_driver",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/gpu:gpu_executor_header",
