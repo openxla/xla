@@ -136,6 +136,23 @@ TEST_F(AlgebraicSimplifierTest, IsNonNegative_Op) {
   }
 }
 
+TEST_F(AlgebraicSimplifierTest, IsPositive_MultiplyOp) {
+  const auto kModuleStr = R"(
+    HloModule m
+    test {
+      p0 = f32[] parameter(0)
+      a0 = f32[] exponential(p0)
+      p1 = f32[] parameter(1)
+      a1 = f32[] exponential(p1)
+      ROOT y = f32[] multiply(a0, a1)
+    }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_TRUE(AlgebraicSimplifierVisitor::IsPositive(
+      m->entry_computation()->root_instruction(), default_options_));
+}
+
 // Test that the result of particular operations might be negative
 TEST_F(AlgebraicSimplifierTest, IsNonNegative_Op_NegativeTestCase) {
   for (const auto op : arb_sign_ops) {
@@ -7257,13 +7274,14 @@ TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowTwoReduceDims) {
   auto root = m->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
-      GmockMatch(m::Reshape(m::Reduce(m::Parameter(0), m::Constant())
-                                .WithShape(S32, {3})
-                                .WithPredicate([](const HloInstruction* instr) {
-                                  return instr->dimensions() ==
-                                         std::vector<int64_t>({1, 2});
-                                }))
-                     .WithShape(S32, {3, 1, 1})));
+      GmockMatch(
+          m::Reshape(
+              m::Reduce(m::Parameter(0), m::Constant())
+                  .WithShape(S32, {3})
+                  .WithPredicate([](const HloInstruction* instr) {
+                    return instr->dimensions() == std::vector<int64_t>({1, 2});
+                  }))
+              .WithShape(S32, {3, 1, 1})));
 }
 
 TEST_F(AlgebraicSimplifierTest, ConcatToBroadcast) {
@@ -11285,12 +11303,13 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcast) {
   EXPECT_TRUE(
       RunHloPass(AlgebraicSimplifier(default_options_), m.get()).value());
   SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::Parameter(0))
-                             .WithPredicate([](const HloInstruction* instr) {
-                               return instr->dimensions() ==
-                                      std::vector<int64_t>({0, 3});
-                             })));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0))
+              .WithPredicate([](const HloInstruction* instr) {
+                return instr->dimensions() == std::vector<int64_t>({0, 3});
+              })));
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
@@ -11306,12 +11325,13 @@ TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
   options.set_is_layout_sensitive(true);
   EXPECT_TRUE(RunHloPass(AlgebraicSimplifier(options), m.get()).value());
   SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::Parameter(0))
-                             .WithPredicate([](const HloInstruction* instr) {
-                               return instr->dimensions() ==
-                                      std::vector<int64_t>({0, 3});
-                             })));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0))
+              .WithPredicate([](const HloInstruction* instr) {
+                return instr->dimensions() == std::vector<int64_t>({0, 3});
+              })));
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastWithLayoutCheckSkipped) {
