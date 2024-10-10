@@ -214,6 +214,61 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
           Property(&HloInstruction::opcode, HloOpcode::kAllGatherStart)));
 }
 
+// This test verifies that the GPUProfileStatisticsAggregator correctly handles
+// copy-start/copy-done async pairs in the profiling data.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorCountsMissingAsyncCopyStart) {
+  GPUProfileStatisticsAggregator aggregator;
+  ProfileStatisticsAggregator::Statistics before_stats = aggregator.GetStats();
+
+  ASSERT_EQ(before_stats.missing_instructions.size(), 0);
+  ASSERT_EQ(before_stats.found_instructions_count, 0);
+
+  absl::string_view kFdoProfile = "";
+  absl::string_view kModuleWithCopyStartDone = R"(
+    HloModule m
+
+    ENTRY main {
+      %param_1 = f32[1024]{0} parameter(1)
+      %param_0 = f32[1024]{0} parameter(0)
+      %res_3 = f32[1024]{0} add(f32[1024]{0} %param_0, f32[1024]{0} %param_1)
+      %res_4 = f32[1024]{0} tanh(f32[1024]{0} %res_3)
+      %res_5 = f32[1024]{0} tanh(f32[1024]{0} %res_4)
+      %copy-start = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_3)
+      %copy-done = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start)
+      %res_6 = f32[1024]{0} tanh(f32[1024]{0} %res_5)
+      %copy-start.2 = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(f32[1024]{0} %res_4)
+      %copy-done.2 = f32[1024]{0:S(5)} copy-done((f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) %copy-start.2)
+      %res_7 = f32[1024]{0} add(f32[1024]{0} %res_6, f32[1024]{0} %res_6)
+      %res_8 = f32[1024]{0} add(f32[1024]{0} %res_7, f32[1024]{0} %res_5)
+      %copy-start.3 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done.2)
+      %copy-done.3 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.3)
+      %res_9 = f32[1024]{0} add(f32[1024]{0} %res_8, f32[1024]{0} %copy-done.3)
+      %copy-start.1 = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(f32[1024]{0:S(5)} %copy-done)
+      %copy-done.1 = f32[1024]{0} copy-done((f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) %copy-start.1)
+      %res_10 = f32[1024]{0} add(f32[1024]{0} %res_9, f32[1024]{0} %copy-done.1)
+      ROOT %res_11 = f32[1024]{0} tanh(f32[1024]{0} %res_10)
+    }
+  )";
+
+  auto config = GetModuleConfig(kFdoProfile);
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
+                                           kModuleWithCopyStartDone, config));
+
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    for (const HloInstruction* user : instr->users()) {
+      aggregator.HandleMissingInstructionLatency(*instr, *user);
+    }
+  }
+  ProfileStatisticsAggregator::Statistics after_stats = aggregator.GetStats();
+  for (const HloInstruction* instr : after_stats.missing_instructions) {
+    EXPECT_EQ(instr->opcode(), HloOpcode::kCopyStart);
+  }
+  EXPECT_EQ(after_stats.found_instructions_count, 0);
+  EXPECT_EQ(after_stats.missing_instructions.size(), 4);
+}
+
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
        ScheduleGpuModuleErrorsOutOnMissingInstrucitonsForAWhileLoopBody) {
   absl::string_view kFdoProfile = R"pb(

@@ -1664,5 +1664,44 @@ TEST_F(GpuHloScheduleTest, AsyncOps) {
                           HloOpcode::kAsyncDone, HloOpcode::kAdd));
 }
 
+// This test verifies that the latency hiding scheduler overlaps host memory
+// offloading (copy-start/copy-done) with computation.
+TEST_F(GpuHloScheduleTest, CopyStartDoneScheduled) {
+  constexpr absl::string_view kHloCopyStartDone = R"(
+    HloModule offloading
+      ENTRY main {
+      param_1 = f32[512,1024]{1,0} parameter(1)
+      param_0 = f32[512,1024]{1,0} parameter(0)
+      add.31 = f32[512,1024]{1,0} add(param_0, param_1)
+      tanh.14 = f32[512,1024]{1,0} tanh(add.31)
+      copy-start.1 = (f32[512,1024]{1,0:S(5)}, f32[512,1024]{1,0}, u32[]) copy-start(add.31)
+      copy-done.1 = f32[512,1024]{1,0:S(5)} copy-done(copy-start.1)
+      tanh.15 = f32[512,1024]{1,0} tanh(tanh.14)
+      reduce-precision.2 = f32[512,1024]{1,0} reduce-precision(tanh.15), exponent_bits=8, mantissa_bits=23
+      copy-start.3 = (f32[512,1024]{1,0}, f32[512,1024]{1,0:S(5)}, u32[]) copy-start(copy-done.1)
+      copy-done.3 = f32[512,1024]{1,0} copy-done(copy-start.3)
+      ROOT add.0 = f32[512,1024]{1,0} add(copy-done.3, reduce-precision.2)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(
+          kHloCopyStartDone,
+          GetModuleConfig(/*enable_latency_hiding_scheduler=*/true)));
+  TF_CHECK_OK(ScheduleGpuModule(
+                  module.get(), /*pointer_size=*/8,
+                  backend().default_stream_executor()->GetDeviceDescription())
+                  .status());
+
+  EXPECT_TRUE(*RunFileCheck(module->ToString(), R"(
+// CHECK: ENTRY
+// CHECK: copy-start.3 = (f32[512,1024]{1,0}, f32[512,1024]{1,0:S(5)}, u32[]) copy-start
+// CHECK: tanh.14 = f32[512,1024]{1,0} tanh
+// CHECK: tanh.15 = f32[512,1024]{1,0} tanh
+// CHECK: reduce-precision.2 = f32[512,1024]{1,0} reduce-precision
+// CHECK: copy-done.3 = f32[512,1024]{1,0} copy-done
+)"));
+}
+
 }  // namespace gpu
 }  // namespace xla
