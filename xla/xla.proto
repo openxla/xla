@@ -660,6 +660,8 @@ message DebugOptions {
   bool xla_gpu_enable_pipelined_reduce_scatter = 231;
   bool xla_gpu_enable_pipelined_p2p = 246;
 
+  reserved 313;  // Was xla_gpu_run_post_layout_collective_pipeliner.
+
   // The minimum data size in bytes to trigger collective-permute-decomposer
   // transformation.
   int64 xla_gpu_collective_permute_decomposer_threshold = 237;
