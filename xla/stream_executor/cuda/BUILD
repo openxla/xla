@@ -487,6 +487,7 @@ cc_library(
     deps = [
         ":cuda_helpers",
         ":cuda_platform_id",
+        "//tensorflow/lite/delegates/flex:delegate",
         "//xla/stream_executor",
         "//xla/stream_executor:fft",
         "//xla/stream_executor:plugin_registry",
