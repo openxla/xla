@@ -95,14 +95,14 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
   return (hlo_query::IsAsyncCollectiveStartOp(&hlo,
                                               /*include_send_recv=*/true) &&
           !IsSyncCollective(&hlo)) ||
-         IsAsyncComputeOp(hlo);
+         IsAsyncComputeOp(hlo) || hlo.opcode() == HloOpcode::kCopyStart;
 }
 
 bool IsGpuAsyncDone(const HloInstruction& hlo) {
   return (hlo_query::IsAsyncCollectiveDoneOp(&hlo,
                                              /*include_send_recv=*/true) &&
           !IsSyncCollective(hlo.operand(0))) ||
-         IsAsyncComputeOp(hlo);
+         IsAsyncComputeOp(hlo) || hlo.opcode() == HloOpcode::kCopyDone;
 }
 
 bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
