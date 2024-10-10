@@ -109,14 +109,24 @@ using llvm_ir::SetToFirstInsertPoint;
 
 namespace cpu {
 
+bool IsNativeConvertSupportedOnTargetCPU(std::string feature_string) {
+  if (absl::StrContains(feature_string, "+avxneconvert") ||
+      absl::StrContains(feature_string, "+amx-bf16")) {
+    return true;
+  }
+  return false;
+}
+
 class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
  public:
   CpuElementalIrEmitter(const HloModuleConfig& module_config,
                         IrEmitter* ir_emitter, llvm::Module* module)
       : ElementalIrEmitter(
             module, ir_emitter->b(),
-            Options { /*xla_cpu_use_truncate_f32_to_bf16_conversion=*/
-                      !IsNativeConvertSupportedOnThisCPU(ir_emitter)}),
+            Options{/*xla_cpu_use_truncate_f32_to_bf16_conversion=*/
+                    !IsNativeConvertSupportedOnTargetCPU(
+                        ir_emitter->target_machine_features_
+                            .get_target_feature_string())}),
         hlo_module_config_(module_config),
         ir_emitter_(ir_emitter) {}
 
@@ -146,16 +156,6 @@ class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
 
   bool fast_min_max() override {
     return hlo_module_config_.debug_options().xla_cpu_enable_fast_min_max();
-  }
-
-  bool IsNativeConvertSupportedOnThisCPU(IrEmitter* ir_emitter) {
-    std::string feature_string =
-        ir_emitter->target_machine_features_.get_target_feature_string();
-    if (absl::StrContains(feature_string, "+avxneconvert") ||
-        absl::StrContains(feature_string, "+amx-bf16")) {
-      return true;
-    }
-    return false;
   }
 
   const HloModuleConfig& hlo_module_config_;
