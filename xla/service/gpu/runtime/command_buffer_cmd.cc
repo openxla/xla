@@ -2035,17 +2035,17 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
   }
 }
 
+// Force update the command when there is any non-constant value slice offset,
+// because the memory address might changed if the offset is loop
+// iterator or operator outputs even if the parent command's memory pointers do
+// not change.
 bool DynamicSliceFusionCmd::force_update() {
   return !llvm::all_of(slices_, [](DynamicSliceThunk::SliceDef& slice) {
-    if (slice.offsets.has_value()) {
-      return llvm::all_of(slice.offsets.value(),
-                          [](DynamicSliceThunk::Offset offset) {
-                            if (std::holds_alternative<uint64_t>(offset))
-                              return true;
-                            return false;
-                          });
-    }
-    return true;
+    if (!slice.offsets.has_value()) return true;
+    return llvm::all_of(slice.offsets.value(),
+                        [](DynamicSliceThunk::Offset offset) {
+                          return std::holds_alternative<uint64_t>(offset);
+                        });
   });
 }
 
