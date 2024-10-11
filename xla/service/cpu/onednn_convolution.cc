@@ -223,7 +223,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
             << std::endl;
     }
   }
-
+  FusedOperandsRef fused_operands{fused_bufs, postop_args};
+  FusedOperandsRef* fused_operands_ref = &fused_operands;
+  
   auto any_ker_md =
       memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
                    dnnl::memory::format_tag::any);
@@ -240,7 +242,17 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   if (post_ops.len() > 0) {
     attrs.set_post_ops(post_ops);
   }
+  QuantizationParams qparams_struct;
+  QuantizationParams* qparams = &qparams_struct;
 
+  qparams->negated_src_zp = conv_config.quant_config().negated_src_zp();
+  qparams->inversed_dst_scale =
+      conv_config.quant_config().inversed_dst_scale();
+  const bool conv_groups = conv_config.feature_groups() > 1;
+  AddQuantParamArgs(/*is_conv=*/true, conv_groups, attrs, fused_operand_idx,
+                    cpu_engine, fused_mds, any_inp_md, any_ker_md, any_res_md,
+                    fused_operands_ref, qparams);
+  
   auto conv_pd = std::make_unique<convolution_forward::primitive_desc>(
       cpu_engine, prop_kind::forward_inference, algorithm::convolution_direct,
       any_inp_md, any_ker_md, bias_md, any_res_md, strides, rhs_dilations,

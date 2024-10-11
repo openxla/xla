@@ -148,8 +148,10 @@ class HloTestBase : public ::testing::Test {
 
   // Compiles the given `hlo` with optimizations, and verifies that optimized
   // HLO matches the given FileCheck pattern.
-  void MatchOptimizedHlo(absl::string_view hlo, absl::string_view pattern,
-                         bool print_operand_shape = false);
+  void MatchOptimizedHlo(
+      absl::string_view hlo, absl::string_view pattern,
+      bool print_operand_shape = false,
+      std::unique_ptr<HloModule>* optimized_module = nullptr);
 
   // Like MatchOptimizedHlo, but checks operand shapes as well.
   void MatchOptimizedHloWithShapes(absl::string_view hlo,
