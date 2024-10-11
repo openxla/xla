@@ -14,12 +14,16 @@ limitations under the License.
 ==============================================================================*/
 
 #include "absl/strings/string_view.h"
+#include "xla/service/pattern_matcher.h"
+#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 
 namespace xla {
 namespace gpu {
 namespace {
+
+namespace m = match;
 
 class SimpleOptimizationTest : public HloTestBase {};
 
@@ -36,6 +40,31 @@ ENTRY e {
 })";
 
   TF_EXPECT_OK(GetOptimizedModule(kHloText).status());
+}
+
+TEST_F(SimpleOptimizationTest, DegeneratedAllReduceRemoval) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+sum {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add.2 = f32[] add(a, b)
+}
+
+main {
+  p0 = f32[8,16] parameter(0), parameter_replication={false}
+  ROOT all-reduce = f32[8,16] all-reduce(p0),
+    channel_id=1,
+    use_global_device_ids=true,
+    replica_groups={{0},{1},{2},{3},{4},{5},{6},{7}},
+    to_apply=sum
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module, GetOptimizedModule(kHloText));
+  EXPECT_THAT(optimized_module->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
 }
 
 }  // namespace
