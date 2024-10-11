@@ -973,3 +973,15 @@ xla_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+xla_test(
+    name = "gpu_compiler_e2e_test",
+    srcs = ["gpu_compiler_e2e_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/tests:hlo_test_base",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
