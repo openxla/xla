@@ -47,9 +47,14 @@ main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module, GetOptimizedModule(kHloText));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kHloText, /*replica_count=*/1,
+                                                /*num_partitions=*/8));
+  module->mutable_config().set_use_spmd_partitioning(true);
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                          GetOptimizedModule(std::move(module)));
   EXPECT_THAT(optimized_module->entry_computation()->root_instruction(),
-              GmockMatch(m::Parameter(0)));
+              GmockMatch(m::Copy(m::Parameter(0))));
 }
 
 }  // namespace
