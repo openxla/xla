@@ -1076,6 +1076,7 @@ cc_library(
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
+        "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
