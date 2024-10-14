@@ -111,7 +111,14 @@ void AddSPMDPasses(
           .debug_options()
           .xla_gpu_multi_streamed_windowed_einsum(),
       /*skip_checking_windowed_einsum_users=*/true,
-      /*disable_ag_rewrite_for_multiple_consumers=*/true);
+      /*disable_ag_rewrite_for_multiple_consumers=*/true,
+      hlo_module->config()
+                  .debug_options()
+                  .xla_gpu_total_flops_threshold_for_windowed_einsum() >= 0
+          ? hlo_module->config()
+                .debug_options()
+                .xla_gpu_total_flops_threshold_for_windowed_einsum()
+          : std::nullopt);
   spmd_pipeline.AddPass<CollectivePermuteMotion>();
 }
 
