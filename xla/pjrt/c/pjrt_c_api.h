@@ -1576,6 +1576,8 @@ struct PJRT_Executable_DeserializeAndLoad_Args {
   PJRT_Client* client;
   const char* serialized_executable;
   size_t serialized_executable_size;
+  const char* compile_options;
+  size_t compile_options_size;
   PJRT_LoadedExecutable* loaded_executable;  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_DeserializeAndLoad_Args,
