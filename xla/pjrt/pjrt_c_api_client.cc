@@ -422,6 +422,16 @@ PjRtCApiClient::DeserializeExecutable(absl::string_view serialized,
   des_args.client = c_client_.get();
   des_args.serialized_executable = serialized.data();
   des_args.serialized_executable_size = serialized.length();
+  des_args.compile_options = nullptr;
+  des_args.compile_options_size = 0;
+
+  if (options) {
+    TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
+                        options->ToProto());
+    std::string options_str = options_proto.SerializeAsString();
+    des_args.compile_options = options_str.c_str();
+    des_args.compile_options_size = options_str.size();
+  }
 
   const PJRT_Api* api = pjrt_c_api();
 
