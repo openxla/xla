@@ -346,6 +346,30 @@ TEST_F(CollectiveQuantizerTest, DequantizeAllGather) {
   EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
 }
 
+TEST_F(CollectiveQuantizerTest, DequantizeAllGatherWithEffectiveScalarScale) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  ENTRY entry {
+    param = f8e4m3fn[8,4,8,128] parameter(0)
+    convert = bf16[8,4,8,128] convert(param)
+    scale = bf16[1] constant({0.1})
+    scale_bcast = bf16[8,4,8,128] broadcast(scale), dimensions={}
+    multiply = bf16[8,4,8,128] multiply(convert, scale_bcast)
+    ROOT all-gather = bf16[8,32,8,128] all-gather(multiply), dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}, channel_id=1
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Multiply(op::Convert(op::AllGather(op::Parameter())),
+                           op::Broadcast()));
+  const HloInstruction* all_gather =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
+}
+
 TEST_F(CollectiveQuantizerTest, DequantizeAllToAll) {
   absl::string_view hlo_string = R"(
   HloModule module

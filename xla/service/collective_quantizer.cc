@@ -36,13 +36,32 @@ struct ConversionSubgraph {
   // Unary instructions following a dequantization or preceding a quantization
   // in top-down order (operand-to-user).
   std::vector<HloInstruction*> unaries;
+
+  std::string ToString() const {
+    std::string result;
+    absl::StrAppend(&result, "\n  Convert Op: ",
+                    convert == nullptr ? "null" : convert->name());
+    absl::StrAppend(&result, "\n  Binary Op: ",
+                    binary == nullptr ? "null" : binary->name());
+    absl::StrAppend(
+        &result, "\n  Clamp Op: ", clamp == nullptr ? "null" : clamp->name());
+    absl::StrAppend(&result, "\n  Scale Broadcast Op: ",
+                    scale_bcast == nullptr ? "null" : scale_bcast->name());
+
+    for (const auto* unary : unaries) {
+      CHECK(unary != nullptr);
+      absl::StrAppend(&result, "\n  Unary Op: ", unary->name());
+    }
+
+    return result;
+  }
 };
 
 // Matches a broadcast of a scalar operand.
 template <typename... Args>
 auto ScalarBroadcast(Args... args) {
   return m::Broadcast(args...).WithPredicate([](const HloInstruction* instr) {
-    return ShapeUtil::IsScalar(instr->operand(0)->shape());
+    return ShapeUtil::IsEffectiveScalar(instr->operand(0)->shape());
   });
 }
 
@@ -95,24 +114,6 @@ HloInstruction* ApplyUnaries(HloInstruction* instr,
         {instr}));
   }
   return instr;
-}
-
-// Returns whether instr is replicated across all partitions associated with
-// module. Returns false when there are multiple replicas.
-absl::StatusOr<bool> InstrIsReplicated(HloModule* module,
-                                       HloInstruction* instr) {
-  // The replication analysis only verifies the replication of instr across
-  // partitions, not replicas. The replica count must be one to ensure instr is
-  // replicated across all devices.
-  if (module->config().replica_count() > 1) {
-    return false;
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      auto replication_analysis,
-      HloReplicationAnalysis::Run(module,
-                                  /*cross_partition_spmd=*/true));
-  return replication_analysis->HloInstructionIsReplicatedAt(instr, {});
 }
 
 // Recursively collects and returns unary, divide, or multiply operands of instr
@@ -172,7 +173,7 @@ std::optional<ConversionSubgraph> IsSupportedDequantization(
                        ScalarBroadcast(&subgraph.scale_bcast))))) {
     subgraph.unaries = {candidate_subgraph.begin() + 2,
                         candidate_subgraph.end()};
-  } else if (candidate_subgraph.size() > 0 &&
+  } else if (!candidate_subgraph.empty() &&
              Match(candidate_subgraph[0], m::Convert(&subgraph.convert))) {
     subgraph.unaries = {candidate_subgraph.begin() + 1,
                         candidate_subgraph.end()};
@@ -180,6 +181,10 @@ std::optional<ConversionSubgraph> IsSupportedDequantization(
     VLOG(5) << "Did not find type conversion or dequantization pattern.";
     return std::nullopt;
   }
+
+  VLOG(5) << "Conversion subgraph found for supporting dequantization of the "
+             "instruction: "
+          << instr->name() << subgraph.ToString();
 
   // The collected unary ops between dequantization/type conversion and
   // collective may only include bitcast, copy, reshape and slice instructions.
@@ -241,13 +246,16 @@ std::optional<ConversionSubgraph> IsSupportedQuantization(
                                     ScalarBroadcast(&subgraph.scale_bcast)),
                           ScalarBroadcast(m::Constant())))))) {
     subgraph.unaries = {ops.begin(), ops.end() - 3};
-  } else if (ops.size() > 0 &&
-             Match(ops.back(), m::Convert(&subgraph.convert))) {
+  } else if (!ops.empty() && Match(ops.back(), m::Convert(&subgraph.convert))) {
     subgraph.unaries = {ops.begin(), ops.end() - 1};
   } else {
     VLOG(5) << "Did not find type conversion or quantization pattern.";
     return std::nullopt;
   }
+
+  VLOG(5) << "Conversion subgraph found for supporting quantization of the "
+             "instruction: "
+          << instr->name() << subgraph.ToString();
 
   // The collected unary ops between collective and quantization/type conversion
   // may only include bitcast, copy, reshape and slice instructions.
@@ -262,21 +270,13 @@ std::optional<ConversionSubgraph> IsSupportedQuantization(
 }
 
 absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
+  VLOG(5) << "Attempt to dequantize collective " << instr->ToShortString();
+
   std::optional<ConversionSubgraph> subgraph =
       IsSupportedDequantization(instr->mutable_operand(0));
 
   if (!subgraph.has_value()) {
     return absl::OkStatus();
-  }
-
-  if (subgraph->scale_bcast) {
-    // The scale must be replicated across all devices.
-    TF_ASSIGN_OR_RETURN(
-        bool scale_is_replicated,
-        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast));
-    if (!scale_is_replicated) {
-      return absl::OkStatus();
-    }
   }
 
   HloInstruction* new_coll_operand = subgraph->convert->mutable_operand(0);
@@ -308,29 +308,22 @@ absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
       instr->ReplaceAllUsesWith(subgraph->binary ? new_binary : new_convert));
 
   *changed = true;
-  VLOG(5) << "Quantized collective " << new_collective->ToShortString();
+  VLOG(5) << "Dequantized collective " << new_collective->ToShortString();
 
   return absl::OkStatus();
 }
 
 absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
-  std::optional<ConversionSubgraph> subgraph;
-  if (instr->user_count() == 1) {
-    subgraph = IsSupportedQuantization(instr->users()[0]);
-  }
-
-  if (!subgraph.has_value()) {
+  if (instr->user_count() != 1) {
     return absl::OkStatus();
   }
 
-  if (subgraph->scale_bcast) {
-    // The scale must be replicated across all devices.
-    TF_ASSIGN_OR_RETURN(
-        bool scale_is_replicated,
-        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast));
-    if (!scale_is_replicated) {
-      return absl::OkStatus();
-    }
+  VLOG(5) << "Attempt to quantize collective " << instr->ToShortString();
+
+  std::optional<ConversionSubgraph> subgraph =
+      IsSupportedQuantization(instr->users()[0]);
+  if (!subgraph.has_value()) {
+    return absl::OkStatus();
   }
 
   HloInstruction* coll_operand = instr->mutable_operand(0);
@@ -380,10 +373,17 @@ absl::StatusOr<bool> CollectiveQuantizer::Run(
 
   for (HloComputation* comp : module->MakeComputationPostOrder()) {
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
-      if (IsSupportedCollective(instr)) {
-        TF_RETURN_IF_ERROR(MatchDequantization(instr, &changed));
-        TF_RETURN_IF_ERROR(MatchQuantization(instr, &changed));
+      if (!IsSupportedCollective(instr)) {
+        continue;
       }
+
+      // Either tries matching dequantization or quantization.
+      bool is_collective_changed = false;
+      TF_RETURN_IF_ERROR(MatchDequantization(instr, &is_collective_changed));
+      if (!is_collective_changed) {
+        TF_RETURN_IF_ERROR(MatchQuantization(instr, &is_collective_changed));
+      }
+      changed |= is_collective_changed;
     }
   }
 
