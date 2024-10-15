@@ -321,7 +321,7 @@ absl::StatusOr<bool> MatchDequantization(HloInstruction* instr) {
 
 absl::StatusOr<bool> MatchQuantization(HloInstruction* instr) {
   if (instr->user_count() != 1) {
-    return absl::OkStatus();
+    return false;
   }
 
   VLOG(5) << "Attempt to quantize collective " << instr->ToShortString();
