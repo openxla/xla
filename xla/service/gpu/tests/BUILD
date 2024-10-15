@@ -171,6 +171,7 @@ xla_test(
         ":gpu_codegen_test",
         "//xla:debug_options_flags",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_matchers",
         "//xla/hlo/utils:hlo_query",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",

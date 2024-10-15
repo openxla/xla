@@ -21,6 +21,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
@@ -167,6 +168,48 @@ ENTRY main {
                         !instr->control_successors().empty();
   }
   EXPECT_TRUE(has_control_deps);
+}
+
+TEST_F(GpuSpmdE2ECompileTest, F8DotRewrite) {
+  // Setup the module such that we will need to generate > 1 collective for
+  // sharding, and verify that linearizer inserts control deps as there are
+  // convolutions that can be auto tuned.
+  const char *const hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  param.0 = bf16[4] parameter(0), sharding={devices=[4]<=[4]}
+  custom-call.0 = bf16[1] custom-call(param.0), custom_call_target="SPMDFullToShardShape", sharding={manual}
+  reshape.0 = bf16[] reshape(custom-call.0)
+  broadcast.0 = bf16[4,8] broadcast(reshape.0)
+  param.1 = bf16[16,8] parameter(1), sharding={devices=[4,1]<=[4]}
+  custom-call.1 = bf16[4,8] custom-call(param.1), custom_call_target="SPMDFullToShardShape", sharding={manual}
+  convert.84 = f8e4m3fn[4,8] convert(custom-call.1)
+  convert.85 = bf16[4,8] convert(convert.84)
+  multiply.32 = bf16[4,8] multiply(convert.85, broadcast.0)
+  all-gather.6 = bf16[16,8] all-gather(multiply.32), channel_id=1,
+    replica_groups={{0,1,2,3}}, dimensions={0}, use_global_device_ids=true
+  transpose.0 = bf16[8,16] transpose(all-gather.6), dimensions={1,0}
+  dot.8 = bf16[16,16] dot(all-gather.6, transpose.0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT custom-call.3 = bf16[64,16] custom-call(dot.8), custom_call_target="SPMDShardToFullShape", sharding={devices=[4,1]<=[4]}
+})";
+
+  auto debug_options = GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_enable_triton_gemm(false);
+  debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
+
+  HloModuleConfig config;
+  config.set_use_spmd_partitioning(true);
+  config.set_num_partitions(4);
+  config.set_debug_options(debug_options);
+  auto hlo_module = ParseAndReturnVerifiedModule(hlo_string, config).value();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto optimized_module,
+                          GetOptimizedModule(std::move(hlo_module)));
+
+  auto *root = optimized_module->entry_computation()->root_instruction();
+  EXPECT_THAT(root, op::GetTupleElement(op::CustomCall()));
+  EXPECT_THAT(root->operand(0)->operand(0)->shape().element_type(), F8E4M3FN);
 }
 
 }  // namespace
