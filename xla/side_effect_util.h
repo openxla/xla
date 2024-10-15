@@ -63,6 +63,9 @@ extern const char kXlaQuantizationNumBucketsValueAttr[];
 // XLA frontend attribute for table id.
 extern const char kXlaTableId[];
 
+// XLA frontend attribute for stream annotation.
+extern const char kXlaStreamAnnotationAttr[];
+
 // XLA frontend attribute for buffer placement.
 extern const char kXlaBufferPlacementAttr[];
 extern const char kXlaBufferPlacementParam[];

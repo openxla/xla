@@ -489,5 +489,35 @@ TEST_F(CallInlinerTest, UseShardManualComputationBodyInlined) {
   EXPECT_TRUE(changed);
 }
 
+TEST_F(CallInlinerTest, DontInlineStreamAnnotationCall) {
+  const absl::string_view hlo_string = R"(
+  HloModule composite
+
+  %add (lhs: f32[]) -> f32[] {
+    %lhs = f32[] parameter(0)
+    %rhs = f32[] constant(2)
+    ROOT %add = f32[] add(f32[] %lhs, f32[] %rhs)
+  }
+
+  ENTRY %main () -> f32[] {
+    %lhs = f32[] constant(42)
+    ROOT %call = f32[] call(f32[] %lhs), to_apply=%add, frontend_attributes={_xla_stream_annotation="1"}
+  })";
+  auto debug_options = HloTestBase::GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_experimental_stream_annotation(true);
+  auto module = ParseAndReturnVerifiedModule(hlo_string).value();
+  module->mutable_config().set_debug_options(debug_options);
+  CallInliner call_inliner(/*single_call_site=*/true);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  ASSERT_FALSE(mutated);
+
+  ASSERT_EQ(module->entry_computation()->instruction_count(), 2);
+  auto inst = module->entry_computation()->instructions().begin();
+  EXPECT_THAT(*inst, op::Constant());
+  ++inst;
+  EXPECT_THAT(*inst, op::Call());
+}
+
 }  // namespace
 }  // namespace xla

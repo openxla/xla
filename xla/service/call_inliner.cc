@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
+#include "xla/side_effect_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -152,6 +153,20 @@ bool InlineUnderShardy(HloInstruction* instruction) {
                              sdy::kManualComputationBodyFuncName.str())));
 }
 
+bool HasStreamAnnotation(HloInstruction* instruction) {
+  if (instruction->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_stream_annotation()) {
+    auto it =
+        instruction->frontend_attributes().map().find(kXlaStreamAnnotationAttr);
+    if (it != instruction->frontend_attributes().map().end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool InlineComposites(
     HloInstruction* instruction,
     const absl::flat_hash_set<std::string>& composites_to_preserve) {
@@ -212,7 +227,7 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
   return instruction->opcode() == HloOpcode::kCall &&
          !instruction->has_backend_config() &&
          !instruction->parent()->IsAsyncComputation() &&
-         InlineUnderShardy(instruction) &&
+         InlineUnderShardy(instruction) && !HasStreamAnnotation(instruction) &&
          InlineComposites(instruction, composites_to_preserve_);
 }
 

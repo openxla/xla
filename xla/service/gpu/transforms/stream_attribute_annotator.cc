@@ -22,6 +22,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/numbers.h"
+#include "xla/side_effect_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -86,6 +88,15 @@ absl::StatusOr<bool> AnnotateStreamAttributesForInstruction(
   *instr_gpu_config.mutable_wait_on_operation_queues() =
       comp_root_gpu_config->wait_on_operation_queues();
   TF_RETURN_IF_ERROR(instr->set_backend_config(instr_gpu_config));
+  return true;
+}
+
+absl::StatusOr<bool> AnnotateStreamAttributesForCall(
+    HloInstruction* instr, int64_t stream_id,
+    GpuBackendConfig& instr_gpu_config) {
+  instr_gpu_config.set_operation_queue_id(stream_id);
+  TF_RETURN_IF_ERROR(instr->set_backend_config(instr_gpu_config));
+  VLOG(3) << "Add call's backend config: " << stream_id;
   return true;
 }
 
@@ -173,6 +184,61 @@ absl::StatusOr<bool> AnnotateStreamAttributesForUsers(
 }
 }  // namespace
 
+absl::StatusOr<bool> ApplyStreamAttributeToComputation(
+    const HloComputation* comp, int64_t channel_id) {
+  bool changed = false;
+  for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
+    auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
+    if (!instr_gpu_config.ok()) {
+      continue;
+    }
+    // For fusion instruction, only annotate
+    // when the root of fusion is a single instruction
+    // running on non-default stream.
+    if (instr->opcode() == HloOpcode::kFusion) {
+      TF_ASSIGN_OR_RETURN(bool comp_result,
+                          AnnotateStreamAttributesForInstruction(
+                              instr, instr_gpu_config.value()));
+      changed |= comp_result;
+    } else if (instr->opcode() == HloOpcode::kCall) {
+      auto it =
+          instr->frontend_attributes().map().find(kXlaStreamAnnotationAttr);
+      if (it != instr->frontend_attributes().map().end()) {
+        int stream_id;
+        TF_RET_CHECK(absl::SimpleAtoi(it->second, &stream_id))
+            << "Invalid stream id: " << it->second;
+        TF_ASSIGN_OR_RETURN(bool comp_result,
+                            AnnotateStreamAttributesForCall(
+                                instr, stream_id, instr_gpu_config.value()));
+        changed |= comp_result;
+        TF_ASSIGN_OR_RETURN(bool sub_comp_result,
+                            ApplyStreamAttributeToComputation(
+                                instr->called_computations()[0], stream_id));
+        changed |= sub_comp_result;
+      }
+    } else if (instr->opcode() == HloOpcode::kCopyStart) {
+      TF_ASSIGN_OR_RETURN(bool comp_result,
+                          AnnotateStreamAttributesForCopyStart(
+                              instr, channel_id, instr_gpu_config.value()));
+      changed |= comp_result;
+      continue;
+    } else if (comp->IsAsyncComputation() &&
+               (instr->opcode() == HloOpcode::kDynamicSlice ||
+                instr->opcode() == HloOpcode::kDynamicUpdateSlice)) {
+      TF_ASSIGN_OR_RETURN(bool comp_result,
+                          WrapIntoFusionAndAnnotateStreamAttributes(
+                              instr, channel_id, instr_gpu_config.value()));
+      changed |= comp_result;
+      continue;
+    }
+
+    TF_ASSIGN_OR_RETURN(bool user_result, AnnotateStreamAttributesForUsers(
+                                              instr, instr_gpu_config.value()));
+    changed |= user_result;
+  }
+  return changed;
+}
+
 absl::StatusOr<bool> StreamAttributeAnnotator::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -182,40 +248,9 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
   int64_t channel_id = hlo_query::NextChannelId(*module);
   for (const HloComputation* comp :
        module->MakeComputationPostOrder(execution_threads)) {
-    for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
-      auto instr_gpu_config = instr->backend_config<GpuBackendConfig>();
-      if (!instr_gpu_config.ok()) {
-        continue;
-      }
-      // For fusion instruction, only annotate
-      // when the root of fusion is a single instruction
-      // running on non-default stream.
-      if (instr->opcode() == HloOpcode::kFusion) {
-        TF_ASSIGN_OR_RETURN(bool comp_result,
-                            AnnotateStreamAttributesForInstruction(
-                                instr, instr_gpu_config.value()));
-        changed |= comp_result;
-      } else if (instr->opcode() == HloOpcode::kCopyStart) {
-        TF_ASSIGN_OR_RETURN(bool comp_result,
-                            AnnotateStreamAttributesForCopyStart(
-                                instr, channel_id, instr_gpu_config.value()));
-        changed |= comp_result;
-        continue;
-      } else if (comp->IsAsyncComputation() &&
-                 (instr->opcode() == HloOpcode::kDynamicSlice ||
-                  instr->opcode() == HloOpcode::kDynamicUpdateSlice)) {
-        TF_ASSIGN_OR_RETURN(bool comp_result,
-                            WrapIntoFusionAndAnnotateStreamAttributes(
-                                instr, channel_id, instr_gpu_config.value()));
-        changed |= comp_result;
-        continue;
-      }
-
-      TF_ASSIGN_OR_RETURN(
-          bool user_result,
-          AnnotateStreamAttributesForUsers(instr, instr_gpu_config.value()));
-      changed |= user_result;
-    }
+    TF_ASSIGN_OR_RETURN(bool comp_result,
+                        ApplyStreamAttributeToComputation(comp, channel_id));
+    changed |= comp_result;
   }
   XLA_VLOG_LINES(
       5, "StreamAttributeAnnotator::Run(), after:\n" + module->ToString());

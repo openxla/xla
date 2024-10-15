@@ -253,7 +253,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
 
   opts.set_xla_gpu_multi_streamed_windowed_einsum(false);
-
+  opts.set_xla_gpu_experimental_stream_annotation(false);
   // Minimum combined size of matrices in matrix multiplication to
   // be rewritten to cuBLAS or Triton kernel call.
   // This threshold is a conservative estimate and has been measured
@@ -1852,6 +1852,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_multi_streamed_windowed_einsum),
       debug_options->xla_gpu_multi_streamed_windowed_einsum(),
       "Whether to run windowed einsum using multiple compute streams."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_experimental_stream_annotation",
+                bool_setter_for(
+                    &DebugOptions::set_xla_gpu_experimental_stream_annotation),
+                debug_options->xla_gpu_experimental_stream_annotation(),
+                "Whether to respect explicit stream annotation tags."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_gemm_rewrite_size_threshold",
       int64_setter_for(&DebugOptions::set_xla_gpu_gemm_rewrite_size_threshold),

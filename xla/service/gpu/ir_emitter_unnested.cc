@@ -575,6 +575,14 @@ absl::Status IrEmitterUnnested::EmitCommandBufferThunk(
   TF_ASSIGN_OR_RETURN(
       CommandBufferCmdSequence cmd_sequence,
       ConvertToCommands(thunk_sequence->thunks(), synchronization_mode));
+  const ExecutionStreamAssignment& stream_assignment =
+      ir_emitter_context_->execution_stream_assignment();
+  for (std::unique_ptr<Thunk>& thunk : thunk_sequence->thunks()) {
+    TF_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
+                        stream_assignment.GetSyncExecutionStreamId(instr));
+    VLOG(3) << "Setting sync id " << execution_stream_id;
+    thunk->set_execution_stream_id(execution_stream_id);
+  }
 
   AddThunkToThunkSequence(std::make_unique<CommandBufferThunk>(
       std::move(cmd_sequence), Thunk::ThunkInfo::WithProfileAnnotation(instr),
@@ -2640,6 +2648,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
         case HloOpcode::kFusion:
+        case HloOpcode::kCall:
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
@@ -2700,6 +2709,9 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
         }
         case HloOpcode::kCustomCall: {
           return EmitAsyncCustomCallStart(instr);
+        }
+        case HloOpcode::kCall: {
+          return EmitCommandBufferThunk(wrapped);
         }
         default:
           return Internal("Unsupported async start wrapped instruction: %s",
