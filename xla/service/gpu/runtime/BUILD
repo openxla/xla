@@ -501,6 +501,7 @@ xla_test(
         "//xla/stream_executor/gpu:gpu_test_kernels_fatbin",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
