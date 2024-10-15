@@ -269,14 +269,13 @@ std::optional<ConversionSubgraph> IsSupportedQuantization(
   return std::make_optional<ConversionSubgraph>(std::move(subgraph));
 }
 
-absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
+absl::StatusOr<bool> MatchDequantization(HloInstruction* instr) {
   VLOG(5) << "Attempt to dequantize collective " << instr->ToShortString();
-
   std::optional<ConversionSubgraph> subgraph =
       IsSupportedDequantization(instr->mutable_operand(0));
 
   if (!subgraph.has_value()) {
-    return absl::OkStatus();
+    return false;
   }
 
   HloInstruction* new_coll_operand = subgraph->convert->mutable_operand(0);
@@ -298,8 +297,17 @@ absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
   HloInstruction* new_binary;
   // When there is a dequantization, insert the scale ops.
   if (subgraph->binary) {
-    HloInstruction* new_scale_bcast = instr->AddInstruction(
-        subgraph->scale_bcast->CloneWithNewShape(new_convert->shape()));
+    auto* new_scale_bcast_operand = subgraph->scale_bcast->mutable_operand(0);
+    if (!ShapeUtil::IsScalar(new_scale_bcast_operand->shape())) {
+      new_scale_bcast_operand =
+          instr->parent()->AddInstruction(HloInstruction::CreateReshape(
+              ShapeUtil::MakeScalarShape(
+                  subgraph->scale_bcast->shape().element_type()),
+              new_scale_bcast_operand));
+    }
+    HloInstruction* new_scale_bcast =
+        instr->AddInstruction(HloInstruction::CreateBroadcast(
+            new_convert->shape(), new_scale_bcast_operand, {}));
     new_binary = instr->AddInstruction(subgraph->binary->CloneWithNewOperands(
         new_convert->shape(), {new_convert, new_scale_bcast}));
   }
@@ -307,13 +315,11 @@ absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
   TF_RETURN_IF_ERROR(
       instr->ReplaceAllUsesWith(subgraph->binary ? new_binary : new_convert));
 
-  *changed = true;
   VLOG(5) << "Dequantized collective " << new_collective->ToShortString();
-
-  return absl::OkStatus();
+  return true;
 }
 
-absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
+absl::StatusOr<bool> MatchQuantization(HloInstruction* instr) {
   if (instr->user_count() != 1) {
     return absl::OkStatus();
   }
@@ -323,7 +329,7 @@ absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
   std::optional<ConversionSubgraph> subgraph =
       IsSupportedQuantization(instr->users()[0]);
   if (!subgraph.has_value()) {
-    return absl::OkStatus();
+    return false;
   }
 
   HloInstruction* coll_operand = instr->mutable_operand(0);
@@ -331,8 +337,17 @@ absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
   HloInstruction *new_binary, *new_clamp;
   // When there is a quantization, insert the scale and clamp ops.
   if (subgraph->binary) {
-    HloInstruction* new_scale_bcast = instr->AddInstruction(
-        subgraph->scale_bcast->CloneWithNewShape(coll_operand->shape()));
+    auto* new_scale_bcast_operand = subgraph->scale_bcast->mutable_operand(0);
+    if (!ShapeUtil::IsScalar(new_scale_bcast_operand->shape())) {
+      new_scale_bcast_operand =
+          instr->parent()->AddInstruction(HloInstruction::CreateReshape(
+              ShapeUtil::MakeScalarShape(
+                  subgraph->scale_bcast->shape().element_type()),
+              new_scale_bcast_operand));
+    }
+    HloInstruction* new_scale_bcast =
+        instr->AddInstruction(HloInstruction::CreateBroadcast(
+            coll_operand->shape(), new_scale_bcast_operand, {}));
     new_binary = instr->AddInstruction(subgraph->binary->CloneWithNewOperands(
         coll_operand->shape(), {coll_operand, new_scale_bcast}));
     HloInstruction* new_clamp_lower = instr->AddInstruction(
@@ -358,10 +373,8 @@ absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
   new_collective = ApplyUnaries(new_collective, subgraph->unaries);
   TF_RETURN_IF_ERROR(subgraph->convert->ReplaceAllUsesWith(new_collective));
 
-  *changed = true;
   VLOG(5) << "Quantized collective " << new_collective->ToShortString();
-
-  return absl::OkStatus();
+  return true;
 }
 
 }  // namespace
@@ -378,12 +391,15 @@ absl::StatusOr<bool> CollectiveQuantizer::Run(
       }
 
       // Either tries matching dequantization or quantization.
-      bool is_collective_changed = false;
-      TF_RETURN_IF_ERROR(MatchDequantization(instr, &is_collective_changed));
-      if (!is_collective_changed) {
-        TF_RETURN_IF_ERROR(MatchQuantization(instr, &is_collective_changed));
+      TF_ASSIGN_OR_RETURN(bool is_dequantized, MatchDequantization(instr));
+      changed |= is_dequantized;
+
+      if (is_dequantized) {
+        continue;
       }
-      changed |= is_collective_changed;
+
+      TF_ASSIGN_OR_RETURN(bool is_quantized, MatchQuantization(instr));
+      changed |= is_quantized;
     }
   }
 
