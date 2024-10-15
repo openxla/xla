@@ -1023,7 +1023,7 @@ message DebugOptions {
   // If set >= 0, this controls the total bytes(combined sizes of both
   // operands in bytes) to enable windowed einsum and
   // xla_gpu_threshold_for_windowed_einsum_mib will be ignored.
-  int64 xla_gpu_total_bytes_threshold_for_windowed_einsum = 337;
+  int64 xla_gpu_operand_bytes_threshold_for_windowed_einsum = 337;
 
   // Next id: 338
 
