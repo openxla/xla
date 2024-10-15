@@ -78,7 +78,7 @@ class StatefulRngSpmdPartitionerTest : public HloTestBase {
         debug_options.xla_gpu_multi_streamed_windowed_einsum(),
         skip_checking_windowed_einsum_users,
         disable_ag_rewrite_for_multiple_consumers,
-        debug_options.xla_gpu_total_bytes_threshold_for_windowed_einsum());
+        debug_options.xla_gpu_operand_bytes_threshold_for_windowed_einsum());
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
     TF_RETURN_IF_ERROR(pass.Run(module.get()).status());
@@ -279,9 +279,9 @@ ENTRY main {
   DebugOptions debug_options = GetDefaultDebugOptions();
   debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
   debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-  int64_t flops_threshold = 1 << 20;
-  debug_options.set_xla_gpu_total_bytes_threshold_for_windowed_einsum(
-      flops_threshold);
+  int64_t oper_bytes_threshold = 1 << 20;
+  debug_options.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(
+      oper_bytes_threshold);
   TF_ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_partitions=*/4, debug_options,
@@ -313,9 +313,9 @@ ENTRY main {
 )";
   DebugOptions debug_options = GetDefaultDebugOptions();
   debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-  int64_t flops_threshold = 1 << 8;
-  debug_options.set_xla_gpu_total_bytes_threshold_for_windowed_einsum(
-      flops_threshold);
+  int64_t oper_bytes_threshold = 1 << 8;
+  debug_options.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(
+      oper_bytes_threshold);
   TF_ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_partitions=*/4, debug_options,

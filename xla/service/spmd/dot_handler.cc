@@ -455,15 +455,15 @@ bool RequiresTransposeSharding(
 }
 
 bool should_enable_windowed_einsum_with_threshold(
-    const SpmdPartitionerOptions& options, int64_t total_flops,
+    const SpmdPartitionerOptions& options, int64_t total_operand_bytes,
     int64_t operand_or_output_shape_size) {
   if (options.total_bytes_windowed_einsum_threshold != std::nullopt) {
-    int64_t total_flops_threshold =
+    int64_t operand_bytes_threshold =
         options.total_bytes_windowed_einsum_threshold.value();
-    return total_flops >= total_flops_threshold;
+    return total_operand_bytes >= operand_bytes_threshold;
   } else {
-    return operand_or_output_shape_size * 1024 * 1024 >=
-           options.threshold_for_windowed_einsum_mib;
+    return operand_or_output_shape_size >=
+           options.threshold_for_windowed_einsum_mib * 1024 * 1024;
   }
 }
 

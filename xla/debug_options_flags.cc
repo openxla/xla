@@ -230,7 +230,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cub_radix_sort(true);
   opts.set_xla_gpu_enable_cudnn_layer_norm(false);
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
-  opts.set_xla_gpu_total_bytes_threshold_for_windowed_einsum(-1);
+  opts.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(-1);
 
   opts.set_xla_gpu_enable_triton_hopper(false);
   opts.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(false);
@@ -1800,12 +1800,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_total_bytes_threshold_for_windowed_einsum",
+      "xla_gpu_operand_bytes_threshold_for_windowed_einsum",
       int64_setter_for(
-          &DebugOptions::set_xla_gpu_total_bytes_threshold_for_windowed_einsum),
-      debug_options->xla_gpu_total_bytes_threshold_for_windowed_einsum(),
+          &DebugOptions::
+              set_xla_gpu_operand_bytes_threshold_for_windowed_einsum),
+      debug_options->xla_gpu_operand_bytes_threshold_for_windowed_einsum(),
       "This controls whether to enable windowed einsum (collective matmul) "
-      "based on the total flops(combined sizes of both operands) if set >= 0."
+      "based on the sum of sizes of 2 operands if set >= 0."
       "If set >= 0, xla_gpu_threshold_for_windowed_einsum_mib is ignored."
       "Default is -1"));
 
