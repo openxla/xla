@@ -234,16 +234,6 @@ bool IsHandledConstantForDynamicSliceFusion(const HloInstruction& offset) {
   return false;
 }
 
-// This checks whether a dynamic index operation has all offsets that are either
-// constant or loop iteration offsets.
-bool HasConstantOrLoopIterationOffsets(
-    const HloDynamicIndexInstruction& instr) {
-  return llvm::all_of(instr.index_operands(), [](const HloInstruction* offset) {
-    return IsLoopIterationNumber(*offset) ||
-           IsHandledConstantForDynamicSliceFusion(*offset);
-  });
-}
-
 UseDefDataflowPaths GetSlicedOperandPaths(const HloInstruction* instr) {
   UseDefDataflowPaths sliced_operand_paths;
 
@@ -510,6 +500,14 @@ absl::StatusOr<HloInstruction*> CreateFusionInstruction(
 }
 
 }  // namespace
+
+bool HasConstantOrLoopIterationOffsets(
+    const HloDynamicIndexInstruction& instr) {
+  return llvm::all_of(instr.index_operands(), [](const HloInstruction* offset) {
+    return IsLoopIterationNumber(*offset) ||
+           IsHandledConstantForDynamicSliceFusion(*offset);
+  });
+}
 
 absl::StatusOr<bool> DynamicSliceFusionRewriter::Run(
     HloModule* module,

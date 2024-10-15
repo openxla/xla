@@ -541,6 +541,7 @@ cc_library(
     srcs = ["command_buffer_scheduling.cc"],
     hdrs = ["command_buffer_scheduling.h"],
     deps = [
+        ":dynamic_slice_fusion_rewriter",
         "//xla:shape_util",
         "//xla:util",
         "//xla/ffi:ffi_api",

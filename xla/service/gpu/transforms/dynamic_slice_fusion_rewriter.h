@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 
 namespace xla {
 namespace gpu {
@@ -84,6 +85,10 @@ class DynamicSliceFusionRewriter : public HloModulePass {
  private:
   std::string platform_name_;
 };
+
+// This checks whether a dynamic index operation has all offsets that are either
+// constant or loop iteration offsets.
+bool HasConstantOrLoopIterationOffsets(const HloDynamicIndexInstruction& instr);
 
 }  // namespace gpu
 }  // namespace xla
