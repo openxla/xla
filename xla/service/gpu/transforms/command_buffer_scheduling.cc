@@ -245,33 +245,36 @@ static bool IsCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
     const auto& custom_config = backend_config.custom_fusion_config();
-    auto fusion_analysis =
-        HloFusionAnalysis::Create(*hlo, config.device_description);
-    const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
-    auto hero_adaptor =
-        HloBfsFindIf(adaptor.GetRoots(), adaptor, [](auto node) {
-          return node.opcode() == HloOpcode::kCustomCall ||
-                 node.opcode() == HloOpcode::kReduceScatter;
-        });
-    const HloInstruction* hero = &hero_adaptor->instruction();
-
-    if (!(IsCommand(hero, config) || IsAsyncStartCommand(hero, config))) {
-      return false;
-    }
-    if (custom_config.name() == "dynamic_address_computation") {
-      if (!config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE)) {
-        return false;
-      }
-      // Check all offsets of slice instructions are constant or loop
-      // iterations
-      bool all_slice_valid = llvm::all_of(
-          fusion->called_computation()->instructions(),
-          [](const HloInstruction* inst) {
-            auto* slice_inst = DynCast<HloDynamicIndexInstruction>(inst);
-            if (!slice_inst) return true;
-            return HasConstantOrLoopIterationOffsets(*slice_inst);
+    if ((custom_config.name() == "address_computation") ||
+        (custom_config.name() == "dynamic_address_computation")) {
+      auto fusion_analysis =
+          HloFusionAnalysis::Create(*hlo, config.device_description);
+      const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
+      auto hero_adaptor =
+          HloBfsFindIf(adaptor.GetRoots(), adaptor, [](auto node) {
+            return node.opcode() == HloOpcode::kCustomCall ||
+                   node.opcode() == HloOpcode::kReduceScatter;
           });
-      return all_slice_valid;
+      const HloInstruction* hero = &hero_adaptor->instruction();
+
+      if (custom_config.name() == "address_computation") {
+        return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
+      } else {
+        if (!config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE) ||
+            !(IsCommand(hero, config) || IsAsyncStartCommand(hero, config))) {
+          return false;
+        }
+        // Check all offsets of slice instructions are constant or loop
+        // iterations
+        bool all_slice_valid = llvm::all_of(
+            fusion->called_computation()->instructions(),
+            [](const HloInstruction* inst) {
+              auto* slice_inst = DynCast<HloDynamicIndexInstruction>(inst);
+              if (!slice_inst) return true;
+              return HasConstantOrLoopIterationOffsets(*slice_inst);
+            });
+        return all_slice_valid;
+      }
     }
     return config.enabled_commands.contains(DebugOptions::FUSION);
   }
