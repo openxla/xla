@@ -507,8 +507,13 @@ TEST(PJRTGpuDeviceTopologyTest, CreateExplicitGpuTopologyAndTargetConfig) {
       reinterpret_cast<const PJRT_TopologyDescription*>(args.topology);
   ASSERT_NE(pjrt_topology, nullptr);
 
+#ifdef TENSORFLOW_USE_ROCM
+  EXPECT_EQ(pjrt_topology->topology->platform_id(), xla::RocmId());
+  EXPECT_EQ(pjrt_topology->topology->platform_name(), xla::RocmName());
+#else
   EXPECT_EQ(pjrt_topology->topology->platform_id(), xla::CudaId());
   EXPECT_EQ(pjrt_topology->topology->platform_name(), xla::CudaName());
+#endif
 
   EXPECT_EQ(pjrt_topology->topology->ProcessCount().value(), 16 * 2);
   EXPECT_EQ(pjrt_topology->topology->DeviceDescriptions().size(), 16 * 2 * 4);
