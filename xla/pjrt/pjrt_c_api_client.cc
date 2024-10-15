@@ -425,10 +425,11 @@ PjRtCApiClient::DeserializeExecutable(absl::string_view serialized,
   des_args.compile_options = nullptr;
   des_args.compile_options_size = 0;
 
+  std::string options_str;
   if (options) {
     TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
                         options->ToProto());
-    std::string options_str = options_proto.SerializeAsString();
+    options_str = options_proto.SerializeAsString();
     des_args.compile_options = options_str.c_str();
     des_args.compile_options_size = options_str.size();
   }
