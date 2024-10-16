@@ -645,6 +645,12 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
     thread_dim_limit.z = prop.maxThreadsDim[2];
     desc.set_thread_dim_limit(thread_dim_limit);
 
+    GridSize grid_size_limit;
+    grid_size_limit.x = prop.maxGridSize[0];
+    grid_size_limit.y = prop.maxGridSize[1];
+    grid_size_limit.z = prop.maxGridSize[2];
+    desc.set_grid_size_limit(grid_size_limit);
+
     float clock_rate_ghz = static_cast<float>(prop.clockRate) / 1e6;
     desc.set_clock_rate_ghz(clock_rate_ghz);
 

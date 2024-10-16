@@ -350,6 +350,11 @@ class DeviceDescription {
     return registers_per_block_limit_;
   }
 
+  // Return the limit on maximum size of each dimension of a grid.
+  const GridSize &grid_size_limit() const {
+    return grid_size_limit_;
+  }
+
   // Returns the number of address bits available to kernel code running on the
   // platform. This affects things like the maximum allocation size and perhaps
   // types used in kernel code such as size_t.
@@ -525,6 +530,10 @@ class DeviceDescription {
     registers_per_block_limit_ = value;
   }
 
+  void set_grid_size_limit(const GridSize &value) {
+    grid_size_limit_ = value;
+  }
+
   void set_device_address_bits(int64_t value) { device_address_bits_ = value; }
   void set_device_memory_size(int64_t value) { device_memory_size_ = value; }
   void set_l2_cache_size(int64_t value) { l2_cache_size_ = value; }
@@ -581,6 +590,9 @@ class DeviceDescription {
 
   int64_t registers_per_core_limit_ = kUninitialized<int64_t>;
   int64_t registers_per_block_limit_ = kUninitialized<int64_t>;
+
+  GridSize grid_size_limit_{kUninitialized<uint64_t>, kUninitialized<uint64_t>,
+                            kUninitialized<uint64_t>};
 
   int64_t device_address_bits_ = kUninitialized<int64_t>;
   int64_t device_memory_size_ = kUninitialized<int64_t>;

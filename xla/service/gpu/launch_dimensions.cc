@@ -34,12 +34,21 @@ LaunchDimensions CalculateLaunchDimensions(
   if (num_elements <= 1) {
     return LaunchDimensions();
   }
+
   num_elements = CeilOfRatio(num_elements, int64_t{dim_config.unroll_factor});
 
   const int kWarpSchedulers = 4;
   int64_t threads_per_block = std::min<int64_t>(
       gpu_device_info.threads_per_warp() * kWarpSchedulers, num_elements);
-  int64_t num_blocks = CeilOfRatio(num_elements, threads_per_block);
+  int64_t num_blocks = CeilOfRatio(num_elements, threads_per_block*2);
+  const auto& max_grid_size = gpu_device_info.grid_size_limit();
+  LOG(INFO) << max_grid_size.x << "\n";
+  LOG(INFO) << max_grid_size.y << "\n";
+  LOG(INFO) << max_grid_size.z << "\n";
+  LOG(INFO) << "num blocks: " << num_blocks << "\n";
+  LOG(INFO) << "threads_per_block: " << threads_per_block << "\n";
+
+  num_blocks = std::min(num_blocks, static_cast<int64_t>(max_grid_size.x));
   return LaunchDimensions(se::BlockDim(num_blocks, 1, 1),
                           se::ThreadDim(threads_per_block, 1, 1));
 }

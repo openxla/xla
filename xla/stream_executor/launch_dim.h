@@ -64,6 +64,15 @@ struct BlockDim : internal::Dim3D {
   }
 };
 
+// Grid dimensionality for use in a kernel launch.
+struct GridSize : internal::Dim3D {
+  explicit GridSize(uint64_t x = 1, uint64_t y = 1, uint64_t z = 1)
+      : internal::Dim3D({x, y, z}) {}
+  std::string ToString() const {
+    return absl::StrCat("GridSize{", x, ", ", y, ", ", z, "}");
+  }
+};
+
 // Cluster dimensionality for use in a kernel launch.
 struct ClusterDim : internal::Dim3D {
   explicit ClusterDim(uint64_t x = 1, uint64_t y = 1, uint64_t z = 1)
