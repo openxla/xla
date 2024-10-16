@@ -435,10 +435,10 @@ TEST(PJRTGpuDeviceTopologyTest, CreateGpuTopology) {
       reinterpret_cast<const PJRT_TopologyDescription*>(args.topology);
   ASSERT_NE(pjrt_topology, nullptr);
 
-  EXPECT_THAT(pjrt_topology->topology->platform_id(),
-              testing::AnyOf(xla::CudaId(), xla::RocmId()));
-  EXPECT_THAT(pjrt_topology->topology->platform_name(),
-              testing::AnyOf(xla::CudaName(), xla::RocmName()));
+  EXPECT_TRUE((pjrt_topology->topology->platform_id() == xla::CudaId() &&
+               pjrt_topology->topology->platform_name() == xla::CudaName()) ||
+              (pjrt_topology->topology->platform_id() == xla::RocmId() &&
+               pjrt_topology->topology->platform_name() == xla::RocmName()));
 
   PJRT_TopologyDescription_Destroy_Args destroy_args;
   destroy_args.struct_size = PJRT_TopologyDescription_Destroy_Args_STRUCT_SIZE;
@@ -502,10 +502,11 @@ TEST(PJRTGpuDeviceTopologyTest, CreateExplicitGpuTopologyAndTargetConfig) {
       reinterpret_cast<const PJRT_TopologyDescription*>(args.topology);
   ASSERT_NE(pjrt_topology, nullptr);
 
-  EXPECT_THAT(pjrt_topology->topology->platform_id(),
-              testing::AnyOf(xla::CudaId(), xla::RocmId()));
-  EXPECT_THAT(pjrt_topology->topology->platform_name(),
-              testing::AnyOf(xla::CudaName(), xla::RocmName()));
+  EXPECT_TRUE((pjrt_topology->topology->platform_id() == xla::CudaId() &&
+               pjrt_topology->topology->platform_name() == xla::CudaName()) ||
+              (pjrt_topology->topology->platform_id() == xla::RocmId() &&
+               pjrt_topology->topology->platform_name() == xla::RocmName()));
+
   EXPECT_EQ(pjrt_topology->topology->ProcessCount().value(), 16 * 2);
   EXPECT_EQ(pjrt_topology->topology->DeviceDescriptions().size(), 16 * 2 * 4);
   EXPECT_EQ(pjrt_topology->topology->DeviceDescriptions()[0]->device_kind(),
