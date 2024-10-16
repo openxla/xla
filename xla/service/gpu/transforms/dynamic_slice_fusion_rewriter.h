@@ -86,7 +86,6 @@ class DynamicSliceFusionRewriter : public HloModulePass {
   std::string platform_name_;
 };
 
-
 }  // namespace gpu
 }  // namespace xla
 
