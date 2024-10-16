@@ -6628,6 +6628,7 @@ cc_library(
         ":pattern_matcher",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
