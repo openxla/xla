@@ -25,7 +25,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "dynamic_slice_fusion_rewriter.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"

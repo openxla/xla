@@ -57,7 +57,12 @@ DynamicSliceThunk::DynamicSliceThunk(
     : Thunk(Kind::kDynamicSlice, thunk_info),
       embedded_thunk_(std::make_unique<SequentialThunk>(
           ThunkInfo(), std::move(*embedded_thunk))),
-      fake_allocations_(std::move(fake_allocations)) {
+      arguments_(arguments),
+      fake_allocations_(std::move(fake_allocations)),
+      offsets_(offsets),
+      orig_shapes_(orig_shapes),
+      sliced_shapes_(sliced_shapes),
+      offset_byte_sizes_(offset_byte_sizes) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,

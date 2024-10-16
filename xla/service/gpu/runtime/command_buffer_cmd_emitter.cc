@@ -191,6 +191,19 @@ static absl::StatusOr<Command> Convert(const NcclCollectiveDoneThunk& thunk) {
                                       thunk.nccl_execution_stream_id());
 }
 
+static absl::StatusOr<Command> Convert(const DynamicSliceThunk& thunk) {
+  auto cmd_sequence = std::make_unique<CommandBufferCmdSequence>();
+  auto embed_thunk = thunk.get_embeded_thunk();
+  TF_RETURN_IF_ERROR(AppendCommands(
+      *(cmd_sequence.get()), embed_thunk->thunks(),
+      CommandBufferCmdSequence::SynchronizationMode::kAutomatic));
+  return std::make_unique<DynamicSliceFusionCmd>(
+      thunk.execution_stream_id(), std::move(cmd_sequence), thunk.get_arguments(),
+      thunk.get_fake_allocations(), thunk.get_offsets(),
+      thunk.get_orig_shapes(), thunk.get_sliced_shapes(),
+      thunk.get_offset_byte_sizes());
+}
+
 static absl::StatusOr<Command> Convert(const PartitionIdThunk& thunk) {
   return std::make_unique<ComputationIdCmd>(thunk.execution_stream_id(),
                                             thunk.dest(),
@@ -308,6 +321,9 @@ static absl::Status AppendCommands(
     case Thunk::Kind::kNcclAllToAllDone:
       return append(Convert<NcclCollectiveDoneThunk>(thunk));
 
+    case Thunk::Kind::kDynamicSlice:
+      return append(Convert<DynamicSliceThunk>(thunk));
+ 
     case Thunk::Kind::kWaitForStreams:
       return append(Convert<WaitForStreamsThunk>(thunk));
 

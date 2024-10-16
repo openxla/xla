@@ -86,9 +86,6 @@ class DynamicSliceFusionRewriter : public HloModulePass {
   std::string platform_name_;
 };
 
-// This checks whether a dynamic index operation has all offsets that are either
-// constant or loop iteration offsets.
-bool HasConstantOrLoopIterationOffsets(const HloDynamicIndexInstruction& instr);
 
 }  // namespace gpu
 }  // namespace xla
