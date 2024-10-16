@@ -781,5 +781,5 @@ bool HasConstantOrLoopIterationOffsets(
                      });
 }
 
-} //namespace gpu
+}  // namespace gpu
 }  // namespace xla

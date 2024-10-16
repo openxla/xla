@@ -101,13 +101,9 @@ class DynamicSliceThunk : public Thunk {
     return arguments_;
   }
 
-  std::vector<BufferAllocation*> get_fake_allocations() const {
-    std::vector<BufferAllocation*> allocations;
-    allocations.reserve(fake_allocations_.size());
-    for (auto it = fake_allocations_.begin(); it != fake_allocations_.end();
-         ++it) {
-      allocations.push_back((*it).get());
-    }
+  const std::vector<std::unique_ptr<BufferAllocation>>& get_fake_allocations()
+      const {
+    return fake_allocations_;
   }
 
   std::vector<std::optional<std::vector<Offset>>> get_offsets() const {
@@ -121,6 +117,7 @@ class DynamicSliceThunk : public Thunk {
   std::vector<std::optional<Shape>> get_sliced_shapes() const {
     return sliced_shapes_;
   }
+
   std::vector<std::optional<uint64_t>> get_offset_byte_sizes() const {
     return offset_byte_sizes_;
   }

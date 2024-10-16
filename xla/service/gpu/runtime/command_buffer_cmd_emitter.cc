@@ -197,9 +197,17 @@ static absl::StatusOr<Command> Convert(const DynamicSliceThunk& thunk) {
   TF_RETURN_IF_ERROR(AppendCommands(
       *(cmd_sequence.get()), embed_thunk->thunks(),
       CommandBufferCmdSequence::SynchronizationMode::kAutomatic));
+
+  auto& thunk_fake_allocations = thunk.get_fake_allocations();
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
+  for (auto it = thunk_fake_allocations.begin();
+       it != thunk_fake_allocations.end(); ++it) {
+    fake_allocations.push_back(
+        std::move(std::make_unique<BufferAllocation>(**it)));
+  }
   return std::make_unique<DynamicSliceFusionCmd>(
-      thunk.execution_stream_id(), std::move(cmd_sequence), thunk.get_arguments(),
-      thunk.get_fake_allocations(), thunk.get_offsets(),
+      thunk.execution_stream_id(), std::move(cmd_sequence),
+      thunk.get_arguments(), std::move(fake_allocations), thunk.get_offsets(),
       thunk.get_orig_shapes(), thunk.get_sliced_shapes(),
       thunk.get_offset_byte_sizes());
 }

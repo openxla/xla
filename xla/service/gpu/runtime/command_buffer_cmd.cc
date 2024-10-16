@@ -1994,7 +1994,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     ExecutionStreamId execution_stream_id,
     std::unique_ptr<CommandBufferCmdSequence> embedded_commands,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
-    std::vector<BufferAllocation*> fake_allocations,
+    std::vector<std::unique_ptr<BufferAllocation>> fake_allocations,
     std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
@@ -2002,7 +2002,7 @@ DynamicSliceFusionCmd::DynamicSliceFusionCmd(
     : CommandBufferCmd(CommandBufferCmdType::kDynamicSliceFusionCmd,
                        execution_stream_id),
       embedded_commands_(std::move(embedded_commands)),
-      fake_allocations_(fake_allocations) {
+      fake_allocations_(std::move(fake_allocations)) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
