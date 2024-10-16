@@ -1,3 +1,4 @@
+#include "xla/stream_executor/activate_context.h"
 /* Copyright 2015 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,6 +71,10 @@ inline std::string MemoryTypeString(MemoryType memory_type) {
 class StreamExecutor {
  public:
   virtual ~StreamExecutor() = default;
+
+  // Returns an ActivateContext that ensures the StreamExecutor's context is
+  // activated for the duration of the returned ActivateContext's scope.
+  virtual std::unique_ptr<ActivateContext> Activate() = 0;
 
   // Returns a reference to the platform that created this executor.
   virtual const Platform* GetPlatform() const = 0;
@@ -192,6 +197,14 @@ class StreamExecutor {
   // given location in device memory.
   virtual absl::Status SynchronousMemZero(DeviceMemoryBase* location,
                                           uint64_t size) = 0;
+
+  // Returns a DeviceMemoryBase representing the range [base, base + size)
+  // for the given DeviceMemoryBase, such that location is contained within the
+  // returned range.
+  virtual absl::StatusOr<DeviceMemoryBase> GetMemoryRange(
+      const DeviceMemoryBase& location) {
+    return absl::UnimplementedError("Not implemented for this executor.");
+  }
 
   virtual bool HostMemoryUnregister(void* location) { return false; };
   virtual bool HostMemoryRegister(void* location, uint64_t size) {

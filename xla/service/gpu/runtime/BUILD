@@ -56,6 +56,7 @@ cc_library(
     deps = [
         ":annotation",
         ":custom_call_thunk",
+        ":dynamic_slice_thunk",
         ":nccl_all_gather_thunk",
         ":nccl_all_reduce_thunk",
         ":nccl_all_to_all_thunk",
@@ -64,6 +65,7 @@ cc_library(
         ":nccl_collective_broadcast_thunk",
         ":nccl_collective_thunk",
         ":thunk",
+        ":while_thunk",
         "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:types",
@@ -204,7 +206,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/service:collective_ops_utils",
         "//xla/stream_executor",
-        "//xla/stream_executor/gpu:scoped_activate_context",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",

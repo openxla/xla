@@ -1063,8 +1063,8 @@ cc_library(
         ":util",
         ":window_util",
         ":xla_data_proto_cc",
-        "//xla/client:padding",
-        "//xla/client:xla_builder",
+        "//xla/hlo/builder:padding",
+        "//xla/hlo/builder:xla_builder",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_module_config",
@@ -1091,7 +1091,7 @@ xla_cc_test(
         ":reference_util",
         ":test",
         ":xla_data_proto_cc",
-        "//xla/client:padding",
+        "//xla/hlo/builder:padding",
         "//xla/tests:literal_test_util",
         "@tsl//tsl/platform:test_main",
     ],
@@ -1167,6 +1167,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@eigen_archive//:eigen3",
     ],
 )
 
