@@ -42,14 +42,14 @@ class ConvolutionTest : public HloTestBase,
     return debug_options;
   }
 
-  PrimitiveType dtype;
-  std::string dtypeString;
-  bool user_scratchpad;
-  bool weights_prepacked;
-  float atol;
-  float rtol;
+  PrimitiveType dtype_;
+  std::string dtypeString_;
+  bool user_scratchpad_;
+  bool weights_prepacked_;
+  float atol_;
+  float rtol_;
 
-  constexpr static char* conv_rewrite_str_ = R"(
+  constexpr static char* kConvRewriteStr = R"(
     ; CHECK:     custom_call_target="__onednn$$convolution",
     ; CHECK:       backend_config={
     ; CHECK-DAG:     "outer_dimension_partitions":[],
@@ -58,41 +58,41 @@ class ConvolutionTest : public HloTestBase,
     ; CHECK:      }
     )";
 
-  constexpr static char* conv_rewrite_fusions_str_ = R"(
+  constexpr static char* kConvRewriteFusionsStr = R"(
     ; CHECK-DAG:          "fusions":{
     ; CHECK-DAG:            "ops":[$0]
     ; CHECK-DAG:      },)";
 
-  constexpr static char* conv_rewrite_optimizations_str_ = R"(
+  constexpr static char* kConvRewriteOptimizationsStr = R"(
     ; CHECK-DAG:          "optimization_config":{
     ; CHECK-DAG:            "weights_prepacked":$0,
     ; CHECK-DAG:            "user_scratchpad":$1,
     ; CHECK-DAG:      })";
 
   ConvolutionTest() {
-    dtype = GetParam();
-    atol = rtol = (dtype == F32) ? 1e-4 : 1e-2;
+    dtype_ = GetParam();
+    atol_ = rtol_ = (dtype_ == F32) ? 1e-4 : 1e-2;
     // TODO(intel-tf): Set default value of user_scratchpad to true after
     // enabling feature
-    user_scratchpad = false;
-    weights_prepacked = false;
-    dtypeString = primitive_util::LowercasePrimitiveTypeName(dtype);
+    user_scratchpad_ = false;
+    weights_prepacked_ = false;
+    dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
   }
 
   void SetUp() override {
-    if (!IsSupportedType(dtype)) {
-      GTEST_SKIP() << "CPU does not support " << dtypeString;
+    if (!IsSupportedType(dtype_)) {
+      GTEST_SKIP() << "CPU does not support " << dtypeString_;
     }
   }
 
-  void SetWeightsPrepacked(bool value) { weights_prepacked = value; }
+  void SetWeightsPrepacked(bool value) { weights_prepacked_ = value; }
 
-  void SetUserScratchpad(bool value) { user_scratchpad = value; }
+  void SetUserScratchpad(bool value) { user_scratchpad_ = value; }
 
   std::string GetOptimizationsString() {
-    return (user_scratchpad || weights_prepacked)
-               ? absl::Substitute(conv_rewrite_optimizations_str_,
-                                  weights_prepacked, user_scratchpad)
+    return (user_scratchpad_ || weights_prepacked_)
+               ? absl::Substitute(kConvRewriteOptimizationsStr,
+                                  weights_prepacked_, user_scratchpad_)
                : "";
   }
 
@@ -105,12 +105,11 @@ class ConvolutionTest : public HloTestBase,
     std::string fusions = stream.str();
     if (fused_ops.size() > 0) {
       fusions.pop_back();
-      return absl::Substitute(
-          conv_rewrite_str_,
-          absl::Substitute(conv_rewrite_fusions_str_, fusions),
-          GetOptimizationsString());
+      return absl::Substitute(kConvRewriteStr,
+                              absl::Substitute(kConvRewriteFusionsStr, fusions),
+                              GetOptimizationsString());
     }
-    return absl::Substitute(conv_rewrite_str_, "", GetOptimizationsString());
+    return absl::Substitute(kConvRewriteStr, "", GetOptimizationsString());
   }
 
   // TODO(intel-tf): Remove this and simplify patterns when Elemental BF16 is
@@ -119,35 +118,26 @@ class ConvolutionTest : public HloTestBase,
     // BF16 is promoted to F32 because not all HLO Instructions currently
     // support BF16 computations. Meanwhile, FP32 and FP16 elementwise
     // instructions are not promoted and remain unchanged.
-    switch (dtype) {
-      case F16:
-        return F16;
-      case F32:
-      case BF16:
-      default:
-        return F32;
-    }
+    return (dtype_ == BF16) ? F32 : dtype_;
   }
 
-  void AdjustToleranceForDtype(PrimitiveType for_type, float atol_arg,
-                               float rtol_arg) {
-    if (dtype == for_type) {
-      atol = atol_arg;
-      rtol = rtol_arg;
+  void AdjustToleranceForDtype(PrimitiveType for_type, float atol, float rtol) {
+    if (dtype_ == for_type) {
+      atol_ = atol;
+      rtol_ = rtol;
     }
   }
 
   std::string PromotedDtypeToString() {
-    auto promoted_type = PromotedDtype();
-    return primitive_util::LowercasePrimitiveTypeName(promoted_type);
+    return primitive_util::LowercasePrimitiveTypeName(PromotedDtype());
   }
 
   void RunCompareAndMatchOptimizedHlo(
       const absl::string_view outline,
       const std::vector<absl::string_view> fused_ops) {
     const std::string convolution_module_str =
-        absl::Substitute(outline, dtypeString, PromotedDtypeToString());
-    EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{atol, rtol}));
+        absl::Substitute(outline, dtypeString_, PromotedDtypeToString());
+    EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{atol_, rtol_}));
     MatchOptimizedHlo(convolution_module_str,
                       ConvStringWithOptimizations(fused_ops));
   }
@@ -162,7 +152,8 @@ TEST_P(ConvolutionTest, Simple2DTest1) {
     reshape.0 = $0[1,22,22,1] reshape(arg.0)
     arg.1 = $0[8,8,1,1] parameter(1)
     reshape.1 = $0[8,8,1,1] reshape(arg.1)
-    convolution.0 = $0[1,11,11,1] convolution(reshape.0, reshape.1), window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    convolution.0 = $0[1,11,11,1] convolution(reshape.0, reshape.1),
+          window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
     reshape.2 = $0[1,11,11,1] reshape(convolution.0)
     tuple.0 = ($0[1,11,11,1]) tuple(reshape.2)
     ROOT get-tuple-element.0 = $0[1,11,11,1] get-tuple-element(tuple.0), index=0
@@ -178,7 +169,8 @@ TEST_P(ConvolutionTest, Simple3DTest1) {
   ENTRY convolution.test {
     p0 = $0[8,4,5,5,1] parameter(0)
     p1 = $0[3,3,3,1,32] parameter(1)
-    ROOT conv = $0[8,4,5,5,32] convolution(p0, p1), window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
+    ROOT conv = $0[8,4,5,5,32] convolution(p0, p1),
+          window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
 })";
 
   RunCompareAndMatchOptimizedHlo(outline, {});
@@ -191,7 +183,8 @@ TEST_P(ConvolutionTest, Conv3DWithBiasTest) {
   ENTRY convolution.test.with.bias {
     arg.0 = $0[15,4,5,5,28] parameter(0)
     arg.1 = $0[3,3,3,28,64] parameter(1)
-    conv = $0[15,4,5,5,64] convolution(arg.0, arg.1), window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
+    conv = $0[15,4,5,5,64] convolution(arg.0, arg.1),
+          window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
     bias = $0[64] parameter(2)
     broadcasted_bias = $0[15,4,5,5,64] broadcast(bias), dimensions={4}
     ROOT add = $0[15,4,5,5,64] add(conv, broadcasted_bias)
@@ -208,7 +201,8 @@ TEST_P(ConvolutionTest, Conv2DWithBinaryAddTest) {
     arg0.1 = $0[1,22,22,1] parameter(0)
     constant.3 = $0[] constant(1)
     broadcast.4 = $0[8,8,1,1] broadcast(constant.3), dimensions={}
-    convolution.0 = $0[1,11,11,1] convolution(arg0.1, broadcast.4), window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    convolution.0 = $0[1,11,11,1] convolution(arg0.1, broadcast.4),
+          window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
     constant.5 = $0[] constant(15)
     broadcast.6 = $0[1] broadcast(constant.5), dimensions={}
     broadcast.9 = $0[1,11,11,1] broadcast(broadcast.6), dimensions={3}
@@ -227,7 +221,8 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndBinaryAddTest) {
   ENTRY convolution.add.test {
     arg0.1 = $0[1,22,22,1] parameter(0)
     arg0.2 = $0[8,8,1,10] parameter(1)
-    convolution.0 = $0[1,11,11,10] convolution(arg0.1, arg0.2), window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
+    convolution.0 = $0[1,11,11,10] convolution(arg0.1, arg0.2),
+          window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
     const.0 = $0[10] constant(15)
     bcast.1 = $0[1,11,11,10] broadcast(const.0), dimensions={3}
     add.0 = $0[1,11,11,10] add(convolution.0, bcast.1)
@@ -242,10 +237,10 @@ INSTANTIATE_TEST_SUITE_P(
     OneDnnConvolutionTestSuite, ConvolutionTest,
     ::testing::Values(F32, BF16, F16),
     [](const ::testing::TestParamInfo<ConvolutionTest::ParamType>& info) {
-      auto infoString = primitive_util::LowercasePrimitiveTypeName(info.param);
-      std::transform(infoString.begin(), infoString.end(), infoString.begin(),
+      auto test_name = primitive_util::LowercasePrimitiveTypeName(info.param);
+      std::transform(test_name.begin(), test_name.end(), test_name.begin(),
                      [](auto c) { return std::toupper(c); });
-      return infoString;
+      return test_name;
     });
 
 }  // namespace cpu
