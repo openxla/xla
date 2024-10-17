@@ -74,14 +74,22 @@ MemrefInfoHandler CreateMemrefInfoFromLiteral(const Literal* literal) {
 StackAlloca GetAllocaAndEmitMemrefInfo(llvm::IRBuilder<>& builder,
                                        const llvm_ir::IrArray& ir_array) {
   const Shape& shape = ir_array.GetShape();
-  int64_t rank = shape.rank();
-  absl::Span<const int64_t> dims = shape.dimensions();
+  // oneDNN handles scalar as a vector of size 1.
+  int64_t rank = shape.rank() == 0 ? 1 : shape.rank();
+  std::vector<int64_t> scalar_shape(1, 1);
+  absl::Span<const int64_t> dims =
+  shape.dimensions().size() == 0 ? scalar_shape : shape.dimensions();
 
   std::vector<int64_t> strides(rank);
-  int64_t stride = 1;
-  for (int i : shape.layout().minor_to_major()) {
-    strides.at(i) = stride;
-    stride *= dims.at(i);
+  if (shape.dimensions().size() == 0) {
+    // Scalar case.
+    strides[0] = 1;
+  } else {
+    int64_t stride = 1;
+    for (int i : shape.layout().minor_to_major()) {
+      strides.at(i) = stride;
+      stride *= dims.at(i);
+    }
   }
 
   // Type of struct
@@ -182,13 +190,17 @@ absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
 }
 
 dnnl::memory::desc ShapeToMemDesc(const Shape& shape) {
-  auto dimensions = shape.dimensions();
+  std::vector<int64_t> scalar_shape(1, 1);
+  auto dimensions = shape.rank() == 0 ? scalar_shape : shape.dimensions();
   if (dimensions.empty()) {
     return dnnl::memory::desc{};
   }
   auto dims = dnnl::memory::dims(dimensions.begin(), dimensions.end());
   dnnl::memory::dims strides(dims.size());
   dnnl::memory::dim stride = 1;
+  if (shape.rank() == 0) {
+    strides[0] = 1;
+  }
   for (auto i : shape.layout().minor_to_major()) {
     strides.at(i) = stride;
     stride *= dims.at(i);
