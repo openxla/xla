@@ -655,24 +655,6 @@ void PrepareQuantizationInstrs(
   }
 }
 
-bool ValidateQuantizationParams(HloInstruction* src_scale,
-                                HloInstruction* src_zp,
-                                HloInstruction* wei_scale,
-                                HloInstruction* wei_zp) {
-  if (!src_scale || !src_zp || !wei_zp) return false;
-  // oneDNN only supports scalar scale and zero-point for src and dst.
-  if (!IsScalar(src_scale) || !IsScalar(src_zp)) return false;
-
-  // Weights scale can only be scalar or vector
-  if (!IsScalar(wei_scale) && !IsVector(wei_scale)) return false;
-
-  // oneDNN only supports zero-point=0 for weights.
-  auto wei_zp_value = GetScalarConstantValue(wei_zp);
-  if (!wei_zp_value || wei_zp_value.value() != 0) return false;
-
-  return true;
-}
-
 // Check if the Quantize and Dequantize pairs have the same scale and zero point
 // values.
 bool ValidateQDQParams(HloInstruction* dequant_input,
@@ -685,9 +667,17 @@ bool ValidateQDQParams(HloInstruction* dequant_input,
       dequant_input,
       QuantizePattern(&quant_scale, &quant_zp, &input, &clamp_min, &clamp_max));
 
-  if (quant_scale && dequant_scale) {
-    auto quant_scale_value = GetScalarConstantValue(quant_scale);
-    auto dequant_scale_value = GetScalarConstantValue(dequant_scale);
+  // We expect scale/zp to match between Quantize and Dequantize ops. We
+  // validate that only if Quantize op exists, otherwise fusing only Dequantize
+  // op is functionally correct although not a typical use case.
+  if (quant_pattern) {
+    // If scale is missing, it may be optimized out. Assume default value of
+    // 1.0.
+    auto quant_scale_value =
+        quant_scale ? GetScalarConstantValue(quant_scale) : 1.0;
+    auto dequant_scale_value =
+        dequant_scale ? GetScalarConstantValue(dequant_scale) : 1.0;
+
     if (quant_scale_value && dequant_scale_value) {
       // Assume that scale for quantize has been inverted by some earlier pass.
       float quant_scale_native_value = 1.0 / quant_scale_value.value();
@@ -695,12 +685,13 @@ bool ValidateQDQParams(HloInstruction* dequant_input,
       if (quant_scale_native_value != dequant_scale_native_value) {
         return false;
       }
+    } else {
+      return false;
     }
-  }
 
-  if (quant_zp && dequant_zp) {
-    auto quant_zp_value = GetScalarConstantValue(quant_zp);
-    auto dequant_zp_value = GetScalarConstantValue(dequant_zp);
+    // If zp is missing, it may be optimized out. Assume default value of 0.
+    auto quant_zp_value = quant_zp ? GetScalarConstantValue(quant_zp) : 0;
+    auto dequant_zp_value = dequant_zp ? GetScalarConstantValue(dequant_zp) : 0;
     if (quant_zp_value && dequant_zp_value) {
       int32_t quant_zp_native_value = quant_zp_value.value();
       // Assume that zp for dequantize has been negated by some earlier pass.
@@ -708,8 +699,35 @@ bool ValidateQDQParams(HloInstruction* dequant_input,
       if (quant_zp_native_value != dequant_zp_native_value) {
         return false;
       }
+    } else {
+      return false;
     }
   }
+  return true;
+}
+
+bool ValidateQuantizationParams(HloInstruction* quant_src,
+                                HloInstruction* quant_wei,
+                                HloInstruction* src_scale,
+                                HloInstruction* src_zp,
+                                HloInstruction* wei_scale,
+                                HloInstruction* wei_zp) {
+  if (!ValidateQDQParams(quant_src, src_scale, src_zp) ||
+      !ValidateQDQParams(quant_wei, wei_scale, wei_zp)) {
+    return false;
+  }
+
+  if (!src_scale || !src_zp || !wei_zp) return false;
+  // oneDNN only supports scalar scale and zero-point for src and dst.
+  if (!IsScalar(src_scale) || !IsScalar(src_zp)) return false;
+
+  // Weights scale can only be scalar or vector
+  if (!IsScalar(wei_scale) && !IsVector(wei_scale)) return false;
+
+  // oneDNN only supports zero-point=0 for weights.
+  auto wei_zp_value = GetScalarConstantValue(wei_zp);
+  if (!wei_zp_value || wei_zp_value.value() != 0) return false;
+
   return true;
 }
 
@@ -743,7 +761,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                    *bitcast_src = nullptr, *copy_wei = nullptr,
                    *bitcast_wei = nullptr, *matmul_call = nullptr,
                    *new_copy_src = nullptr, *new_copy_wei = nullptr;
-    bool is_valid_qdq_params = true;
+
     // Try to match uniform_dequantize_pattern -> dot.
     // This will be replaced with onednn_custom_call[int8 in, f32 out].
     bool quant_lhs =
@@ -759,10 +777,6 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                                              &copy_wei, &bitcast_wei)))
             : false;
 
-    if (!ValidateQDQParams(quant_src, src_scale, src_zp) ||
-        !ValidateQDQParams(quant_wei, wei_scale, wei_zp)) {
-      is_valid_qdq_params = false;
-    }
     bool should_rewrite_int8 = false;
     if (quant_lhs) {
       should_rewrite_int8 = true;
@@ -787,7 +801,8 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                                   &new_copy_src, &new_copy_wei);
         should_rewrite_int8 =
             should_rewrite_int8 &&
-            ValidateQuantizationParams(src_scale, src_zp, wei_scale, wei_zp);
+            ValidateQuantizationParams(quant_src, quant_wei, src_scale, src_zp,
+                                       wei_scale, wei_zp);
       }
     }
 
@@ -795,7 +810,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     OneDnnMatMulConfig* matmul_config =
         backend_config.mutable_onednn_matmul_config();
 
-    if (should_rewrite_int8 && is_valid_qdq_params) {
+    if (should_rewrite_int8) {
       // The uniform_dequantize pattern being matched assumes the zp of src was
       // negated by some earlier optimization pass.
       matmul_config->mutable_quant_config()->set_negated_src_zp(quant_lhs);
@@ -882,7 +897,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                    *bitcast_src = nullptr, *copy_wei = nullptr,
                    *bitcast_wei = nullptr, *custom_call = nullptr,
                    *new_copy_src = nullptr, *new_copy_wei = nullptr;
-    bool is_valid_qdq_params = true;
+
     // Try to match uniform_dequantize_pattern -> convolution.
     // This will be replaced with onednn_custom_call[int8 in, f32 out].
     bool quant_lhs =
@@ -897,10 +912,6 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                         1, DequantizePattern(&quant_wei, &wei_scale, &wei_zp,
                                              &copy_wei, &bitcast_wei)))
             : false;
-    if (!ValidateQDQParams(quant_src, src_scale, src_zp) ||
-        !ValidateQDQParams(quant_wei, wei_scale, wei_zp)) {
-      is_valid_qdq_params = false;
-    }
 
     bool should_rewrite_int8 = false;
     if (quant_lhs) {
@@ -913,18 +924,19 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
             QuantizeWeights(conv, channel_dim, &quant_wei, &wei_scale, &wei_zp);
         should_rewrite_int8 = status.ok();
       }
-      if (should_rewrite_int8 && is_valid_qdq_params) {
+      if (should_rewrite_int8) {
         PrepareQuantizationInstrs(conv, quant_src, quant_wei, copy_src,
                                   copy_wei, bitcast_src, bitcast_wei,
                                   &src_scale, &src_zp, &wei_scale, &wei_zp,
                                   &new_copy_src, &new_copy_wei);
         should_rewrite_int8 =
             should_rewrite_int8 &&
-            ValidateQuantizationParams(src_scale, src_zp, wei_scale, wei_zp);
+            ValidateQuantizationParams(quant_src, quant_wei, src_scale, src_zp,
+                                       wei_scale, wei_zp);
       }
     }
 
-    if (should_rewrite_int8 && is_valid_qdq_params) {
+    if (should_rewrite_int8) {
       // The uniform_dequantize pattern being matched assumes the zp of src was
       // negated by some earlier optimization pass.
       conv_config->mutable_quant_config()->set_negated_src_zp(quant_lhs);
@@ -1210,6 +1222,30 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
+  // This is a heuristic check to check if Multiply op is possibly part of
+  // Quantize pattern.
+  bool MultiplyInQuantizePattern(HloInstruction* instr) {
+    auto user_instr = [&](HloInstruction* instr) {
+      return (instr && instr->user_count() == 1) ? instr->users()[0] : nullptr;
+    };
+    auto level1 = user_instr(instr);
+    auto level2 = user_instr(level1);
+    auto level3 = user_instr(level2);
+    auto level4 = user_instr(level3);
+    if (level1 && level2 && level3 && level4) {
+      std::vector<HloOpcode> ops{level1->opcode(), level2->opcode(),
+                                 level3->opcode(), level4->opcode()};
+      // We don't check for Add instr as it is optional in the pattern.
+      if (std::find(ops.begin(), ops.end(), HloOpcode::kClamp) != ops.end() &&
+          std::find(ops.begin(), ops.end(), HloOpcode::kRoundNearestEven) !=
+              ops.end() &&
+          std::find(ops.begin(), ops.end(), HloOpcode::kConvert) != ops.end()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   absl::Status HandleMultiply(HloInstruction* instr) override {
     HloInstruction* matmul_call;
     HloInstruction* intermediate_instr = nullptr;
@@ -1237,6 +1273,10 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                                OneDnnMatmulInstr(&dot))
                                .WithOneUser(),
                            m::Broadcast(m::Constant(&constant)));
+
+    // Don't fuse Multiply if it is part of Quantize pattern. The pattern will
+    // be handled later by Requantize fusion.
+    if (MultiplyInQuantizePattern(instr)) return absl::OkStatus();
 
     if (Match(instr, pattern)) {
       std::vector<HloInstruction*> new_operands;

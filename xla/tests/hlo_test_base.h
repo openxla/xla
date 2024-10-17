@@ -104,7 +104,8 @@ class HloTestBase : public HloHardwareIndependentTestBase {
                                const HloModuleConfig& config);
 
   // Compiles the given `hlo` with optimizations, and verifies that optimized
-  // HLO matches the given FileCheck pattern.
+  // HLO matches the given FileCheck pattern. Optionally, return the optimized
+  // HLO module in optimized_module which can be useful for further checks.
   void MatchOptimizedHlo(
       absl::string_view hlo, absl::string_view pattern,
       bool print_operand_shape = false,

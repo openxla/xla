@@ -127,6 +127,17 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:   }
     ; CHECK:     }
     )";
+  const char* fused_matmul_bias_relu_ = R"(
+    ; CHECK:     custom_call_target="__onednn$matmul",
+    ; CHECK:       backend_config={
+    ; CHECK-DAG:     "outer_dimension_partitions":[],
+    ; CHECK-DAG:     "onednn_matmul_config":{
+    ; CHECK-DAG:       "fusions":{
+    ; CHECK-DAG:         "ops":["BIAS","RELU"]
+    ; CHECK-DAG:     }
+    ; CHECK-DAG:   }
+    ; CHECK:     }
+    )";
   const char* fused_matmul_bias_relu_linear_ = R"(
     ; CHECK:     custom_call_target="__onednn$matmul",
     ; CHECK:       backend_config={
@@ -1690,7 +1701,7 @@ ENTRY DequantizeMatMulBiasReluRequantize {
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
   std::unique_ptr<HloModule> optimized_module;
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_linear_, false,
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_, false,
                     &optimized_module);
   CheckCustomCallTypes(optimized_module, S8, S8, S8);
 }
@@ -1754,7 +1765,7 @@ ENTRY DequantizeMatMulBiasReluRequantizeConstWeights {
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
   std::unique_ptr<HloModule> optimized_module;
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_linear_, false,
+  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_, false,
                     &optimized_module);
   CheckCustomCallTypes(optimized_module, S8, S8, S8);
 }
