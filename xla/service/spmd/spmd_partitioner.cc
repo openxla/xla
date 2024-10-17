@@ -727,11 +727,24 @@ HloInstruction* PartitionedHlo::PadWithValueHlo(
   if (mask == nullptr) {
     return hlo_;
   }
+  HloInstruction* hlo = hlo_;
+  if (left_padded_dims.empty() && hlo->opcode() == HloOpcode::kDynamicSlice &&
+      hlo->operand(0)->opcode() == HloOpcode::kPad &&
+      hlo->operand(0)->operand(0)->opcode() == HloOpcode::kIota) {
+    HloIotaInstruction* iota =
+        Cast<HloIotaInstruction>(hlo->mutable_operand(0)->mutable_operand(0));
+    auto* new_iota = state_.b->AddInstruction(HloInstruction::CreateIota(
+        hlo->operand(0)->shape(), iota->iota_dimension()));
+    auto operands = hlo->mutable_operands();
+    operands[0] = new_iota;
+    hlo = state_.b->AddInstruction(
+        hlo->CloneWithNewOperands(hlo->shape(), operands));
+  }
 
   auto broadcast_pad_value = state_.b->AddInstruction(
       HloInstruction::CreateBroadcast(shape, pad_value, {}));
   return state_.b->AddInstruction(HloInstruction::CreateTernary(
-      shape, HloOpcode::kSelect, mask, hlo_, broadcast_pad_value));
+      shape, HloOpcode::kSelect, mask, hlo, broadcast_pad_value));
 }
 
 PartitionedHlo PartitionedHlo::PadWithZero(
