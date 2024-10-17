@@ -1,0 +1,38 @@
+# Copyright 2023 The XLA Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+
+name: Add Assignees
+on:
+  pull_request_target:
+  issues:
+  issue_comment:
+
+jobs:
+  assign-partner-tags:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to attach tags into the PR
+      issues: write
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.number }}
+    if: github.event.sender.type == 'User'
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # v3.2.0
+      - name: Add assignees
+        run: python3 .github/workflows/assignees.py
