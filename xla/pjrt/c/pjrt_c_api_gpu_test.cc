@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/service/custom_call_target_registry.h"
+#include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/gpu/gpu_init.h"
@@ -60,15 +61,12 @@ limitations under the License.
 namespace pjrt {
 namespace {
 
-#ifdef TENSORFLOW_USE_ROCM
-const bool kUnused = (RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); },
-                                                  /*platform_name=*/"rocm"),
-                      true);
-#else   // TENSORFLOW_USE_ROCM
-const bool kUnused = (RegisterPjRtCApiTestFactory([]() { return GetPjrtApi(); },
-                                                  /*platform_name=*/"cuda"),
-                      true);
-#endif  // TENSORFLOW_USE_ROCM
+// Register GPU as the backend for tests in pjrt_c_api_gpu_test.cc.
+const bool kUnused =
+    (RegisterPjRtCApiTestFactory(
+         []() { return GetPjrtApi(); },
+         xla::PlatformUtil::CanonicalPlatformName("gpu").value()),
+     true);
 
 class PjrtCApiGpuTest : public PjrtCApiTestBase {
  public:
@@ -273,15 +271,16 @@ TEST(PjrtCApiGpuKVStoreTest, CreateClientWithKVCallback) {
 
 TEST(PjrtCApiGpuAllocatorTest, ValidOptionsParsing) {
   auto api = GetPjrtApi();
+  auto platform_name = xla::PlatformUtil::CanonicalPlatformName("gpu").value();
   std::vector<std::string> allocator_options = {"default", "platform", "bfc",
                                                 "cuda_async"};
   for (const std::string& allocator_option : allocator_options) {
-#ifdef TENSORFLOW_USE_ROCM
-    if (allocator_option == "cuda_async") {
-      VLOG(1) << "cuda_async allocator not available on ROCm!";
-      continue;
+    if (platform_name == "rocm") {
+      if (allocator_option == "cuda_async") {
+        VLOG(1) << "cuda_async allocator not available on ROCm!";
+        continue;
+      }
     }
-#endif
     absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
         {"allocator", allocator_option},
         {"visible_devices", xla::PjRtValueType(std::vector<int64_t>{0, 1})},
