@@ -104,3 +104,41 @@ def initialize_rbe_configs():
             "sigbuild-r2.17-clang-cudnn9-python3.12": "docker://gcr.io/tensorflow-sigs/build@sha256:23e477895dd02e45df1056d4a0a9c4229dec3a20c23fb2f3fb5832ecbd0a29bc",
         },
     )
+    sigbuild_tf_configs(
+        name_container_map = {
+            "sigbuild-r2.14-clang": "docker://gcr.io/tensorflow-sigs/build@sha256:ae09fd8cb4d7ba090dc9d5b150119e7b7a014327cef254b5b603202d1c8f3de7",
+            "sigbuild-r2.14-clang-python3.8": "docker://gcr.io/tensorflow-sigs/build@sha256:2f574b24129c9170f31c68e01444c28debef68daf0e2badc7d38305b24307d8d",
+            "sigbuild-r2.14-clang-python3.9": "docker://gcr.io/tensorflow-sigs/build@sha256:ae09fd8cb4d7ba090dc9d5b150119e7b7a014327cef254b5b603202d1c8f3de7",
+            "sigbuild-r2.14-clang-python3.10": "docker://gcr.io/tensorflow-sigs/build@sha256:4c66c239c4bc90d0245bd4c05954a90e8924dfdc9975e22e87224469a8c98004",
+            "sigbuild-r2.14-clang-python3.11": "docker://gcr.io/tensorflow-sigs/build@sha256:sha256:0fc742850e2679a930562d3bfa26b1aaf8178410fd9b068c41676164c2fa7b64",
+        },
+        # Unclear why LIBC is set to 2.19 here, and yet manylinux2010 is 2.12
+        # and manylinux2014 is 2.17.
+        env = {
+            "ABI_LIBC_VERSION": "glibc_2.19",
+            "ABI_VERSION": "gcc",
+            "BAZEL_COMPILER": "/usr/lib/llvm-16/bin/clang",
+            "BAZEL_HOST_SYSTEM": "i686-unknown-linux-gnu",
+            "BAZEL_TARGET_CPU": "k8",
+            "BAZEL_TARGET_LIBC": "glibc_2.19",
+            "BAZEL_TARGET_SYSTEM": "x86_64-unknown-linux-gnu",
+            "CC": "/usr/lib/llvm-16/bin/clang",
+            "CC_TOOLCHAIN_NAME": "linux_gnu_x86",
+            "CLEAR_CACHE": "1",
+            "CUDNN_INSTALL_PATH": "/usr/lib/x86_64-linux-gnu",
+            "CLANG_CUDA_COMPILER_PATH": "/usr/lib/llvm-16/bin/clang",
+            "HOST_CXX_COMPILER": "/usr/lib/llvm-16/bin/clang",
+            "HOST_C_COMPILER": "/usr/lib/llvm-16/bin/clang",
+            "PYTHON_BIN_PATH": "/usr/bin/python3",
+            "TENSORRT_INSTALL_PATH": "/usr/lib/x86_64-linux-gnu",
+            "TF_CUDA_CLANG": "1",
+            "TF_CUDA_COMPUTE_CAPABILITIES": "3.5,6.0",
+            "TF_CUDA_VERSION": "12.1",
+            "TF_CUDNN_VERSION": "8.9",
+            "TF_ENABLE_XLA": "1",
+            "TF_NEED_CUDA": "1",
+            "TF_NEED_TENSORRT": "1",
+            "TF_SYSROOT": "/dt9",
+            "TF_TENSORRT_VERSION": "8.6",
+        },
+    )
