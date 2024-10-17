@@ -1016,6 +1016,7 @@ cc_library(
     ],
     deps = [
         ":cuda_collectives",
+        ":cuda_command_buffer",
         ":cuda_context",
         ":cuda_event",  # buildcleaner: keep
         ":cuda_kernel",  # buildcleaner: keep
@@ -1314,5 +1315,25 @@ xla_test(
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
+    name = "cuda_command_buffer",
+    srcs = ["cuda_command_buffer.cc"],
+    hdrs = ["cuda_command_buffer.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cuda_status",
+        "//xla/stream_executor/gpu:gpu_command_buffer",
+        "//xla/stream_executor/gpu:gpu_executor_header",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
