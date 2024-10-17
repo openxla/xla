@@ -1580,8 +1580,8 @@ struct PJRT_Executable_DeserializeAndLoad_Args {
   // Serialized CompileOptionsProto or null (to use the options
   // from the serialized executable).
   // (https://github.com/openxla/xla/blob/main/xla/pjrt/compile_options.proto)
-  const char* compile_options;
-  size_t compile_options_size;
+  const char* overridden_serialized_compile_options;
+  size_t overridden_serialized_compile_options_size;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_DeserializeAndLoad_Args,
                           loaded_executable);

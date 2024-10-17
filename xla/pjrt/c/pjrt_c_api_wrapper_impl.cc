@@ -1570,17 +1570,20 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
-  std::optional<xla::CompileOptions> options;
+  std::optional<xla::CompileOptions> overriden_options;
 
-  if (args->compile_options && args->compile_options_size > 0) {
+  if (args->overridden_serialized_compile_options &&
+      args->overridden_serialized_compile_options_size > 0) {
     PJRT_ASSIGN_OR_RETURN(
-        options, ParseCompileOptions(absl::string_view(
-                     args->compile_options, args->compile_options_size)));
+        overriden_options,
+        ParseCompileOptions(absl::string_view(
+            args->overridden_serialized_compile_options,
+            args->overridden_serialized_compile_options_size)));
   }
 
-  PJRT_ASSIGN_OR_RETURN(
-      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-      args->client->client->DeserializeExecutable(serialized, options));
+  PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+                        args->client->client->DeserializeExecutable(
+                            serialized, overriden_options));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);
