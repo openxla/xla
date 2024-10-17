@@ -25,6 +25,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "tsl/platform/threadpool.h"
+#include "xla/service/cpu/onednn_matmul.h"
+#include "xla/service/cpu/onednn_convolution.h"
 
 namespace xla {
 namespace cpu {
@@ -50,8 +52,8 @@ class OneDnnContractionRewriter : public HloModulePass {
   static bool ShouldRewriteDot(const HloInstruction* dot_instr,
                                bool before_layout_assignment = false);
   static bool ShouldRewriteConv(const HloInstruction* conv_instr);
-  static bool ShouldRewriteInstr(const HloInstruction* instr,
-                                 bool before_layout_assignment = false) {
+  static bool ShouldRewriteDotOrConv(const HloInstruction* instr,
+                                     bool before_layout_assignment = false) {
     return ShouldRewriteDot(instr, before_layout_assignment) ||
            ShouldRewriteConv(instr);
   }
@@ -61,18 +63,26 @@ class OneDnnContractionRewriter : public HloModulePass {
   const tsl::thread::ThreadPool* compile_threadpool_;
 };
 
-#define HANDLE_OP_INTERNAL(internal_callee, contraction, ...)          \
-  switch (contraction->backend_config<BackendConfig>()                 \
-              ->backend_config_oneof_case()) {                         \
-    case BackendConfig::BackendConfigOneofCase::kOnednnMatmulConfig:   \
-      return internal_callee<                                          \
-          BackendConfig::BackendConfigOneofCase::kOnednnMatmulConfig>( \
-          contraction, __VA_ARGS__);                                   \
-    default:                                                           \
-      return internal_callee<                                          \
-          BackendConfig::BackendConfigOneofCase::kOnednnConvConfig>(   \
-          contraction, __VA_ARGS__);                                   \
+using ContractionVariant = std::variant<PrimitiveTrait<kOnednnConvConfig>,
+                                        PrimitiveTrait<kOnednnMatmulConfig>>;
+using FusionsConfigPointer = xla::cpu::OneDnnFusionConfig*;
+using OptimizationConfigPointer = xla::cpu::OneDnnOptimizationConfig*;
+
+template <BackendConfigOneofCase config>
+struct PrimitiveTrait<config, FusionsConfigPointer> {
+  static FusionsConfigPointer GetTransformationConfig(
+      typename PrimitiveTrait<config>::pointer_type kernel_config) {
+    return kernel_config->mutable_fusions();
   }
+};
+
+template <BackendConfigOneofCase config>
+struct PrimitiveTrait<config, OptimizationConfigPointer> {
+  static OptimizationConfigPointer GetTransformationConfig(
+      typename PrimitiveTrait<config>::pointer_type kernel_config) {
+    return kernel_config->mutable_optimization_config();
+  }
+};
 
 }  // namespace cpu
 }  // namespace xla
