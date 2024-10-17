@@ -91,11 +91,87 @@ class DynamicSliceThunk : public Thunk {
     std::optional<Shape> orig_shape;
     std::optional<Shape> sliced_shape;
     std::optional<uint64_t> offset_byte_size;
+    // std::string ToString() const {
+    //   std::string result;
+    //   absl::StrAppend(&result, "embedded argument: ");
+    //   absl::StrAppend(&result, embedded_thunk_argument.has_value()
+    //                                ? embedded_thunk_argument.value().ToString()
+    //                                : "no value");
+    //   absl::StrAppend(&result, "\n");
+    //   absl::StrAppend(&result, "offsets: ");
+    //   if (offsets.has_value()) {
+    //     for (auto it = offsets.value.begin(); it != offsets.value.end(); it++) {
+    //       if (std::holds_alternative<uint64_t>(*it)) {
+    //         absl::StrAppend(&result, "[CONSTANT:", *it, "], ");
+    //       } else if (std::holds_alternative<LoopIter>(*it)) {
+    //         absl::StrAppend(&result, "[LoopIteration], ");
+    //       } else if (std::holds_alternative<BufferAllocation::Slice>(*it)) {
+    //         absl::StrAppend(&result, "[SliceAllocation:", (*it).ToString(),
+    //                         "], ");
+    //       } else if (std::holds_alternative<OffsetArray>(*it)) {
+    //         absl::StrAppend(&result, "[OffsetArray], ");
+    //       }
+    //     }
+    //   } else {
+    //     absl::StrAppend(&result, "no value\n");
+    //   }
+
+    //   absl::StrAppend(&result, "\n");
+    //   if (orig_shapes.has_value()) {
+    //     absl::StrAppend(&result, "[OrigShape:", orig_shapes.value().ToString(),
+    //                     "], ");
+    //   } else {
+    //     absl::StrAppend(&result, "no orig shape value\n");
+    //   }
+
+    //   absl::StrAppend(&result, "\n");
+    //   if (sliced_shapes.has_value()) {
+    //     absl::StrAppend(
+    //         &result, "[SlicedShape:", sliced_shapes.value().ToString(), "]\n ");
+    //   } else {
+    //     absl::StrAppend(&result, "no sliced shape value\n");
+    //   }
+    //   return result;
+    // }
   };
+
+  const SequentialThunk* get_embeded_thunk() const {
+    return embedded_thunk_.get();
+  }
+
+  std::vector<std::optional<BufferAllocation::Slice>> get_arguments() const {
+    return arguments_;
+  }
+
+  const std::vector<std::unique_ptr<BufferAllocation>>& get_fake_allocations()
+      const {
+    return fake_allocations_;
+  }
+
+  std::vector<std::optional<std::vector<Offset>>> get_offsets() const {
+    return offsets_;
+  }
+
+  std::vector<std::optional<Shape>> get_orig_shapes() const {
+    return orig_shapes_;
+  }
+
+  std::vector<std::optional<Shape>> get_sliced_shapes() const {
+    return sliced_shapes_;
+  }
+
+  std::vector<std::optional<uint64_t>> get_offset_byte_sizes() const {
+    return offset_byte_sizes_;
+  }
 
  private:
   std::unique_ptr<SequentialThunk> embedded_thunk_;
+  std::vector<std::optional<BufferAllocation::Slice>> arguments_;
   std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_;
+  std::vector<std::optional<std::vector<Offset>>> offsets_;
+  std::vector<std::optional<Shape>> orig_shapes_;
+  std::vector<std::optional<Shape>> sliced_shapes_;
+  std::vector<std::optional<uint64_t>> offset_byte_sizes_;
 
   std::vector<SliceDef> slices_;
 
