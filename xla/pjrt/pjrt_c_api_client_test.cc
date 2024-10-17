@@ -227,7 +227,8 @@ TEST(PjRtClientTest, DeserializeExecutableWithDifferentDeviceAssignment) {
       client->DeserializeExecutable(serialized_executable,
                                     compile_options_for_device(1)));
 
-  // Check that the executable was indeed serialized for device 1.
+  // Check that the executable's compile options were overridden
+  // with device id 1.
   EXPECT_EQ(
       deserialized_executable->addressable_devices()[0]->global_device_id(), 1);
 }
