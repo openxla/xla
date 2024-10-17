@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
+#include "xla/side_effect_util.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -160,6 +161,19 @@ bool InlineComposites(
              instruction->frontend_attributes().map().at("composite.name"));
 }
 
+bool InlineStreamAnnotation(HloInstruction* instruction) {
+  if (instruction->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_stream_annotation()) {
+    if (instruction->frontend_attributes().map().contains(
+            kXlaStreamAnnotationAttr)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 /* static */ absl::StatusOr<CallInliner::InlinedInstructionMap>
@@ -213,7 +227,8 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
          !instruction->has_backend_config() &&
          !instruction->parent()->IsAsyncComputation() &&
          InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_);
+         InlineComposites(instruction, composites_to_preserve_) &&
+         InlineStreamAnnotation(instruction);
 }
 
 absl::StatusOr<bool> CallInliner::Run(
