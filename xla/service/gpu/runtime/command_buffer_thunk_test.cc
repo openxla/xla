@@ -1480,7 +1480,7 @@ class CmdBufferTest : public HloTestBase {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
-    //debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE);
     return debug_options;
   }
 };
