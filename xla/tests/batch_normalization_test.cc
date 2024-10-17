@@ -236,6 +236,63 @@ XLA_TEST_F(BatchNormalizationTest, BasicTraining) {
   ComputeAndCompareTuple(&builder, expected, {}, ErrorSpec(0.1));
 }
 
+XLA_TEST_F(BatchNormalizationTest, TrainingLargeInputs) {
+  const int kFeatureIndex = 3;
+  XlaBuilder builder(TestName());
+
+  // Check that we don't catastrophically lose precision when calculating the
+  // variance of an array of large numbers.  1e7 and 1e7 + 1 can be represented
+  // exactly in fp32, but their sum is 2e7, i.e. we lose the `+1`.
+  auto operand = ConstantR4FromArray4D<float>(&builder, {{
+                                                             {{1e7}},
+                                                         },
+                                                         {
+                                                             {{1e7 + 1}},
+                                                         }});
+
+  auto scale = ConstantR1<float>(&builder, {1});
+  auto offset = ConstantR1<float>(&builder, {0});
+  BatchNormTraining(operand, scale, offset,
+                    /*epsilon=*/0.001, kFeatureIndex);
+
+  // Calculated with infinite precision, our mean and varance would be
+  //
+  //   μ   = 1e7 + 0.5
+  //   σ^2 = E[(X-μ)^2]
+  //       = E[{(1e7 - μ)^2, (1e7+1 - μ)^2}]
+  //       = 0.25.
+  //
+  // But in fp32, 1e7 + 0.5 rounds to 1e7.  Therefore we get
+  //
+  //   μ_f32   = 1e7
+  //   σ^2_f32 = E[(X-μ_f32)^2]
+  //           = E[{0, 1}]
+  //           = 0.5.
+  //
+  // This is not perfect, but it's much better than if we calculated the
+  // variance in f32 as E[X^2] - E^2[X], where we'd get
+  //
+  //   E^2_f32[X] = 1e14
+  //   E_f32[X^2] = E[{1e7^2, (1e7+1)^2}]
+  //              = E[{1e14, 1e14}]
+  //              = 1e14
+  //   σ^2_f32    = 1e14 - 1e14
+  //              = 0.
+  //
+  auto expected = LiteralUtil::MakeTupleFromSlices({
+      LiteralUtil::CreateR4<float>({{
+                                        {{0}},
+                                    },
+                                    {
+                                        {{std::sqrt(2.0f)}},
+                                    }}),
+      /*mean=*/LiteralUtil::CreateR1<float>({1e7}),
+      /*var=*/LiteralUtil::CreateR1<float>({0.5}),
+  });
+
+  ComputeAndCompareTuple(&builder, expected, {}, ErrorSpec(0.1));
+}
+
 XLA_TEST_F(BatchNormalizationTest, BasicTraining_fp16) {
   const int kFeatureIndex = 3;
   XlaBuilder builder(TestName());
