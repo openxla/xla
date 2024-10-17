@@ -19,6 +19,7 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 #include <type_traits>
+#include <cmath>
 
 #include "llvm/Support/ErrorHandling.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value_util.h"
@@ -43,13 +44,20 @@ struct FloatCompare : CwiseAll {
     }
   }
 
+  // Template type for non-floating point and non-complex
   template <typename T>
   static bool isnan(T a) {
-    return std::isnan(a);
+    return false;
   }
+  // Handling complex types
   template <typename T>
   static bool isnan(std::complex<T> a) {
     return std::isnan(std::real(a)) || std::isnan(std::imag(a));
+  }
+  // Template for isnan (Floating numbers)
+  template <typename T>
+  static bool isnan(std::is_floating_point<T> a) {
+    return std::isnan(a);
   }
 };
 
