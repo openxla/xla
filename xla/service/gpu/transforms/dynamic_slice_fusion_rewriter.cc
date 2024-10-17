@@ -422,6 +422,7 @@ absl::StatusOr<HloInstruction*> CreateFusionInstruction(
 absl::StatusOr<bool> DynamicSliceFusionRewriter::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  VLOG(2) << module->ToString();
   absl::flat_hash_map<HloInstruction*,
                       std::pair<UseDefDataflowPaths, DefUseDataflowPaths>>
       matches_kv;
@@ -434,13 +435,16 @@ absl::StatusOr<bool> DynamicSliceFusionRewriter::Run(
       if ((instr->opcode() == HloOpcode::kReduceScatter &&
            instr->shape().IsArray()) ||
           IsLegacyCublasMatmul(*instr) || IsCustomCall(instr, platform_name_)) {
+        VLOG(2) << "Found hero instruction: " << instr->ToString(); 
         UseDefDataflowPaths sliced_operand_paths = GetSlicedOperandPaths(instr);
         bool has_sliced_operand_paths = sliced_operand_paths.size() > 1;
+        VLOG(2) << "Has sliced operand paths: " << has_sliced_operand_paths;
         DefUseDataflowPaths sliced_user_paths = GetSlicedUserPaths(instr);
         bool has_sliced_user_paths = absl::c_any_of(
             sliced_user_paths,
             [&](auto& sliced_user_path) { return !sliced_user_path.empty(); });
 
+        VLOG(2) << "Has sliced user paths: " << has_sliced_user_paths;
         if (absl::c_any_of(sliced_user_paths, [&](auto& sliced_user_path) {
               return DynCast<HloDynamicUpdateSliceInstruction>(
                          sliced_user_path.back()) == nullptr;

@@ -259,20 +259,11 @@ static bool IsCommand(const HloInstruction* hlo,
       if (custom_config.name() == "address_computation") {
         return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
       } else {
-        if (!config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE) ||
-            !(IsCommand(hero, config) || IsAsyncStartCommand(hero, config))) {
-          return false;
-        }
-        // Check all offsets of slice instructions are constant or loop
-        // iterations
-        bool all_slice_valid = llvm::all_of(
-            fusion->called_computation()->instructions(),
-            [](const HloInstruction* inst) {
-              auto* slice_inst = DynCast<HloDynamicIndexInstruction>(inst);
-              if (!slice_inst) return true;
-              return HasConstantOrLoopIterationOffsets(*slice_inst);
-            });
-        return all_slice_valid;
+        // DynamicSliceFusionRewriter currently only rewrites for dynamic slice
+        // fusion with constant or loop iteration offset values, which are all
+        // supported by command buffer.
+        return (config.enabled_commands.contains(DebugOptions::DYNAMIC_SLICE) &&
+                (IsCommand(hero, config) || IsAsyncStartCommand(hero, config)));
       }
     }
     return config.enabled_commands.contains(DebugOptions::FUSION);
