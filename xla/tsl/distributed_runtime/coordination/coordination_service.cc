@@ -64,6 +64,7 @@ using tensorflow::CoordinationServiceError;
 using tensorflow::DeviceInfo;
 using tensorflow::KeyValueEntry;
 
+constexpr char kRegisterBarrierId[] = "[Init] Wait for all tasks to register";
 constexpr absl::Duration kDevicePropagationTimeout = absl::Hours(1);
 constexpr int kDefaultHeartbeatTimeoutMs = 10 * 1000;  // 10 seconds
 constexpr int kServiceToClientTimeoutMs = 10 * 1000;   // 10 seconds
@@ -121,6 +122,8 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
 
   absl::Status RegisterTask(const CoordinatedTask& task,
                             uint64_t incarnation) override;
+  void RegisterTaskAsync(const CoordinatedTask& task, uint64_t incarnation,
+                         StatusCallback done) override;
   void WaitForAllTasks(const CoordinatedTask& task, const DeviceInfo& devices,
                        StatusCallback done) override;
   void ShutdownTaskAsync(const CoordinatedTask& task,
@@ -155,6 +158,11 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   const DeviceInfo& ListClusterDevices() override
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   uint64_t GetServiceIncarnation() override;
+  void BarrierAsyncLocked(
+      std::string barrier_id, absl::Duration timeout,
+      const CoordinatedTask& task,
+      const std::vector<CoordinatedTask>& participating_tasks,
+      StatusCallback done) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Checks if any task has stopped sending heartbeats.
   void CheckHeartbeatTimeout();
   // Checks if any barrier has timed out.
@@ -199,7 +207,7 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
       std::string_view barrier_id, absl::Duration timeout,
       const CoordinatedTask& task,
       const std::vector<CoordinatedTask>& participating_tasks,
-      StatusCallback done);
+      StatusCallback done) ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Initializes a new barrier. Returns false if the barrier should fail
   // immediately.
   bool InitializeBarrier(
@@ -210,6 +218,8 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   void PassBarrier(std::string_view barrier_id, const absl::Status& result,
                    BarrierState* barrier)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
+  // Post-barrier hook to connect all tasks.
+  void ConnectAllTasks() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Post-barrier hook to aggregate device info.
   void AggregateClusterDevices() ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
   // Post-shutdown barrier hook to disconnect tasks that acked and propagate
@@ -275,6 +285,9 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
     CoordinatedTaskState GetState() { return state_; }
     absl::Status GetStatus() { return status_; }
     uint64_t GetTaskIncarnation() { return task_incarnation_; }
+    void SetTaskIncarnation(uint64_t task_incarnation) {
+      task_incarnation_ = task_incarnation;
+    }
     void SetConnected(uint64_t task_incarnation);
     void Disconnect(uint64_t grace_period_duration_us);
     absl::Status RecordHeartbeat(uint64_t task_incarnation);
@@ -318,6 +331,9 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   Env& env_;
   const uint64_t service_incarnation_ = random::New64();
   const uint64_t heartbeat_timeout_ms_;
+  bool cluster_register_with_barrier_ = false;
+  bool cluster_register_barrier_passed_ = false;
+  const absl::Duration cluster_register_timeout_;
   const absl::Duration shutdown_barrier_timeout_;
   // If a task restarts with a new incarnation, we may allow it to reconnect
   // silently if configured. This is useful when we know that a task can
@@ -467,6 +483,9 @@ CoordinationServiceStandaloneImpl::CoordinationServiceStandaloneImpl(
                    ? config.heartbeat_timeout_in_ms()
                    : kDefaultHeartbeatTimeoutMs;
       }()),
+      cluster_register_with_barrier_(config.cluster_register_with_barrier()),
+      cluster_register_timeout_(
+          absl::Milliseconds(config.cluster_register_timeout_in_ms())),
       shutdown_barrier_timeout_(
           absl::Milliseconds(config.shutdown_barrier_timeout_in_ms())),
       allow_new_incarnation_to_reconnect_(
@@ -655,24 +674,38 @@ void CoordinationServiceStandaloneImpl::LogConnectStatusLocked() const {
 
 absl::Status CoordinationServiceStandaloneImpl::RegisterTask(
     const CoordinatedTask& task, uint64_t incarnation) {
+  absl::Notification done;
+  absl::Status status;
+  RegisterTaskAsync(task, incarnation, [&](absl::Status s) {
+    status = s;
+    done.Notify();
+  });
+  done.WaitForNotification();
+  return status;
+}
+
+void CoordinationServiceStandaloneImpl::RegisterTaskAsync(
+    const CoordinatedTask& task, uint64_t incarnation, StatusCallback done) {
   const std::string task_name = GetTaskName(task);
 
   std::string error_message;
   absl::MutexLock l(&state_mu_);
   if (ServiceHasStopped()) {
-    return MakeCoordinationError(absl::InternalError(absl::StrCat(
+    done(MakeCoordinationError(absl::InternalError(absl::StrCat(
         "Coordination service has stopped. RegisterTask() from task: ",
         task_name,
         " failed. This usually implies an earlier error that caused "
         "coordination service to shut down before the workers disconnect "
         "gracefully. Check the task leader's logs for an earlier error to "
-        "debug the root cause.")));
+        "debug the root cause."))));
+    return;
   }
   if (!cluster_state_.contains(task_name)) {
     // Note: return early here as unexpected task register errors should not
     // be propagated to other tasks.
-    return MakeCoordinationError(absl::InvalidArgumentError(
-        absl::StrCat("Unexpected task registered with task_name=", task_name)));
+    done(MakeCoordinationError(absl::InvalidArgumentError(absl::StrCat(
+        "Unexpected task registered with task_name=", task_name))));
+    return;
   }
 
   auto* task_cluster_state = cluster_state_[task_name].get();
@@ -690,12 +723,25 @@ absl::Status CoordinationServiceStandaloneImpl::RegisterTask(
     //   an unavailable error state, but has now restarted (possibly with
     //   a new incarnation). This is only allowed if configured with
     //   `allow_new_incarnation_to_reconnect`.
+    if (cluster_register_with_barrier_) {
+      // Impose barrier so that all tasks can register together.
+      // Note: it is possible that the same task restarts multiple times and
+      // registers itself with new incarnations.
+      // That is fine as long
+      // TODO(b/XXX): Add test case where register barrier has passed, but
+      // the task restarts and registers again - it should fail.
+      task_cluster_state->SetTaskIncarnation(incarnation);
+      BarrierAsyncLocked(kRegisterBarrierId, cluster_register_timeout_, task,
+                         {}, std::move(done));
+      return;
+    }
     task_cluster_state->SetConnected(incarnation);
     LOG(INFO) << task_name
               << " has connected to coordination service. Incarnation: "
               << incarnation;
     LogConnectStatusLocked();
-    return absl::OkStatus();
+    done(absl::OkStatus());
+    return;
   } else if (task_state == CoordinatedTaskState::TASKSTATE_CONNECTED) {
     // This may happen if the service processes the initial RegisterTask(),
     // but the agent did not receive the response so the agent retries again.
@@ -708,7 +754,8 @@ absl::Status CoordinationServiceStandaloneImpl::RegisterTask(
                 << " has connected to coordination service with the same "
                 << "incarnation again: " << incarnation;
       LogConnectStatusLocked();
-      return absl::OkStatus();
+      done(absl::OkStatus());
+      return;
     } else {
       error_message =
           absl::StrCat(task_name,
@@ -729,7 +776,7 @@ absl::Status CoordinationServiceStandaloneImpl::RegisterTask(
       MakeCoordinationError(absl::AbortedError(error_message), task);
   SetTaskError(task_name, error);
   PropagateError(error, task);
-  return error;
+  done(error);
 }
 
 void CoordinationServiceStandaloneImpl::WaitForAllTasks(
@@ -1195,22 +1242,19 @@ bool CoordinationServiceStandaloneImpl::ValidateBarrierArgs(
     absl::Status error = MakeCoordinationError(absl::InvalidArgumentError(
         absl::StrCat("A non-participating task (", GetTaskName(task),
                      ") called the barrier: ", barrier_id)));
-    {
-      absl::MutexLock l(&state_mu_);
-      // Check if coordination service has stopped. If so, return an error
-      // immediately.
-      if (ServiceHasStopped()) {
-        done(MakeCoordinationError(absl::InternalError(
-            "Barrier requested after coordination service has shut down.")));
-        return false;
-      }
-      auto pair = barriers_.try_emplace(barrier_id);
-      auto it = pair.first;
-      auto* barrier = &it->second;
-      // Make sure subsequent calls fail and existing waiting tasks receive the
-      // error.
-      PassBarrier(barrier_id, error, barrier);
+    // Check if coordination service has stopped. If so, return an error
+    // immediately.
+    if (ServiceHasStopped()) {
+      done(MakeCoordinationError(absl::InternalError(
+          "Barrier requested after coordination service has shut down.")));
+      return false;
     }
+    auto pair = barriers_.try_emplace(barrier_id);
+    auto it = pair.first;
+    auto* barrier = &it->second;
+    // Make sure subsequent calls fail and existing waiting tasks receive the
+    // error.
+    PassBarrier(barrier_id, error, barrier);
     done(error);
     return false;
   }
@@ -1293,6 +1337,15 @@ void CoordinationServiceStandaloneImpl::BarrierAsync(
     std::string barrier_id, absl::Duration timeout, const CoordinatedTask& task,
     const std::vector<CoordinatedTask>& participating_tasks,
     StatusCallback done) {
+  absl::MutexLock l(&state_mu_);
+  return BarrierAsyncLocked(barrier_id, timeout, task, participating_tasks,
+                            std::move(done));
+};
+
+void CoordinationServiceStandaloneImpl::BarrierAsyncLocked(
+    std::string barrier_id, absl::Duration timeout, const CoordinatedTask& task,
+    const std::vector<CoordinatedTask>& participating_tasks,
+    StatusCallback done) {
   VLOG(3) << "Task " << GetTaskName(task) << " invoked BarrierAsync("
           << barrier_id << ").";
 
@@ -1301,7 +1354,6 @@ void CoordinationServiceStandaloneImpl::BarrierAsync(
     return;  // Exit early if args are wrong.
   }
 
-  absl::MutexLock l(&state_mu_);
   // Check if coordination service has stopped. If so, return an error
   // immediately.
   if (ServiceHasStopped()) {
@@ -1423,6 +1475,17 @@ void CoordinationServiceStandaloneImpl::PassBarrier(std::string_view barrier_id,
     callback(result);
   }
   barrier->done_callbacks.clear();
+  // Special hook for initial register barrier to connect all tasks at once.
+  if (barrier_id == kRegisterBarrierId && !cluster_register_barrier_passed_) {
+    cluster_register_barrier_passed_ = true;
+    if (result.ok()) {
+      ConnectAllTasks();
+    } else {
+      // Initialization failed, stop service now.
+      Stop();
+      return;
+    }
+  }
   // Special hook for shutdown barrier to disconnect tasks at the barrier and
   // propagate errors to those that have not.
   if (barrier_id == shutdown_barrier_id_) {
@@ -1478,6 +1541,17 @@ bool CoordinationServiceStandaloneImpl::ValidateTaskArgs(
     }
   }
   return true;
+}
+
+void CoordinationServiceStandaloneImpl::ConnectAllTasks() {
+  for (const auto& [task_name, task_state] : cluster_state_) {
+    uint64_t incarnation = task_state->GetTaskIncarnation();
+    task_state->SetConnected(incarnation);
+    LOG(INFO) << task_name
+              << " has connected to coordination service. Incarnation: "
+              << incarnation;
+  }
+  LogConnectStatusLocked();
 }
 
 void CoordinationServiceStandaloneImpl::AggregateClusterDevices() {
