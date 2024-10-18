@@ -3,6 +3,7 @@ load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/service/cpu:build_defs.bzl", "runtime_copts")
 load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl:tsl.bzl", "tsl_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1052,6 +1053,29 @@ cc_library(
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
         "//xla/service/cpu:runtime_topk",
+        "//xla/stream_executor:device_memory",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "onednn_thunk",
+    srcs = ["onednn_thunk.cc"],
+    hdrs = ["onednn_thunk.h"],
+    copts = tsl_copts(),
+    deps = [
+        ":custom_call_thunk",
+        ":thunk",
+        "//xla/runtime:buffer_use",
+        "//xla/service:buffer_assignment",
+        "//xla/service/cpu:onednn_memory_util",
+        "//xla/service/cpu:onednn_convolution",
+        "//xla/service/cpu:onednn_layer_norm",
+        "//xla/service/cpu:onednn_matmul",
+        "//xla/service/cpu:onednn_softmax",
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/memory",
