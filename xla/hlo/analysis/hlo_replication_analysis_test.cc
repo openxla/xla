@@ -673,6 +673,50 @@ ENTRY entry {
       FindInstruction(module.get(), "dynamic-slice"), {}, replica_groups_2));
 }
 
+TEST_F(HloReplicationAnalysisTest, PartiallyReplicatedAllGatherFlattenedID) {
+  const std::string module_str = R"(
+HloModule PartiallyReplicatedAllGatherFlattenedID
+
+ENTRY entry {
+  param = s32[2] parameter(0)
+  all-gather0 = s32[4] all-gather(param), dimensions={0}, replica_groups={{0,1},{2,3}}, channel_id=1, use_global_device_ids=true
+  all-gather1 = s32[4] all-gather(param), dimensions={0}, replica_groups={{0,3},{1,2}}, channel_id=2, use_global_device_ids=true
+  ROOT tuple = (s32[4], s32[4]) tuple(all-gather0, all-gather1)
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(module_str, /*replica_count=*/1,
+                                                /*num_partitions=*/4));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloReplicationAnalysis> replica_analysis,
+      HloReplicationAnalysis::RunWithPartialReplication(
+          module.get(),
+          /*cross_partition_spmd=*/true));
+
+  EXPECT_FALSE(replica_analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "all-gather0"), {}));
+
+  std::array<ReplicaGroup, 2> replica_groups0;
+  replica_groups0[0].add_replica_ids(0);
+  replica_groups0[0].add_replica_ids(1);
+  replica_groups0[1].add_replica_ids(2);
+  replica_groups0[1].add_replica_ids(3);
+  EXPECT_TRUE(replica_analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "all-gather0"), {}, replica_groups0));
+
+  EXPECT_FALSE(replica_analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "all-gather1"), {}));
+
+  std::array<ReplicaGroup, 2> replica_groups1;
+  replica_groups1[0].add_replica_ids(0);
+  replica_groups1[0].add_replica_ids(3);
+  replica_groups1[1].add_replica_ids(1);
+  replica_groups1[1].add_replica_ids(2);
+  EXPECT_TRUE(replica_analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "all-gather1"), {}, replica_groups1));
+}
+
 TEST_F(HloReplicationAnalysisTest, OptimizationBarrier) {
   const std::string module_str = R"(
 HloModule OptimizationBarrier

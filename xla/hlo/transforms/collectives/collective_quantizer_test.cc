@@ -279,6 +279,121 @@ TEST_F(CollectiveQuantizerTest, AllGatherQuantizeNonReplicatedScale) {
   EXPECT_FALSE(changed);
 }
 
+TEST_F(CollectiveQuantizerTest, AllGatherQuantizePartialReplication) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = bf16[8,4,8,128] parameter(0)
+    all-gather = bf16[8,16,8,128] all-gather(param), dimensions={1}, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=1, use_global_device_ids=true
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=2, use_global_device_ids=true
+    scale_bcast = bf16[8,16,8,128] broadcast(all_reduced_scale), dimensions={}
+    divide = bf16[8,16,8,128] divide(all-gather, scale_bcast)
+    clamp_lower = bf16[] constant(-448.0)
+    clamp_lower_bcast = bf16[8,16,8,128] broadcast(clamp_lower), dimensions={}
+    clamp_upper = bf16[] constant(448.0)
+    clamp_upper_bcast = bf16[8,16,8,128] broadcast(clamp_upper), dimensions={}
+    clamp = bf16[8,16,8,128] clamp(clamp_lower_bcast, divide, clamp_upper_bcast)
+    ROOT convert = f8e4m3fn[8,16,8,128] convert(clamp)
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::AllGather(op::Convert(op::Clamp(
+                  op::Broadcast(), op::Divide(op::Parameter(), op::Broadcast()),
+                  op::Broadcast()))));
+  HloInstruction* all_gather = module->entry_computation()->root_instruction();
+  EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
+}
+
+TEST_F(CollectiveQuantizerTest, AllToAllQuantizePartialReplication) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = bf16[8,32,8,128] parameter(0)
+    all-to-all = bf16[8,32,8,128] all-to-all(param), dimensions={1}, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=1
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=2, use_global_device_ids=true
+    scale_bcast = bf16[8,32,8,128] broadcast(all_reduced_scale), dimensions={}
+    divide = bf16[8,32,8,128] divide(all-to-all, scale_bcast)
+    clamp_lower = bf16[] constant(-448.0)
+    clamp_lower_bcast = bf16[8,32,8,128] broadcast(clamp_lower), dimensions={}
+    clamp_upper = bf16[] constant(448.0)
+    clamp_upper_bcast = bf16[8,32,8,128] broadcast(clamp_upper), dimensions={}
+    clamp = bf16[8,32,8,128] clamp(clamp_lower_bcast, divide, clamp_upper_bcast)
+    ROOT convert = f8e4m3fn[8,32,8,128] convert(clamp)
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::AllToAll(op::Convert(op::Clamp(
+                  op::Broadcast(), op::Divide(op::Parameter(), op::Broadcast()),
+                  op::Broadcast()))));
+  HloInstruction* all_to_all = module->entry_computation()->root_instruction();
+  EXPECT_THAT(all_to_all->shape().element_type(), F8E4M3FN);
+}
+
+TEST_F(CollectiveQuantizerTest,
+       AllGatherQuantizePartialReplicationGroupMismatch) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = bf16[8,4,8,128] parameter(0)
+    all-gather = bf16[8,32,8,128] all-gather(param), dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}, channel_id=1, use_global_device_ids=true
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=2, use_global_device_ids=true
+    scale_bcast = bf16[8,32,8,128] broadcast(all_reduced_scale), dimensions={}
+    divide = bf16[8,32,8,128] divide(all-gather, scale_bcast)
+    clamp_lower = bf16[] constant(-448.0)
+    clamp_lower_bcast = bf16[8,32,8,128] broadcast(clamp_lower), dimensions={}
+    clamp_upper = bf16[] constant(448.0)
+    clamp_upper_bcast = bf16[8,32,8,128] broadcast(clamp_upper), dimensions={}
+    clamp = bf16[8,32,8,128] clamp(clamp_lower_bcast, divide, clamp_upper_bcast)
+    ROOT convert = f8e4m3fn[8,32,8,128] convert(clamp)
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_FALSE(changed);
+}
+
 TEST_F(CollectiveQuantizerTest, ConvertAllGather) {
   absl::string_view hlo_string = R"(
   HloModule module
@@ -447,6 +562,106 @@ TEST_F(CollectiveQuantizerTest, DequantizeAllGatherUnary) {
                                    ->mutable_operand(0)
                                    ->mutable_operand(0);
   EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
+}
+
+TEST_F(CollectiveQuantizerTest, DequantizeAllGatherPartialReplication) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = f8e4m3fn[8,4,8,128] parameter(0)
+    convert = bf16[8,4,8,128] convert(param)
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=1, use_global_device_ids=true
+    scale_bcast = bf16[8,4,8,128] broadcast(all_reduced_scale), dimensions={}
+    multiply = bf16[8,4,8,128] multiply(convert, scale_bcast)
+    ROOT all-gather = bf16[8,16,8,128] all-gather(multiply), dimensions={1}, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=2, use_global_device_ids=true
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Multiply(op::Convert(op::AllGather(op::Parameter())),
+                           op::Broadcast()));
+  const HloInstruction* all_gather =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
+}
+
+TEST_F(CollectiveQuantizerTest, DequantizeAllToAllPartialReplication) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = f8e4m3fn[8,32,8,128] parameter(0)
+    convert = bf16[8,32,8,128] convert(param)
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=1, use_global_device_ids=true
+    scale_bcast = bf16[8,32,8,128] broadcast(all_reduced_scale), dimensions={}
+    multiply = bf16[8,32,8,128] multiply(convert, scale_bcast)
+    ROOT all-to-all = bf16[8,32,8,128] all-to-all(multiply), dimensions={1}, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=2
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Multiply(op::Convert(op::AllToAll(op::Parameter())),
+                           op::Broadcast()));
+  const HloInstruction* all_gather =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  EXPECT_THAT(all_gather->shape().element_type(), F8E4M3FN);
+}
+
+TEST_F(CollectiveQuantizerTest,
+       DequantizeAllGatherPartialReplicationGroupMismatch) {
+  absl::string_view hlo_string = R"(
+  HloModule module
+  max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+  ENTRY entry {
+    param = f8e4m3fn[8,4,8,128] parameter(0)
+    convert = bf16[8,4,8,128] convert(param)
+    scale = bf16[1] parameter(1), sharding={devices=[8]<=[8]}
+    scalar_scale = bf16[] reshape(scale)
+    all_reduced_scale = bf16[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1,2,3},{4,5,6,7}}, channel_id=1, use_global_device_ids=true
+    scale_bcast = bf16[8,4,8,128] broadcast(all_reduced_scale), dimensions={}
+    multiply = bf16[8,4,8,128] multiply(convert, scale_bcast)
+    ROOT all-gather = bf16[8,32,8,128] all-gather(multiply), dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}, channel_id=2, use_global_device_ids=true
+    }
+  )";
+
+  HloModuleConfig config;
+  config.set_num_partitions(8);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunCollectiveQuantizer(module.get()));
+  EXPECT_FALSE(changed);
 }
 
 }  // namespace
