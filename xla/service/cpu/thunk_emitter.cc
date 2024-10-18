@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/infeed_thunk.h"
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
 #include "xla/backends/cpu/runtime/logical_id_thunk.h"
+#include "xla/backends/cpu/runtime/onednn_thunk.h"
 #include "xla/backends/cpu/runtime/outfeed_thunk.h"
 #include "xla/backends/cpu/runtime/reduce_scatter_thunk.h"
 #include "xla/backends/cpu/runtime/resource_use.h"
@@ -62,6 +63,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/ir_emission_utils.h"
 #include "xla/service/cpu/ir_emitter2.h"
@@ -942,11 +944,7 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
 
   // TODO(penporn): Support these existing targets.
   auto custom_call_target = custom_call->custom_call_target();
-  if (custom_call_target == "PadToStatic" ||
-      custom_call_target == "__onednn$matmul" ||
-      custom_call_target == "__onednn$softmax" ||
-      custom_call_target == "__onednn$layernorm" ||
-      custom_call_target == "__onednn$matmul_reorder") {
+  if (custom_call_target == "PadToStatic") {
     return Unimplemented("Custom call target %s is not implemented.",
                          custom_call_target);
   }
@@ -954,6 +952,37 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
     return EmitTopKThunk(custom_call);
   } else if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
+  } else if (custom_call_target.find("__onednn$") != std::string::npos) {
+    auto typed_custom_call = Cast<HloCustomCallInstruction>(custom_call);
+    auto backend_config = typed_custom_call->backend_config<BackendConfig>();
+
+    std::string config_str;
+    if (custom_call_target == "__onednn$convolution") {
+      OneDnnConvolutionConfig conv_config;
+      conv_config.CopyFrom(backend_config->onednn_conv_config());
+      conv_config.SerializeToString(&config_str);
+    } else if (custom_call_target == "__onednn$matmul" ||
+               custom_call_target == "__onednn$matmul_reorder") {
+      OneDnnMatMulConfig matmul_config;
+      matmul_config.CopyFrom(backend_config->onednn_matmul_config());
+      matmul_config.SerializeToString(&config_str);
+    } else if (custom_call_target == "__onednn$layernorm") {
+      OneDnnNormConfig ln_config;
+      ln_config.CopyFrom(backend_config->onednn_layer_norm_config());
+      ln_config.SerializeToString(&config_str);
+    } else if (custom_call_target == "__onednn$softmax") {
+      OneDnnSoftmaxConfig softmax_config;
+      softmax_config.CopyFrom(backend_config->onednn_softmax_config());
+      softmax_config.SerializeToString(&config_str);
+    } else {
+      return InvalidArgument("Unknown OneDNN custom call target: %s",
+                             custom_call_target);
+    }
+
+    TF_ASSIGN_OR_RETURN(auto op_buffers, GetCustomCallOpBuffers(
+                        instruction, buffer_assignment_));
+    return ThunkSequence::Of<OneDnnThunk>(custom_call_target, ThunkInfo(custom_call),
+                                          op_buffers, config_str);
   }
 
   // Check the API version.

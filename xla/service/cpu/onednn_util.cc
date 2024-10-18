@@ -25,8 +25,10 @@ std::unique_ptr<tsl::OneDnnThreadPool> CreateOneDnnThreadPool(
     const Eigen::ThreadPoolDevice* threadpool_device) {
 #ifndef ENABLE_ONEDNN_OPENMP
   if (threadpool_device != nullptr) {
-    return std::make_unique<tsl::OneDnnThreadPool>(threadpool_device->getPool(),
-                                                   false);
+    return std::make_unique<tsl::OneDnnThreadPool>(
+        threadpool_device->getPool(),
+        /*can_use_caller_thread=*/false, /*num_threads=*/-1,
+        /*call_from_xla=*/true);
   }
 #endif  // !ENABLE_ONEDNN_OPENMP
   return nullptr;

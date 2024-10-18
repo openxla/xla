@@ -83,13 +83,18 @@ class OneDnnThreadPool : public threadpool_iface {
     set_num_and_max_threads(num_threads);
   }
   OneDnnThreadPool(Eigen::ThreadPoolInterface* eigen_interface,
-                   bool can_use_caller_thread, int num_threads = -1)
+                   bool can_use_caller_thread, int num_threads = -1,
+                   bool call_from_xla = false)
       : eigen_interface_(eigen_interface),
-        can_use_caller_thread_(can_use_caller_thread) {
+        can_use_caller_thread_(can_use_caller_thread),
+        call_from_xla_(call_from_xla) {
     set_num_and_max_threads(num_threads);
   }
   virtual int get_num_threads() const override { return num_threads_; }
   virtual bool get_in_parallel() const override {
+    // If call_from_xla is true, return false since the caller in thunk-runtime
+    // itself is a part of the threadpool and we want to avoid sequential execution.
+    if (call_from_xla_) return false;
     return (eigen_interface_->CurrentThreadId() != -1) ? true : false;
   }
   virtual uint64_t get_flags() const override { return ASYNCHRONOUS; }
@@ -108,10 +113,16 @@ class OneDnnThreadPool : public threadpool_iface {
     int njobs = std::min(n, nthr);
     bool balance = (nthr < n);
 
+    // If call_from_xla is true, set use_caller_thread to true.
+    // We always use the caller thread performing one of the parallel tasks 
+    // instead of waiting. This helps particularly with thunk runtime since 
+    // caller thread is one of the worker thread in the threadpool.
     // If use_caller_thread, schedule njobs-1 jobs to thread pool and run last
     // job directly.
     const bool use_caller_thread =
-        can_use_caller_thread_ && nthr == port::NumSchedulableCPUs();
+        call_from_xla_
+            ? true
+            : can_use_caller_thread_ && nthr == port::NumSchedulableCPUs();
     const int njobs_to_schedule = use_caller_thread ? njobs - 1 : njobs;
 
     if (use_caller_thread) {
@@ -166,6 +177,7 @@ class OneDnnThreadPool : public threadpool_iface {
   int num_threads_ = 1;                 // Execute in caller thread.
   bool can_use_caller_thread_ = false;  // true if the user set the env variable
                                         // to use caller thread also.
+  bool call_from_xla_ = false;  // true if the object is created from XLA
   inline void set_num_and_max_threads(int num_threads) {
     num_threads_ =
         num_threads == -1 ? eigen_interface_->NumThreads() : num_threads;
@@ -181,7 +193,8 @@ class OneDnnThreadPool {
   OneDnnThreadPool() = default;
   OneDnnThreadPool(Eigen::ThreadPoolInterface* eigen_interface) {}
   OneDnnThreadPool(Eigen::ThreadPoolInterface* eigen_interface,
-                   bool can_use_caller_thread, int num_threads = -1) {}
+                   bool can_use_caller_thread, int num_threads = -1,
+                   bool call_from_xla = false) {}
   static void set_onednn_max_threads(int num_threads) {}
 };
 
