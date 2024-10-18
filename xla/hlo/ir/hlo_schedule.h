@@ -87,8 +87,8 @@ class HloInstructionSequence {
   }
 
   bool contains(const HloInstruction* inst) const {
-    return std::find(instruction_sequence_.begin(), instruction_sequence_.end(),
-                     inst) != instruction_sequence_.end();
+    return absl::c_find(instruction_sequence_, inst) !=
+           instruction_sequence_.end();
   }
 
   // Clears the sequence of all instructions.

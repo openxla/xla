@@ -195,7 +195,7 @@ static absl::StatusOr<Command> Convert(const DynamicSliceThunk& thunk) {
   auto cmd_sequence = std::make_unique<CommandBufferCmdSequence>();
   auto embed_thunk = thunk.get_embeded_thunk();
   TF_RETURN_IF_ERROR(AppendCommands(
-      *(cmd_sequence.get()), embed_thunk->thunks(),
+      *cmd_sequence, embed_thunk->thunks(),
       CommandBufferCmdSequence::SynchronizationMode::kAutomatic));
 
   auto& thunk_fake_allocations = thunk.get_fake_allocations();
