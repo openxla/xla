@@ -805,6 +805,8 @@ message DebugOptions {
   // Whether to use multiple compute streams to run windowed einsum.
   bool xla_gpu_multi_streamed_windowed_einsum = 280;
 
+  bool xla_gpu_experimental_stream_annotation = 337;
+
   // If enabled, uses bf16_6way gemm to compute F32 gemm.
   bool xla_gpu_enable_bf16_6way_gemm = 271;
 
@@ -1020,7 +1022,7 @@ message DebugOptions {
   //   coll.2-done = collective(coll.2-start)
   int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
 
-  // Next id: 337
+  // Next id: 338
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
