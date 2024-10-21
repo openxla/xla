@@ -222,6 +222,30 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
   TRANSPOSE_LAST_TWO_DIMS_IF(
       matmul_config.transpose_b() && weights_md.get_ndims() > 1, weights_md);
   auto output_md = output_minfo.GetOneDnnMemDesc();
+
+  // TODO(snadampal): allocate the reordered weights Literal conditionally
+  // only when the weights are already not pre-packed and only for aarch64
+  // currently it's allocated upfront because Literal object scope issues
+  auto bias_md = dnnl::memory::desc{};
+  if (absl::c_count(matmul_config.fusions().ops(), OneDnnFusionConfig::BIAS) >
+        0) {
+      MemrefInfo bias_minfo(args[arg_indx++]);
+      bias_md = bias_minfo.GetOneDnnMemDesc();
+  }
+  auto reordered_weights_md = OneDnnMatMulOptWeightsDesc(
+        cpu_engine, input_md, weights_md, bias_md, output_md);
+  auto reordered_weights_shape =
+        MemDescToXlaShapeFlattened(reordered_weights_md);
+  auto reordered_weights_literal = Literal(reordered_weights_shape);
+  void* rhs_data = weights_minfo.Data();
+
+  // TODO(snadampal): add an API to tsl cpuinfo to check for aarch64.
+  // For now, using the HW implementation id directly here.
+  // 0x41	ASCII character 'A' - implementer is Arm Limited.
+  // Reference:
+  // https://developer.arm.com/documentation/101427/0101/Register-descriptions/AArch64-system-registers/MIDR-EL1--Main-ID-Register--EL1.
+  auto weight_format = (tsl::port::CPUFamily() == 0x41 ) ? memory::format_tag::any
+                                                 : memory::format_tag::ab;
   if (matmul_config.optimization_config().weights_prepacked()) {
     // Weight pre-packing is supported for 2D weights only.
     // Since prepacked weights array is flattened, try to infer the dims from
@@ -230,8 +254,23 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
     // array.
     weights_md =
         memory::desc({input_md.get_dims().back(), output_md.get_dims().back()},
-                     weights_md.get_data_type(), memory::format_tag::ab);
+                     weights_md.get_data_type(), weight_format);
+  } else if (tsl::port::CPUFamily() == 0x41) {
+    // Weights are not pre-packed, and this scenario requires
+    // weights reordering on aarch64
+    auto weights_mem =
+        dnnl::memory{weights_md, cpu_engine, weights_minfo.Data()};
+    rhs_data = reordered_weights_literal.untyped_data();
+    auto reordered_weights_mem =
+        dnnl::memory{reordered_weights_md, cpu_engine,
+                     rhs_data};
+
+    dnnl::reorder rdr{weights_mem, reordered_weights_mem};
+    rdr.execute(onednn_stream, weights_mem, reordered_weights_mem);
+    onednn_stream.wait();
+    weights_md = reordered_weights_md;
   }
+
   const int64_t num_fused_operands = num_args - arg_indx;
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
@@ -251,7 +290,7 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
 
   auto lhs_mem = memory(input_md, cpu_engine, input_minfo.Data());
   auto rhs_mem =
-      memory(matmul_pd->weights_desc(), cpu_engine, weights_minfo.Data());
+      memory(matmul_pd->weights_desc(), cpu_engine, rhs_data);
   auto result_mem = memory(output_md, cpu_engine, output_minfo.Data());
 
   if (std::strstr(matmul_pd->impl_info_str(), "ref") != nullptr) {
