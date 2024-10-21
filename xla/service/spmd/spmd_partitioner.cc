@@ -2392,6 +2392,9 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
     // If a tuple's elements are all manual, then sharding.IsManual() == True,
     // so we test whether it is tuple first.
     if (sharding.IsTuple()) {
+      if (opcode == HloOpcode::kOutfeed) {
+        return HloSharding::AssignDevice(0);
+      }
       std::vector<HloSharding> subshardings = sharding.tuple_elements();
       for (HloSharding& subsharding : subshardings) {
         // Delay manual sharding substitution for CustomCalls.
