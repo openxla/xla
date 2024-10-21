@@ -13,7 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#ifdef __linux__
 #include <dlfcn.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <tuple>
 #include <type_traits>
@@ -95,12 +99,31 @@ llvm::SmallVector<InterpreterValue> Call(MutableArrayRef<InterpreterValue> args,
   if (callee->getRegion(0).hasOneBlock()) {
     return Interpret(state, callee.getRegion(), args);
   }
-
-  void* sym = dlsym(RTLD_DEFAULT, callee.getSymName().str().c_str());
+  
+  /*GetModuleHandle gets the handle for the module of the current process
+  GetProcAddress uses the module handle to look for the address
+  of the function/variable named by callee.getSymName().str().c_str()*/
+  void* sym =nullptr;
+  #ifdef _WIN32
+  HMODULE handle =GetModuleHandle(NULL);
+  if (handle){
+      sym =GetProcAddress(handle, callee.getSymName().str().c_str());
+      if (!sym) {
+          state.AddFailure("Callee not found");
+          return {};
+      }
+  }
+  else {
+       state.AddFailure("Failed to get module handle");
+       return {};
+  }
+  #else
+  sym = dlsym(RTLD_DEFAULT, callee.getSymName().str().c_str());
   if (sym == nullptr) {
     state.AddFailure("callee not found");
     return {};
   }
+  #endif
 
   InterpreterValue result;
   if (TryCall<float, float>(sym, callee, args, result) ||
