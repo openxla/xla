@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "rocm/include/hip/hip_runtime.h"
+#include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_description.h"
@@ -85,7 +86,7 @@ class RocmExecutor : public GpuExecutor {
   void Deallocate(DeviceMemoryBase* mem) override;
   bool SynchronizeAllActivity() override;
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
-      GpuStream* stream, bool use_delay_kernel) override;
+      Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
       const std::string& symbol_name, ModuleHandle module_handle) override;
   absl::Status SynchronousMemZero(DeviceMemoryBase* location,
@@ -97,7 +98,6 @@ class RocmExecutor : public GpuExecutor {
                                  uint64_t size) override;
   absl::Status TrimGraphMemory() override;
   void DeallocateStream(Stream* stream) override;
-  absl::Status BlockHostUntilDone(Stream* stream) override;
   absl::Status EnablePeerAccessTo(StreamExecutor* other) override;
   bool CanEnablePeerAccessTo(StreamExecutor* other) override;
   bool DeviceMemoryUsage(int64_t* free, int64_t* total) const override;
@@ -128,10 +128,6 @@ class RocmExecutor : public GpuExecutor {
   CreateDeviceDescription(int device_ordinal);
 
  private:
-  // Collects metadata for the specified kernel.
-  absl::Status GetKernelMetadata(GpuKernel* rocm_kernel,
-                                 KernelMetadata* kernel_metadata);
-
   // Loads a module in HSACO format.
   absl::StatusOr<ModuleHandle> LoadModuleFromHsaco(const char* hsaco)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);

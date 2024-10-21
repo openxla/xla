@@ -621,13 +621,6 @@ absl::Status GpuDriver::GraphAddChildNode(CUgraphNode* node, CUgraph graph,
                         "Failed to set CUDA graph child node params");
 }
 
-absl::Status GpuDriver::SynchronizeStream(Context* context, CUstream stream) {
-  ScopedActivateContext activated{context};
-  CHECK(stream != nullptr);
-  return cuda::ToStatus(cuStreamSynchronize(stream),
-                        "Could not synchronize CUDA stream");
-}
-
 int GpuDriver::GetDeviceCount() {
   int device_count = 0;
   auto status = cuda::ToStatus(cuDeviceGetCount(&device_count));
@@ -644,20 +637,6 @@ absl::StatusOr<int32_t> GpuDriver::GetDriverVersion() {
   TF_RETURN_IF_ERROR(cuda::ToStatus(cuDriverGetVersion(&version),
                                     "Could not get driver version"));
   return version;
-}
-
-absl::StatusOr<int> GpuDriver::GetMaxOccupiedBlocksPerCore(
-    Context* context, CUfunction kernel, int threads_per_block,
-    size_t dynamic_shared_memory_bytes) {
-  ScopedActivateContext activation(context);
-
-  int max_blocks;
-  TF_RETURN_IF_ERROR(cuda::ToStatus(
-      cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-          &max_blocks, kernel, threads_per_block, dynamic_shared_memory_bytes,
-          CU_OCCUPANCY_DISABLE_CACHING_OVERRIDE),
-      absl::StrFormat("Failed to calculate occupancy of kernel %p", kernel)));
-  return max_blocks;
 }
 
 absl::StatusOr<size_t> GpuDriver::GraphGetNodeCount(GpuGraphHandle graph) {

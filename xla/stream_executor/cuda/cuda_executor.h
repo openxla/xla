@@ -1,4 +1,5 @@
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/cuda/cuda_context.h"
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +74,7 @@ class CudaExecutor : public GpuExecutor {
   }
 
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
-      GpuStream* stream, bool use_delay_kernel) override;
+      Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
       const std::string& symbol_name, ModuleHandle module_handle) override;
   absl::Status SynchronousMemZero(DeviceMemoryBase* location,
@@ -84,7 +85,6 @@ class CudaExecutor : public GpuExecutor {
                                  const DeviceMemoryBase& gpu_src,
                                  uint64_t size) override;
   void DeallocateStream(Stream* stream) override;
-  absl::Status BlockHostUntilDone(Stream* stream) override;
   absl::Status EnablePeerAccessTo(StreamExecutor* other) override;
   bool CanEnablePeerAccessTo(StreamExecutor* other) override;
   bool DeviceMemoryUsage(int64_t* free_out, int64_t* total_out) const override;
@@ -138,10 +138,6 @@ class CudaExecutor : public GpuExecutor {
   CreateDeviceDescription(int device_ordinal);
 
  private:
-  // Collects metadata for the specified kernel.
-  absl::Status GetKernelMetadata(GpuKernel* cuda_kernel,
-                                 KernelMetadata* kernel_metadata);
-
   // Loads a module in cubin format.
   absl::StatusOr<ModuleHandle> LoadModuleFromCuBin(const char* cubin)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
@@ -207,6 +203,9 @@ class CudaExecutor : public GpuExecutor {
   // Lookup map for alive streams, from raw stream pointers.
   absl::flat_hash_map<void*, Stream*> alive_gpu_streams_
       ABSL_GUARDED_BY(alive_gpu_streams_mu_);
+
+  // CudaContext for this device.
+  CudaContext* cuda_context_;
 };
 
 }  // namespace stream_executor::gpu

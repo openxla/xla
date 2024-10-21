@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
@@ -179,7 +178,7 @@ absl::Status AsynchronousMemcpyD2D(StreamExecutor* executor,
 }  // namespace
 
 absl::StatusOr<std::unique_ptr<CudaStream>> CudaStream::Create(
-    GpuExecutor* executor,
+    StreamExecutor* executor,
     std::optional<std::variant<StreamPriority, int>> priority) {
   int stream_priority = [&]() {
     if (priority.has_value() && std::holds_alternative<int>(priority.value())) {
@@ -243,6 +242,13 @@ void DestroyStream(StreamExecutor* executor, CUstream stream) {
             << executor;
   }
 }
+
+absl::Status SynchronizeStream(StreamExecutor* executor, CUstream stream) {
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+  CHECK(stream != nullptr);
+  return cuda::ToStatus(cuStreamSynchronize(stream),
+                        "Could not synchronize CUDA stream");
+}
 }  // namespace
 
 CudaStream::~CudaStream() {
@@ -250,6 +256,10 @@ CudaStream::~CudaStream() {
   executor_->DeallocateStream(this);
 
   DestroyStream(executor_, stream_handle_);
+}
+
+absl::Status CudaStream::BlockHostUntilDone() {
+  return SynchronizeStream(executor_, stream_handle_);
 }
 
 absl::Status CudaStream::Memset32(DeviceMemoryBase* location, uint32_t pattern,

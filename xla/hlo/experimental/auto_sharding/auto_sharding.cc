@@ -68,7 +68,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/transforms/hlo_constant_splitter.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_splitter.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
+#include "xla/hlo/transforms/simplifiers/optimize_input_output_buffer_alias.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/service/buffer_value.h"
@@ -78,10 +81,7 @@ limitations under the License.
 #include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_value.h"
-#include "xla/service/optimize_input_output_buffer_alias.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
@@ -4156,15 +4156,14 @@ absl::StatusOr<bool> AutoSharding::Run(
           FindAllIndices(mesh_shapes[i], *option_.num_dcn_slices);
       if (dcn_indices.empty()) {
         VLOG(1) << " Mesh shape does not contain DCN axis.";
-        continue;
+      } else {
+        if (dcn_indices.size() > 1) {
+          LOG(WARNING)
+              << "Could not infer a unique DCN axis. Choosing one randomly.";
+        }
+        this_option.device_mesh_alpha[dcn_indices[0]] = kDcnDeviceMeshAlpha;
+        this_option.device_mesh_beta[dcn_indices[0]] = kDcnDeviceMeshBeta;
       }
-
-      if (dcn_indices.size() > 1) {
-        LOG(WARNING)
-            << "Could not infer a unique DCN axis. Choosing one randomly.";
-      }
-      this_option.device_mesh_alpha[dcn_indices[0]] = kDcnDeviceMeshAlpha;
-      this_option.device_mesh_beta[dcn_indices[0]] = kDcnDeviceMeshBeta;
     }
 
     auto pass = std::make_unique<AutoShardingImplementation>(this_option);
