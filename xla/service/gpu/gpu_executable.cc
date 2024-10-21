@@ -599,22 +599,25 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
   // TODO(b/30100571): we could potentially postpone deallocating the temp
   // buffers until a different computation is executed.
   if (stream_to_sync) {
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-    while (!se::gpu::AsGpuStream(stream_to_sync)->IsIdle()) {
-      if (!async_status.async_op_status.ok()) {
-        // NCCL error has occurred, wait for all communicators
-        // to be aborted before returning.
-        while (async_status.is_all_comms_aborted == false) {
-          // Need to rendezvous while waiting for the signal in case
-          // any rank is stuck when aborting.
-          TF_RETURN_IF_ERROR(
-              RendezvousAfterInitialization(run_options, debug_options));
-        }
+    auto device = stream_to_sync->parent()->GetDeviceDescription();
+    if (std::holds_alternative<se::CudaComputeCapability>(
+            device.gpu_compute_capability())) {
+      TF_ASSIGN_OR_RETURN(bool is_idle, stream_to_sync->IsIdle());
+      while (!is_idle) {
+        if (!async_status.async_op_status.ok()) {
+          // NCCL error has occurred, wait for all communicators
+          // to be aborted before returning.
+          while (async_status.is_all_comms_aborted == false) {
+            // Need to rendezvous while waiting for the signal in case
+            // any rank is stuck when aborting.
+            TF_RETURN_IF_ERROR(
+                RendezvousAfterInitialization(run_options, debug_options));
+          }
 
-        return async_status.async_op_status;
+          return async_status.async_op_status;
+        }
       }
     }
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
     absl::Status block_status = stream_to_sync->BlockHostUntilDone();
     if (!block_status.ok()) {
       return Internal(
