@@ -67,6 +67,16 @@ std::string_view Thunk::KindToString(Kind kind) {
       return "infeed";
     case Kind::kKernel:
       return "kernel";
+    case Kind::kOneDnnConvolution:
+      return "onednn-convolution";
+    case Kind::kOneDnnLayerNorm:
+      return "onednn-layernorm";
+    case Kind::kOneDnnMatMul:
+      return "onednn-matmul";
+    case Kind::kOneDnnMatMulReorder:
+      return "onednn-matmul-reorder";
+    case Kind::kOneDnnSoftmax:
+      return "onednn-softmax";
     case Kind::kOutfeed:
       return "outfeed";
     case Kind::kPartitionId:
