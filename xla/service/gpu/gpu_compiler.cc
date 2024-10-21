@@ -874,21 +874,6 @@ absl::Status RunCollectiveOptimizationPasses(
   collectives_pipeline.AddPass<HloDCE>();
 
   if (debug_options.xla_gpu_enable_pipelined_collectives() ||
-      debug_options.xla_gpu_enable_pipelined_all_reduce()) {
-    CollectivePipeliner::Config config{
-        /*level_to_operate_on=*/0,
-        /*max_pipelining_per_loop=*/INT64_MAX,
-        /*last_run=*/true,
-        /*pipeline_use_tree=*/false,
-        /*process_different_sized_ops=*/true,
-        /*pipelining_direction=*/
-        CollectivePipeliner::PipeliningDirection::kForward,
-        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
-        /*acceptable_formatting=*/HloPredicateTrue,
-        /*reuse_pipelined_op_buffer=*/HloPredicateFalse};
-    collectives_pipeline.AddPass<CollectivePipeliner>(config);
-  }
-  if (debug_options.xla_gpu_enable_pipelined_collectives() ||
       debug_options.xla_gpu_enable_pipelined_all_gather()) {
     CollectivePipeliner::Config config{
         /*level_to_operate_on=*/0,
@@ -907,6 +892,21 @@ absl::Status RunCollectiveOptimizationPasses(
         /*postprocess_backward_rotated_op=*/std::nullopt,
         /*should_add_loop_invariant_op_in_chain=*/true,
     };
+    collectives_pipeline.AddPass<CollectivePipeliner>(config);
+  }
+  if (debug_options.xla_gpu_enable_pipelined_collectives() ||
+      debug_options.xla_gpu_enable_pipelined_all_reduce()) {
+    CollectivePipeliner::Config config{
+        /*level_to_operate_on=*/0,
+        /*max_pipelining_per_loop=*/INT64_MAX,
+        /*last_run=*/true,
+        /*pipeline_use_tree=*/false,
+        /*process_different_sized_ops=*/true,
+        /*pipelining_direction=*/
+        CollectivePipeliner::PipeliningDirection::kForward,
+        /*should_process=*/HloPredicateIsOp<HloOpcode::kAllReduce>,
+        /*acceptable_formatting=*/HloPredicateTrue,
+        /*reuse_pipelined_op_buffer=*/HloPredicateFalse};
     collectives_pipeline.AddPass<CollectivePipeliner>(config);
   }
   if (debug_options.xla_gpu_enable_pipelined_collectives() ||
