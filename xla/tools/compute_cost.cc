@@ -48,6 +48,33 @@ Usage:
 )";
 }  // namespace
 
+namespace xla {
+void print_costs_of_all_instructions(const HloModule& module,
+                                     const HloCostAnalysis& analysis) {
+  absl::flat_hash_map<std::string, std::string> fingerprint_to_name;
+  std::cout << "HLO name, deduplicated name, bytes accessed, flops\n";
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* hlo : computation->instructions()) {
+      if (hlo->opcode() == HloOpcode::kParameter ||
+          hlo->opcode() == HloOpcode::kConstant ||
+          hlo->opcode() == HloOpcode::kTuple ||
+          hlo->opcode() == HloOpcode::kGetTupleElement ||
+          hlo->opcode() == HloOpcode::kBitcast) {
+        // These instructions always have zero costs.
+        continue;
+      }
+      absl::string_view deduplicated_name = hlo->metadata().deduplicated_name();
+      if (deduplicated_name.empty()) {
+        deduplicated_name = hlo->name();
+      }
+      std::cout << hlo->name() << ", " << deduplicated_name << ", "
+                << analysis.bytes_accessed(*hlo) << ", "
+                << analysis.flop_count(*hlo) << "\n";
+    }
+  }
+}
+}  // namespace xla
+
 int main(int argc, char** argv) {
   std::string input, format;
   bool gpu = false;
@@ -57,9 +84,10 @@ int main(int argc, char** argv) {
       tsl::Flag("format", &format, "hlo|pb|pbtxt"),
       tsl::Flag("gpu", &gpu,
                 "Use GPU flavor of cost analysis instead of the generic one"),
-      tsl::Flag("all", &all,
-                "Print costs and deduplicated name of each instruction, not "
-                "just the total costs for the module")};
+      tsl::Flag(
+          "all", &all,
+          "Also print costs and deduplicated name of each instruction, not "
+          "just the total costs for the module")};
   xla::AppendDebugOptionsFlags(&flag_list);
   const std::string kUsageString =
       absl::StrCat(kUsage, "\n\n", tsl::Flags::Usage(argv[0], flag_list));
@@ -84,32 +112,12 @@ int main(int argc, char** argv) {
       module->entry_computation()->root_instruction()->Accept(&*analysis));
 
   if (all) {
-    absl::flat_hash_map<std::string, std::string> fingerprint_to_name;
-    std::cout << "HLO name, deduplicated name, bytes accessed, flops\n";
-    for (const xla::HloComputation* computation : module->computations()) {
-      for (const xla::HloInstruction* hlo : computation->instructions()) {
-        if (hlo->opcode() == xla::HloOpcode::kParameter ||
-            hlo->opcode() == xla::HloOpcode::kConstant ||
-            hlo->opcode() == xla::HloOpcode::kTuple ||
-            hlo->opcode() == xla::HloOpcode::kGetTupleElement ||
-            hlo->opcode() == xla::HloOpcode::kBitcast) {
-          // These instructions always have zero costs.
-          continue;
-        }
-        absl::string_view deduplicated_name =
-            hlo->metadata().deduplicated_name();
-        if (deduplicated_name.empty()) {
-          deduplicated_name = hlo->name();
-        }
-        std::cout << hlo->name() << ", " << deduplicated_name << ", "
-                  << analysis->bytes_accessed(*hlo) << ", "
-                  << analysis->flop_count(*hlo) << "\n";
-      }
-    }
-  } else {
-    std::cout << std::setw(5) << std::setprecision(4)
-              << analysis->flop_count() / (1e9) << " GFLOPS. "
-              << analysis->bytes_accessed() / (1e6) << " MB." << std::endl;
+    print_costs_of_all_instructions(*module, *analysis);
   }
+
+  std::cout << std::setw(5) << std::setprecision(4)
+            << "Total: " << analysis->flop_count() / (1e9) << " GFLOPS. "
+            << analysis->bytes_accessed() / (1e6) << " MB." << std::endl;
+
   return 0;
 }
