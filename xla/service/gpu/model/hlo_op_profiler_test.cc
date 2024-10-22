@@ -51,7 +51,7 @@ TEST_F(HloOpProfilerTest, BasicMeasurementsAreCorrect) {
 }
 
 TEST_F(HloOpProfilerTest, UnsupportedCombinationsDoNotCrash) {
-  HloOpProfiler profiler(test_runner_);
+  HloOpProfiler profiler(test_runner_as_hlo_runner());
   EXPECT_THAT(profiler.MeasureClockCyclesPerOp(HloOpcode::kCbrt, S8),
               tsl::testing::StatusIs(tsl::error::INVALID_ARGUMENT));
 }
