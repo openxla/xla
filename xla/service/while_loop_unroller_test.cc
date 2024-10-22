@@ -1270,10 +1270,10 @@ TEST_F(WhileLoopUnrollerTest, SimpleLoopWithCustomCallNonTupleForRoot) {
   )";
   auto m = ParseAndReturnVerifiedModule(hlo_string).value();
   UnrollConfig config;
-  EXPECT_TRUE(WhileLoopUnroller(/*unroll_factor=*/-1,
-                                /*wrap_in_trivial_loop=*/false, config)
-                  .Run(m.get())
-                  .value());
+  EXPECT_FALSE(WhileLoopUnroller(/*unroll_factor=*/-1,
+                                 /*wrap_in_trivial_loop=*/false, config)
+                   .Run(m.get())
+                   .value());
 }
 
 TEST_F(WhileLoopUnrollerTest, SimpleLoopWithCustomCall) {
@@ -1306,10 +1306,10 @@ TEST_F(WhileLoopUnrollerTest, SimpleLoopWithCustomCall) {
   )";
   auto m = ParseAndReturnVerifiedModule(hlo_string).value();
   UnrollConfig config;
-  EXPECT_TRUE(WhileLoopUnroller(/*unroll_factor=*/-1,
-                                /*wrap_in_trivial_loop=*/false, config)
-                  .Run(m.get())
-                  .value());
+  EXPECT_FALSE(WhileLoopUnroller(/*unroll_factor=*/-1,
+                                 /*wrap_in_trivial_loop=*/false, config)
+                   .Run(m.get())
+                   .value());
 }
 
 }  // namespace
