@@ -20,14 +20,17 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 
-#include "rocm/include/roctracer/roctracer.h"
-#include "rocm/include/roctracer/roctracer_hip.h"
-#include "rocm/rocm_config.h"
-#if TF_ROCM_VERSION >= 50300
-#include "rocm/include/roctracer/roctracer_roctx.h"
-#else
-#include "rocm/include/roctracer/roctracer_hcc.h"
-#endif
+#include <rocm/include/rocprofiler-sdk/buffer.h>
+#include <rocm/include/rocprofiler-sdk/buffer_tracing.h>
+#include <rocm/include/rocprofiler-sdk/callback_tracing.h>
+#include <rocm/include/rocprofiler-sdk/external_correlation.h>
+#include <romc/include/rocprofiler-sdk/fwd.h>
+#include <rocm/include/rocprofiler-sdk/internal_threading.h>
+#include <rocm/include/rocprofiler-sdk/registration.h>
+#include <rocm/include/rocprofiler-sdk/rocprofiler.h>
+#include <rocm/include/rocprofiler-sdk/cxx/name_info.hpp>
+#include <rocm/include/rocprofiler-sdk/hip.h>
+
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
@@ -66,42 +69,22 @@ namespace wrap {
 
 #endif  // PLATFORM_GOOGLE
 
-#if TF_ROCM_VERSION >= 50300
-#define FOREACH_ROCTRACER_API(DO_FUNC)           \
-  DO_FUNC(roctracer_default_pool_expl)           \
-  DO_FUNC(roctracer_disable_domain_activity)     \
-  DO_FUNC(roctracer_disable_domain_callback)     \
-  DO_FUNC(roctracer_disable_op_activity)         \
-  DO_FUNC(roctracer_disable_op_callback)         \
-  DO_FUNC(roctracer_enable_domain_activity_expl) \
-  DO_FUNC(roctracer_enable_domain_callback)      \
-  DO_FUNC(roctracer_enable_op_activity_expl)     \
-  DO_FUNC(roctracer_enable_op_callback)          \
-  DO_FUNC(roctracer_error_string)                \
-  DO_FUNC(roctracer_flush_activity_expl)         \
-  DO_FUNC(roctracer_get_timestamp)               \
-  DO_FUNC(roctracer_op_string)                   \
-  DO_FUNC(roctracer_open_pool_expl)              \
-  DO_FUNC(roctracer_set_properties)              \
-  DO_FUNC(roctracer_next_record)
+// only support which latest version ?
+#if TF_ROCM_VERSION >= 50700
+#define FOREACH_ROCTRACER_API(DO_FUNC)                     \
+  DO_FUNC(rocprofiler_force_configure)                     \
+  DO_FUNC(rocprofiler_at_internal_thread_create)           \
+  DO_FUNC(rocprofiler_create_buffer)                       \
+  DO_FUNC(rocprofiler_flush_buffer)                        \
+  DO_FUNC(rocprofiler_get_status_string)                   \
+  DO_FUNC(rocprofiler_create_context)                      \
+  DO_FUNC(rocprofiler_context_is_valid)                    \
+  DO_FUNC(rocprofiler_start_context)                       \
+  DO_FUNC(rocprofiler_configure_callback_tracing_service)  \
+  DO_FUNC(rocprofiler_configure_callback_thread)           \
+  DO_FUNC(rocprofiler_asign_callback_thread)              
 #else
-#define FOREACH_ROCTRACER_API(DO_FUNC)           \
-  DO_FUNC(roctracer_default_pool_expl)           \
-  DO_FUNC(roctracer_disable_domain_activity)     \
-  DO_FUNC(roctracer_disable_domain_callback)     \
-  DO_FUNC(roctracer_disable_op_activity)         \
-  DO_FUNC(roctracer_disable_op_callback)         \
-  DO_FUNC(roctracer_enable_domain_activity_expl) \
-  DO_FUNC(roctracer_enable_domain_callback)      \
-  DO_FUNC(roctracer_enable_op_activity_expl)     \
-  DO_FUNC(roctracer_enable_op_callback)          \
-  DO_FUNC(roctracer_error_string)                \
-  DO_FUNC(roctracer_flush_activity_expl)         \
-  DO_FUNC(roctracer_get_timestamp)               \
-  DO_FUNC(roctracer_op_string)                   \
-  DO_FUNC(roctracer_open_pool_expl)              \
-  DO_FUNC(roctracer_set_properties)
-#endif
+
 FOREACH_ROCTRACER_API(ROCTRACER_API_WRAPPER)
 
 #undef FOREACH_ROCTRACER_API

@@ -26,6 +26,11 @@ limitations under the License.
 #include "tsl/profiler/backends/cpu/annotation_stack.h"
 #include "tsl/profiler/utils/time_utils.h"
 
+extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(
+  uint32_t version, const char* runtime_version, uint32_t priority,
+  rocprofiler_client_id_t* id
+);
+
 namespace xla {
 namespace profiler {
 
@@ -46,6 +51,28 @@ constexpr uint32_t RocmTracerEvent::kInvalidDeviceId;
           absl::StrCat("roctracer call error", errstr));                    \
     }                                                                       \
   } while (false)
+
+void
+thread_precreate(rocprofiler_runtime_library_t lib, void* tool_data)
+{
+    static_cast<call_stack_t*>(tool_data)->emplace_back(
+        source_location{__FUNCTION__,
+                        __FILE__,
+                        __LINE__,
+                        std::string{"internal thread about to be created by rocprofiler (lib="} +
+                            std::to_string(lib) + ")"});
+}
+
+void
+thread_postcreate(rocprofiler_runtime_library_t lib, void* tool_data)
+{
+    static_cast<call_stack_t*>(tool_data)->emplace_back(
+        source_location{__FUNCTION__,
+                        __FILE__,
+                        __LINE__,
+                        std::string{"internal thread was created by rocprofiler (lib="} +
+                            std::to_string(lib) + ")"});
+}
 
 namespace {
 
@@ -1349,6 +1376,9 @@ void RocmTracer::Enable(const RocmTracerOptions& options,
                         RocmTraceCollector* collector) {
   options_ = options;
   collector_ = collector;
+  static std::once_flag configure_once;
+  std::call_once(configure_once, rocprofiler_force_configure, &rocprofiler_configure,
+                 "force configuration");
   api_cb_impl_ = new RocmApiCallbackImpl(options, this, collector);
   activity_cb_impl_ = new RocmActivityCallbackImpl(options, this, collector);
 
@@ -1586,3 +1616,51 @@ absl::Status RocmTracer::DisableActivityTracing() {
 
 }  // namespace profiler
 }  // namespace xla
+
+extern "C" rocprofiler_tool_configure_result_t*
+rocprofiler_configure(uint32_t                 version,
+                      const char*              runtime_version,
+                      uint32_t                 priority,
+                      rocprofiler_client_id_t* id)
+{
+    // set the client name
+    id->name = "XLA";
+
+    // store client info
+    client::client_id = id;
+
+    // compute major/minor/patch version info
+    uint32_t major = version / 10000;
+    uint32_t minor = (version % 10000) / 100;
+    uint32_t patch = version % 100;
+
+    // generate info string
+    auto info = std::stringstream{};
+    info << id->name << " (priority=" << priority << ") is using rocprofiler-sdk v" << major << "."
+         << minor << "." << patch << " (" << runtime_version << ")";
+
+    std::clog << info.str() << std::endl;
+
+    auto* client_tool_data = new std::vector<client::source_location>{};
+
+    client_tool_data->emplace_back(
+        client::source_location{__FUNCTION__, __FILE__, __LINE__, info.str()});
+
+    ROCPROFILER_CALL(rocprofiler_at_internal_thread_create(
+                         xla::profiler::thread_precreate,
+                         xla::profiler::thread_postcreate,
+                         ROCPROFILER_LIBRARY | ROCPROFILER_HSA_LIBRARY | ROCPROFILER_HIP_LIBRARY |
+                             ROCPROFILER_MARKER_LIBRARY,
+                         static_cast<void*>(client_tool_data)),
+                     "registration for thread creation notifications");
+
+    // create configure data
+    static auto cfg =
+        rocprofiler_tool_configure_result_t{sizeof(rocprofiler_tool_configure_result_t),
+                                            &xla::profiler::tool_init,
+                                            &xla::profiler::tool_fini,
+                                            static_cast<void*>(client_tool_data)};
+
+    // return pointer to configure data
+    return &cfg;
+}
