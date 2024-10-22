@@ -957,6 +957,7 @@ cc_library(
             "@tsl//tsl/platform:env",
             "@tsl//tsl/platform:path",
             "@tsl//tsl/platform:platform_port",
+            "@tsl//tsl/platform:protobuf",
             "@tsl//tsl/platform:status",
         ],
     )
