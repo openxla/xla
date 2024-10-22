@@ -996,6 +996,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
     ],
