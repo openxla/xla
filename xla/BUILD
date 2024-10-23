@@ -346,6 +346,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/numeric:bits",
@@ -374,6 +375,8 @@ xla_cc_test(
         ":test",
         ":types",
         ":util",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/types:span",
         "@ml_dtypes//:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
@@ -1048,6 +1051,7 @@ xla_cc_test(
     deps = [
         ":test",
         ":window_util",
+        ":xla_data_proto_cc",
         "@tsl//tsl/platform:test_main",
     ],
 )
