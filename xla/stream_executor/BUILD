@@ -456,6 +456,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",  # buildcleaner: keep
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:status",
