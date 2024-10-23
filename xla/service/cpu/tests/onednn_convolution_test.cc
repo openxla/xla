@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <utility>
 
-#include "absl/strings/substitute.h"
+#include "absl/strings/str_replace.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
@@ -50,23 +50,23 @@ class ConvolutionTest : public HloTestBase,
   float rtol_;
 
   constexpr static char* kConvRewriteStr = R"(
-    ; CHECK:     custom_call_target="__onednn$$convolution",
+    ; CHECK:     custom_call_target="__onednn$convolution",
     ; CHECK:       backend_config={
     ; CHECK-DAG:     "outer_dimension_partitions":[],
-    ; CHECK-DAG:       "onednn_conv_config":{$0$1
+    ; CHECK-DAG:       "onednn_conv_config":{$fusions_str,$opt_config
     ; CHECK-DAG:    }
     ; CHECK:      }
     )";
 
   constexpr static char* kConvRewriteFusionsStr = R"(
     ; CHECK-DAG:          "fusions":{
-    ; CHECK-DAG:            "ops":[$0]
+    ; CHECK-DAG:            "ops":[$fused_ops]
     ; CHECK-DAG:      },)";
 
   constexpr static char* kConvRewriteOptimizationsStr = R"(
     ; CHECK-DAG:          "optimization_config":{
-    ; CHECK-DAG:            "weights_prepacked":$0,
-    ; CHECK-DAG:            "user_scratchpad":$1,
+    ; CHECK-DAG:            "weights_prepacked":$weights_prepacked,
+    ; CHECK-DAG:            "user_scratchpad":$user_scratchpad,
     ; CHECK-DAG:      })";
 
   ConvolutionTest() {
@@ -91,8 +91,11 @@ class ConvolutionTest : public HloTestBase,
 
   std::string GetOptimizationsString() {
     return (user_scratchpad_ || weights_prepacked_)
-               ? absl::Substitute(kConvRewriteOptimizationsStr,
-                                  weights_prepacked_, user_scratchpad_)
+               ? absl::StrReplaceAll(kConvRewriteOptimizationsStr,
+                                     {{"$weights_prepacked",
+                                       weights_prepacked_ ? "true" : "false"},
+                                      {"$user_scratchpad",
+                                       user_scratchpad_ ? "true" : "false"}})
                : "";
   }
 
@@ -105,11 +108,15 @@ class ConvolutionTest : public HloTestBase,
     std::string fusions = stream.str();
     if (fused_ops.size() > 0) {
       fusions.pop_back();
-      return absl::Substitute(kConvRewriteStr,
-                              absl::Substitute(kConvRewriteFusionsStr, fusions),
-                              GetOptimizationsString());
+      return absl::StrReplaceAll(
+          kConvRewriteStr,
+          {{"$fusions_str,", absl::StrReplaceAll(kConvRewriteFusionsStr,
+                                                 {{"$fused_ops", fusions}})},
+           {"$opt_config", GetOptimizationsString()}});
     }
-    return absl::Substitute(kConvRewriteStr, "", GetOptimizationsString());
+    return absl::StrReplaceAll(
+        kConvRewriteStr,
+        {{"$fusions_str,", ""}, {"$opt_config", GetOptimizationsString()}});
   }
 
   // TODO(intel-tf): Remove this and simplify patterns when Elemental BF16 is
@@ -135,8 +142,9 @@ class ConvolutionTest : public HloTestBase,
   void RunCompareAndMatchOptimizedHlo(
       const absl::string_view outline,
       const std::vector<absl::string_view> fused_ops) {
-    const std::string convolution_module_str =
-        absl::Substitute(outline, dtypeString_, PromotedDtypeToString());
+    const std::string convolution_module_str = absl::StrReplaceAll(
+        outline,
+        {{"$dtype", dtypeString_}, {"$pdtype", PromotedDtypeToString()}});
     EXPECT_TRUE(RunAndCompare(convolution_module_str, ErrorSpec{atol_, rtol_}));
     MatchOptimizedHlo(convolution_module_str,
                       ConvStringWithOptimizations(fused_ops));
@@ -148,15 +156,15 @@ TEST_P(ConvolutionTest, Simple2DTest1) {
   HloModule convolution.test
 
   ENTRY convolution.test {
-    arg.0 = $0[1,22,22,1] parameter(0)
-    reshape.0 = $0[1,22,22,1] reshape(arg.0)
-    arg.1 = $0[8,8,1,1] parameter(1)
-    reshape.1 = $0[8,8,1,1] reshape(arg.1)
-    convolution.0 = $0[1,11,11,1] convolution(reshape.0, reshape.1),
+    arg.0 = $dtype[1,22,22,1] parameter(0)
+    reshape.0 = $dtype[1,22,22,1] reshape(arg.0)
+    arg.1 = $dtype[8,8,1,1] parameter(1)
+    reshape.1 = $dtype[8,8,1,1] reshape(arg.1)
+    convolution.0 = $dtype[1,11,11,1] convolution(reshape.0, reshape.1),
           window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    reshape.2 = $0[1,11,11,1] reshape(convolution.0)
-    tuple.0 = ($0[1,11,11,1]) tuple(reshape.2)
-    ROOT get-tuple-element.0 = $0[1,11,11,1] get-tuple-element(tuple.0), index=0
+    reshape.2 = $dtype[1,11,11,1] reshape(convolution.0)
+    tuple.0 = ($dtype[1,11,11,1]) tuple(reshape.2)
+    ROOT gte.0 = $dtype[1,11,11,1] get-tuple-element(tuple.0), index=0
   })";
 
   RunCompareAndMatchOptimizedHlo(outline, {});
@@ -167,9 +175,9 @@ TEST_P(ConvolutionTest, Simple3DTest1) {
   HloModule convolution.test
 
   ENTRY convolution.test {
-    p0 = $0[8,4,5,5,1] parameter(0)
-    p1 = $0[3,3,3,1,32] parameter(1)
-    ROOT conv = $0[8,4,5,5,32] convolution(p0, p1),
+    p0 = $dtype[8,4,5,5,1] parameter(0)
+    p1 = $dtype[3,3,3,1,32] parameter(1)
+    ROOT conv = $dtype[8,4,5,5,32] convolution(p0, p1),
           window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
 })";
 
@@ -181,13 +189,13 @@ TEST_P(ConvolutionTest, Conv3DWithBiasTest) {
   HloModule convolution.test.with.bias
 
   ENTRY convolution.test.with.bias {
-    arg.0 = $0[15,4,5,5,28] parameter(0)
-    arg.1 = $0[3,3,3,28,64] parameter(1)
-    conv = $0[15,4,5,5,64] convolution(arg.0, arg.1),
+    arg.0 = $dtype[15,4,5,5,28] parameter(0)
+    arg.1 = $dtype[3,3,3,28,64] parameter(1)
+    conv = $dtype[15,4,5,5,64] convolution(arg.0, arg.1),
           window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
-    bias = $0[64] parameter(2)
-    broadcasted_bias = $0[15,4,5,5,64] broadcast(bias), dimensions={4}
-    ROOT add = $0[15,4,5,5,64] add(conv, broadcasted_bias)
+    bias = $dtype[64] parameter(2)
+    broadcasted_bias = $dtype[15,4,5,5,64] broadcast(bias), dimensions={4}
+    ROOT add = $dtype[15,4,5,5,64] add(conv, broadcasted_bias)
 })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BIAS"});
@@ -198,15 +206,15 @@ TEST_P(ConvolutionTest, Conv2DWithBinaryAddTest) {
   HloModule convolution.test.with.binaryadd
 
   ENTRY convolution.test.with.binaryadd {
-    arg0.1 = $0[1,22,22,1] parameter(0)
-    constant.3 = $0[] constant(1)
-    broadcast.4 = $0[8,8,1,1] broadcast(constant.3), dimensions={}
-    convolution.0 = $0[1,11,11,1] convolution(arg0.1, broadcast.4),
+    arg0.1 = $dtype[1,22,22,1] parameter(0)
+    constant.3 = $dtype[] constant(1)
+    broadcast.4 = $dtype[8,8,1,1] broadcast(constant.3), dimensions={}
+    convolution.0 = $dtype[1,11,11,1] convolution(arg0.1, broadcast.4),
           window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    constant.5 = $0[] constant(15)
-    broadcast.6 = $0[1] broadcast(constant.5), dimensions={}
-    broadcast.9 = $0[1,11,11,1] broadcast(broadcast.6), dimensions={3}
-    ROOT add.10 = $0[1,11,11,1] add(convolution.0, broadcast.9)
+    constant.5 = $dtype[] constant(15)
+    broadcast.6 = $dtype[1] broadcast(constant.5), dimensions={}
+    broadcast.9 = $dtype[1,11,11,1] broadcast(broadcast.6), dimensions={3}
+    ROOT add.10 = $dtype[1,11,11,1] add(convolution.0, broadcast.9)
   })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BINARY_ADD"});
@@ -219,15 +227,15 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndBinaryAddTest) {
   HloModule convolution.add.test
 
   ENTRY convolution.add.test {
-    arg0.1 = $0[1,22,22,1] parameter(0)
-    arg0.2 = $0[8,8,1,10] parameter(1)
-    convolution.0 = $0[1,11,11,10] convolution(arg0.1, arg0.2),
+    arg0.1 = $dtype[1,22,22,1] parameter(0)
+    arg0.2 = $dtype[8,8,1,10] parameter(1)
+    convolution.0 = $dtype[1,11,11,10] convolution(arg0.1, arg0.2),
           window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    const.0 = $0[10] constant(15)
-    bcast.1 = $0[1,11,11,10] broadcast(const.0), dimensions={3}
-    add.0 = $0[1,11,11,10] add(convolution.0, bcast.1)
-    const.1 = $0[1,11,11,10] constant({...})
-    ROOT add.1 = $0[1,11,11,10] add(add.0, const.1)
+    const.0 = $dtype[10] constant(15)
+    bcast.1 = $dtype[1,11,11,10] broadcast(const.0), dimensions={3}
+    add.0 = $dtype[1,11,11,10] add(convolution.0, bcast.1)
+    const.1 = $dtype[1,11,11,10] constant({...})
+    ROOT add.1 = $dtype[1,11,11,10] add(add.0, const.1)
   })";
 
   RunCompareAndMatchOptimizedHlo(outline, {"BIAS"});
