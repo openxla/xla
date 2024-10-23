@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
+#include "xla/service/cpu/onednn_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/tsl/util/onednn_threadpool.h"
 #include "tsl/platform/logging.h"
@@ -83,15 +84,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
       static_cast<const xla::ExecutableRunOptions*>(args[arg_indx++]);
   XLA_LIGHTWEIGHT_CHECK(run_options != nullptr);
   XLA_LIGHTWEIGHT_CHECK(run_options->intra_op_thread_pool() != nullptr);
-  tsl::OneDnnThreadPool thread_pool(
-      run_options->intra_op_thread_pool()->getPool(), false);
+  auto thread_pool = CreateOneDnnThreadPool(
+      run_options ? run_options->intra_op_thread_pool() : nullptr);
   dnnl::engine cpu_engine(dnnl::engine::kind::cpu, 0);
-#ifndef ENABLE_ONEDNN_OPENMP
-  auto onednn_stream =
-      stream(dnnl::threadpool_interop::make_stream(cpu_engine, &thread_pool));
-#else
-  auto onednn_stream = stream(cpu_engine);
-#endif  // ENABLE_ONEDNN_OPENMP
+  auto onednn_stream = MakeOneDnnStream(cpu_engine, thread_pool.get());
 
   std::string config_str(static_cast<const char*>(args[arg_indx++]));
   OneDnnConvolutionConfig conv_config;
