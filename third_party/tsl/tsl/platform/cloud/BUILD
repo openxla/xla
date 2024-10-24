@@ -216,7 +216,6 @@ cc_library(
         "//tsl/platform:str_util",
         "//tsl/platform:stringpiece",
         "//tsl/platform:types",
-        "@curl",
         "@xla//xla/tsl/lib/gtl:map_util",
         "@xla//xla/tsl/util:env_var",
     ],
@@ -238,7 +237,6 @@ cc_library(
         "//tsl/platform:stringpiece",
         "//tsl/platform:test",
         "//tsl/platform:types",
-        "@curl",
         "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
