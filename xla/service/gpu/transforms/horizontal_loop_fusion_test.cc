@@ -905,6 +905,31 @@ e {
   EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
 }
 
+TEST_F(HorizontalLoopFusionTest, FuseNonDefaultLayouts) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+f {
+  p = s8[2,2]{0,1} parameter(0)
+  b = s8[2,2]{1,0} bitcast(p)
+  n = s8[2,2]{1,0} negate(b)
+ }
+
+g {
+  p = s8[2,2]{0,1} parameter(0)
+  b = s8[2,2]{1,0} bitcast(p)
+  a = s8[2,2]{1,0} add(b, b)
+}
+
+e {
+  p0 = s8[2,2]{0,1} parameter(0)
+  p1 = s8[2,2]{0,1} parameter(1)
+  a = s8[2,2] fusion(p0), kind=kLoop, calls=f
+  b = s8[2,2] fusion(p1), kind=kLoop, calls=g
+  t = tuple(a, b)
+})"));
+
+  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

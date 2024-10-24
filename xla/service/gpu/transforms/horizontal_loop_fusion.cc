@@ -232,27 +232,6 @@ bool IsProfitableFusionCandidate(const HloInstruction& instr,
   return true;
 }
 
-// Returns whether `fusion_instr` has only row-major layouts.
-// The horizontal fusion excludes computations with non-row-major layouts,
-// because fusing computations with different layouts can result in uncoalesced
-// memory accesses and cause great performance overhead.
-bool HasOnlyRowMajorLayout(const HloInstruction& instr) {
-  if (instr.opcode() != HloOpcode::kFusion) {
-    return LayoutUtil::IsMonotonicWithDim0Major(instr.shape().layout());
-  }
-
-  auto fused_instrs = instr.fused_instructions_computation()->instructions();
-  for (HloInstruction* i : fused_instrs) {
-    if (!LayoutUtil::IsDenseArray(i->shape())) {
-      continue;
-    }
-    if (!LayoutUtil::IsMonotonicWithDim0Major(i->shape().layout())) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // Returns whether any operand of `instr` is a parameter instruction that
 // is shared with `fusion_instrs`.
 bool AnyOpndIsParamSharedAmongFusions(
@@ -294,10 +273,6 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
       VLOG(2) << "sliced_input_fusion=" << sliced_input_fusion_
               << " rejects may-not-be profitable fusion instr"
               << instr->ToString();
-      continue;
-    } else if (!HasOnlyRowMajorLayout(*instr)) {
-      VLOG(2) << "sliced_input_fusion=" << sliced_input_fusion_
-              << " rejects non-row-major fusion instr " << instr->ToString();
       continue;
     } else if (sliced_input_fusion_ &&
                AnyOpndIsParamSharedAmongFusions(instr, fusible_candidates)) {
