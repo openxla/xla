@@ -20,16 +20,20 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 #define XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 
+#ifndef TF_ROCM_VERSION
+#define TF_ROCM_VERSION 500000  // Default value if not defined
+#endif
+
 #include <rocm/include/rocprofiler-sdk/buffer.h>
 #include <rocm/include/rocprofiler-sdk/buffer_tracing.h>
 #include <rocm/include/rocprofiler-sdk/callback_tracing.h>
 #include <rocm/include/rocprofiler-sdk/external_correlation.h>
-#include <romc/include/rocprofiler-sdk/fwd.h>
+#include <rocm/include/rocprofiler-sdk/fwd.h>
 #include <rocm/include/rocprofiler-sdk/internal_threading.h>
 #include <rocm/include/rocprofiler-sdk/registration.h>
 #include <rocm/include/rocprofiler-sdk/rocprofiler.h>
 #include <rocm/include/rocprofiler-sdk/cxx/name_info.hpp>
-#include <rocm/include/rocprofiler-sdk/hip.h>
+// #include <rocm/include/rocprofiler-sdk/hip.h>
 
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
@@ -70,11 +74,14 @@ namespace wrap {
 #endif  // PLATFORM_GOOGLE
 
 // only support which latest version ?
-#if TF_ROCM_VERSION >= 50700
+/*
+#if TF_ROCM_VERSION >= 507000
 #define FOREACH_ROCTRACER_API(DO_FUNC)                     \
   DO_FUNC(rocprofiler_force_configure)                     \
   DO_FUNC(rocprofiler_at_internal_thread_create)           \
   DO_FUNC(rocprofiler_create_buffer)                       \
+  DO_FUNC(rocprofiler_get_buffer_tracing_names)            \
+  DO_FUNC(rocprofiler_get_callback_tracing_names)          \
   DO_FUNC(rocprofiler_flush_buffer)                        \
   DO_FUNC(rocprofiler_get_status_string)                   \
   DO_FUNC(rocprofiler_create_context)                      \
@@ -82,10 +89,21 @@ namespace wrap {
   DO_FUNC(rocprofiler_start_context)                       \
   DO_FUNC(rocprofiler_configure_callback_tracing_service)  \
   DO_FUNC(rocprofiler_configure_callback_thread)           \
-  DO_FUNC(rocprofiler_asign_callback_thread)              
-#else
-
+  DO_FUNC(rocprofiler_asign_callback_thread)               \
+  DO_FUNC(rocprofiler_get_timestamp)                       
+#endif
 FOREACH_ROCTRACER_API(ROCTRACER_API_WRAPPER)
+*/
+ROCTRACER_API_WRAPPER(rocprofiler_force_configure)
+ROCTRACER_API_WRAPPER(rocprofiler_create_context)
+ROCTRACER_API_WRAPPER(rocprofiler_configure_callback_tracing_service)
+ROCTRACER_API_WRAPPER(rocprofiler_create_buffer)
+ROCTRACER_API_WRAPPER(rocprofiler_flush_buffer)
+ROCTRACER_API_WRAPPER(rocprofiler_configure_buffer_tracing_service)
+ROCTRACER_API_WRAPPER(rocprofiler_get_thread_id)
+// ROCTRACER_API_WRAPPER(rocprofiler_get_timestamp)
+
+
 
 #undef FOREACH_ROCTRACER_API
 #undef ROCTRACER_API_WRAPPER
