@@ -4093,13 +4093,18 @@ cc_library(
     srcs = ["hlo_domain_map.cc"],
     hdrs = ["hlo_domain_map.h"],
     deps = [
-        "//xla:types",
+        "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
