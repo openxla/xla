@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "xla/backends/profiler/gpu/rocm_collector.h"
+// #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 #include "xla/tsl/util/env_var.h"
 #include "tsl/platform/abi.h"
@@ -65,10 +65,13 @@ using tsl::profiler::XLineBuilder;
 using tsl::profiler::XPlaneBuilder;
 using tsl::profiler::XSpace;
 
+
+
 // GpuTracer for ROCm GPU.
 class GpuTracer : public profiler::ProfilerInterface {
  public:
-  GpuTracer(RocmTracer* rocm_tracer) : rocm_tracer_(rocm_tracer) {
+  GpuTracer() {
+    Start();
     LOG(INFO) << "GpuTracer created.";
   }
   ~GpuTracer() override {}
@@ -76,15 +79,15 @@ class GpuTracer : public profiler::ProfilerInterface {
   // GpuTracer interface:
   absl::Status Start() override;
   absl::Status Stop() override;
-  absl::Status CollectData(XSpace* space) override;
+  // absl::Status CollectData(XSpace* space) override;
 
  private:
   absl::Status DoStart();
   absl::Status DoStop();
 
-  RocmTracerOptions GetRocmTracerOptions();
+  // RocmTracerOptions GetRocmTracerOptions();
 
-  RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
+  // RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
 
   enum State {
     kNotStarted,
@@ -95,10 +98,10 @@ class GpuTracer : public profiler::ProfilerInterface {
   };
   State profiling_state_ = State::kNotStarted;
 
-  RocmTracer* rocm_tracer_;
-  std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
+  // RocmTracer* rocm_tracer_;
+  // std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
 };
-
+/*
 RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   // TODO(rocm-profiler): We need support for context similar to CUDA
   RocmTracerOptions options;
@@ -170,9 +173,9 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
                             hip_api_aux_ops.end());
 
   // options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, hip_api_domain_ops);
-  options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, empty_vec);
+  // options.api_callbacks.emplace(ACTIVITY_DOMAIN_HIP_API, empty_vec);
 
-  options.activity_tracing.emplace(ACTIVITY_DOMAIN_HIP_OPS, empty_vec);
+  // options.activity_tracing.emplace(ACTIVITY_DOMAIN_HIP_OPS, empty_vec);
 
   return options;
 }
@@ -186,8 +189,9 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
   options.num_gpus = num_gpus;
   return options;
 }
-
+*/
 absl::Status GpuTracer::DoStart() {
+  /*
   if (!rocm_tracer_->IsAvailable()) {
     return tsl::errors::Unavailable("Another profile session running.");
   }
@@ -203,6 +207,10 @@ absl::Status GpuTracer::DoStart() {
 
   RocmTracerOptions tracer_options = GetRocmTracerOptions();
   rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
+  */
+  xla::profiler::setup();
+  xla::profiler::start();
+  xla::profiler::identify(1);
 
   return absl::OkStatus();
 }
@@ -219,9 +227,13 @@ absl::Status GpuTracer::Start() {
 }
 
 absl::Status GpuTracer::DoStop() {
+  xla::profiler::stop();
+  xla::profiler::shutdown();
+  /*
   rocm_tracer_->Disable();
   AnnotationStack::Enable(false);
   return absl::OkStatus();
+  */
 }
 
 absl::Status GpuTracer::Stop() {
@@ -232,6 +244,7 @@ absl::Status GpuTracer::Stop() {
   return absl::OkStatus();
 }
 
+/*
 absl::Status GpuTracer::CollectData(XSpace* space) {
   switch (profiling_state_) {
     case State::kNotStarted:
@@ -253,6 +266,7 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
   }
   return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
 }
+*/
 
 // Not in anonymous namespace for testing purposes.
 std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
@@ -261,11 +275,14 @@ std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
       options.device_type() != ProfileOptions::UNSPECIFIED)
     return nullptr;
 
+/*
   profiler::RocmTracer* rocm_tracer =
       profiler::RocmTracer::GetRocmTracerSingleton();
   if (!rocm_tracer->IsAvailable()) return nullptr;
-
   return std::make_unique<profiler::GpuTracer>(rocm_tracer);
+  */
+ return nullptr;
+  // return std::make_unique<profiler::GpuTracer>(nullptr);
 }
 
 auto register_rocm_gpu_tracer_factory = [] {
