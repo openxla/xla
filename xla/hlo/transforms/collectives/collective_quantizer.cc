@@ -97,10 +97,13 @@ HloInstruction* ApplyUnaries(HloInstruction* instr,
   return instr;
 }
 
-// Returns whether instr is replicated across all partitions associated with
-// module. Returns false when there are multiple replicas.
-absl::StatusOr<bool> InstrIsReplicated(HloModule* module,
-                                       HloInstruction* instr) {
+// Returns whether instr is replicated across replica_groups. When
+// replica_groups is empty, returns whether instr is replicated across all
+// partitions associated with module. Returns false when there are multiple
+// replicas.
+absl::StatusOr<bool> InstrIsReplicated(
+    HloModule* module, HloInstruction* instr,
+    absl::Span<const ReplicaGroup> replica_groups) {
   // The replication analysis only verifies the replication of instr across
   // partitions, not replicas. The replica count must be one to ensure instr is
   // replicated across all devices.
@@ -108,11 +111,12 @@ absl::StatusOr<bool> InstrIsReplicated(HloModule* module,
     return false;
   }
 
-  TF_ASSIGN_OR_RETURN(
-      auto replication_analysis,
-      HloReplicationAnalysis::Run(module,
-                                  /*cross_partition_spmd=*/true));
-  return replication_analysis->HloInstructionIsReplicatedAt(instr, {});
+  TF_ASSIGN_OR_RETURN(auto replication_analysis,
+                      HloReplicationAnalysis::RunWithPartialReplication(
+                          module,
+                          /*cross_partition_spmd=*/true));
+  return replication_analysis->HloInstructionIsReplicatedAt(instr, {},
+                                                            replica_groups);
 }
 
 // Recursively collects and returns unary, divide, or multiply operands of instr
@@ -261,21 +265,25 @@ std::optional<ConversionSubgraph> IsSupportedQuantization(
   return std::make_optional<ConversionSubgraph>(std::move(subgraph));
 }
 
-absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
+absl::StatusOr<bool> MatchDequantization(HloInstruction* instr) {
   std::optional<ConversionSubgraph> subgraph =
       IsSupportedDequantization(instr->mutable_operand(0));
 
   if (!subgraph.has_value()) {
-    return absl::OkStatus();
+    return false;
   }
 
   if (subgraph->scale_bcast) {
-    // The scale must be replicated across all devices.
+    // The scale must be replicated across the partition groups participating in
+    // the collective.
     TF_ASSIGN_OR_RETURN(
         bool scale_is_replicated,
-        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast));
+        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast,
+                          instr->opcode() == HloOpcode::kCollectivePermute
+                              ? absl::Span<const ReplicaGroup>{}
+                              : instr->replica_groups()));
     if (!scale_is_replicated) {
-      return absl::OkStatus();
+      return false;
     }
   }
 
@@ -307,29 +315,32 @@ absl::Status MatchDequantization(HloInstruction* instr, bool* changed) {
   TF_RETURN_IF_ERROR(
       instr->ReplaceAllUsesWith(subgraph->binary ? new_binary : new_convert));
 
-  *changed = true;
-  VLOG(5) << "Quantized collective " << new_collective->ToShortString();
+  VLOG(5) << "Collective " << instr->ToString() << " has been replaced with "
+          << new_collective->ToString();
 
-  return absl::OkStatus();
+  return true;
 }
 
-absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
+absl::StatusOr<bool> MatchQuantization(HloInstruction* instr) {
   std::optional<ConversionSubgraph> subgraph;
   if (instr->user_count() == 1) {
     subgraph = IsSupportedQuantization(instr->users()[0]);
   }
 
   if (!subgraph.has_value()) {
-    return absl::OkStatus();
+    return false;
   }
 
   if (subgraph->scale_bcast) {
     // The scale must be replicated across all devices.
     TF_ASSIGN_OR_RETURN(
         bool scale_is_replicated,
-        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast));
+        InstrIsReplicated(instr->parent()->parent(), subgraph->scale_bcast,
+                          instr->opcode() == HloOpcode::kCollectivePermute
+                              ? absl::Span<const ReplicaGroup>{}
+                              : instr->replica_groups()));
     if (!scale_is_replicated) {
-      return absl::OkStatus();
+      return false;
     }
   }
 
@@ -365,10 +376,10 @@ absl::Status MatchQuantization(HloInstruction* instr, bool* changed) {
   new_collective = ApplyUnaries(new_collective, subgraph->unaries);
   TF_RETURN_IF_ERROR(subgraph->convert->ReplaceAllUsesWith(new_collective));
 
-  *changed = true;
-  VLOG(5) << "Quantized collective " << new_collective->ToShortString();
+  VLOG(5) << "Collective " << instr->ToString() << " has been replaced with "
+          << new_collective->ToString();
 
-  return absl::OkStatus();
+  return true;
 }
 
 }  // namespace
@@ -381,8 +392,11 @@ absl::StatusOr<bool> CollectiveQuantizer::Run(
   for (HloComputation* comp : module->MakeComputationPostOrder()) {
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
       if (IsSupportedCollective(instr)) {
-        TF_RETURN_IF_ERROR(MatchDequantization(instr, &changed));
-        TF_RETURN_IF_ERROR(MatchQuantization(instr, &changed));
+        TF_ASSIGN_OR_RETURN(bool instr_changed, MatchDequantization(instr));
+        if (!instr_changed) {
+          TF_ASSIGN_OR_RETURN(instr_changed, MatchQuantization(instr));
+        }
+        changed |= instr_changed;
       }
     }
   }

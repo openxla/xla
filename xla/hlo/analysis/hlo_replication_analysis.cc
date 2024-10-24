@@ -100,11 +100,15 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
             hlo->GetModule()->config().num_partitions();
         absl::flat_hash_set<int64_t> visited_partitions;
         absl::flat_hash_set<int64_t> visited_replicas;
+        std::vector<absl::Span<const int64_t>> device_sets;
         for (const auto& group : hlo->replica_groups()) {
           visited_partitions.clear();
           visited_replicas.clear();
           visited_replicas.reserve(group.replica_ids().size());
           visited_partitions.reserve(group.replica_ids().size());
+          if (support_partial_replication) {
+            device_sets.push_back(group.replica_ids());
+          }
           for (int64_t id : group.replica_ids()) {
             int64_t rid = id / num_partitions;
             int64_t pid = id % num_partitions;
@@ -120,6 +124,8 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
         if ((cross_partition_spmd && replicated_across_partitions) ||
             (!cross_partition_spmd && replicated_across_replicas)) {
           return HloReplication::ReplicatedOnAllDevices();
+        } else if (support_partial_replication) {
+          return HloReplication::PartiallyReplicated(device_sets);
         } else {
           return HloReplication::UniqueOnAllDevices();
         }
