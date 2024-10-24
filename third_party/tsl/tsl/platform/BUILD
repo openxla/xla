@@ -1065,6 +1065,7 @@ cc_library(
     deps = [
         "@ml_dtypes//:float8",
         "@ml_dtypes//:intn",
+        "@ml_dtypes//:mxfloat",
     ],
 )
 
