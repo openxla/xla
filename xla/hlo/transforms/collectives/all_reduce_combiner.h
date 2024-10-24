@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/all_reduce_key.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -42,6 +43,23 @@ class AllReduceCombiner : public HloModulePass {
   absl::StatusOr<bool> Run(
       HloModule* module,
       const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+
+  using GroupKey = std::tuple<AllReduceKey, /*extra_args*/ std::string>;
+
+  static std::string GetGroupKeyExtraArgs(AllReduceCombiner::GroupKey& key);
+
+  // Returns a key that will be equal for instructions that might be combined,
+  // or different if not.
+  static std::optional<AllReduceCombiner::GroupKey> CombineKey(
+      const HloInstruction* instruction, const HloDomainMap& domain_map);
+
+ protected:
+  absl::StatusOr<bool> RunWithKeyCombiner(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads,
+      absl::FunctionRef<std::optional<AllReduceCombiner::GroupKey>(
+          const HloInstruction*, const HloDomainMap&)>
+          combine_key);
 
  private:
   // Combine all reduce ops up to this threshold.
