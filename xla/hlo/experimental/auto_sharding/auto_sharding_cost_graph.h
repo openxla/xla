@@ -52,11 +52,6 @@ struct EdgeReshardingCost {
     return EdgeReshardingCost(other.communication_cost + communication_cost,
                               other.memory_cost + memory_cost);
   }
-
-  std::string ToString() const {
-    return absl::StrCat("{communication_cost=", communication_cost,
-                        ", memory_cost=", memory_cost, "}");
-  }
 };
 
 using EdgeReshardingCostMatrix = Matrix<EdgeReshardingCost>;
@@ -106,8 +101,6 @@ class CostGraph {
   void Simplify(bool enable);
 
   NodeStrategyIdx RemapIndex(NodeIdx node_id, NodeStrategyIdx value) const;
-
-  std::string ToString() const;
 
   // TODO: Make class member variables private.
 
