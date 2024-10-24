@@ -70,8 +70,6 @@ using llvm_ir::SetToFirstInsertPoint;
 using xla::float8_fnuz_ir_emitter::EmitF8fnuzToFloating;
 using xla::float8_fnuz_ir_emitter::EmitFloatingToF8fnuz;
 
-namespace {
-
 absl::StatusOr<llvm::Value*> EmitReducePrecisionIR(
     PrimitiveType src_ty, llvm::Value* x, int64_t dest_exponent_bits,
     int64_t dest_mantissa_bits, bool quiet_nans, llvm::IRBuilder<>* b) {
@@ -214,6 +212,8 @@ absl::StatusOr<llvm::Value*> EmitReducePrecisionIR(
 
   return result;
 }
+
+namespace {
 
 template <int f8_exponent_bits>
 llvm::Value* handle_halfway_points_F16ToF8(llvm::Value* f16_abs_bits,
