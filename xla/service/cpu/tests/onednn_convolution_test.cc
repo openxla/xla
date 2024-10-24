@@ -49,7 +49,7 @@ class ConvolutionTest : public HloTestBase,
   float atol_;
   float rtol_;
 
-  constexpr static char* kConvRewriteStr = R"(
+  constexpr static const char* kConvRewriteStr = R"(
     ; CHECK:     custom_call_target="__onednn$convolution",
     ; CHECK:       backend_config={
     ; CHECK-DAG:     "outer_dimension_partitions":[],
@@ -58,12 +58,12 @@ class ConvolutionTest : public HloTestBase,
     ; CHECK:      }
     )";
 
-  constexpr static char* kConvRewriteFusionsStr = R"(
+  constexpr static const char* kConvRewriteFusionsStr = R"(
     ; CHECK-DAG:          "fusions":{
     ; CHECK-DAG:            "ops":[$fused_ops]
     ; CHECK-DAG:      },)";
 
-  constexpr static char* kConvRewriteOptimizationsStr = R"(
+  constexpr static const char* kConvRewriteOptimizationsStr = R"(
     ; CHECK-DAG:          "optimization_config":{
     ; CHECK-DAG:            "weights_prepacked":$weights_prepacked,
     ; CHECK-DAG:            "user_scratchpad":$user_scratchpad,
