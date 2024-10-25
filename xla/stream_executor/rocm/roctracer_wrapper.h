@@ -35,6 +35,16 @@ limitations under the License.
 #include <rocm/include/rocprofiler-sdk/cxx/name_info.hpp>
 // #include <rocm/include/rocprofiler-sdk/hip.h>
 
+#include <rocm/include/rocprofiler-sdk/rocprofiler.h>
+#include <rocm/include/rocprofiler-sdk/buffer.h>
+#include <rocm/include/rocprofiler-sdk/buffer_tracing.h>
+#include <rocm/include/rocprofiler-sdk/callback_tracing.h>
+#include <rocm/include/rocprofiler-sdk/external_correlation.h>
+#include <rocm/include/rocprofiler-sdk/fwd.h>
+#include <rocm/include/rocprofiler-sdk/internal_threading.h>
+#include <rocm/include/rocprofiler-sdk/registration.h>
+
+
 #include "xla/stream_executor/platform/dso_loader.h"
 #include "xla/stream_executor/platform/port.h"
 #include "tsl/platform/env.h"
@@ -52,7 +62,7 @@ namespace wrap {
   }
 
 #else
-
+/*
 #define ROCTRACER_API_WRAPPER(API_NAME)                                       \
   template <typename... Args>                                                 \
   auto API_NAME(Args... args) -> decltype(::API_NAME(args...)) {              \
@@ -70,6 +80,26 @@ namespace wrap {
     }();                                                                      \
     return loaded(args...);                                                   \
   }
+*/
+#define ROCTRACER_API_WRAPPER(API_NAME)                                       \
+  template <typename... Args>                                                 \
+  auto API_NAME(Args... args) -> decltype(::API_NAME(args...)) {              \
+    using FuncPtrT = std::add_pointer<decltype(::API_NAME)>::type;            \
+    static FuncPtrT loaded = nullptr;                                         \
+    if (!loaded) {                                                            \
+      static const char* kName = #API_NAME;                                   \
+      void* f;                                                                \
+      auto s = tsl::Env::Default()->GetSymbolFromLibrary(                     \
+          stream_executor::internal::CachedDsoLoader::GetRoctracerDsoHandle() \
+              .value(),                                                       \
+          kName, &f);                                                         \
+      CHECK(s.ok()) << "could not find " << kName                             \
+                    << " in roctracer DSO; dlerror: " << s.message();         \
+      loaded = reinterpret_cast<FuncPtrT>(f);                                 \
+    }                                                                         \
+    return loaded(args...);                                                   \
+  }
+
 
 #endif  // PLATFORM_GOOGLE
 
@@ -95,14 +125,22 @@ namespace wrap {
 FOREACH_ROCTRACER_API(ROCTRACER_API_WRAPPER)
 */
 ROCTRACER_API_WRAPPER(rocprofiler_force_configure)
+ROCTRACER_API_WRAPPER(rocprofiler_start_context)
+ROCTRACER_API_WRAPPER(rocprofiler_stop_context)
 ROCTRACER_API_WRAPPER(rocprofiler_create_context)
+ROCTRACER_API_WRAPPER(rocprofiler_is_initialized)
+ROCTRACER_API_WRAPPER(rocprofiler_context_is_valid)
+ROCTRACER_API_WRAPPER(rocprofiler_assign_callback_thread)
+ROCTRACER_API_WRAPPER(rocprofiler_create_callback_thread)
 ROCTRACER_API_WRAPPER(rocprofiler_configure_callback_tracing_service)
 ROCTRACER_API_WRAPPER(rocprofiler_create_buffer)
 ROCTRACER_API_WRAPPER(rocprofiler_flush_buffer)
 ROCTRACER_API_WRAPPER(rocprofiler_configure_buffer_tracing_service)
 ROCTRACER_API_WRAPPER(rocprofiler_get_thread_id)
-// ROCTRACER_API_WRAPPER(rocprofiler_get_timestamp)
-
+ROCTRACER_API_WRAPPER(rocprofiler_at_internal_thread_create)
+ROCTRACER_API_WRAPPER(rocprofiler_push_external_correlation_id)
+ROCTRACER_API_WRAPPER(rocprofiler_query_buffer_tracing_kind_name)
+ROCTRACER_API_WRAPPER(rocprofiler_query_buffer_tracing_kind_operation_name)
 
 
 #undef FOREACH_ROCTRACER_API
