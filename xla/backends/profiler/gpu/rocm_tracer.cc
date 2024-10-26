@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/profiler/gpu/rocm_tracer.h"
-
 #include "xla/backends/profiler/gpu/common/call_stack.hpp"
 #include "xla/backends/profiler/gpu/common/defines.hpp"
 #include "xla/backends/profiler/gpu/common/filesystem.hpp"
 #include "xla/backends/profiler/gpu/common/name_info.hpp"
+
+#include "xla/backends/profiler/gpu/rocm_tracer.h"
+#include "xla/stream_executor/rocm/roctracer_wrapper.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/node_hash_map.h"
@@ -56,6 +57,10 @@ extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(
   uint32_t version, const char* runtime_version, uint32_t priority,
   rocprofiler_client_id_t* id
 );
+
+template <typename Tp = std::string_view>
+using buffer_name_info_t = rocprofiler::sdk::utility::name_info<rocprofiler_buffer_tracing_kind_t, Tp>;
+
 
 namespace se = ::stream_executor;
 
@@ -122,6 +127,46 @@ tool_code_object_callback(rocprofiler_callback_tracing_record_t record,
     (void) user_data;
     (void) callback_data;
 }
+
+template <typename Tp>
+inline buffer_name_info_t<Tp>
+rocm_get_buffer_tracing_names()
+{
+    auto cb_name_info = buffer_name_info_t<Tp>{};
+    //
+    // callback for each kind operation
+    //
+    static auto tracing_kind_operation_cb = [](rocprofiler_buffer_tracing_kind_t kindv,
+                                               rocprofiler_tracing_operation_t   operation,
+                                               void*                             data_v) {
+        auto* name_info_v = static_cast<buffer_name_info_t<Tp>*>(data_v);
+
+        const char* name = nullptr;
+        auto        status =
+            se::wrap::rocprofiler_query_buffer_tracing_kind_operation_name(kindv, operation, &name, nullptr);
+        if(status == rocprofiler::sdk::success_v && name) name_info_v->emplace(kindv, operation, name);
+        return 0;
+    };
+
+    //
+    //  callback for each buffer kind (i.e. domain)
+    //
+    static auto tracing_kind_cb = [](rocprofiler_buffer_tracing_kind_t kind, void* data) {
+        //  store the buffer kind name
+        auto*       name_info_v = static_cast<buffer_name_info_t<Tp>*>(data);
+        const char* name        = nullptr;
+        auto        status      = se::wrap::rocprofiler_query_buffer_tracing_kind_name(kind, &name, nullptr);
+        if(status == rocprofiler::sdk::success_v && name) name_info_v->emplace(kind, name);
+
+        se::wrap::rocprofiler_iterate_buffer_tracing_kind_operations(kind, tracing_kind_operation_cb, data);
+        return 0;
+    };
+
+    se::wrap::rocprofiler_iterate_buffer_tracing_kinds(tracing_kind_cb, &cb_name_info);
+
+    return cb_name_info;
+}
+
 
 void
 tool_tracing_callback(rocprofiler_context_id_t      context,
@@ -411,7 +456,8 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
 
     call_stack_v->emplace_back(source_location{__FUNCTION__, __FILE__, __LINE__, ""});
 
-    client_name_info = xla::common::get_buffer_tracing_names();
+    client_name_info = rocm_get_buffer_tracing_names<std::string_view>();
+    // client_name_info = get_default_buffer_tracing_names();
 
     for(const auto& itr : client_name_info)
     {
@@ -506,7 +552,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
                      "assignment of thread for buffer");
 
     int valid_ctx = 0;
-    ROCPROFILER_CALL(rocprofiler_context_is_valid(client_ctx, &valid_ctx),
+    ROCPROFILER_CALL(se::wrap::rocprofiler_context_is_valid(client_ctx, &valid_ctx),
                      "context validity check");
     if(valid_ctx == 0)
     {
@@ -588,7 +634,8 @@ rocprofiler_configure(uint32_t                 version,
                       rocprofiler_client_id_t* id)
 {
     // set the client name
-    id->name = "XLA";
+    id->name = "XLA-with-rocprofv3";
+    std::cout << "Configure XLA with rocprofv3!\n";
 
     // store client info
     xla::profiler::client_id = id;
@@ -628,3 +675,5 @@ rocprofiler_configure(uint32_t                 version,
     // return pointer to configure data
     return &cfg;
 }
+
+

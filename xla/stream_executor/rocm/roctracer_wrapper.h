@@ -21,7 +21,7 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ROCM_ROCTRACER_WRAPPER_H_
 
 #ifndef TF_ROCM_VERSION
-#define TF_ROCM_VERSION 500000  // Default value if not defined
+#define TF_ROCM_VERSION 600000  // Default value if not defined
 #endif
 
 #include <rocm/include/rocprofiler-sdk/buffer.h>
@@ -31,18 +31,8 @@ limitations under the License.
 #include <rocm/include/rocprofiler-sdk/fwd.h>
 #include <rocm/include/rocprofiler-sdk/internal_threading.h>
 #include <rocm/include/rocprofiler-sdk/registration.h>
-#include <rocm/include/rocprofiler-sdk/rocprofiler.h>
 #include <rocm/include/rocprofiler-sdk/cxx/name_info.hpp>
-// #include <rocm/include/rocprofiler-sdk/hip.h>
-
 #include <rocm/include/rocprofiler-sdk/rocprofiler.h>
-#include <rocm/include/rocprofiler-sdk/buffer.h>
-#include <rocm/include/rocprofiler-sdk/buffer_tracing.h>
-#include <rocm/include/rocprofiler-sdk/callback_tracing.h>
-#include <rocm/include/rocprofiler-sdk/external_correlation.h>
-#include <rocm/include/rocprofiler-sdk/fwd.h>
-#include <rocm/include/rocprofiler-sdk/internal_threading.h>
-#include <rocm/include/rocprofiler-sdk/registration.h>
 
 
 #include "xla/stream_executor/platform/dso_loader.h"
@@ -124,6 +114,7 @@ namespace wrap {
 #endif
 FOREACH_ROCTRACER_API(ROCTRACER_API_WRAPPER)
 */
+
 ROCTRACER_API_WRAPPER(rocprofiler_force_configure)
 ROCTRACER_API_WRAPPER(rocprofiler_start_context)
 ROCTRACER_API_WRAPPER(rocprofiler_stop_context)
@@ -141,6 +132,9 @@ ROCTRACER_API_WRAPPER(rocprofiler_at_internal_thread_create)
 ROCTRACER_API_WRAPPER(rocprofiler_push_external_correlation_id)
 ROCTRACER_API_WRAPPER(rocprofiler_query_buffer_tracing_kind_name)
 ROCTRACER_API_WRAPPER(rocprofiler_query_buffer_tracing_kind_operation_name)
+ROCTRACER_API_WRAPPER(rocprofiler_iterate_buffer_tracing_kind_operations)
+ROCTRACER_API_WRAPPER(rocprofiler_iterate_buffer_tracing_kinds)
+ROCTRACER_API_WRAPPER(rocprofiler_get_status_string)
 
 
 #undef FOREACH_ROCTRACER_API

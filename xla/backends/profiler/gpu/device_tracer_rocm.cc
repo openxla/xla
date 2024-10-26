@@ -71,6 +71,7 @@ using tsl::profiler::XSpace;
 class GpuTracer : public profiler::ProfilerInterface {
  public:
   GpuTracer() {
+    std::cout << "GpuTrace with rocprofv3\n" << std::flush;
     Start();
     LOG(INFO) << "GpuTracer created.";
   }
