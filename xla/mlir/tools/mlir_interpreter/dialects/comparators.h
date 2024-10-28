@@ -1,3 +1,4 @@
+
 /* Copyright 2022 The OpenXLA Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +20,6 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 #include <type_traits>
-#include <cmath>
 
 #include "llvm/Support/ErrorHandling.h"
 #include "xla/mlir/tools/mlir_interpreter/framework/interpreter_value_util.h"
@@ -44,19 +44,10 @@ struct FloatCompare : CwiseAll {
     }
   }
 
-  // Overload for floating-point types only
-  template <typename T, typename std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
+  template <typename T>
   static bool isnan(T a) {
     return std::isnan(a);
   }
-
-  // Overload for non-floating point types (integral types)
-  template <typename T, typename std::enable_if_t<std::is_integral_v<T>, int> = 0>
-  static bool isnan(T a) {
-    return false;  // Integral types can't be NaN
-  }
-
-  // Handling complex types
   template <typename T>
   static bool isnan(std::complex<T> a) {
     return std::isnan(std::real(a)) || std::isnan(std::imag(a));
