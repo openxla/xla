@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_device_mesh.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_option.h"
@@ -43,14 +44,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/buffer_value.h"
-#include "xla/service/hlo_alias_analysis.h"
-#include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_value.h"
-#include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "tsl/platform/statusor.h"
 
@@ -144,7 +144,7 @@ TEST(DeviceMeshTest, ReshapeTestWithIota) {
   EXPECT_EQ(device_mesh.num_elements(), 64);
 }
 
-class AutoShardingTest : public HloTestBase {
+class AutoShardingTest : public HloHardwareIndependentTestBase {
  protected:
   const absl::string_view kDotHloString = R"(
 HloModule module

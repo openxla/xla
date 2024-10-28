@@ -190,6 +190,7 @@ cc_library(
     name = "ifrt_ir_program_serdes",
     srcs = ["ifrt_ir_program_serdes.cc"],
     compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla/python/ifrt:friends"],
     deps = [
         ":ifrt_ir_program",
         "//xla/mlir/utils:error_util",
@@ -223,5 +224,20 @@ xla_cc_test(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "atom_program_compiler",
+    hdrs = ["atom_program_compiler.h"],
+    compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla/python/ifrt:friends"],
+    deps = [
+        ":ir",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt/hlo:hlo_program",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
     ],
 )

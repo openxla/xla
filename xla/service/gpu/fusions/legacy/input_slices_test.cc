@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -33,7 +34,7 @@ namespace {
 
 class InputSlicesTest : public HloTestBase {
  protected:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     auto opts = HloTestBase::GetDebugOptionsForTest();
     opts.set_xla_gpu_mlir_emitter_level(0);
     return opts;

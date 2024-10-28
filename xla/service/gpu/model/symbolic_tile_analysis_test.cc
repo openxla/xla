@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/status_matchers.h"
@@ -961,7 +961,7 @@ ENTRY main {
                                  /*tile_sizes=*/{1, 1, 32},
                                  /*tile_strides=*/{0, 1, 1},
                                  /*tile_offsets_indexing=*/R"(
-    (d0, d1)[rt0, rt1] -> (rt0, d1, rt1),
+    (d0, d1){rt0, rt1} -> (rt0, d1, rt1),
     domain:
     d0 in [0, 0],
     d1 in [0, 1],

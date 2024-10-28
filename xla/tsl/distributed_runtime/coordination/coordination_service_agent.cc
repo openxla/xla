@@ -293,7 +293,7 @@ absl::Status CoordinationServiceAgentImpl::Connect() {
     call_opts.SetTimeout(absl::ToInt64Milliseconds(deadline - absl::Now()));
     absl::Notification n;
     leader_client_->RegisterTaskAsync(
-        &call_opts, &request, &response, [&](absl::Status s) {
+        &call_opts, &request, &response, [&](const absl::Status& s) {
           if (s.ok()) {
             leader_incarnation_ = response.leader_incarnation();
             {
@@ -362,7 +362,7 @@ void CoordinationServiceAgentImpl::StartSendingHeartbeats() {
     // transient network failures.
     VLOG(10) << "HeartbeatRequest: " << request.DebugString();
     leader_client_->HeartbeatAsync(&call_opts, &request, &response,
-                                   [&](absl::Status s) {
+                                   [&](const absl::Status& s) {
                                      status = s;
                                      n.Notify();
                                    });
@@ -385,9 +385,11 @@ void CoordinationServiceAgentImpl::StartSendingHeartbeats() {
       }
       SetError(status);
     } else if (response.leader_incarnation() != leader_incarnation_) {
-      SetError(MakeCoordinationError(
-          absl::AbortedError("Leader incarnation ID mismatch: the "
-                             "coordination leader has restarted.")));
+      SetError(MakeCoordinationError(absl::AbortedError(
+          "Leader incarnation ID mismatch: the coordination  leader "
+          "(usually slice 0 task 0) has restarted. Check for earlier "
+          "errors or any scheduler events (e.g. preemption, eviction) to "
+          "debug further.")));
     }
     // Send next heartbeat after an interval.
     {
@@ -406,7 +408,7 @@ void CoordinationServiceAgentImpl::StartPollingForError() {
   LOG(INFO) << "Polling for error from coordination service. This is a "
                "long-running RPC that will return only if an error is "
                "encountered or cancelled (e.g. due to shutdown).";
-  PollForErrorAsync([&](absl::Status status) {
+  PollForErrorAsync([&](const absl::Status& status) {
     CHECK(!status.ok()) << "PollForError returned OK status. Should "
                            "always return an error.";
     if (absl::IsCancelled(status)) {
@@ -472,7 +474,7 @@ absl::Status CoordinationServiceAgentImpl::WaitForAllTasks(
   absl::Status status;
   absl::Notification n;
   leader_client_->WaitForAllTasksAsync(&request, &response,
-                                       [&](absl::Status s) {
+                                       [&](const absl::Status& s) {
                                          status = s;
                                          n.Notify();
                                        });
@@ -548,7 +550,7 @@ absl::Status CoordinationServiceAgentImpl::ReportError(
 
   absl::Notification n;
   leader_client_->ReportErrorToServiceAsync(
-      &request, &response, [&](absl::Status s) {
+      &request, &response, [&](const absl::Status& s) {
         VLOG(5) << "ReportErrorToServiceResponse: " << s;
         if (!s.ok()) {
           LOG(ERROR)
@@ -556,8 +558,10 @@ absl::Status CoordinationServiceAgentImpl::ReportError(
                  "coordination service: "
               << s
               << "\nThis is usually caused by an earlier error during "
-                 "execution. Check the logs (this task or the leader) for "
-                 "an earlier error to debug further.";
+                 "execution. Check the logs of (a) this task, (b) the "
+                 "leader (usually slice 0 task 0) and (c) the scheduler "
+                 "(e.g. preemption, eviction) for an earlier error to debug "
+                 "further.";
         }
         n.Notify();
       });
@@ -591,7 +595,7 @@ absl::Status CoordinationServiceAgentImpl::ShutdownInternal() {
 
     absl::Notification n;
     leader_client_->ShutdownTaskAsync(&call_opts, &request, &response,
-                                      [&status, &n](absl::Status s) {
+                                      [&status, &n](const absl::Status& s) {
                                         status = s;
                                         n.Notify();
                                       });
@@ -603,8 +607,10 @@ absl::Status CoordinationServiceAgentImpl::ShutdownInternal() {
           << "Failed to disconnect from coordination service with status: "
           << TrimCoordinationErrorMessage(status)
           << "\nProceeding with agent shutdown anyway. This is usually caused "
-             "by an earlier error during execution. Check the logs (this task "
-             "or the leader) for an earlier error to debug further.";
+             "by an earlier error during execution. Check the logs of (a) this "
+             "task, (b) the leader (usually slice 0 task 0) and (c) the "
+             "scheduler (e.g. preemption, eviction) for an earlier error to "
+             "debug further.";
     }
   }
 
@@ -620,8 +626,9 @@ absl::Status CoordinationServiceAgentImpl::ShutdownInternal() {
           "still shutdown anyway. Agent status: ",
           status_.ToString(),
           "\nThis is usually caused by an earlier error during execution. "
-          "Check the logs (this task or the leader) for an earlier error to "
-          "debug further.");
+          "Check the logs of (a) this task, (b) the leader (usually slice 0 "
+          "task 0) and (c) the scheduler (e.g. preemption, eviction) for an "
+          "earlier error to debug further.");
       status =
           MakeCoordinationError(absl::FailedPreconditionError(status_message));
       LOG(ERROR) << status_message;
@@ -651,7 +658,7 @@ absl::Status CoordinationServiceAgentImpl::Reset() {
   absl::Status status;
   absl::Notification n;
   leader_client_->ResetTaskAsync(&request, &response,
-                                 [&status, &n](absl::Status s) {
+                                 [&status, &n](const absl::Status& s) {
                                    status = s;
                                    n.Notify();
                                  });
@@ -816,10 +823,11 @@ absl::Status CoordinationServiceAgentImpl::InsertKeyValue(
 
   absl::Status status;
   absl::Notification n;
-  leader_client_->InsertKeyValueAsync(&request, &response, [&](absl::Status s) {
-    status = s;
-    n.Notify();
-  });
+  leader_client_->InsertKeyValueAsync(&request, &response,
+                                      [&](const absl::Status& s) {
+                                        status = s;
+                                        n.Notify();
+                                      });
   n.WaitForNotification();
   VLOG(3) << "InsertKeyValueResponse: " << status;
   return status;
@@ -835,10 +843,11 @@ absl::Status CoordinationServiceAgentImpl::DeleteKeyValue(
 
   absl::Status status;
   absl::Notification n;
-  leader_client_->DeleteKeyValueAsync(&request, &response, [&](absl::Status s) {
-    status = s;
-    n.Notify();
-  });
+  leader_client_->DeleteKeyValueAsync(&request, &response,
+                                      [&](const absl::Status& s) {
+                                        status = s;
+                                        n.Notify();
+                                      });
   n.WaitForNotification();
   VLOG(3) << "DeleteKeyValueResponse " << status;
   return absl::OkStatus();
@@ -868,7 +877,6 @@ void CoordinationServiceAgentImpl::SetError(const absl::Status& error) {
   if (state_ == CoordinatedTaskState::TASKSTATE_ERROR) return;
   absl::Status trimmed_error = TrimCoordinationErrorMessage(error);
 
-  LOG(ERROR) << "Coordination agent is set to ERROR: " << trimmed_error;
   state_ = CoordinatedTaskState::TASKSTATE_ERROR;
   status_ = trimmed_error;
   error_fn_(trimmed_error);
@@ -885,7 +893,7 @@ absl::Status CoordinationServiceAgentImpl::WaitAtBarrier(
     const std::vector<CoordinatedTask>& tasks) {
   absl::Status status;
   absl::Notification n;
-  WaitAtBarrierAsync(barrier_id, timeout, tasks, [&](absl::Status s) {
+  WaitAtBarrierAsync(barrier_id, timeout, tasks, [&](const absl::Status& s) {
     status = s;
     n.Notify();
   });

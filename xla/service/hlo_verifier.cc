@@ -615,6 +615,24 @@ absl::Status ShapeVerifier::HandleAllToAll(HloInstruction* hlo) {
   }
 }
 
+absl::Status ShapeVerifier::HandleRaggedAllToAll(HloInstruction* hlo) {
+  auto* all_to_all = Cast<HloRaggedAllToAllInstruction>(hlo);
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(
+                          all_to_all->channel_id().has_value(), std::nullopt));
+
+  TF_RETURN_IF_ERROR(CheckReplicaGroups(hlo, group_mode));
+
+  TF_RET_CHECK(all_to_all != nullptr);
+  TF_RET_CHECK(hlo->operand_count() == 6);
+  std::vector<const Shape*> operand_shapes;
+  for (const HloInstruction* operand : hlo->operands()) {
+    operand_shapes.push_back(&operand->shape());
+  }
+  return CheckShape(hlo,
+                    ShapeInference::InferRaggedAllToAllShape(operand_shapes));
+}
+
 absl::Status ShapeVerifier::HandlePartitionId(HloInstruction* hlo) {
   return CheckShape(hlo, ShapeUtil::MakeShape(U32, {}));
 }
@@ -2515,11 +2533,6 @@ absl::Status VerifyChannels(const HloModule& module,
             << "channel " << pair.first
             << " is used for different types of channel instructions";
       }
-      if (sendrecv->is_host_transfer()) {
-        TF_RET_CHECK(instructions.size() == 2)
-            << "channel " << pair.first
-            << " is used for multiple host send/recv instructions";
-      }
     } else {
       for (const HloInstruction* instr : instructions) {
         if (opts.verify_unique_channel_ids) {
@@ -3051,7 +3064,11 @@ absl::StatusOr<bool> HloVerifier::Run(
     for (auto* computation : module->computations(execution_threads)) {
       TF_RETURN_IF_ERROR(computation->Accept(shape_verifier.get()));
       TF_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
-      if (computation->IsAsyncComputation()) {
+      // Verify that async computations contain a single instruction or a
+      // collection of send/recv instructions. This is needed to represent NCCL
+      // groups on GPU.
+      if (computation->IsAsyncComputation() &&
+          !computation->OnlyContainsSendRecv()) {
         TF_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

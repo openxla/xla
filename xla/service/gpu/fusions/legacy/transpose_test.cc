@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -37,7 +38,7 @@ namespace {
 
 class TransposeTest : public HloTestBase {
  protected:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     auto opts = HloTestBase::GetDebugOptionsForTest();
     opts.set_xla_gpu_mlir_emitter_level(0);
     return opts;

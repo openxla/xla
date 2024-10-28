@@ -86,6 +86,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #endif
   opts.set_xla_cpu_use_thunk_runtime(true);
   opts.set_xla_cpu_parallel_codegen_split_count(32);
+  opts.set_xla_cpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_cpu_enable_concurrency_optimized_scheduler(false);
   opts.set_xla_cpu_prefer_vector_width(256);
   opts.set_xla_cpu_max_isa("");
@@ -171,7 +172,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_enable_pipelined_collectives(false);
   opts.set_xla_gpu_enable_pipelined_all_reduce(false);
-  opts.set_xla_gpu_enable_pipelined_all_gather(true);
+  opts.set_xla_gpu_enable_pipelined_all_gather(false);
   opts.set_xla_gpu_enable_pipelined_reduce_scatter(true);
   opts.set_xla_gpu_enable_pipelined_p2p(false);
 
@@ -204,7 +205,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_exhaustive_tiling_search(false);
 
-  opts.set_xla_gpu_enable_priority_fusion(true);
+  opts.set_xla_gpu_experimental_enable_triton_heroless_priority_fusion(false);
   opts.set_xla_gpu_experimental_enable_triton_softmax_priority_fusion(false);
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
@@ -229,6 +230,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cub_radix_sort(true);
   opts.set_xla_gpu_enable_cudnn_layer_norm(false);
   opts.set_xla_gpu_threshold_for_windowed_einsum_mib(100000);
+  opts.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(-1);
 
   opts.set_xla_gpu_enable_triton_hopper(false);
   opts.set_xla_gpu_experimental_enable_fusion_block_level_rewriter(false);
@@ -287,7 +289,11 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_cudnn_gemm_max_plans(5);
 
+  // TODO: remove this as it is replaced by xla_gpu_pgle_accuracy_checker.
   opts.set_xla_gpu_enable_pgle_accuracy_checker(false);
+
+  opts.set_xla_gpu_pgle_accuracy_checker(
+      DebugOptions::PGLE_STRICTNESS_LEVEL_WARN);
 
   opts.set_xla_gpu_executable_warn_stuck_timeout_seconds(10);
   opts.set_xla_gpu_executable_terminate_timeout_seconds(30);
@@ -700,6 +706,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
     return true;
   };
 
+  // Custom "sub-parser" lambda for xla_gpu_pgle_accuracy_checker.
+  auto setter_for_xla_gpu_pgle_accuracy_checker =
+      [debug_options](const std::string& value) {
+        DebugOptions::PGLEStrictnessLevel strictness_level;
+        if (!DebugOptions::PGLEStrictnessLevel_Parse(value,
+                                                     &strictness_level)) {
+          return false;
+        }
+        debug_options->set_xla_gpu_pgle_accuracy_checker(strictness_level);
+        return true;
+      };
+
   // Don't use an initializer list for initializing the vector; this would
   // create a temporary copy, and exceeds the stack space when compiling with
   // certain configurations.
@@ -881,6 +899,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Split LLVM module into at most this many parts before codegen to enable "
       "parallel compilation for the CPU backend."));
   flag_list->push_back(tsl::Flag(
+      "xla_cpu_copy_insertion_use_region_analysis",
+      bool_setter_for(
+          &DebugOptions::set_xla_cpu_copy_insertion_use_region_analysis),
+      debug_options->xla_cpu_copy_insertion_use_region_analysis(),
+      "Use region based analysis in copy insertion pass."));
+  flag_list->push_back(tsl::Flag(
       "xla_cpu_enable_concurrency_optimized_scheduler",
       bool_setter_for(
           &DebugOptions::set_xla_cpu_enable_concurrency_optimized_scheduler),
@@ -999,6 +1023,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_dump_hlo_as_proto(),
                 "Dumps HLO modules as HloProtos to the directory specified by "
                 "--xla_dump_to."));
+  flag_list->push_back(
+      tsl::Flag("xla_gpu_experimental_dump_fdo_profiles",
+                bool_setter_for(
+                    &DebugOptions::set_xla_gpu_experimental_dump_fdo_profiles),
+                debug_options->xla_gpu_experimental_dump_fdo_profiles(),
+                "Dumps FDO profiles as text to the directory specified "
+                "by --xla_dump_to."));
   flag_list->push_back(
       tsl::Flag("xla_dump_hlo_as_dot",
                 bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_dot),
@@ -1603,11 +1634,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(&DebugOptions::set_xla_gpu_exhaustive_tiling_search),
       debug_options->xla_gpu_exhaustive_tiling_search(),
       "Enable (slow) search for the Triton GEMM fusion tilings."));
+  flag_list->push_back(tsl::Flag("xla_gpu_enable_priority_fusion",
+                                 noop_flag_setter<bool>, true,
+                                 "[Deprecated, do not use]"));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_priority_fusion",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_priority_fusion),
-      debug_options->xla_gpu_enable_priority_fusion(),
-      "Enable priority queue for fusion order."));
+      "xla_gpu_experimental_enable_triton_heroless_priority_fusion",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_triton_heroless_priority_fusion),
+      debug_options
+          ->xla_gpu_experimental_enable_triton_heroless_priority_fusion(),
+      "Enable heroless Triton fusions in the PriorityFusion pass. The pass "
+      "will try to make Triton fusions first and foremost where it is "
+      "possible."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_softmax_priority_fusion",
       bool_setter_for(
@@ -1785,6 +1824,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "larger than this threshold will be transformed to use windowed einsums."
       "Default is 100000"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_operand_bytes_threshold_for_windowed_einsum",
+      int64_setter_for(
+          &DebugOptions::
+              set_xla_gpu_operand_bytes_threshold_for_windowed_einsum),
+      debug_options->xla_gpu_operand_bytes_threshold_for_windowed_einsum(),
+      "This controls whether to enable windowed einsum (collective matmul) "
+      "based on the sum of sizes of 2 operands if set >= 0."
+      "If set >= 0, xla_gpu_threshold_for_windowed_einsum_mib is ignored."
+      "Default is -1"));
+
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_triton_hopper",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_triton_hopper),
       debug_options->xla_gpu_enable_triton_hopper(),
@@ -1961,12 +2011,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "a training. The location of the marker (if any) is determined "
       "by the option value of type DebugOptions::StepMarkerLocation."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_enable_pgle_accuracy_checker",
-      bool_setter_for(&DebugOptions::set_xla_gpu_enable_pgle_accuracy_checker),
-      debug_options->xla_gpu_enable_pgle_accuracy_checker(),
-      "Enables strict PGLE checking. If an FDO profile is specified and "
-      "latency hiding scheduler encounters missing instructions in the profile "
-      "compilation will halt."));
+      "xla_gpu_pgle_accuracy_checker", setter_for_xla_gpu_pgle_accuracy_checker,
+      DebugOptions::PGLEStrictnessLevel_Name(
+          debug_options->xla_gpu_pgle_accuracy_checker()),
+      "If an FDO profile is specified and latency hiding scheduler encounters "
+      "missing instructions in the profile, then the compilation will halt "
+      "(ERROR), or a warning will be emitted (WARN), or the checker is "
+      "disabled (OFF)"));
 
   flag_list->push_back(tsl::Flag(
       "xla_gpu_executable_warn_stuck_timeout",

@@ -55,17 +55,17 @@ int GetIndexByName(absl::Span<HloInstruction* const> instruction_sequence,
 class GpuLatencyHidingSchedulerBaseTest : public HloTestBase {
  protected:
   absl::StatusOr<HloModule*> ScheduleModule(
-      HloModule* module, int64_t num_parallel_resources = 1) {
+      HloModule* module, int64_t num_parallel_resources = 1,
+      DebugOptions::PGLEStrictnessLevel strictness =
+          DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
     auto& test_backend = backend();
     const auto& gpu_device_info =
         test_backend.default_stream_executor()->GetDeviceDescription();
-    HloModuleConfig config(module->config());
-    DebugOptions dboptions(config.debug_options());
-    dboptions.set_xla_gpu_enable_pgle_accuracy_checker(true);
-    dboptions.set_xla_gpu_experimental_parallel_collective_overlap_limit(
+    DebugOptions& options = module->mutable_config().mutable_debug_options();
+    options.set_xla_gpu_experimental_parallel_collective_overlap_limit(
         num_parallel_resources);
-    config.set_debug_options(dboptions);
-    module->set_config(config);
+    options.set_xla_gpu_pgle_accuracy_checker(strictness);
+
     TF_RETURN_IF_ERROR(
         ScheduleGpuModule(module, /*pointer_size=*/8, gpu_device_info)
             .status());
@@ -105,6 +105,44 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
       tuple0 = (f32[], f32[2,16], u32[], u32[]) tuple(parameter0, bitcast0, partition-id0, replica-id0)
       opt-barrier = (f32[], f32[2,16], u32[], u32[]) opt-barrier(tuple0)
       ROOT _ = get-tuple-element(opt-barrier), index=0
+    }
+  )";
+
+  auto config = GetModuleConfig(kFdoProfile);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule, config));
+
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    aggregator.HandleMissingInstructionCost(*instr);
+
+    ProfileStatisticsAggregator::Statistics after_stats = aggregator.GetStats();
+    EXPECT_EQ(after_stats.missing_instructions.size(), 0);
+    EXPECT_EQ(after_stats.found_instructions_count, 0);
+  }
+}
+
+// Copies are not fusion wrapped. We ran a fusion wrapper prior to scheduling
+// which wrapped copies and some copies were prevented from copy elision by copy
+// insertion pass which runs after scheduling. Potentially we might end up with
+// unrecognized instructions at scheduling time.
+//
+// See b/373800086 for more context.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorDoesNotCountCopies) {
+  GPUProfileStatisticsAggregator aggregator;
+  ProfileStatisticsAggregator::Statistics before_stats = aggregator.GetStats();
+
+  ASSERT_EQ(before_stats.missing_instructions.size(), 0);
+  ASSERT_EQ(before_stats.found_instructions_count, 0);
+
+  absl::string_view kFdoProfile = "";
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    ENTRY main {
+      parameter.0 = f32[] parameter(0)
+      ROOT copy.0 = copy(parameter.0)
     }
   )";
 
