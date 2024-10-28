@@ -1,3 +1,6 @@
+/* Implemented Function FindSymbolInProcess locate a function or variable
+ symbol in the current process's address space */
+
 #ifdef _WIN32
 
 #include "symbol_finder.h"

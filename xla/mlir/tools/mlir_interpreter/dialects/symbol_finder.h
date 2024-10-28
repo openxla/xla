@@ -1,3 +1,6 @@
+/* This header file declares the FindSymbolInProcess function, which takes a symbol name as 
+input and returns either the symbol's address or an error status, encapsulated in absl::StatusOr<void*> */
+
 #ifndef SYMBOL_FINDER_H_
 #define SYMBOL_FINDER_H_
 

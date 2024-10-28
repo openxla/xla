@@ -1,3 +1,7 @@
+/* This code defines a POSIX-compatible function, FindSymbolInProcess, 
+   which uses dlsym to locate a function or variable symbol (symbol_name) in the current process;
+   it returns the symbol's address if found or an error if not */
+   
 #ifndef _WIN32
 
 #include "symbol_finder.h"
