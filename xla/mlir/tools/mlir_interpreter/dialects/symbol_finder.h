@@ -8,5 +8,4 @@ input and returns either the symbol's address or an error status, encapsulated i
 #include "absl/status/statusor.h"
 
 absl::StatusOr<void*> FindSymbolInProcess(const std::string& symbol_name);
-
 #endif  // SYMBOL_FINDER_H_
