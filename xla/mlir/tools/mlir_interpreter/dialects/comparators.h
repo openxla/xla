@@ -44,20 +44,22 @@ struct FloatCompare : CwiseAll {
     }
   }
 
-  // Template type for non-floating point and non-complex
-  template <typename T>
+  // Overload for floating-point types only
+  template <typename T, typename std::enable_if_t<std::is_floating_point_v<T>, int> = 0>
   static bool isnan(T a) {
-    return false;
+    return std::isnan(a);
   }
+
+  // Overload for non-floating point types (integral types)
+  template <typename T, typename std::enable_if_t<std::is_integral_v<T>, int> = 0>
+  static bool isnan(T a) {
+    return false;  // Integral types can't be NaN
+  }
+
   // Handling complex types
   template <typename T>
   static bool isnan(std::complex<T> a) {
     return std::isnan(std::real(a)) || std::isnan(std::imag(a));
-  }
-  // Template for isnan (Floating numbers)
-  template <typename T>
-  static bool isnan(std::is_floating_point<T> a) {
-    return std::isnan(a);
   }
 };
 

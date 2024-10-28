@@ -21,6 +21,7 @@ cc_library(
         ],
         exclude = ["util.cc"],
     ),
+    hdrs=["symbol_finder.h"],
     deps = [
         ":dialect_utils",
         "//xla/mlir/tools/mlir_interpreter/framework",
