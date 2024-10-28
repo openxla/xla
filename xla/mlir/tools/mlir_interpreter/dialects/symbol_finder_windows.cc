@@ -20,5 +20,4 @@ absl::StatusOr<void*> FindSymbolInProcess(const std::string& symbol_name) {
     return absl::InternalError("Failed to get module handle");
   }
 }
-
 #endif  // _WIN32
