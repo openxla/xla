@@ -924,8 +924,9 @@ HloInstruction::FusionKind ChooseFusionKind(const HloInstruction& producer,
 bool IsConsumerTheOnlyNonRootUser(const HloInstruction& instr,
                                   const HloInstruction& consumer) {
   return absl::c_all_of(instr.users(), [&](const HloInstruction* user) {
-    if (user->opcode() == HloOpcode::kGetTupleElement) {
-      // Skip GTE.
+    if (user->opcode() == HloOpcode::kGetTupleElement ||
+        user->opcode() == HloOpcode::kBitcast) {
+      // Skip no-op instructions.
       return IsConsumerTheOnlyNonRootUser(*user, consumer);
     }
     // `user` is `consumer` or consumed by ROOT.
