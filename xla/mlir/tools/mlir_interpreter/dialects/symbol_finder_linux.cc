@@ -16,5 +16,4 @@ absl::StatusOr<void*> FindSymbolInProcess(const std::string& symbol_name) {
   }
   return sym;
 }
-
 #endif  // !_WIN32
