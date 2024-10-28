@@ -801,9 +801,10 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
       MaxOperandsAndOutputsPerFusion()) {
     return FusionDecision::Allow();
   } else {
-    VLOG(5) << "Operand count of " << "(" << instr1.ToString()
-            << " ) = " << instr1.operand_count() << " and ( "
-            << instr2.ToString() << " ) = " << instr2.operand_count()
+    VLOG(5) << "Operand count of "
+            << "(" << instr1.ToString() << " ) = " << instr1.operand_count()
+            << " and ( " << instr2.ToString()
+            << " ) = " << instr2.operand_count()
             << " and num_output_buffers = " << num_output_buffers
             << " is bigger than the bound of "
             << MaxOperandsAndOutputsPerFusion();
