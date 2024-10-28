@@ -34,6 +34,7 @@ load(
 load(
     "//xla/stream_executor:build_defs.bzl",
     "gpu_only_cc_library",
+    "stream_executor_gpu_friends",
 )
 load(
     "//xla/tests:build_defs.bzl",
@@ -49,20 +50,13 @@ load(
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = internal_visibility([
-        "//learning/dist_belief_extra/gpu:__subpackages__",
-        "//tensorflow/compiler/tf2xla:__subpackages__",
-        "//xla:__subpackages__",
-        "//tensorflow/core/kernels:__subpackages__",
-        "//xla/pjrt:__subpackages__",
-        "//xla/service/gpu:__subpackages__",
-        "//xla/stream_executor:__subpackages__",
-        "//tensorflow/core:__subpackages__",
-        "//third_party/sparse_conv:__subpackages__",
-        "//waymo/ml/compiler/triton:__subpackages__",
-        "//waymo/research/representation/threed:__subpackages__",
-    ]),
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
+)
+
+package_group(
+    name = "friends",
+    packages = stream_executor_gpu_friends(),
 )
 
 cc_library(
@@ -196,6 +190,7 @@ gpu_only_cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:typed_kernel_factory",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
@@ -742,9 +737,11 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_platform_id",
         "//xla/stream_executor/rocm:rocm_platform_id",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
