@@ -635,10 +635,10 @@ rocprofiler_configure(uint32_t                 version,
 {
     // set the client name
     id->name = "XLA-with-rocprofv3";
-    std::cout << "Configure XLA with rocprofv3!\n";
 
     // store client info
     xla::profiler::client_id = id;
+    std::cout << "Configure rocprofv3...\n" <<std::flush;
 
     // compute major/minor/patch version info
     uint32_t major = version / 10000;
@@ -647,7 +647,7 @@ rocprofiler_configure(uint32_t                 version,
 
     // generate info string
     auto info = std::stringstream{};
-    info << id->name << " (priority=" << priority << ") is using rocprofiler-sdk v" << major << "."
+    info << id->name << "Configure XLA with rocprofv3... (priority=" << priority << ") is using rocprofiler-sdk v" << major << "."
          << minor << "." << patch << " (" << runtime_version << ")";
 
     std::clog << info.str() << std::endl;
