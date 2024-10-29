@@ -71,7 +71,7 @@ using tsl::profiler::XSpace;
 class GpuTracer : public profiler::ProfilerInterface {
  public:
   GpuTracer() {
-    std::cout << "GpuTrace with rocprofv3\n" << std::flush;
+    LOG(FATAL) << "GpuTrace with rocprofv3...\n";
     Start();
     LOG(INFO) << "GpuTracer created.";
   }
@@ -80,7 +80,7 @@ class GpuTracer : public profiler::ProfilerInterface {
   // GpuTracer interface:
   absl::Status Start() override;
   absl::Status Stop() override;
-  // absl::Status CollectData(XSpace* space) override;
+  absl::Status CollectData(XSpace* space) override;
 
  private:
   absl::Status DoStart();
@@ -245,7 +245,7 @@ absl::Status GpuTracer::Stop() {
   return absl::OkStatus();
 }
 
-/*
+// /*
 absl::Status GpuTracer::CollectData(XSpace* space) {
   switch (profiling_state_) {
     case State::kNotStarted:
@@ -261,13 +261,13 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
       VLOG(3) << "No trace data collected";
       return absl::OkStatus();
     case State::kStoppedOk: {
-      if (rocm_trace_collector_) rocm_trace_collector_->Export(space);
+      // if (rocm_trace_collector_) rocm_trace_collector_->Export(space);
       return absl::OkStatus();
     }
   }
   return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
 }
-*/
+// */
 
 // Not in anonymous namespace for testing purposes.
 std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
