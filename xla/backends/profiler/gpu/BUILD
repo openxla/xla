@@ -31,7 +31,7 @@ tsl_gpu_library(
         ":cupti_collector",
         ":cupti_tracer",
         ":cupti_wrapper",
-        ":rocm_collector",
+        # ":rocm_collector",
         ":rocm_tracer",
     ],
     deps = [
@@ -213,6 +213,7 @@ tsl_gpu_library(
     ],
 )
 
+"""
 tsl_gpu_library(
     name = "rocm_collector",
     srcs = if_rocm(["rocm_collector.cc"]),
@@ -247,6 +248,7 @@ tsl_gpu_library(
         "@tsl//tsl/profiler/utils:xplane_utils",
     ],
 )
+"""
 
 tsl_gpu_library(
     name = "rocm_tracer",
@@ -255,7 +257,8 @@ tsl_gpu_library(
     copts = tf_profiler_copts() + tsl_copts(),
     visibility = ["//visibility:public"],
     deps = [
-        ":rocm_collector",
+        #":rocm_collector",
+        "//xla/backends/profiler/gpu/common:common_headers",
         "//xla/stream_executor/rocm:roctracer_wrapper",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/container:flat_hash_map",
