@@ -54,32 +54,14 @@ stop() CLIENT_API;
 void
 identify(uint64_t corr_id) CLIENT_API;
 
-class RocmTracer {
-public:
-    // Constructor
-    RocmTracer() {
-        std::cout << "RocmTracer initialized." << std::endl;
-    }
-
-    // Destructor
-    ~RocmTracer() {
-        std::cout << "RocmTracer destroyed." << std::endl;
-    }
-};
 
 class RocmTracer {
 public:
-    // Get the singleton instance of RocmTracer
-    static RocmTracer& GetRocmTracerSingleton() {
-        static RocmTracer instance;
-        return instance;
-    }
+    // Returns a pointer to singleton RocmTracer.
+    static RocmTracer* GetRocmTracerSingleton();
 
-    // Check if the tracer is available
-    bool IsAvailable() const {
-        // Simulate a check for tracer availability
-        return is_available_;
-    }
+    // Only one profile session can be live in the same time.
+    bool IsAvailable() const;
 
     // Start tracing a specific operation
     void StartTracing(const std::string& operation_name) {
@@ -131,20 +113,20 @@ public:
 private:
     // Private constructor for singleton
     RocmTracer() : is_available_(true) {
-        std::cout << "RocmTracer initialized." << std::endl;
+        LOG(ERROR) << "RocmTracer initialized...";
     }
 
     // Private destructor
     ~RocmTracer() {
-        std::cout << "RocmTracer destroyed." << std::endl;
+        std::cout << "RocmTracer destroyed..." << std::endl;
     }
 
     // Disable copy constructor and assignment operator
     RocmTracer(const RocmTracer&) = delete;
     RocmTracer& operator=(const RocmTracer&) = delete;
-
     bool is_available_; // Simulated availability status
 };
+
 }  // namespace profiler
 }  // namespace xla
 

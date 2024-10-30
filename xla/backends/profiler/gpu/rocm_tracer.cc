@@ -502,7 +502,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
     constexpr auto buffer_size_bytes      = 4096;
     constexpr auto buffer_watermark_bytes = buffer_size_bytes - (buffer_size_bytes / 8);
 
-    /*
+    
     ROCPROFILER_CALL(se::wrap::rocprofiler_create_buffer(client_ctx,
                                                buffer_size_bytes,
                                                buffer_watermark_bytes,
@@ -511,7 +511,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
                                                tool_data,
                                                &client_buffer),
                      "buffer creation");
-    */
+    
     for(auto itr :
         {ROCPROFILER_BUFFER_TRACING_HSA_CORE_API, ROCPROFILER_BUFFER_TRACING_HSA_AMD_EXT_API})
     {
@@ -624,6 +624,15 @@ stop()
     ROCPROFILER_CALL(se::wrap::rocprofiler_stop_context(client_ctx), "context stop");
 }
 
+/* static */ RocmTracer* RocmTracer::GetRocmTracerSingleton() {
+  static auto* singleton = new RocmTracer();
+  return singleton;
+}
+
+bool RocmTracer::IsAvailable() const {
+  return true;  // &&NumGpus()
+}
+
 }  // namespace profiler
 }  // namespace xla
 
@@ -638,7 +647,7 @@ rocprofiler_configure(uint32_t                 version,
 
     // store client info
     xla::profiler::client_id = id;
-    std::cout << "Configure rocprofv3...\n" <<std::flush;
+    LOG(ERROR) << "Configure rocprofv3...\n";
 
     // compute major/minor/patch version info
     uint32_t major = version / 10000;
