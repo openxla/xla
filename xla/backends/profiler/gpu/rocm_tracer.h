@@ -53,6 +53,98 @@ stop() CLIENT_API;
 
 void
 identify(uint64_t corr_id) CLIENT_API;
+
+class RocmTracer {
+public:
+    // Constructor
+    RocmTracer() {
+        std::cout << "RocmTracer initialized." << std::endl;
+    }
+
+    // Destructor
+    ~RocmTracer() {
+        std::cout << "RocmTracer destroyed." << std::endl;
+    }
+};
+
+class RocmTracer {
+public:
+    // Get the singleton instance of RocmTracer
+    static RocmTracer& GetRocmTracerSingleton() {
+        static RocmTracer instance;
+        return instance;
+    }
+
+    // Check if the tracer is available
+    bool IsAvailable() const {
+        // Simulate a check for tracer availability
+        return is_available_;
+    }
+
+    // Start tracing a specific operation
+    void StartTracing(const std::string& operation_name) {
+        if (IsAvailable()) {
+            std::cout << "Started tracing operation: " << operation_name << std::endl;
+        } else {
+            std::cout << "RocmTracer is not available." << std::endl;
+        }
+    }
+
+    // Stop tracing the current operation
+    void StopTracing(const std::string& operation_name) {
+        if (IsAvailable()) {
+            std::cout << "Stopped tracing operation: " << operation_name << std::endl;
+        } else {
+            std::cout << "RocmTracer is not available." << std::endl;
+        }
+    }
+
+    // Collect and print trace data
+    void CollectTraceData() {
+        if (IsAvailable()) {
+            std::cout << "Collecting trace data..." << std::endl;
+            // Simulate trace data collection
+            std::cout << "Trace data: [Dummy data]" << std::endl;
+        } else {
+            std::cout << "RocmTracer is not available." << std::endl;
+        }
+    }
+
+    // Dummy method to simulate tracer events
+    void LogEvent(const std::string& event_name) {
+        if (IsAvailable()) {
+            std::cout << "Logging event: " << event_name << std::endl;
+        } else {
+            std::cout << "RocmTracer is not available." << std::endl;
+        }
+    }
+
+    // Dummy method to clear trace data
+    void ClearTraceData() {
+        if (IsAvailable()) {
+            std::cout << "Clearing trace data." << std::endl;
+        } else {
+            std::cout << "RocmTracer is not available." << std::endl;
+        }
+    }
+
+private:
+    // Private constructor for singleton
+    RocmTracer() : is_available_(true) {
+        std::cout << "RocmTracer initialized." << std::endl;
+    }
+
+    // Private destructor
+    ~RocmTracer() {
+        std::cout << "RocmTracer destroyed." << std::endl;
+    }
+
+    // Disable copy constructor and assignment operator
+    RocmTracer(const RocmTracer&) = delete;
+    RocmTracer& operator=(const RocmTracer&) = delete;
+
+    bool is_available_; // Simulated availability status
+};
 }  // namespace profiler
 }  // namespace xla
 

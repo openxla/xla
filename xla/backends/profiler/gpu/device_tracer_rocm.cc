@@ -70,7 +70,7 @@ using tsl::profiler::XSpace;
 // GpuTracer for ROCm GPU.
 class GpuTracer : public profiler::ProfilerInterface {
  public:
-  GpuTracer() {
+  GpuTracer(RocmTracer* rocm_tracer) : rocm_tracer_(rocm_tracer) {
     LOG(FATAL) << "GpuTrace with rocprofv3...\n";
     Start();
     LOG(INFO) << "GpuTracer created.";
@@ -99,7 +99,7 @@ class GpuTracer : public profiler::ProfilerInterface {
   };
   State profiling_state_ = State::kNotStarted;
 
-  // RocmTracer* rocm_tracer_;
+  RocmTracer* rocm_tracer_;
   // std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
 };
 /*
@@ -273,17 +273,19 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
 std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
     const ProfileOptions& options) {
   if (options.device_type() != ProfileOptions::GPU &&
-      options.device_type() != ProfileOptions::UNSPECIFIED)
+      options.device_type() != ProfileOptions::UNSPECIFIED){
+    LOG(ERROR) << "rocm_tracer initialised...";
     return nullptr;
+  }
 
-/*
   profiler::RocmTracer* rocm_tracer =
       profiler::RocmTracer::GetRocmTracerSingleton();
-  if (!rocm_tracer->IsAvailable()) return nullptr;
+  if (!rocm_tracer->IsAvailable()) {
+    LOG(ERROR) << "rocm_tracer initialised...";
+    return nullptr;
+  }
+  LOG(ERROR) << "rocm_tracer initialised...";
   return std::make_unique<profiler::GpuTracer>(rocm_tracer);
-  */
- return nullptr;
-  // return std::make_unique<profiler::GpuTracer>(nullptr);
 }
 
 auto register_rocm_gpu_tracer_factory = [] {
