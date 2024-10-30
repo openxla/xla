@@ -1,4 +1,5 @@
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl:tsl.bzl", "if_windows")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,8 +22,8 @@ cc_library(
         ],
         exclude = ["util.cc"],
     ),
-    hdrs=["symbol_finder.h"],
     deps = [
+        ":find_symbol",
         ":dialect_utils",
         "//xla/mlir/tools/mlir_interpreter/framework",
         "//xla/mlir_hlo",
@@ -62,3 +63,24 @@ cc_library(
         "@llvm-project//mlir:ViewLikeInterface",
     ],
 )
+
+cc_library(
+  name = "find_symbol_posix",
+  srcs = ["symbol_finder_windows.cc"],
+  deps = ["@com_google_absl//absl/status:statusor"],
+  tags = ["manual"]
+)
+
+cc_library(
+  name = "find_symbol_windows",
+  srcs = ["symbol_finder_linux.cc"],
+  deps = ["@com_google_absl//absl/status:statusor"],
+  tags = ["manual"]
+)
+
+cc_library(
+  name = "find_symbol",
+  hdrs = ["symbol_finder.h"],
+  deps = if_windows([":find_symbol_windows"], [":find_symbol_posix"])
+)
+
