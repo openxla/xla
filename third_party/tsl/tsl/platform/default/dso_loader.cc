@@ -170,7 +170,8 @@ absl::StatusOr<void*> GetHipsolverDsoHandle() {
 #endif
 
 absl::StatusOr<void*> GetRoctracerDsoHandle() {
-  return GetDsoHandle("roctracer64", "");
+  // return GetDsoHandle("roctracer64", "");
+  return GetDsoHandle("rocprofiler-sdk", "");
 }
 
 absl::StatusOr<void*> GetHipsparseDsoHandle() {
