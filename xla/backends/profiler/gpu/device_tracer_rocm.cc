@@ -71,9 +71,9 @@ using tsl::profiler::XSpace;
 class GpuTracer : public profiler::ProfilerInterface {
  public:
   GpuTracer(RocmTracer* rocm_tracer) : rocm_tracer_(rocm_tracer) {
-    LOG(FATAL) << "GpuTrace with rocprofv3...\n";
+    LOG(ERROR) << "GpuTrace with rocprofv3...\n";
     Start();
-    LOG(INFO) << "GpuTracer created.";
+    LOG(INFO) << "GpuTracer created...";
   }
   ~GpuTracer() override {}
 
