@@ -645,7 +645,7 @@ TEST_F(ClientServerTest, ConnectEventuallyTimesOutIfAClientDoesNotShowUp) {
     client_options.rpc_timeout = timeout;
     // Overwrite the default error callback which invokes LOG(QFATAL).
     client_options.missed_heartbeat_callback = [](absl::Status status) {
-      LOG(ERROR) << "Distributed client has missing heartbeats: " << status;
+      LOG(ERROR) << "Distributed client hit an error: " << status;
     };
     auto client = GetClient(node_id, client_options);
 
@@ -686,7 +686,7 @@ TEST_F(ClientServerTest, ClientRestart_AfterConnect_Fails) {
     client_options.rpc_timeout = timeout;
     // Overwrite the default error callback which invokes LOG(QFATAL).
     client_options.missed_heartbeat_callback = [](absl::Status status) {
-      LOG(ERROR) << "Distributed client has missing heartbeats: " << status;
+      LOG(ERROR) << "Distributed client hit an error: " << status;
     };
     auto client = GetClient(node_id, client_options);
 
@@ -740,7 +740,7 @@ TEST_F(ClientServerTest, ClientRestart_DuringConnect_Succeeds) {
     client_options.rpc_timeout = timeout;
     // Overwrite the default error callback which invokes LOG(QFATAL).
     client_options.missed_heartbeat_callback = [](absl::Status status) {
-      LOG(ERROR) << "Distributed client has missing heartbeats: " << status;
+      LOG(ERROR) << "Distributed client hit an error: " << status;
     };
     bool restarted_node_2 = false;
     if (node_id == 3) {

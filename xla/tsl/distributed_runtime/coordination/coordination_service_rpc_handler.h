@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef XLA_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_RPC_HANDLER_H_
 #define XLA_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_RPC_HANDLER_H_
 
-#include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"

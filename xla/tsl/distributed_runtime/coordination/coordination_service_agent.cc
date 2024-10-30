@@ -337,9 +337,7 @@ absl::Status CoordinationServiceAgentImpl::Connect() {
       ThreadOptions(), kHeartbeatThread,
       absl::bind_front(&CoordinationServiceAgentImpl::StartSendingHeartbeats,
                        this)));
-  if (configs_.poll_for_error_from_service_at_startup()) {
-    StartPollingForError();
-  }
+  StartPollingForError();
   return absl::OkStatus();
 }
 

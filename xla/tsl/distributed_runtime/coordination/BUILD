@@ -74,7 +74,6 @@ tsl_gpu_library(
         ":coordination_client",
         ":coordination_service",
         ":coordination_service_error_util",
-        "//xla/tsl/distributed_runtime:call_options",
         "//xla/tsl/protobuf:coordination_config_proto_cc",
         "//xla/tsl/protobuf:coordination_service_proto_cc",
         "//xla/tsl/util:device_name_utils",

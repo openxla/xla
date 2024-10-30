@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
@@ -37,10 +36,10 @@ limitations under the License.
 namespace tsl {
 namespace {
 using tensorflow::CoordinatedTask;
-using tensorflow::CoordinationServiceError;
 using tensorflow::KeyValueEntry;
 }  // namespace
 
+// TODO(b/369222279): Remove this. This is a no-op now.
 void CoordinationServiceRpcHandler::SetAgentInstance(
     CoordinationServiceAgent* agent) {
   absl::MutexLock l(&mu_);
@@ -134,25 +133,11 @@ void CoordinationServiceRpcHandler::ResetTaskAsync(
   done(service_->ResetTask(request->source_task()));
 }
 
+// TODO(b/369222279): Remove this unused RPC.
 void CoordinationServiceRpcHandler::ReportErrorToTaskAsync(
     const tensorflow::ReportErrorToTaskRequest* request,
     tensorflow::ReportErrorToTaskResponse* response, StatusCallback done) {
-  absl::ReaderMutexLock l(&mu_);
-  if (agent_ == nullptr) {
-    done(MakeCoordinationError(absl::InternalError(
-        "CoordinationServiceAgent is uninitialized or has already shutdown.")));
-    return;
-  }
-  const CoordinationServiceError& error_payload = request->error_payload();
-  absl::Status error(
-      static_cast<absl::StatusCode>(request->error_code()),
-      absl::StrCat(
-          "Error reported from /job:", error_payload.source_task().job_name(),
-          "/task:", error_payload.source_task().task_id(), ": ",
-          request->error_message()));
-  error = MakeCoordinationError(error, error_payload);
-  agent_->SetError(error);
-  done(absl::OkStatus());
+  done(MakeCoordinationError(absl::UnimplementedError("Deprecated.")));
 }
 
 void CoordinationServiceRpcHandler::ReportErrorToServiceAsync(

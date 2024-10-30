@@ -74,5 +74,7 @@ message CoordinationServiceConfig {
 
   // Use long polling to get error from coordination service as the error
   // propagation mechanism.
+  // TODO(b/369222279): Remove this field once we are certain that long polling
+  // is stable.
   bool poll_for_error_from_service_at_startup = 13;
 }

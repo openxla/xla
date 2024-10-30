@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "grpcpp/server.h"
 #include "grpcpp/server_builder.h"
 #include "grpcpp/support/channel_arguments.h"
@@ -42,6 +43,7 @@ namespace tsl {
 namespace {
 using tensorflow::CoordinatedJob;
 using tensorflow::CoordinationServiceConfig;
+using ::testing::status::StatusIs;
 
 constexpr char kParameterServerJobName[] = "parameter_server";
 constexpr char kWorkerJobName[] = "worker";
@@ -81,14 +83,17 @@ class TestCoordinationServiceTaskState {
 
   ~TestCoordinationServiceTaskState() = default;
 
-  void Shutdown() {
-    coord_client_.reset();
+  void ShutdownClient() {
     coord_agent_.reset();
-    coord_compute_pool_.reset();
+    coord_client_.reset();
+  }
+
+  void ShutdownServer() {
+    grpc_server_->Shutdown();
     static_cast<tsl::GrpcCoordinationServiceImpl*>(coord_rpc_service_.get())
         ->SetCoordinationServiceInstance(nullptr);
-    grpc_server_->Shutdown();
     coord_rpc_service_->Shutdown();
+    grpc_server_ = nullptr;
   }
 
   void StartGrpcServer() {
@@ -118,15 +123,16 @@ class TestCoordinationServiceTaskState {
   void InitializeAndConnectCoordinationAgents(
       const std::string& job_name, int task_id,
       const CoordinationServiceConfig& coordination_config) {
-    auto error_fn = [this, job_name](const absl::Status& status) {
+    auto error_fn = [this, job_name, task_id](const absl::Status& status) {
       this->status_ = status;
-      LOG(ERROR) << "Coordination service agent of " << job_name
-                 << " is in error status: " << status;
+      LOG(ERROR) << "Coordination service agent of " << job_name << ":"
+                 << task_id << " is in error status: " << status;
+      this->n_.Notify();
     };
 
-    TF_CHECK_OK(coord_agent_->Initialize(Env::Default(), job_name, task_id,
-                                         coordination_config,
-                                         std::move(coord_client_), error_fn));
+    TF_CHECK_OK(coord_agent_->Initialize(
+        Env::Default(), job_name, task_id, coordination_config,
+        std::move(coord_client_), std::move(error_fn)));
     TF_CHECK_OK(coord_agent_->Connect());
     TF_CHECK_OK(status_);
   }
@@ -139,6 +145,8 @@ class TestCoordinationServiceTaskState {
 
   absl::Status GetStatus() const { return status_; }
 
+  void WaitForErrorPropagation() { n_.WaitForNotification(); }
+
  private:
   std::unique_ptr<::grpc::Server> grpc_server_;
   std::unique_ptr<thread::ThreadPool> coord_compute_pool_;
@@ -148,6 +156,7 @@ class TestCoordinationServiceTaskState {
       CreateCoordinationServiceAgent();
   std::unique_ptr<CoordinationClient> coord_client_;
   absl::Status status_;
+  absl::Notification n_;
 };
 
 class CoordinationServiceRecoverableJobTest : public ::testing::Test {
@@ -160,11 +169,15 @@ class CoordinationServiceRecoverableJobTest : public ::testing::Test {
   }
 
   void TearDown() override {
-    state_ps_0_.Shutdown();
-    state_ps_1_.Shutdown();
-    state_worker_0_.Shutdown();
-    state_worker_1_.Shutdown();
+    state_ps_0_.ShutdownClient();
+    state_ps_1_.ShutdownClient();
+    state_worker_0_.ShutdownClient();
+    state_worker_1_.ShutdownClient();
     coord_service_.reset();
+    state_ps_0_.ShutdownServer();
+    state_ps_1_.ShutdownServer();
+    state_worker_0_.ShutdownServer();
+    state_worker_1_.ShutdownServer();
   }
 
   void Initialize() {
@@ -222,6 +235,13 @@ class CoordinationServiceRecoverableJobTest : public ::testing::Test {
     coordination_config_.add_recoverable_jobs(job_name);
   }
 
+  void WaitForErrorPropagation() {
+    state_ps_0_.WaitForErrorPropagation();
+    state_ps_1_.WaitForErrorPropagation();
+    state_worker_0_.WaitForErrorPropagation();
+    state_worker_1_.WaitForErrorPropagation();
+  }
+
  protected:
   CoordinationServiceConfig coordination_config_;
   std::unique_ptr<CoordinationServiceInterface> coord_service_;
@@ -235,24 +255,29 @@ TEST_F(CoordinationServiceRecoverableJobTest,
        UnrecoverableWorkerFailurePropagated) {
   Initialize();
   TF_ASSERT_OK(state_worker_0_.ReportError(absl::InternalError("Test Error.")));
-
+  WaitForErrorPropagation();
   // For unrecoverable task, error propagates to all connected tasks.
-  EXPECT_TRUE(absl::IsInternal(state_ps_0_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_ps_1_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_worker_0_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_worker_1_.GetStatus()));
+  EXPECT_THAT(state_ps_0_.GetStatus(), StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_ps_1_.GetStatus(), StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_worker_0_.GetStatus(),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_worker_1_.GetStatus(),
+              StatusIs(absl::StatusCode::kInternal));
 }
 
 TEST_F(CoordinationServiceRecoverableJobTest,
        UnrecoverablePSFailurePropagated) {
   Initialize();
   TF_ASSERT_OK(state_ps_0_.ReportError(absl::InternalError("Test Error.")));
+  WaitForErrorPropagation();
 
   // For unrecoverable task, error propagates to all connected tasks.
-  EXPECT_TRUE(absl::IsInternal(state_ps_0_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_ps_1_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_worker_0_.GetStatus()));
-  EXPECT_TRUE(absl::IsInternal(state_worker_1_.GetStatus()));
+  EXPECT_THAT(state_ps_0_.GetStatus(), StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_ps_1_.GetStatus(), StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_worker_0_.GetStatus(),
+              StatusIs(absl::StatusCode::kInternal));
+  EXPECT_THAT(state_worker_1_.GetStatus(),
+              StatusIs(absl::StatusCode::kInternal));
 }
 
 TEST_F(CoordinationServiceRecoverableJobTest,
@@ -260,11 +285,13 @@ TEST_F(CoordinationServiceRecoverableJobTest,
   AddJobToRecoverableJobs(kWorkerJobName);
   Initialize();
   TF_ASSERT_OK(state_worker_0_.ReportError(absl::InternalError("Test Error.")));
+  state_worker_0_.WaitForErrorPropagation();
 
   // For recoverable task, error does not propagate.
   EXPECT_TRUE(state_ps_0_.GetStatus().ok());
   EXPECT_TRUE(state_ps_1_.GetStatus().ok());
-  EXPECT_TRUE(absl::IsInternal(state_worker_0_.GetStatus()));
+  EXPECT_THAT(state_worker_0_.GetStatus(),
+              StatusIs(absl::StatusCode::kInternal));
   EXPECT_TRUE(state_worker_1_.GetStatus().ok());
 }
 
