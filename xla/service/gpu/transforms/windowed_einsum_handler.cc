@@ -358,7 +358,7 @@ bool FindDusSliceForCachedActivation(HloInstruction* inst,
                                      HloInstruction** slice_indices,
                                      bool is_first_slice) {
   // We are only interested in DUS in the loop body.
-  if (inst->opcode() != HloOpcode::kDynamicUpdateSlice) {
+  if (HloPredicateIsNotOp<HloOpcode::kDynamicUpdateSlice>(inst)) {
     return false;
   }
   // Check that the first operand of DUS is a:
