@@ -952,7 +952,8 @@ PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
     absl::StatusOr<nb::object> out =
         o->fun.Call(callable, args, nargs, kwnames);
     if (!out.ok()) {
-      const char* error_string = out.status().ToString().c_str();
+      std::string status_str = out.status().ToString();
+      const char* error_string = status_str.c_str();
       if (out.status().code() == absl::StatusCode::kDeadlineExceeded) {
         PyErr_SetString(PyExc_TimeoutError, error_string);
       } else {
