@@ -192,7 +192,6 @@ gpu_only_cc_library(
         "gpu_command_buffer.h",
     ],
     deps = [
-        ":gpu_driver_header",
         ":gpu_executor_header",
         ":gpu_types_header",
         ":scoped_update_mode",
@@ -730,9 +729,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":gpu_command_buffer",
-        ":gpu_driver_header",
         ":gpu_test_kernels",
-        ":gpu_types_header",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_memory",
@@ -754,8 +751,10 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
