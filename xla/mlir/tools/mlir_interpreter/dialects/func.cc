@@ -112,10 +112,6 @@ llvm::SmallVector<InterpreterValue> Call(MutableArrayRef<InterpreterValue> args,
       TryCall<double, double, double>(sym, callee, args, result)) {
     return {result};
   }
-}
-
-
-
   state.AddFailure("unsupported call target");
   return {};
 }
