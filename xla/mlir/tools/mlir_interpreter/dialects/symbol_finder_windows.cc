@@ -3,7 +3,7 @@
 
 #ifdef _WIN32
 
-#include "symbol_finder.h"
+#include "xla/mlir/tools/mlir_interpreter/dialects/symbol_finder.h"
 #include <windows.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

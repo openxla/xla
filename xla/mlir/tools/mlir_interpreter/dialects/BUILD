@@ -22,8 +22,8 @@ cc_library(
         ],
         exclude = ["util.cc"],
     ),
+    hdrs= ["symbol_finder.h"],
     deps = [
-        ":find_symbol",
         ":dialect_utils",
         "//xla/mlir/tools/mlir_interpreter/framework",
         "//xla/mlir_hlo",
@@ -65,15 +65,15 @@ cc_library(
 )
 
 cc_library(
-  name = "find_symbol_posix",
-  srcs = ["symbol_finder_windows.cc"],
+  name = "find_symbol_linux",
+  srcs = ["symbol_finder_linux.cc"],
   deps = ["@com_google_absl//absl/status:statusor"],
   tags = ["manual"]
 )
 
 cc_library(
   name = "find_symbol_windows",
-  srcs = ["symbol_finder_linux.cc"],
+  srcs = ["symbol_finder_windows.cc"],
   deps = ["@com_google_absl//absl/status:statusor"],
   tags = ["manual"]
 )
@@ -81,6 +81,6 @@ cc_library(
 cc_library(
   name = "find_symbol",
   hdrs = ["symbol_finder.h"],
-  deps = if_windows([":find_symbol_windows"], [":find_symbol_posix"])
+  deps = if_windows([":find_symbol_windows"], [":find_symbol_linux"])
 )
 

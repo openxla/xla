@@ -4,7 +4,7 @@
    
 #ifndef _WIN32
 
-#include "symbol_finder.h"
+#include "xla/mlir/tools/mlir_interpreter/dialects/symbol_finder.h"
 #include <dlfcn.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
