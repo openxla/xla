@@ -1458,6 +1458,7 @@ xla_test(
         "gpu_a100",
         "gpu_p100",
         "gpu_v100",
+        "gpu_b100",
         "gpu_amd_any",
     ],
     deps = if_gpu_is_configured(
@@ -3103,6 +3104,7 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
+        "gpu_b100",
     ],
     deps = [
         ":triton_fusion_numerics_verifier",
