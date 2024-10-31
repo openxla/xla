@@ -1916,6 +1916,7 @@ xla_test(
     backends = [
         "gpu_v100",
         "gpu_a100",
+        "gpu_b100",
     ],
     tags = [
         "cuda-only",
@@ -2636,6 +2637,7 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
+        "gpu_b100",
     ],
     deps = [
         ":variant_visitor",
@@ -2878,6 +2880,7 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
+        "gpu_b100",
         "gpu_amd_any",
     ],
     tags = [
@@ -2993,6 +2996,7 @@ xla_test(
     srcs = ["determinism_test.cc"],
     backends = [
         "gpu_a100",
+        "gpu_b100",
         "gpu_amd_any",
     ],
     deps = [
