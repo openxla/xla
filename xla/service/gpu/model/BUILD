@@ -50,6 +50,7 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
+        "gpu_b100",
     ],
     deps = [
         ":analytical_latency_estimator",
