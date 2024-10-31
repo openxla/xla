@@ -14,6 +14,7 @@ NVIDIA_GPU_BACKENDS = [
     "gpu_v100",
     "gpu_a100",
     "gpu_h100",
+    "gpu_b100",
 ]
 
 # The generic "gpu" backend includes the actual backends in this list.
@@ -63,6 +64,7 @@ def prepare_nvidia_gpu_backend_data(backends, disabled_backends, backend_tags, b
         "gpu_v100": (7, 0),
         "gpu_a100": (8, 0),
         "gpu_h100": (9, 0),
+        "gpu_b100": (10, 0),
     }
     for gpu_backend in NVIDIA_GPU_BACKENDS:
         all_tags = new_backend_tags[gpu_backend]
