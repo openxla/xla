@@ -8,7 +8,7 @@ load(
     "if_gpu_is_configured",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google")
+load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -418,9 +418,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     shard_count = 20,
     tags = [
         "no_mac",
@@ -470,9 +469,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = [
         "no_mac",
     ],
@@ -508,9 +506,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = [
         "no_mac",
     ],
@@ -650,9 +647,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = [
         "large",
         "no_mac",
@@ -678,9 +674,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     shard_count = 10,
     tags = ["no_mac"],
     deps = [
@@ -766,9 +761,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     tags = ["no_mac"],
     deps = [
         ":kernel_name_tracer",
