@@ -40,6 +40,9 @@ LaunchDimensions CalculateLaunchDimensions(
   int64_t threads_per_block = std::min<int64_t>(
       gpu_device_info.threads_per_warp() * kWarpSchedulers, num_elements);
   int64_t num_blocks = CeilOfRatio(num_elements, threads_per_block);
+  if (num_blocks > gpu_device_info.block_dim_limit().x) {
+    num_blocks = gpu_device_info.block_dim_limit().x;
+  }
   return LaunchDimensions(se::BlockDim(num_blocks, 1, 1),
                           se::ThreadDim(threads_per_block, 1, 1));
 }
