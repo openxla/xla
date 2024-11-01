@@ -333,7 +333,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
   // don't use cuBlas in the end. This assumes that the substituting algorithm
   // has result which are close enough for the check in this file.
   if (dot->precision_config().algorithm() ==
-          PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
+      PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
     dot->mutable_precision_config()->set_algorithm(
         PrecisionConfig::ALG_DOT_F32_F32_F32);
   }
@@ -1039,7 +1039,7 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
           absl::StatusOr<bool> has_executable =
               compile(fusion, config, gemm_config_set.size() > 1);
           TF_CHECK_OK(has_executable.status())
-              << "Failure occured when compiling fusion " << fusion->name()
+              << " - Failure occured when compiling fusion " << fusion->name()
               << " with config '" << ToString(config)
               << "'\nFused HLO computation:\n"
               << fusion->fused_instructions_computation()->ToString();
