@@ -5636,7 +5636,7 @@ XlaOp CollectivePermute(
                                               channel_id, inplace);
 }
 
-XlaOp CollectivePermute(
+XlaOp MultiCollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     const std::optional<ChannelHandle>& channel_id, const bool inplace) {

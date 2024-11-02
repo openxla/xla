@@ -1560,7 +1560,7 @@ class XlaBuilder {
       XlaOp operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<ChannelHandle>& channel_id, const bool inplace);
-  friend XlaOp CollectivePermute(
+  friend XlaOp MultiCollectivePermute(
       absl::Span<const XlaOp> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<ChannelHandle>& channel_id, const bool inplace);
@@ -2650,7 +2650,7 @@ XlaOp CollectivePermute(
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     const std::optional<ChannelHandle>& channel_id = std::nullopt,
     const bool inplace = false);
-XlaOp CollectivePermute(
+XlaOp MultiCollectivePermute(
     absl::Span<const XlaOp> operands,
     const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
     const std::optional<ChannelHandle>& channel_id = std::nullopt,

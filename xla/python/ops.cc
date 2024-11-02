@@ -373,6 +373,9 @@ void BuildOpsSubmodule(nb::module_& m) {
   ops.def("CollectivePermute", &CollectivePermute, nb::arg("operand"),
           nb::arg("source_target_pairs"), nb::arg("channel_id") = std::nullopt,
           nb::arg("inplace") = false);
+  ops.def("MultiCollectivePermute", &MultiCollectivePermute,
+          nb::arg("operands"), nb::arg("source_target_pairs"),
+          nb::arg("channel_id") = std::nullopt, nb::arg("inplace") = false);
   ops.def("ConcatInDim", &ConcatInDim, nb::arg("builder"), nb::arg("operands"),
           nb::arg("dimension"));
   ops.def("Conditional",

@@ -681,8 +681,7 @@ absl::Status CheckBufferOffset(const Shape& buffer_shape,
 }
 
 absl::Status CheckInplaceCollectivePermute(HloInstruction* collective_permute) {
-  if (!static_cast<HloCollectivePermuteInstruction*>(collective_permute)
-           ->inplace()) {
+  if (!Cast<HloCollectivePermuteInstruction>(collective_permute)->inplace()) {
     return absl::OkStatus();
   }
   // TODO support grouped partial collective permute
@@ -845,11 +844,10 @@ absl::Status ShapeVerifier::HandleCollectivePermute(HloInstruction* hlo) {
   absl::c_transform(
       hlo->operands(), std::back_inserter(operand_shapes),
       [](const HloInstruction* operand) { return &(operand->shape()); });
-  return CheckShape(
-      hlo,
-      ShapeInference::InferCollectivePermuteShape(
-          operand_shapes,
-          static_cast<HloCollectivePermuteInstruction*>(hlo)->inplace()));
+  return CheckShape(hlo,
+                    ShapeInference::InferCollectivePermuteShape(
+                        operand_shapes,
+                        Cast<HloCollectivePermuteInstruction>(hlo)->inplace()));
 }
 
 absl::Status ShapeVerifier::HandleCollectivePermuteStart(HloInstruction* hlo) {
@@ -868,11 +866,10 @@ absl::Status ShapeVerifier::HandleCollectivePermuteStart(HloInstruction* hlo) {
     context_shapes = std::vector<Shape>(hlo->shape().tuple_shapes().begin() + 2,
                                         hlo->shape().tuple_shapes().end());
   }
-  return CheckShape(
-      hlo,
-      ShapeInference::InferCollectivePermuteStartShape(
-          operand_shapes, context_shapes,
-          static_cast<HloCollectivePermuteInstruction*>(hlo)->inplace()));
+  return CheckShape(hlo,
+                    ShapeInference::InferCollectivePermuteStartShape(
+                        operand_shapes, context_shapes,
+                        Cast<HloCollectivePermuteInstruction>(hlo)->inplace()));
 }
 
 absl::Status ShapeVerifier::HandleCollectivePermuteDone(HloInstruction* hlo) {

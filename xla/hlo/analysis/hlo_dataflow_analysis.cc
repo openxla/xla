@@ -1589,8 +1589,7 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
             define_value_at(/*index=*/{i});
           }
 
-          if (static_cast<HloCollectivePermuteInstruction*>(instruction)
-                  ->inplace()) {
+          if (Cast<HloCollectivePermuteInstruction>(instruction)->inplace()) {
             CHECK_EQ(instruction->operand_count(), 4);
             if (instruction->operand(1)->shape().IsTuple()) {
               for (int i = 0; i < ShapeUtil::TupleElementCount(
