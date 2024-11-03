@@ -255,7 +255,6 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/service:hlo_proto_cc",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
