@@ -64,7 +64,6 @@ cc_library(
     ],
 )
 
-# New target for the header file
 cc_library(
     name = "symbol_finder_header",
     hdrs = ["symbol_finder.h"],
@@ -75,7 +74,7 @@ cc_library(
     srcs = ["symbol_finder_linux.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header",  # Depend on the header-only target
+        ":symbol_finder_header", 
     ],
     tags = ["manual"]
 )
@@ -85,7 +84,7 @@ cc_library(
     srcs = ["symbol_finder_windows.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header",  # Depend on the header-only target
+        ":symbol_finder_header", 
     ],
     tags = ["manual"]
 )
@@ -94,4 +93,3 @@ cc_library(
     name = "find_symbol",
     deps = if_windows([":symbol_finder_windows"], [":symbol_finder_linux"])
 )
-
