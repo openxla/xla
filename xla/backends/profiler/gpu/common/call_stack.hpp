@@ -32,6 +32,12 @@
 #include <string>
 #include <vector>
 
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+
+
 namespace xla {
 namespace common {
 struct source_location
@@ -71,7 +77,7 @@ print_call_stack(std::string         ofname,
         }
     }
 
-    std::cout << "Outputting collected data to " << ofname << "...\n" << std::flush;
+    // LOG(INFO) << "Outputting collected data to " << ofname;
 
     size_t n = 0;
     for(const auto& itr : _call_stack)
