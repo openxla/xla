@@ -66,7 +66,6 @@ using tsl::profiler::XPlaneBuilder;
 using tsl::profiler::XSpace;
 
 
-
 // GpuTracer for ROCm GPU.
 class GpuTracer : public profiler::ProfilerInterface {
  public:
@@ -192,27 +191,9 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
 }
 */
 absl::Status GpuTracer::DoStart() {
-  /*
-  if (!rocm_tracer_->IsAvailable()) {
-    return tsl::errors::Unavailable("Another profile session running.");
-  }
-
-  AnnotationStack::Enable(true);
-
-  RocmTraceCollectorOptions trace_collector_options =
-      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
-  uint64_t start_gputime_ns = RocmTracer::GetTimestamp();
-  uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
-  rocm_trace_collector_ = CreateRocmCollector(
-      trace_collector_options, start_walltime_ns, start_gputime_ns);
-
-  RocmTracerOptions tracer_options = GetRocmTracerOptions();
-  rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
-  */
-  xla::profiler::setup();
-  xla::profiler::start();
-  xla::profiler::identify(1);
-
+  rocm_tracer_->setup();
+  rocm_tracer_->start();
+  rocm_tracer_->identify(1);
   return absl::OkStatus();
 }
 
@@ -228,13 +209,9 @@ absl::Status GpuTracer::Start() {
 }
 
 absl::Status GpuTracer::DoStop() {
-  xla::profiler::stop();
-  xla::profiler::shutdown();
-  /*
-  rocm_tracer_->Disable();
-  AnnotationStack::Enable(false);
-  return absl::OkStatus();
-  */
+  rocm_tracer_->stop();
+  rocm_tracer_->shutdown();
+  return absl::OkStatus();  
 }
 
 absl::Status GpuTracer::Stop() {
@@ -273,18 +250,14 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
 std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
     const ProfileOptions& options) {
   if (options.device_type() != ProfileOptions::GPU &&
-      options.device_type() != ProfileOptions::UNSPECIFIED){
-    LOG(ERROR) << "rocm_tracer initialised...";
+      options.device_type() != ProfileOptions::UNSPECIFIED);
     return nullptr;
-  }
 
   profiler::RocmTracer* rocm_tracer =
       profiler::RocmTracer::GetRocmTracerSingleton();
   if (!rocm_tracer->IsAvailable()) {
-    LOG(ERROR) << "rocm_tracer initialised...";
     return nullptr;
   }
-  LOG(ERROR) << "rocm_tracer initialised...";
   return std::make_unique<profiler::GpuTracer>(rocm_tracer);
 }
 

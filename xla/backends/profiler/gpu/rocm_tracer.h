@@ -39,21 +39,6 @@ limitations under the License.
 
 namespace xla {
 namespace profiler {
-void
-setup() CLIENT_API;
-
-void
-shutdown() CLIENT_API;
-
-void
-start() CLIENT_API;
-
-void
-stop() CLIENT_API;
-
-void
-identify(uint64_t corr_id) CLIENT_API;
-
 
 class RocmTracer {
 public:
@@ -63,71 +48,30 @@ public:
     // Only one profile session can be live in the same time.
     bool IsAvailable() const;
 
-    // Start tracing a specific operation
-    void StartTracing(const std::string& operation_name) {
-        if (IsAvailable()) {
-            std::cout << "Started tracing operation: " << operation_name << std::endl;
-        } else {
-            std::cout << "RocmTracer is not available." << std::endl;
-        }
-    }
-
-    // Stop tracing the current operation
-    void StopTracing(const std::string& operation_name) {
-        if (IsAvailable()) {
-            std::cout << "Stopped tracing operation: " << operation_name << std::endl;
-        } else {
-            std::cout << "RocmTracer is not available." << std::endl;
-        }
-    }
-
-    // Collect and print trace data
-    void CollectTraceData() {
-        if (IsAvailable()) {
-            std::cout << "Collecting trace data..." << std::endl;
-            // Simulate trace data collection
-            std::cout << "Trace data: [Dummy data]" << std::endl;
-        } else {
-            std::cout << "RocmTracer is not available." << std::endl;
-        }
-    }
-
-    // Dummy method to simulate tracer events
-    void LogEvent(const std::string& event_name) {
-        if (IsAvailable()) {
-            std::cout << "Logging event: " << event_name << std::endl;
-        } else {
-            std::cout << "RocmTracer is not available." << std::endl;
-        }
-    }
-
-    // Dummy method to clear trace data
-    void ClearTraceData() {
-        if (IsAvailable()) {
-            std::cout << "Clearing trace data." << std::endl;
-        } else {
-            std::cout << "RocmTracer is not available." << std::endl;
-        }
-    }
+    void setup() CLIENT_API;
+    void shutdown() CLIENT_API;
+    void start() CLIENT_API;
+    void stop() CLIENT_API;
+    void identify(uint64_t corr_id) CLIENT_API;
 
 private:
     // Private constructor for singleton
     RocmTracer() : is_available_(true) {
-        LOG(ERROR) << "RocmTracer initialized...";
+        LOG(INFO) << "RocmTracer initialized...";
     }
 
     // Private destructor
     ~RocmTracer() {
-        std::cout << "RocmTracer destroyed..." << std::endl;
+        LOG(INFO) << "RocmTracer destroyed...";
     }
 
     // Disable copy constructor and assignment operator
     RocmTracer(const RocmTracer&) = delete;
     RocmTracer& operator=(const RocmTracer&) = delete;
     bool is_available_; // Simulated availability status
-};
+};  // end of RocmTracer
 
-}  // namespace profiler
-}  // namespace xla
+}  // end of namespace profiler
+}  // end of namespace xla
 
 #endif  // XLA_BACKENDS_PROFILER_GPU_ROCM_TRACER_H_
