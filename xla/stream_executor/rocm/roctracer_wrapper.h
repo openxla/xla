@@ -135,6 +135,7 @@ ROCTRACER_API_WRAPPER(rocprofiler_query_buffer_tracing_kind_operation_name)
 ROCTRACER_API_WRAPPER(rocprofiler_iterate_buffer_tracing_kind_operations)
 ROCTRACER_API_WRAPPER(rocprofiler_iterate_buffer_tracing_kinds)
 ROCTRACER_API_WRAPPER(rocprofiler_get_status_string)
+ROCTRACER_API_WRAPPER(rocprofiler_configure)
 
 
 #undef FOREACH_ROCTRACER_API
