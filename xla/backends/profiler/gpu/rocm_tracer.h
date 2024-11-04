@@ -35,8 +35,6 @@ limitations under the License.
 #    define CLIENT_API
 #endif
 
-#include <cstdint>
-
 namespace xla {
 namespace profiler {
 
@@ -49,9 +47,9 @@ public:
     bool IsAvailable() const;
 
     void setup() CLIENT_API;
-    void shutdown() CLIENT_API;
     void start() CLIENT_API;
     void stop() CLIENT_API;
+    void shutdown() CLIENT_API;
     void identify(uint64_t corr_id) CLIENT_API;
 
 private:
