@@ -1278,6 +1278,9 @@ tsl_pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    additional_exported_symbols = [
+        "rocprofiler_configure",
+    ],
     defines = if_google(
         [],
         select({
