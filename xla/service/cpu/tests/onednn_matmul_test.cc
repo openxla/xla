@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <utility>
 
+#include "absl/strings/str_replace.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
@@ -27,15 +29,21 @@ limitations under the License.
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace op = xla::testing::opcode_matchers;
 
 namespace xla {
 namespace cpu {
 
-class MatmulTest : public HloTestBase {
+class MatmulTest : public HloTestBase,
+                   public ::testing::WithParamInterface<
+                       std::tuple<PrimitiveType, PrimitiveType>> {
  protected:
+  PrimitiveType dtype_;
+  std::string dtypeString_;
+  float atol_;
+  float rtol_;
+
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_cpu_use_thunk_runtime(false);
@@ -138,17 +146,6 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:   }
     ; CHECK:     }
     )";
-  const char* fused_matmul_bias_relu_linear_ = R"(
-    ; CHECK:     custom_call_target="__onednn$matmul",
-    ; CHECK:       backend_config={
-    ; CHECK-DAG:     "outer_dimension_partitions":[],
-    ; CHECK-DAG:     "onednn_matmul_config":{
-    ; CHECK-DAG:       "fusions":{
-    ; CHECK-DAG:         "ops":["BIAS","RELU","LINEAR"]
-    ; CHECK-DAG:     }
-    ; CHECK-DAG:   }
-    ; CHECK:     }
-    )";
   const char* fused_matmul_bias_sigmoid_rewrite_str_ = R"(
     ; CHECK:     custom_call_target="__onednn$matmul",
     ; CHECK:       backend_config={
@@ -159,26 +156,77 @@ class MatmulTest : public HloTestBase {
     ; CHECK-DAG:     }
     ; CHECK:     }
     )";
-  
-  void CheckCustomCallTypes(std::unique_ptr<HloModule>& module,
-                            PrimitiveType operand0_type,
-                            PrimitiveType operand1_type,
-                            PrimitiveType result_type) {
-    HloInstruction* custom_call =
-        FindInstruction(module.get(), HloOpcode::kCustomCall);
-    if (custom_call) {
-      EXPECT_EQ(custom_call->operand(0)->shape().element_type(), operand0_type);
-      EXPECT_EQ(custom_call->operand(1)->shape().element_type(), operand1_type);
-      auto actual_type =
-          custom_call->shape().IsTuple()
-              ? custom_call->shape().tuple_shapes(0).element_type()
-              : custom_call->shape().element_type();
-      EXPECT_EQ(actual_type, result_type);
+};
+
+class QuantizedMatmulTest : public MatmulTest {
+ protected:
+  PrimitiveType quant_dtype_;
+  std::string quant_dtype_str_;
+  int clamp_min_;
+  int clamp_max_;
+
+  QuantizedMatmulTest() : MatmulTest() {
+    dtype_ = std::get<0>(GetParam());
+    quant_dtype_ = std::get<1>(GetParam());
+    dtypeString_ = primitive_util::LowercasePrimitiveTypeName(dtype_);
+    quant_dtype_str_ = primitive_util::LowercasePrimitiveTypeName(quant_dtype_);
+    atol_ = rtol_ = 1e-2;
+    if (quant_dtype_ == S8) {
+      clamp_min_ = -128;
+      clamp_max_ = 127;
     } else {
-      FAIL() << "CustomCall not found in the optimized module";
+      // U8 case
+      clamp_min_ = 0;
+      clamp_max_ = 255;
     }
   }
-  
+
+  void SetUp() override {
+    MatmulTest::SetUp();
+    if (!IsSupportedType(quant_dtype_)) {
+      GTEST_SKIP() << "CPU does not support " << quant_dtype_str_;
+    }
+  }
+
+  void RunCompareAndMatchOptimizedHlo(
+      const absl::string_view outline, const std::string& match_str,
+      std::vector<PrimitiveType>& operand0_types,
+      std::vector<PrimitiveType>& operand1_types,
+      std::vector<PrimitiveType>& result_types) {
+    const std::string matmul_module_str = absl::StrReplaceAll(
+        outline, {{"$dtype", dtypeString_},
+                  {"$quant_dtype", quant_dtype_str_},
+                  {"$clamp_min", std::to_string(clamp_min_)},
+                  {"$clamp_max", std::to_string(clamp_max_)}});
+    EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{atol_, rtol_}));
+    std::unique_ptr<HloModule> optimized_module;
+    MatchOptimizedHlo(matmul_module_str, match_str,
+                      /*print_operand_shape=*/false, &optimized_module);
+    CheckCustomCallTypes(optimized_module, operand0_types, operand1_types,
+                         result_types);
+  }
+
+  void CheckCustomCallTypes(std::unique_ptr<HloModule>& module,
+                            std::vector<PrimitiveType>& operand0_types,
+                            std::vector<PrimitiveType>& operand1_types,
+                            std::vector<PrimitiveType>& result_types) {
+    std::vector<HloInstruction*> custom_calls =
+        FindInstructions(module.get(), HloOpcode::kCustomCall);
+    if (custom_calls.size() == 0) {
+      FAIL() << "CustomCall not found in the optimized module";
+    }
+    for (int i = 0; i < custom_calls.size(); ++i) {
+      EXPECT_EQ(custom_calls[i]->operand(0)->shape().element_type(),
+                operand0_types[i]);
+      EXPECT_EQ(custom_calls[i]->operand(1)->shape().element_type(),
+                operand1_types[i]);
+      auto actual_type =
+          custom_calls[i]->shape().IsTuple()
+              ? custom_calls[i]->shape().tuple_shapes(0).element_type()
+              : custom_calls[i]->shape().element_type();
+      EXPECT_EQ(actual_type, result_types[i]);
+    }
+  }
 };
 
 TEST_F(MatmulTest, SimpleTestF32) {
@@ -1616,159 +1664,84 @@ TEST_F(MatmulTest, BroadcastedAddAfterFusion) {
   )");
 }
 
-TEST_F(MatmulTest, DequantizeMatMulBiasReluRequantize) {
-  const char* matmul_module_str = R"(
-HloModule DequantizeMatMulBiasReluRequantize, alias_passthrough_params=true, entry_computation_layout={(f32[1024,256]{1,0}, f32[256,512]{1,0}, f32[512]{0}, f32[512,2048]{1,0})->f32[1024,2048]{1,0}}
-ENTRY DequantizeMatMulBiasReluRequantize {
-  constant.13 = f32[] constant(-127)
-  broadcast.101 = f32[1024,512]{1,0} broadcast(constant.13), dimensions={}
-  broadcast.19 = f32[1024,256]{1,0} broadcast(constant.13), dimensions={}
-  arg0.1 = f32[1024,256]{1,0} parameter(0), parameter_replication={false}
-  constant = f32[] constant(2.5)
-  broadcast = f32[1024,256]{1,0} broadcast(constant), dimensions={}
-  multiply = f32[1024,256]{1,0} multiply(arg0.1, broadcast)
-  constant.11 = f32[] constant(3)
-  broadcast.12 = f32[1024,256]{1,0} broadcast(constant.11), dimensions={}
-  add.18 = f32[1024,256]{1,0} add(multiply, broadcast.12)
-  constant.14 = f32[] constant(127)
-  broadcast.20 = f32[1024,256]{1,0} broadcast(constant.14), dimensions={}
-  clamp.21 = f32[1024,256]{1,0} clamp(broadcast.19, add.18, broadcast.20)
-  round-nearest-even.22 = f32[1024,256]{1,0} round-nearest-even(clamp.21)
-  convert.23 = s8[1024,256]{1,0} convert(round-nearest-even.22)
-  convert.32 = s32[1024,256]{1,0} convert(convert.23)
-  constant.4 = s32[] constant(-3)
-  broadcast.1 = s32[1024,256]{1,0} broadcast(constant.4), dimensions={}
-  add = s32[1024,256]{1,0} add(convert.32, broadcast.1)
-  convert.34 = f32[1024,256]{1,0} convert(add)
-  constant.27 = f32[] constant(0.4)
-  broadcast.28 = f32[1024,256]{1,0} broadcast(constant.27), dimensions={}
-  multiply.35 = f32[1024,256]{1,0} multiply(convert.34, broadcast.28)
-  broadcast.67 = f32[256,512]{1,0} broadcast(constant.13), dimensions={}
-  arg1.2 = f32[256,512]{1,0} parameter(1), parameter_replication={false}
-  constant.1 = f32[] constant(1.66666663)
-  broadcast.2 = f32[256,512]{1,0} broadcast(constant.1), dimensions={}
-  multiply.1 = f32[256,512]{1,0} multiply(arg1.2, broadcast.2)
-  broadcast.68 = f32[256,512]{1,0} broadcast(constant.14), dimensions={}
-  clamp.69 = f32[256,512]{1,0} clamp(broadcast.67, multiply.1, broadcast.68)
-  round-nearest-even.70 = f32[256,512]{1,0} round-nearest-even(clamp.69)
-  convert.71 = s8[256,512]{1,0} convert(round-nearest-even.70)
-  convert.80 = s32[256,512]{1,0} convert(convert.71)
-  convert.82 = f32[256,512]{1,0} convert(convert.80)
-  constant.75 = f32[] constant(0.6)
-  broadcast.76 = f32[256,512]{1,0} broadcast(constant.75), dimensions={}
-  multiply.83 = f32[256,512]{1,0} multiply(convert.82, broadcast.76)
-  dot.84 = f32[1024,512]{1,0} dot(multiply.35, multiply.83), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={grad_x="false",grad_y="false"}
-  arg2.3 = f32[512]{0} parameter(2), parameter_replication={false}
-  broadcast.86 = f32[1024,512]{1,0} broadcast(arg2.3), dimensions={1}
-  add.87 = f32[1024,512]{1,0} add(dot.84, broadcast.86)
-  constant.88 = f32[] constant(0)
-  broadcast.89 = f32[1024,512]{1,0} broadcast(constant.88), dimensions={}
-  maximum.90 = f32[1024,512]{1,0} maximum(add.87, broadcast.89)
-  constant.2 = f32[] constant(11.1111107)
-  broadcast.3 = f32[1024,512]{1,0} broadcast(constant.2), dimensions={}
-  multiply.2 = f32[1024,512]{1,0} multiply(maximum.90, broadcast.3)
-  constant.93 = f32[] constant(7)
-  broadcast.94 = f32[1024,512]{1,0} broadcast(constant.93), dimensions={}
-  add.100 = f32[1024,512]{1,0} add(multiply.2, broadcast.94)
-  broadcast.102 = f32[1024,512]{1,0} broadcast(constant.14), dimensions={}
-  clamp.103 = f32[1024,512]{1,0} clamp(broadcast.101, add.100, broadcast.102)
-  round-nearest-even.104 = f32[1024,512]{1,0} round-nearest-even(clamp.103)
-  convert.105 = s8[1024,512]{1,0} convert(round-nearest-even.104)
-  convert.114 = s32[1024,512]{1,0} convert(convert.105)
-  constant.5 = s32[] constant(-7)
-  broadcast.4 = s32[1024,512]{1,0} broadcast(constant.5), dimensions={}
-  add.1 = s32[1024,512]{1,0} add(convert.114, broadcast.4)
-  convert.116 = f32[1024,512]{1,0} convert(add.1)
-  constant.109 = f32[] constant(0.09)
-  broadcast.110 = f32[1024,512]{1,0} broadcast(constant.109), dimensions={}
-  multiply.117 = f32[1024,512]{1,0} multiply(convert.116, broadcast.110)
-  broadcast.43 = f32[512,2048]{1,0} broadcast(constant.13), dimensions={}
-  arg3.4 = f32[512,2048]{1,0} parameter(3), parameter_replication={false}
-  constant.3 = f32[] constant(12.5)
-  broadcast.5 = f32[512,2048]{1,0} broadcast(constant.3), dimensions={}
-  multiply.3 = f32[512,2048]{1,0} multiply(arg3.4, broadcast.5)
-  broadcast.44 = f32[512,2048]{1,0} broadcast(constant.14), dimensions={}
-  clamp.45 = f32[512,2048]{1,0} clamp(broadcast.43, multiply.3, broadcast.44)
-  round-nearest-even.46 = f32[512,2048]{1,0} round-nearest-even(clamp.45)
-  convert.47 = s8[512,2048]{1,0} convert(round-nearest-even.46)
-  convert.56 = s32[512,2048]{1,0} convert(convert.47)
-  convert.58 = f32[512,2048]{1,0} convert(convert.56)
-  constant.51 = f32[] constant(0.08)
-  broadcast.52 = f32[512,2048]{1,0} broadcast(constant.51), dimensions={}
-  multiply.59 = f32[512,2048]{1,0} multiply(convert.58, broadcast.52)
-  ROOT dot.118 = f32[1024,2048]{1,0} dot(multiply.117, multiply.59), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={grad_x="false",grad_y="false"}
-})";
+TEST_P(QuantizedMatmulTest, DequantizeMatMulBiasReluRequantizeConstWeights) {
+  const char* module_str = R"(
+HloModule quant.matmul.test
 
-  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  std::unique_ptr<HloModule> optimized_module;
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_, false,
-                    &optimized_module);
-  CheckCustomCallTypes(optimized_module, S8, S8, S8);
-}
-
-TEST_F(MatmulTest, DequantizeMatMulBiasReluRequantizeConstWeights) {
-  const char* matmul_module_str = R"(
-HloModule DequantizeMatMulBiasReluRequantizeConstWeights, alias_passthrough_params=true, entry_computation_layout={(f32[1024,256]{1,0})->f32[1024,2048]{1,0}}
-ENTRY DequantizeMatMulBiasReluRequantizeConstWeights {
-  constant.7 = f32[] constant(-127)
-  broadcast.49 = f32[1024,512]{1,0} broadcast(constant.7), dimensions={}
-  broadcast.13 = f32[1024,256]{1,0} broadcast(constant.7), dimensions={}
-  arg0.1 = f32[1024,256]{1,0} parameter(0), parameter_replication={false}
-  constant = f32[] constant(2.5)
-  broadcast = f32[1024,256]{1,0} broadcast(constant), dimensions={}
-  multiply = f32[1024,256]{1,0} multiply(arg0.1, broadcast)
-  constant.5 = f32[] constant(3)
-  broadcast.6 = f32[1024,256]{1,0} broadcast(constant.5), dimensions={}
-  add.12 = f32[1024,256]{1,0} add(multiply, broadcast.6)
-  constant.8 = f32[] constant(127)
-  broadcast.14 = f32[1024,256]{1,0} broadcast(constant.8), dimensions={}
-  clamp.15 = f32[1024,256]{1,0} clamp(broadcast.13, add.12, broadcast.14)
-  round-nearest-even.16 = f32[1024,256]{1,0} round-nearest-even(clamp.15)
-  convert.17 = s8[1024,256]{1,0} convert(round-nearest-even.16)
-  convert.26 = s32[1024,256]{1,0} convert(convert.17)
+ENTRY quant.matmul.test {
+  constant.7 = $dtype[] constant($clamp_min)
+  broadcast.49 = $dtype[1024,512] broadcast(constant.7), dimensions={}
+  broadcast.13 = $dtype[1024,256] broadcast(constant.7), dimensions={}
+  arg0.1 = $dtype[1024,256] parameter(0), parameter_replication={false}
+  constant = $dtype[] constant(2.5)
+  broadcast = $dtype[1024,256] broadcast(constant), dimensions={}
+  multiply = $dtype[1024,256] multiply(arg0.1, broadcast)
+  constant.5 = $dtype[] constant(3)
+  broadcast.6 = $dtype[1024,256] broadcast(constant.5), dimensions={}
+  add.12 = $dtype[1024,256] add(multiply, broadcast.6)
+  constant.8 = $dtype[] constant($clamp_max)
+  broadcast.14 = $dtype[1024,256] broadcast(constant.8), dimensions={}
+  clamp.15 = $dtype[1024,256] clamp(broadcast.13, add.12, broadcast.14)
+  round-nearest-even.16 = $dtype[1024,256] round-nearest-even(clamp.15)
+  convert.17 = $quant_dtype[1024,256] convert(round-nearest-even.16)
+  convert.26 = s32[1024,256] convert(convert.17)
   constant.2 = s32[] constant(-3)
-  broadcast.1 = s32[1024,256]{1,0} broadcast(constant.2), dimensions={}
-  add = s32[1024,256]{1,0} add(convert.26, broadcast.1)
-  convert.28 = f32[1024,256]{1,0} convert(add)
-  constant.21 = f32[] constant(0.4)
-  broadcast.22 = f32[1024,256]{1,0} broadcast(constant.21), dimensions={}
-  multiply.29 = f32[1024,256]{1,0} multiply(convert.28, broadcast.22)
-  constant.30 = f32[256,512]{1,0} constant({...})
-  dot.31 = f32[1024,512]{1,0} dot(multiply.29, constant.30), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={grad_x="false",grad_y="false"}
-  constant.33 = f32[512]{0} constant({...})
-  broadcast.34 = f32[1024,512]{1,0} broadcast(constant.33), dimensions={1}
-  add.35 = f32[1024,512]{1,0} add(dot.31, broadcast.34)
-  constant.36 = f32[] constant(0)
-  broadcast.37 = f32[1024,512]{1,0} broadcast(constant.36), dimensions={}
-  maximum.38 = f32[1024,512]{1,0} maximum(add.35, broadcast.37)
-  constant.1 = f32[] constant(11.1111107)
-  broadcast.2 = f32[1024,512]{1,0} broadcast(constant.1), dimensions={}
-  multiply.1 = f32[1024,512]{1,0} multiply(maximum.38, broadcast.2)
-  constant.41 = f32[] constant(7)
-  broadcast.42 = f32[1024,512]{1,0} broadcast(constant.41), dimensions={}
-  add.48 = f32[1024,512]{1,0} add(multiply.1, broadcast.42)
-  broadcast.50 = f32[1024,512]{1,0} broadcast(constant.8), dimensions={}
-  clamp.51 = f32[1024,512]{1,0} clamp(broadcast.49, add.48, broadcast.50)
-  round-nearest-even.52 = f32[1024,512]{1,0} round-nearest-even(clamp.51)
-  convert.53 = s8[1024,512]{1,0} convert(round-nearest-even.52)
-  convert.62 = s32[1024,512]{1,0} convert(convert.53)
+  broadcast.1 = s32[1024,256] broadcast(constant.2), dimensions={}
+  add = s32[1024,256] add(convert.26, broadcast.1)
+  convert.28 = $dtype[1024,256] convert(add)
+  constant.21 = $dtype[] constant(0.4)
+  broadcast.22 = $dtype[1024,256] broadcast(constant.21), dimensions={}
+  multiply.29 = $dtype[1024,256] multiply(convert.28, broadcast.22)
+  constant.30 = $dtype[256,512] constant({...})
+  dot.31 = $dtype[1024,512] dot(multiply.29, constant.30), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  constant.33 = $dtype[512] constant({...})
+  broadcast.34 = $dtype[1024,512] broadcast(constant.33), dimensions={1}
+  add.35 = $dtype[1024,512] add(dot.31, broadcast.34)
+  constant.36 = $dtype[] constant(0)
+  broadcast.37 = $dtype[1024,512] broadcast(constant.36), dimensions={}
+  maximum.38 = $dtype[1024,512] maximum(add.35, broadcast.37)
+  constant.1 = $dtype[] constant(11.1111107)
+  broadcast.2 = $dtype[1024,512] broadcast(constant.1), dimensions={}
+  multiply.1 = $dtype[1024,512] multiply(maximum.38, broadcast.2)
+  constant.41 = $dtype[] constant(7)
+  broadcast.42 = $dtype[1024,512] broadcast(constant.41), dimensions={}
+  add.48 = $dtype[1024,512] add(multiply.1, broadcast.42)
+  broadcast.50 = $dtype[1024,512] broadcast(constant.8), dimensions={}
+  clamp.51 = $dtype[1024,512] clamp(broadcast.49, add.48, broadcast.50)
+  round-nearest-even.52 = $dtype[1024,512] round-nearest-even(clamp.51)
+  convert.53 = $quant_dtype[1024,512] convert(round-nearest-even.52)
+  convert.62 = s32[1024,512] convert(convert.53)
   constant.6 = s32[] constant(-7)
-  broadcast.3 = s32[1024,512]{1,0} broadcast(constant.6), dimensions={}
-  add.1 = s32[1024,512]{1,0} add(convert.62, broadcast.3)
-  convert.64 = f32[1024,512]{1,0} convert(add.1)
-  constant.57 = f32[] constant(0.09)
-  broadcast.58 = f32[1024,512]{1,0} broadcast(constant.57), dimensions={}
-  multiply.65 = f32[1024,512]{1,0} multiply(convert.64, broadcast.58)
-  constant.66 = f32[512,2048]{1,0} constant({...})
-  ROOT dot.67 = f32[1024,2048]{1,0} dot(multiply.65, constant.66), lhs_contracting_dims={1}, rhs_contracting_dims={0}, frontend_attributes={grad_x="false",grad_y="false"}
+  broadcast.3 = s32[1024,512] broadcast(constant.6), dimensions={}
+  add.1 = s32[1024,512] add(convert.62, broadcast.3)
+  convert.64 = $dtype[1024,512] convert(add.1)
+  constant.57 = $dtype[] constant(0.09)
+  broadcast.58 = $dtype[1024,512] broadcast(constant.57), dimensions={}
+  multiply.65 = $dtype[1024,512] multiply(convert.64, broadcast.58)
+  constant.66 = $dtype[512,2048] constant({...})
+  ROOT dot.67 = $dtype[1024,2048] dot(multiply.65, constant.66), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })";
 
-  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-4, 1e-4}));
-  std::unique_ptr<HloModule> optimized_module;
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_bias_relu_, false,
-                    &optimized_module);
-  CheckCustomCallTypes(optimized_module, S8, S8, S8);
+  std::vector<PrimitiveType> operand0_types = {quant_dtype_, quant_dtype_};
+  std::vector<PrimitiveType> operand1_types = {S8, S8};
+  std::vector<PrimitiveType> result_types = {quant_dtype_, dtype_};
+  RunCompareAndMatchOptimizedHlo(module_str, fused_matmul_bias_relu_,
+                                 operand0_types, operand1_types, result_types);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    OneDnnQuantMatmulTestSuite, QuantizedMatmulTest,
+    // TODO(intel-tf): Add BF16 type when quantization supports it.
+    ::testing::Combine(::testing::Values(F32), ::testing::Values(S8, U8)),
+    [](const ::testing::TestParamInfo<QuantizedMatmulTest::ParamType>& info) {
+      auto test_name =
+          primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param)) +
+          "_" +
+          primitive_util::LowercasePrimitiveTypeName(std::get<1>(info.param));
+      std::transform(test_name.begin(), test_name.end(), test_name.begin(),
+                     [](auto c) { return std::toupper(c); });
+      return test_name;
+    });
 
 }  // namespace cpu
 }  // namespace xla

@@ -22,7 +22,8 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-constexpr auto kOnednnConvConfig = BackendConfigOneofCase::kOnednnConvConfig;
+constexpr auto kOnednnConvConfig =
+    BackendConfig::BackendConfigOneofCase::kOnednnConvConfig;
 
 extern "C" {
 extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void** args);

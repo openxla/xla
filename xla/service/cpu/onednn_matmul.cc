@@ -119,9 +119,10 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
                               memory::format_tag::any);
   }
 
+  int fused_operand_idx = 0;
   dnnl::post_ops post_ops = PopulateOneDnnPostOps(
-      cpu_engine, fused_mds, &matmul_config.fusions(), output_md.get_ndims(),
-      fused_operands_ref, &bias_md);
+      fused_operand_idx, cpu_engine, fused_mds, &matmul_config.fusions(),
+      output_md.get_ndims(), fused_operands_ref, &bias_md);
 
   dnnl::primitive_attr attrs;
   if (matmul_config.optimization_config().user_scratchpad()) {
@@ -136,9 +137,8 @@ std::unique_ptr<matmul::primitive_desc> CreateMatMulPrimDesc(
     qparams->inversed_dst_scale =
         matmul_config.quant_config().inversed_dst_scale();
     AddQuantParamArgs(/*is_conv=*/false, /*conv_groups=*/false, attrs,
-                      fused_operand_idx, cpu_engine, fused_mds,
-                      input_md, plain_weights_md, output_md,
-                      fused_operands_ref, qparams);
+                      fused_operand_idx, cpu_engine, fused_mds, input_md,
+                      plain_weights_md, output_md, fused_operands_ref, qparams);
   }
   return std::make_unique<matmul::primitive_desc>(
       cpu_engine, input_md, weights_md, bias_md, output_md, attrs);
@@ -257,9 +257,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
   std::vector<std::pair<int, dnnl::memory>> postop_args;
   FusedOperandsRef fused_operands_ref{fused_bufs, postop_args};
   QuantizationParams qparams;
-  auto matmul_pd =
-      CreateMatMulPrimDesc(cpu_engine, input_md, weights_md, output_md,
-                           fused_mds, matmul_config, &fused_operands_ref, &qparams);
+  auto matmul_pd = CreateMatMulPrimDesc(cpu_engine, input_md, weights_md,
+                                        output_md, fused_mds, matmul_config,
+                                        &fused_operands_ref, &qparams);
 
   XLA_LIGHTWEIGHT_CHECK(num_args == arg_indx);
 

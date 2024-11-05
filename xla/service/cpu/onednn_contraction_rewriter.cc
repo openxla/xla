@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_convolution.h"
 #include "xla/service/cpu/onednn_matmul.h"
-#include "xla/service/cpu/onednn_convolution.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_pattern_utils.h"
 #include "xla/service/cpu/onednn_util.h"
@@ -1222,8 +1221,8 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  // This is a heuristic check to check if Multiply op is possibly part of
-  // Quantize pattern.
+  // This is a heuristic to check if Multiply op is possibly part of Quantize
+  // pattern.
   bool MultiplyInQuantizePattern(HloInstruction* instr) {
     auto user_instr = [&](HloInstruction* instr) {
       return (instr && instr->user_count() == 1) ? instr->users()[0] : nullptr;
