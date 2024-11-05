@@ -5353,6 +5353,25 @@ absl::Status AlgebraicSimplifierVisitor::HandleConvert(
   return TryRemoveUpcastAndDowncastSurroundingBinaryOp(convert);
 }
 
+absl::Status AlgebraicSimplifierVisitor::HandleReducePrecision(
+    HloInstruction* hlo) {
+  HloReducePrecisionInstruction* reduce_precision =
+      Cast<HloReducePrecisionInstruction>(hlo);
+  int tgt_exponent_bits = reduce_precision->exponent_bits();
+  int tgt_mantissa_bits = reduce_precision->mantissa_bits();
+  PrimitiveType dtype = hlo->shape().element_type();
+  int dtype_exponent_bits = primitive_util::ExponentWidth(dtype);
+  int dtype_mantissa_bits = primitive_util::SignificandWidth(dtype) - 1;
+  if (tgt_exponent_bits >= dtype_exponent_bits &&
+      tgt_mantissa_bits >= dtype_mantissa_bits) {
+    // If the target exponent bits and mantissa bits are equal to or greater
+    // than those of the operation's data type, the operation is a no-op and
+    // can be removed.
+    return ReplaceInstruction(hlo, hlo->mutable_operand(0));
+  }
+  return absl::OkStatus();
+}
+
 absl::Status AlgebraicSimplifierVisitor::HandleCustomCall(
     HloInstruction* custom_call) {
   // Remove redundant slice to dynamic of pad to static
@@ -5780,8 +5799,9 @@ AlgebraicSimplifierVisitor::TryToSinkBroadcastAfterOpWithUniqueNonScalarOperand(
         new_operands.push_back(operand);
       }
     }
-    VLOG(4) << "Sinking broadcast after user:" << "\n  old broadcast: "
-            << broadcast->ToString() << "\n  old user: " << user->ToString();
+    VLOG(4) << "Sinking broadcast after user:"
+            << "\n  old broadcast: " << broadcast->ToString()
+            << "\n  old user: " << user->ToString();
     changed_shape = ShapeUtil::ChangeElementType(operand->shape(),
                                                  user->shape().element_type());
     simplifier_->UpdateLayout(&changed_shape);

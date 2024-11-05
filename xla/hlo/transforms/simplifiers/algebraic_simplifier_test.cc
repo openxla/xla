@@ -3384,6 +3384,46 @@ TEST_F(AlgebraicSimplifierTest, EliminateConvertPairMultiOut) {
                                   m::Floor(m::Op().Is(input)))));
 }
 
+// Test that reduce-precision(A), is simplified to A if op exponent and
+// mantissa bits are equal to or greater than those of the A data type.
+// BF16 has exponent_bits=8 and mantissa_bits=7
+TEST_F(AlgebraicSimplifierTest, EliminateReducePrecision) {
+  const char* const kModuleStr = R"(
+  HloModule test
+
+  ENTRY main {
+    x = bf16[8,8] parameter(0)
+    y = bf16[8,8] parameter(1)
+    dot0 = bf16[8,8] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT res = bf16[8,8] reduce-precision(dot0), exponent_bits=8, mantissa_bits=7
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Dot(m::Parameter(0), m::Parameter(1))));
+}
+
+// Test that reduce-precision(A), is not simplified to A if op exponent or
+// mantissa bits are less than those of the A data type.
+// BF16 has exponent_bits=8 and mantissa_bits=7
+TEST_F(AlgebraicSimplifierTest, EliminateReducePrecision_NegativeTestCase) {
+  const char* const kModuleStr = R"(
+  HloModule test
+
+  ENTRY main {
+    x = f16[8,8] parameter(0)
+    y = f16[8,8] parameter(1)
+    dot0 = f16[8,8] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT res = f16[8,8] reduce-precision(dot0), exponent_bits=4, mantissa_bits=3
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
 // Test that copies are removed.
 TEST_F(AlgebraicSimplifierTest, RemoveCopy) {
   auto m = CreateNewVerifiedModule();
@@ -7258,13 +7298,14 @@ TEST_F(AlgebraicSimplifierTest, SliceOfReduceWindowTwoReduceDims) {
   auto root = m->entry_computation()->root_instruction();
   EXPECT_THAT(
       root,
-      GmockMatch(m::Reshape(m::Reduce(m::Parameter(0), m::Constant())
-                                .WithShape(S32, {3})
-                                .WithPredicate([](const HloInstruction* instr) {
-                                  return instr->dimensions() ==
-                                         std::vector<int64_t>({1, 2});
-                                }))
-                     .WithShape(S32, {3, 1, 1})));
+      GmockMatch(
+          m::Reshape(
+              m::Reduce(m::Parameter(0), m::Constant())
+                  .WithShape(S32, {3})
+                  .WithPredicate([](const HloInstruction* instr) {
+                    return instr->dimensions() == std::vector<int64_t>({1, 2});
+                  }))
+              .WithShape(S32, {3, 1, 1})));
 }
 
 TEST_F(AlgebraicSimplifierTest, ConcatToBroadcast) {
@@ -11471,12 +11512,13 @@ TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcast) {
   EXPECT_TRUE(
       RunHloPass(AlgebraicSimplifier(default_options_), m.get()).value());
   SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::Parameter(0))
-                             .WithPredicate([](const HloInstruction* instr) {
-                               return instr->dimensions() ==
-                                      std::vector<int64_t>({0, 3});
-                             })));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0))
+              .WithPredicate([](const HloInstruction* instr) {
+                return instr->dimensions() == std::vector<int64_t>({0, 3});
+              })));
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
@@ -11492,12 +11534,13 @@ TEST_F(AlgebraicSimplifierTest, TransposeBitcastOfBroadcast) {
   options.set_is_layout_sensitive(true);
   EXPECT_TRUE(RunHloPass(AlgebraicSimplifier(options), m.get()).value());
   SCOPED_TRACE(m->ToString());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::Parameter(0))
-                             .WithPredicate([](const HloInstruction* instr) {
-                               return instr->dimensions() ==
-                                      std::vector<int64_t>({0, 3});
-                             })));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0))
+              .WithPredicate([](const HloInstruction* instr) {
+                return instr->dimensions() == std::vector<int64_t>({0, 3});
+              })));
 }
 
 TEST_F(AlgebraicSimplifierTest, TransposeOfBroadcastWithLayoutCheckSkipped) {
