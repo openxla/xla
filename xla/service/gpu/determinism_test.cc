@@ -84,7 +84,9 @@ class DeterminismTest : public GpuCodegenTest {
     }
   }
 
-  DebugOptions GetDebugOptionsForTest() override { return debug_options_; }
+  DebugOptions GetDebugOptionsForTest() const override {
+    return debug_options_;
+  }
 
   DebugOptions debug_options_;
 
@@ -109,6 +111,9 @@ class DeterminismTest : public GpuCodegenTest {
     TF_ASSERT_OK_AND_ASSIGN(stream_executor::Platform * default_platform,
                             PlatformUtil::GetDefaultPlatform());
     stream_executor::gpu::MockGpuExecutor executor(default_platform, 0);
+    EXPECT_CALL(executor, CreateStream).WillRepeatedly([&]() {
+      return backend().default_stream_executor()->CreateStream();
+    });
     EXPECT_CALL(executor, CreateEventBasedTimer).Times(0);
     EXPECT_CALL(executor, GetDeviceDescription)
         .WillRepeatedly([this]() -> const se::DeviceDescription& {

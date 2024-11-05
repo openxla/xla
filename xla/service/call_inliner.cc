@@ -31,8 +31,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_domain_isolator.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/status_macros.h"
@@ -148,8 +148,8 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
 bool InlineUnderShardy(HloInstruction* instruction) {
   return !(instruction->GetModule()->config().use_shardy_partitioner() &&
            (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
-            absl::StartsWith(instruction->to_apply()->name(),
-                             sdy::kManualComputationBodyFuncName.str())));
+            absl::StrContains(instruction->to_apply()->name(),
+                              sdy::kManualComputationBodyFuncName.str())));
 }
 
 bool InlineComposites(

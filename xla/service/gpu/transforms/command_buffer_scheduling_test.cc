@@ -43,7 +43,7 @@ class CommandBufferSchedulingTest : public HloTestBase {
     return TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     auto debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONALS);
@@ -53,6 +53,13 @@ class CommandBufferSchedulingTest : public HloTestBase {
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.set_xla_gpu_graph_min_graph_size(2);
     return debug_options;
+  }
+
+  const se::GpuComputeCapability& GetGpuComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
   }
 };
 
@@ -809,6 +816,10 @@ TEST_F(CommandBufferSchedulingTest, WhileNotCommand) {
 }
 
 TEST_F(CommandBufferSchedulingTest, While) {
+  const auto& gpu_desc = GetGpuComputeCapability();
+  if (std::holds_alternative<se::RocmComputeCapability>(gpu_desc)) {
+    GTEST_SKIP() << "Not supported for ROCm!";
+  }
   const char* hlo = R"(
     HloModule TestModule, is_scheduled=true
 
@@ -870,6 +881,10 @@ TEST_F(CommandBufferSchedulingTest, While) {
 }
 
 TEST_F(CommandBufferSchedulingTest, Conditional) {
+  const auto& gpu_desc = GetGpuComputeCapability();
+  if (std::holds_alternative<se::RocmComputeCapability>(gpu_desc)) {
+    GTEST_SKIP() << "Not supported for ROCm!";
+  }
   const char* hlo = R"(
     HloModule TestModule, is_scheduled=true
 

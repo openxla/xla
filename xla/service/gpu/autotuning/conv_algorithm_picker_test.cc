@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/conv_algorithm_picker.h"
 
 #include <cstdint>
+#include <memory>
 #include <variant>
 #include <vector>
 
@@ -23,6 +24,7 @@ limitations under the License.
 #include "xla/autotune_results.pb.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -31,10 +33,10 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/service/platform_util.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla.pb.h"
@@ -78,6 +80,8 @@ ENTRY main {
                           PlatformUtil::GetStreamExecutors(platform));
   ASSERT_GT(executors.size(), 0);
   se::StreamExecutor* stream_exec = executors[0];
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                          stream_exec->CreateStream());
 
   const se::GpuComputeCapability& cc = backend()
                                            .default_stream_executor()
@@ -88,7 +92,7 @@ ENTRY main {
   changed = false;
   DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
 
-  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr}, opts};
+  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr, stream.get()}, opts};
   TF_ASSERT_OK_AND_ASSIGN(changed,
                           RunHloPass(GpuConvAlgorithmPicker(cfg), m.get()));
   ASSERT_TRUE(changed);
@@ -200,7 +204,9 @@ ENTRY main {
   ASSERT_TRUE(changed);
 
   DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
-  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr}, opts};
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                          stream_exec->CreateStream());
+  AutotuneConfig cfg{DeviceConfig{stream_exec, nullptr, stream.get()}, opts};
   TF_ASSERT_OK_AND_ASSIGN(changed,
                           RunHloPass(GpuConvAlgorithmPicker(cfg), m.get()));
   ASSERT_TRUE(changed);

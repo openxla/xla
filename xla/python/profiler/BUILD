@@ -4,16 +4,15 @@ load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
 cc_library(
-    name = "xplane_visitor_lib",
-    srcs = ["xplane_visitor.cc"],
-    hdrs = ["xplane_visitor.h"],
+    name = "profile_data_lib",
+    srcs = ["profile_data.cc"],
+    hdrs = ["profile_data.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
     visibility = [
-        "//perftools/accelerators/xprof/api/python:__pkg__",
         "//xla/python:__pkg__",
     ],
     deps = [
@@ -28,16 +27,16 @@ cc_library(
 )
 
 tsl_pybind_extension(
-    name = "xplane_visitor",
-    srcs = ["py_xplane_visitor.cc"],
+    name = "profile_data",
+    srcs = ["py_profile_data.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    pytype_srcs = ["xplane_visitor.pyi"],
+    pytype_srcs = ["profile_data.pyi"],
     visibility = ["//visibility:public"],
     deps = [
-        ":xplane_visitor_lib",
+        ":profile_data_lib",
         "@nanobind",
     ],
 )

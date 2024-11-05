@@ -102,10 +102,6 @@ absl::StatusOr<Type> TritonType(mlir::OpBuilder b, PrimitiveType t) {
       return b.getI1Type();
     case S8:
       return b.getI8Type();
-    case S4:  // The unpacking to i8 is supported by the emitter.
-      // We pass the s4 tensor as i8 tensor with the minor dimension having 2x
-      // less elements and unpack in the inner loop of the triton kernel.
-      return b.getI8Type();
     case F8E5M2:
       return b.getFloat8E5M2Type();
     case F8E4M3FN:
@@ -325,29 +321,71 @@ ScalarOrTensor Splat(ImplicitLocOpBuilder& b, ScalarOrTensor value,
   return ScalarOrTensor(b.create<mt::SplatOp>(type, value.UnwrapUnsafe()));
 }
 
+bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
+  auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
+  if (!dev_fn_id.has_value()) {
+    return false;
+  }
+  PrimitiveType output_type = hlo.shape().element_type();
+  return output_type == PrimitiveType::BF16 ||
+         output_type == PrimitiveType::F16 ||
+         output_type == PrimitiveType::F32 || output_type == PrimitiveType::F64;
+}
+
+absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
+    ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
+    const se::DeviceDescription& device_info, const HloInstruction& hlo,
+    ValueRange inputs) {
+  auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
+  if (!dev_fn_id.has_value()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("No libdevice function for operation ", hlo.ToString()));
+  }
+  PrimitiveType output_type = hlo.shape().element_type();
+  if (output_type != PrimitiveType::BF16 && output_type != PrimitiveType::F16 &&
+      output_type != PrimitiveType::F32 && output_type != PrimitiveType::F64) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported elementwise operation ", hlo.ToString()));
+  }
+  llvm::Triple triple("nvptx64-unknown-unknown");
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          device_info.gpu_compute_capability())) {
+    triple.setTriple("amdgcn-unknown-unknown");
+  }
+  llvm::SmallVector<Value, 2> casted_inputs;
+  PrimitiveType casted_output_type = output_type;
+  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+    // Upcast the inputs to F32.
+    for (int64_t i = 0; i < inputs.size(); ++i) {
+      casted_inputs.push_back(Cast(b, inputs[i], b.getF32Type()));
+    }
+    casted_output_type = F32;
+  } else {
+    casted_inputs.assign(inputs.begin(), inputs.end());
+  }
+  Value res = b.create<mt::ExternElementwiseOp>(
+      casted_inputs[0].getType(), casted_inputs, "libdevice", libdevice_path,
+      ObtainDeviceFunctionName(dev_fn_id.value(), casted_output_type, triple),
+      /*pure=*/true);
+  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+    // Downcast back to the original output type.
+    TF_ASSIGN_OR_RETURN(auto dst_ty, TritonType(b, output_type));
+    res = Cast(b, res, dst_ty);
+  }
+  return res;
+}
+
 absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
                                       absl::string_view libdevice_path,
                                       const se::DeviceDescription& device_info,
                                       const HloInstruction& hlo,
                                       ValueRange inputs) {
-  if (mlir::getElementTypeOrSelf(inputs[0]).isF32() ||
-      mlir::getElementTypeOrSelf(inputs[0]).isF64()) {
-    auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
-    if (dev_fn_id.ok()) {
-      llvm::Triple triple("nvptx64-unknown-unknown");
-      if (std::holds_alternative<se::RocmComputeCapability>(
-              device_info.gpu_compute_capability())) {
-        triple.setTriple("amdgcn-unknown-unknown");
-      }
-      return b.create<mt::ExternElementwiseOp>(
-          inputs[0].getType(), inputs, "libdevice", libdevice_path,
-          ObtainDeviceFunctionName(dev_fn_id.value(),
-                                   hlo.shape().element_type(), triple),
-          /*pure=*/true);
-    }
+  if (IsSupportedElementwiseLibdeviceFunction(hlo)) {
+    return EmitElementwiseLibdeviceFunction(b, libdevice_path, device_info, hlo,
+                                            inputs);
   }
   const bool is_integer =
-      mlir::isa<mlir::IntegerType>(mlir::getElementTypeOrSelf(inputs[0]));
+      mlir::isa<mlir::IntegerType>(getElementTypeOrSelf(inputs[0].getType()));
 
   switch (hlo.opcode()) {
     case HloOpcode::kCopy:
@@ -440,32 +478,6 @@ absl::StatusOr<ScalarOrTensor> EmitConstant(ImplicitLocOpBuilder& b,
     }
   }
   return CreateConst(b, ty, ScalarConstantValue<double>(constant, F64), shape);
-}
-
-// Emit sequence of operations for unpacking 2xi4 -> i8.
-absl::StatusOr<Value> EmitUnpackInt4(ImplicitLocOpBuilder& b,
-                                     const HloInstruction* hlo,
-                                     int64_t unpack_dim_idx, Value value) {
-  VLOG(6) << "EmitUnpackInt4: " << hlo->ToString();
-  auto input_type = mlir::cast<mlir::RankedTensorType>(value.getType());
-  if (input_type.getShape().size() != 2) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("UnpackInt4 works only for 2d inputs: ", hlo->ToString()));
-  }
-  // We use shifts instead the mask because we need to keep the sign bit.
-  Value shift4 =
-      Splat(b, CreateConst(b, b.getI8Type(), 4), input_type.getShape())
-          .UnwrapUnsafe();
-  Value lo = b.create<ma::ShRSIOp>(b.create<ma::ShLIOp>(value, shift4), shift4);
-  Value hi = b.create<ma::ShRSIOp>(value, shift4);
-  Value result = b.create<mt::JoinOp>(hi, lo);
-  if (unpack_dim_idx == 0) {
-    result = b.create<mt::TransOp>(result, b.getDenseI32ArrayAttr({0, 2, 1}));
-  }
-  SmallVector<int64_t> result_shape(input_type.getShape());
-  result_shape[unpack_dim_idx] *= 2;
-  auto type = mlir::RankedTensorType::get(result_shape, b.getI8Type());
-  return b.create<mt::ReshapeOp>(type, result, /*allow_reorder=*/false);
 }
 
 }  // namespace xla::gpu::triton

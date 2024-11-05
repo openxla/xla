@@ -741,14 +741,19 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
         tsl::Fingerprint64(unscaled_request.SerializeAsString());
     std::string request_dump_path =
         absl::StrCat("/tmp/solver_request_", unscaled_request.request_name(),
-                     "_", solver_request_fprint, ".proto");
-    auto write_status = file::SetBinaryProto(
+                     "_", solver_request_fprint, ".textproto");
+    auto write_status = file::SetTextProto(
         // Modify this file path if needed.
         request_dump_path, unscaled_request, file::Defaults());
-    VLOG(5) << "Dumped solver request to " << request_dump_path;
+    LOG(INFO) << "Dumped solver request to " << request_dump_path;
     if (!write_status.ok()) {
       LOG(ERROR) << write_status.message();
     }
+  }
+  // Invokes the solver request callback for any additional debugging.
+  bool solver_request_callback = false;
+  if (solver_request_callback) {
+    SolverRequestCallback(unscaled_request);
   }
 #endif
   if (request.enable_output()) {
@@ -767,14 +772,18 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
           << "Unique edges: " << unique_edges << "\n"
           << "Total instructions: " << request.num_nodes() << "\n"
           << "Total edges: " << request.edges_size() << "\n"
-          << "Memory budget: " << request.memory_budget() / (1024 * 1024 * 1024)
-          << "GB\n"
+          << "Memory budget: " << request.memory_budget() << " ("
+          << request.memory_budget() / (1024 * 1024 * 1024) << "GB)\n"
           << "Number variables for ILP: " << solver->NumVariables() << "\n"
           << "Number of ILP constraints: " << solver->NumConstraints() << "\n"
           << "Deterministic mode: " << request.deterministic_mode() << "\n"
+          << "Minimize departures: " << request.minimize_departures() << "\n"
           << "Module name: " << request.module_name();
   if (request.has_max_cost()) {
     VLOG(0) << "Max cost: " << request.max_cost().coeff();
+  }
+  if (request.has_max_departures()) {
+    VLOG(0) << "Max departures: " << request.max_departures().coeff();
   }
   auto result = SolveAndExtractSolution(request, s, e, overbudget_var,
                                         makespan_var, *solver);
@@ -803,6 +812,7 @@ absl::StatusOr<AutoShardingSolverOutput> FormulateAndSolveMIPFromSolverRequest(
     LOG(INFO) << "Total Departures: " << evaluation.total_departures;
     LOG(INFO) << "Total Makespan: " << evaluation.total_makespan;
     LOG(INFO) << "Total Violations: " << evaluation.violation_codes.size();
+    LOG(INFO) << "Maximum Total Memory: " << evaluation.max_total_memory;
   }
   const absl::Time end_time = absl::Now();
   const auto duration = end_time - start_time;
@@ -1019,8 +1029,6 @@ AutoShardingEvaluation Evaluate(const AutoShardingSolverRequest& request,
     }
   }
   if (request.memory_budget() > 0) {
-    double total_overbudget = 0.0;
-    double lower_bound_overbudget = 0.0;
     std::vector<double> total_memory_costs, lower_bound_memory_costs;
     if (request.node_intervals().empty()) {  // Handles live matrices.
       total_memory_costs.resize(request.live_size(), 0.0);
@@ -1121,8 +1129,12 @@ AutoShardingEvaluation Evaluate(const AutoShardingSolverRequest& request,
         }
       }
     }
+    double total_overbudget = 0.0;
+    double lower_bound_overbudget = 0.0;
     for (LivenessIdx time_idx = 0; time_idx < total_memory_costs.size();
          ++time_idx) {
+      evaluation.max_total_memory =
+          std::max(evaluation.max_total_memory, total_memory_costs[time_idx]);
       if (request.has_overbudget_coeff()) {
         total_overbudget =
             std::max(total_overbudget,

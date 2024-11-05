@@ -148,9 +148,12 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingLibNvPtxCompiler(
   RETURN_IF_NVPTXCOMPILER_ERROR(
       nvPTXCompilerGetInfoLogSize(compiler_handle, &info_log_size));
 
-  std::string info_log(info_log_size, '\0');
+  std::vector<char> info_log_buffer(info_log_size + 1);
   RETURN_IF_NVPTXCOMPILER_ERROR(
-      nvPTXCompilerGetInfoLog(compiler_handle, info_log.data()));
+      nvPTXCompilerGetInfoLog(compiler_handle, info_log_buffer.data()));
+  // The buffer may have several trailing null characters, so create a string
+  // from the pointer to the buffer rather than pair of iterators.
+  std::string info_log(info_log_buffer.data());
 
   // Print the verbose output of ptxas.
   if (!info_log.empty()) {

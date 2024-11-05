@@ -40,125 +40,92 @@ dnnl::stream MakeOneDnnStream(
              : dnnl::stream(cpu_engine);
 }
 
-void AddQuantParamArgs(bool is_conv, bool conv_groups,
-                       dnnl::primitive_attr& attrs, int& fused_operand_idx,
-                       const engine& cpu_engine,
-                       const std::vector<memory::desc>& fused_mds,
-                       const memory::desc& input_md,
-                       const memory::desc& weights_md, const memory::desc& output_md,
-                       FusedOperandsRef* fused_operands_ref,
-                       QuantizationParams* qparams) {
-  memory::data_type res_dt = output_md.get_data_type();
-  qparams->quant_result = 
-      (res_dt == memory::data_type::s8 || res_dt == memory::data_type::u8);
-  qparams->quant_operands = 
-      weights_md.get_data_type() == memory::data_type::s8;
-  memory::data_type inp_dt = input_md.get_data_type();
-  if (qparams->quant_operands) {
-    // Hybrid quantization is not currently supported.
-    XLA_LIGHTWEIGHT_CHECK(inp_dt == memory::data_type::s8 ||
-                          inp_dt == memory::data_type::u8);
-
-    auto src_scale_md = fused_mds.at(fused_operand_idx);
-    auto src_scale_buf = fused_operands_ref
-                              ? fused_operands_ref->bufs[fused_operand_idx]
-                              : nullptr;
-    fused_operand_idx++;
-    auto src_zp_md = fused_mds.at(fused_operand_idx);
-    auto src_zp_buf = fused_operands_ref
-                          ? fused_operands_ref->bufs[fused_operand_idx]
-                          : nullptr;
-    fused_operand_idx++;
-    auto wei_scale_md = fused_mds.at(fused_operand_idx);
-    auto wei_scale_buf = fused_operands_ref
-                              ? fused_operands_ref->bufs[fused_operand_idx]
-                              : nullptr;
-    fused_operand_idx++;
-    int wei_scale_size = wei_scale_md.get_dims()[0];
-    auto wei_zp_md = fused_mds.at(fused_operand_idx);
-    auto wei_zp_buf = fused_operands_ref
-                          ? fused_operands_ref->bufs[fused_operand_idx]
-                          : nullptr;
-    fused_operand_idx++;
-    // oneDNN only supports common scale/zp for src (no per-channel support).
-    XLA_LIGHTWEIGHT_CHECK(src_scale_md.get_dims()[0] == 1);
-    XLA_LIGHTWEIGHT_CHECK(src_zp_md.get_dims()[0] ==
-                          src_scale_md.get_dims()[0]);
-    if (fused_operands_ref) {
-      fused_operands_ref->postop_args.emplace_back(
-          DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC,
-          memory(src_scale_md, cpu_engine, src_scale_buf));
-      int* src_zp_data = (int*)src_zp_buf;
-
-      // We may need to negate the sign of the zp to get the original one
-      // because the hlo optimizer flips the zp sign in uniform_dequantize
-      // pattern.
-      qparams->src_zp_vec[0] =
-          qparams->negated_src_zp ? src_zp_data[0] * -1 : src_zp_data[0];
-      fused_operands_ref->postop_args.emplace_back(
-          DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC,
-          memory(src_zp_md, cpu_engine, qparams->src_zp_vec.data()));
-      fused_operands_ref->postop_args.emplace_back(
-          DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS,
-          memory(wei_scale_md, cpu_engine, wei_scale_buf));
-
-      // Weights' zero point is supported by oneDNN only in weights
-      // decompression.
-      auto wei_zp_mem = memory(wei_zp_md, cpu_engine, wei_zp_buf);
-      if (qparams->quant_result) {
-        auto dst_scale_md = fused_mds.at(fused_operand_idx);
-        auto dst_scale_buf = fused_operands_ref->bufs[fused_operand_idx];
-        fused_operand_idx++;
-        auto dst_zp_md = fused_mds.at(fused_operand_idx);
-        auto dst_zp_buf = fused_operands_ref->bufs[fused_operand_idx];
-        fused_operand_idx++;
-
-        // oneDNN only supports common scale/zp for dst (no per-channel
-        // support).
-        XLA_LIGHTWEIGHT_CHECK(dst_scale_md.get_dims()[0] == 1);
-        XLA_LIGHTWEIGHT_CHECK(dst_zp_md.get_dims()[0] ==
-                              dst_scale_md.get_dims()[0]);
-
-        float* scale_data = (float*)dst_scale_buf;
-        // We may need to compute the reciprocal of scale to get the original
-        // one because the hlo optimizer changes it in uniform_quantize pattern.
-        qparams->dst_scale_vec[0] =
-            qparams->inversed_dst_scale ? 1.0 / scale_data[0] : scale_data[0];
-        if (dst_zp_md.get_data_type() == memory::data_type::f32) {
-          // oneDNN expects zp to be int32 not f32.
-          qparams->dst_zp_vec[0] = static_cast<int>(((float*)dst_zp_buf)[0]);
-        } else {
-          qparams->dst_zp_vec[0] = ((int*)dst_zp_buf)[0];
+dnnl::post_ops PopulateOneDnnPostOps(
+    const dnnl::engine& cpu_engine,
+    const std::vector<dnnl::memory::desc>& fused_mds,
+    const OneDnnFusionConfig* fusion_config, const int output_ndims,
+    FusedOperandsRef* fused_operands_ref, dnnl::memory::desc* bias_md) {
+  dnnl::post_ops post_ops;
+  int fused_operand_idx = 0;
+  for (auto& fused_op : fusion_config->ops()) {
+    switch (fused_op) {
+      case OneDnnFusionConfig::RELU:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_relu, 0.f, 0.f);
+        break;
+      case OneDnnFusionConfig::TANH:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_tanh, 0.f, 0.f);
+        break;
+      case OneDnnFusionConfig::GELU_TANH:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_tanh, 0.f, 0.f);
+        break;
+      case OneDnnFusionConfig::GELU_ERF:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_gelu_erf, 0.f, 0.f);
+        break;
+      case OneDnnFusionConfig::RELU6:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_clip_v2, 0.f, 6.0f);
+        break;
+      case OneDnnFusionConfig::SIGMOID:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_logistic, 0.f, 0.f);
+        break;
+      case OneDnnFusionConfig::BIAS: {
+        *bias_md = fused_mds.at(fused_operand_idx);
+        // TODO(intel-tf): Move this check to the rewriter file
+        // Extend bias rank to match result rank.
+        auto missed_rank = output_ndims - bias_md->get_ndims();
+        if (missed_rank > 0) {
+          auto bias_dims = bias_md->get_dims();
+          bias_dims.insert(bias_dims.begin(), missed_rank, 1);
+          *bias_md = bias_md->reshape(bias_dims);
         }
-        fused_operands_ref->postop_args.emplace_back(
-            DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST,
-            memory(dst_scale_md, cpu_engine, qparams->dst_scale_vec.data()));
-        auto dst_zp_md_new =
-            memory::desc(dst_zp_md.get_dims(), memory::data_type::s32,
-                          memory::format_tag::x);
-        fused_operands_ref->postop_args.emplace_back(
-            DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_DST,
-            memory(dst_zp_md_new, cpu_engine, qparams->dst_zp_vec.data()));
-      }
-    }
-    // We set the mask to zero as we are using single scale and zero point
-    // for the whole tensor. 
-    attrs.set_scales_mask(DNNL_ARG_SRC, 0);
-    attrs.set_zero_points_mask(DNNL_ARG_SRC, 0);
-    int wei_mask;
-    if (wei_scale_size == 1) {
-      wei_mask = 0;
-    } else {
-      wei_mask = !is_conv ? 2 : conv_groups ? 3 : 1;
-    }
-
-    attrs.set_scales_mask(DNNL_ARG_WEIGHTS, wei_mask);
-    if (qparams->quant_result) {
-      attrs.set_scales_mask(DNNL_ARG_DST, 0);
-      attrs.set_zero_points_mask(DNNL_ARG_DST, 0);
+        if (fused_operands_ref) {
+          fused_operands_ref->postop_args.emplace_back(
+              DNNL_ARG_BIAS,
+              dnnl::memory(*bias_md, cpu_engine,
+                           fused_operands_ref->bufs[fused_operand_idx]));
+        }
+        fused_operand_idx++;
+      } break;
+      case OneDnnFusionConfig::ELU:
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_elu, 1.0f, 0.0f);
+        break;
+      case OneDnnFusionConfig::BINARY_ADD: {
+        auto binary_md = fused_mds.at(fused_operand_idx);
+        // TODO(intel-tf): Move this check to the rewriter file
+        // Extend addend rank to match result rank.
+        auto missed_rank = output_ndims - binary_md.get_ndims();
+        if (missed_rank > 0) {
+          auto binary_dims = binary_md.get_dims();
+          binary_dims.insert(binary_dims.begin(), missed_rank, 1);
+          binary_md = binary_md.reshape(binary_dims);
+        }
+        if (fused_operands_ref) {
+          auto arg_idx =
+              DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops.len()) | DNNL_ARG_SRC_1;
+          fused_operands_ref->postop_args.emplace_back(
+              arg_idx,
+              dnnl::memory(binary_md, cpu_engine,
+                           fused_operands_ref->bufs[fused_operand_idx]));
+        }
+        post_ops.append_binary(dnnl::algorithm::binary_add, binary_md);
+        fused_operand_idx++;
+      } break;
+      case OneDnnFusionConfig::LINEAR: {
+        float const_float;
+        *(reinterpret_cast<int32_t*>(&const_float)) =
+            fusion_config->alpha_typecast();
+        post_ops.append_eltwise(dnnl::algorithm::eltwise_linear, const_float,
+                                0.f);
+      } break;
+      default:
+        LOG(FATAL) << __FILE__ << ":" << __LINE__
+                   << " Attempt to call OneDNN runtime library with "
+                      "unsupported post op."
+                   << std::endl;
     }
   }
+  return post_ops;
 }
+
 }  // namespace cpu
 }  // namespace xla
 

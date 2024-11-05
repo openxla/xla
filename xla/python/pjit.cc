@@ -55,12 +55,14 @@ limitations under the License.
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/guard_lib.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/jax_jit.h"
+#include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/py_array.h"
@@ -70,7 +72,6 @@ limitations under the License.
 #include "xla/python/pytree.h"
 #include "xla/python/sharding.h"
 #include "xla/python/traceback.h"
-#include "xla/python/transfer_guard_lib.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
@@ -250,7 +251,7 @@ class PjitFunction {
                nb::callable cache_miss, std::vector<int> static_argnums,
                std::vector<nb::str> static_argnames,
                nb::object global_cache_key,
-               std::shared_ptr<xla::PyTreeRegistry> pytree_registry,
+               xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry,
                nb::callable shard_arg_fallback,
                std::shared_ptr<PjitFunctionCache> cache);
   ~PjitFunction();
@@ -289,7 +290,7 @@ class PjitFunction {
   const std::string& function_name() const { return function_name_; }
   const std::optional<nb::callable>& fun() const { return fun_; }
   const nb::callable& cache_miss() const { return cache_miss_; }
-  const std::shared_ptr<xla::PyTreeRegistry>& pytree_registry() const {
+  const xla::nb_class_ptr<xla::PyTreeRegistry>& pytree_registry() const {
     return pytree_registry_;
   }
   const nb::callable& shard_arg_fallback() const { return shard_arg_fallback_; }
@@ -333,7 +334,7 @@ class PjitFunction {
   std::vector<nb::str> static_argnames_;
   nb::object global_cache_key_;
 
-  std::shared_ptr<xla::PyTreeRegistry> pytree_registry_;
+  xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry_;
   nb::callable shard_arg_fallback_;
   std::shared_ptr<PjitFunctionCache> cache_;
   std::shared_ptr<PjitFunctionCache::Cache> executables_;
@@ -367,7 +368,7 @@ PjitFunction::PjitFunction(
     std::string function_name, std::optional<nb::callable> fun,
     nb::callable cache_miss, std::vector<int> static_argnums,
     std::vector<nb::str> static_argnames, nb::object global_cache_key,
-    std::shared_ptr<xla::PyTreeRegistry> pytree_registry,
+    xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry,
     nb::callable shard_arg_fallback, std::shared_ptr<PjitFunctionCache> cache)
     : function_name_(std::move(function_name)),
       fun_(std::move(fun)),
@@ -1074,7 +1075,7 @@ void InitializePjitFunction(
     std::optional<nb::callable> fun, nb::callable cache_miss,
     std::vector<int> static_argnums, std::vector<nb::str> static_argnames,
     nb::object global_cache_key,
-    std::shared_ptr<xla::PyTreeRegistry> pytree_registry,
+    xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry,
     nb::callable shard_arg_fallback, std::shared_ptr<PjitFunctionCache> cache) {
   if (nb::isinstance<nb::list>(global_cache_key)) {
     global_cache_key = nb::tuple(global_cache_key);
@@ -1093,7 +1094,7 @@ nb::object MakePjitFunction(
     std::string function_name, std::optional<nb::callable> fun,
     nb::callable cache_miss, std::vector<int> static_argnums,
     std::vector<nb::str> static_argnames, nb::object global_cache_key,
-    std::shared_ptr<xla::PyTreeRegistry> pytree_registry,
+    xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry,
     nb::callable shard_arg_fallback,
     std::optional<std::shared_ptr<PjitFunctionCache>> cache) {
   nb::object obj = nb::steal<nb::object>(PjitFunction_tp_new(
@@ -1248,8 +1249,8 @@ void BuildPjitSubmodule(nb::module_& m) {
         std::vector<nb::str> static_argnames =
             nb::cast<std::vector<nb::str>>(pickle["static_argnames"]);
         nb::object global_cache_key = pickle["global_cache_key"];
-        std::shared_ptr<xla::PyTreeRegistry> pytree_registry =
-            nb::cast<std::shared_ptr<xla::PyTreeRegistry>>(
+        xla::nb_class_ptr<xla::PyTreeRegistry> pytree_registry =
+            nb::cast<xla::nb_class_ptr<xla::PyTreeRegistry>>(
                 nb::handle(pickle["pytree_registry"].ptr()));
         nb::callable shard_arg_fallback =
             nb::cast<nb::callable>(pickle["shard_arg_fallback"]);
@@ -1288,8 +1289,8 @@ void BuildPjitSubmodule(nb::module_& m) {
          std::vector<nb::str> static_argnames, nb::object global_cache_key,
          nb::object pytree_registry, nb::callable shard_arg_fallback,
          std::optional<std::shared_ptr<PjitFunctionCache>> cache) {
-        std::shared_ptr<xla::PyTreeRegistry> registry =
-            nb::cast<std::shared_ptr<xla::PyTreeRegistry>>(
+        xla::nb_class_ptr<xla::PyTreeRegistry> registry =
+            nb::cast<xla::nb_class_ptr<xla::PyTreeRegistry>>(
                 nb::handle(pytree_registry.ptr()));
         return MakePjitFunction(
             std::move(function_name), std::move(fun), std::move(cache_miss),

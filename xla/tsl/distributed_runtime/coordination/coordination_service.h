@@ -122,8 +122,11 @@ class CoordinationServiceInterface {
   //   - InvalidArgument: Unexpected task request.
   //   - Aborted: (1) task is in error state, or (2) task is in connected state
   //       with a different incarnation, indicating that it restarted.
+  //   - DeadlineExceeded: waited too long for straggler tasks to register.
   virtual absl::Status RegisterTask(const tensorflow::CoordinatedTask& task,
                                     uint64_t incarnation) = 0;
+  virtual void RegisterTaskAsync(const tensorflow::CoordinatedTask& task,
+                                 uint64_t incarnation, StatusCallback done) = 0;
 
   // Wait for all tasks to be up and running, and register local device
   // info. The callback is invoked when all tasks are up and registered, or some
@@ -159,7 +162,7 @@ class CoordinationServiceInterface {
 
   // Set a task in error state permanently.
   virtual absl::Status ReportTaskError(const tensorflow::CoordinatedTask& task,
-                                       absl::Status error) = 0;
+                                       const absl::Status& error) = 0;
 
   // Get the state and the error status of the tasks.
   virtual std::vector<tensorflow::CoordinatedTaskStateInfo> GetTaskState(
@@ -225,7 +228,7 @@ class CoordinationServiceInterface {
   //       list of participating tasks.
   //   - FailedPrecondition: Agent is in UNINITIALIZED or ERROR state.
   virtual void BarrierAsync(
-      std::string_view barrier_id, absl::Duration timeout,
+      std::string barrier_id, absl::Duration timeout,
       const tensorflow::CoordinatedTask& task,
       const std::vector<tensorflow::CoordinatedTask>& participating_tasks,
       StatusCallback done) = 0;
@@ -236,7 +239,7 @@ class CoordinationServiceInterface {
   // Possible service errors:
   //   - FailedPrecondition: Barrier has already been passed.
   virtual absl::Status CancelBarrier(
-      std::string_view barrier_id, const tensorflow::CoordinatedTask& task) = 0;
+      std::string barrier_id, const tensorflow::CoordinatedTask& task) = 0;
 
   // Gets error from the coordination service. Block until the service
   // returns an error or the task/service is shutdown. This should never be used

@@ -35,12 +35,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/map_util.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
@@ -139,6 +139,7 @@ struct SchedulerConfig {
   bool enable_selective_resources = false;
   int64_t max_hops_to_closest_selective_overlap = 0;
   int64_t rerun = 0;
+  int64_t parallel_collective_overlap_limit = 1;
 };
 
 // Class used estimate latency between instructions and cost of HLOs.
@@ -215,7 +216,7 @@ class AsyncTracker {
       const HloInstruction& hlo) const;
 
   // Returns resources used (i.e., occupied or released) by this instruction
-  virtual ResourcesVector GetResourcesFromInstruction(
+  absl::Span<const ResourcePair> GetResourcesFromInstruction(
       const HloInstruction& hlo) const;
 
   // Modifies the schedule graph passed as input to add dependencies that are
@@ -298,8 +299,12 @@ class AsyncTracker {
       : get_canonical_async_op_(std::move(func)), config_(config) {}
 
  private:
-  mutable absl::flat_hash_map<const HloComputation*,
-                              absl::flat_hash_map<int64_t, int64_t>>
+  const absl::flat_hash_map<int64_t, int64_t>& RecursivelyComputeResourceMap(
+      const HloComputation* computation) const;
+
+  mutable absl::flat_hash_map<
+      const HloComputation*,
+      std::unique_ptr<absl::flat_hash_map<int64_t, int64_t>>>
       async_in_computation_cache_;
   GetCanonicalAsyncOpFunc get_canonical_async_op_;
 

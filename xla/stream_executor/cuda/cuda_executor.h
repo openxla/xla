@@ -1,4 +1,5 @@
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/cuda/cuda_context.h"
 /* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,15 +66,15 @@ class CudaExecutor : public GpuExecutor {
       const DeviceMemoryBase& location) override;
 
   absl::StatusOr<void*> CollectiveMemoryAllocate(uint64_t size) override {
-    return CudaCollectives::CollectiveMemoryAllocate(gpu_context(), size);
+    return CudaCollectives::CollectiveMemoryAllocate(this, size);
   }
 
   absl::Status CollectiveMemoryDeallocate(void* location) override {
-    return CudaCollectives::CollectiveMemoryDeallocate(gpu_context(), location);
+    return CudaCollectives::CollectiveMemoryDeallocate(this, location);
   }
 
   absl::StatusOr<std::unique_ptr<EventBasedTimer>> CreateEventBasedTimer(
-      GpuStream* stream, bool use_delay_kernel) override;
+      Stream* stream, bool use_delay_kernel) override;
   absl::StatusOr<DeviceMemoryBase> GetSymbol(
       const std::string& symbol_name, ModuleHandle module_handle) override;
   absl::Status SynchronousMemZero(DeviceMemoryBase* location,
@@ -84,15 +85,14 @@ class CudaExecutor : public GpuExecutor {
                                  const DeviceMemoryBase& gpu_src,
                                  uint64_t size) override;
   void DeallocateStream(Stream* stream) override;
-  absl::Status BlockHostUntilDone(Stream* stream) override;
   absl::Status EnablePeerAccessTo(StreamExecutor* other) override;
   bool CanEnablePeerAccessTo(StreamExecutor* other) override;
   bool DeviceMemoryUsage(int64_t* free_out, int64_t* total_out) const override;
   absl::StatusOr<std::unique_ptr<Kernel>> LoadKernel(
       const MultiKernelLoaderSpec& spec) override;
   void UnloadKernel(const Kernel* kernel) override;
-  absl::Status LoadModule(const MultiModuleLoaderSpec& spec,
-                          ModuleHandle* module_handle) override;
+  absl::StatusOr<ModuleHandle> LoadModule(
+      const MultiModuleLoaderSpec& spec) override;
   bool UnloadModule(ModuleHandle module_handle) override;
   absl::StatusOr<std::shared_ptr<DeviceMemoryBase>> CreateOrShareConstant(
       Stream* stream, absl::Span<const uint8_t> content) override;
@@ -138,20 +138,15 @@ class CudaExecutor : public GpuExecutor {
   CreateDeviceDescription(int device_ordinal);
 
  private:
-  // Collects metadata for the specified kernel.
-  absl::Status GetKernelMetadata(GpuKernel* cuda_kernel,
-                                 KernelMetadata* kernel_metadata);
-
-  // (supported on CUDA only)
-  absl::Status LoadModuleFromCuBin(const char* cubin, CUmodule* module)
+  // Loads a module in cubin format.
+  absl::StatusOr<ModuleHandle> LoadModuleFromCuBin(const char* cubin)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
-  // Loads the PTX text `ptx` as a CUDA module.  `ptx` must be null terminated.
-  // (supported on CUDA only)
-  absl::Status LoadModuleFromPtx(const char* ptx, CUmodule* module)
+  // Loads the PTX text `ptx` as a CUDA module. `ptx` must be null terminated.
+  absl::StatusOr<ModuleHandle> LoadModuleFromPtx(const char* ptx)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
-  bool UnloadGpuBinary(const void* gpu_binary)
+  bool UnloadGpuBinary(ModuleHandle gpu_binary)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(in_memory_modules_mu_);
 
   // Returns true if a delay kernel is supported.
@@ -167,12 +162,12 @@ class CudaExecutor : public GpuExecutor {
   std::map<const absl::uint128, std::weak_ptr<DeviceMemoryBase>>
       shared_constants_ ABSL_GUARDED_BY(shared_constants_mu_);
 
-  // Kernel -> loaded GPU binary. Many kernels may load the same binary.
-  absl::flat_hash_map<const Kernel*, const void*> kernel_to_gpu_binary_
+  // Kernel -> loaded GPU module. Many kernels may load the same binary.
+  absl::flat_hash_map<const Kernel*, ModuleHandle> kernel_to_gpu_binary_
       ABSL_GUARDED_BY(in_memory_modules_mu_);
 
-  // GPU binary (PTX or CUBIN) -> {CUDA module, reference count}.
-  absl::flat_hash_map<const void*, std::pair<CUmodule, uint64_t>>
+  // Loaded GPU module handle -> {CUDA module, reference count}.
+  absl::flat_hash_map<ModuleHandle, std::pair<CUmodule, uint64_t>>
       gpu_binary_to_module_ ABSL_GUARDED_BY(in_memory_modules_mu_);
 
   // Handle for the CUDA device being operated on. Immutable
@@ -208,6 +203,9 @@ class CudaExecutor : public GpuExecutor {
   // Lookup map for alive streams, from raw stream pointers.
   absl::flat_hash_map<void*, Stream*> alive_gpu_streams_
       ABSL_GUARDED_BY(alive_gpu_streams_mu_);
+
+  // CudaContext for this device.
+  CudaContext* cuda_context_;
 };
 
 }  // namespace stream_executor::gpu

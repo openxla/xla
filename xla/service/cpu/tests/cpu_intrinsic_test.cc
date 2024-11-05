@@ -14,7 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cctype>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
@@ -81,7 +84,7 @@ class CpuUnaryIntrinsicTest
   }
 
  private:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     HloTestBase::SetAotFastMathDebugOptions(&debug_options);
     return debug_options;

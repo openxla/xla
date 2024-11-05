@@ -26,11 +26,12 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "llvm/IR/Module.h"
 #include "xla/autotune_results.pb.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
-#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
@@ -40,12 +41,10 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_compiler.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -227,7 +226,6 @@ class GpuCompiler : public LLVMCompiler {
   virtual absl::Status OptimizeHloConvolutionCanonicalization(
       HloModule* hlo_module, se::GpuComputeCapability gpu_version,
       se::dnn::VersionInfo dnn_version,
-      se::DeviceMemoryAllocator* device_allocator,
       const se::SemanticVersion& toolkit_version) = 0;
 
   // TODO(timshen): Replace `debug_module` with some portable debug information
@@ -247,6 +245,18 @@ class GpuCompiler : public LLVMCompiler {
     return Unimplemented("LinkModules is not implemented.");
   }
 
+  // Creates an AutotuneConfig for the given options.
+  absl::StatusOr<AutotuneConfig> GetAutotuneConfig(
+      se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
+      const GpuCompiler::CompileOptions& options,
+      const Compiler::TargetConfig& gpu_target_config);
+
+  // Runs verification passes after fusion.
+  absl::Status RunPostFusionVerificationPasses(
+      HloModule* hlo_module, se::StreamExecutor* stream_exec,
+      const GpuCompiler::CompileOptions& options,
+      const Compiler::TargetConfig& gpu_target_config);
+
   se::Platform::Id platform_id_;
 
   // The triple that represents our target.
@@ -257,6 +267,9 @@ class GpuCompiler : public LLVMCompiler {
 
   // The size in bytes of a pointer. Used by ShapeSizeBytesFunction.
   const int64_t pointer_size_;
+
+  // A stream to use for autotuning if none is provided.
+  std::unique_ptr<se::Stream> compute_stream_;
 
   GpuCompiler(const GpuCompiler&) = delete;
   GpuCompiler& operator=(const GpuCompiler&) = delete;

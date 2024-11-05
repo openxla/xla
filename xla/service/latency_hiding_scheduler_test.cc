@@ -37,7 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/service/async_collective_creator.h"
+#include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -3165,9 +3165,10 @@ ENTRY %module {
       return AsyncTracker::GetResourceHazardType(resource_type);
     }
 
-    ResourcesVector GetResourcesFromInstruction(
+    ResourcesVector GetResourcesFromInstructionImpl(
         const HloInstruction& hlo) const override {
-      ResourcesVector result = AsyncTracker::GetResourcesFromInstruction(hlo);
+      ResourcesVector result =
+          AsyncTracker::GetResourcesFromInstructionImpl(hlo);
       // There is only one target defined resource (which is non-extendable).
       if (hlo.opcode() == HloOpcode::kAllGatherStart) {
         result.push_back({AsyncTracker::GetFirstTargetDefinedResource(),

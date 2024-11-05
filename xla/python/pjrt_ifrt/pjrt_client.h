@@ -135,11 +135,12 @@ class PjRtClient final
   ~PjRtClient() override;
 
   // For making Arrays with `dtype` as kString:
-  //   (1) the `data` argument should point to an array of `absl::string_view`
+  //   (1) the `data` argument should point to an array of `absl::Cord`
   //   in major-to-minor order,
   //   (2) `byte_strides` are not supported, and non-`nullopt` values cause this
   //   function to fail.
   //   (3) only the `kImmutableDuringCall` semantics is supported currently.
+  //   Fails for other values of `HostBufferSemantics`.
   absl::StatusOr<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
       const void* data, DType dtype, Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
@@ -151,6 +152,11 @@ class PjRtClient final
       Shape shape, std::shared_ptr<const Sharding> sharding,
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics semantics) override;
+  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
+      Shape shape, std::shared_ptr<const Sharding> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,

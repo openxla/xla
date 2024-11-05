@@ -76,6 +76,9 @@ struct AutoShardingEvaluation {
   // The (raw) total makespan, i.e., not scaled by the makespan coefficient.
   double total_makespan = 0.0;
 
+  // The maximum total memory over all time steps.
+  double max_total_memory = 0.0;
+
   bool operator==(const AutoShardingEvaluation& other) const;
 };
 
@@ -127,6 +130,8 @@ class StrategyShaver {
 // Check fail if `request` is invalid (e.g., because of negative node costs).
 // Note: This does not include checks for valid variable aliasing yet.
 absl::Status ValidateRequest(const AutoShardingSolverRequest& request);
+
+void SolverRequestCallback(const AutoShardingSolverRequest& request);
 
 }  // namespace spmd
 }  // namespace xla

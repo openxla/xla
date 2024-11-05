@@ -120,6 +120,14 @@ bool IsInputFusibleReduction(const HloInstruction& instr);
 // or a loop fusion rooted with such.
 bool IsNestableVariadicReduction(const HloInstruction& instr);
 
+// Whether `instr` is a nestable variadic reduce-window
+// or a loop fusion rooted with such.
+bool IsNestableVariadicReduceWindow(const HloInstruction& instr);
+
+// Whether `instr` is a nestable variadic reduction
+// or a loop fusion rooted with such.
+bool IsNestableVariadicReduction(const HloInstruction& instr);
+
 // Whether `instr` is fusible as root of a scatter input fusions, i.e. `instr`
 // is either an unfused scatter op or a scatter input fusion.
 bool IsInputFusibleScatter(const HloInstruction& instr);
@@ -227,6 +235,9 @@ bool IsGenericTritonFusion(const HloInstruction& instr);
 // Whether the fusion will likely behave poorly with vectorization due to the
 // instructions it contains.
 bool MayPreventVectorization(const HloFusionAdaptor& fusion);
+
+// Returns the max loop unroll factor.
+inline constexpr int64_t MaxUnrollFactor() { return 4; }
 
 LaunchDimensionsConfig ComputeLoopFusionConfig(
     const HloFusionAnalysis& analysis);

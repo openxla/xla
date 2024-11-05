@@ -29,9 +29,11 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/transforms/instruction_fusion.h"
-#include "xla/service/hlo_dce.h"
+#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/transforms/priority_fusion.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/shape.h"
@@ -40,6 +42,7 @@ limitations under the License.
 #include "xla/test.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -303,10 +306,13 @@ TEST_F(HorizontalLoopFusionTest, HorizontalLoopFusionAfterVerticalFusion) {
   HloPassPipeline fusion("fusion");
   const se::DeviceDescription device_info =
       TestGpuDeviceInfo::RTXA6000DeviceInfo();
-  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/false,
-                                                 device_info);
-  fusion.AddPass<xla::gpu::GpuInstructionFusion>(/*may_duplicate=*/true,
-                                                 device_info);
+  GpuHloCostAnalysis::Options cost_analysis_options{
+      HloCostAnalysis::DefaultShapeSize,
+      /*per_second_rates=*/{},
+      /*min_latencies_seconds=*/{},
+      /*count_multiple_input_accesses=*/true};
+  fusion.AddPass<xla::gpu::PriorityFusion>(/*thread_pool=*/nullptr, device_info,
+                                           cost_analysis_options);
   EXPECT_TRUE(fusion.Run(module.get()).value());
   EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
   TF_ASSERT_OK(verifier().Run(module.get()).status());
@@ -555,10 +561,9 @@ TEST_F(HorizontalLoopFusionTest, DynamicUpdateSlice) {
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), ErrorSpec{0, 0}));
 }
 
-TEST_F(HorizontalLoopFusionTest, NegativeTestForSharedParam) {
+TEST_F(HorizontalLoopFusionTest,
+       AllowSharedParametersWhenNotUsingConcatenation) {
   auto module = ParseAndReturnVerifiedModule(R"(
- HloModule BasicTest
-
  fused_computation.1 {
    arg.1 = f16[123]{0} parameter(0)
    arg.2 = f16[123]{0} parameter(1)
@@ -582,10 +587,40 @@ TEST_F(HorizontalLoopFusionTest, NegativeTestForSharedParam) {
        fusion(arg.3, arg.2), kind=kLoop, calls=fused_computation.2
    ROOT tuple.1 = (f16[123]{0}, f16[123]{0})
        tuple(fusion.1, fusion.2)
- }
-)")
+ })")
                     .value();
 
+  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()
+                  ->parameter_instruction(0)
+                  ->users()[0]
+                  ->fused_instructions_computation()
+                  ->root_instruction(),
+              GmockMatch(m::Tuple(m::Multiply(), m::Add())));
+}
+
+TEST_F(HorizontalLoopFusionTest, ForbidSharedParametersWhenUsingConcatenation) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+f {
+  p = f16[] parameter(0)
+}
+
+g {
+  p = f16[] parameter(0)
+  b = f16[1] bitcast(p)
+}
+
+e {
+  p = f16[] parameter(0)
+  a = f16[] fusion(p), kind=kLoop, calls=f
+  b = f16[1] fusion(p), kind=kLoop, calls=g
+  t = tuple(a, b)
+})"));
+
+  // As fusions f and g have different output shapes, the horizontal fusion
+  // algorithm would only consider merging them using concatenation/slicing.
+  // The horizontal fusion is not supposed to happen in this
+  // example though because f and g share an input parameter.
   EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
 }
 
@@ -844,6 +879,30 @@ TEST_F(HorizontalLoopFusionTest, DoNotMergeVariadicReductions) {
                     .value();
 
   EXPECT_FALSE(HorizontalLoopFusion().Run(module.get()).value());
+}
+
+TEST_F(HorizontalLoopFusionTest, DoFusionInsideWhileLoop) {
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+b {
+  a = (s8[]) parameter(0)
+  b = s8[] get-tuple-element(a), index=0
+  c = s8[] add(b, b)
+  d = s8[] multiply(b, b)
+  e = s8[] subtract(c, d)
+  t = tuple(e)
+}
+
+c {
+  p = (s8[]) parameter(0)
+  r = pred[] constant(true)
+}
+
+e {
+  p = (s8[]) parameter(0)
+  r = (s8[]) while(p), condition=c, body=b
+})"));
+
+  EXPECT_TRUE(HorizontalLoopFusion().Run(module.get()).value());
 }
 
 }  // namespace

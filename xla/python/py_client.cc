@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/callback.h"
+#include "xla/python/guard_lib.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -83,7 +84,6 @@ limitations under the License.
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/traceback.h"
-#include "xla/python/transfer_guard_lib.h"
 #include "xla/python/types.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
@@ -429,6 +429,11 @@ PyClient::CompileIfrtProgram(
         options.executable_build_options.set_device_memory_size(
             *stats->bytes_limit);
       }
+    }
+
+    if (pjrt_compatible_client->pjrt_client()->key_value_store().has_value()) {
+      options.executable_build_options.set_key_value_store(
+          *pjrt_compatible_client->pjrt_client()->key_value_store());
     }
   }
 

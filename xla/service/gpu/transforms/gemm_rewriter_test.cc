@@ -94,7 +94,7 @@ class GemmRewriteTest : public GpuCodegenTest {
     }
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // These tests test the cuBLAS rewriter so we have to make sure that we use
     // cuBLAS for them.
@@ -287,7 +287,7 @@ class ParameterizedGemmRewriteTest
     replacements_[kCustomCallTargetPlaceholder] =
         kUsingCublasLt ? "__cublas$lt$matmul" : "__cublas$gemm";
   }
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(GetParam());
     debug_options.set_xla_gpu_enable_triton_gemm(false);
@@ -1446,7 +1446,7 @@ INSTANTIATE_TEST_SUITE_P(CublasTestsBothLegacyAndLt,
 // A test fixture class for tests which are specific to legacy cublas
 class LegacyCublasGemmRewriteTest : public GemmRewriteTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_triton_gemm(false);
     debug_options.set_xla_gpu_enable_cublaslt(false);
@@ -2203,7 +2203,7 @@ ENTRY test {
 // A test fixture class for tests which are specific to cublasLt
 class CublasLtGemmRewriteTest : public GemmRewriteTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(true);
     debug_options.set_xla_gpu_enable_triton_gemm(false);
@@ -6107,9 +6107,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, UnscaledABScaledDF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P2_INV:%[^ ]+]] = f32[] divide([[C0]], [[P2]])
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
+; CHECK-PTX-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]], [[C2]]),
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]], [[C2]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -6325,8 +6325,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
 ; CHECK-PTX-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
-; CHECK-GCN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -6435,8 +6434,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
 ; CHECK-PTX-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
-; CHECK-CGN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -6516,7 +6514,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
 ; CHECK-PTX:         [[P4:%[^ ]+]] = f16[] parameter(5)
 ; CHECK-PTX:       [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[DUMMY0:%[^ ]+]], [[DUMMY1:%[^ ]+]], /*index=5*/[[DUMMY2:%[^ ]+]]),
 ; CHECK-NOT:       output_to_operand_aliasing
-; CHECK-GCN:       [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[DUMMY0:%[^ ]+]], [[DUMMY1:%[^ ]+]], /*index=5*/[[DUMMY2:%[^ ]+]]),
+; CHECK-GCN:       [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[DUMMY0:%[^ ]+]], [[DUMMY1:%[^ ]+]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -6589,8 +6587,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
 ; CHECK-PTX-NEXT:    [[DV:%[^ ]+]] = f16[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[CV2:%[^ ]+]] = f32[] convert([[DV]])
 ; CHECK-PTX:     [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[VB]], /*index=5*/[[CV2]]),
-; CHECK-GCN:     [[C:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN:     [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[C]], /*index=5*/[[C]], [[VB]]),
+; CHECK-GCN:     [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[VB]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -7405,8 +7402,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
 ; CHECK-PTX-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
-; CHECK-GCN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -7487,8 +7483,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f16[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[P4_INV_CONVERT:%[^ ]+]] = f32[] convert([[P4_INV]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CONVERT]], [[P3_CONVERT]], [[P4_INV_CONVERT]]),
-; CHECK-CGN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CONVERT]], [[P3_CONVERT]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CONVERT]], [[P3_CONVERT]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -7566,8 +7561,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest,
 ; CHECK-PTX-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
-; CHECK-CGN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
-; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[C1]]),
+; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
 ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
@@ -7837,7 +7831,6 @@ TEST_P(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
 ; CHECK-GCN-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]])
 ; CHECK-GCN-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-GCN-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
-; CHECK-GCN-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
 ; CHECK-PTX:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
 ; CHECK-GCN:           custom_call_target="__cublas$lt$matmul$f8",
 ; CHECK:           backend_config={
@@ -8052,7 +8045,7 @@ class GemmRewriteAllocationTest : public GpuCodegenTest {
     ASSERT_EQ(allocations.size(), expected_number_of_allocations);
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // Make sure the rewriter does not skip the rewrite for being too small.
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(0);
@@ -8085,7 +8078,7 @@ ENTRY AddDotsFunc {
 
 class SmallDotGemmRewriteTest : public GemmRewriteTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GemmRewriteTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_gemm_rewrite_size_threshold(100);
     return debug_options;

@@ -98,7 +98,7 @@ limitations under the License.
 #include "xla/service/gpu/fusions/triton/emitter_helpers.h"
 #include "xla/service/gpu/fusions/triton/passes.h"
 #include "xla/service/gpu/fusions/triton/triton_fusion_emitter_legacy_matmul.h"
-#include "xla/service/gpu/fusions/triton/triton_support.h"
+#include "xla/service/gpu/fusions/triton/xla_triton_ops.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
@@ -147,7 +147,6 @@ using ::xla::gpu::triton::Cast;
 using ::xla::gpu::triton::CreateConst;
 using ::xla::gpu::triton::EmitConstant;
 using ::xla::gpu::triton::EmitElementwise;
-using ::xla::gpu::triton::EmitUnpackInt4;
 using ::xla::gpu::triton::GetPaddedTileSizes;
 using ::xla::gpu::triton::ScalarOrTensor;
 using ::xla::gpu::triton::StorageType;
@@ -462,6 +461,42 @@ absl::StatusOr<ScalarOrTensor> EmitTiledIota(
   return Broadcast(b, mlir::cast<TensorValue>(range), padded_tile_sizes);
 }
 
+// Reshapes a non-0D tensor of shape [1, 1, 1, ...] to a scalar.
+ScalarOrTensor ReshapeTensorToScalar(ImplicitLocOpBuilder& b, Value input) {
+  auto element_type = mlir::cast<ShapedType>(input.getType()).getElementType();
+
+  // First, reshape to a 1D tensor if not already the case. This is needed
+  // because triton::ReduceOp can only reduce 1 dimension at a time.
+  auto single_dim_tensor = input;
+  if (mlir::cast<ShapedType>(input.getType()).getRank() > 1) {
+    Type output_tensor_type = mlir::RankedTensorType::get({1}, element_type);
+    single_dim_tensor = b.create<mt::ReshapeOp>(output_tensor_type, input,
+                                                /*allow_reorder=*/true);
+  }
+
+  // Second, reduce to a scalar.
+  mt::ReduceOp reduction =
+      b.create<mt::ReduceOp>(single_dim_tensor, /*axis=*/0);
+
+  mlir::Location loc = b.getLoc();
+  mlir::Block* reducer = b.createBlock(
+      &reduction->getRegion(0), /*insertPt=*/{},
+      /*argTypes=*/{element_type, element_type}, /*locs=*/{loc, loc});
+
+  b.setInsertionPointToStart(reducer);
+  Value result = mlir::isa<mlir::IntegerType>(element_type)
+                     ? b.create<ma::AddIOp>(reducer->getArgument(0),
+                                            reducer->getArgument(1))
+                           .getResult()
+                     : b.create<ma::AddFOp>(reducer->getArgument(0),
+                                            reducer->getArgument(1))
+                           .getResult();
+  b.create<mt::ReduceReturnOp>(SmallVector<Value>({result}));
+  b.setInsertionPointAfter(reduction);
+
+  return ScalarOrTensor(reduction.getResult().front());
+}
+
 absl::StatusOr<ScalarOrTensor> EmitTiledReshape(ImplicitLocOpBuilder& b,
                                                 ArrayRef<int64_t> tile_sizes,
                                                 ScalarOrTensor input) {
@@ -480,12 +515,12 @@ absl::StatusOr<ScalarOrTensor> EmitTiledReshape(ImplicitLocOpBuilder& b,
 
   auto input_shaped_type = mlir::cast<ShapedType>(input.Type());
 
-  // TODO(b/370012383): Implement support for reshapes of the kind [] reshape
-  // ([1,1,1...]). This requires a reduction.
+  // Handle the case of reshaping [1,1,1...] to a scalar.
   if (tile_sizes.empty()) {
-    return absl::InternalError(
-        "Reshapes of the kind [] reshape ([1,1,1...]) are not supported.");
+    return ReshapeTensorToScalar(b, input.UnwrapTensor());
   }
+
+  // At this point we know that neither the input nor the output are 0D tensors.
 
   Type output_tensor_type = mlir::RankedTensorType::get(
       padded_tile_sizes, input_shaped_type.getElementType());
@@ -585,9 +620,9 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
         EmitParameterLoad(b, make_tensor.op, make_tensor.boundary_checks);
 
     // Some types are stored using different types, e.g. i1 is stored in memory
-    // as i8. It's important to type checking that we perform a conversion
-    // after loading if the type of the loaded parameter does not match what
-    // is expected.
+    // as i8. It's important to type checking that we perform a conversion after
+    // loading if the type of the loaded parameter does not match what is
+    // expected.
     Type loaded_element_type = getElementTypeOrSelf(parameter.Type());
     TF_ASSIGN_OR_RETURN(Type expected_element_type,
                         TritonType(b, hlo->shape().element_type()));
@@ -702,19 +737,8 @@ absl::StatusOr<ScalarOrTensor> EmitScope(
     absl::flat_hash_map<const HloInstruction*, ScalarOrTensor>& values) {
   for (const HloInstruction* hlo : instructions) {
     ScalarOrTensor result;
-    if (hlo->opcode() == HloOpcode::kConvert &&
-        hlo->operand(0)->shape().element_type() == S4) {
-      TF_ASSIGN_OR_RETURN(
-          auto unpacked,
-          EmitUnpackInt4(b, hlo, /*unpack_dim_idx=*/0,
-                         values[hlo->operand(0)].UnwrapUnsafe()));
-      std::vector<Value> operands({unpacked});
-      TF_ASSIGN_OR_RETURN(
-          Value elementwise_result,
-          EmitElementwise(b, libdevice_path, device_info, *hlo, operands));
-      result = ScalarOrTensor(elementwise_result);
-    } else if (hlo->opcode() == HloOpcode::kConcatenate ||
-               hlo->opcode() == HloOpcode::kDynamicSlice) {
+    if (hlo->opcode() == HloOpcode::kConcatenate ||
+        hlo->opcode() == HloOpcode::kDynamicSlice) {
       // Parameter loads and their concatenations are handled outside EmitScope.
       TF_RET_CHECK(values.contains(hlo)) << hlo->ToString();
       continue;
@@ -983,10 +1007,10 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 }  // namespace
 
 void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
-  mlir_context
-      .loadDialect<mt::TritonDialect, mt::gpu::TritonGPUDialect,
-                   mlir::arith::ArithDialect, mlir::affine::AffineDialect,
-                   mlir::LLVM::LLVMDialect, xla::gpu::XlaGpuDialect>();
+  mlir_context.loadDialect<
+      mt::TritonDialect, mt::gpu::TritonGPUDialect, mlir::arith::ArithDialect,
+      mlir::affine::AffineDialect, mlir::LLVM::LLVMDialect,
+      xla::gpu::XlaGpuDialect, mt::xla::XlaTritonDialect>();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
   mlir::LLVM::registerInlinerInterface(registry);
@@ -996,8 +1020,7 @@ void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
 // Simplified copy of translateLLVMToLLVMIR which in addition takes
 // path to libdevice directly as an argument.
 absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
-    llvm::LLVMContext* llvmContext, mlir::ModuleOp module,
-    absl::string_view libdevice_path) {
+    llvm::LLVMContext* llvmContext, mlir::ModuleOp module) {
   mlir::DialectRegistry registry;
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
@@ -1055,6 +1078,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     Type ir_type;
     if (type == U16) {
       ir_type = b.getI16Type();
+    } else if (type == S4) {
+      ir_type = b.getI8Type();
     } else {
       TF_ASSIGN_OR_RETURN(ir_type, TritonType(b, type));
     }
@@ -1261,8 +1286,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   if (emit_kernel) {
     TF_ASSIGN_OR_RETURN(
         std::unique_ptr<llvm::Module> ll_triton_module,
-        TranslateLLVMToLLVMIR(&llvm_module->getContext(), triton_module,
-                              GetLibdevicePath(hlo_config, device_info)));
+        TranslateLLVMToLLVMIR(&llvm_module->getContext(), triton_module));
     VLogModule(5, *ll_triton_module);
     if (should_verify) {
       VerifyModule(*ll_triton_module);

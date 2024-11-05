@@ -8,18 +8,8 @@ load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = ["//xla:friends"],
     licenses = ["notice"],
-)
-
-package_group(
-    name = "friends",
-    includes = [
-        "//xla:friends",
-    ],
-    packages = [
-        "//platforms/testing/tests/...",
-    ],
 )
 
 filegroup(
@@ -150,6 +140,7 @@ exhaustive_xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],
@@ -188,6 +179,7 @@ xla_test(
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],
@@ -255,6 +247,7 @@ exhaustive_xla_test(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
     ],

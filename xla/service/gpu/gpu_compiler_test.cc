@@ -62,6 +62,8 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/monitoring/collected_metrics.h"
+#include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
@@ -121,6 +123,44 @@ ENTRY main {
                         /*is_autotuning_compilation=*/false})
           .value();
   EXPECT_EQ(GetCompiledProgramsCount(), 1);
+}
+
+TEST_F(GpuCompilerTest, RecordsStreamzStackTrace) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p = f32[10]{0} parameter(0)
+  ROOT neg = f32[10]{0} negate(p)
+}
+)";
+
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+
+  std::unique_ptr<Executable> executable =
+      backend()
+          .compiler()
+          ->RunBackend(std::move(module), backend().default_stream_executor(),
+                       {/*device_allocator=*/nullptr,
+                        /*thread_pool=*/nullptr,
+                        /*layout_canonicalization_callback=*/{},
+                        /*is_autotuning_compilation=*/false})
+          .value();
+
+  const std::string kGpuCompilerStacktraceMetricName =
+      "/xla/service/gpu/compiler_stacktrace_count";
+  tsl::monitoring::CollectionRegistry::CollectMetricsOptions options;
+  std::unique_ptr<tsl::monitoring::CollectedMetrics> metrics =
+      tsl::monitoring::CollectionRegistry::Default()->CollectMetrics(options);
+
+  EXPECT_TRUE(metrics->point_set_map.find(kGpuCompilerStacktraceMetricName) !=
+              metrics->point_set_map.end());
+
+  // Since Streamz is recorded every call, we expect at least one point.
+  // All other callers may increment the counter as well.
+  EXPECT_GT(
+      metrics->point_set_map[kGpuCompilerStacktraceMetricName]->points.size(),
+      0);
 }
 
 TEST_F(GpuCompilerTest, GenerateDebugInfoForNonAutotuningCompilations) {
@@ -289,7 +329,7 @@ ENTRY e {
     return str;
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options = HloTestBase::GetDebugOptionsForTest();
     options.set_xla_gpu_dump_autotune_results_to(
         xla_gpu_dump_autotune_results_to_);
@@ -411,7 +451,19 @@ ENTRY main {
             HloOpcode::kAllGatherDone);
 }
 
-TEST_F(GpuCompilerTest,
+class GpuCompilerTestWithAutotuneDb : public GpuCompilerTest {
+ public:
+  static void SetUpTestSuite() {
+    std::string path =
+        tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service", "gpu",
+                          "gpu_compiler_test_autotune_db.textproto");
+    TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(path));
+  }
+
+  static void TearDownTestSuite() { AutotunerUtil::ClearAutotuneResults(); }
+};
+
+TEST_F(GpuCompilerTestWithAutotuneDb,
        GemmFusionIsNoOpWhenGemmFusionAutotunerFallsBackToCublas) {
   auto cc = backend()
                 .default_stream_executor()
@@ -456,17 +508,10 @@ ENTRY main {
   config.set_replica_count(1);
   config.set_num_partitions(1);
 
-  // Load autotuning DB. We shouldn't depend on actual execution times in a unit
-  // test.
-  std::string path =
-      tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "service", "gpu",
-                        "gpu_compiler_test_autotune_db.textproto");
-  TF_EXPECT_OK(AutotunerUtil::LoadAutotuneResultsFromFile(path));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(hlo_string, config));
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_enabled_module,
                           GetOptimizedModule(std::move(module)));
-  AutotunerUtil::ClearAutotuneResults();
   DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
   triton_disabled_debug_options.set_xla_gpu_enable_dynamic_slice_fusion(false);
   triton_disabled_debug_options.set_xla_gpu_enable_triton_gemm(false);
@@ -484,6 +529,54 @@ ENTRY main {
   // enabling triton gemm
   EXPECT_EQ(triton_enabled_module->computation_count(),
             triton_disabled_module->computation_count());
+}
+
+TEST_F(GpuCompilerTestWithAutotuneDb,
+       CublasF8NumericallySameWithTritonFallbackAndWithoutTriton) {
+  auto cc = backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .cuda_compute_capability();
+  if (!cc.IsAtLeastHopper()) {
+    GTEST_SKIP()
+        << "Autotuning results have only been generated for Hopper GPUs";
+  }
+  const absl::string_view hlo_string = R"(
+HloModule test 
+
+ENTRY main {
+  p0 = f8e4m3fn[12288,4096]{0,1} parameter(0)
+  p1 = f8e4m3fn[4096,16384]{0,1} parameter(1)
+  dot = bf16[12288,16384]{1,0} dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcast = bf16[] constant(0.956)
+  broadcast = bf16[12288,16384]{1,0} broadcast(bitcast), dimensions={}
+  ROOT multiply = bf16[12288,16384]{1,0} multiply(dot, broadcast)
+  })";
+
+  HloModuleConfig config;
+  DebugOptions triton_enabled_debug_options = GetDebugOptionsForTest();
+  triton_enabled_debug_options
+      .set_xla_gpu_require_complete_aot_autotune_results(true);
+  config.set_debug_options(triton_enabled_debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_enabled_module,
+                          GetOptimizedModule(std::move(module)));
+
+  DebugOptions triton_disabled_debug_options = GetDebugOptionsForTest();
+  triton_disabled_debug_options.set_xla_gpu_enable_triton_gemm(false);
+  triton_disabled_debug_options.set_xla_gpu_cublas_fallback(true);
+  config.set_debug_options(triton_disabled_debug_options);
+
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_disabled_module,
+                          GetOptimizedModule(std::move(module)));
+
+  EXPECT_TRUE(RunAndCompareTwoModules(std::move(triton_enabled_module),
+                                      std::move(triton_disabled_module),
+                                      ErrorSpec{1e-6, 1e-6}, false));
 }
 
 class FloatNormalizationTest : public GpuCompilerTest,
@@ -740,7 +833,7 @@ class KernelCacheTest : public HloTestBase {
     }
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_kernel_cache_file(cache_file_name_);
     debug_options.set_xla_gpu_enable_llvm_module_compilation_parallelism(true);
@@ -900,7 +993,7 @@ ENTRY e {
 
 class KernelCacheTestSingleThreaded : public KernelCacheTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = KernelCacheTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_force_compilation_parallelism(1);
     return debug_options;
@@ -917,7 +1010,7 @@ TEST_F(KernelCacheTestSingleThreaded, CacheIsGenerated) {
 
 class NoKernelCacheTest : public KernelCacheTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = KernelCacheTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
     return debug_options;
@@ -1157,6 +1250,10 @@ ENTRY main {
 
 class PassOrderTest : public GpuCompilerTest {
  public:
+  struct PassRange {
+    int first_pass_run_index;
+    int second_pass_run_index;
+  };
   void SetDebugOptions(const DebugOptions& options) {
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_debug_options(options);
@@ -1164,10 +1261,13 @@ class PassOrderTest : public GpuCompilerTest {
   }
 
   // Fails if any of the passes with names matching the regular expression
-  // first_pass_regex run after any of the passes matching last_pass_regex or if
-  // none of the executed passes matches first_pass_regex or last_pass_regex.
-  void VerifyPassOrder(absl::string_view first_pass_regex,
-                       absl::string_view last_pass_regex) {
+  // `first_pass_regex` run after any of the passes matching `last_pass_regex`
+  // or if none of the executed passes matches `first_pass_regex` or
+  // `last_pass_regex`. Returns a PassRange with the latest run index of any
+  // passes with names matching `first_pass_regex` and the earliest run index of
+  // any passes with names matching 'last_pass_regex'.
+  PassRange VerifyPassOrder(absl::string_view first_pass_regex,
+                            absl::string_view last_pass_regex) {
     if (!optimized_module_) {
       CompileModule(GetModuleConfigForTest());
     }
@@ -1196,6 +1296,25 @@ class PassOrderTest : public GpuCompilerTest {
     EXPECT_LE(first_pass_latest_run, last_pass_earliest_run)
         << "One or more passes matching " << first_pass_regex
         << " ran after passes matching " << last_pass_regex;
+    return {first_pass_latest_run, last_pass_earliest_run};
+  }
+
+  // Checks that no pass that matches `pass_regex` runs strictly in between
+  // `pass_range.first_pass_run_index` and `pass_range.second_pass_run_index`.
+  void VerifyNotRunInBetween(const PassRange& pass_range,
+                             absl::string_view pass_regex) {
+    int run_index = 0;
+    for (const HloPassMetadata& pass_metadata :
+         optimized_module_->metadata()->proto().pass_metadata()) {
+      if (run_index >= pass_range.second_pass_run_index) {
+        break;
+      }
+      if (run_index++ <= pass_range.first_pass_run_index) {
+        continue;
+      }
+      EXPECT_FALSE(RE2::FullMatch(pass_metadata.pass_name(), pass_regex))
+          << "Ran " << pass_metadata.pass_name() << " in the given range";
+    }
   }
 
  private:
@@ -1248,6 +1367,37 @@ TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
 
   VerifyPassOrder(/*first_pass_regex=*/"collective-quantizer",
                   /*last_pass_regex=*/"collective-pipeliner.*");
+}
+
+TEST_F(PassOrderTest,
+       AllGatherDynamicSliceSimplifierRunsAfterAllGatherOptimizer) {
+  VerifyPassOrder(
+      /*first_pass_regex=*/".*all-gather-optimizer.*",
+      /*last_pass_regex=*/".*all-gather-dynamic-slice-simplifier.*");
+}
+
+TEST_F(PassOrderTest, GemmFusionRunsAfterDotNormalizer) {
+  auto cc = backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .cuda_compute_capability();
+  if (!cc.IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  DebugOptions options = GetDebugOptionsForTest();
+  options.set_xla_gpu_enable_triton_gemm(true);
+  SetDebugOptions(options);
+  auto pass_range = VerifyPassOrder(
+      /*first_pass_regex=*/"dot_normalizer",
+      /*last_pass_regex=*/"triton-gemm-rewriter");
+  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
+}
+
+TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
+  auto pass_range = VerifyPassOrder(
+      /*first_pass_regex=*/"dot_normalizer",
+      /*last_pass_regex=*/"cublas-gemm-rewriter");
+  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
 }  // namespace

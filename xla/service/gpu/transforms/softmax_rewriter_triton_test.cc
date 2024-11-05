@@ -29,14 +29,13 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/status_matchers.h"
 
@@ -124,15 +123,13 @@ ENTRY main {
   reduce = f16[127]{0} reduce(param_0, constant_neg_inf), dimensions={1}, to_apply=max_computation
   broadcast = f16[127,125]{1,0} broadcast(reduce), dimensions={0}
   subtract = f16[127,125]{1,0} subtract(param_0, broadcast)
-  // Replace Softmax exponential with abs, because Triton doesn't support
-  // non-f32 exponentials.
-  abs = f16[127,125]{1,0} abs(subtract)
+  exp = f16[127,125]{1,0} exponential(subtract)
   constant_zero = f16[] constant(0)
-  second_reduce = f16[127]{0} reduce(abs, constant_zero), dimensions={1}, to_apply=add_computation
+  second_reduce = f16[127]{0} reduce(exp, constant_zero), dimensions={1}, to_apply=add_computation
   second_broadcast = f16[127,125]{1,0} broadcast(second_reduce), dimensions={0}
   // Replace divide with multiply, because Triton doesn't support f16
   // divisions.
-  ROOT multiply = f16[127,125]{1,0} multiply(abs, second_broadcast)
+  ROOT multiply = f16[127,125]{1,0} multiply(exp, second_broadcast)
 }
 )";
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
@@ -210,20 +207,20 @@ ENTRY main {
   reduce = bf16[127]{0} reduce(param_0, constant_neg_inf), dimensions={1}, to_apply=max_computation
   broadcast = bf16[127,125]{1,0} broadcast(reduce), dimensions={0}
   subtract = bf16[127,125]{1,0} subtract(param_0, broadcast)
-  ROOT exponential = bf16[127,125]{1,0} exponential(subtract)
+  ROOT round = bf16[127,125]{1,0} round-nearest-even(subtract)
 })";
 
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
-  const HloInstruction* bf16_exponential =
+  const HloInstruction* bf16_round_nearest_even =
       hlo_query::GetFirstInstructionWithOpcode(*module->entry_computation(),
-                                               HloOpcode::kExp);
+                                               HloOpcode::kRoundNearestEven);
   EXPECT_FALSE(IsTritonSupportedInstruction(
-      *bf16_exponential, device_info_.gpu_compute_capability()));
+      *bf16_round_nearest_even, device_info_.gpu_compute_capability()));
   EXPECT_TRUE(fusion_rewriter_.Run(module.get()).value());
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::Exp(
+      GmockMatch(m::RoundNearestEven(
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig))));
 }
 
@@ -734,8 +731,8 @@ max_computation {
 
 ENTRY main {
   param_0 = f16[127,125]{1,0} parameter(0)
-  exponential = f16[127,125] exponential(param_0)
-  convert = f32[127,125] convert(exponential)
+  round-nearest-even = f16[127,125] round-nearest-even(param_0)
+  convert = f32[127,125] convert(round-nearest-even)
   constant_neg_inf = f32[] constant(-inf)
   reduce = f32[127]{0} reduce(convert, constant_neg_inf), dimensions={1}, to_apply=max_computation
   broadcast = f32[127,125]{1,0} broadcast(reduce), dimensions={0}
@@ -746,7 +743,7 @@ ENTRY main {
   EXPECT_TRUE(fusion_rewriter_.Run(module.get()).value());
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Exp(m::Parameter()))
+              GmockMatch(m::Fusion(m::RoundNearestEven(m::Parameter()))
                              .WithPredicate(HasBlockLevelFusionConfig)));
 }
 
