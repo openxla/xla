@@ -39,36 +39,44 @@ namespace xla {
 namespace cpu {
 namespace {
 
-class MemoryUtilTest : public ::testing::Test,
-                       public ::testing::WithParamInterface<
-                           std::tuple<PrimitiveType, std::vector<int64_t>>> {
+class MemoryUtilTest
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<std::vector<int64_t>> {
  protected:
-  constexpr static const char* pad_test_pattern_ = R"(
+  constexpr static const char* test_pattern_ = R"(
     CHECK: %[[mref0:[0-9]+]] = insertvalue
     CHECK: %[[mref1:[0-9]+]] = insertvalue
-    CHECK-SAME: [[arr:\[12 x i64\]]], [[arr]] } %[[mref0]], i64 255, 3
-  )";
+    CHECK-SAME: [[arr:\[12 x i64\]]] } %[[mref0]], i64 255, 3
+    CHECK: %{{[0-9]+}} = insertvalue
+    CHECK-SAME: %[[mref1]], [[arr]] )";
+
+  auto GetMemRefTestPattern(Shape shape) {
+    std::ostringstream stream;
+    stream << "[";
+    absl::c_for_each(shape.dimensions(),
+                     [&stream](auto x) { stream << "i64 " << x << ", "; });
+    return absl::StrCat(test_pattern_, stream.str());
+  }
 };
 
-TEST_P(MemoryUtilTest, VerifyPadTest) {
-  PrimitiveType dtype = std::get<0>(GetParam());
+TEST_P(MemoryUtilTest, VerifyMemRefTest) {
   std::string filecheck_input;
   llvm::LLVMContext context = llvm::LLVMContext();
   llvm::IRBuilder builder(context);
   llvm::raw_string_ostream ostream(filecheck_input);
-  llvm::Module module("MemoryUtilPad", context);
+  llvm::Module module("MemoryUtilTest", context);
 
   llvm::FunctionType* function_type = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context), {builder.getPtrTy()}, false);
   llvm::Function* function = llvm::Function::Create(
       function_type, llvm::Function::LinkageTypes::ExternalLinkage,
-      "memory_util_pad_test", module);
+      "memory_util_test", module);
   llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "BB", function);
   builder.SetInsertPoint(bb);
 
-  Shape shape = ShapeUtil::MakeShape(dtype, std::get<1>(GetParam()));
+  Shape shape = ShapeUtil::MakeShape(F32, GetParam());
   llvm::Argument* ptr = function->getArg(0);
-  llvm::Type* type = llvm_ir::PrimitiveTypeToIrType(dtype, &module);
+  llvm::Type* type = llvm_ir::PrimitiveTypeToIrType(F32, &module);
 
   if (shape.IsArray()) {
     for (auto dim : LayoutUtil::MinorToMajor(shape)) {
@@ -81,25 +89,19 @@ TEST_P(MemoryUtilTest, VerifyPadTest) {
   alloca.EmitLifetimeEnd();
   ostream << module;
 
-  absl::StatusOr<bool> match = RunFileCheck(filecheck_input, pad_test_pattern_);
+  absl::StatusOr<bool> match =
+      RunFileCheck(filecheck_input, GetMemRefTestPattern(shape));
   TF_ASSERT_OK(match.status());
   EXPECT_TRUE(match.value());
 }
 
 INSTANTIATE_TEST_SUITE_P(
     MemoryUtilTestSuite, MemoryUtilTest,
-    ::testing::Combine(::testing::ValuesIn({S8, S16, BF16, F16, F32}),
-                       ::testing::Values(std::vector<int64_t>({30}),
-                                         std::vector<int64_t>({30, 40}),
-                                         std::vector<int64_t>({30, 40, 50}))),
+    ::testing::Values(std::vector<int64_t>({30}),
+                      std::vector<int64_t>({30, 40}),
+                      std::vector<int64_t>({30, 40, 50})),
     [](const ::testing::TestParamInfo<MemoryUtilTest::ParamType>& info) {
-      std::ostringstream test_name;
-      auto dtype =
-          primitive_util::LowercasePrimitiveTypeName(std::get<0>(info.param));
-      std::transform(dtype.begin(), dtype.end(), dtype.begin(),
-                     [](auto c) { return std::toupper(c); });
-      test_name << dtype << "_Rank_" << std::get<1>(info.param).size();
-      return test_name.str();
+      return absl::StrCat("Rank_", info.param.size());
     });
 
 }  // namespace

@@ -46,7 +46,8 @@ struct MemrefInfoPOD {
   int64_t dtype;
   int64_t rank;
   void* data;
-  int64_t pad;
+  int64_t unused;  // This unused value pads the struct to align with a 64-byte
+                   // cacheline
   int64_t dims[kOneDnnMaxNDims];
   int64_t strides[kOneDnnMaxNDims];
 };
