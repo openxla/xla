@@ -74,9 +74,9 @@ cc_library(
     srcs = ["symbol_finder_linux.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header", 
+        ":symbol_finder_header",
     ],
-    tags = ["manual"]
+    tags = ["manual"],
 )
 
 cc_library(
@@ -84,12 +84,12 @@ cc_library(
     srcs = ["symbol_finder_windows.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header", 
+        ":symbol_finder_header",
     ],
-    tags = ["manual"]
+    tags = ["manual"],
 )
 
 cc_library(
     name = "find_symbol",
-    deps = if_windows([":symbol_finder_windows"], [":symbol_finder_linux"])
+    deps = if_windows([":symbol_finder_windows"], [":symbol_finder_linux"]),
 )
