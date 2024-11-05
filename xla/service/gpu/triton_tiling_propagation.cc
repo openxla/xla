@@ -786,7 +786,9 @@ DimOrderMapOrError GetPropagatedDimOrdersForDimAlteringOp(
       for (const Fragment* subdim : dst_logical[dim_idx]) {
         dst_fragments_order.push_back(*subdim);
         src_to_dst[subdim] = dst_fragments_order.size() - 1;
-        dim_numbers_present_in_dst.insert(subdim->dst_dim_number());
+        if (subdim->full_count() > 1) {
+          dim_numbers_present_in_dst.insert(subdim->dst_dim_number());
+        }
       }
     }
     for (const auto& [dim_index, dim_sequence] :
