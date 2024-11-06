@@ -809,6 +809,82 @@ llvm::Value* EmitF8e4m3b11fnuzToF16(llvm::Value* f8_value,
   return f16_value;
 }
 
+absl::StatusOr<llvm::Value*> EmitF16ToF4e2m1fn(llvm::Value* f16_value,
+                                               llvm::IRBuilder<>* b) {
+  TF_ASSIGN_OR_RETURN(
+      llvm::Value * reduced_precision,
+      EmitReducePrecisionIR(
+          /*src_ty=*/F16, f16_value,
+          /*dest_exponent_bits=*/primitive_util::ExponentWidth(F4E2M1FN) + 1,
+          /*dest_mantissa_bits=*/primitive_util::SignificandWidth(F4E2M1FN) - 1,
+          /*quiet_nans=*/false, b));
+  llvm::Value* as_int16 = b->CreateBitCast(reduced_precision, b->getInt16Ty());
+  llvm::Value* as_int8 =
+      b->CreateTrunc(b->CreateLShr(as_int16, 9), b->getInt8Ty());
+
+  // Extract sign, exponent and mantissa from reduced precision value.
+  auto i8_const = [&](int val) {
+    return llvm::ConstantInt::get(b->getInt8Ty(), val);
+  };
+  llvm::Value* f4_sign = b->CreateLShr(as_int8, 6);
+  llvm::Value* f4_bits = b->CreateAnd(as_int8, i8_const(0x3F));
+  llvm::Value* f4_normal = b->CreateSub(f4_bits, i8_const(28));
+
+  // Special case for exponent overflow.
+  auto i16_const = [&](int val) {
+    return llvm::ConstantInt::get(b->getInt16Ty(), val);
+  };
+  llvm::Value* f16_bits = b->CreateAnd(
+      b->CreateBitCast(f16_value, b->getInt16Ty()), i16_const(0x7FFF));
+  llvm::Value* is_overflow =
+      b->CreateICmpUGE(f16_bits, i16_const(0x4700));                    // 7.0
+  llvm::Value* is_nan = b->CreateICmpUGT(f16_bits, i16_const(0x7C00));  // inf
+  llvm::Value* max_or_nan =
+      b->CreateSelect(is_nan, i8_const(0x8), i8_const(0x7));
+  llvm::Value* f4_normal_or_overflow =
+      b->CreateSelect(is_overflow, max_or_nan, f4_normal);
+
+  // Special case for exponent underflow.
+  llvm::Value* is_underflow = b->CreateICmpSLE(f4_normal, i8_const(1));
+  llvm::Value* is_one = b->CreateICmpUGE(f16_bits, i16_const(0x3A00));   // 0.75
+  llvm::Value* is_zero = b->CreateICmpULE(f16_bits, i16_const(0x3400));  // 0.25
+  llvm::Value* denorm_or_zero =
+      b->CreateSelect(is_zero, i8_const(0x0), i8_const(0x1));
+  llvm::Value* f4_small =
+      b->CreateSelect(is_one, i8_const(0x2), denorm_or_zero);
+  llvm::Value* f4_result =
+      b->CreateSelect(is_underflow, f4_small, f4_normal_or_overflow);
+
+  // Add sign to the resulting value.
+  return b->CreateOr(f4_result, b->CreateShl(f4_sign, 3));
+}
+
+llvm::Value* EmitF4e2m1fnToF16(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
+  llvm::Value* as_int16 = b->CreateZExt(f8_value, b->getInt16Ty());
+
+  // Extract sign, exponent and mantissa from reduced precision value.
+  auto i16_const = [&](int val) {
+    return llvm::ConstantInt::get(b->getInt16Ty(), val);
+  };
+  llvm::Value* sign = b->CreateLShr(as_int16, 3);
+  llvm::Value* sign_shifted = b->CreateShl(sign, 15);
+  llvm::Value* bits = b->CreateAnd(as_int16, i16_const(0x7));
+  llvm::Value* bits_shifted = b->CreateShl(bits, 9);
+
+  // Re-bias the exponent and handle denormals.
+  llvm::Value* f16_normal = b->CreateAdd(bits_shifted, i16_const(14 << 10));
+  llvm::Value* is_denorm_or_zero = b->CreateICmpULE(bits, i16_const(1));
+  llvm::Value* is_zero = b->CreateICmpEQ(bits, i16_const(0));
+  llvm::Value* denorm_or_zero =
+      b->CreateSelect(is_zero, i16_const(0x0000), i16_const(0x3800));
+  llvm::Value* f16_result =
+      b->CreateSelect(is_denorm_or_zero, denorm_or_zero, f16_normal);
+
+  // Add sign to the resulting value.
+  llvm::Value* f16_signed = b->CreateOr(f16_result, sign_shifted);
+  return b->CreateBitCast(f16_signed, b->getHalfTy());
+}
+
 llvm::Value* EmitIntegralToFloating(llvm::Value* integer_value,
                                     PrimitiveType from_type,
                                     PrimitiveType to_type, llvm::Module* module,
@@ -899,6 +975,12 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
         }
         if (to_type == F8E4M3B11FNUZ) {
           return EmitF16ToF8e4m3b11fnuz(
+              EmitIntegralToFloating(operand_value, from_type, F16, module_,
+                                     b_),
+              b_);
+        }
+        if (to_type == F4E2M1FN) {
+          return EmitF16ToF4e2m1fn(
               EmitIntegralToFloating(operand_value, from_type, F16, module_,
                                      b_),
               b_);
@@ -1108,6 +1190,14 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
           return operand_value;
         }
       }
+      if (from_type == F4E2M1FN) {
+        TF_RET_CHECK(to_type != F4E2M1FN);
+        operand_value = EmitF4e2m1fnToF16(operand_value, b_);
+        from_type = F16;
+        if (from_type == to_type) {
+          return operand_value;
+        }
+      }
       if (from_type == F8E5M2FNUZ || from_type == F8E4M3FNUZ) {
         TF_RET_CHECK(to_type != from_type);
         PrimitiveType cast_type =
@@ -1183,6 +1273,14 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
               llvm_ir::PrimitiveTypeToIrType(F16, module_->getContext()));
         }
         return EmitF16ToF8e4m3b11fnuz(operand_value, b_);
+      }
+      if (to_type == F4E2M1FN) {
+        // Cast to F16 first. Casts to F4E2M1FN must be from F16.
+        if (from_type != F16) {
+          operand_value = b_->CreateFPCast(
+              operand_value, llvm_ir::PrimitiveTypeToIrType(F16, module_));
+        }
+        return EmitF16ToF4e2m1fn(operand_value, b_);
       }
       if (to_type == F8E5M2FNUZ || to_type == F8E4M3FNUZ) {
         return EmitFloatingToF8fnuz(from_type, operand_value, to_type, b_);
@@ -1734,6 +1832,9 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
       } else if (operand_type == F8E4M3FN) {
         lhs_value = EmitF8e4m3fnToF16(lhs_value, b_);
         rhs_value = EmitF8e4m3fnToF16(rhs_value, b_);
+      } else if (operand_type == F4E2M1FN) {
+        lhs_value = EmitF4e2m1fnToF16(lhs_value, b_);
+        rhs_value = EmitF4e2m1fnToF16(rhs_value, b_);
       } else if (operand_type == F8E5M2FNUZ || operand_type == F8E4M3FNUZ) {
         TF_ASSIGN_OR_RETURN(
             lhs_value,
@@ -3588,10 +3689,8 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
               primitive_util::IsFloatingPointType(component_element_type))
               << component_element_type;
           llvm::Type* float_ir_type;
-          if (component_element_type == F8E4M3FNUZ) {
-            float_ir_type =
-                llvm_ir::PrimitiveTypeToIrType(F16, module_->getContext());
-          } else if (component_element_type == F8E5M2FNUZ) {
+          if (component_element_type == F8E4M3FNUZ ||
+              component_element_type == F8E5M2FNUZ) {
             float_ir_type =
                 llvm_ir::PrimitiveTypeToIrType(F16, module_->getContext());
           } else {
