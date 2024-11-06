@@ -24,6 +24,7 @@ namespace ml_dtypes {
 
 struct NumpyDtypes {
   int bfloat16;
+  int float4_e2m1fn;
   int float8_e3m4;
   int float8_e4m3;
   int float8_e4m3fn;

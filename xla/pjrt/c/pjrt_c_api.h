@@ -649,6 +649,9 @@ typedef enum {
   // More truncated 8 bit floating-point formats.
   PJRT_Buffer_Type_F8E4M3,
   PJRT_Buffer_Type_F8E3M4,
+
+  // 4-bit MX floating-point format.
+  PJRT_Buffer_Type_F4E2M1FN,
 } PJRT_Buffer_Type;
 
 typedef enum {

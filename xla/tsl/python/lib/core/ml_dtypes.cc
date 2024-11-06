@@ -61,6 +61,8 @@ struct MlDtypesInitInfo {
 
       numpy_dtypes.bfloat16 =
           py::dtype::from_args(ml_dtypes.attr("bfloat16")).num();
+      numpy_dtypes.float4_e2m1fn =
+          py::dtype::from_args(ml_dtypes.attr("float4_e2m1fn")).num();
       numpy_dtypes.float8_e3m4 =
           py::dtype::from_args(ml_dtypes.attr("float8_e3m4")).num();
       numpy_dtypes.float8_e4m3 =
@@ -85,6 +87,7 @@ struct MlDtypesInitInfo {
 
     // Verify all types were successfully loaded.
     if (numpy_dtypes.bfloat16 == NPY_NOTYPE ||
+        numpy_dtypes.float4_e2m1fn == NPY_NOTYPE ||
         numpy_dtypes.float8_e3m4 == NPY_NOTYPE ||
         numpy_dtypes.float8_e4m3 == NPY_NOTYPE ||
         numpy_dtypes.float8_e4m3fn == NPY_NOTYPE ||
