@@ -34,6 +34,27 @@ limitations under the License.
 
 namespace xla::emitters {
 
+// Extract output arguments from an instruction's shape
+// Populates the provided arguments vector
+absl::Status KernelArguments::ExtractOutputArguments(
+    std::vector<KernelArgument>& arguments,
+    const BufferAssignment& buffer_assignment,
+    const HloInstruction* hlo_instruction) {
+  return ShapeUtil::ForEachSubshapeWithStatus(
+      hlo_instruction->shape(),
+      [&](const Shape& subshape, const ShapeIndex& index) {
+        if (!subshape.IsArray()) return absl::OkStatus();
+
+        TF_ASSIGN_OR_RETURN(
+            BufferAllocation::Slice slice,
+            buffer_assignment.GetUniqueSlice(hlo_instruction, index));
+
+        arguments.emplace_back(
+            KernelArgument(subshape, slice, /*written=*/true));
+        return absl::OkStatus();
+      });
+}
+
 absl::StatusOr<KernelArguments> KernelArguments::Create(
     const BufferAssignment& buffer_assignment,
     const BufferAlignment& buffer_alignment,
@@ -47,19 +68,8 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
         KernelArgument(operand->shape(), slice, /*written=*/false));
   }
 
-  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
-      hlo_instruction->shape(),
-      [&](const Shape& subshape, const ShapeIndex& index) {
-        if (!subshape.IsArray()) return absl::OkStatus();
-
-        TF_ASSIGN_OR_RETURN(
-            BufferAllocation::Slice slice,
-            buffer_assignment.GetUniqueSlice(hlo_instruction, index));
-
-        kernel_arguments.emplace_back(
-            KernelArgument(subshape, slice, /*written=*/true));
-        return absl::OkStatus();
-      }));
+  TF_RETURN_IF_ERROR(ExtractOutputArguments(kernel_arguments, buffer_assignment,
+                                            hlo_instruction));
 
   return KernelArguments{std::move(kernel_arguments), buffer_alignment, dedup};
 }
@@ -71,6 +81,57 @@ absl::StatusOr<KernelArguments> KernelArguments::Create(
   return KernelArguments::Create(buffer_assignment, buffer_alignment,
                                  hlo_instruction, hlo_instruction->operands(),
                                  /*dedup=*/true);
+}
+
+absl::StatusOr<KernelArguments> KernelArguments::Create(
+    const BufferAssignment& buffer_assignment,
+    const HloInstruction* hlo_instruction,
+    absl::Span<const HloInstruction* const> needed_operands,
+    absl::Span<const int32_t> interleaved_output_indices) {
+  if (interleaved_output_indices.empty()) {
+    return KernelArguments::Create(buffer_assignment, hlo_instruction,
+                                   needed_operands, /*dedup=*/false);
+  }
+
+  if (interleaved_output_indices.back() >=
+      needed_operands.size() + interleaved_output_indices.size()) {
+    return absl::InvalidArgumentError("Output index out of bounds");
+  }
+
+  std::vector<KernelArgument> kernel_arguments;
+
+  std::vector<KernelArgument> output_arguments;
+  TF_RETURN_IF_ERROR(ExtractOutputArguments(output_arguments, buffer_assignment,
+                                            hlo_instruction));
+
+  // Interleave the inputs and outputs according to the indices
+  size_t arg_idx = 0;
+  size_t output_pos = 0;
+
+  for (size_t i = 0; i < needed_operands.size() + output_arguments.size();
+       ++i) {
+    if (output_pos < interleaved_output_indices.size() &&
+        interleaved_output_indices[output_pos] == i) {
+      kernel_arguments.emplace_back(output_arguments[output_pos]);
+      ++output_pos;
+    } else if (arg_idx < needed_operands.size()) {
+      TF_ASSIGN_OR_RETURN(
+          BufferAllocation::Slice slice,
+          buffer_assignment.GetUniqueSlice(needed_operands[arg_idx], {}));
+      kernel_arguments.emplace_back(KernelArgument(
+          needed_operands[arg_idx]->shape(), slice, /*written=*/false));
+      ++arg_idx;
+    } else {
+      return absl::InvalidArgumentError("Did not use all inputs/outputs");
+    }
+  }
+
+  if (arg_idx != needed_operands.size() ||
+      output_pos != output_arguments.size()) {
+    return absl::InvalidArgumentError("Did not use all inputs/outputs");
+  }
+
+  return KernelArguments(std::move(kernel_arguments), /*dedup=*/false);
 }
 
 std::vector<KernelArgument> KernelArguments::ProcessArguments(
