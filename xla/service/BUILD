@@ -4229,6 +4229,7 @@ cc_library(
     deps = [
         ":algorithm_util",
         ":float8_fnuz_ir_emitter",
+        "//xla:comparison_util",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -4244,6 +4245,7 @@ cc_library(
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/service/llvm_ir:math_ops",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -4254,6 +4256,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TransformUtils",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
