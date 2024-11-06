@@ -44,7 +44,8 @@ dnnl::post_ops PopulateOneDnnPostOps(
     const dnnl::engine& cpu_engine,
     const std::vector<dnnl::memory::desc>& fused_mds,
     const OneDnnFusionConfig* fusion_config, const int output_ndims,
-    FusedOperandsRef* fused_operands_ref, dnnl::memory::desc* bias_md) {
+    FusedOperandsRef* fused_operands_ref, dnnl::memory::desc* bias_md,
+    bool is_conv) {
   dnnl::post_ops post_ops;
   int fused_operand_idx = 0;
   for (auto& fused_op : fusion_config->ops()) {
@@ -72,7 +73,7 @@ dnnl::post_ops PopulateOneDnnPostOps(
         // TODO(intel-tf): Move this check to the rewriter file
         // Extend bias rank to match result rank.
         auto missed_rank = output_ndims - bias_md->get_ndims();
-        if (missed_rank > 0) {
+        if (missed_rank > 0 && !is_conv) {
           auto bias_dims = bias_md->get_dims();
           bias_dims.insert(bias_dims.begin(), missed_rank, 1);
           *bias_md = bias_md->reshape(bias_dims);
@@ -93,7 +94,7 @@ dnnl::post_ops PopulateOneDnnPostOps(
         // TODO(intel-tf): Move this check to the rewriter file
         // Extend addend rank to match result rank.
         auto missed_rank = output_ndims - binary_md.get_ndims();
-        if (missed_rank > 0) {
+        if (missed_rank > 0 && !is_conv) {
           auto binary_dims = binary_md.get_dims();
           binary_dims.insert(binary_dims.begin(), missed_rank, 1);
           binary_md = binary_md.reshape(binary_dims);

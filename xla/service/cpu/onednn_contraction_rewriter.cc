@@ -115,6 +115,14 @@ inline auto OneDnnConvolutionInstr(HloInstruction** instr) {
   return m::CustomCall(instr, {"__onednn$convolution"});
 }
 
+inline bool IsOneDnnConvolutionInstr(HloInstruction* instr) {
+  return Match(instr, m::CustomCall({"__onednn$convolution"}));
+}
+
+inline bool IsOneDnnMatmulInstr(HloInstruction* instr) {
+  return Match(instr, m::CustomCall({"__onednn$matmul"}));
+}
+
 inline auto OneDnnFusibleInstr(HloInstruction** instr) {
   return m::AnyOf<HloInstruction>(
       m::CustomCall(instr, {"__onednn$matmul"}),
@@ -194,6 +202,36 @@ std::optional<float> GetConstantValueAsFloat32(const HloInstruction* inst) {
     default:
       return std::nullopt;
   }
+}
+
+auto GetOneDnnContractionVariant(
+    absl::StatusOr<BackendConfig>* backend_config) {
+  return ((*backend_config)->backend_config_oneof_case() == kOnednnConvConfig)
+             ? OneDnnContractionVariant(PrimitiveTrait<kOnednnConvConfig>{})
+             : OneDnnContractionVariant(PrimitiveTrait<kOnednnMatmulConfig>{});
+}
+
+// Return the correct mutable config instance for the given contraction variant
+// based on the template parameter
+template <typename TransformationType>
+TransformationType GetTransformationConfig(
+    absl::StatusOr<BackendConfig>* backend_config) {
+  return std::visit(
+      [&](auto&& config) -> TransformationType {
+        using T = std::decay_t<decltype(config)>;
+        return PrimitiveTrait<T::kConfigVal, TransformationType>::
+            GetTransformationConfig(
+                GetKernelConfig<T::kConfigVal>(backend_config));
+      },
+      GetOneDnnContractionVariant(backend_config));
+}
+
+auto GetFusionsConfig(absl::StatusOr<BackendConfig>* backend_config) {
+  return GetTransformationConfig<OneDnnFusionConfig*>(backend_config);
+}
+
+auto GetOptimizationsConfig(absl::StatusOr<BackendConfig>* backend_config) {
+  return GetTransformationConfig<OneDnnOptimizationConfig*>(backend_config);
 }
 
 inline auto BcastConstScalarNear(double value) {
@@ -285,7 +323,7 @@ auto GELUActivation(HloInstruction* instr, HloInstruction** src) {
   return OneDnnFusionConfig::UNDEFINED;
 }
 
-// OneDNN matmul / convolution can fuse add operation with automatic
+// OneDNN matmul and convolution can fuse add operation with automatic
 // broadcasting along the addend's dimensions that are 1s. When compatible,
 // Broadcast can be replaced by Bitcast, which is much cheaper. Compute new
 // shape for the Bitcast.
@@ -751,18 +789,18 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleMaximum(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* optional_bitcast = nullptr;
-    // Attempt to elide maximum and fuse ReLU activation into GEMM, including
-    // when slicing or bitcasting is applied to the result.
+    // Attempt to elide maximum and fuse ReLU activation into GEMM / Conv,
+    // including when slicing or bitcasting is applied to the result.
     if (Match(instr,
               m::MaximumAnyOrder(ElementwiseSafeIntermediates(
                                      &intermediate_instr, &optional_bitcast,
-                                     OneDnnMatmulInstr(&matmul_call))
+                                     OneDnnFusibleInstr(&contraction))
                                      .WithOneUser(),
                                  BcastConstScalar(0)))) {
-      return FuseActivation(OneDnnFusionConfig::RELU, instr, matmul_call,
+      return FuseActivation(OneDnnFusionConfig::RELU, instr, contraction,
                             intermediate_instr, optional_bitcast);
     }
     return absl::OkStatus();
@@ -782,59 +820,59 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleSelect(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* optional_bitcast = nullptr;
     HloInstruction* src;
-    // Attempt to elide ELU subgraph and fuse ELU activation into GEMM,
+    // Attempt to elide ELU subgraph and fuse ELU activation into GEMM / Conv,
     // including when slicing or bitcasting is applied to the result.
     if (ELUActivation(instr, &src)) {
       if (Match(src, ElementwiseSafeIntermediates(
                          &intermediate_instr, &optional_bitcast,
-                         OneDnnMatmulInstr(&matmul_call)))) {
-        return FuseActivation(OneDnnFusionConfig::ELU, instr, matmul_call,
-                              intermediate_instr);
+                         OneDnnFusibleInstr(&contraction)))) {
+        return FuseActivation(OneDnnFusionConfig::ELU, instr, contraction,
+                              intermediate_instr, optional_bitcast);
       }
     }
     return absl::OkStatus();
   }
 
   absl::Status HandleTanh(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* optional_bitcast = nullptr;
-    // Attempt to elide Tanh and fuse Tanh activation into GEMM, including
-    // when slicing or bitcasting is applied to the result.
+    // Attempt to elide Tanh and fuse Tanh activation into GEMM / Conv,
+    // including when slicing or bitcasting is applied to the result.
     if (Match(instr, m::Tanh(ElementwiseSafeIntermediates(
                                  &intermediate_instr, &optional_bitcast,
-                                 OneDnnMatmulInstr(&matmul_call))
+                                 OneDnnFusibleInstr(&contraction))
                                  .WithOneUser()))) {
-      return FuseActivation(OneDnnFusionConfig::TANH, instr, matmul_call,
-                            intermediate_instr);
+      return FuseActivation(OneDnnFusionConfig::TANH, instr, contraction,
+                            intermediate_instr, optional_bitcast);
     }
     return absl::OkStatus();
   }
 
   absl::Status HandleClamp(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* optional_bitcast = nullptr;
-    // Attempt to elide RELU6 and fuse RELU6 activation into GEMM, including
-    // when slicing or bitcasting is applied to the result.
+    // Attempt to elide RELU6 and fuse RELU6 activation into GEMM / Conv,
+    // including when slicing or bitcasting is applied to the result.
     if (Match(instr, m::Clamp(BcastConstScalar(0),
                               ElementwiseSafeIntermediates(
                                   &intermediate_instr, &optional_bitcast,
-                                  OneDnnMatmulInstr(&matmul_call))
+                                  OneDnnFusibleInstr(&contraction))
                                   .WithOneUser(),
                               BcastConstScalar(6)))) {
-      return FuseActivation(OneDnnFusionConfig::RELU6, instr, matmul_call,
-                            intermediate_instr);
+      return FuseActivation(OneDnnFusionConfig::RELU6, instr, contraction,
+                            intermediate_instr, optional_bitcast);
     }
     return absl::OkStatus();
   }
 
   absl::Status HandleMultiply(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* src;
     auto activation = GELUActivation(instr, &src);
@@ -842,24 +880,25 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       HloInstruction* optional_bitcast = nullptr;
       if (Match(src, ElementwiseSafeIntermediates(
                          &intermediate_instr, &optional_bitcast,
-                         OneDnnMatmulInstr(&matmul_call)))) {
-        return FuseActivation(activation, instr, matmul_call,
+                         OneDnnFusibleInstr(&contraction)))) {
+        return FuseActivation(activation, instr, contraction,
                               intermediate_instr, optional_bitcast);
       }
     }
 
-    HloInstruction *dot, *constant;
+    HloInstruction* constant;
     HloInstruction* optional_convert = nullptr;
-    auto pattern = m::Op(&instr)
-                       .WithOpcode(HloOpcode::kMultiply)
-                       .WithBinaryOperandsAnyOrder(
-                           m::AnyOf<HloInstruction>(
-                               pu::SupportedConvert(&optional_convert,
-                                                    OneDnnMatmulInstr(&dot))
-                                   .WithElementType(PrimitiveType::F32),
-                               OneDnnMatmulInstr(&dot))
-                               .WithOneUser(),
-                           m::Broadcast(m::Constant(&constant)));
+    auto pattern =
+        m::Op(&instr)
+            .WithOpcode(HloOpcode::kMultiply)
+            .WithBinaryOperandsAnyOrder(
+                m::AnyOf<HloInstruction>(
+                    pu::SupportedConvert(&optional_convert,
+                                         OneDnnFusibleInstr(&contraction))
+                        .WithElementType(PrimitiveType::F32),
+                    OneDnnFusibleInstr(&contraction))
+                    .WithOneUser(),
+                m::Broadcast(m::Constant(&constant)));
 
     if (Match(instr, pattern)) {
       std::vector<HloInstruction*> new_operands;
@@ -868,31 +907,28 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      for (auto operand : dot->operands()) {
+      for (auto operand : contraction->operands()) {
         new_operands.push_back(operand);
       }
-      auto matmul_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
-          dot->CloneWithNewOperands(instr->shape(), new_operands)));
-      auto backend_config = matmul_call->backend_config<BackendConfig>();
-      backend_config->mutable_onednn_matmul_config()
-          ->mutable_fusions()
-          ->add_ops(OneDnnFusionConfig::LINEAR);
+      auto custom_call = Cast<HloCustomCallInstruction>(instr->AddInstruction(
+          contraction->CloneWithNewOperands(instr->shape(), new_operands)));
+      auto backend_config = custom_call->backend_config<BackendConfig>();
+      auto fusions_config = GetFusionsConfig(&backend_config);
+      fusions_config->add_ops(OneDnnFusionConfig::LINEAR);
       // Casting to int32 because of issues in proto config for decimal types
       // handling.
-      backend_config->mutable_onednn_matmul_config()
-          ->mutable_fusions()
-          ->set_alpha_typecast(
-              *(reinterpret_cast<int32_t*>(&constant_value.value())));
-      TF_RETURN_IF_ERROR(matmul_call->set_backend_config(*backend_config));
+      fusions_config->set_alpha_typecast(
+          *(reinterpret_cast<int32_t*>(&constant_value.value())));
+      TF_RETURN_IF_ERROR(custom_call->set_backend_config(*backend_config));
       HloInstruction* new_instr;
       if (optional_convert != nullptr &&
           optional_convert->opcode() == HloOpcode::kConvert) {
-        new_instr = matmul_call->AddInstruction(HloInstruction::CreateConvert(
+        new_instr = custom_call->AddInstruction(HloInstruction::CreateConvert(
             ShapeUtil::ChangeElementType(
-                matmul_call->shape(), optional_convert->shape().element_type()),
-            matmul_call));
+                custom_call->shape(), optional_convert->shape().element_type()),
+            custom_call));
       } else {
-        new_instr = matmul_call;
+        new_instr = custom_call;
       }
 
       TF_RETURN_IF_ERROR(ReplaceInstruction(instr, new_instr));
@@ -908,16 +944,16 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleDivide(HloInstruction* instr) override {
-    HloInstruction* matmul_call;
+    HloInstruction* contraction;
     HloInstruction* intermediate_instr = nullptr;
     HloInstruction* optional_bitcast = nullptr;
     HloInstruction* src;
     if (SigmoidActivation(instr, &src)) {
       if (Match(src, ElementwiseSafeIntermediates(
                          &intermediate_instr, &optional_bitcast,
-                         OneDnnMatmulInstr(&matmul_call))
+                         OneDnnFusibleInstr(&contraction))
                          .WithOneUser())) {
-        return FuseActivation(OneDnnFusionConfig::SIGMOID, instr, matmul_call,
+        return FuseActivation(OneDnnFusionConfig::SIGMOID, instr, contraction,
                               intermediate_instr, optional_bitcast);
       }
     }
@@ -926,25 +962,25 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
 
   absl::Status FuseActivation(OneDnnFusionConfig_FusionKind kind,
                               HloInstruction* activation,
-                              HloInstruction* matmul,
+                              HloInstruction* contraction,
                               HloInstruction* intermediate_instr = nullptr,
                               HloInstruction* optional_bitcast = nullptr) {
-    TF_ASSIGN_OR_RETURN(auto backend_config,
-                        matmul->backend_config<BackendConfig>());
-    auto* matmul_config = backend_config.mutable_onednn_matmul_config();
-    matmul_config->mutable_fusions()->add_ops(kind);
-    TF_RETURN_IF_ERROR(matmul->set_backend_config(backend_config));
-    std::unique_ptr<HloInstruction> output = matmul->Clone();
+    auto backend_config = contraction->backend_config<BackendConfig>();
+    auto fusions_config = GetFusionsConfig(&backend_config);
+    fusions_config->add_ops(kind);
+    TF_RETURN_IF_ERROR(contraction->set_backend_config(*backend_config));
+    std::unique_ptr<HloInstruction> output = contraction->Clone();
     if (optional_bitcast != nullptr &&
         optional_bitcast->opcode() == HloOpcode::kBitcast) {
       HloInstruction* new_instr = nullptr;
       if (intermediate_instr != nullptr &&
           intermediate_instr->opcode() == HloOpcode::kConvert) {
         auto bitcast_call =
-            matmul->AddInstruction(HloInstruction::CreateBitcast(
-                ShapeUtil::ChangeElementType(optional_bitcast->shape(),
-                                             matmul->shape().element_type()),
-                matmul));
+            contraction->AddInstruction(HloInstruction::CreateBitcast(
+                ShapeUtil::ChangeElementType(
+                    optional_bitcast->shape(),
+                    contraction->shape().element_type()),
+                contraction));
         new_instr = bitcast_call->AddInstruction(HloInstruction::CreateConvert(
             ShapeUtil::ChangeElementType(
                 bitcast_call->shape(),
@@ -955,7 +991,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     } else if (intermediate_instr) {
       output = intermediate_instr->CloneWithNewOperands(
           intermediate_instr->shape(),
-          {matmul->parent()->AddInstruction(std::move(output))});
+          {contraction->parent()->AddInstruction(std::move(output))});
     }
 
     return ReplaceWithNewInstruction(activation, std::move(output));

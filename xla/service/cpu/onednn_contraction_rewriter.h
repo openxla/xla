@@ -24,6 +24,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/cpu/onednn_matmul.h"
+#include "xla/service/cpu/onednn_convolution.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -73,6 +75,26 @@ class OneDnnContractionRewriter : public HloModulePass {
           BackendConfig::BackendConfigOneofCase::kOnednnConvConfig>(   \
           contraction, __VA_ARGS__);                                   \
   }
+
+using OneDnnContractionVariant =
+    std::variant<PrimitiveTrait<kOnednnConvConfig>,
+                 PrimitiveTrait<kOnednnMatmulConfig>>;
+
+template <BackendConfigOneofCase config>
+struct PrimitiveTrait<config, OneDnnFusionConfig*> {
+  static OneDnnFusionConfig* GetTransformationConfig(
+      typename PrimitiveTrait<config>::pointer_type kernel_config) {
+    return kernel_config->mutable_fusions();
+  }
+};
+
+template <BackendConfigOneofCase config>
+struct PrimitiveTrait<config, OneDnnOptimizationConfig*> {
+  static OneDnnOptimizationConfig* GetTransformationConfig(
+      typename PrimitiveTrait<config>::pointer_type kernel_config) {
+    return kernel_config->mutable_optimization_config();
+  }
+};
 
 }  // namespace cpu
 }  // namespace xla
