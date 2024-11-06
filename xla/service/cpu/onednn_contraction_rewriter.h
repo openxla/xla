@@ -63,22 +63,21 @@ class OneDnnContractionRewriter : public HloModulePass {
   const tsl::thread::ThreadPool* compile_threadpool_;
 };
 
-using ContractionVariant = std::variant<PrimitiveTrait<kOnednnConvConfig>,
-                                        PrimitiveTrait<kOnednnMatmulConfig>>;
-using FusionsConfigPointer = xla::cpu::OneDnnFusionConfig*;
-using OptimizationsConfigPointer = xla::cpu::OneDnnOptimizationConfig*;
+using OneDnnContractionVariant =
+    std::variant<PrimitiveTrait<kOnednnConvConfig>,
+                 PrimitiveTrait<kOnednnMatmulConfig>>;
 
 template <BackendConfigOneofCase config>
-struct PrimitiveTrait<config, FusionsConfigPointer> {
-  static FusionsConfigPointer GetTransformationConfig(
+struct PrimitiveTrait<config, OneDnnFusionConfig*> {
+  static OneDnnFusionConfig* GetTransformationConfig(
       typename PrimitiveTrait<config>::pointer_type kernel_config) {
     return kernel_config->mutable_fusions();
   }
 };
 
 template <BackendConfigOneofCase config>
-struct PrimitiveTrait<config, OptimizationsConfigPointer> {
-  static OptimizationsConfigPointer GetTransformationConfig(
+struct PrimitiveTrait<config, OneDnnOptimizationConfig*> {
+  static OneDnnOptimizationConfig* GetTransformationConfig(
       typename PrimitiveTrait<config>::pointer_type kernel_config) {
     return kernel_config->mutable_optimization_config();
   }

@@ -196,11 +196,11 @@ std::optional<float> GetConstantValueAsFloat32(const HloInstruction* inst) {
   }
 }
 
-ContractionVariant GetContractionVariant(
+auto GetOneDnnContractionVariant(
     absl::StatusOr<BackendConfig>* backend_config) {
   return ((*backend_config)->backend_config_oneof_case() == kOnednnConvConfig)
-             ? ContractionVariant(PrimitiveTrait<kOnednnConvConfig>{})
-             : ContractionVariant(PrimitiveTrait<kOnednnMatmulConfig>{});
+             ? OneDnnContractionVariant(PrimitiveTrait<kOnednnConvConfig>{})
+             : OneDnnContractionVariant(PrimitiveTrait<kOnednnMatmulConfig>{});
 }
 
 // Return the correct mutable config instance for the given contraction variant
@@ -215,17 +215,15 @@ TransformationType GetTransformationConfig(
             GetTransformationConfig(
                 GetKernelConfig<T::kConfigVal>(backend_config));
       },
-      GetContractionVariant(backend_config));
+      GetOneDnnContractionVariant(backend_config));
 }
 
-FusionsConfigPointer GetFusionsConfig(
-    absl::StatusOr<BackendConfig>* backend_config) {
-  return GetTransformationConfig<FusionsConfigPointer>(backend_config);
+auto GetFusionsConfig(absl::StatusOr<BackendConfig>* backend_config) {
+  return GetTransformationConfig<OneDnnFusionConfig*>(backend_config);
 }
 
-OptimizationsConfigPointer GetOptimizationsConfig(
-    absl::StatusOr<BackendConfig>* backend_config) {
-  return GetTransformationConfig<OptimizationsConfigPointer>(backend_config);
+auto GetOptimizationsConfig(absl::StatusOr<BackendConfig>* backend_config) {
+  return GetTransformationConfig<OneDnnOptimizationConfig*>(backend_config);
 }
 
 inline auto BcastConstScalarNear(double value) {
@@ -708,10 +706,10 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       auto backend_config = custom_call->backend_config<BackendConfig>();
       auto fusions_config = GetFusionsConfig(&backend_config);
       auto optimization_config = GetOptimizationsConfig(&backend_config);
-      // TODO(intel-tf): Remove this restriction once oneDNN has an optimized
+      // TODO(intel-tf): Here, we allow 1D addends only when they are the first
+      // fused op. Remove this restriction once oneDNN has an optimized
       // implementation for broadcasted add across all dimensions.
-      OneDnnFusionConfig_FusionKind kind = OneDnnFusionConfig::UNDEFINED;
-      kind =
+      OneDnnFusionConfig_FusionKind kind =
           (addend->shape().rank() == 1)
               ? (fusions_config->ops().empty() ? OneDnnFusionConfig::BIAS
                                                : OneDnnFusionConfig::UNDEFINED)
