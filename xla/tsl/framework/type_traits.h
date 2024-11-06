@@ -70,6 +70,7 @@ struct is_simple_type {
       std::is_trivial<T>::value || std::is_same<T, Eigen::half>::value ||
       std::is_same<T, complex64>::value || std::is_same<T, complex128>::value ||
       is_quantized<T>::value || std::is_same<T, bfloat16>::value ||
+      std::is_same<T, float4_e2m1fn>::value ||
       std::is_same<T, float8_e3m4>::value ||
       std::is_same<T, float8_e4m3>::value ||
       std::is_same<T, float8_e4m3fn>::value ||

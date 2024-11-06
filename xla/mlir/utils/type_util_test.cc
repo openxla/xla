@@ -101,6 +101,7 @@ INSTANTIATE_TEST_SUITE_P(
     Execute, TypeUtilTest,
     ::testing::ValuesIn(std::vector<TypeUtilTestParam>(
         {{PRED, [](mlir::Builder b) { return b.getI1Type(); }},
+         {F4E2M1FN, [](mlir::Builder b) { return b.getFloat4E2M1FNType(); }},
          {F8E5M2, [](mlir::Builder b) { return b.getFloat8E5M2Type(); }},
          {F8E4M3, [](mlir::Builder b) { return b.getFloat8E4M3Type(); }},
          {F8E4M3FN, [](mlir::Builder b) { return b.getFloat8E4M3FNType(); }},

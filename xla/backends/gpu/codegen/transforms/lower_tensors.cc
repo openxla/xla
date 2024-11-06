@@ -297,7 +297,7 @@ std::tuple<Value, Value> GetI4IndexAndNibble(Value linear_index,
 mlir::LLVM::GEPOp CreateGep(TypedValue<mlir::RankedTensorType> tensor,
                             Value linear_index, mlir::ImplicitLocOpBuilder& b) {
   Type element_type = tensor.getType().getElementType();
-  if (element_type == b.getI4Type()) {
+  if (element_type.getIntOrFloatBitWidth() == 4) {
     element_type = b.getI8Type();
   }
   auto ptr = mlir::LLVM::LLVMPointerType::get(b.getContext());
@@ -325,8 +325,9 @@ struct RewriteTensorExtract : OpRewritePattern<mlir::tensor::ExtractOp> {
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
     auto linear_index = GetLinearIndex(op.getIndices(), b);
     Type element_type = op.getTensor().getType().getElementType();
+
     Value is_low_nibble = nullptr;
-    if (element_type == rewriter.getI4Type()) {
+    if (element_type.getIntOrFloatBitWidth() == 4) {
       std::tie(linear_index, is_low_nibble) =
           GetI4IndexAndNibble(linear_index, b);
     }
@@ -341,7 +342,7 @@ struct RewriteTensorExtract : OpRewritePattern<mlir::tensor::ExtractOp> {
       auto high_value = b.create<mlir::arith::ShRUIOp>(
           load, b.create<mlir::arith::ConstantIntOp>(4, load.getType()));
       load = b.create<mlir::arith::TruncIOp>(
-          op.getType(),
+          rewriter.getI4Type(),
           b.create<mlir::arith::SelectOp>(is_low_nibble, load, high_value));
     }
 
@@ -377,6 +378,7 @@ struct RewriteTransferRead : OpRewritePattern<mlir::vector::TransferReadOp> {
 
     auto source = mlir::dyn_cast<mlir::TypedValue<mlir::RankedTensorType>>(
         op.getSource());
+    mlir::Type source_element_type = source.getType().getElementType();
 
     mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
     auto linear_index = GetLinearIndex(op.getIndices(), b);
@@ -385,7 +387,8 @@ struct RewriteTransferRead : OpRewritePattern<mlir::vector::TransferReadOp> {
     if (vector_type.getElementType().isInteger(1)) {
       vector_type = vector_type.cloneWith(std::nullopt, b.getI8Type());
     }
-    if (op.getVectorType().getElementType().isInteger(4)) {
+    mlir::Type gep_element_type = vector_type.getElementType();
+    if (gep_element_type.getIntOrFloatBitWidth() == 4) {
       linear_index = b.create<arith::ShRUIOp>(
           linear_index,
           b.create<arith::ConstantIntOp>(1, linear_index.getType()));
@@ -397,11 +400,11 @@ struct RewriteTransferRead : OpRewritePattern<mlir::vector::TransferReadOp> {
     auto loaded =
         b.create<mlir::LLVM::LoadOp>(llvm_vector_type, gep).getResult();
 
-    if (source.getType().getElementType().isInteger(1)) {
+    if (source_element_type.isInteger(1)) {
       Value zero = b.create<mlir::arith::ConstantOp>(
           mlir::DenseElementsAttr::get(vector_type, b.getI8IntegerAttr(0)));
       loaded = b.create<arith::CmpIOp>(arith::CmpIPredicate::ne, loaded, zero);
-    } else if (source.getType().getElementType().isInteger(4)) {
+    } else if (source_element_type.getIntOrFloatBitWidth() == 4) {
       // LLVM and XLA pack i4s in opposite order, so we have to reshuffle the
       // elements.
       loaded = PermutePairsInVector(loaded, b);
@@ -430,7 +433,7 @@ struct RewriteTensorInsert : OpRewritePattern<mlir::tensor::InsertOp> {
     auto scalar_value = op.getScalar();
 
     // For i4 we store 2 values into one byte. This needs special handling here.
-    if (tensor_dest.getType().getElementType() == rewriter.getI4Type()) {
+    if (tensor_dest.getType().getElementType().getIntOrFloatBitWidth() == 4) {
       // We need to use directly op.getDest() as input, otherwise the following
       // rewrite might remove the only user of it.
       tensor_dest = op.getDest();
@@ -448,6 +451,10 @@ struct RewriteTensorInsert : OpRewritePattern<mlir::tensor::InsertOp> {
       auto tensor_dest_i8 =
           b.create<UnrealizedConversionCastOp>(tensor_ty, tensor_dest)
               .getResult(0);
+      if (scalar_value.getType() != rewriter.getI4Type()) {
+        scalar_value =
+            b.create<arith::BitcastOp>(rewriter.getI4Type(), scalar_value);
+      }
       scalar_value = b.create<mlir::arith::ExtUIOp>(ty, scalar_value);
 
       // We need AtomicRMWOp because it can happen that different threads try to
@@ -507,12 +514,13 @@ struct RewriteTransferWrite : OpRewritePattern<mlir::vector::TransferWriteOp> {
     auto linear_index = GetLinearIndex(op.getIndices(), b);
 
     mlir::Value vector_value = op.getVector();
-    if (op.getVectorType().getElementType().isInteger(1)) {
+    mlir::Type vector_element_type = op.getVectorType().getElementType();
+    if (vector_element_type.isInteger(1)) {
       vector_value = b.create<arith::ExtUIOp>(
           op.getVectorType().cloneWith(std::nullopt, b.getI8Type()),
           vector_value);
     }
-    if (op.getVectorType().getElementType().isInteger(4)) {
+    if (vector_element_type.getIntOrFloatBitWidth() == 4) {
       linear_index = b.create<arith::ShRUIOp>(
           linear_index,
           b.create<arith::ConstantIntOp>(1, linear_index.getType()));

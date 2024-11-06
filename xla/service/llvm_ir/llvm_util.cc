@@ -199,6 +199,8 @@ llvm::Type* PrimitiveTypeToIrType(PrimitiveType element_type,
     case S16:
     case U16:
       return llvm::Type::getInt16Ty(context);
+    case F4E2M1FN:
+      return llvm::Type::getIntNTy(context, 4);
     case F8E5M2:
     case F8E5M2FNUZ:
     case F8E4M3:

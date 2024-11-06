@@ -6844,6 +6844,13 @@ func.func @invalid_dimension_attr(%arg0: tensor<?x?xf32, #mhlo.type_extensions<b
 
 // -----
 
+func.func @f4e2m1fn(%arg0: tensor<f16>) -> tensor<f4E2M1FN> {
+  %0 = "mhlo.convert"(%arg0) : (tensor<f16>) -> tensor<f4E2M1FN>
+  func.return %0 : tensor<f4E2M1FN>
+}
+
+// -----
+
 func.func @f8e3m4(%arg0: tensor<f16>) -> tensor<f8E3M4> {
   %0 = "mhlo.convert"(%arg0) : (tensor<f16>) -> tensor<f8E3M4>
   func.return %0 : tensor<f8E3M4>
