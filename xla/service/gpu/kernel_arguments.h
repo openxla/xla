@@ -73,6 +73,19 @@ class KernelArguments {
       absl::Span<const HloInstruction* const> needed_operands,
       bool dedup = true);
 
+  // Certain kernels require output arguments to be interleaved with input
+  // arguments. This function creates a KernelArguments object where the output
+  // arguments are interleaved with the input arguments according to the
+  // provided indices.
+  // Example: If needed_operands has 3 elements and hlo_instruction shape yields
+  // 2 output arguments, and interleaved_output_indices = {1, 4}:
+  // - Final argument order will be: input0, output0, input1, input2, output1
+  static absl::StatusOr<KernelArguments> Create(
+      const BufferAssignment& buffer_assignment,
+      const HloInstruction* hlo_instruction,
+      absl::Span<const HloInstruction* const> needed_operands,
+      absl::Span<const int32_t> interleaved_output_indices);
+
   const std::vector<KernelArgument>& args() const { return args_; }
 
  private:
@@ -81,6 +94,11 @@ class KernelArguments {
 
   static std::vector<KernelArgument> ProcessArguments(
       std::vector<KernelArgument> kernel_arguments, bool dedup);
+
+  static absl::Status ExtractOutputArguments(
+      std::vector<KernelArgument>& arguments,
+      const BufferAssignment& buffer_assignment,
+      const HloInstruction* hlo_instruction);
 
   std::vector<KernelArgument> args_;
 };

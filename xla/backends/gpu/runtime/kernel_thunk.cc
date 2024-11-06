@@ -54,18 +54,22 @@ namespace gpu {
 // KernelThunk
 //===----------------------------------------------------------------------===//
 
-KernelThunk::KernelThunk(
-    const HloInstruction* instr, std::string kernel_name,
-    absl::Span<const KernelArgument> kernel_arguments,
-    LaunchDimensions launch_dimensions,
-    std::optional<se::ClusterDim> cluster_dim, int64_t shmem_bytes,
-    std::optional<stream_executor::gpu::TmaMetadata> tma_metadata)
+KernelThunk::KernelThunk(const HloInstruction* instr, std::string kernel_name,
+                         absl::Span<const KernelArgument> kernel_arguments,
+                         LaunchDimensions launch_dimensions,
+                         std::optional<se::ClusterDim> cluster_dim,
+                         int64_t shmem_bytes,
+                         std::optional<se::gpu::TmaMetadata> tma_metadata,
+                         std::optional<std::string> ptx,
+                         std::optional<std::vector<uint8_t>> cubin)
     : Thunk(Kind::kKernel, Thunk::ThunkInfo::WithProfileAnnotation(instr)),
       kernel_name_(std::move(kernel_name)),
       launch_dimensions_(std::move(launch_dimensions)),
       cluster_dim_(std::move(cluster_dim)),
       shmem_bytes_(shmem_bytes),
-      tma_metadata_(std::move(tma_metadata)) {
+      tma_metadata_(std::move(tma_metadata)),
+      ptx_(std::move(ptx)),
+      cubin_(std::move(cubin)) {
   args_.reserve(kernel_arguments.size());
   written_.reserve(kernel_arguments.size());
   for (const KernelArgument& kernel_argument : kernel_arguments) {
@@ -92,10 +96,12 @@ absl::Status KernelThunk::Initialize(const InitializeParams& params) {
   // lets the time spent loading the kernel not count towards our execution
   // profiles.
   if (!kernel_cache_.contains(params.executor)) {
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::Kernel> kernel,
-        CreateKernel(kernel_name_, args_.size(), params.src.text,
-                     params.src.binary, params.executor, shmem_bytes_));
+    absl::string_view ptx = ptx_.has_value() ? ptx_.value() : params.src.text;
+    absl::Span<const uint8_t> cubin =
+        cubin_.has_value() ? cubin_.value() : params.src.binary;
+    TF_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
+                        CreateKernel(kernel_name_, args_.size(), ptx, cubin,
+                                     params.executor, shmem_bytes_));
 
     kernel_cache_.emplace(params.executor, std::move(kernel));
   }

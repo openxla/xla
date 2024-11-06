@@ -74,7 +74,9 @@ class KernelThunk : public Thunk {
               LaunchDimensions launch_dimensions,
               std::optional<se::ClusterDim> cluster_dim, int64_t shmem_bytes,
               std::optional<stream_executor::gpu::TmaMetadata> tma_metadata =
-                  std::nullopt);
+                  std::nullopt,
+              std::optional<std::string> ptx = std::nullopt,
+              std::optional<std::vector<uint8_t>> cubin = std::nullopt);
   KernelThunk(const KernelThunk&) = delete;
   KernelThunk& operator=(const KernelThunk&) = delete;
   ~KernelThunk() override = default;
@@ -112,6 +114,9 @@ class KernelThunk : public Thunk {
   // The cluster dimensions used to launch the kernel.
   const std::optional<se::ClusterDim> cluster_dim_;
 
+  std::optional<std::string> ptx_;
+  std::optional<std::vector<uint8_t>> cubin_;
+
   int64_t shmem_bytes_;
 
   // Map of argument index to TmaDescriptor used to create arguments to the
@@ -120,6 +125,7 @@ class KernelThunk : public Thunk {
 
   // Loaded kernels for each `StreamExecutor`.
   mutable absl::Mutex mutex_;
+
   absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<se::Kernel>>
       kernel_cache_ ABSL_GUARDED_BY(mutex_);
 };

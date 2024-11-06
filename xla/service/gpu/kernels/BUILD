@@ -392,6 +392,7 @@ cc_library(
         "cuda-only",
         "gpu",
     ],
+    visibility = [":friends"],
     deps = [
         ":custom_kernel",
         "//xla/stream_executor:device_memory",

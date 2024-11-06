@@ -162,6 +162,11 @@ bool IsCustomCallToTopK(const HloInstruction& hlo) {
          hlo.custom_call_target() == kTopKCustomCallTarget;
 }
 
+bool IsCustomCallToPtxKernel(const HloInstruction& hlo) {
+  return hlo.opcode() == HloOpcode::kCustomCall &&
+         hlo.custom_call_target() == "__gpu$xla.gpu.ptx";
+}
+
 bool IsSliceWithUnitStrides(const HloInstruction* instr) {
   auto slice = DynCast<HloSliceInstruction>(instr);
   return slice && absl::c_all_of(slice->slice_strides(),
