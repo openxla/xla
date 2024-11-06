@@ -91,13 +91,13 @@ bool LiteralProtoHasValues(const LiteralProto& proto) {
          !proto.s16s().empty() || proto.s32s_size() || proto.s64s_size() ||
          !proto.u2s().empty() || !proto.u4s().empty() || !proto.u8s().empty() ||
          !proto.u16s().empty() || proto.u32s_size() || proto.u64s_size() ||
-         !proto.f8e5m2s().empty() || !proto.f8e4m3s().empty() ||
-         !proto.f8e4m3fns().empty() || !proto.f8e4m3b11fnuzs().empty() ||
-         !proto.f8e5m2fnuzs().empty() || !proto.f8e4m3fnuzs().empty() ||
-         !proto.f8e3m4s().empty() || !proto.f16s().empty() ||
-         !proto.bf16s().empty() || proto.f32s_size() || proto.f64s_size() ||
-         proto.c64s_size() || proto.c128s_size() || proto.preds_size() ||
-         proto.tuple_literals_size();
+         !proto.f4e2m1fns().empty() || !proto.f8e3m4s().empty() ||
+         !proto.f8e4m3b11fnuzs().empty() || !proto.f8e4m3fns().empty() ||
+         !proto.f8e4m3fnuzs().empty() || !proto.f8e4m3s().empty() ||
+         !proto.f8e5m2fnuzs().empty() || !proto.f8e5m2s().empty() ||
+         !proto.f16s().empty() || !proto.bf16s().empty() || proto.f32s_size() ||
+         proto.f64s_size() || proto.c64s_size() || proto.c128s_size() ||
+         proto.preds_size() || proto.tuple_literals_size();
 }
 
 // Lazy getter for the interned scalar shape in static storage. We reuse this
@@ -1874,7 +1874,6 @@ bool LiteralBase::Piece::EqualElements(const LiteralBase::Piece& other) const {
         << __func__ << " is only supported for dense arrays: " << subshape();
     CHECK_EQ(size_bytes_dense(), other.size_bytes_dense());
     if (primitive_util::IsSubByteNonPredType(subshape().element_type())) {
-      CHECK(!primitive_util::IsFloatingPointType(subshape().element_type()));
       auto one_array = buffer();
       auto two_array = other.buffer();
       const int bits_per_element =
@@ -2259,6 +2258,11 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
     case S64:
       CopyToRepeatedField(proto->mutable_s64s(), data<int64_t>());
       break;
+    case F4E2M1FN:
+      *proto->mutable_f4e2m1fns() = std::string(
+          reinterpret_cast<const char*>(data<tsl::float4_e2m1fn>().data()),
+          size_bytes_dense());
+      break;
     case F8E5M2:
       *proto->mutable_f8e5m2s() = std::string(
           reinterpret_cast<const char*>(data<tsl::float8_e5m2>().data()),
@@ -2445,6 +2449,14 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
     case U64:
       TF_RETURN_IF_ERROR(CopyFromRepeatedField(data<uint64_t>(), proto.u64s()));
       break;
+    case F4E2M1FN: {
+      const std::string& s(proto.f4e2m1fns());
+      TF_RET_CHECK(data<tsl::float4_e2m1fn>().size() *
+                       sizeof(tsl::float4_e2m1fn) ==
+                   s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      break;
+    }
     case F8E5M2: {
       const std::string& s(proto.f8e5m2s());
       TF_RET_CHECK(data<tsl::float8_e5m2>().size() * sizeof(tsl::float8_e5m2) ==
