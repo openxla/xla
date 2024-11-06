@@ -136,6 +136,9 @@ struct has_negative_zero
     : std::bool_constant<std::numeric_limits<T>::is_iec559> {};
 
 template <>
+struct has_negative_zero<tsl::float4_e2m1fn> : std::bool_constant<true> {};
+
+template <>
 struct has_negative_zero<tsl::float8_e4m3fn> : std::bool_constant<true> {};
 
 template <typename T>

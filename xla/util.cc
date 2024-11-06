@@ -148,6 +148,7 @@ std::string Reindent(absl::string_view original,
 
 template <typename FloatT>
 static void RoundTripNanPayload(FloatT value, std::string* result) {
+  static_assert(std::numeric_limits<FloatT>::has_quiet_NaN);
   static_assert(!std::is_same<FloatT, tsl::float8_e4m3fn>::value,
                 "RoundTripNanPayload does not support E4M3FN");
   static_assert(!std::is_same<FloatT, tsl::float8_e4m3fnuz>::value,
@@ -172,6 +173,10 @@ static std::string GenericRoundTripFpToString(FloatT value) {
   int max_decimal_digits = std::numeric_limits<FloatT>::max_digits10;
   return absl::StrFormat("%.*g", max_decimal_digits,
                          static_cast<double>(value));
+}
+
+std::string RoundTripFpToString(tsl::float4_e2m1fn value) {
+  return GenericRoundTripFpToString(value);
 }
 
 std::string RoundTripFpToString(tsl::float8_e5m2 value) {
