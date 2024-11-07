@@ -703,11 +703,85 @@ HloSharding TransposeSharding(const HloSharding& sharding,
   }
 }
 
-std::optional<HloSharding> ReshapeSharding(const Shape& source_shape,
-                                           const Shape& target_shape,
-                                           const HloSharding& source_sharding) {
+std::optional<HloSharding> ReshapeSharding(
+    const Shape& source_shape, const Shape& target_shape,
+    const HloSharding& source_sharding,
+    const bool enable_sharding_replication_grad_accum) {
   if (source_sharding.IsTileMaximal() || source_sharding.IsManual()) {
     return source_sharding;
+  }
+  if (enable_sharding_replication_grad_accum) {
+    // Gradient Accumulation Case [8,2048] to [2,4,2048] or [32,2048] to
+    // [8,4,2048]
+    if (source_shape.rank() == 2 && target_shape.rank() == 3 &&
+        source_sharding.ReplicateOnLastTileDim()) {
+      const int64_t source_dim1 = source_shape.dimensions(1);
+      const int64_t target_dim2 = target_shape.dimensions(2);
+
+      const int64_t partition_dim = source_sharding.tile_assignment().dim(0);
+      // Check if the sharding metadata matches the expected pattern for
+      // gradient accumulation Must be on source tensor of rank2 [Shard, 1,
+      // Shard, ......]
+      bool is_gradient_accumulation_pattern =
+          (source_sharding.tile_assignment().dim(0) > 1 &&
+           source_sharding.tile_assignment().dim(1) == 1);
+      if (is_gradient_accumulation_pattern && source_dim1 == target_dim2) {
+        VLOG(2) << "Gradient Accumulation Case triggered";
+        // Handle extra axes with a loop
+        std::vector<int64_t> new_tile_assignment_dims;
+        new_tile_assignment_dims.push_back(1);
+        new_tile_assignment_dims.push_back(partition_dim);
+        new_tile_assignment_dims.push_back(1);
+
+        for (int i = 2; i < source_sharding.tile_assignment().num_dimensions();
+             ++i) {
+          new_tile_assignment_dims.push_back(
+              source_sharding.tile_assignment().dim(i));
+        }
+
+        return HloSharding::Subgroup(
+            source_sharding.tile_assignment().Reshape(new_tile_assignment_dims),
+            source_sharding.subgroup_types(), source_sharding.metadata());
+      } else {
+        VLOG(2) << "Gradient Accumulation case check failed, last source and "
+                   "target dimensions "
+                   "do not match or partition_dim is not greater than 1.";
+      }
+    }
+
+    // Gradient Accumulation Case s32[32] to s32[8,4]
+    // ReshapeSharding called with source_shape: s32[32], target_shape:
+    // s32[8,4], sharding: {devices=[4,8]<=[32] last_tile_dim_replicate}
+    if (source_shape.rank() == 1 && target_shape.rank() == 2 &&
+        source_sharding.ReplicateOnLastTileDim()) {
+      const int64_t source_dim0 = source_shape.dimensions(0);
+      const int64_t target_dim0 = target_shape.dimensions(0);
+      const int64_t target_dim1 = target_shape.dimensions(1);
+      const int64_t partition_dim = source_sharding.tile_assignment().dim(0);
+
+      if (partition_dim > 1 && source_dim0 == target_dim0 * target_dim1) {
+        VLOG(2) << "Gradient Accumulation Case signed 32 bit triggered";
+        // Handle extra axes with a loop
+        std::vector<int64_t> new_tile_assignment_dims;
+        new_tile_assignment_dims.push_back(1);
+        new_tile_assignment_dims.push_back(partition_dim);
+
+        for (int i = 1; i < source_sharding.tile_assignment().num_dimensions();
+             ++i) {
+          new_tile_assignment_dims.push_back(
+              source_sharding.tile_assignment().dim(i));
+        }
+
+        return HloSharding::Subgroup(
+            source_sharding.tile_assignment().Reshape(new_tile_assignment_dims),
+            source_sharding.subgroup_types(), source_sharding.metadata());
+      } else {
+        VLOG(2) << "Gradient accumulation case check failed, source dimension "
+                   "does not match "
+                   "product of target dimensions "
+                   "or partition_dim is not greater than 1";
+      }
+    }
   }
 
   // In case of a tiled sharding, the reshaped sharding will be valid if the

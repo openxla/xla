@@ -119,9 +119,10 @@ HloSharding TransposeSharding(const HloSharding& sharding,
 // shape or std::nullopt if the resulting reshape would create an invalid
 // sharding (non continuous or non uniformly sized tiles). In case of a tile
 // maximal sharding returns the original sharding.
-std::optional<HloSharding> ReshapeSharding(const Shape& source_shape,
-                                           const Shape& target_shape,
-                                           const HloSharding& source_sharding);
+std::optional<HloSharding> ReshapeSharding(
+    const Shape& source_shape, const Shape& target_shape,
+    const HloSharding& source_sharding,
+    const bool enable_sharding_replication_grad_accum = false);
 
 // Propagates sharding through reshape. It tries to find partial matches on
 // subsets of dimensions that could satisfy ReshapeSharding() constraints, then

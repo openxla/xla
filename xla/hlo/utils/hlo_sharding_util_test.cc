@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/dot_as_convolution_util.h"
@@ -130,6 +131,34 @@ TEST(HloShardingUtilTest, TransposeShardingWithCollapsedDimsSubgroupManual) {
       HloSharding::Subgroup(TileAssignment({1, 1, 2, 4}), {OpSharding::MANUAL});
   EXPECT_EQ(TransposeShardingWithCollapsedDims(input, {-1, 2}, {-1, -1, 1}),
             output);
+}
+TEST(HloShardingUtilTest, ReshapeShardingGradientAccumulationCaseRequested) {
+  Shape input_shape = ShapeUtil::MakeShape(F32, {8, 2048});
+  Shape output_shape = ShapeUtil::MakeShape(F32, {2, 4, 2048});
+  const std::string original =
+      "{devices=[4,1,8]<=[32] last_tile_dim_replicate}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+
+  std::optional<HloSharding> result =
+      ReshapeSharding(input_shape, output_shape, sharding,
+                      /*enable_sharding_replication_grad_accum =*/true);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value().ToString(), "{devices=[1,4,1,8]<=[32]}");
+}
+
+TEST(HloShardingUtilTest, ReshapeShardingGradientAccumulationCaseRequestedS32) {
+  Shape input_shape = ShapeUtil::MakeShape(S32, {32});
+  Shape output_shape = ShapeUtil::MakeShape(S32, {8, 4});
+  const std::string original = "{devices=[4,8]<=[32] last_tile_dim_replicate}";
+  TF_ASSERT_OK_AND_ASSIGN(HloSharding sharding, ParseSharding(original));
+  EXPECT_EQ(sharding.ToString(), original);
+
+  std::optional<HloSharding> result =
+      ReshapeSharding(input_shape, output_shape, sharding,
+                      /*enable_sharding_replication_grad_accum =*/true);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value().ToString(), "{devices=[1,4,8]<=[32]}");
 }
 
 TEST(HloShardingUtilTest, ReshapeShardingDimensionSizeOnePartitioned1) {

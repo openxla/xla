@@ -3013,7 +3013,8 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
   if (sharding.IsTileMaximal()) {
     return DefaultAction(hlo);
   }
-
+  const bool enable_sharding_replication_grad_accum =
+      options().enable_sharding_replication_grad_accum;
   auto operand = GetPartitionedHlo(hlo->operand(0));
   auto desired_operand = [&](const HloSharding& output_sharding)
       -> std::optional<HloInstruction*> {
@@ -3021,7 +3022,8 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
     // desired_operand_sharding.
     std::optional<HloSharding> desired_operand_sharding =
         hlo_sharding_util::ReshapeSharding(
-            hlo->shape(), hlo->operand(0)->shape(), output_sharding);
+            hlo->shape(), hlo->operand(0)->shape(), output_sharding,
+            enable_sharding_replication_grad_accum);
     if (desired_operand_sharding.has_value() &&
         output_sharding.NumTiles() == desired_operand_sharding->NumTiles()) {
       return b_.AddInstruction(hlo->CloneWithNewOperands(
@@ -3039,8 +3041,9 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
 
   // Then try the desired_output_sharding.
   std::optional<HloSharding> desired_output_sharding =
-      hlo_sharding_util::ReshapeSharding(hlo->operand(0)->shape(), hlo->shape(),
-                                         operand.sharding());
+      hlo_sharding_util::ReshapeSharding(
+          hlo->operand(0)->shape(), hlo->shape(), operand.sharding(),
+          enable_sharding_replication_grad_accum);
   if (desired_output_sharding.has_value()) {
     if (auto operand_hlo = desired_operand(*desired_output_sharding)) {
       (*operand_hlo)->set_sharding(*desired_output_sharding);
@@ -3230,7 +3233,8 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
       // get an operand sharding that's fully compatible with propagated. This
       // helps us find the compatible dimensions on the operand.
       auto operand_propagated_back = hlo_sharding_util::ReshapeSharding(
-          base_shape, operand_base_shape, propagated);
+          base_shape, operand_base_shape, propagated,
+          enable_sharding_replication_grad_accum);
       std::vector<int64_t> operand_group_dims;
       if (!operand_propagated_back.has_value()) {
         // Unlikely, but if certain case is not implemented properly in

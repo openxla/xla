@@ -122,6 +122,12 @@ struct SpmdPartitionerOptions {
   // This combines sizes in bytes of both operands.
   // When it's set, it will override threshold_for_windowed_einsum_mib.
   std::optional<int64_t> total_bytes_windowed_einsum_threshold = std::nullopt;
+
+  // Whether to enable sharding replication for gradient accumulation pattern.
+  // Pattern is a Jax scan op over the accumulation dimension.
+  // This option can prevent all-to-alls around the scan op at the expense of
+  // higher memory.
+  bool enable_sharding_replication_grad_accum = false;
 };
 
 // Class to wrap the computation builder to capture information during SPMD
