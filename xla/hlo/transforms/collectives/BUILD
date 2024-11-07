@@ -398,6 +398,36 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "rematerialize_large_all_gather",
+    hdrs = ["rematerialize_large_all_gather.h"],
+    srcs = ["rematerialize_large_all_gather.cc"],
+    deps = [
+        "//xla/hlo/utils:hlo_query",
+        "//xla:shape_util",
+        "//xla/service:hlo_creation_utils",
+        "//xla/service:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "rematerialize_large_all_gather_test",
+    srcs = ["rematerialize_large_all_gather_test.cc"],
+    deps = [
+        ":rematerialize_large_all_gather",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
     name = "while_loop_all_reduce_code_motion_setup",
     srcs = ["while_loop_all_reduce_code_motion_setup.cc"],
     hdrs = ["while_loop_all_reduce_code_motion_setup.h"],

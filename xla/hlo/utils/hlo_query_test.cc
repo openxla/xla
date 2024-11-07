@@ -262,5 +262,37 @@ TEST_F(HloQueryTest, NextChannelIdTwoIdsTest) {
   EXPECT_EQ(hlo_query::NextChannelId(*module), 10);
 }
 
+TEST_F(HloQueryTest, MatchingReplicaGroups) {
+  absl::string_view hlo = R"(
+    HloModule test
+    ENTRY test_computation {
+      p = f32[8,4] parameter(0)
+      ROOT ag = f32[16,4] all-gather(p), dimensions={0}, replica_groups={{0,1},{2,3}}
+    }
+    )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  const CollectiveDeviceList list({{0, 1}, {2, 3}});
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  EXPECT_TRUE(hlo_query::HasMatchingReplicaGroups(root, list.replica_groups()));
+}
+
+TEST_F(HloQueryTest, NonMatchingReplicaGroups) {
+  absl::string_view hlo = R"(
+    HloModule test
+    ENTRY test_computation {
+      p = f32[8,4] parameter(0)
+      ROOT ag = f32[16,4] all-gather(p), dimensions={0}, replica_groups={{0,1},{2,3}}
+    }
+    )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  const CollectiveDeviceList list({{0, 2}, {1, 3}});
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  EXPECT_FALSE(
+      hlo_query::HasMatchingReplicaGroups(root, list.replica_groups()));
+}
 }  // namespace
 }  // namespace xla
