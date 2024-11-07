@@ -1464,9 +1464,9 @@ absl::StatusOr<bool> ProcessShardingInstruction(
     for (auto it = instructions.rbegin(); it != instructions.rend(); ++it) {
       HloInstruction* instruction = *it;
       if (instruction->IsCustomCall("Sharding")) {
-        TF_RET_CHECK(instruction->has_sharding())
-            << "Sharding instruction must have a sharding attribute";
         VLOG(3) << "ProcessShardingInstruction: " << instruction->ToString();
+        // No check output because has_sharding will block it from showing.
+        TF_RET_CHECK(instruction->has_sharding());
         HloSharding original_sharding = instruction->sharding();
 
         std::vector<int64_t> unspec_dims;
