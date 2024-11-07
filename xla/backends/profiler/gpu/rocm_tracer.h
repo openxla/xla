@@ -28,6 +28,7 @@ limitations under the License.
 #include "tsl/platform/types.h"
 
 #include "xla/stream_executor/rocm/roctracer_wrapper.h"
+#include "xla/backends/profiler/gpu/rocm_collector.h"
 
 #ifdef buffered_api_tracing_client_EXPORTS
 #    define CLIENT_API __attribute__((visibility("default")))
@@ -38,6 +39,18 @@ limitations under the License.
 namespace xla {
 namespace profiler {
 
+struct RocmTracerOptions {
+  std::set<uint32_t> api_tracking_set;  // actual api set we want to profile
+
+  // map of domain --> ops for which we need to enable the API callbacks
+  // If the ops vector is empty, then enable API callbacks for entire domain
+  absl::flat_hash_map<rocprofiler_buffer_tracing_kind_t, std::vector<uint32_t> > api_callbacks;
+
+  // map of domain --> ops for which we need to enable the Activity records
+  // If the ops vector is empty, then enable Activity records for entire domain
+  absl::flat_hash_map<rocprofiler_buffer_tracing_kind_t, std::vector<uint32_t> > activity_tracing;
+};
+
 class RocmTracer {
 public:
     // Returns a pointer to singleton RocmTracer.
@@ -45,6 +58,9 @@ public:
 
     // Only one profile session can be live in the same time.
     bool IsAvailable() const;
+
+    static uint64_t GetTimestamp();
+    static int NumGpus();
 
     void setup() CLIENT_API;
     void start() CLIENT_API;
@@ -54,7 +70,7 @@ public:
 
 private:
     // Private constructor for singleton
-    RocmTracer() : is_available_(true) {
+    RocmTracer() : is_available_(true), num_gpus_(NumGpus()) {
         LOG(INFO) << "RocmTracer initialized...";
     }
 
@@ -63,10 +79,12 @@ private:
         LOG(INFO) << "RocmTracer destroyed...";
     }
 
+    bool is_available_; // availability status
+    int num_gpus_; 
+
     // Disable copy constructor and assignment operator
     RocmTracer(const RocmTracer&) = delete;
     RocmTracer& operator=(const RocmTracer&) = delete;
-    bool is_available_; // Simulated availability status
 };  // end of RocmTracer
 
 }  // end of namespace profiler

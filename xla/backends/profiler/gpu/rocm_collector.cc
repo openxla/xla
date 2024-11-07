@@ -41,6 +41,8 @@ limitations under the License.
 #include "tsl/profiler/utils/xplane_schema.h"
 #include "tsl/profiler/utils/xplane_utils.h"
 
+namespace se = ::stream_executor;
+
 namespace xla {
 namespace profiler {
 
@@ -100,6 +102,7 @@ static void NormalizeTimeStamps(XPlaneBuilder* plane,
   });
 }
 
+/*
 std::string GetDeviceXLineName(
     int64_t stream_id, absl::flat_hash_set<RocmTracerEventType>& event_types) {
   std::string line_name = absl::StrCat("Stream #", stream_id);
@@ -111,7 +114,7 @@ std::string GetDeviceXLineName(
   }
   return absl::StrCat(line_name, "(", absl::StrJoin(type_names, ","), ")");
 }
-
+*/
 }  // namespace
 
 static void DumpRocmTracerEvent(const RocmTracerEvent& event,
@@ -120,9 +123,9 @@ static void DumpRocmTracerEvent(const RocmTracerEvent& event,
                                 const std::string& message) {
   std::ostringstream oss;
   oss << "correlation_id=" << event.correlation_id;
-  oss << ",type=" << GetRocmTracerEventTypeName(event.type);
-  oss << ",source=" << GetRocmTracerEventSourceName(event.source);
-  oss << ",domain=" << GetRocmTracerEventDomainName(event.domain);
+  // oss << ",type=" << GetRocmTracerEventTypeName(event.type);
+  // oss << ",source=" << GetRocmTracerEventSourceName(event.source);
+  // oss << ",domain=" << GetRocmTracerEventDomainName(event.domain);
   oss << ",name=" << event.name;
   oss << ",annotation=" << event.annotation;
   oss << ",start_time_us="
@@ -161,15 +164,15 @@ static void DumpRocmTracerEvent(const RocmTracerEvent& event,
 }
 
 static uint64_t get_timestamp() {
-  uint64_t ts;
-  if (se::wrap::roctracer_get_timestamp(&ts) != ROCTRACER_STATUS_SUCCESS) {
-    const char* errstr = se::wrap::roctracer_error_string();
-    LOG(ERROR) << "function roctracer_get_timestamp failed with error "
-               << errstr;
-    // Return 0 on error.
-    return 0;
-  }
-  return ts;
+    uint64_t ts;
+    rocprofiler_status_t CHECKSTATUS = se::wrap::rocprofiler_get_timestamp(&ts);
+    if (CHECKSTATUS != ROCPROFILER_STATUS_SUCCESS) {
+        const char* errstr = se::wrap::rocprofiler_get_status_string(CHECKSTATUS);
+        LOG(ERROR) << "function rocprofiler_get_timestamp failed with error "
+                   << errstr;
+        return 0;
+    }
+    return ts;
 }
 
 struct RocmDeviceOccupancyParams {
@@ -250,9 +253,11 @@ class PerDeviceCollector {
       return;
     }
     std::string kernel_name = tsl::port::MaybeAbiDemangle(event.name.c_str());
+    /*
     if (kernel_name.empty()) {
       kernel_name = GetRocmTracerEventTypeName(event.type);
     }
+    */
     XEventMetadata* event_metadata =
         plane->GetOrCreateEventMetadata(std::move(kernel_name));
     XEventBuilder xevent = line->AddEvent(*event_metadata);
@@ -469,10 +474,12 @@ class PerDeviceCollector {
       CreateXEvent(event, plane, start_gputime_ns, end_gputime_ns, &line);
       events_types_per_line[line_id].emplace(event.type);
     }
+    /*
     device_plane->ForEachLine([&](XLineBuilder line) {
       line.SetName(
           GetDeviceXLineName(line.Id(), events_types_per_line[line.Id()]));
     });
+    */
     host_plane->ForEachLine([&](XLineBuilder line) {
       line.SetName(absl::StrCat("Host Threads/", line.Id()));
     });
@@ -771,8 +778,8 @@ RocmTraceCollectorImpl::ApiActivityInfoExchange() {
           DumpRocmTracerEvent(api_event, 0, 0, ". Dropped!");
           LOG(WARNING) << "A ROCm API event type with unimplemented activity "
                           "merge dropped! "
-                          "Type="
-                       << GetRocmTracerEventTypeName(api_event.type);
+                          "Type=";
+                       // << GetRocmTracerEventTypeName(api_event.type);
       }
     }
   }
@@ -835,8 +842,8 @@ RocmTraceCollectorImpl::ApiActivityInfoExchange() {
           DumpRocmTracerEvent(activity_event, 0, 0, ". Dropped!");
           LOG(WARNING) << "A ROCm activity event with unimplemented API "
                           "callback merge dropped! "
-                          "Type="
-                       << GetRocmTracerEventTypeName(activity_event.type);
+                          "Type=";
+                       // << GetRocmTracerEventTypeName(activity_event.type);
           break;
       }
     }

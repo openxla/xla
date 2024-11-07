@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-// #include "xla/backends/profiler/gpu/rocm_collector.h"
+#include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 #include "xla/tsl/util/env_var.h"
 #include "tsl/platform/abi.h"
@@ -85,9 +85,9 @@ class GpuTracer : public profiler::ProfilerInterface {
   absl::Status DoStart();
   absl::Status DoStop();
 
-  // RocmTracerOptions GetRocmTracerOptions();
+  RocmTracerOptions GetRocmTracerOptions();
 
-  // RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
+  RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
 
   enum State {
     kNotStarted,
@@ -99,9 +99,9 @@ class GpuTracer : public profiler::ProfilerInterface {
   State profiling_state_ = State::kNotStarted;
 
   RocmTracer* rocm_tracer_;
-  // std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
+  std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
 };
-/*
+
 RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   // TODO(rocm-profiler): We need support for context similar to CUDA
   RocmTracerOptions options;
@@ -109,16 +109,19 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
 
   // clang formatting does not preserve one entry per line
   // clang-format off
-  std::vector<uint32_t> hip_api_domain_ops{
+  std::vector<uint32_t> hip_api_domain_ops{0,1,2,
+    /*
       // KERNEL
       HIP_API_ID_hipExtModuleLaunchKernel,
       HIP_API_ID_hipModuleLaunchKernel,
       HIP_API_ID_hipHccModuleLaunchKernel,
       HIP_API_ID_hipLaunchKernel,
-      HIP_API_ID_hipExtLaunchKernel,
+      
+      hipExtLaunchKernel,
       // MEMCPY
-      HIP_API_ID_hipMemcpy,
-      HIP_API_ID_hipMemcpyAsync,
+      hipMemcpy,
+      hipMemcpyAsync,
+      
       HIP_API_ID_hipMemcpyDtoD,
       HIP_API_ID_hipMemcpyDtoDAsync,
       HIP_API_ID_hipMemcpyDtoH,
@@ -127,8 +130,9 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
       HIP_API_ID_hipMemcpyHtoDAsync,
       HIP_API_ID_hipMemcpyPeer,
       HIP_API_ID_hipMemcpyPeerAsync,
-
+      
       // MEMSet
+      
       HIP_API_ID_hipMemsetD32,
       HIP_API_ID_hipMemsetD32Async,
       HIP_API_ID_hipMemsetD16,
@@ -137,14 +141,15 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
       HIP_API_ID_hipMemsetD8Async,
       HIP_API_ID_hipMemset,
       HIP_API_ID_hipMemsetAsync,
-
+      
       // MEMAlloc
-      HIP_API_ID_hipMalloc,
-      HIP_API_ID_hipMallocPitch,
+      hipMalloc,
+      hipMallocPitch,
       // MEMFree
-      HIP_API_ID_hipFree,
+      hipFree,
       // GENERIC
-      HIP_API_ID_hipStreamSynchronize,
+      hipStreamSynchronize,
+      */
   };
   // clang-format on
 
@@ -158,13 +163,14 @@ RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
   // activity (using correlation id).
   // clang-format off
   std::vector<uint32_t> hip_api_aux_ops{
-    HIP_API_ID_hipStreamWaitEvent,
+    0, 1,
+    // hipStreamWaitEvent,
     // TODO(rocm-profiler): finding device ID from hipEventSynchronize need some
     // extra work, we ignore it for now.
-    // HIP_API_ID_hipEventSynchronize,
-    HIP_API_ID_hipHostFree,
-    HIP_API_ID_hipHostMalloc,
-    HIP_API_ID_hipSetDevice  //  added to track default device
+    // hipEventSynchronize,
+    // HIP_API_ID_hipHostFree,
+    // HIP_API_ID_hipHostMalloc,
+    // HIP_API_ID_hipSetDevice  //  added to track default device
   };
 
   // clang-format on
@@ -189,11 +195,29 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
   options.num_gpus = num_gpus;
   return options;
 }
-*/
+
 absl::Status GpuTracer::DoStart() {
+  if (!rocm_tracer_->IsAvailable()) {
+    return tsl::errors::Unavailable("Another profile session running.");
+  }
+
+  AnnotationStack::Enable(true);
+
+  RocmTraceCollectorOptions trace_collector_options =
+      GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
+
   rocm_tracer_->setup();
   rocm_tracer_->start();
   rocm_tracer_->identify(1);
+
+  uint64_t start_gputime_ns = rocm_tracer_->GetTimestamp();
+  uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
+  rocm_trace_collector_ = CreateRocmCollector(
+      trace_collector_options, start_walltime_ns, start_gputime_ns);
+  LOG(ERROR) << "DoStart interrupted ...";
+  RocmTracerOptions tracer_options = GetRocmTracerOptions();
+  // rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
+
   return absl::OkStatus();
 }
 
@@ -222,8 +246,8 @@ absl::Status GpuTracer::Stop() {
   return absl::OkStatus();
 }
 
-// /*
 absl::Status GpuTracer::CollectData(XSpace* space) {
+  // LOG(ERROR) << "profiling_state_" << profiling_state_;
   switch (profiling_state_) {
     case State::kNotStarted:
       VLOG(3) << "No trace data collected, session wasn't started";
@@ -238,20 +262,20 @@ absl::Status GpuTracer::CollectData(XSpace* space) {
       VLOG(3) << "No trace data collected";
       return absl::OkStatus();
     case State::kStoppedOk: {
-      // if (rocm_trace_collector_) rocm_trace_collector_->Export(space);
+      if (rocm_trace_collector_) rocm_trace_collector_->Export(space);
       return absl::OkStatus();
     }
   }
   return tsl::errors::Internal("Invalid profiling state: ", profiling_state_);
 }
-// */
 
 // Not in anonymous namespace for testing purposes.
 std::unique_ptr<profiler::ProfilerInterface> CreateGpuTracer(
     const ProfileOptions& options) {
   if (options.device_type() != ProfileOptions::GPU &&
-      options.device_type() != ProfileOptions::UNSPECIFIED);
+      options.device_type() != ProfileOptions::UNSPECIFIED){
     return nullptr;
+  }
 
   profiler::RocmTracer* rocm_tracer =
       profiler::RocmTracer::GetRocmTracerSingleton();

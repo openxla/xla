@@ -210,36 +210,6 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
         }
 
         if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING &&
-           (header->kind == ROCPROFILER_BUFFER_TRACING_HSA_CORE_API ||
-            header->kind == ROCPROFILER_BUFFER_TRACING_HSA_AMD_EXT_API ||
-            header->kind == ROCPROFILER_BUFFER_TRACING_HSA_IMAGE_EXT_API ||
-            header->kind == ROCPROFILER_BUFFER_TRACING_HSA_FINALIZE_EXT_API))
-        {
-            auto* record =
-                static_cast<rocprofiler_buffer_tracing_hsa_api_record_t*>(header->payload);
-            auto info = std::stringstream{};
-            info << "tid=" << record->thread_id << ", context=" << context.handle
-                 << ", buffer_id=" << buffer_id.handle
-                 << ", cid=" << record->correlation_id.internal
-                 << ", extern_cid=" << record->correlation_id.external.value
-                 << ", kind=" << record->kind << ", operation=" << record->operation
-                 << ", start=" << record->start_timestamp << ", stop=" << record->end_timestamp
-                 << ", name=" << client_name_info.at(record->kind, record->operation);
-
-            if(record->start_timestamp > record->end_timestamp)
-            {
-                auto msg = std::stringstream{};
-                msg << "hsa api: start > end (" << record->start_timestamp << " > "
-                    << record->end_timestamp
-                    << "). diff = " << (record->start_timestamp - record->end_timestamp);
-                std::cerr << "threw an exception " << msg.str() << "\n" << std::flush;
-                // throw std::runtime_error{msg.str()};
-            }
-
-            static_cast<call_stack_t*>(user_data)->emplace_back(
-                source_location{__FUNCTION__, __FILE__, __LINE__, kind_name + info.str()});
-        }
-        else if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING &&
                 header->kind == ROCPROFILER_BUFFER_TRACING_HIP_RUNTIME_API)
         {
             auto* record =
@@ -325,97 +295,6 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
             static_cast<call_stack_t*>(user_data)->emplace_back(
                 source_location{__FUNCTION__, __FILE__, __LINE__, kind_name + info.str()});
         }
-        else if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING &&
-                header->kind == ROCPROFILER_BUFFER_TRACING_PAGE_MIGRATION)
-        {
-            auto* record =
-                static_cast<rocprofiler_buffer_tracing_page_migration_record_t*>(header->payload);
-
-            auto info = std::stringstream{};
-
-            info << "kind=" << record->kind << ", operation=" << record->operation
-                 << ", pid=" << record->pid << ", start=" << record->start_timestamp
-                 << ", stop=" << record->end_timestamp
-                 << ", name=" << client_name_info.at(record->kind, record->operation);
-
-            switch(record->operation)
-            {
-                case ROCPROFILER_PAGE_MIGRATION_PAGE_MIGRATE:
-                {
-                    info << ", page_fault=(" << record->page_fault.read_fault << ", "
-                         << record->page_fault.migrated << ", " << record->page_fault.node_id
-                         << ", " << std::hex << "0x" << record->page_fault.address << ")";
-                    break;
-                }
-                case ROCPROFILER_PAGE_MIGRATION_PAGE_FAULT:
-                {
-                    info << ", page_migrate=(" << std::hex << "0x"
-                         << record->page_migrate.start_addr << ", 0x"
-                         << record->page_migrate.end_addr << ", " << std::dec
-                         << record->page_migrate.from_node << ", " << record->page_migrate.to_node
-                         << ", " << record->page_migrate.prefetch_node << ", "
-                         << record->page_migrate.preferred_node << ", "
-                         << record->page_migrate.trigger << ")";
-                    break;
-                }
-                case ROCPROFILER_PAGE_MIGRATION_QUEUE_SUSPEND:
-                {
-                    info << ", queue_suspend=(" << record->queue_suspend.rescheduled << ", "
-                         << record->queue_suspend.node_id << ", " << record->queue_suspend.trigger
-                         << ")";
-                    break;
-                }
-                case ROCPROFILER_PAGE_MIGRATION_UNMAP_FROM_GPU:
-                {
-                    info << ", unmap_from_gpu=(" << record->unmap_from_gpu.node_id << std::hex
-                         << ", 0x" << record->unmap_from_gpu.start_addr << ", 0x"
-                         << record->unmap_from_gpu.end_addr << ", " << std::dec
-                         << record->unmap_from_gpu.trigger << ")";
-                    break;
-                }
-                case ROCPROFILER_PAGE_MIGRATION_NONE:
-                case ROCPROFILER_PAGE_MIGRATION_LAST:
-                {
-                    // throw std::runtime_error{"unexpected page migration value"};
-                    printf("page migration: start > end\n");
-                    break;
-                }
-            }
-
-            if(record->start_timestamp > record->end_timestamp)
-                printf("page migration: start > end\n");
-                // throw std::runtime_error("page migration: start > end");
-
-            static_cast<call_stack_t*>(user_data)->emplace_back(
-                source_location{__FUNCTION__, __FILE__, __LINE__, kind_name + info.str()});
-        }
-        else if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING &&
-                header->kind == ROCPROFILER_BUFFER_TRACING_SCRATCH_MEMORY)
-        {
-            auto* record =
-                static_cast<rocprofiler_buffer_tracing_scratch_memory_record_t*>(header->payload);
-
-            auto info = std::stringstream{};
-
-            auto _elapsed =
-                std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(
-                    std::chrono::nanoseconds{record->end_timestamp - record->start_timestamp})
-                    .count();
-
-            info << "tid=" << record->thread_id << ", context=" << context.handle
-                 << ", buffer_id=" << buffer_id.handle
-                 << ", cid=" << record->correlation_id.internal
-                 << ", extern_cid=" << record->correlation_id.external.value
-                 << ", kind=" << record->kind << ", operation=" << record->operation
-                 << ", agent_id=" << record->agent_id.handle
-                 << ", queue_id=" << record->queue_id.handle << ", thread_id=" << record->thread_id
-                 << ", elapsed=" << std::setprecision(3) << std::fixed << _elapsed
-                 << " usec, flags=" << record->flags
-                 << ", name=" << client_name_info.at(record->kind, record->operation);
-
-            static_cast<call_stack_t*>(user_data)->emplace_back(
-                source_location{__FUNCTION__, __FILE__, __LINE__, kind_name + info.str()});
-        }
         else
         {
             auto _msg = std::stringstream{};
@@ -487,15 +366,7 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
                                                tool_data,
                                                &client_buffer),
                      "buffer creation");
-    /*
-    for(auto itr :
-        {ROCPROFILER_BUFFER_TRACING_HSA_CORE_API, ROCPROFILER_BUFFER_TRACING_HSA_AMD_EXT_API})
-    {
-        ROCPROFILER_CALL(se::wrap::rocprofiler_configure_buffer_tracing_service(
-                             client_ctx, itr, nullptr, 0, client_buffer),
-                         "buffer tracing service configure");
-    }
-    */
+
     ROCPROFILER_CALL(
         se::wrap::rocprofiler_configure_buffer_tracing_service(
             client_ctx, ROCPROFILER_BUFFER_TRACING_HIP_RUNTIME_API, nullptr, 0, client_buffer),
@@ -511,16 +382,6 @@ int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
             client_ctx, ROCPROFILER_BUFFER_TRACING_MEMORY_COPY, nullptr, 0, client_buffer),
         "buffer tracing service for memory copy configure");
 
-// /*
-    // May have incompatible kernel so only emit a warning here
-    ROCPROFILER_WARN(se::wrap::rocprofiler_configure_buffer_tracing_service(
-        client_ctx, ROCPROFILER_BUFFER_TRACING_PAGE_MIGRATION, nullptr, 0, client_buffer));
-
-    ROCPROFILER_CALL(
-        se::wrap::rocprofiler_configure_buffer_tracing_service(
-            client_ctx, ROCPROFILER_BUFFER_TRACING_SCRATCH_MEMORY, nullptr, 0, client_buffer),
-        "buffer tracing service for page migration configure");
-// */
     int valid_ctx = 0;
     ROCPROFILER_CALL(se::wrap::rocprofiler_context_is_valid(client_ctx, &valid_ctx),
                      "context validity check");
@@ -548,7 +409,34 @@ void tool_fini(void* tool_data){
 
     delete _call_stack;
 }
-}  // namespace
+}  // end of namespace
+
+int RocmTracer::NumGpus() {
+    static int num_gpus = []() -> int {
+        if (hipInit(0) != hipSuccess) {
+            return 0;
+        }
+        int gpu_count;
+        if (hipGetDeviceCount(&gpu_count) != hipSuccess) {
+            return 0;
+        }
+        LOG(ERROR) << "Profiler found " << gpu_count << " GPUs.";
+        return gpu_count;
+    }();
+    return num_gpus;
+}
+
+/*static*/ uint64_t RocmTracer::GetTimestamp() {
+    uint64_t ts;
+    rocprofiler_status_t CHECKSTATUS = se::wrap::rocprofiler_get_timestamp(&ts);
+    if (CHECKSTATUS != ROCPROFILER_STATUS_SUCCESS) {
+        const char* errstr = se::wrap::rocprofiler_get_status_string(CHECKSTATUS);
+        LOG(ERROR) << "function rocprofiler_get_timestamp failed with error "
+                   << errstr;
+        return 0;
+    }
+    return ts;
+}
 
 void RocmTracer::setup(){
     if(int status = 0;
