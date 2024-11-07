@@ -136,6 +136,10 @@ def CollectivePermute(
     operand: XlaOp,
     source_target_pairs: Sequence[tuple[int, int]],
     channel_id: Optional[_ChannelHandle] = ...) -> XlaOp: ...
+def MultiCollectivePermute(
+    operands: Sequence[XlaOp],
+    source_target_pairs: Sequence[tuple[int, int]],
+    channel_id: Optional[_ChannelHandle] = ...) -> XlaOp: ...
 def ConcatInDim(builder: XlaBuilder,
                 operands: Sequence[XlaOp],
                 dimension: int) -> XlaOp: ...
