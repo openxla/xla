@@ -643,9 +643,10 @@ absl::StatusOr<Value> EmitBroadcast(ImplicitLocOpBuilder& b,
     if (output_spec != nullptr && output_spec->at(0).stride > 0) {
       const auto* input_spec =
           analysis->IterSpec(side.scope, broadcast.operand(0), dim.index);
+      // A dimension is broadcasted if it's either absent in the input or
+      // if its size is increased from the input to the output.
       if (input_spec == nullptr ||
           output_spec->at(0).count > input_spec->at(0).count) {
-        // Broadcasted dimension.
         expanded_input = b.create<mt::ExpandDimsOp>(expanded_input, dim_idx);
       }
       ++dim_idx;
@@ -1236,7 +1237,7 @@ class MatMulEmitterHelper {
         if (spec == nullptr ||
             (IsNonTrivialTiledDimension(side.scope, properties.index) &&
              spec->size() == 1 && spec->at(0).count == 1)) {
-          // If a non-trivial tiled dimension has a trivial iteration spec at
+          // If a non-trivial tiled dimension has only one element at
           // the parameter, it's being broadcasted. Skip it in the tensor
           // pointer to prevent it from being padded to the tile size on load
           // instead of being broadcasted.
