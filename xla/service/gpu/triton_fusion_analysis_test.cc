@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
+#include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -616,6 +617,32 @@ e {
               ElementsAre(FieldsAre(/*stride=*/1, /*count=*/2,
                                     /*slice_start=*/0, /*slice_limit=*/2,
                                     /*subfragments=*/ElementsAre(2))));
+}
+
+TEST_F(TritonDotAnalysisTest, BroadcastWithinDimensionIsNotSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+f {
+  a = f16[5,7] parameter(0)
+  br = f16[2,5,7] broadcast(a), dimensions={1,2}
+  bc = f16[10,7] bitcast(br)
+  b = f16[3,7] parameter(1)
+  d = f16[10,3] dot(bc, b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+e {
+  a = f16[5,7] parameter(0)
+  b = f16[3,7] parameter(1)
+  f = f16[10,3] fusion(a, b), kind=kCustom, calls=f
+})"));
+  const HloComputation& dot_computation = *module->entry_computation()
+                                               ->root_instruction()
+                                               ->called_computations()[0];
+  EXPECT_THAT(
+      TritonFusionAnalysis::Execute(dot_computation),
+      tsl::testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                             ::testing::HasSubstr("Unsupported broadcast")));
 }
 
 TEST_F(TritonDotAnalysisTest, OutputBroadcastIsNotAccepted) {
