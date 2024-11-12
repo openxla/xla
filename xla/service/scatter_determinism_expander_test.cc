@@ -92,7 +92,7 @@ TEST_F(ScatterDeterminismExpanderTest,
 TEST_F(ScatterDeterminismExpanderTest,
        EliminateNonScalarScatterWithNonAssociativeCombiner) {
   const char* const kModuleStr = R"(
-    HloModule scatter_expander
+    HloModule scatter_determinisic_expander
 
     scatter_computation {
       arg1.173 = f32[] parameter(1)
@@ -113,9 +113,9 @@ TEST_F(ScatterDeterminismExpanderTest,
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
 
-  ScatterDeterminismExpander scatter_expander;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&scatter_expander, module.get()));
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
   EXPECT_TRUE(result);
 }
 
@@ -200,14 +200,15 @@ TEST_F(ScatterDeterminismExpanderTest, ScalarScatterAddCorrectnessTest) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
 
   ScatterDeterminismExpander scatter_determinism_expander;
   TF_ASSERT_OK_AND_ASSIGN(
       bool result, RunHloPass(&scatter_determinism_expander, module.get()));
 
   EXPECT_TRUE(result);
-
-  std::vector<float> expected_result = {2.0, 16.0, 14.0, 3.0};
 
   Literal result_literal = ExecuteAndTransfer(std::move(module), {});
 
@@ -240,14 +241,15 @@ TEST_F(ScatterDeterminismExpanderTest,
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
 
   ScatterDeterminismExpander scatter_determinism_expander;
   TF_ASSERT_OK_AND_ASSIGN(
       bool result, RunHloPass(&scatter_determinism_expander, module.get()));
 
   EXPECT_TRUE(result);
-
-  std::vector<float> expected_result = {2.0, 16.0, 9.0, 0.0};
 
   Literal result_literal = ExecuteAndTransfer(std::move(module), {});
 
@@ -280,14 +282,15 @@ TEST_F(ScatterDeterminismExpanderTest,
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
 
   ScatterDeterminismExpander scatter_determinism_expander;
   TF_ASSERT_OK_AND_ASSIGN(
       bool result, RunHloPass(&scatter_determinism_expander, module.get()));
 
   EXPECT_TRUE(result);
-
-  std::vector<float> expected_result = {2, 0, 0, 0, 1, 0, 0, 0, 3};
 
   Literal result_literal = ExecuteAndTransfer(std::move(module), {});
 
@@ -297,7 +300,8 @@ TEST_F(ScatterDeterminismExpanderTest,
   EXPECT_EQ(actual_result, expected_result);
 }
 
-TEST_F(ScatterDeterminismExpanderTest, NonScalarScatterAddCorrectnessTest) {
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarUpdateCorrectnessTest) {
   const char* const kModuleStr = R"(
     HloModule scatter_determinism_expander
 
@@ -319,14 +323,14 @@ TEST_F(ScatterDeterminismExpanderTest, NonScalarScatterAddCorrectnessTest) {
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
-
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
   ScatterDeterminismExpander scatter_determinism_expander;
   TF_ASSERT_OK_AND_ASSIGN(
       bool result, RunHloPass(&scatter_determinism_expander, module.get()));
 
   EXPECT_TRUE(result);
-
-  std::vector<float> expected_result = {0, 1, 6, 7};
 
   Literal result_literal = ExecuteAndTransfer(std::move(module), {});
 
@@ -337,7 +341,89 @@ TEST_F(ScatterDeterminismExpanderTest, NonScalarScatterAddCorrectnessTest) {
 }
 
 TEST_F(ScatterDeterminismExpanderTest,
-       ScatterAddWithNonScalarIndexAndUpdateCorrectnessTest) {
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness2DTest1) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3] constant({{0, 0, 0}, {0, 0, 0}, {0, 0, 0}})
+      indices = s32[4, 2] constant({{0, 0}, {0, 1}, {1, 1}, {1, 2}})
+      updates = f32[4, 2] constant({{1, 2}, {4, 7}, {10, 13}, {21, 27}})
+      ROOT scatter.48 = f32[3, 3] scatter(operand, indices, updates),
+        update_window_dims={1}, inserted_window_dims={0},
+        scatter_dims_to_operand_dims={1, 0}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness2DTest2) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3] constant({{0, 0, 0}, {0, 0, 0}, {0, 0, 0}})
+      indices = s32[4, 2] constant({{0, 0}, {0, 1}, {1, 1}, {1, 2}})
+      updates = f32[4, 2] constant({{1, 2}, {4, 7}, {10, 13}, {21, 27}})
+      ROOT scatter.48 = f32[3, 3] scatter(operand, indices, updates),
+        update_window_dims={1}, inserted_window_dims={1},
+        scatter_dims_to_operand_dims={1, 0}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness2DTest3) {
   const char* const kModuleStr = R"(
     HloModule scatter_determinism_expander
 
@@ -359,6 +445,9 @@ TEST_F(ScatterDeterminismExpanderTest,
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
 
   ScatterDeterminismExpander scatter_determinism_expander;
   TF_ASSERT_OK_AND_ASSIGN(
@@ -366,7 +455,46 @@ TEST_F(ScatterDeterminismExpanderTest,
 
   EXPECT_TRUE(result);
 
-  std::vector<float> expected_result = {1, 6, 7, 0, 10, 13, 0, 0, 0};
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness2DTest4) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3] constant({{0, 0, 0}, {0, 0, 0}, {0, 0, 0}})
+      indices = s32[4, 2] constant({{0, 0}, {0, 1}, {1, 1}, {1, 2}})
+      updates = f32[4, 2] constant({{1, 2}, {4, 7}, {10, 13}, {21, 27}})
+      ROOT scatter.48 = f32[3, 3] scatter(operand, indices, updates),
+        update_window_dims={1}, inserted_window_dims={1},
+        scatter_dims_to_operand_dims={0, 1}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
 
   Literal result_literal = ExecuteAndTransfer(std::move(module), {});
 
@@ -374,6 +502,232 @@ TEST_F(ScatterDeterminismExpanderTest,
   std::vector<float> actual_result(result_data.begin(), result_data.end());
 
   EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness3DTest1) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3, 3] constant({{{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}})
+      indices = s32[4, 2] constant({{0, 0}, {0, 1}, {1, 1}, {1, 2}})
+      updates = f32[4, 2] constant({{1, 2}, {4, 7}, {10, 13}, {21, 27}})
+      ROOT scatter.48 = f32[3, 3, 3] scatter(operand, indices, updates),
+        update_window_dims={1}, inserted_window_dims={1, 2},
+        scatter_dims_to_operand_dims={2, 0}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness3DTest2) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3, 3] constant({{{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}})
+      indices = s32[4, 2] constant({{0, 0}, {0, 1}, {1, 1}, {1, 2}})
+      updates = f32[4, 2] constant({{1, 2}, {4, 7}, {10, 13}, {21, 27}})
+      ROOT scatter.48 = f32[3, 3, 3] scatter(operand, indices, updates),
+        update_window_dims={1}, inserted_window_dims={1, 2},
+        scatter_dims_to_operand_dims={2, 1}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness3DTest3) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3, 3] constant({{{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}})
+      indices = s32[2, 2] constant({{0, 0}, {1, 1}})
+      updates = f32[2, 2, 2] constant({{{1, 2}, {4, 7}}, {{10, 13}, {21, 27}}})
+      ROOT scatter.48 = f32[3, 3, 3] scatter(operand, indices, updates),
+        update_window_dims={1, 2}, inserted_window_dims={1},
+        scatter_dims_to_operand_dims={2, 0}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest,
+       ScatterAddWithNonScalarIndexAndUpdateCorrectness3DTest4) {
+  const char* const kModuleStr = R"(
+    HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg1.173 = f32[] parameter(1)
+      arg0.172 = f32[] parameter(0)
+      ROOT add.48 = f32[] add(arg0.172, arg1.173)
+    }
+
+    ENTRY scatter_add_computation {
+      operand = f32[3, 3, 3] constant({{{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}, 
+                                       {{0, 0, 0}, 
+                                        {0, 0, 0}, 
+                                        {0, 0, 0}}})
+      indices = s32[2, 2] constant({{0, 0}, {1, 1}})
+      updates = f32[2, 2, 2] constant({{{1, 2}, {4, 7}}, {{10, 13}, {21, 27}}})
+      ROOT scatter.48 = f32[3, 3, 3] scatter(operand, indices, updates),
+        update_window_dims={1, 2}, inserted_window_dims={2},
+        scatter_dims_to_operand_dims={0, 1}, index_vector_dim=1,
+        to_apply=scatter_computation
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  auto cloned_module = module->Clone();
+  Literal expected_literal = ExecuteAndTransfer(std::move(cloned_module), {});
+  auto expected_result = expected_literal.data<float>();
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+
+  EXPECT_TRUE(result);
+
+  Literal result_literal = ExecuteAndTransfer(std::move(module), {});
+
+  auto result_data = result_literal.data<float>();
+  std::vector<float> actual_result(result_data.begin(), result_data.end());
+
+  EXPECT_EQ(actual_result, expected_result);
+}
+
+TEST_F(ScatterDeterminismExpanderTest, ComplicatedMultiDimensionalScatterTest) {
+  const char* const kModuleStr = R"(
+  HloModule scatter_determinism_expander
+
+    scatter_computation {
+      arg0 = f32[] parameter(0)
+      arg1 = f32[] parameter(1)
+      ROOT add.48 = f32[] add(arg0, arg1)
+    }
+
+    ENTRY fused_computation {
+      p0 = f32[1,1,3072,3]{3,2,1,0} parameter(0)
+      p1 = s32[1,1,128,2,3]{4,3,2,1,0} parameter(1)
+      p2 = f32[1,1,128,2,3]{4,3,2,1,0} parameter(2)
+      ROOT scatter.50 = f32[1,1,3072,3]{3,2,1,0} scatter(p0, p1, p2), update_window_dims={4}, inserted_window_dims={0,1,2}, scatter_dims_to_operand_dims={0,1,2}, index_vector_dim=4, to_apply=scatter_computation
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr));
+
+  ScatterDeterminismExpander scatter_determinism_expander;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool result, RunHloPass(&scatter_determinism_expander, module.get()));
+  EXPECT_TRUE(result);
 }
 
 TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
@@ -388,8 +742,8 @@ TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
 
     ENTRY scatter_add_computation {
       operand = f32[2] constant({0, 0})
-      indices = s32[3,1] constant({{0}, {1}, {1}})
-      updates = f32[3] constant({2, 1, 5})
+      indices = s32[2,1] constant({{1}, {1}})
+      updates = f32[2] constant({2, 1})
       ROOT scatter.48 = f32[2] scatter(operand, indices, updates),
         update_window_dims={}, inserted_window_dims={0},
         scatter_dims_to_operand_dims={0}, index_vector_dim=1,
@@ -398,48 +752,41 @@ TEST_F(ScatterDeterminismExpanderTest, ScatterAddHloVerificationTest) {
 
   const char* const kExpectedPattern = R"(
     CHECK: ENTRY %scatter_add_computation () -> f32[2] {
-    CHECK-DAG:   %[[INDICES:.*]] = s32[3,1]{1,0} constant({ {0}, {1}, {1} })
-    CHECK-DAG:   %[[RESHAPE:.*]] = s32[3]{0} reshape(%[[INDICES]])
+    CHECK-DAG:   %[[INDICES:.*]] = s32[2,1]{1,0} constant({ {1}, {1} })
+    CHECK-DAG:   %[[RESHAPE:.*]] = s32[2]{0} reshape(%[[INDICES]])
+    CHECK-DAG:   %[[IOTA:.*]] = s32[2]{0} iota(), iota_dimension=0
     CHECK-DAG:   %[[OPERAND:.*]] = f32[2]{0} constant({0, 0})
-    CHECK-DAG:   %[[RESHAPE1:.*]] = s32[3]{0} reshape(%[[INDICES]])
-    CHECK-DAG:   %[[UPDATES:.*]] = f32[3]{0} constant({2, 1, 5})
-    CHECK-DAG:   %[[TRANSPOSE:.*]] = f32[3]{0} transpose(%[[UPDATES]]), dimensions={0}
-    CHECK-DAG:   %[[RESHAPE2:.*]] = f32[3]{0} reshape(%[[TRANSPOSE]])
-    CHECK-DAG:   %[[SORT:.*]] = (s32[3]{0}, f32[3]{0}) sort(%[[RESHAPE1]], %[[RESHAPE2]]), dimensions={0}, to_apply=%sorting_computation
-    CHECK-DAG:   %[[GET_TUPLE_ELEMENT:.*]] = s32[3]{0} get-tuple-element(%[[SORT]]), index=0
-    CHECK-DAG:   %[[SLICE4:.*]] = s32[2]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:2]}
-    CHECK-DAG:   %[[SLICE5:.*]] = s32[2]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[1:3]}
-    CHECK-DAG:   %[[COMPARE3:.*]] = pred[2]{0} compare(%[[SLICE4]], %[[SLICE5]]), direction=NE
-    CHECK-DAG:   %[[CONSTANT4:.*]] = pred[] constant(true)
-    CHECK-DAG:   %[[BROADCAST4:.*]] = pred[1]{0} broadcast(%[[CONSTANT4]]), dimensions={}
-    CHECK-DAG:   %[[CONCAT_COMPARE4:.*]] = pred[3]{0} concatenate(%[[COMPARE3]], %[[BROADCAST4]]), dimensions={0}
-    CHECK-DAG:   %[[BROADCAST5:.*]] = pred[3]{0} broadcast(%[[CONCAT_COMPARE4]]), dimensions={0}
-    CHECK-DAG:   %[[CONSTANT5:.*]] = s32[3]{0} constant({2, 2, 2})
-    CHECK-DAG:   %[[SELECT2:.*]] = s32[3]{0} select(%[[BROADCAST5]], %[[GET_TUPLE_ELEMENT]], %[[CONSTANT5]])
-    CHECK-DAG:   %[[CONSTANT3:.*]] = s32[] constant(0)
-    CHECK-DAG:   %[[BROADCAST3:.*]] = s32[2]{0} broadcast(%[[CONSTANT3]]), dimensions={}
-    CHECK-DAG:   %[[SLICE3:.*]] = s32[1]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:1]}
-    CHECK-DAG:   %[[CONCAT3:.*]] = s32[3]{0} concatenate(%[[BROADCAST3]], %[[SLICE3]]), dimensions={0}
-    CHECK-DAG:   %[[COMPARE2:.*]] = pred[3]{0} compare(%[[GET_TUPLE_ELEMENT]], %[[CONCAT3]]), direction=EQ
-    CHECK-DAG:   %[[CONSTANT1:.*]] = s32[] constant(0)
-    CHECK-DAG:   %[[BROADCAST1:.*]] = s32[1]{0} broadcast(%[[CONSTANT1]]), dimensions={}
-    CHECK-DAG:   %[[SLICE1:.*]] = s32[2]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:2]}
-    CHECK-DAG:   %[[CONCAT1:.*]] = s32[3]{0} concatenate(%[[BROADCAST1]], %[[SLICE1]]), dimensions={0}
-    CHECK-DAG:   %[[COMPARE1:.*]] = pred[3]{0} compare(%[[GET_TUPLE_ELEMENT]], %[[CONCAT1]]), direction=EQ
-    CHECK-DAG:   %[[GET_TUPLE_ELEMENT1:.*]] = f32[3]{0} get-tuple-element(%[[SORT]]), index=1
-    CHECK-DAG:   %[[CONSTANT_F32:.*]] = f32[] constant(0)
-    CHECK-DAG:   %[[BROADCAST_F32:.*]] = f32[1]{0} broadcast(%[[CONSTANT_F32]]), dimensions={}
-    CHECK-DAG:   %[[SLICE_F32:.*]] = f32[2]{0} slice(%[[GET_TUPLE_ELEMENT1]]), slice={[0:2]}
-    CHECK-DAG:   %[[CONCAT_F32:.*]] = f32[3]{0} concatenate(%[[BROADCAST_F32]], %[[SLICE_F32]]), dimensions={0}
-    CHECK-DAG:   %[[MAP:.*]] = f32[3]{0} map(%[[GET_TUPLE_ELEMENT1]], %[[CONCAT_F32]]), dimensions={0}, to_apply=%scatter_computation
-    CHECK-DAG:   %[[SELECT:.*]] = f32[3]{0} select(%[[COMPARE1]], %[[MAP]], %[[GET_TUPLE_ELEMENT1]])
-    CHECK-DAG:   %[[CONSTANT2:.*]] = f32[] constant(0)
-    CHECK-DAG:   %[[BROADCAST2:.*]] = f32[2]{0} broadcast(%[[CONSTANT2]]), dimensions={}
-    CHECK-DAG:   %[[SLICE2:.*]] = f32[1]{0} slice(%[[SELECT]]), slice={[0:1]}
-    CHECK-DAG:   %[[CONCAT2:.*]] = f32[3]{0} concatenate(%[[BROADCAST2]], %[[SLICE2]]), dimensions={0}
-    CHECK-DAG:   %[[MAP1:.*]] = f32[3]{0} map(%[[SELECT]], %[[CONCAT2]]), dimensions={0}, to_apply=%scatter_computation
-    CHECK-DAG:   %[[SELECT1:.*]] = f32[3]{0} select(%[[COMPARE2]], %[[MAP1]], %[[SELECT]])
-    CHECK-DAG: ROOT %[[SCATTER:.*]] = f32[2]{0} scatter(%[[OPERAND]], %[[SELECT2]], %[[SELECT1]]),
+    CHECK-DAG:   %[[RESHAPE1:.*]] = s32[2]{0} reshape(%[[INDICES]])
+    CHECK-DAG:   %[[RESHAPE2:.*]] = s32[2,1]{1,0} reshape(%[[RESHAPE1]])
+    CHECK-DAG:   %[[RESHAPE4:.*]] = s32[2]{0} reshape(%[[RESHAPE2]])
+    CHECK-DAG:   %[[UPDATES:.*]] = f32[2]{0} constant({2, 1})
+    CHECK-DAG:   %[[TRANSPOSE:.*]] = f32[2]{0} transpose(%[[UPDATES]]), dimensions={0}
+    CHECK-DAG:   %[[RESHAPE3:.*]] = f32[2]{0} reshape(%[[TRANSPOSE]])
+    CHECK-DAG:   %[[SORT:.*]] = (s32[2]{0}, f32[2]{0}) sort(%[[RESHAPE4]], %[[RESHAPE3]]), dimensions={0}, to_apply=%sorting_computation
+    CHECK-DAG:   %[[GET_TUPLE_ELEMENT:.*]] = s32[2]{0} get-tuple-element(%[[SORT]]), index=0
+    CHECK-DAG:   %[[SLICE2:.*]] = s32[1]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:1]}
+    CHECK-DAG:   %[[SLICE3:.*]] = s32[1]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[1:2]}
+    CHECK-DAG:   %[[COMPARE2:.*]] = pred[1]{0} compare(%[[SLICE2]], %[[SLICE3]]), direction=NE
+    CHECK-DAG:   %[[CONSTANT3:.*]] = pred[] constant(true)
+    CHECK-DAG:   %[[BROADCAST2:.*]] = pred[1]{0} broadcast(%[[CONSTANT3]]), dimensions={}
+    CHECK-DAG:   %[[CONCATENATE2:.*]] = pred[2]{0} concatenate(%[[COMPARE2]], %[[BROADCAST2]]), dimensions={0}
+    CHECK-DAG:   %[[BROADCAST3:.*]] = pred[2,1]{1,0} broadcast(%[[CONCATENATE2]]), dimensions={0}
+    CHECK-DAG:   %[[RESHAPE5:.*]] = s32[2,1]{1,0} reshape(%[[GET_TUPLE_ELEMENT]])
+    CHECK-DAG:   %[[CONSTANT:.*]] = s32[2,1]{1,0} constant({ {2}, {2} })
+    CHECK-DAG:   %[[SELECT1:.*]] = s32[2,1]{1,0} select(%[[BROADCAST3]], %[[RESHAPE5]], %[[CONSTANT]])
+    CHECK-DAG:   %[[CONSTANT2:.*]] = s32[] constant(0)
+    CHECK-DAG:   %[[BROADCAST1:.*]] = s32[1]{0} broadcast(%[[CONSTANT2]]), dimensions={}
+    CHECK-DAG:   %[[SLICE1:.*]] = s32[1]{0} slice(%[[GET_TUPLE_ELEMENT]]), slice={[0:1]}
+    CHECK-DAG:   %[[CONCATENATE1:.*]] = s32[2]{0} concatenate(%[[BROADCAST1]], %[[SLICE1]]), dimensions={0}
+    CHECK-DAG:   %[[COMPARE1:.*]] = pred[2]{0} compare(%[[GET_TUPLE_ELEMENT]], %[[CONCATENATE1]]), direction=EQ
+    CHECK-DAG:   %[[GET_TUPLE_ELEMENT1:.*]] = f32[2]{0} get-tuple-element(%[[SORT]]), index=1
+    CHECK-DAG:   %[[CONSTANT1:.*]] = f32[] constant(0)
+    CHECK-DAG:   %[[BROADCAST:.*]] = f32[1]{0} broadcast(%[[CONSTANT1]]), dimensions={}
+    CHECK-DAG:   %[[SLICE:.*]] = f32[1]{0} slice(%[[GET_TUPLE_ELEMENT1]]), slice={[0:1]}
+    CHECK-DAG:   %[[CONCATENATE:.*]] = f32[2]{0} concatenate(%[[BROADCAST]], %[[SLICE]]), dimensions={0}
+    CHECK-DAG:   %[[MAP:.*]] = f32[2]{0} map(%[[GET_TUPLE_ELEMENT1]], %[[CONCATENATE]]), dimensions={0}, to_apply=%scatter_computation
+    CHECK-DAG:   %[[SELECT:.*]] = f32[2]{0} select(%[[COMPARE1]], %[[MAP]], %[[GET_TUPLE_ELEMENT1]])
+    CHECK-DAG:  ROOT %[[SCATTER:.*]] = f32[2]{0} scatter(%[[OPERAND]], %[[SELECT1]], %[[SELECT]]),
     CHECK-SAME:   update_window_dims={},
     CHECK-SAME:   inserted_window_dims={0},
     CHECK-SAME:   scatter_dims_to_operand_dims={0},
