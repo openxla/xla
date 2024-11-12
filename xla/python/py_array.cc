@@ -420,18 +420,21 @@ struct BatchedCopyToDeviceWithShardingKey {
   ifrt::MemoryKind src_memory_kind;
   tsl::RCReference<ifrt::DeviceList> dst_devices;
   ifrt::MemoryKind dst_memory_kind;
+  ifrt::ArrayCopySemantics array_copy_semantics;
 
   bool operator==(const BatchedCopyToDeviceWithShardingKey& other) const {
     return *src_devices == *other.src_devices &&
            src_memory_kind == other.src_memory_kind &&
            *dst_devices == *other.dst_devices &&
-           dst_memory_kind == other.dst_memory_kind;
+           dst_memory_kind == other.dst_memory_kind &&
+           array_copy_semantics == other.array_copy_semantics;
   }
 
   template <typename H>
   friend H AbslHashValue(H h, const BatchedCopyToDeviceWithShardingKey& key) {
     return H::combine(std::move(h), key.src_devices, key.src_memory_kind,
-                      key.dst_devices, key.dst_memory_kind);
+                      key.dst_devices, key.dst_memory_kind,
+                      key.array_copy_semantics);
   }
 };
 
@@ -1071,7 +1074,8 @@ PyArray::Storage::~PyArray_Storage() {
 absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     absl::Span<const PyArray> py_arrays,
     absl::Span<const tsl::RCReference<ifrt::DeviceList>> dst_device_lists,
-    absl::Span<const nb::object> dst_shardings) {
+    absl::Span<const nb::object> dst_shardings,
+    absl::Span<const ifrt::ArrayCopySemantics> array_copy_semantics) {
   if (py_arrays.empty()) {
     return std::vector<PyArray>();
   }
@@ -1093,6 +1097,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   for (int i = 0; i < py_arrays.size(); ++i) {
     const auto& py_array = py_arrays[i];
     const auto& dst_sharding = dst_shardings[i];
+    const auto& array_cs = array_copy_semantics[i];
 
     auto* ifrt_array_ptr = py_array.ifrt_array();
     const tsl::RCReference<ifrt::DeviceList>& src_devices =
@@ -1106,7 +1111,8 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
         CreateIfRtMemoryKindFromSharding(dst_sharding),
         dst_devices->devices().front());
 
-    if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind) {
+    if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
+        array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
       results[i] = py_arrays[i];
       continue;
     }
@@ -1123,7 +1129,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
         jax::ApplyTransferGuardToDeviceToDevice(transfer_guard_formatter));
 
     Batch& batch = batches[BatchedCopyToDeviceWithShardingKey{
-        src_devices, src_memory_kind, dst_devices, dst_memory_kind}];
+        src_devices, src_memory_kind, dst_devices, dst_memory_kind, array_cs}];
     batch.indexes.push_back(i);
     batch.ifrt_arrays.push_back(tsl::FormRef(ifrt_array_ptr));
   }
@@ -1140,8 +1146,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
               absl::MakeSpan(batch.ifrt_arrays),
               // All arrays in `batch` have the same `key.dst_devices` and
               // `key.dst_memory_kind` due to the grouping above.
-              key.dst_devices, key.dst_memory_kind,
-              ifrt::ArrayCopySemantics::kReuseInput));
+              key.dst_devices, key.dst_memory_kind, key.array_copy_semantics));
       for (int i = 0; i < batch.indexes.size(); ++i) {
         ifrt_arrays.push_back(
             std::make_pair(batch.indexes[i], std::move(copied[i])));
@@ -1605,15 +1610,19 @@ absl::Status PyHostValue::CopyToHostAsync(
   TF_ASSIGN_OR_RETURN(nb_dtype dtype,
                       PrimitiveTypeToNbDtype(host_shape.element_type()));
   value_ = nb_numpy_ndarray(dtype, host_shape.dimensions(), strides);
-  // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
-  // the same transposition as the device buffer. This is different from
-  // PjRtBuffer::ToLiteral()'s semantics that the runtime respects the layout
-  // of the host buffer literal. On the other hand, the runtime often knows
-  // better about an efficient layout for the host buffer. It will be useful
-  // to revisit the semantics of PjRtBuffer::ToLiteral() to see if it is
-  // desirable for the runtime to choose the layout.
-  ready_ = ifrt_array->CopyToHostBuffer(value_.mutable_data(), strides,
-                                        ifrt::ArrayCopySemantics::kReuseInput);
+  auto* value_buffer = value_.mutable_data();
+  {
+    nb::gil_scoped_release gil_release;
+    // TODO(hyeontaek): Several PjRt runtimes assume that the host buffer uses
+    // the same transposition as the device buffer. This is different from
+    // PjRtBuffer::ToLiteral()'s semantics that the runtime respects the layout
+    // of the host buffer literal. On the other hand, the runtime often knows
+    // better about an efficient layout for the host buffer. It will be useful
+    // to revisit the semantics of PjRtBuffer::ToLiteral() to see if it is
+    // desirable for the runtime to choose the layout.
+    ready_ = ifrt_array->CopyToHostBuffer(
+        value_buffer, strides, ifrt::ArrayCopySemantics::kReuseInput);
+  }
   // Make sure the destination of the copy remains alive until the copy is done.
   value_.inc_ref();
   ready_.OnReady([array{value_.ptr()}](absl::Status status) {
@@ -1767,7 +1776,8 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
   m.attr("batched_copy_array_to_devices_with_sharding") = nb::cpp_function(
       [](absl::Span<const PyArray> arrays,
          absl::Span<const std::vector<const PyDevice*>> dst_device_lists,
-         absl::Span<const nb::object> shardings) {
+         absl::Span<const nb::object> shardings,
+         absl::Span<const ifrt::ArrayCopySemantics> array_copy_semantics) {
         std::vector<tsl::RCReference<ifrt::DeviceList>> device_lists;
         device_lists.reserve(dst_device_lists.size());
         for (const auto& dst_devices : dst_device_lists) {
@@ -1780,7 +1790,7 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
               ifrt::BasicDeviceList::Create(std::move(devices)));
         }
         return xla::ValueOrThrow(PyArray::BatchedCopyToDeviceWithSharding(
-            arrays, device_lists, shardings));
+            arrays, device_lists, shardings, array_copy_semantics));
       });
   m.attr("array_result_handler") = nb::cpp_function(
       [](nb::object aval, nb::object sharding, bool committed,

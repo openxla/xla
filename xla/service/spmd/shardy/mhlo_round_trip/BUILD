@@ -126,9 +126,9 @@ xla_cc_test(
     name = "mhlo_import_test",
     srcs = ["mhlo_import_test.cc"],
     deps = [
+        ":export_shardings",
         ":mhlo_import",
         "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -136,7 +136,6 @@ xla_cc_test(
         "@llvm-project//mlir:Support",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/dialect/sdy/ir:register",
-        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
     ],
 )

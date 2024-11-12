@@ -1975,7 +1975,8 @@ PjRtStreamExecutorBuffer::CopyToDevice(PjRtDevice* dst_device) {
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorBuffer::CopyToDeviceMemorySpace(
     PjRtDevice* dst_device, PjRtMemorySpace* dst_memory_space) {
-  if (dst_device == device_ && dst_memory_space == memory_space()) {
+  if (dst_device == device_ && dst_memory_space == memory_space() &&
+      dst_memory_space->kind_id() != PinnedHostMemorySpace::kKindId) {
     return InvalidArgument(
         "CopyToDeviceMemorySpace cannot accept the same source and destination "
         "devices/memory");
@@ -3501,8 +3502,6 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
       build_options.set_device_ordinal(
           addressable_devices.front()->local_hardware_id().value());
     }
-    build_options.set_compute_stream(
-        device_state(build_options.device_ordinal()).compute_stream());
   }
   return extras;
 }

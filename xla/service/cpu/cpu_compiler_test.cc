@@ -3,23 +3,22 @@
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-
 #include <memory>
 #include <string>
 #include <utility>
 
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/service/hlo_runner.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/service/hlo_runner_pjrt.h"
+#include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/tests/new_hlo_test_base.h"
 #include "xla/tests/pjrt_client_registry.h"
@@ -32,7 +31,12 @@ namespace xla {
 namespace cpu {
 namespace {
 
-std::unique_ptr<HloRunnerInterface> CreatePjrtHloRunner() {
+std::unique_ptr<HloRunnerInterface> CreateHloRunner() {
+  if (!ShouldUsePjRt()) {
+    return std::make_unique<HloRunner>(
+        PlatformUtil::GetDefaultPlatform().value());
+  }
+
   PjRtClientTestFactoryRegistry& pjrt_registry =
       GetGlobalPjRtClientTestFactory();
   std::unique_ptr<PjRtClient> client = pjrt_registry.Get()().value();
@@ -48,14 +52,12 @@ std::unique_ptr<HloRunnerInterface> CreatePjrtHloRunner() {
 
 class CpuCompilerTest : public NewHloTestBase {
  public:
-  CpuCompilerTest()
-      : NewHloTestBase(CreatePjrtHloRunner(), CreatePjrtHloRunner()) {}
+  CpuCompilerTest() : NewHloTestBase(CreateHloRunner(), CreateHloRunner()) {}
 };
 
 TEST_F(CpuCompilerTest, RecordsStreamzStackTrace) {
   const char* hlo_text = R"(
     HloModule test
-
     ENTRY main {
       p = f32[10]{0} parameter(0)
       ROOT neg = f32[10]{0} negate(p)
@@ -71,7 +73,6 @@ TEST_F(CpuCompilerTest, RecordsStreamzStackTrace) {
   tsl::monitoring::CollectionRegistry::CollectMetricsOptions options;
   std::unique_ptr<tsl::monitoring::CollectedMetrics> metrics =
       tsl::monitoring::CollectionRegistry::Default()->CollectMetrics(options);
-
   EXPECT_TRUE(metrics->point_set_map.find(kCpuCompilerStacktraceMetricName) !=
               metrics->point_set_map.end());
 

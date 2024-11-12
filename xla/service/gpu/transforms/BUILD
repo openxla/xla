@@ -518,6 +518,7 @@ xla_cc_test(
     deps = [
         ":collective_select_folder",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
@@ -2231,6 +2232,7 @@ xla_cc_test(
     deps = [
         ":pipelined_p2p_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
@@ -3116,7 +3118,6 @@ xla_test(
         "//xla/service/gpu/autotuning:autotuner_compile_util",
         "//xla/service/gpu/autotuning:autotuner_util",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/status",

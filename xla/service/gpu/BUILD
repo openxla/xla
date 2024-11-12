@@ -260,6 +260,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -467,8 +468,6 @@ cc_library(
         "//xla/service/llvm_ir:fused_ir_emitter",
         "//xla/service/llvm_ir:ir_array",
         "//xla/service/llvm_ir:ir_builder_mixin",
-        "//xla/service/llvm_ir:kernel_support_library",
-        "//xla/service/llvm_ir:llvm_loop",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/service/llvm_ir:math_ops",
@@ -1435,6 +1434,7 @@ cc_library(
         ":fusion_dispatch_pipeline",
         ":fusion_pipeline",
         ":gpu_all_gather_combiner",
+        ":gpu_all_reduce_combiner",
         ":gpu_constants",
         ":gpu_executable",
         ":gpu_float_support",
@@ -1606,10 +1606,7 @@ cc_library(
         "//xla/service:call_inliner",
         "//xla/service:collective_permute_decomposer",
         "//xla/service:collective_pipeliner",
-        "//xla/service:collective_quantizer",
         "//xla/service:collective_utils",
-        "//xla/service:collectives_schedule_linearizer",
-        "//xla/service:comparison_expander",
         "//xla/service:compiler",
         "//xla/service:conditional_simplifier",
         "//xla/service:copy_insertion",
@@ -1648,9 +1645,12 @@ cc_library(
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
+        "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:dnn",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/lib/monitoring:counter",
         "//xla:autotune_results_proto_cc",
         "//xla:debug_options_flags",
@@ -1675,11 +1675,7 @@ cc_library(
         # go/keep-sorted end
     ]) + xla_internal(["service:export_hlo"]) + if_google([
         "//xla/hlo/experimental/auto_sharding",
-    ]) + [
-        "//xla/stream_executor:device_memory_allocator",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
-    ],
+    ]),
 )
 
 xla_test(
@@ -2610,6 +2606,7 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
     ],
@@ -3238,6 +3235,43 @@ xla_cc_test(
     srcs = ["reduce_scatter_combiner_test.cc"],
     deps = [
         ":gpu_reduce_scatter_combiner",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service:collective_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "gpu_all_reduce_combiner",
+    srcs = ["all_reduce_combiner.cc"],
+    hdrs = ["all_reduce_combiner.h"],
+    deps = [
+        ":backend_configs_cc",
+        ":gpu_collective_combiner_utils",
+        ":gpu_hlo_schedule",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/collectives:all_reduce_combiner",
+        "//xla/service:hlo_domain_map",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "all_reduce_combiner_test",
+    srcs = ["all_reduce_combiner_test.cc"],
+    deps = [
+        ":gpu_all_reduce_combiner",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:collective_utils",

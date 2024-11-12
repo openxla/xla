@@ -333,7 +333,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
   // don't use cuBlas in the end. This assumes that the substituting algorithm
   // has result which are close enough for the check in this file.
   if (dot->precision_config().algorithm() ==
-          PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
+      PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3) {
     dot->mutable_precision_config()->set_algorithm(
         PrecisionConfig::ALG_DOT_F32_F32_F32);
   }
@@ -1039,7 +1039,7 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
           absl::StatusOr<bool> has_executable =
               compile(fusion, config, gemm_config_set.size() > 1);
           TF_CHECK_OK(has_executable.status())
-              << "Failure occured when compiling fusion " << fusion->name()
+              << " - Failure occured when compiling fusion " << fusion->name()
               << " with config '" << ToString(config)
               << "'\nFused HLO computation:\n"
               << fusion->fused_instructions_computation()->ToString();
@@ -1079,103 +1079,125 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
   return results;
 }
 
-absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
-    AutotunerCompileUtil& compile_util, const HloFusionInstruction& fusion,
-    absl::Span<const ExecutableCandidate> candidates) {
+absl::Status GemmFusionAutotunerImpl::CompareBuffers(
+    const HloFusionInstruction& fusion,
+    const ScopedShapedBuffer& reference_buffer,
+    const ScopedShapedBuffer& buffer, AutotuneResult& res) {
   const HloComputation* fusion_computation = fusion.called_computations().at(0);
+  const HloInstruction& root = *fusion_computation->root_instruction();
+  BufferComparator comparator(root.shape(),
+                              debug_options_.xla_gpu_autotune_gemm_rtol());
+  TF_ASSIGN_OR_RETURN(se::Stream* const stream, config_.GetStream());
 
+  TF_ASSIGN_OR_RETURN(
+      bool outputs_match,
+      comparator.CompareEqual(stream, /*current=*/buffer.root_buffer(),
+                              /*expected=*/reference_buffer.root_buffer()));
+
+  if (!outputs_match) {
+    const char kMessage[] =
+        "Results do not match the reference. This is likely a "
+        "bug/unexpected loss of precision.";
+    LOG(ERROR) << kMessage;
+    CHECK(!config_.should_crash_on_check_failure());
+    // WRONG_RESULT is not taken seriously by PickBestResult(), so
+    // use DISQUALIFIED.
+    res.mutable_failure()->set_kind(AutotuneResult::DISQUALIFIED);
+    res.mutable_failure()->set_msg(kMessage);
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<bool> GemmFusionAutotunerImpl::CheckRedZones(
+    const RedzoneBuffers& rz_buffers, AutotuneResult& res) {
+  TF_ASSIGN_OR_RETURN(se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
+                      rz_buffers.RedzoneAllocator().CheckRedzones());
+  if (rz_check_status.ok()) return true;
+  LOG(ERROR) << "Red zone modified";
+  res.mutable_failure()->set_kind(AutotuneResult::REDZONE_MODIFIED);
+  res.mutable_failure()->set_msg(rz_check_status.RedzoneFailureMsg());
+  CHECK(!config_.should_crash_on_check_failure());
+  return false;
+}
+
+absl::StatusOr<std::optional<AutotuneResult>>
+GemmFusionAutotunerImpl::MeasurePerformance(
+    AutotunerCompileUtil& compile_util, const HloFusionInstruction& fusion,
+    const ExecutableCandidate& candidate,
+    std::optional<ScopedShapedBuffer>& reference_buffer) {
   se::StreamExecutor* stream_exec = config_.GetExecutor();
   if (!stream_exec->SynchronizeAllActivity()) {
     return Internal("Failed to synchronize GPU for autotuning.");
   }
-  tsl::profiler::ScopedAnnotation annotation([&] {
-    return absl::StrFormat("XlaAutotunerMeasurement:#hlo_op=%s#",
-                           fusion.name());
-  });
   TF_ASSIGN_OR_RETURN(se::Stream* const stream, config_.GetStream());
 
-  const HloInstruction& root = *fusion_computation->root_instruction();
-  BufferComparator comparator(root.shape(),
-                              debug_options_.xla_gpu_autotune_gemm_rtol());
+  VLOG(5) << "Trying : " << ToString(candidate.config);
+  AutotuneResult res = FromConfig(candidate.config);
 
+  const HloComputation* fusion_computation = fusion.called_computations().at(0);
   TF_ASSIGN_OR_RETURN(auto rz_buffers,
                       RedzoneBuffers::FromInstruction(
                           *fusion_computation->FusionInstruction(), config_,
                           debug_options_, RedzoneBuffers::kAllInputs));
+  std::optional<ProfilingOutput> profiling_output;
+  TF_ASSIGN_OR_RETURN(profiling_output, compile_util.ProfileExecutable(
+                                            candidate.executable.get(), stream,
+                                            rz_buffers.input_buffers(),
+                                            rz_buffers.input_shapes()));
 
-  const int log_every_n = GetLogEveryN();
+  if (!profiling_output) {
+    VLOG(5) << "Skipping this tiling." << ToString(candidate.config);
+    return std::nullopt;
+  }
+
+  VLOG(5) << "Running the kernel took: " << profiling_output->duration;
+  LOG_IF(WARNING, profiling_output->duration >= absl::Seconds(1))
+      << "Slow kernel for " << fusion.called_computations()[0]->ToString()
+      << " took: " << profiling_output->duration << ". "
+      << ToString(candidate.config);
+
+  *res.mutable_run_time() =
+      tsl::proto_utils::ToDurationProto(profiling_output->duration);
+
+  if (!config_.should_check_correctness()) {
+    return res;
+  }
+
+  if (std::holds_alternative<CuBlasConfig>(candidate.config)) {
+    reference_buffer = std::move(profiling_output->output);
+    return res;
+  }
+
+  // Reference buffer is available when `config.should_check_correctness()`
+  // is set and reference executable was compiled.
+  if (reference_buffer.has_value()) {
+    TF_ASSIGN_OR_RETURN(bool rz_ok, CheckRedZones(rz_buffers, res));
+    if (!rz_ok) return res;
+
+    TF_RETURN_IF_ERROR(CompareBuffers(fusion, *reference_buffer,
+                                      profiling_output->output, res));
+  }
+  return res;
+}
+
+absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
+    AutotunerCompileUtil& compile_util, const HloFusionInstruction& fusion,
+    absl::Span<const ExecutableCandidate> candidates) {
+  tsl::profiler::ScopedAnnotation annotation([&] {
+    return absl::StrFormat("XlaAutotunerMeasurement:#hlo_op=%s#",
+                           fusion.name());
+  });
   std::vector<AutotuneResult> results;
   std::optional<ScopedShapedBuffer> reference_buffer;
   for (const ExecutableCandidate& candidate : candidates) {
-    VLOG(5) << "Trying : " << ToString(candidate.config);
-    AutotuneResult res = FromConfig(candidate.config);
-
-    std::optional<ProfilingOutput> profiling_output;
-    if (IsAutotuningEnabled()) {
-      TF_ASSIGN_OR_RETURN(
-          profiling_output,
-          compile_util.ProfileExecutable(candidate.executable.get(), stream,
-                                         rz_buffers.input_buffers(),
-                                         rz_buffers.input_shapes()));
-      if (std::holds_alternative<CuBlasConfig>(candidate.config) &&
-          config_.should_check_correctness()) {
-        reference_buffer = std::move(profiling_output->output);
-      }
-
-      int ran_so_far = results.size() + 1;
-      if (ran_so_far % log_every_n == 0) {
-        VLOG(2) << "Ran " << ran_so_far << " configs of " << candidates.size()
-                << ".";
-      }
-      if (!profiling_output) {
-        VLOG(5) << "Skipping this tiling.";
-        continue;
-      }
-
-      VLOG(5) << "Running the kernel took: " << profiling_output->duration;
-      if (profiling_output->duration >= absl::Seconds(1)) {
-        LOG(WARNING) << "Slow kernel for "
-                     << fusion.called_computations()[0]->ToString()
-                     << " took: " << profiling_output->duration << ". "
-                     << ToString(candidate.config);
-      }
-      *res.mutable_run_time() =
-          tsl::proto_utils::ToDurationProto(profiling_output->duration);
+    TF_ASSIGN_OR_RETURN(
+        auto result,
+        MeasurePerformance(compile_util, fusion, candidate, reference_buffer));
+    VLOG(2) << "Ran " << results.size() + 1 << " configs of "
+            << candidates.size() << ".";
+    if (result.has_value()) {
+      results.push_back(std::move(*result));
     }
-
-    // Reference buffer is available when `config.should_check_correctness()`
-    // is set and reference executable was compiled.
-    if (reference_buffer.has_value() &&
-        !std::holds_alternative<CuBlasConfig>(candidate.config)) {
-      TF_ASSIGN_OR_RETURN(
-          se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
-          rz_buffers.RedzoneAllocator().CheckRedzones());
-      if (!rz_check_status.ok()) {
-        LOG(ERROR) << "Red zone modified";
-        res.mutable_failure()->set_kind(AutotuneResult::REDZONE_MODIFIED);
-        res.mutable_failure()->set_msg(rz_check_status.RedzoneFailureMsg());
-        CHECK(!config_.should_crash_on_check_failure());
-        continue;
-      }
-
-      TF_ASSIGN_OR_RETURN(
-          bool outputs_match,
-          comparator.CompareEqual(
-              stream, /*current=*/profiling_output->output.root_buffer(),
-              /*expected=*/reference_buffer->root_buffer()));
-      if (!outputs_match) {
-        const char kMessage[] =
-            "Results do not match the reference. This is likely a "
-            "bug/unexpected loss of precision.";
-        LOG(ERROR) << kMessage;
-        CHECK(!config_.should_crash_on_check_failure());
-        // WRONG_RESULT is not taken seriously by PickBestResult(), so
-        // use DISQUALIFIED.
-        res.mutable_failure()->set_kind(AutotuneResult::DISQUALIFIED);
-        res.mutable_failure()->set_msg(kMessage);
-      }
-    }
-    results.push_back(std::move(res));
   }
   VLOG(2) << "Done running.";
   return results;
@@ -1369,27 +1391,30 @@ static BackendConfigs TrimConfigs(const BackendConfigs& gemm_config_sets,
 
 // Exchange the results with the other ranks.
 absl::Status ExchangeResults(KeyValueStoreInterface& key_value_store,
-                             const int module_id, const int shard_index,
-                             const int shard_count) {
+                             absl::string_view fusion_set_fingerprint,
+                             const int shard_index, const int shard_count) {
   AutotuneResults results;
   TF_RETURN_IF_ERROR(AutotunerUtil::SerializeAutotuneResults(&results));
   TF_ASSIGN_OR_RETURN(std::string results_str,
                       AutotuneResultsToString(results, true));
   constexpr absl::string_view kKeyPrefix = "gemm_fusion_autotuning_results";
-  TF_RETURN_IF_ERROR(key_value_store.Set(
-      absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, shard_index),
-      results_str));
-  VLOG(2) << "Rank " << shard_index << ": published results";
+  TF_RET_CHECK(!fusion_set_fingerprint.empty());
+  const std::string local_key = absl::StrFormat(
+      "%s_%s_%d", kKeyPrefix, fusion_set_fingerprint, shard_index);
+  TF_RETURN_IF_ERROR(key_value_store.Set(local_key, results_str));
+  VLOG(2) << "Rank " << shard_index << ": published results at " << local_key;
   for (int i = 0; i < shard_count; ++i) {
     if (i == shard_index) {
       continue;
     }
+    const std::string remote_key =
+        absl::StrFormat("%s_%s_%d", kKeyPrefix, fusion_set_fingerprint, i);
     VLOG(2) << "Rank " << shard_index << ": waiting for results from rank " << i
-            << " / " << shard_count;
+            << " / " << shard_count << " at " << remote_key;
     TF_ASSIGN_OR_RETURN(
         std::string autotune_results_str,
         key_value_store.Get(
-            absl::StrFormat("%s_%d_%d", kKeyPrefix, module_id, i),
+            remote_key,
             // TODO(b/361009609): reset to infinite duration once solved.
             // Using an infinite duration here leads to issues with MPI, see
             // https://github.com/google/jax/issues/22995.
@@ -1452,11 +1477,19 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
     const bool shard_autotuning = debug_options.xla_gpu_shard_autotuning() &&
                                   key_value_store_.process_count > 1 &&
                                   total_fusion_count > 0;
+    std::string fusion_set_fingerprint;
     if (shard_autotuning) {
       if (key_value_store_.key_value_store == nullptr) {
         return absl::FailedPreconditionError(
             "Sharded autotuning requested but key-value store is missing.");
       }
+
+      for (const auto& [fusion, _] : gemm_config_sets) {
+        fusion_set_fingerprint += fusion->ToString();
+      }
+      TF_ASSIGN_OR_RETURN(fusion_set_fingerprint,
+                          GetBase64EncodedSha256Hash(fusion_set_fingerprint));
+
       gemm_config_sets =
           TrimConfigs(gemm_config_sets, key_value_store_.process_index,
                       key_value_store_.process_count);
@@ -1473,7 +1506,7 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
 
     if (shard_autotuning) {
       TF_RETURN_IF_ERROR(ExchangeResults(
-          *key_value_store_.key_value_store, module->unique_id(),
+          *key_value_store_.key_value_store, fusion_set_fingerprint,
           key_value_store_.process_index, key_value_store_.process_count));
     }
   }
