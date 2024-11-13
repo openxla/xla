@@ -593,37 +593,6 @@ xla_test(
 )
 
 xla_test(
-    name = "xla_hlo_profile_test",
-    srcs = ["xla_hlo_profile_test.cc"],
-    backends = [
-        # Hlo profiles are only supported on CPU/GPU.
-        "cpu",
-        "gpu",
-    ],
-    tags = ["not_run:arm"],
-    deps = [
-        ":client_library_test_base",
-        ":test_macros_header",
-        ":test_utils",
-        "//xla:array2d",
-        "//xla:shape_util",
-        "//xla:util",
-        "//xla/client:local_client",
-        "//xla/hlo/builder:xla_builder",
-        "//xla/hlo/builder:xla_computation",
-        "//xla/service:platform_util",
-        "//xla/service:stream_pool",
-        "//xla/tsl/lib/core:status_test_util",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:regexp",
-        "@tsl//tsl/platform:test",
-    ],
-)
-
-xla_test(
     name = "axpy_simple_test",
     srcs = ["axpy_simple_test.cc"],
     tags = ["test_xla_cpu_thunks"],
@@ -2470,13 +2439,16 @@ xla_test(
     ],
     deps = [
         ":hlo_test_base",
+        ":literal_test_util",
         ":xla_internal_test_main",
         "//xla:literal",
+        "//xla:literal_util",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -3398,4 +3370,27 @@ bzl_library(
         "//xla/stream_executor:build_defs_bzl",
         "@tsl//tsl/platform:build_config_root_bzl",
     ] + tests_build_defs_bzl_deps(),
+)
+
+xla_test(
+    name = "atan2_test",
+    srcs = ["atan2_test.cc"],
+    deps = [
+        ":client_library_test_base",
+        "//xla:error_spec",
+        "//xla/hlo/builder:xla_builder",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
+    name = "remainder_test",
+    srcs = ["remainder_test.cc"],
+    deps = [
+        ":client_library_test_base",
+        "//xla:error_spec",
+        "//xla:literal_util",
+        "//xla/hlo/builder:xla_builder",
+        "@com_google_googletest//:gtest_main",
+    ],
 )

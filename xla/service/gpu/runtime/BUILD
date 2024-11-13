@@ -232,12 +232,10 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
-        "//xla/stream_executor/cuda:cuda_driver",
         "//xla/stream_executor/cuda:cuda_executor",
     ]) + if_rocm_is_configured([
         "@local_config_rocm//rocm:rocm_headers",
         "@local_config_rocm//rocm:rccl",
-        "//xla/stream_executor/rocm:rocm_driver",
         "//xla/stream_executor/rocm:rocm_executor",
     ]) + if_gpu_is_configured([
         "//xla/stream_executor/gpu:gpu_stream",
@@ -952,7 +950,6 @@ cc_library(
         "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/gpu:gpu_driver_header",
         "//xla/stream_executor/gpu:gpu_stream",
         "//xla/stream_executor/gpu:gpu_types_header",
         "@com_google_absl//absl/algorithm:container",
@@ -1061,7 +1058,7 @@ cc_library(
         ":nccl_collective_thunk",
         ":thunk",
         "//xla/hlo/ir:hlo",
-        "//xla/stream_executor",
+        "//xla/stream_executor:stream",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",

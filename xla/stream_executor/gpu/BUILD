@@ -42,7 +42,6 @@ load(
 )
 load(
     "//xla/tsl:tsl.bzl",
-    "if_libtpu",
     "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
@@ -142,32 +141,6 @@ gpu_only_cc_library(
     deps = ["@com_google_absl//absl/status:statusor"],
 )
 
-gpu_only_cc_library(
-    name = "gpu_driver_header",
-    hdrs = ["gpu_driver.h"],
-    visibility = internal_visibility([
-        "//xla/service/gpu:__subpackages__",
-        "//xla/stream_executor:__subpackages__",
-        "//tensorflow/core/common_runtime/gpu:__subpackages__",
-        "//tensorflow/core/util/autotune_maps:__subpackages__",
-    ]),
-    deps = [
-        ":context",
-        ":gpu_types_header",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-    ] + if_libtpu(
-        if_false = ["@local_config_cuda//cuda:cuda_headers"],
-        if_true = [],
-    ),
-)
-
 cc_library(
     name = "scoped_update_mode",
     hdrs = [
@@ -227,25 +200,12 @@ cc_library(
     name = "gpu_executor_header",
     hdrs = ["gpu_executor.h"],
     deps = [
-        ":context",
-        "//xla/stream_executor:blas",
-        "//xla/stream_executor:command_buffer",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor:dnn",
-        "//xla/stream_executor:event_based_timer",
-        "//xla/stream_executor:fft",
-        "//xla/stream_executor:host_memory_allocation",
-        "//xla/stream_executor:kernel",
-        "//xla/stream_executor:kernel_spec",
-        "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_common",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
     ],
 )

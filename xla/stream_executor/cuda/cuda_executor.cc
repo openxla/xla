@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_collectives.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
+#include "xla/stream_executor/cuda/cuda_driver_version.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -63,7 +64,6 @@ limitations under the License.
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/gpu/context.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/host_memory_allocation.h"
@@ -550,7 +550,6 @@ std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
 CudaExecutor::~CudaExecutor() {
   CHECK(kernel_to_gpu_binary_.empty()) << "CudaExecutor has live kernels.";
   CHECK(gpu_binary_to_module_.empty()) << "CudaExecutor has loaded modules.";
-  set_context(nullptr);
 }
 
 void CudaExecutor::UnifiedMemoryDeallocate(void* location) {
@@ -587,7 +586,6 @@ absl::Status CudaExecutor::Init() {
   TF_ASSIGN_OR_RETURN(device_, GetDevice(device_ordinal()));
   TF_ASSIGN_OR_RETURN(CudaContext * context,
                       CudaContext::Create(device_ordinal(), device_));
-  set_context(context);
   cuda_context_ = context;
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major_, &cc_minor_, device_));
   TF_ASSIGN_OR_RETURN(delay_kernels_supported_, DelayKernelIsSupported());
@@ -1151,7 +1149,7 @@ absl::StatusOr<std::unique_ptr<Stream>> CudaExecutor::CreateStream(
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
 CudaExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
   VLOG(2) << "Create CUDA command buffer (CUDA graph)";
-  return CudaCommandBuffer::Create(mode, this);
+  return CudaCommandBuffer::Create(mode, this, cuda_context_);
 }
 
 absl::Status CudaExecutor::TrimGraphMemory() {
@@ -1168,10 +1166,10 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major, &cc_minor, device));
 
   DeviceDescription desc;
+  TF_ASSIGN_OR_RETURN(int32_t version, CudaDriverVersion());
 
   desc.set_driver_version(
-      ParseCudaVersion(GpuDriver::GetDriverVersion().value_or(0))
-          .value_or(SemanticVersion{0, 0, 0}));
+      ParseCudaVersion(version).value_or(SemanticVersion{0, 0, 0}));
   desc.set_runtime_version(
       ParseCudaVersion(CudaRuntime::GetRuntimeVersion().value_or(0))
           .value_or(SemanticVersion{0, 0, 0}));
