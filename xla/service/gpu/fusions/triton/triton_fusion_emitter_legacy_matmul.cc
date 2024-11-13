@@ -1118,6 +1118,16 @@ class MatMulEmitterHelper {
     return false;
   }
 
+  bool NonTrivialTiledDimensionHasNoIterationAtParameter(
+      TritonFusionAnalysis::Scope scope, const HloInstruction& hlo,
+      int64_t dim_index) {
+    const TensorIterationSpec::DimIterationSpec* spec =
+        analysis_.IterSpec(scope, &hlo, dim_index);
+    return spec == nullptr ||
+           (IsNonTrivialTiledDimension(scope, dim_index) && spec->size() == 1 &&
+            (spec->at(0).count <= 1 || spec->at(0).stride == 0));
+  }
+
   // Return the batch stride of the HLO passed as a parameter. If the
   // parameter HLO has no batch dimension, a zero stride is returned.
   // Also sets offset_batch and updates has_batch_offset as a side effect.
@@ -1231,18 +1241,13 @@ class MatMulEmitterHelper {
     }
 
     auto add_dim = [&](const DimProperties& properties) -> absl::Status {
-      {
-        const TensorIterationSpec::DimIterationSpec* spec =
-            analysis_.IterSpec(side.scope, hlo, properties.index);
-        if (spec == nullptr ||
-            (IsNonTrivialTiledDimension(side.scope, properties.index) &&
-             spec->size() == 1 && spec->at(0).count == 1)) {
-          // If a non-trivial tiled dimension has only one element at
-          // the parameter, it's being broadcasted. Skip it in the tensor
-          // pointer to prevent it from being padded to the tile size on load
-          // instead of being broadcasted.
-          return absl::OkStatus();
-        }
+      if (NonTrivialTiledDimensionHasNoIterationAtParameter(side.scope, *hlo,
+                                                            properties.index)) {
+        // If a non-trivial tiled dimension has only one element at
+        // the parameter, it's being broadcasted. Skip it in the tensor
+        // pointer to prevent it from being padded to the tile size on load
+        // instead of being broadcasted.
+        return absl::OkStatus();
       }
       Value pid_offset =
           (properties.pid == nullptr)
@@ -2141,9 +2146,8 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
       CHECK(values[index].insert({param_hlo, param_value}).second);
       SmallVector<Value> increments;
       for (const DimProperties& dim : side.tiled_dims) {
-        const TensorIterationSpec::DimIterationSpec* spec =
-            analysis.IterSpec(side.scope, iter_args_to_inputs[i], dim.index);
-        if (spec == nullptr || spec->at(0).stride == 0) {
+        if (emitter.NonTrivialTiledDimensionHasNoIterationAtParameter(
+                side.scope, *iter_args_to_inputs[i], dim.index)) {
           continue;
         }
         // Only the contracting dimensions are advanced.
