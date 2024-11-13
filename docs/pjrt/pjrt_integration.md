@@ -9,7 +9,7 @@ how to test PJRT integration with JAX.
 
 The PJRT C API provides the device compiler and runtime interface, as well as the interface between the framework and the hardware.
 
-A PJRT plugin is a Python package that contains a `.so` file which implements PJRT C APIs, as well as Python methods/setup to make it discoverable by the framework.
+A PJRT plugin is a Python package that contains a shared library as a `.so` file which implements PJRT C APIs, as well as Python methods/setup to make it discoverable by the framework.
 
 For more examples of PJRT plugins see [PJRT Examples](examples.md).
 
@@ -17,9 +17,9 @@ For more examples of PJRT plugins see [PJRT Examples](examples.md).
 
 ### Step 1: Implement [PJRT C API interface](https://github.com/openxla/xla/tree/main/xla/pjrt/c/pjrt_c_api.h)
 
-**Option A**: You can implement the PJRT C API directly.
+**1a.** You can implement only the PJRT C API directly.
 
-**Option B**: If you're able to build against C++ code in the [xla repo](https://github.com/openxla/xla) (via forking or bazel), you can also implement the PJRT C++ API and use the C→C++ wrapper:
+**1b (Optional)** If you're able to build against C++ code in the [xla repo](https://github.com/openxla/xla) (via forking or bazel), you can also implement the PJRT C++ API and use the C→C++ wrapper:
 
 1. Implement a C++ PJRT client inheriting from the [base PJRT client](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_client.h) (and related PJRT classes). Here are some examples of C++ PJRT client: [pjrt\_stream\_executor\_client.h](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_stream_executor_client.h), [cpu\_client.h](https://github.com/openxla/xla/blob/main/xla/pjrt/cpu/cpu_client.h).
 2. Implement a few C API methods that are not part of C++ PJRT client:
@@ -50,7 +50,7 @@ With the [wrapper](https://github.com/openxla/xla/blob/main/xla/pjrt/c/pjrt_c_ap
 
 ### Step 2: Implement GetPjrtApi
 
-You need to implement a method `GetPjrtApi` which returns a `PJRT_Api*` containing function pointers to PJRT C API implementations. Below is an example assuming implementing through wrapper (similar to [pjrt\_c\_api\_cpu.cc](https://github.com/openxla/xla/blob/main/xla/pjrt/c/pjrt_c_api_cpu.cc)):
+You need to implement a method `GetPjrtApi` which returns a `PJRT_Api*` containing function pointers to PJRT C API implementations. If writing in C++, this method needs to be defined as `extern C` to prevent name mangling. Below is an example assuming implementing through wrapper (similar to [pjrt\_c\_api\_cpu.cc](https://github.com/openxla/xla/blob/main/xla/pjrt/c/pjrt_c_api_cpu.cc)):
 ```
 const PJRT_Api* GetPjrtApi() {
   static const PJRT_Api pjrt_api =

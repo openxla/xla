@@ -1,6 +1,8 @@
 # PJRT Examples
 
+You can find a basic example in [xla/pjrt/plugin/example_plugin](https://github.com/openxla/xla/tree/main/xla/pjrt/plugin/example_plugin).
 
+Other examples are provided in the following sections.
 
 ## Example: JAX CUDA plugin
 
