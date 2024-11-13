@@ -84,7 +84,7 @@ absl::StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
     }
     default:
       return Internal("Unexpected async start op %s",
-                           HloOpcodeString(async_start->opcode()));
+                      HloOpcodeString(async_start->opcode()));
   }
 
   sync_instruction->set_metadata(async_start->metadata());
