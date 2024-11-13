@@ -21,7 +21,11 @@ For more examples of PJRT plugins see [PJRT Examples](examples.md).
 
 **1b (Optional)** If you're able to build against C++ code in the [xla repo](https://github.com/openxla/xla) (via forking or bazel), you can also implement the PJRT C++ API and use the C→C++ wrapper:
 
-1. Implement a C++ PJRT client inheriting from the [base PJRT client](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_client.h) (and related PJRT classes). Here are some examples of C++ PJRT client: [pjrt\_stream\_executor\_client.h](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_stream_executor_client.h), [cpu\_client.h](https://github.com/openxla/xla/blob/main/xla/pjrt/cpu/cpu_client.h).
+1. Implement a C++ PJRT client inheriting from the [base PJRT client](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_client.h) (and related PJRT classes).
+   Here are some examples of C++ PJRT client: 
+   - [PJRT Example plugin](https://github.com/openxla/xla/tree/main/xla/pjrt/plugin/example_plugin)
+   - [Stream executor client plugin](https://github.com/openxla/xla/blob/main/xla/pjrt/pjrt_stream_executor_client.h)
+   - Real-world example: [cpu\_client.h](https://github.com/openxla/xla/blob/main/xla/pjrt/cpu/cpu_client.h).
 2. Implement a few C API methods that are not part of C++ PJRT client:
   * [PJRT\_Client\_Create](https://github.com/openxla/xla/blob/c23fbd601a017be25726fd6d624b22daa6a8a4e5/xla/pjrt/c/pjrt_c_api.h#L344-L365). Below is some sample pseudo code (assuming `GetPluginPjRtClient` returns a C++ PJRT client implemented above):
 
