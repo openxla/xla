@@ -615,6 +615,12 @@ class XlaBuilder {
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
+  XlaOp RaggedDot(
+      XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+      const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig* precision_config = nullptr,
+      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
   XlaOp Conv(
       XlaOp lhs, XlaOp rhs, absl::Span<const int64_t> window_strides,
       Padding padding, int64_t feature_group_count = 1,
@@ -1308,6 +1314,10 @@ class XlaBuilder {
                          absl::Span<const XlaOp> sparse_meta,
                          absl::Span<const SparsityDescriptor> sparsity,
                          const DotDimensionNumbers& dimension_number,
+                         const PrecisionConfig* precision_config,
+                         std::optional<PrimitiveType> preferred_element_type);
+  friend XlaOp RaggedDot(XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+                         const RaggedDotDimensionNumbers& dimension_numbers,
                          const PrecisionConfig* precision_config,
                          std::optional<PrimitiveType> preferred_element_type);
   friend XlaOp Conv(XlaOp lhs, XlaOp rhs,
@@ -2184,6 +2194,13 @@ XlaOp SparseDot(
     XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
     absl::Span<const SparsityDescriptor> sparsity,
     const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config = nullptr,
+    std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
+// Enqueues a ragged dot instruction onto the computation.
+XlaOp RaggedDot(
+    XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+    const RaggedDotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config = nullptr,
     std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 

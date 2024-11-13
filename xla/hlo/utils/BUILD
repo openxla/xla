@@ -21,6 +21,16 @@ package_group(
 )
 
 cc_library(
+    name = "hlo_container_util",
+    srcs = [],
+    hdrs = ["hlo_container_util.h"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
     name = "hlo_live_range",
     srcs = ["hlo_live_range.cc"],
     hdrs = ["hlo_live_range.h"],
@@ -98,6 +108,7 @@ cc_library(
         "hlo_sharding_util.h",
     ],
     deps = [
+        ":hlo_container_util",
         "//xla:array",
         "//xla:literal_util",
         "//xla:protobuf_util",
@@ -108,6 +119,7 @@ cc_library(
         "//xla/hlo/ir:tile_assignment",
         "//xla/service:call_graph",
         "//xla/service:dot_as_convolution_util",
+        "//xla/service:gather_scatter_utils",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",

@@ -267,6 +267,19 @@ absl::Status ShapeVerifier::HandleDot(HloInstruction* dot) {
   return CheckShape(dot, expected);
 }
 
+absl::Status ShapeVerifier::HandleRaggedDot(HloInstruction* ragged_dot) {
+  TF_RETURN_IF_ERROR(
+      CheckOperandCount(ragged_dot, HloRaggedDotInstruction::kOperands));
+  TF_ASSIGN_OR_RETURN(
+      const Shape expected,
+      ShapeInference::InferRaggedDotOpShape(
+          ragged_dot->operand(0)->shape(), ragged_dot->operand(1)->shape(),
+          ragged_dot->operand(2)->shape(),
+          ragged_dot->ragged_dot_dimension_numbers(),
+          /*preferred_element_type=*/ragged_dot->shape().element_type()));
+  return CheckShape(ragged_dot, expected);
+}
+
 absl::Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
   TF_ASSIGN_OR_RETURN(
       Shape expected,
@@ -1984,7 +1997,15 @@ absl::Status ShapeVerifier::CheckShape(
             if (instruction_memory_space != operand_memory_space &&
                 (instruction_memory_space == Layout::kHostMemorySpace ||
                  operand_memory_space == Layout::kHostMemorySpace)) {
-              // Is a host->device copy for a device->host copy.
+              if (instruction_memory_space == Layout::kHostMemorySpace) {
+                // Unfortunately it might still be a host->host copy before
+                // memory space is propagated. A transpose is allowed in that
+                // case.
+                return instruction->shape().element_type() ==
+                       inferred_shape.element_type();
+              }
+              // A host->device copy or a device->host copy cannot do a
+              // transpose.
               return Shape::Equal().IgnoreMemorySpaceInLayout()(
                   instruction->shape(), inferred_shape);
             }
@@ -2526,8 +2547,7 @@ absl::Status VerifyChannels(const HloModule& module,
   }
 
   // Iterate over each channel to check invariants.
-  for (auto& pair : channel_instructions) {
-    auto& instructions = pair.second;
+  for (auto& [channel_id, instructions] : channel_instructions) {
     const HloInstruction* first = instructions[0];
     if (const auto* sendrecv = DynCast<HloSendRecvInstruction>(first)) {
       absl::flat_hash_set<HloOpcode> opcodes;
@@ -2535,14 +2555,14 @@ absl::Status VerifyChannels(const HloModule& module,
         opcodes.insert(instr->opcode());
         auto cast = DynCast<HloSendRecvInstruction>(instr);
         TF_RET_CHECK(cast != nullptr)
-            << "channel " << pair.first
+            << "channel " << channel_id
             << " is used for different types of channel instructions";
       }
     } else {
-      for (const HloInstruction* instr : instructions) {
-        if (opts.verify_unique_channel_ids) {
+      if (opts.verify_unique_channel_ids) {
+        for (const HloInstruction* instr : instructions) {
           TF_RET_CHECK(first->opcode() == instr->opcode())
-              << "channel " << pair.first
+              << "channel " << channel_id
               << " is used for different types of channel instructions";
         }
       }

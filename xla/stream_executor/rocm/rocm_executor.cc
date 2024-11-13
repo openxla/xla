@@ -53,10 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/gpu/context.h"
-#include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/host_memory_allocation.h"
@@ -467,7 +463,6 @@ RocmExecutor::~RocmExecutor() {
   for (auto& it : in_memory_modules_) {
     UnloadRocmModule(rocm_context_, it.second);
   }
-  set_context(nullptr);
   CHECK(kernel_to_gpu_binary_.empty()) << "RocmExecutor has live kernels.";
   CHECK(gpu_binary_to_module_.empty()) << "RocmExecutor has loaded modules.";
 }
@@ -606,7 +601,6 @@ absl::Status RocmExecutor::Init() {
 
   TF_ASSIGN_OR_RETURN(rocm_context_,
                       RocmContext::Create(device_ordinal(), device_));
-  set_context(rocm_context_);
   TF_ASSIGN_OR_RETURN(version_, GetGpuISAVersion(device_));
   return absl::OkStatus();
 }
@@ -964,11 +958,6 @@ RocmExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
   return RocmCommandBuffer::Create(mode, this);
 }
 
-absl::Status RocmExecutor::TrimGraphMemory() {
-  return ToStatus(wrap::hipDeviceGraphMemTrim(device_),
-                  "Failed to trim device graph memory");
-}
-
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
 RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   TF_ASSIGN_OR_RETURN(hipDevice_t device, GetDevice(device_ordinal));
@@ -1054,9 +1043,11 @@ RocmExecutor::CreateDeviceDescription(int device_ordinal) {
   desc.set_runtime_version(
       ParseRocmVersion(RocmRuntime::GetRuntimeVersion().value_or(0))
           .value_or(SemanticVersion{0, 0, 0}));
+  int32_t version;
+  TF_RETURN_IF_ERROR(ToStatus(wrap::hipDriverGetVersion(&version),
+                              "Could not get driver version"));
   desc.set_driver_version(
-      ParseRocmVersion(GpuDriver::GetDriverVersion().value_or(0))
-          .value_or(SemanticVersion{0, 0, 0}));
+      ParseRocmVersion(version).value_or(SemanticVersion{0, 0, 0}));
 
   // It would be better to use the PCI device ID or some other truly unique
   // identifier for the GPU model.  But getting this requires using NVML or
@@ -1096,6 +1087,15 @@ absl::StatusOr<MemoryType> RocmExecutor::GetPointerMemorySpace(
       "failed to query device pointer for memory space: ", ToString(result)));
 }
 
+absl::StatusOr<const RocmKernel*> RocmExecutor::GetRocmKernel(
+    const Kernel* kernel) {
+  absl::MutexLock lock{&in_memory_modules_mu_};
+  auto it = loaded_kernels_.find(kernel);
+  if (it == loaded_kernels_.end()) {
+    return absl::NotFoundError("Kernel not loaded in this executor.");
+  }
+  return static_cast<const RocmKernel*>(*it);
+}
 }  // namespace gpu
 
 }  // namespace stream_executor

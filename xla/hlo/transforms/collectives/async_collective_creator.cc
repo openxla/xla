@@ -50,22 +50,20 @@ struct ReplacedAsync {
 
 absl::StatusOr<ReplacedAsync> CreateAsyncAllReduce(
     HloInstruction* instruction) {
-  HloComputation* computation = instruction->parent();
   auto* ar = Cast<HloAllReduceInstruction>(instruction);
   HloInstruction* start =
-      computation->AddInstruction(HloInstruction::CreateAllReduceStart(
+      instruction->AddInstruction(HloInstruction::CreateAllReduceStart(
           ar->shape(), ar->operands(), ar->to_apply(), ar->device_list(),
           ar->constrain_layout(), ar->channel_id(),
           ar->use_global_device_ids()));
   HloInstruction* done =
-      computation->AddInstruction(HloInstruction::CreateUnary(
+      instruction->AddInstruction(HloInstruction::CreateUnary(
           ar->shape(), HloOpcode::kAllReduceDone, start));
   return ReplacedAsync{start, done};
 }
 
 absl::StatusOr<ReplacedAsync> CreateAsyncAllGather(
     HloInstruction* instruction) {
-  HloComputation* computation = instruction->parent();
   auto* ag = Cast<HloAllGatherInstruction>(instruction);
   std::vector<const Shape*> operand_shapes;
   operand_shapes.reserve(ag->operand_count());
@@ -78,19 +76,18 @@ absl::StatusOr<ReplacedAsync> CreateAsyncAllGather(
            : *operand_shapes[0],
        ag->shape()});
   HloInstruction* start =
-      computation->AddInstruction(HloInstruction::CreateAllGatherStart(
+      instruction->AddInstruction(HloInstruction::CreateAllGatherStart(
           shape, ag->operands(), ag->all_gather_dimension(), ag->device_list(),
           ag->constrain_layout(), ag->channel_id(),
           ag->use_global_device_ids()));
   HloInstruction* done =
-      computation->AddInstruction(HloInstruction::CreateUnary(
+      instruction->AddInstruction(HloInstruction::CreateUnary(
           ag->shape(), HloOpcode::kAllGatherDone, start));
   return ReplacedAsync{start, done};
 }
 
 absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
     HloInstruction* instruction, absl::Span<const Shape> context_shapes) {
-  HloComputation* computation = instruction->parent();
   auto* cp = Cast<HloCollectivePermuteInstruction>(instruction);
   HloInstruction* start;
   HloInstruction* operand = cp->mutable_operand(0);
@@ -99,7 +96,7 @@ absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
       cp->operands(), std::back_inserter(operand_shapes),
       [](const HloInstruction* operand) { return &(operand->shape()); });
   if (!cp->inplace()) {
-    start = computation->AddInstruction(
+    start = instruction->AddInstruction(
         HloInstruction::CreateCollectivePermuteStart(
             ShapeInference::InferCollectivePermuteStartShape(
                 operand_shapes, context_shapes, false)
@@ -108,7 +105,7 @@ absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
   } else {
     // TODO support grouped partial collective permutes
     CHECK_EQ(cp->operand_count(), 4);
-    start = computation->AddInstruction(
+    start = instruction->AddInstruction(
         HloInstruction::CreateCollectivePermuteStart(
             ShapeInference::InferCollectivePermuteStartShape(
                 operand_shapes, context_shapes, true)
@@ -121,7 +118,7 @@ absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
     }
   }
   HloInstruction* done =
-      computation->AddInstruction(HloInstruction::CreateUnary(
+      instruction->AddInstruction(HloInstruction::CreateUnary(
           cp->shape(), HloOpcode::kCollectivePermuteDone, start));
   return ReplacedAsync{start, done};
 }
@@ -135,6 +132,9 @@ absl::StatusOr<ReplacedAsync> CreateAsyncStartDone(
                                            HloInstruction::kMainExecutionThread,
                                            /*replace=*/false));
   HloInstruction* start = done->mutable_operand(0);
+  FrontendAttributes fas = instruction->frontend_attributes();
+  start->set_frontend_attributes(fas);
+  done->set_frontend_attributes(fas);
   return ReplacedAsync{start, done};
 }
 

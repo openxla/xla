@@ -422,17 +422,6 @@ PjRtCApiClient::DeserializeExecutable(absl::string_view serialized,
   des_args.client = c_client_.get();
   des_args.serialized_executable = serialized.data();
   des_args.serialized_executable_size = serialized.length();
-  des_args.overridden_serialized_compile_options = nullptr;
-  des_args.overridden_serialized_compile_options_size = 0;
-
-  std::string options_str;
-  if (options) {
-    TF_ASSIGN_OR_RETURN(const CompileOptionsProto options_proto,
-                        options->ToProto());
-    options_str = options_proto.SerializeAsString();
-    des_args.overridden_serialized_compile_options = options_str.c_str();
-    des_args.overridden_serialized_compile_options_size = options_str.size();
-  }
 
   const PJRT_Api* api = pjrt_c_api();
 
@@ -2350,7 +2339,13 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   if (c_api == nullptr) {
     return Internal("PJRT C API is nullptr for %s", device_type);
   }
+  return WrapClientAroundCApi(c_api, create_options, kv_store);
+}
 
+absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
+    const PJRT_Api* c_api,
+    const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
+    std::shared_ptr<KeyValueStoreInterface> kv_store) {
   PJRT_Client_Create_Args init_args;
   init_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   init_args.extension_start = nullptr;

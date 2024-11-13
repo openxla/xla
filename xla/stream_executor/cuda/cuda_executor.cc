@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_collectives.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
+#include "xla/stream_executor/cuda/cuda_driver_version.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -63,12 +64,6 @@ limitations under the License.
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
 #include "xla/stream_executor/gpu/context.h"
-#include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/gpu/gpu_kernel.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/host_memory_allocation.h"
@@ -555,7 +550,6 @@ std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
 CudaExecutor::~CudaExecutor() {
   CHECK(kernel_to_gpu_binary_.empty()) << "CudaExecutor has live kernels.";
   CHECK(gpu_binary_to_module_.empty()) << "CudaExecutor has loaded modules.";
-  set_context(nullptr);
 }
 
 void CudaExecutor::UnifiedMemoryDeallocate(void* location) {
@@ -592,7 +586,6 @@ absl::Status CudaExecutor::Init() {
   TF_ASSIGN_OR_RETURN(device_, GetDevice(device_ordinal()));
   TF_ASSIGN_OR_RETURN(CudaContext * context,
                       CudaContext::Create(device_ordinal(), device_));
-  set_context(context);
   cuda_context_ = context;
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major_, &cc_minor_, device_));
   TF_ASSIGN_OR_RETURN(delay_kernels_supported_, DelayKernelIsSupported());
@@ -712,6 +705,12 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
   }
   VLOG(3) << "LoadKernel on kernel : " << *kernel_name;
 
+  {
+    // Keep track of loaded kernels.
+    absl::MutexLock lock{&in_memory_modules_mu_};
+    loaded_kernels_.insert(cuda_kernel.get());
+  }
+
   // Update CUDA kernel properties after it was loaded in the CUDA context.
   cuda_kernel->set_name(*kernel_name);
 
@@ -761,6 +760,8 @@ void CudaExecutor::UnloadKernel(const Kernel* kernel) {
   VLOG(3) << "Unloading kernel " << kernel << " : " << kernel->name();
 
   absl::MutexLock lock{&in_memory_modules_mu_};
+  loaded_kernels_.erase(kernel);
+
   auto gpu_binary_it = kernel_to_gpu_binary_.find(kernel);
   if (kernel_to_gpu_binary_.end() == gpu_binary_it) {
     // We might never see kernel being explicitly loaded if it was resolved from
@@ -1148,12 +1149,7 @@ absl::StatusOr<std::unique_ptr<Stream>> CudaExecutor::CreateStream(
 absl::StatusOr<std::unique_ptr<CommandBuffer>>
 CudaExecutor::CreateCommandBuffer(CommandBuffer::Mode mode) {
   VLOG(2) << "Create CUDA command buffer (CUDA graph)";
-  return CudaCommandBuffer::Create(mode, this);
-}
-
-absl::Status CudaExecutor::TrimGraphMemory() {
-  return cuda::ToStatus(cuDeviceGraphMemTrim(device_),
-                        "Failed to trim device graph memory");
+  return CudaCommandBuffer::Create(mode, this, cuda_context_);
 }
 
 absl::StatusOr<std::unique_ptr<DeviceDescription>>
@@ -1165,10 +1161,10 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major, &cc_minor, device));
 
   DeviceDescription desc;
+  TF_ASSIGN_OR_RETURN(int32_t version, CudaDriverVersion());
 
   desc.set_driver_version(
-      ParseCudaVersion(GpuDriver::GetDriverVersion().value_or(0))
-          .value_or(SemanticVersion{0, 0, 0}));
+      ParseCudaVersion(version).value_or(SemanticVersion{0, 0, 0}));
   desc.set_runtime_version(
       ParseCudaVersion(CudaRuntime::GetRuntimeVersion().value_or(0))
           .value_or(SemanticVersion{0, 0, 0}));
@@ -1305,5 +1301,14 @@ absl::StatusOr<MemoryType> CudaExecutor::GetPointerMemorySpace(
   }
 }
 
+absl::StatusOr<const CudaKernel*> CudaExecutor::GetCudaKernel(
+    const Kernel* kernel) {
+  absl::MutexLock lock{&in_memory_modules_mu_};
+  auto it = loaded_kernels_.find(kernel);
+  if (it == loaded_kernels_.end()) {
+    return absl::NotFoundError("Kernel not loaded in this executor.");
+  }
+  return static_cast<const CudaKernel*>(*it);
+}
 }  // namespace gpu
 }  // namespace stream_executor

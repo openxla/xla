@@ -170,7 +170,7 @@ bool CheckParameterUsageIsCompatible(const HloInstruction* gte,
       return false;
     }
     // Expected same index as dynamic-update-slice().
-    if (user->operand(static_cast<HloDynamicSliceInstruction*>(user)
+    if (user->operand(static_cast<HloDynamicUpdateSliceInstruction*>(user)
                           ->first_index_operand_number() +
                       sliced_index) != dus_idx) {
       VLOG(5) << "CheckParameterUsageIsCompatible(): Idx is not the same as "
@@ -337,7 +337,7 @@ CheckStoreIntoSliceIsCompatible(HloInstruction* instr,
                             HloOpcode::kPad, HloOpcode::kCollectivePermute,
                             HloOpcode::kConvert, HloOpcode::kReshape,
                             HloOpcode::kAllReduce, HloOpcode::kTranspose,
-                            HloOpcode::kBroadcast, HloOpcode::kBitcast>(i) ||
+                            HloOpcode::kBroadcast>(i) ||
            (multi_uses_pipelining && i->IsElementwise()) ||
            i->IsCustomCall(CollectivePipeliner::kInsertedByPreviousStep) ||
            i->IsCustomCall(CollectivePipeliner::kSunkByPreviousStep);

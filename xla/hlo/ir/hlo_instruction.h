@@ -116,7 +116,8 @@ class HloPrintOptions {
         canonicalize_computations_(false),
         print_extra_attributes_(true),
         syntax_sugar_async_ops_(true),
-        print_name_after_closing_brace_(false) {}
+        print_name_after_closing_brace_(false),
+        print_full_replica_group_list_(false) {}
   // Static reference to a default construction HloPrintOptions, to avoid
   // constructing a new one each time default is needed.
   static const HloPrintOptions& Default() {
@@ -163,16 +164,23 @@ class HloPrintOptions {
     return Canonical()
         // Exclude because they do not affect HLO optimizations.
         .set_print_infeed_outfeed_config(false)
-        // Exclude floating point constant literals that are not all zeros, all
-        // ones, or integers because they may be randomly initialized weights,
-        // which may be changed across different runs.
+        // Exclude floating point constant literals that are not all
+        // zeros, all ones, or integers because they may be randomly
+        // initialized weights, which may be changed across different
+        // runs.
         .set_print_only_essential_constants(true)
         // Remove "id" in "name.id" (after period) because it can be
-        // non-deterministic. This mainly affects computations' names because
-        // canonicalized instructions' names are in "tmp_id" format.
+        // non-deterministic. This mainly affects computations' names
+        // because canonicalized instructions' names are in "tmp_id"
+        // format.
         .set_print_ids(false)
         // Sort computations.
-        .set_canonicalize_computations(true);
+        .set_canonicalize_computations(true)
+        // Force to print full replica group list to avoid non-determinism.
+        // With this flag set to false, the replica group list may be printed
+        // in a compact form when iota_replica_group_list is present, which may
+        // be different across different runs.
+        .set_print_full_replica_group_list(true);
   }
 
   // Options to produce a fingerprint of an HLO module and computation.
@@ -291,6 +299,11 @@ class HloPrintOptions {
   // If true, control dependencies will be printed.
   HloPrintOptions& set_print_control_dependencies(bool value) {
     print_control_dependencies_ = value;
+    return *this;
+  }
+
+  HloPrintOptions& set_print_full_replica_group_list(bool value) {
+    print_full_replica_group_list_ = value;
     return *this;
   }
 
@@ -428,6 +441,9 @@ class HloPrintOptions {
   int print_name_after_closing_brace() const {
     return print_name_after_closing_brace_;
   }
+  bool print_full_replica_group_list() const {
+    return print_full_replica_group_list_;
+  }
 
  private:
   // The interval between the /*index=*/ annotated operands. 0 means never print
@@ -458,6 +474,7 @@ class HloPrintOptions {
   bool print_extra_attributes_;
   bool syntax_sugar_async_ops_;
   bool print_name_after_closing_brace_;
+  bool print_full_replica_group_list_;
 };
 
 // For canonical string output, we need to have a canonical way to rename
@@ -863,6 +880,15 @@ class HloInstruction {
       std::vector<SparsityDescriptor> sparsity = {},
       absl::Span<HloInstruction* const> sparse_meta = {});
 
+  // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes', with
+  // contracting, batch, ragged, and group dimensions specified in
+  // 'dimension_numbers'.
+  static std::unique_ptr<HloInstruction> CreateRaggedDot(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      HloInstruction* group_sizes,
+      const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig& precision_config);
+
   // Creates a reduce-precision op, where operand is the data to reduce in
   // precision, and exponent_bits and mantissa_bits describe the precision to
   // reduce it to.
@@ -1050,10 +1076,10 @@ class HloInstruction {
   // The ragged all-to-all HLO has the following arguments:
   // input: ragged input data tensor.
   // input_offsets: ragged input offsets tensor.
-  // input_sizes: ragged input sizes tensor.
+  // send_sizes: ragged send sizes tensor.
   // output: ragged output data tensor.
   // output_offsets: ragged output offsets tensor.
-  // output_sizes: ragged output sizes tensor.
+  // recv_sizes: ragged recv sizes tensor.
   //
   // The '*_offsets' and '*_sizes' tensors must have the same shape.
   // The output buffer is passed in as an input (and aliased in the output),
@@ -2604,6 +2630,9 @@ class HloInstruction {
   // Delegates to HloDotInstruction::dot_dimension_numbers().
   const DotDimensionNumbers& dot_dimension_numbers() const;
 
+  // Delegates to HloRaggedDotInstruction::ragged_dot_dimension_numbers().
+  const RaggedDotDimensionNumbers& ragged_dot_dimension_numbers() const;
+
   // Delegates to HloDomainInstruction::operand_side_metadata().
   const DomainMetadata& operand_side_metadata() const;
 
@@ -2968,6 +2997,8 @@ std::string RandomDistributionToString(const RandomDistribution& distribution);
 std::string PrecisionToString(const PrecisionConfig::Precision& precision);
 std::string AlgorithmToString(const PrecisionConfig::Algorithm& algorithm);
 std::string DotDimensionNumbersToString(const DotDimensionNumbers& dnums);
+std::string RaggedDotDimensionNumbersToString(
+    const RaggedDotDimensionNumbers& dnums);
 std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums);
 

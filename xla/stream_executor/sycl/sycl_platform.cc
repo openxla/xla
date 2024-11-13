@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform/initialize.h"
@@ -49,7 +48,7 @@ Platform::Id SyclPlatform::id() const { return sycl::kSyclPlatformId; }
 
 int SyclPlatform::VisibleDeviceCount() const {
   // Initialized in a thread-safe manner the first time this is run.
-  static const int num_devices = [] { return GpuDriver::GetDeviceCount(); }();
+  static const int num_devices = [] { return 0; }();
   return num_devices;
 }
 
