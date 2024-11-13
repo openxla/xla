@@ -2117,7 +2117,7 @@ TEST_F(HloDataflowAnalysisTest, CombinedCollectivePermuteStartAndDone) {
   EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1}));
   EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1, 0}));
   EXPECT_TRUE(analysis.ValueIsDefinedAt(start, /*index=*/{1, 1}));
-  
+
   EXPECT_TRUE(analysis.ValueIsDefinedAt(done, /*index=*/{}));
   EXPECT_FALSE(analysis.ValueIsDefinedAt(done, /*index=*/{0}));
   EXPECT_FALSE(analysis.ValueIsDefinedAt(done, /*index=*/{1}));

@@ -2043,16 +2043,15 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
 
   auto operands = instr->operands();
   std::vector<NcclCollectiveThunk::Buffer> buffers;
-  for (int oprd_idx = 0; oprd_idx <  operands.size(); ++oprd_idx) {
+  for (int oprd_idx = 0; oprd_idx < operands.size(); ++oprd_idx) {
     const auto operand = operands.at(oprd_idx);
     const ShapeIndex nested_shape_idx = {1, oprd_idx}, normal_shape_idx = {1};
     const Shape operand_shape = operand->shape();
     const Shape result_shape = instr->shape().tuple_shapes(1);
-    TF_ASSIGN_OR_RETURN(
-        BufferAllocation::Slice result_slice,
-        GetAllocationSliceForHlo(instr, result_shape.IsTuple()
-                                            ? nested_shape_idx
-                                            : normal_shape_idx));
+    TF_ASSIGN_OR_RETURN(BufferAllocation::Slice result_slice,
+                        GetAllocationSliceForHlo(
+                            instr, result_shape.IsTuple() ? nested_shape_idx
+                                                          : normal_shape_idx));
 
     const int64_t src_memory_space = operand_shape.layout().memory_space();
     const int64_t dst_memory_space =

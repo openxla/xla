@@ -965,7 +965,8 @@ class HloCollectiveBroadcastInstruction : public HloCollectiveInstruction {
 class HloCollectivePermuteInstruction : public HloChannelInstruction {
  public:
   explicit HloCollectivePermuteInstruction(
-      HloOpcode opcode, const Shape& shape, absl::Span<HloInstruction* const> operands,
+      HloOpcode opcode, const Shape& shape,
+      absl::Span<HloInstruction* const> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<int64_t>& channel_id);
 
@@ -993,9 +994,7 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
            hlo->opcode() == HloOpcode::kCollectivePermuteStart;
   }
 
-  bool inplace() const {
-    return inplace_;
-  }
+  bool inplace() const { return inplace_; }
 
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,

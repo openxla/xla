@@ -1580,9 +1580,9 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
           // AllReduceDone's output aliases its input.
           break;
         case HloOpcode::kCollectivePermuteStart:
-          // CollectivePermuteStart produces a tuple of
-          // {{aliased operand(s)}, {destination buffer(s)}, contexts}, where the context
-          // data are optional.
+          // CollectivePermuteStart produces a tuple of {{aliased operand(s)},
+          // {destination buffer(s)}, contexts}, where the context data are
+          // optional.
           define_value_at(/*index=*/{});
           define_value_at(/*index=*/{1});
           for (int i = 2; i < instruction->shape().tuple_shapes_size(); ++i) {

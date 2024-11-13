@@ -2985,7 +2985,8 @@ void HloInstruction::AppendOperand(HloInstruction* operand) {
   operand->AddUser(this);
 }
 
-void HloInstruction::AppendOperands(absl::Span<HloInstruction* const> operands) {
+void HloInstruction::AppendOperands(
+    absl::Span<HloInstruction* const> operands) {
   for (HloInstruction* operand : operands) {
     HloInstruction::AppendOperand(operand);
   }

@@ -2664,8 +2664,8 @@ class HloInstruction {
       std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>
           aliasing);
 
-  // Appends operand(s) to the list of operands and adds this instruction as a user
-  // of the operand.
+  // Appends operand(s) to the list of operands and adds this instruction as a
+  // user of the operand.
   void AppendOperand(HloInstruction* operand);
   void AppendOperands(absl::Span<HloInstruction* const> operands);
 

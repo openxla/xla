@@ -78,7 +78,8 @@ bool IsLocalPeerTransfer(
 NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
     ThunkInfo thunk_info, NcclApi* nccl_api,
     const HloCollectivePermuteInstruction* instr, int64_t replica_count,
-    int64_t partition_count, const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
+    int64_t partition_count, const std::vector<Buffer>& buffers,
+    bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclCollectivePermuteStart, thunk_info,
                           nccl_api, IsSyncCollective(instr)),
       config_(GetNcclP2PConfig(instr, replica_count, partition_count)),
@@ -174,7 +175,8 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
     NcclCommHandleWrapper comm_wrapper) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
-      ConvertToDeviceBuffers(params, std::vector<NcclCollectiveThunk::Buffer>(buffers_),
+      ConvertToDeviceBuffers(params,
+                             std::vector<NcclCollectiveThunk::Buffer>(buffers_),
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(const int64_t current_id,
                       GetCurrentId(params.collective_params, config_));
@@ -197,8 +199,9 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
 
 absl::Status RunCollectivePermute(
     NcclApi* nccl_api, NcclP2PConfig::SourceTargetMapEntry source_target,
-    std::vector<DeviceBufferPair>& buffers, se::Stream& stream, NcclApi::NcclCommHandle comm,
-    absl::string_view device_string, int64_t current_id, bool use_memcpy,
+    std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
+    NcclApi::NcclCommHandle comm, absl::string_view device_string,
+    int64_t current_id, bool use_memcpy,
     NcclCollectivePermuteStartThunk::RecvPtrMap& recv_ptr_map) {
   // Determine the source and target IDs for this instance. The source ID is the
   // ID which will copy its data to this instance. The destination ID is the ID
@@ -252,13 +255,11 @@ absl::Status RunCollectivePermute(
     // Only change the pointer value when it's different from stored one.
     if (source_id) {
       std::vector<void*> dest_opaques;
-      std::transform(dest_addrs.begin(), dest_addrs.end(),
-                     std::back_inserter(dest_opaques),
-                     [](se::DeviceMemoryBase dest_addr) {
-                       return dest_addr.opaque();
-                     });
-      TF_RETURN_IF_ERROR(
-          recv_ptr_map.PutRecvPtr(current_id, dest_opaques));
+      std::transform(
+          dest_addrs.begin(), dest_addrs.end(),
+          std::back_inserter(dest_opaques),
+          [](se::DeviceMemoryBase dest_addr) { return dest_addr.opaque(); });
+      TF_RETURN_IF_ERROR(recv_ptr_map.PutRecvPtr(current_id, dest_opaques));
     }
   } else {
     // GroupStart/End API is needed if we will issue both send & recv calls, or
@@ -304,7 +305,8 @@ absl::Status RunCollectivePermute(
     }
   }
   if (use_memcpy && target_id) {
-    TF_ASSIGN_OR_RETURN(auto recv_ptrs_ref, recv_ptr_map.GetRecvPtr(*target_id));
+    TF_ASSIGN_OR_RETURN(auto recv_ptrs_ref,
+                        recv_ptr_map.GetRecvPtr(*target_id));
     if (recv_ptrs_ref.IsUnavailable()) {
       // TODO make BlockUntilReady support AsyncValueRef directly.
       BlockUntilReady(recv_ptrs_ref.GetAsyncValue());
@@ -318,7 +320,8 @@ absl::Status RunCollectivePermute(
     for (uint64_t idx = 0; idx < buffers.size(); ++idx) {
       se::DeviceMemoryBase dst_addr = se::DeviceMemoryBase(recv_ptrs.at(idx));
       auto src_addr = src_addrs.at(idx);
-      TF_RETURN_IF_ERROR(stream.MemcpyD2D(&dst_addr, src_addr, src_addr.size()));
+      TF_RETURN_IF_ERROR(
+          stream.MemcpyD2D(&dst_addr, src_addr, src_addr.size()));
     }
   }
 
