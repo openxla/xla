@@ -69,7 +69,8 @@ class HloReplicationAnalysis {
     static HloReplication ReplicatedOnAllDevices();
     static HloReplication UniqueOnAllDevices();
     static HloReplication PartiallyReplicated(
-        absl::Span<const std::vector<int64_t>> device_sets);
+        absl::Span<const std::vector<std::vector<int64_t>>>
+            groups_for_replicas);
     HloReplication();
     HloReplication(const HloReplication& other) = default;
     HloReplication(HloReplication&& other) = default;
@@ -88,14 +89,21 @@ class HloReplicationAnalysis {
       kPartiallyReplicated = 2,
     };
     explicit HloReplication(State state,
-                            absl::Span<const std::vector<int64_t>> device_sets);
+                            absl::Span<const std::vector<std::vector<int64_t>>>
+                                groups_for_replicas);
     State state_;
     // Empty if state_ is kReplicatedOnAllDevices or kUniqueOnAllDevices.
-    // Otherwise, when cross_partition_spmd is true, contains the partition IDs
-    // in the replica_groups of an all-gather, all-reduce or dynamic-slice. When
-    // cross_partition_spmd is false, contains the replica IDs in the
-    // replica_groups of an all-gather, all-reduce or dynamic-slice.
-    std::vector<std::vector<int64_t>> device_sets_;
+    //
+    // If cross_partition_spmd is true, groups_for_replicas_[k] holds the
+    // replica groups of an all-gather, all-reduce or dynamic-slice for
+    // replica k with each element of a replica group describing a partition
+    // ID.
+    //
+    // Similarly, if cross_partition_spmd is false, groups_for_replicas_[k]
+    // holds the replica groups of an all-gather, all-reduce or dynamic-slice
+    // for partition k with each element of a replica group describing a replica
+    // ID.
+    std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas_;
   };
 
   static HloReplication DetermineHloInstructionIsReplicated(
