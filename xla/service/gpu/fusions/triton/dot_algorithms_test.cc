@@ -789,6 +789,9 @@ CHECK-NOT: mma.sync.aligned.{{.*}}.row.col.f32.tf32.tf32.f32
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Triton currently disabled on ROCM.";
+  }
   const std::string kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32_X3
 
@@ -809,6 +812,9 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X3) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Triton currently disabled on ROCM.";
+  }
   const std::string kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32_X6
 
@@ -829,6 +835,9 @@ TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32_X6) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Triton currently disabled on ROCM.";
+  }
   const std::string kHloText = R"(
     HloModule Algorithm_TF32_TF32_F32
 
@@ -849,6 +858,9 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32) {
 }
 
 TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Triton currently disabled on ROCM.";
+  }
   const std::string kHloText = R"(
     HloModule Algorithm_TF32_TF32_F32_X3
 
@@ -871,6 +883,9 @@ TEST_F(TritonAlgorithmTest, Algorithm_TF32_TF32_F32_X3) {
 TEST_F(TritonAlgorithmTest, Algorithm_BF16_BF16_F32) {
   if (!SupportsBF16(GpuComputeComp())) {
     GTEST_SKIP() << "BF16 not supported.";
+  }
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "Triton currently disabled on ROCM.";
   }
   const std::string kHloText = R"(
     HloModule Algorithm_BF16_BF16_F32
