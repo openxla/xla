@@ -125,6 +125,9 @@ message ExecutableBuildOptionsProto {
   // ShardingPropagation and SpmdPartitioner. See go/xla-sdy-pipeline for
   // details.
   bool use_shardy_partitioner = 19;
+
+  int64 process_index = 22;
+  int64 process_count = 23;
 }
 
 message OptionOverrideProto {
