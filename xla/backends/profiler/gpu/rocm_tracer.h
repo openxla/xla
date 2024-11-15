@@ -58,9 +58,11 @@ public:
 
     // Only one profile session can be live in the same time.
     bool IsAvailable() const;
+    void Enable(const RocmTracerOptions& options, RocmTraceCollector* collector);
 
     static uint64_t GetTimestamp();
     static int NumGpus();
+
 
     void setup() CLIENT_API;
     void start() CLIENT_API;
@@ -81,6 +83,8 @@ private:
 
     bool is_available_; // availability status
     int num_gpus_; 
+    std::optional<RocmTracerOptions> options_;
+    RocmTraceCollector* collector_ = nullptr;
 
     // Disable copy constructor and assignment operator
     RocmTracer(const RocmTracer&) = delete;

@@ -19,6 +19,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/common/name_info.hpp"
 
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
+#include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/stream_executor/rocm/roctracer_wrapper.h"
 
 #include "absl/container/flat_hash_map.h"
@@ -181,15 +182,22 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
         throw std::runtime_error{"rocprofiler invoked a buffer callback with a null pointer to the "
                                  "array of headers. this should never happen"};
     */
-    LOG(ERROR) << "Number of heads = " << num_headers;
-    LOG(ERROR) << "Tracing category = " << ROCPROFILER_BUFFER_CATEGORY_TRACING;
+
+    auto* collector_impl = static_cast<RocmTraceCollector*>(user_data);
+    LOG(ERROR) << "Number of gpus = " << &collector_impl;
+
+
+    LOG(INFO) << "Number of heads = " << num_headers;
+    LOG(INFO) << "Tracing category = " << ROCPROFILER_BUFFER_CATEGORY_TRACING;
     for(size_t i = 0; i < num_headers; ++i)
     {
         auto* header = headers[i];
 
+        RocmTracerEvent event;
+
         auto kind_name = std::string{};
-        LOG(ERROR) << "head category = " << header->category;
-        LOG(ERROR) << "head kind = " << header->kind;
+        LOG(INFO) << "head category = " << header->category;
+        LOG(INFO) << "head kind = " << header->kind;
 
         if(header->category == ROCPROFILER_BUFFER_CATEGORY_TRACING)
         {
@@ -205,7 +213,7 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
                 len       = std::max(len, kind_name.length());
                 kind_name.resize(len, ' ');
                 kind_name += " :: ";
-                LOG(ERROR) << "kind name = " << kind_name;
+                LOG(INFO) << "kind name = " << kind_name;
             }
         }
 
@@ -214,6 +222,15 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
         {
             auto* record =
                 static_cast<rocprofiler_buffer_tracing_hip_api_record_t*>(header->payload);
+
+            event.type = RocmTracerEventType::HIP_RUNTIME_API;
+            event.start_time_ns = record->start_timestamp;
+            event.end_time_ns = record->end_timestamp;
+            // event.device_id = record->dispatch_info.agent_id.handle;;
+            // event.stream_id = record->stream_id;
+            event.correlation_id = record->correlation_id.internal;
+            event.name = client_name_info[record->kind][record->operation];
+
             auto info = std::stringstream{};
             info << "tid=" << record->thread_id << ", context=" << context.handle
                  << ", buffer_id=" << buffer_id.handle
@@ -241,6 +258,14 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
         {
             auto* record =
                 static_cast<rocprofiler_buffer_tracing_kernel_dispatch_record_t*>(header->payload);
+            
+            event.type = RocmTracerEventType::KERNEL_DISPATCH;
+            event.start_time_ns = record->start_timestamp;
+            event.end_time_ns = record->end_timestamp;
+            event.device_id = record->dispatch_info.agent_id.handle;
+            event.stream_id = record->dispatch_info.queue_id.handle;
+            event.correlation_id = record->correlation_id.internal;
+            event.name = client_kernels.at(record->dispatch_info.kernel_id).kernel_name;
 
             auto info = std::stringstream{};
 
@@ -253,6 +278,11 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
                  << ", queue_id=" << record->dispatch_info.queue_id.handle
                  << ", kernel_id=" << record->dispatch_info.kernel_id
                  << ", kernel=" << client_kernels.at(record->dispatch_info.kernel_id).kernel_name
+                 << ", kernel group segement size " << client_kernels.at(record->dispatch_info.kernel_id).group_segment_size
+                 << ", kernel private segement size " << client_kernels.at(record->dispatch_info.kernel_id).private_segment_size
+                 << ", kernel scalar general purpose register count " << client_kernels.at(record->dispatch_info.kernel_id).sgpr_count
+                 << ", kernel arch_vpgr_count " << client_kernels.at(record->dispatch_info.kernel_id).arch_vgpr_count
+                 << ", keernel accum_vpgr_count " << client_kernels.at(record->dispatch_info.kernel_id).accum_vgpr_count
                  << ", start=" << record->start_timestamp << ", stop=" << record->end_timestamp
                  << ", private_segment_size=" << record->dispatch_info.private_segment_size
                  << ", group_segment_size=" << record->dispatch_info.group_segment_size
@@ -303,7 +333,10 @@ tool_tracing_callback(rocprofiler_context_id_t      context,
             std::cout << _msg.str() << std::endl;
             // throw std::runtime_error{_msg.str()};
         }
-    }
+        // Pass the created event to RocmTraceCollectorImpl
+        LOG(ERROR) << "Prepare transferring event to RocmTraceCollectorImpl";
+        collector_impl->AddEvent(event);
+    }   
 }
 
 int tool_init(rocprofiler_client_finalize_t fini_func, void* tool_data)
@@ -426,6 +459,12 @@ int RocmTracer::NumGpus() {
     return num_gpus;
 }
 
+void RocmTracer::Enable(const RocmTracerOptions& options, RocmTraceCollector* collector) {
+    options_ = options;
+    collector_ = collector;
+    LOG(ERROR) << "GpuTracer started";
+}
+
 /*static*/ uint64_t RocmTracer::GetTimestamp() {
     uint64_t ts;
     rocprofiler_status_t CHECKSTATUS = se::wrap::rocprofiler_get_timestamp(&ts);
@@ -506,10 +545,7 @@ rocprofiler_configure(uint32_t                 version,
 
     std::clog << info.str() << std::endl;
 
-    auto* client_tool_data = new std::vector<xla::profiler::source_location>{};
-
-    client_tool_data->emplace_back(
-        xla::common::source_location{__FUNCTION__, __FILE__, __LINE__, info.str()});
+    auto* client_tool_data = new std::vector<>{};
 
     // create configure data
     static auto cfg =

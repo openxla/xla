@@ -216,7 +216,7 @@ absl::Status GpuTracer::DoStart() {
       trace_collector_options, start_walltime_ns, start_gputime_ns);
   LOG(ERROR) << "DoStart interrupted ...";
   RocmTracerOptions tracer_options = GetRocmTracerOptions();
-  // rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
+  rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
 
   return absl::OkStatus();
 }
@@ -247,7 +247,7 @@ absl::Status GpuTracer::Stop() {
 }
 
 absl::Status GpuTracer::CollectData(XSpace* space) {
-  // LOG(ERROR) << "profiling_state_" << profiling_state_;
+  LOG(ERROR) << "profiling_state_" << profiling_state_;
   switch (profiling_state_) {
     case State::kNotStarted:
       VLOG(3) << "No trace data collected, session wasn't started";
