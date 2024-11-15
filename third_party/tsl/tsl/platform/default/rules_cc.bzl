@@ -26,5 +26,6 @@ def cc_library(name, deps = None, **kwargs):
     # alias of `empty`.
     if name != "empty":
         deps = deps + ["@xla//xla/tsl:bazel_issue_21519"]  # buildifier: disable=list-append
+        deps = deps + ["@tsl//:bazel_issue_21519"]  # buildifier: disable=list-append
 
     native.cc_library(name = name, deps = deps, **kwargs)
