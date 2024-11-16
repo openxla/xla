@@ -208,7 +208,6 @@ absl::Status GpuTracer::DoStart() {
 
   rocm_tracer_->setup();
   rocm_tracer_->start();
-  rocm_tracer_->identify(1);
 
   uint64_t start_gputime_ns = rocm_tracer_->GetTimestamp();
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();

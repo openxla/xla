@@ -63,12 +63,10 @@ public:
     static uint64_t GetTimestamp();
     static int NumGpus();
 
-
     void setup() CLIENT_API;
     void start() CLIENT_API;
     void stop() CLIENT_API;
     void shutdown() CLIENT_API;
-    void identify(uint64_t corr_id) CLIENT_API;
 
 private:
     // Private constructor for singleton

@@ -87,6 +87,7 @@ enum class RocmTracerEventType {
   Unsupported = 0,
   HIP_RUNTIME_API,
   KERNEL_DISPATCH,
+  MEMORY_COPY,
 };
 
 const char* GetRocmTracerEventTypeName(const RocmTracerEventType& type);
@@ -116,16 +117,12 @@ struct RocmTracerEvent {
   // RocmTracerEventDomain domain;
   RocmTracerEventType type;
   std::string name;
-  // This points to strings in AnnotationMap, which should outlive the point
-  // where serialization happens.
-  // absl::string_view annotation;
-  // absl::string_view roctx_range;
   uint64_t start_time_ns = 0;
   uint64_t end_time_ns = 0;
-  uint32_t device_id = kInvalidDeviceId;
-  uint32_t correlation_id = kInvalidCorrelationId;
-  uint32_t thread_id = kInvalidThreadId;
-  int64_t stream_id = kInvalidStreamId;
+  uint32_t device_id = 0;
+  uint32_t correlation_id = 0;
+  uint32_t thread_id = 0;
+  int64_t stream_id = 0;
 };
 
 struct RocmTraceCollectorOptions {
