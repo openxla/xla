@@ -36,17 +36,15 @@ There are several terms that are used in the context of XLA, MLIR, LLVM, and oth
     - HLO is an internal graph representation (IR) for the XLA compiler (and also supported input). It is **not** based
       on MLIR, and has it's own textual syntax and binary (protobuf based) representation.
 - **MLIR**
-    - [MLIR](https://mlir.llvm.org) is intended to be a hybrid IR which can support multiple different requirements in a
-      unified infrastructure. It's accepted by LLVM as an input but it is not a language in itself; it is a framework
-      that allows you to define your own dialect, and then compile it to LLVM code.
+    - [MLIR](https://mlir.llvm.org) MLIR is a hybrid IR infrastructure that allows users to define "dialects" of
+      operations at varying degrees of abstraction, and gradually lower between these opsets performing transformations
+      at each granularity. There are [several standard dialects provided by LLVM](https://mlir.llvm.org/docs/Dialects/),
+      most important of which is [LLVM IR](https://mlir.llvm.org/docs/Dialects/LLVM/), which has one-to-one mapping to
+      LLVM code. The usual flow of a compiler is to start with MLIR in its own dialect, then iteratively lower to
+      standard LLVM dialects, until you reach "LLVM IR", which is converted to LLVM code and processed further by LLVM
+      compiler.
 - **LLVM**
     - [LLVM](https://llvm.org/) is a compiler backend, and a language that it takes as an input. Many compilers, like
       clang or rust, generate LLVM code as a first step, and then LLVM generates machine code from it. This allows
       developers to reuse code that is similar in different compilers, and also makes supporting different target
       platforms easier.
-- **Dialects**
-    - [Dialects](https://mlir.llvm.org/docs/LangRef/#dialects) are the mechanism by which to engage with and extend the
-      MLIR ecosystem. There are [several standard dialects provided by LLVM](https://mlir.llvm.org/docs/Dialects/), most
-      important of which is [LLVM IR](https://mlir.llvm.org/docs/Dialects/LLVM/), which has one-to-one mapping to LLVM
-      code. The usual flow of a compiler is to start with MLIR in its own dialect, then iteratively lower to standard
-      LLVM dialects, until you reach "LLVM IR", which is converted to LLVM code and processed further by LLVM compiler.
