@@ -633,15 +633,13 @@ cc_library(
     srcs = ["gpu_test_kernels_fatbin.cc"],
     hdrs = ["gpu_test_kernels_fatbin.h"],
     data = [":gpu_test_kernels_fatbin_extractor"],
-    local_defines = [
-        "FATBIN_SRC=\\\"$(rootpath :gpu_test_kernels_fatbin_extractor)\\\"",
-    ],
     tags = ["gpu"],
     deps = [
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:test",
     ],
 )
 
