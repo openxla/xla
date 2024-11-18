@@ -16,12 +16,23 @@ package_group(
 
 cc_library(
     name = "dialects",
-    srcs = glob(
-        [
-            "*.cc",
+    srcs = [
+            "affine.cc",
+            "arith.cc",
+            "bufferization.cc",
+            "builtin.cc",
+            "complex.cc",
+            "func.cc",
+            "linalg.cc",
+            "math.cc",
+            "memref.cc",
+            "mhlo.cc",
+            "mhlo_binary_cwise.cc",
+            "mhlo_unary_cwise.cc",
+            "scf.cc",
+            "tensor.cc",
+            "vector.cc",
         ],
-        exclude = ["util.cc"],
-    ),
     deps = [
         ":find_symbol",
         ":dialect_utils",
@@ -65,25 +76,31 @@ cc_library(
 )
 
 cc_library(
+    name = "symbol_finder_header",
+    hdrs = ["symbol_finder.h"],
+)
+
+cc_library(
     name = "symbol_finder_linux",
-    srcs = ["symbol_finder.h","symbol_finder_linux.cc"],
+    srcs = ["symbol_finder_linux.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
+        ":symbol_finder_header",
     ],
     tags = ["manual"],
 )
 
 cc_library(
     name = "symbol_finder_windows",
-    srcs = ["symbol_finder.h","symbol_finder_windows.cc"],
+    srcs = ["symbol_finder_windows.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
+        ":symbol_finder_header",
     ],
     tags = ["manual"],
 )
 
 cc_library(
     name = "find_symbol",
-    hdrs = ["symbol_finder.h"],
     deps = if_windows([":symbol_finder_windows"], [":symbol_finder_linux"]),
 )
