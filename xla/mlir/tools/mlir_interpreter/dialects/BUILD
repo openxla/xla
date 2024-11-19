@@ -76,31 +76,25 @@ cc_library(
 )
 
 cc_library(
-    name = "symbol_finder_header",
-    hdrs = ["symbol_finder.h"],
-)
-
-cc_library(
     name = "symbol_finder_linux",
-    srcs = ["symbol_finder_linux.cc"],
+    srcs = ["symbol_finder.h","symbol_finder_linux.cc"],
     deps = [
-        "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header",
+        "@com_google_absl//absl/status:statusor"
     ],
     tags = ["manual"],
 )
 
 cc_library(
     name = "symbol_finder_windows",
-    srcs = ["symbol_finder_windows.cc"],
+    srcs = ["symbol_finder.h","symbol_finder_windows.cc"],
     deps = [
         "@com_google_absl//absl/status:statusor",
-        ":symbol_finder_header",
     ],
     tags = ["manual"],
 )
 
 cc_library(
     name = "find_symbol",
+    hdrs = ["symbol_finder.h"],
     deps = if_windows([":symbol_finder_windows"], [":symbol_finder_linux"]),
 )
