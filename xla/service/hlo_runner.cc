@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/hlo_module_util.h"
 #include "xla/service/transfer_manager.h"
+#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory_allocator.h"
@@ -365,6 +366,15 @@ absl::StatusOr<ExecutionOutput> HloRunner::ExecuteWithExecutionInputs(
                                     stream.get(), nullptr, RunId(),
                                     backend().device_count());
   service_run_options.mutable_run_options()->set_execution_profile(profile);
+
+  auto options = executable->module().config().debug_options();
+  auto gpu_run_options = std::make_unique<gpu::GpuExecutableRunOptions>();
+  if (options.xla_gpu_require_exclusive_lock()) {
+    gpu_run_options->set_requires_exclusive_lock_on_gpu();
+  }
+
+  service_run_options.mutable_run_options()->set_gpu_executable_run_options(
+      gpu_run_options.get());
 
   TF_ASSIGN_OR_RETURN(ExecutionOutput retval,
                       executable->ExecuteOnStreamWrapper(&service_run_options,
