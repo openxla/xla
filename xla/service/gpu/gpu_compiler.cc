@@ -1294,6 +1294,9 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
   for (auto cmd_type : debug_option.xla_gpu_enable_command_buffer()) {
     commands.insert(static_cast<DebugOptions::CommandBufferCmdType>(cmd_type));
   }
+  // Disable dynamic slice fusion if the command buffer is enabled, this will
+  // make command buffer having fixed memory allocations during the whole module
+  // execution.
   if (debug_option.xla_gpu_enable_dynamic_slice_fusion() &&
       (!commands.contains(DebugOptions::FUSION))) {
     HloPassPipeline pipeline("dynamic-slice");
