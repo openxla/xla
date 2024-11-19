@@ -1289,9 +1289,13 @@ absl::Status RunAsyncDotPasses(HloModule* hlo_module) {
 
 absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
                                          se::Platform::Id platform_id) {
-  if (hlo_module->config()
-          .debug_options()
-          .xla_gpu_enable_dynamic_slice_fusion()) {
+  auto& debug_option = hlo_module->config().debug_options();
+  absl::flat_hash_set<DebugOptions::CommandBufferCmdType> commands;
+  for (auto cmd_type : debug_option.xla_gpu_enable_command_buffer()) {
+    commands.insert(static_cast<DebugOptions::CommandBufferCmdType>(cmd_type));
+  }
+  if (debug_option.xla_gpu_enable_dynamic_slice_fusion() &&
+      (!commands.contains(DebugOptions::FUSION))) {
     HloPassPipeline pipeline("dynamic-slice");
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         se::PlatformManager::PlatformWithId(platform_id));
