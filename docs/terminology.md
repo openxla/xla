@@ -43,5 +43,5 @@ There are several terms that are used in the context of XLA, MLIR, LLVM, and oth
     - [LLVM](https://llvm.org/) is a compiler backend, and a language that it takes as an input. Many compilers generate
       LLVM code as a first step, and then LLVM generates machine code from it. This allows developers to reuse code that
       is similar in different compilers, and also makes supporting different target platforms easier. XLA:GPU and CPU
-      backends have [LLVM IR emitters](https://github.com/openxla/xla/tree/eaf3da004abf3f370a441ebb2719d82b83ba6308/xla/service/llvm_ir)
+      backends have [LLVM IR emitters](https://github.com/openxla/xla/tree/main/xla/service/llvm_ir)
       for targeting specific hardware.
