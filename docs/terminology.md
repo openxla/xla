@@ -30,21 +30,18 @@ There are several terms that are used in the context of XLA, MLIR, LLVM, and oth
       StableHLO. It provides a snapshot of the StableHLO dialect at a given point in time by versioning individual
       program elements, and is used for serialization and stability.
 - **MHLO**
-    - MHLO aka [MLIR-HLO](https://github.com/tensorflow/mlir-hlo) is a standalone MLIR-based input of XLA, but is
-      deprecated. Users are encouraged to use StableHLO instead.
+    - MHLO is a standalone MLIR-based representation of XLA's HLO IR. The dialect is being evaluated for deprecation,
+      and new users of the dialect should prefer to use StableHLO instead.
 - **HLO**
     - HLO is an internal graph representation (IR) for the XLA compiler (and also supported input). It is **not** based
       on MLIR, and has it's own textual syntax and binary (protobuf based) representation.
 - **MLIR**
     - [MLIR](https://mlir.llvm.org) MLIR is a hybrid IR infrastructure that allows users to define "dialects" of
       operations at varying degrees of abstraction, and gradually lower between these opsets performing transformations
-      at each granularity. There are [several standard dialects provided by LLVM](https://mlir.llvm.org/docs/Dialects/),
-      most important of which is [LLVM IR](https://mlir.llvm.org/docs/Dialects/LLVM/), which has one-to-one mapping to
-      LLVM code. The usual flow of a compiler is to start with MLIR in its own dialect, then iteratively lower to
-      standard LLVM dialects, until you reach "LLVM IR", which is converted to LLVM code and processed further by LLVM
-      compiler.
+      at each granularity. StableHLO and CHLO are two examples of MLIR dialects.
 - **LLVM**
-    - [LLVM](https://llvm.org/) is a compiler backend, and a language that it takes as an input. Many compilers, like
-      clang or rust, generate LLVM code as a first step, and then LLVM generates machine code from it. This allows
-      developers to reuse code that is similar in different compilers, and also makes supporting different target
-      platforms easier.
+    - [LLVM](https://llvm.org/) is a compiler backend, and a language that it takes as an input. Many compilers generate
+      LLVM code as a first step, and then LLVM generates machine code from it. This allows developers to reuse code that
+      is similar in different compilers, and also makes supporting different target platforms easier. XLA:GPU and CPU
+      backends have [LLVM IR emitters](https://github.com/openxla/xla/tree/eaf3da004abf3f370a441ebb2719d82b83ba6308/xla/service/llvm_ir)
+      for targeting specific hardware.
