@@ -36,7 +36,7 @@ namespace cpu {
 
 class MatmulTest : public HloTestBase {
  protected:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_cpu_use_thunk_runtime(false);
     return debug_options;
@@ -286,10 +286,10 @@ TEST_F(MatmulTest, SimpleTestF32Add2Dots) {
   HloModule matmul.biasadd.test.f32
 
   ENTRY matmul.biasadd.test.f32 {
-    arg0.1 = f32[32,32,40,30] parameter(0), parameter_replication={false}
-    arg0.2 = f32[32,32,30,40] parameter(1), parameter_replication={false}
-    arg0.3 = f32[32,32,40,40] parameter(2), parameter_replication={false}
-    arg0.4 = f32[32,32,40,40] parameter(3), parameter_replication={false}
+    arg0.1 = f32[32,32,40,30] parameter(0)
+    arg0.2 = f32[32,32,30,40] parameter(1)
+    arg0.3 = f32[32,32,40,40] parameter(2)
+    arg0.4 = f32[32,32,40,40] parameter(3)
     dot.7 = f32[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
     dot.8 = f32[32,32,40,40] dot(arg0.3, arg0.4), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
     ROOT add.10 = f32[32,32,40,40] add(dot.7, dot.8)
@@ -308,39 +308,17 @@ TEST_F(MatmulTest, SimpleTestF16Add2Dots) {
   HloModule matmul.biasadd.test.f16
 
   ENTRY matmul.biasadd.test.f16 {
-    arg0.1 = f16[32,32,40,30] parameter(0), parameter_replication={false}
-    arg0.2 = f16[32,32,30,40] parameter(1), parameter_replication={false}
-    arg0.3 = f16[32,32,40,40] parameter(2), parameter_replication={false}
-    arg0.4 = f16[32,32,40,40] parameter(3), parameter_replication={false}
-    dot.7 = f16[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    dot.8 = f16[32,32,40,40] dot(arg0.3, arg0.4), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    ROOT add.10 = f16[32,32,40,40] add(dot.7, dot.8)
+    arg0.1 = f16[32,64,128] parameter(0)
+    arg0.2 = f16[32,128,64] parameter(1)
+    arg0.3 = f16[32,64,64] parameter(2)
+    arg0.4 = f16[32,64,64] parameter(3)
+    dot.7 = f16[32,64,64] dot(arg0.1, arg0.2), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+    dot.8 = f16[32,64,64] dot(arg0.3, arg0.4), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+    ROOT add.10 = f16[32,64,64] add(dot.7, dot.8)
   })";
 
   EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-2}));
   MatchOptimizedHlo(matmul_module_str, fused_matmul_sum_);
-}
-
-TEST_F(MatmulTest, SimpleTestBF16Add2Dots) {
-  if (!IsSupportedType(PrimitiveType::BF16)) {
-    GTEST_SKIP() << "CPU does not support BF16.";
-  }
-
-  const char* matmul_module_str = R"(
-  HloModule matmul.biasadd.test.bf16
-
-  ENTRY matmul.biasadd.test.bf16 {
-    arg0.1 = bf16[32,32,40,30] parameter(0), parameter_replication={false}
-    arg0.2 = bf16[32,32,30,40] parameter(1), parameter_replication={false}
-    arg0.3 = bf16[32,32,40,40] parameter(2), parameter_replication={false}
-    arg0.4 = bf16[32,32,40,40] parameter(3), parameter_replication={false}
-    dot.7 = bf16[32,32,40,40] dot(arg0.1, arg0.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    dot.8 = bf16[32,32,40,40] dot(arg0.3, arg0.4), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}
-    ROOT add.10 = bf16[32,32,40,40] add(dot.7, dot.8)
-  })";
-
-  EXPECT_TRUE(RunAndCompare(matmul_module_str, ErrorSpec{1e-2, 1e-2}));
-  MatchOptimizedHlo(matmul_module_str, fused_matmul_binary_add_);
 }
 
 TEST_F(MatmulTest, SimpleTestF32WithBiasAsParameter2) {

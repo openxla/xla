@@ -666,7 +666,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
         m::Op(&addend));
     if (!Match(addend_intermediate, addend_pattern)) return absl::OkStatus();
 
-    if (optional_addend_broadcast) {
+    if (optional_addend_broadcast && addend->shape().rank() != 1) {
       auto new_shape =
           AdjustBiasShape(optional_addend_broadcast, contraction->shape());
       if (new_shape.ok()) {
@@ -702,7 +702,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     // implementation for broadcasted add across all dimensions.
     OneDnnFusionConfig_FusionKind kind = OneDnnFusionConfig::UNDEFINED;
     kind =
-        (ShapeUtil::TrueRank(addend->shape()) == 1)
+        (addend->shape().rank() == 1)
             ? (GetKernelConfig<config>(&backend_config)->fusions().ops().empty()
                    ? OneDnnFusionConfig::BIAS
                    : OneDnnFusionConfig::UNDEFINED)
@@ -710,6 +710,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                        : OneDnnFusionConfig::BINARY_ADD;
     if (kind == OneDnnFusionConfig::UNDEFINED) return absl::OkStatus();
 
+    // Alias output buffers to addend for in-place accumulation
     if (kind == OneDnnFusionConfig::SUM) {
       custom_call->set_output_to_operand_aliasing({{{}, {addend_idx, {}}}});
     }

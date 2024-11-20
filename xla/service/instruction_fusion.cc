@@ -38,12 +38,12 @@ limitations under the License.
 #endif  // PLATFORM_GOOGLE
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_reachability.h"
 #include "xla/map_util.h"
 #include "xla/service/fusion_queue.h"
-#include "xla/service/hlo_dataflow_analysis.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
@@ -210,6 +210,8 @@ bool IsAlwaysDuplicable(const HloInstruction& instruction) {
     case HloOpcode::kMap:
     case HloOpcode::kParameter:
     case HloOpcode::kPower:
+    case HloOpcode::kRaggedAllToAll:
+    case HloOpcode::kRaggedDot:
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kReduce:
@@ -789,9 +791,9 @@ bool InstructionFusion::MultiOutputFusionCreatesCycle(
     HloInstruction* producer, HloInstruction* consumer,
     const HloReachabilityMap& reachability) {
   absl::flat_hash_set<int> operands;
-  for (const HloInstruction* operand : consumer->operands()) {
+  auto insert = [&](const HloInstruction* operand) {
     if (operand == producer) {
-      continue;
+      return false;
     }
 
     // If the reachability map already contains the producer and the operand of
@@ -804,11 +806,25 @@ bool InstructionFusion::MultiOutputFusionCreatesCycle(
       return true;
     }
     operands.insert(operand->unique_id());
+    return false;
+  };
+
+  for (const HloInstruction* operand : consumer->operands()) {
+    if (insert(operand)) {
+      return true;
+    }
+  }
+  for (const HloInstruction* predecessor : consumer->control_predecessors()) {
+    if (insert(predecessor)) {
+      return true;
+    }
   }
 
   // Do a DFS on the producer to see if any of the other consumer operands are
   // reachable in the current state of the graph.
   std::vector<HloInstruction*> worklist = producer->users();
+  worklist.insert(worklist.end(), producer->control_successors().begin(),
+                  producer->control_successors().end());
   absl::flat_hash_set<int> visits;
   while (!worklist.empty()) {
     const HloInstruction* user = worklist.back();
@@ -820,6 +836,8 @@ bool InstructionFusion::MultiOutputFusionCreatesCycle(
       visits.insert(user->unique_id());
       worklist.insert(worklist.end(), user->users().begin(),
                       user->users().end());
+      worklist.insert(worklist.end(), user->control_successors().begin(),
+                      user->control_successors().end());
     }
   }
   return false;

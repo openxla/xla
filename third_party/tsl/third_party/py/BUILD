@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@python//:defs.bzl", "compile_pip_requirements")
 load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
 
@@ -37,4 +38,37 @@ compile_pip_requirements(
     generate_hashes = False,
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
+)
+
+# Flag indicating if the target requires pre-built wheel.
+bool_flag(
+    name = "wheel_dependency",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "enable_wheel_dependency",
+    flag_values = {
+        ":wheel_dependency": "True",
+    },
+)
+
+# Flag indicating if the target requires wheel compliance verification.
+bool_flag(
+    name = "wheel_compliance",
+    # TODO(ybaturina): Enable the flag by default when hermetic C++ toolchain is ready.
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "verify_wheel_compliance_py",
+    srcs = [
+        "verify_wheel_compliance.py",
+    ],
+    main = "verify_wheel_compliance.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@pypi_auditwheel//:pkg",
+    ],
 )

@@ -21,6 +21,10 @@ cc_library(
         "//tensorflow/python/profiler/internal:__subpackages__",
     ]),
     deps = [
+        "//xla/tsl/profiler/utils:time_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
@@ -31,10 +35,6 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:time_utils",
-        "@tsl//tsl/profiler/utils:xplane_builder",
-        "@tsl//tsl/profiler/utils:xplane_schema",
-        "@tsl//tsl/profiler/utils:xplane_utils",
     ],
     alwayslink = True,
 )

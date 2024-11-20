@@ -2023,6 +2023,32 @@ XlaOp XlaBuilder::SparseDot(
   });
 }
 
+XlaOp XlaBuilder::RaggedDot(
+    XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+    const RaggedDotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config,
+    std::optional<PrimitiveType> preferred_element_type) {
+  return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
+    TF_ASSIGN_OR_RETURN(const Shape* lhs_shape, GetShapePtr(lhs));
+    TF_ASSIGN_OR_RETURN(const Shape* rhs_shape, GetShapePtr(rhs));
+    TF_ASSIGN_OR_RETURN(const Shape* group_sizes_shape,
+                        GetShapePtr(group_sizes));
+    TF_ASSIGN_OR_RETURN(Shape shape,
+                        ShapeInference::InferRaggedDotOpShape(
+                            *lhs_shape, *rhs_shape, *group_sizes_shape,
+                            dimension_numbers, preferred_element_type));
+
+    std::vector<XlaOp> operands{lhs, rhs, group_sizes};
+    HloInstructionProto instr;
+    *instr.mutable_shape() = shape.ToProto();
+    *instr.mutable_ragged_dot_dimension_numbers() = dimension_numbers;
+    if (precision_config != nullptr) {
+      *instr.mutable_precision_config() = *precision_config;
+    }
+    return AddInstruction(std::move(instr), HloOpcode::kRaggedDot, operands);
+  });
+}
+
 absl::Status XlaBuilder::VerifyConvolution(
     const Shape& lhs_shape, const Shape& rhs_shape,
     const ConvolutionDimensionNumbers& dimension_numbers) const {
@@ -2396,7 +2422,14 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
     // Infeed takes a single token operand. Generate the token to pass to the
     // infeed.
     XlaOp token;
-    auto make_token = [&]() {
+    auto make_token = [&]() -> absl::StatusOr<XlaOp> {
+      if (infeed_token_.valid()) {
+        LOG(WARNING)
+            << "XLA computation " << name()
+            << " contains multiple infeed ops without explicit user ordering, "
+               "this is hazardous. Enforcing implicit ordering.";
+        return infeed_token_;
+      }
       HloInstructionProto token_instr;
       *token_instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
       return AddInstruction(std::move(token_instr), HloOpcode::kAfterAll, {});
@@ -2430,6 +2463,13 @@ XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
       TF_ASSIGN_OR_RETURN(infeed, AddInstruction(std::move(instr),
                                                  HloOpcode::kInfeed, {token}));
     }
+
+    HloInstructionProto infeed_token;
+    *infeed_token.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
+    infeed_token.set_tuple_index(1);
+    TF_ASSIGN_OR_RETURN(infeed_token_,
+                        AddInstruction(std::move(infeed_token),
+                                       HloOpcode::kGetTupleElement, {infeed}));
 
     // The infeed instruction produces a tuple of the infed data and a token
     // type. Return XLA op containing the data.
@@ -2501,14 +2541,23 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
     // Outfeed takes a token as its second operand. Generate the token to pass
     // to the outfeed.
     XlaOp token;
-    auto make_token = [&]() {
+    auto make_token = [&]() -> absl::StatusOr<XlaOp> {
+      if (outfeed_token_.valid()) {
+        LOG(WARNING)
+            << "XLA computation " << name()
+            << " contains multiple outfeed ops without explicit user ordering, "
+               "this is hazardous. Enforcing implicit ordering.";
+        return outfeed_token_;
+      }
       HloInstructionProto token_instr;
       *token_instr.mutable_shape() = ShapeUtil::MakeTokenShape().ToProto();
       return AddInstruction(std::move(token_instr), HloOpcode::kAfterAll, {});
     };
     auto make_outfeed = [&](XlaOp token) {
-      return AddInstruction(std::move(instr), HloOpcode::kOutfeed,
-                            {operand, token});
+      TF_ASSIGN_OR_RETURN(outfeed_token_,
+                          AddInstruction(std::move(instr), HloOpcode::kOutfeed,
+                                         {operand, token}));
+      return absl::OkStatus();
     };
     if (sharding()) {
       XlaScopedShardingAssignment scoped_sharding(
@@ -2525,9 +2574,9 @@ void XlaBuilder::Outfeed(XlaOp operand, const Shape& shape_with_layout,
       }
       *tuple_sharding.add_tuple_shardings() = sharding_builder::AssignDevice(0);
       XlaScopedShardingAssignment scoped_sharding(this, tuple_sharding);
-      TF_RETURN_IF_ERROR(make_outfeed(token).status());
+      TF_RETURN_IF_ERROR(make_outfeed(token));
     } else {
-      TF_RETURN_IF_ERROR(make_outfeed(token).status());
+      TF_RETURN_IF_ERROR(make_outfeed(token));
     }
     // The outfeed instruction produces a token. However, existing users expect
     // a nil shape (empty tuple). This should only be relevant if the outfeed is
@@ -5074,6 +5123,14 @@ XlaOp SparseDot(const XlaOp lhs, const XlaOp rhs,
   return lhs.builder()->SparseDot(lhs, rhs, sparse_meta, sparsity,
                                   dimension_numbers, precision_config,
                                   preferred_element_type);
+}
+
+XlaOp RaggedDot(const XlaOp lhs, const XlaOp rhs, const XlaOp group_sizes,
+                const RaggedDotDimensionNumbers& dimension_numbers,
+                const PrecisionConfig* precision_config,
+                std::optional<PrimitiveType> preferred_element_type) {
+  return lhs.builder()->RaggedDot(lhs, rhs, group_sizes, dimension_numbers,
+                                  precision_config, preferred_element_type);
 }
 
 XlaOp Conv(const XlaOp lhs, const XlaOp rhs,

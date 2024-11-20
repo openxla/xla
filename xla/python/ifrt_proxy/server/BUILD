@@ -146,7 +146,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:env",
@@ -177,12 +179,14 @@ ifrt_proxy_cc_test(
         "//xla/python/ifrt:mock",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:sharding_serdes",
+        "//xla/python/ifrt_proxy/common:array_util",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "//xla/python/ifrt_proxy/common:types_proto_cc",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/service:computation_placer_hdr",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -191,6 +195,7 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
@@ -203,7 +208,6 @@ ifrt_proxy_cc_test(
         "@tsl//tsl/platform:status_to_from_proto",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
@@ -232,6 +236,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -264,6 +270,7 @@ cc_library(
     srcs = ["version.cc"],
     hdrs = ["version.h"],
     deps = [
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -286,8 +293,12 @@ ifrt_proxy_cc_test(
     srcs = ["host_buffer_test.cc"],
     deps = [
         ":host_buffer",
+        "//xla/python/ifrt",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:status_matchers",
     ],
 )

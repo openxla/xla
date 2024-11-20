@@ -55,11 +55,11 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = internal_visibility(["//xla/tsl/profiler:internal"]),
     deps = [
+        "//xla/tsl/profiler/utils:timestamp_utils",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:timestamp_utils",
-        "@tsl//tsl/profiler/utils:xplane_schema",
-        "@tsl//tsl/profiler/utils:xplane_utils",
     ],
 )
 
@@ -73,14 +73,14 @@ cc_library(
     ]),
     deps = [
         ":trace_container",
+        "//xla/tsl/profiler/utils:format_utils",
+        "//xla/tsl/profiler/utils:math_utils",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
         "@jsoncpp_git//:jsoncpp",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
-        "@tsl//tsl/profiler/utils:format_utils",
-        "@tsl//tsl/profiler/utils:math_utils",
     ],
 )
 
@@ -120,16 +120,16 @@ cc_library(
     ]),
     deps = [
         ":trace_container",
+        "//xla/tsl/profiler/utils:tf_xplane_visitor",
+        "//xla/tsl/profiler/utils:trace_utils",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
+        "//xla/tsl/profiler/utils:xplane_visitor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:tf_xplane_visitor",
-        "@tsl//tsl/profiler/utils:trace_utils",
-        "@tsl//tsl/profiler/utils:xplane_schema",
-        "@tsl//tsl/profiler/utils:xplane_utils",
-        "@tsl//tsl/profiler/utils:xplane_visitor",
     ],
 )
 
@@ -139,12 +139,12 @@ tsl_cc_test(
     srcs = ["xplane_to_trace_events_test.cc"],
     deps = [
         ":xplane_to_trace_events",
+        "//xla/tsl/profiler/utils:trace_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
         "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:trace_utils",
-        "@tsl//tsl/profiler/utils:xplane_builder",
-        "@tsl//tsl/profiler/utils:xplane_schema",
     ],
 )

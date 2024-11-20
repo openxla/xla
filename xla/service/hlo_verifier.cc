@@ -267,6 +267,19 @@ absl::Status ShapeVerifier::HandleDot(HloInstruction* dot) {
   return CheckShape(dot, expected);
 }
 
+absl::Status ShapeVerifier::HandleRaggedDot(HloInstruction* ragged_dot) {
+  TF_RETURN_IF_ERROR(
+      CheckOperandCount(ragged_dot, HloRaggedDotInstruction::kOperands));
+  TF_ASSIGN_OR_RETURN(
+      const Shape expected,
+      ShapeInference::InferRaggedDotOpShape(
+          ragged_dot->operand(0)->shape(), ragged_dot->operand(1)->shape(),
+          ragged_dot->operand(2)->shape(),
+          ragged_dot->ragged_dot_dimension_numbers(),
+          /*preferred_element_type=*/ragged_dot->shape().element_type()));
+  return CheckShape(ragged_dot, expected);
+}
+
 absl::Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
   TF_ASSIGN_OR_RETURN(
       Shape expected,
@@ -613,6 +626,24 @@ absl::Status ShapeVerifier::HandleAllToAll(HloInstruction* hlo) {
     return CheckShape(hlo,
                       ShapeInference::InferAllToAllTupleShape(operand_shapes));
   }
+}
+
+absl::Status ShapeVerifier::HandleRaggedAllToAll(HloInstruction* hlo) {
+  auto* all_to_all = Cast<HloRaggedAllToAllInstruction>(hlo);
+  TF_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
+                      GetCollectiveOpGroupMode(
+                          all_to_all->channel_id().has_value(), std::nullopt));
+
+  TF_RETURN_IF_ERROR(CheckReplicaGroups(hlo, group_mode));
+
+  TF_RET_CHECK(all_to_all != nullptr);
+  TF_RET_CHECK(hlo->operand_count() == 6);
+  std::vector<const Shape*> operand_shapes;
+  for (const HloInstruction* operand : hlo->operands()) {
+    operand_shapes.push_back(&operand->shape());
+  }
+  return CheckShape(hlo,
+                    ShapeInference::InferRaggedAllToAllShape(operand_shapes));
 }
 
 absl::Status ShapeVerifier::HandlePartitionId(HloInstruction* hlo) {
@@ -1961,7 +1992,15 @@ absl::Status ShapeVerifier::CheckShape(
             if (instruction_memory_space != operand_memory_space &&
                 (instruction_memory_space == Layout::kHostMemorySpace ||
                  operand_memory_space == Layout::kHostMemorySpace)) {
-              // Is a host->device copy for a device->host copy.
+              if (instruction_memory_space == Layout::kHostMemorySpace) {
+                // Unfortunately it might still be a host->host copy before
+                // memory space is propagated. A transpose is allowed in that
+                // case.
+                return instruction->shape().element_type() ==
+                       inferred_shape.element_type();
+              }
+              // A host->device copy or a device->host copy cannot do a
+              // transpose.
               return Shape::Equal().IgnoreMemorySpaceInLayout()(
                   instruction->shape(), inferred_shape);
             }
@@ -2369,6 +2408,12 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
           break;
         }
         case HloOpcode::kSend: {
+          // If the instruction is kSend or kRecv, it can have no users if and
+          // only if it is wrapped in an async call.
+          if (instruction->IsRoot() &&
+              instruction->parent()->IsAsyncComputation()) {
+            break;
+          }
           TF_RETURN_IF_ERROR(VerifySingleUser(
               instruction, {HloOpcode::kSendDone, HloOpcode::kTuple}));
           break;
@@ -2379,6 +2424,12 @@ absl::Status VerifyAsynchronousInstructionPairs(const HloModule& module) {
           break;
         }
         case HloOpcode::kRecv: {
+          // If the instruction is kSend or kRecv, it can have no users if and
+          // only if it is wrapped in an async call.
+          if (instruction->IsRoot() &&
+              instruction->parent()->IsAsyncComputation()) {
+            break;
+          }
           TF_RETURN_IF_ERROR(VerifySingleUser(
               instruction, {HloOpcode::kRecvDone, HloOpcode::kTuple}));
           break;
@@ -2451,6 +2502,12 @@ absl::Status VerifyChannels(const HloModule& module,
 
       switch (instruction->opcode()) {
         case HloOpcode::kSend: {
+          // If the instruction is kSend or kRecv, it can have no users if and
+          // only if it is wrapped in an async call.
+          if (instruction->IsRoot() &&
+              instruction->parent()->IsAsyncComputation()) {
+            break;
+          }
           TF_RET_CHECK(instruction->users().size() == 1);
           const HloInstruction* send_done = instruction->users().front();
           if (send_done->opcode() == HloOpcode::kSendDone) {
@@ -2460,6 +2517,12 @@ absl::Status VerifyChannels(const HloModule& module,
           break;
         }
         case HloOpcode::kRecv: {
+          // If the instruction is kSend or kRecv, it can have no users if and
+          // only if it is wrapped in an async call.
+          if (instruction->IsRoot() &&
+              instruction->parent()->IsAsyncComputation()) {
+            break;
+          }
           TF_RET_CHECK(instruction->users().size() == 1);
           const HloInstruction* recv_done = instruction->users().front();
           if (recv_done->opcode() == HloOpcode::kRecvDone) {
@@ -2479,8 +2542,7 @@ absl::Status VerifyChannels(const HloModule& module,
   }
 
   // Iterate over each channel to check invariants.
-  for (auto& pair : channel_instructions) {
-    auto& instructions = pair.second;
+  for (auto& [channel_id, instructions] : channel_instructions) {
     const HloInstruction* first = instructions[0];
     if (const auto* sendrecv = DynCast<HloSendRecvInstruction>(first)) {
       absl::flat_hash_set<HloOpcode> opcodes;
@@ -2488,19 +2550,14 @@ absl::Status VerifyChannels(const HloModule& module,
         opcodes.insert(instr->opcode());
         auto cast = DynCast<HloSendRecvInstruction>(instr);
         TF_RET_CHECK(cast != nullptr)
-            << "channel " << pair.first
+            << "channel " << channel_id
             << " is used for different types of channel instructions";
       }
-      if (sendrecv->is_host_transfer()) {
-        TF_RET_CHECK(instructions.size() == 2)
-            << "channel " << pair.first
-            << " is used for multiple host send/recv instructions";
-      }
     } else {
-      for (const HloInstruction* instr : instructions) {
-        if (opts.verify_unique_channel_ids) {
+      if (opts.verify_unique_channel_ids) {
+        for (const HloInstruction* instr : instructions) {
           TF_RET_CHECK(first->opcode() == instr->opcode())
-              << "channel " << pair.first
+              << "channel " << channel_id
               << " is used for different types of channel instructions";
         }
       }
@@ -2911,8 +2968,12 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
           const Layout& operand_layout = operand_shape.layout();
           Layout::Equal equal_predicate =
               Layout::Equal().IgnoreTiles().IgnoreMemorySpace();
-          if (instruction->opcode() == HloOpcode::kConvert) {
-            // Convert instructions can change element_size_in_bits
+          if (instruction->opcode() == HloOpcode::kConvert ||
+              instruction->opcode() == HloOpcode::kCompare ||
+              (instruction->opcode() == HloOpcode::kSelect &&
+               operand_shape.element_type() == PRED)) {
+            // Convert and Compare instructions can change element_size_in_bits
+            // Select instructions ignore element_size_in_bits for predicate
             equal_predicate.IgnoreElementSize();
           } else if (instruction->opcode() == HloOpcode::kDynamicSlice ||
                      instruction->opcode() == HloOpcode::kDynamicUpdateSlice ||
@@ -3023,7 +3084,11 @@ absl::StatusOr<bool> HloVerifier::Run(
     for (auto* computation : module->computations(execution_threads)) {
       TF_RETURN_IF_ERROR(computation->Accept(shape_verifier.get()));
       TF_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
-      if (computation->IsAsyncComputation()) {
+      // Verify that async computations contain a single instruction or a
+      // collection of send/recv instructions. This is needed to represent NCCL
+      // groups on GPU.
+      if (computation->IsAsyncComputation() &&
+          !computation->OnlyContainsSendRecv()) {
         TF_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

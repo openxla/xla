@@ -47,9 +47,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/layout_util.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/pattern_matcher_gmock.h"
 #include "xla/shape.h"
@@ -1464,6 +1464,51 @@ TEST(XlaBuilderTest, SparseDot) {
   SparseDot(lhs, rhs, sparse_meta, sparsity, dnums);
   TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
   TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[10, 20]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, RaggedDotNonContractingWithPreferredElementType) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(S8, {11, 5}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(S8, {3, 5, 7}), "rhs");
+  auto group_sizes =
+      Parameter(&b, 2, ShapeUtil::MakeShape(U32, {3}), "group_sizes");
+
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_contracting_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(1);
+  RaggedDotDimensionNumbers ragged_dot_dnums;
+  *ragged_dot_dnums.mutable_dot_dimension_numbers() = dot_dnums;
+  ragged_dot_dnums.add_lhs_ragged_dimensions(0);
+  ragged_dot_dnums.add_rhs_group_dimensions(0);
+
+  RaggedDot(lhs, rhs, group_sizes, ragged_dot_dnums,
+            /*precision_config=*/nullptr, /*preferred_element_type=*/S32);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("s32[11, 7]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, RaggedDotContractingWithPreferredElementType) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(BF16, {11, 5}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(BF16, {5, 7}), "rhs");
+  auto group_sizes =
+      Parameter(&b, 2, ShapeUtil::MakeShape(U32, {3}), "group_sizes");
+
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_contracting_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(0);
+  RaggedDotDimensionNumbers ragged_dot_dnums;
+  *ragged_dot_dnums.mutable_dot_dimension_numbers() = dot_dnums;
+  ragged_dot_dnums.add_lhs_ragged_dimensions(1);
+
+  RaggedDot(lhs, rhs, group_sizes, ragged_dot_dnums,
+            /*precision_config=*/nullptr, /*preferred_element_type=*/F32);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[3, 11, 7]"));
   EXPECT_THAT(GetRoot(*module),
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
@@ -3563,6 +3608,39 @@ INSTANTIATE_TEST_SUITE_P(
         {"f32[?, 10]", "f32[1]", /*broadcast_dimensions=*/zero_array,
          "f32[?, 10]", &Sub},
     }));
+
+TEST(XlaBuilderTest, UnorderedInfeed) {
+  XlaBuilder b(TestName());
+  const Shape s = ShapeUtil::MakeShape(PRED, {});
+  XlaOp infeed0 = Infeed(&b, s);
+  XlaOp infeed1 = Infeed(&b, s);
+  And(infeed0, infeed1);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  // infeed0 should use an arbitrary token.
+  // infeed1 should use the token produced by infeed0.
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::And(
+                  m::GetTupleElement(m::Infeed(m::AfterAll()), 0),
+                  m::GetTupleElement(
+                      m::Infeed(m::GetTupleElement(m::Infeed(), 1)), 0))));
+}
+
+TEST(XlaBuilderTest, UnorderedOutfeed) {
+  XlaBuilder b(TestName());
+  const Shape s = ShapeUtil::MakeShape(S32, {});
+  XlaOp param0 = Parameter(&b, 0, s, "p0");
+  XlaOp param1 = Parameter(&b, 1, s, "p1");
+  Outfeed(param0, s, "");
+  Outfeed(param1, s, "");
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  // outfeed0 should use an arbitrary token.
+  // outfeed1 should use the token produced by infeed0.
+  HloInstruction* p1 = module->entry_computation()->parameter_instruction(1);
+  EXPECT_EQ(p1->user_count(), 1);
+  EXPECT_THAT(p1->users()[0], GmockMatch(m::Outfeed(
+                                  m::Parameter(1),
+                                  m::Outfeed(m::Parameter(0), m::AfterAll()))));
+}
 
 }  // namespace
 }  // namespace xla

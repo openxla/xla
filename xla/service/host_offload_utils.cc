@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/host_memory_offload_annotations.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -248,12 +249,28 @@ bool IsSynchronousCopyFromOrToHost(const HloInstruction* instruction) {
   if (instruction->opcode() != HloOpcode::kCopy) {
     return false;
   }
-  return (instruction->shape().has_layout() &&
-          instruction->shape().layout().memory_space() ==
-              Layout::kHostMemorySpace) ||
-         (instruction->operand(0)->shape().has_layout() &&
-          instruction->operand(0)->shape().layout().memory_space() ==
-              Layout::kHostMemorySpace);
+  if (!instruction->shape().has_layout() ||
+      !instruction->operand(0)->shape().has_layout()) {
+    // Host offloading copies do not exist without layouts.
+    return false;
+  }
+  const int64_t copy_memory_space =
+      instruction->shape().layout().memory_space();
+  const int64_t operand_memory_space =
+      instruction->operand(0)->shape().layout().memory_space();
+  return (copy_memory_space == Layout::kHostMemorySpace &&
+          operand_memory_space != Layout::kHostMemorySpace) ||
+         (copy_memory_space != Layout::kHostMemorySpace &&
+          operand_memory_space == Layout::kHostMemorySpace);
+}
+
+bool ComputeTypeIsHost(const HloInstruction* hlo_instruction) {
+  const auto& frontend_attributes_map =
+      hlo_instruction->frontend_attributes().map();
+  return (frontend_attributes_map.find(kXlaComputeTypeAttr) !=
+              frontend_attributes_map.end() &&
+          frontend_attributes_map.find(kXlaComputeTypeAttr)->second ==
+              kXlaComputeTypeHost);
 }
 
 }  // namespace host_offload_utils

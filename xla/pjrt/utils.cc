@@ -41,7 +41,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/client/executable_build_options.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -384,58 +384,6 @@ absl::StatusOr<std::vector<MemorySpaceColor>> GetOutputMemoryKinds(
 // Make sure to choose delimiter that will never show up in Layout strings.
 static const char* kDelimiter = ";";
 
-static std::string GetFrontendAttr(absl::Span<const LayoutMode> layout_modes) {
-  return absl::StrJoin(layout_modes, kDelimiter,
-                       [](std::string* out, const LayoutMode& mode) {
-                         absl::StrAppend(out, mode.ToString());
-                       });
-}
-
-absl::Status AddLayoutModesToFrontendAttrs(mlir::ModuleOp module,
-                                           XlaComputation& xla_computation) {
-  TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
-                      GetArgLayoutModes(module));
-  TF_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
-                      GetOutputLayoutModes(module));
-
-  // Type is string->string proto map. Using auto here to deal with different
-  // build environments.
-  auto& frontend_attrs = *xla_computation.mutable_proto()
-                              ->mutable_frontend_attributes()
-                              ->mutable_map();
-  frontend_attrs["arg_layout_modes"] = GetFrontendAttr(arg_layout_modes);
-  frontend_attrs["out_layout_modes"] = GetFrontendAttr(out_layout_modes);
-  return absl::OkStatus();
-}
-
-static std::string GetFrontendAttrForMemorySpace(
-    const std::vector<MemorySpaceColor>& memory_spaces) {
-  return absl::StrJoin(
-      memory_spaces, kDelimiter,
-      [](std::string* out, const MemorySpaceColor memory_kind) {
-        absl::StrAppend(out, memory_kind);
-      });
-}
-
-absl::Status AddMemoryKindsToFrontendAttrs(mlir::ModuleOp module,
-                                           XlaComputation& xla_computation) {
-  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> arg_memory_spaces,
-                      GetArgMemoryKinds(module));
-  TF_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
-                      GetOutputMemoryKinds(module));
-
-  // Type is string->string proto map. Using auto here to deal with different
-  // build environments.
-  auto& frontend_attrs = *xla_computation.mutable_proto()
-                              ->mutable_frontend_attributes()
-                              ->mutable_map();
-  frontend_attrs["arg_memory_spaces"] =
-      GetFrontendAttrForMemorySpace(arg_memory_spaces);
-  frontend_attrs["out_memory_spaces"] =
-      GetFrontendAttrForMemorySpace(out_memory_spaces);
-  return absl::OkStatus();
-}
-
 static absl::StatusOr<std::vector<LayoutMode>> GetLayoutModesFromFrontendAttr(
     absl::string_view attr) {
   // SkipEmpty() needed to avoid returning the empty string when attr is empty.
@@ -735,11 +683,14 @@ absl::Status DetermineArgumentLayoutsFromCompileOptions(
 
   // Assign a default layout based on `sharded_shape` to any array subshapes in
   // `dst_shape` that are missing layouts.
-  auto assign_layouts = [&choose_compact_layout_for_shape_function](
-                            const Shape& sharded_shape, Shape* dst_shape) {
+  const bool allow_auto_layout =
+      build_options && build_options->has_debug_options() &&
+      build_options->debug_options().xla_pjrt_allow_auto_layout_in_hlo();
+  auto assign_layouts = [&](const Shape& sharded_shape, Shape* dst_shape) {
     return ShapeUtil::ForEachMutableSubshapeWithStatus(
         dst_shape, [&](Shape* subshape, const ShapeIndex& idx) {
-          if (subshape->IsArray() && !subshape->has_layout()) {
+          if (subshape->IsArray() && !subshape->has_layout() &&
+              !allow_auto_layout) {
             CHECK(ShapeUtil::IndexIsValid(sharded_shape, idx));
             const Shape& sharded_subshape =
                 ShapeUtil::GetSubshape(sharded_shape, idx);

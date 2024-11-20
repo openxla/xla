@@ -158,6 +158,7 @@ cc_library(
         "//xla:__subpackages__",
         "//tensorflow/core:__subpackages__",
         "@tsl//tsl:__subpackages__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     deps = [
         ":numeric_types",
@@ -273,6 +274,7 @@ cc_library(
         "//xla/tsl/util:device_name_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:status",
@@ -467,10 +469,10 @@ tsl_cc_test(
         ":device_id_impl",
         ":device_id_utils",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/util:device_name_utils",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/protobuf:error_codes_proto_impl_cc",
     ],
 )
 
