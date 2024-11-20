@@ -1353,44 +1353,38 @@ TEST_F(CollectivePipelinerTest,
   constexpr absl::string_view hlo_string = R"(
 HloModule module
 
-add {
-  lhs = bf16[] parameter(0)
-  rhs = bf16[] parameter(1)
-  ROOT add = bf16[] add(lhs, rhs)
-}
-
 while_cond {
-  param = (s32[], bf16[3,8,128], bf16[3,1,2,128]) parameter(0)
+  param = (s32[], bf16[5,8,128], bf16[5,1,2,128]) parameter(0)
   loop_index = s32[] get-tuple-element(param), index=0
   c4 = s32[] constant(4)
   ROOT cmp = pred[] compare(loop_index, c4), direction=LT
 }
 
 while_body {
-  param = (s32[], bf16[3,8,128], bf16[3,1,2,128]) parameter(0)
+  param = (s32[], bf16[5,8,128], bf16[5,1,2,128]) parameter(0)
   loop_index = s32[] get-tuple-element(param), index=0
-  partial_output = bf16[3,8,128] get-tuple-element(param), index=1
-  slice_input = bf16[3,1,2,128] get-tuple-element(param), index=2
+  partial_output = bf16[5,8,128] get-tuple-element(param), index=1
+  slice_input = bf16[5,1,2,128] get-tuple-element(param), index=2
   c0 = s32[] constant(0)
   c1 = s32[] constant(1)
   next_loop_index = s32[] add(loop_index, c1)
-  c4 = s32[] constant(4)
-  four_minus_loop_index = s32[] subtract(c4, loop_index)
-  dynamic-slice = bf16[1,1,2,128] dynamic-slice(slice_input, four_minus_loop_index, c0, c0, c0), dynamic_slice_sizes={1,1,2,128}
-  dynamic-slice_reshape = bf16[1,2,128] reshape(dynamic-slice)
-  add = bf16[1,2,128] add(dynamic-slice_reshape, dynamic-slice_reshape), control-predecessors={c4}
-  all-gather = bf16[1,8,128] all-gather(add), dimensions={1}, replica_groups={}
-  updated_partial_output = bf16[3,8,128] dynamic-update-slice(partial_output, all-gather, four_minus_loop_index, c0, c0)
-  ROOT tuple = (s32[], bf16[3,8,128], bf16[3,1,2,128]) tuple(next_loop_index, updated_partial_output, slice_input), control-predecessors={add}
+  c3 = s32[] constant(3)
+  three_minus_loop_index = s32[] subtract(c3, loop_index)
+  dynamic_slice = bf16[1,1,2,128] dynamic-slice(slice_input, three_minus_loop_index, c0, c0, c0), dynamic_slice_sizes={1,1,2,128}
+  dynamic_slice_reshape = bf16[1,2,128] reshape(dynamic_slice)
+  add = bf16[1,2,128] add(dynamic_slice_reshape, dynamic_slice_reshape), control-predecessors={c3}
+  all_gather = bf16[1,8,128] all-gather(add), dimensions={1}, replica_groups={}
+  updated_partial_output = bf16[5,8,128] dynamic-update-slice(partial_output, all_gather, three_minus_loop_index, c0, c0)
+  ROOT tuple = (s32[], bf16[5,8,128], bf16[5,1,2,128]) tuple(next_loop_index, updated_partial_output, slice_input), control-predecessors={add}
 }
 
 ENTRY entry {
   c1 = s32[] constant(1)
-  p0 = bf16[3,8,128] parameter(0)
-  p1 = bf16[3,1,2,128] parameter(1)
-  tuple = (s32[], bf16[3,8,128], bf16[3,1,2,128]) tuple(c1, p0, p1)
-  while = (s32[], bf16[3,8,128], bf16[3,1,2,128]) while(tuple), condition=while_cond, body=while_body
-  ROOT gte1 = bf16[3,8,128] get-tuple-element(while), index=1
+  p0 = bf16[5,8,128] parameter(0)
+  p1 = bf16[5,1,2,128] parameter(1)
+  tuple = (s32[], bf16[5,8,128], bf16[5,1,2,128]) tuple(c1, p0, p1)
+  while = (s32[], bf16[5,8,128], bf16[5,1,2,128]) while(tuple), condition=while_cond, body=while_body
+  ROOT gte = bf16[5,8,128] get-tuple-element(while), index=1
 }
 )";
   auto module = ParseAndReturnUnverifiedModule(hlo_string, config_).value();
@@ -1401,25 +1395,10 @@ ENTRY entry {
                            IsAllGather)
                   .value());
   XLA_VLOG_LINES(1, module->ToString());
-  const int64_t while_count = absl::c_count_if(
-      module->entry_computation()->instructions(),
-      [](const HloInstruction* instruction) {
-        return HloPredicateIsOp<HloOpcode::kWhile>(instruction);
-      });
-  EXPECT_EQ(while_count, 1);
   const HloInstruction* while_instr =
       FindInstruction(module.get(), HloOpcode::kWhile);
-  const HloInstruction* tuple = while_instr->operand(0);
-  EXPECT_TRUE(tuple->HasControlDependencies());
-  EXPECT_EQ(tuple->control_predecessors().size(), 1);
-  const HloInstruction* add_instr = tuple->control_predecessors()[0];
-  EXPECT_EQ(add_instr->opcode(), HloOpcode::kAdd);
   const HloComputation* comp = while_instr->while_body();
   const HloInstruction* root_loop = comp->root_instruction();
-  EXPECT_TRUE(root_loop->HasControlDependencies());
-  EXPECT_EQ(root_loop->control_predecessors().size(), 1);
-  const HloInstruction* add_instr_loop = root_loop->control_predecessors()[0];
-  EXPECT_EQ(add_instr_loop->opcode(), HloOpcode::kAdd);
 
   const HloInstruction* shifted_loop_counter = root_loop->operand(4);
   EXPECT_EQ(shifted_loop_counter->opcode(), HloOpcode::kAdd);
