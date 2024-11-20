@@ -1813,6 +1813,11 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
     std::string stderr_str;
     int child_status =
         child[node_id].Communicate(nullptr, &stdout_str, &stderr_str);
+    if (WIFEXITED(child_status) &&
+        WEXITSTATUS(child_status) ==
+            static_cast<int>(absl::StatusCode::kFailedPrecondition)) {
+      GTEST_SKIP() << "Requires Ampere+ GPU.";
+    }
     EXPECT_EQ(child_status, 0) << " node " << node_id << "\nstdout:\n"
                                << stdout_str << "\nstderr:\n"
                                << stderr_str;
@@ -1845,8 +1850,15 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
                       GetStreamExecutorGpuClient(options));
   TF_RET_CHECK(client->platform_name() == "cuda");
+  if (!se::CudaComputeCapability(
+           std::get<std::string>(
+               client->addressable_devices().front()->Attributes().at(
+                   "compute_capability")))
+           .IsAtLeastAmpere()) {
+    return absl::FailedPreconditionError("Ampere+ GPU required");
+  }
   TF_RET_CHECK(client->addressable_device_count() == 1);
-  TF_RET_CHECK(client->device_count() == 2);
+  TF_RET_CHECK(client->device_count() == ShardedAutotuningTest::kNumNodes);
 
   CompileOptions compile_options;
   DebugOptions* debug_options =
@@ -1910,8 +1922,8 @@ int main(int argc, char* argv[]) {
   tsl::Flags::Parse(&argc, argv, flag_list);
   testing::InitGoogleTest(&argc, argv);
   if (node_id >= 0) {
-    return !xla::ShardedAutotuningWorksTestBody(node_id, use_xla_computation)
-                .ok();
+    return xla::ShardedAutotuningWorksTestBody(node_id, use_xla_computation)
+        .raw_code();
   }
   return RUN_ALL_TESTS();
 }
