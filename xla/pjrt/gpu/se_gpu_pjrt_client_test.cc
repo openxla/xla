@@ -1821,8 +1821,6 @@ TEST_P(ShardedAutotuningTest, ShardedAutotuningWorks) {
 
 absl::Status ShardedAutotuningWorksTestBody(const int node_id,
                                             bool use_xla_computation) {
-  tsl::setenv("CUDA_VISIBLE_DEVICES", std::to_string(node_id).data(),
-              /*overwrite=*/true);
   std::unique_ptr<xla::DistributedRuntimeService> service;
   if (node_id == 0) {
     TF_ASSIGN_OR_RETURN(
@@ -1840,6 +1838,7 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id,
   TF_QCHECK_OK(distributed_client->Connect());
   GpuClientOptions options;
   options.node_id = node_id;
+  options.allowed_devices = {node_id};
   options.num_nodes = ShardedAutotuningTest::kNumNodes;
   options.kv_store = GetDistributedKeyValueStore(distributed_client,
                                                  /*key_prefix=*/"gpu:");
