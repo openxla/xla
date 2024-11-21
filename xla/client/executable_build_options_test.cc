@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/client/executable_build_options.h"
 
+#include <memory>
+
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
