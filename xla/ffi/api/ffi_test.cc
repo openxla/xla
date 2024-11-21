@@ -138,6 +138,7 @@ TEST(FfiTest, DataTypeEnumValue) {
   EXPECT_EQ(encoded(PrimitiveType::F8E5M2FNUZ), encoded(DataType::F8E5M2FNUZ));
   EXPECT_EQ(encoded(PrimitiveType::F8E4M3FNUZ), encoded(DataType::F8E4M3FNUZ));
   EXPECT_EQ(encoded(PrimitiveType::F8E3M4), encoded(DataType::F8E3M4));
+  EXPECT_EQ(encoded(PrimitiveType::F8E8M0FNU), encoded(DataType::F8E8M0FNU));
 }
 
 TEST(FfiTest, DataTypeByteWidth) {
@@ -196,6 +197,8 @@ TEST(FfiTest, DataTypeByteWidth) {
             ByteWidth(DataType::F8E4M3FNUZ));
   EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E3M4),
             ByteWidth(DataType::F8E3M4));
+  EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E8M0FNU),
+            ByteWidth(DataType::F8E8M0FNU));
 }
 
 TEST(FfiTest, ErrorEnumValue) {

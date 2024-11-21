@@ -600,8 +600,9 @@ message LiteralProto {
   bytes f8e4m3s = 28;
   bytes f8e5m2fnuzs = 24;
   bytes f8e5m2s = 19;
+  bytes f8e8m0fnus = 31;
   repeated int64 sparse_indices = 14;
-  // Next = 31
+  // Next = 32
 }
 
 message WindowDimension {

@@ -66,6 +66,7 @@ struct CustomDtypes {
   nb_dtype float8_e4m3fnuz;
   nb_dtype float8_e5m2;
   nb_dtype float8_e5m2fnuz;
+  std::optional<nb_dtype> float8_e8m0fnu;
   std::optional<nb_dtype> int2;
   nb_dtype int4;
   std::optional<nb_dtype> uint2;
@@ -96,6 +97,10 @@ const CustomDtypes& GetCustomDtypes() {
         nb_dtype::from_args(ml_dtypes.attr("float8_e4m3fnuz"));
     dtypes->float8_e5m2fnuz =
         nb_dtype::from_args(ml_dtypes.attr("float8_e5m2fnuz"));
+    if (nb::hasattr(ml_dtypes, "float8_e8m0fnu")) {
+      dtypes->float8_e8m0fnu =
+          nb_dtype::from_args(ml_dtypes.attr("float8_e8m0fnu"));
+    }
     dtypes->int4 = nb_dtype::from_args(ml_dtypes.attr("int4"));
     dtypes->uint4 = nb_dtype::from_args(ml_dtypes.attr("uint4"));
     if (nb::hasattr(ml_dtypes, "int2")) {
@@ -166,6 +171,9 @@ absl::StatusOr<PrimitiveType> DtypeToPrimitiveType(const nb_dtype& np_type) {
     map->emplace(custom_dtypes.float8_e4m3fnuz, F8E4M3FNUZ);
     map->emplace(custom_dtypes.float8_e5m2, F8E5M2);
     map->emplace(custom_dtypes.float8_e5m2fnuz, F8E5M2FNUZ);
+    if (custom_dtypes.float8_e8m0fnu.has_value()) {
+      map->emplace(*custom_dtypes.float8_e8m0fnu, F8E8M0FNU);
+    }
     if (custom_dtypes.int2.has_value()) {
       map->emplace(*custom_dtypes.int2, S2);
     }
@@ -250,6 +258,11 @@ absl::StatusOr<nb_dtype> PrimitiveTypeToNbDtype(PrimitiveType type) {
       return custom_dtypes.float8_e5m2;
     case F8E5M2FNUZ:
       return custom_dtypes.float8_e5m2fnuz;
+    case F8E8M0FNU:
+      if (custom_dtypes.float8_e8m0fnu.has_value()) {
+        return *custom_dtypes.float8_e8m0fnu;
+      }
+      break;
     case BF16:
       return custom_dtypes.bfloat16;
     case F16:
@@ -345,6 +358,11 @@ absl::StatusOr<nb_dtype> IfrtDtypeToNbDtype(ifrt::DType dtype) {
       return custom_dtypes.float8_e5m2;
     case ifrt::DType::kF8E5M2FNUZ:
       return custom_dtypes.float8_e5m2fnuz;
+    case ifrt::DType::kF8E8M0FNU:
+      if (custom_dtypes.float8_e8m0fnu.has_value()) {
+        return *custom_dtypes.float8_e8m0fnu;
+      }
+      break;
     case ifrt::DType::kString:
       // PEP 3118 code for "pointer to Python Object". We use Python objects
       // instead of 'U' (Unicode string) or 'V' (raw data) because the latter
@@ -413,6 +431,9 @@ const NumpyScalarTypes& GetNumpyScalarTypes() {
     dtypes->np_float8_e5m2 = nb::object(ml_dtypes.attr("float8_e5m2"));
     dtypes->np_float8_e4m3fnuz = nb::object(ml_dtypes.attr("float8_e4m3fnuz"));
     dtypes->np_float8_e5m2fnuz = nb::object(ml_dtypes.attr("float8_e5m2fnuz"));
+    if (nb::hasattr(ml_dtypes, "float8_e8m0fnu")) {
+      dtypes->np_float8_e8m0fnu = nb::object(ml_dtypes.attr("float8_e8m0fnu"));
+    }
     dtypes->np_float16 = nb::object(numpy.attr("float16"));
     dtypes->np_float32 = nb::object(numpy.attr("float32"));
     dtypes->np_float64 = nb::object(numpy.attr("float64"));

@@ -56,6 +56,8 @@ absl::StatusOr<const llvm::fltSemantics*> PrimitiveTypeToAPFloatSemantics(
       return &llvm::APFloat::Float8E5M2();
     case F8E5M2FNUZ:
       return &llvm::APFloat::Float8E5M2FNUZ();
+    case F8E8M0FNU:
+      return &llvm::APFloat::Float8E8M0FNU();
     case BF16:
       return &llvm::APFloat::BFloat();
     case F16:
@@ -83,6 +85,7 @@ absl::StatusOr<llvm::Type*> PrimitiveTypeToLLVMType(llvm::IRBuilderBase* b,
     case F8E4M3FNUZ:
     case F8E5M2:
     case F8E5M2FNUZ:
+    case F8E8M0FNU:
       return b->getInt8Ty();
     case BF16:
       return b->getBFloatTy();

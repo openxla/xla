@@ -95,9 +95,10 @@ bool LiteralProtoHasValues(const LiteralProto& proto) {
          !proto.f8e4m3b11fnuzs().empty() || !proto.f8e4m3fns().empty() ||
          !proto.f8e4m3fnuzs().empty() || !proto.f8e4m3s().empty() ||
          !proto.f8e5m2fnuzs().empty() || !proto.f8e5m2s().empty() ||
-         !proto.f16s().empty() || !proto.bf16s().empty() || proto.f32s_size() ||
-         proto.f64s_size() || proto.c64s_size() || proto.c128s_size() ||
-         proto.preds_size() || proto.tuple_literals_size();
+         !proto.f8e8m0fnus().empty() || !proto.f16s().empty() ||
+         !proto.bf16s().empty() || proto.f32s_size() || proto.f64s_size() ||
+         proto.c64s_size() || proto.c128s_size() || proto.preds_size() ||
+         proto.tuple_literals_size();
 }
 
 // Lazy getter for the interned scalar shape in static storage. We reuse this
@@ -2298,6 +2299,11 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
           reinterpret_cast<const char*>(data<tsl::float8_e3m4>().data()),
           size_bytes_dense());
       break;
+    case F8E8M0FNU:
+      *proto->mutable_f8e8m0fnus() = std::string(
+          reinterpret_cast<const char*>(data<tsl::float8_e8m0fnu>().data()),
+          size_bytes_dense());
+      break;
     case F16:
       *proto->mutable_f16s() =
           std::string(reinterpret_cast<const char*>(data<half>().data()),
@@ -2506,6 +2512,14 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
     case F8E3M4: {
       const std::string& s(proto.f8e3m4s());
       TF_RET_CHECK(data<tsl::float8_e3m4>().size() * sizeof(tsl::float8_e3m4) ==
+                   s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      break;
+    }
+    case F8E8M0FNU: {
+      const std::string& s(proto.f8e8m0fnus());
+      TF_RET_CHECK(data<tsl::float8_e8m0fnu>().size() *
+                       sizeof(tsl::float8_e8m0fnu) ==
                    s.size());
       memcpy(untyped_data(), s.data(), s.size());
       break;

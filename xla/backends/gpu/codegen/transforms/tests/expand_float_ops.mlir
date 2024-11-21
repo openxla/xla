@@ -152,3 +152,16 @@ module {
 // CHECK-LABEL: @f4_abs
 // CHECK-NOT: math.absf
 // CHECK: arith.constant 7 : i4
+
+// -----
+
+module {
+  func.func @e8m0_abs(%arg0: f8E8M0FNU) -> f8E8M0FNU {
+    %ret = math.absf %arg0 : f8E8M0FNU
+    return %ret : f8E8M0FNU
+  }
+}
+
+// CHECK-LABEL: @e8m0_abs
+// CHECK-NOT: math.absf
+// CHECK: return %arg0

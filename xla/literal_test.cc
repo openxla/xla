@@ -124,10 +124,11 @@ class LiteralUtilTest : public ::testing::Test {
 template <typename T>
 class LiteralUtilFloatTest : public LiteralUtilTest {};
 
-using FloatTypes = ::testing::Types<
-    float, half, bfloat16, tsl::float4_e2m1fn, tsl::float8_e3m4,
-    tsl::float8_e4m3, tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fn,
-    tsl::float8_e4m3fnuz, tsl::float8_e5m2, tsl::float8_e5m2fnuz>;
+using FloatTypes = ::testing::Types<float, half, bfloat16, tsl::float4_e2m1fn,
+                                    tsl::float8_e3m4, tsl::float8_e4m3,
+                                    tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fn,
+                                    tsl::float8_e4m3fnuz, tsl::float8_e5m2,
+                                    tsl::float8_e5m2fnuz, tsl::float8_e8m0fnu>;
 
 TYPED_TEST_SUITE(LiteralUtilFloatTest, FloatTypes);
 
@@ -210,6 +211,10 @@ TEST_F(LiteralUtilTest, LiteralScalarToString) {
   auto f8e3m4_lit =
       LiteralUtil::CreateR0<tsl::float8_e3m4>(tsl::float8_e3m4(0.5));
   EXPECT_EQ("f8e3m4[] 0.5", f8e3m4_lit.ToString());
+
+  auto f8e8m0fnu_lit =
+      LiteralUtil::CreateR0<tsl::float8_e8m0fnu>(tsl::float8_e8m0fnu(0.5));
+  EXPECT_EQ("f8e8m0fnu[] 0.5", f8e8m0fnu_lit.ToString());
 }
 
 TEST_F(LiteralUtilTest, LiteralVectorToString) {
@@ -696,6 +701,11 @@ TEST_F(LiteralUtilTest, IsAll) {
   tsl::float8_e3m4 v16(9);  // Exactly representable in e3m4
   EXPECT_FALSE(LiteralUtil::CreateR1<tsl::float8_e3m4>({v16}).IsAll(8));
   EXPECT_TRUE(LiteralUtil::CreateR1<tsl::float8_e3m4>({v16}).IsAll(9));
+
+  tsl::float8_e8m0fnu w16(8);
+  EXPECT_TRUE(LiteralUtil::CreateR1<tsl::float8_e8m0fnu>({w16}).IsAll(8));
+  // 9 rounds to 8 in E8M0FNU but is not equal to 8, so this should be false
+  EXPECT_FALSE(LiteralUtil::CreateR1<tsl::float8_e8m0fnu>({w16}).IsAll(9));
 
   complex64 c8_9 = {8, 9};
   EXPECT_FALSE(LiteralUtil::CreateR2<complex64>({{c8_9}, {c8_9}}).IsAll(8));
@@ -2245,6 +2255,9 @@ TEST_F(LiteralUtilTest, ProtoRoundTrip) {
       LiteralUtil::CreateR1<e4f>({e4f{10.0}, e4f{20.0}, e4f{-30.0}});
   using e3 = tsl::float8_e3m4;
   auto vector_f8e3m4 = LiteralUtil::CreateR1<e3>({e3{2.5}, e3{5.0}, e3{-8.0}});
+  using e8m0 = tsl::float8_e8m0fnu;
+  auto vector_f8e8m0fnu =
+      LiteralUtil::CreateR1<e8m0>({e8m0{1.0}, e8m0{2.0}, e8m0{4.0}});
   auto matrix_pred =
       LiteralUtil::CreateR2<bool>({{true, false, true}, {false, false, true}});
   auto vector_s4 = LiteralUtil::CreateR1<s4>({s4{-1}, s4{3}, s4{7}});
@@ -2273,6 +2286,7 @@ TEST_F(LiteralUtilTest, ProtoRoundTrip) {
   EXPECT_EQ(vector_f8e4m3fnuz, to_from_proto(vector_f8e4m3fnuz));
   EXPECT_EQ(vector_f8e5m2, to_from_proto(vector_f8e5m2));
   EXPECT_EQ(vector_f8e5m2fnuz, to_from_proto(vector_f8e5m2fnuz));
+  EXPECT_EQ(vector_f8e8m0fnu, to_from_proto(vector_f8e8m0fnu));
   EXPECT_EQ(matrix_pred, to_from_proto(matrix_pred));
   EXPECT_EQ(vector_s4, to_from_proto(vector_s4));
   EXPECT_EQ(vector_u4, to_from_proto(vector_u4));
@@ -2523,8 +2537,8 @@ TEST_F(LiteralUtilTest, SliceOnBool) {
 }
 
 TEST_F(LiteralUtilTest, IsEqualAt) {
-  double val_double = 6.0;
-  int val_integral = 6;
+  double val_double = 4.0;
+  int val_integral = 4;
   Literal c1 = LiteralUtil::CreateR0<int>(val_integral);
   EXPECT_TRUE(c1.IsEqualAt({}, val_double));
   EXPECT_TRUE(c1.IsEqualAt({}, val_integral));
@@ -2573,6 +2587,10 @@ TEST_F(LiteralUtilTest, IsEqualAt) {
       LiteralUtil::CreateR0<tsl::float4_e2m1fn>(tsl::float4_e2m1fn{val_double});
   EXPECT_TRUE(c11.IsEqualAt({}, val_double));
   EXPECT_TRUE(c11.IsEqualAt({}, val_integral));
+  Literal c12 = LiteralUtil::CreateR0<tsl::float8_e8m0fnu>(
+      tsl::float8_e8m0fnu{val_double});
+  EXPECT_TRUE(c12.IsEqualAt({}, val_double));
+  EXPECT_TRUE(c12.IsEqualAt({}, val_integral));
 }
 
 TEST_F(LiteralUtilTest, CreateFromShapeWithUnknownLeafArrays) {
@@ -2901,8 +2919,8 @@ class LiteralSerializationTest : public ::testing::Test,
          {PRED,          S4,       U4,         S8,       U8,         S16,
           U16,           S32,      U32,        S64,      U64,        F16,
           F32,           F64,      BF16,       F4E2M1FN, F8E3M4,     F8E4M3,
-          F8E4M3B11FNUZ, F8E4M3FN, F8E4M3FNUZ, F8E5M2,   F8E5M2FNUZ, C64,
-          C128}) {
+          F8E4M3B11FNUZ, F8E4M3FN, F8E4M3FNUZ, F8E5M2,   F8E5M2FNUZ, F8E8M0FNU,
+          C64,           C128}) {
       for (const DimensionVector& dimensions : {
                DimensionVector{},
                DimensionVector{0},

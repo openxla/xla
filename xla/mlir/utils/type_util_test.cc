@@ -112,6 +112,7 @@ INSTANTIATE_TEST_SUITE_P(
          {F8E4M3FNUZ,
           [](mlir::Builder b) { return b.getFloat8E4M3FNUZType(); }},
          {F8E3M4, [](mlir::Builder b) { return b.getFloat8E3M4Type(); }},
+         {F8E8M0FNU, [](mlir::Builder b) { return b.getFloat8E8M0FNUType(); }},
          {F16, [](mlir::Builder b) { return b.getF16Type(); }},
          {BF16, [](mlir::Builder b) { return b.getBF16Type(); }},
          {F32, [](mlir::Builder b) { return b.getF32Type(); }},

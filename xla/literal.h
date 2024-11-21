@@ -591,7 +591,14 @@ class LiteralBase {
       if constexpr (bits_per_element < 8) {
         static_assert(!primitive_util::IsComplexType(primitive_type));
         static_assert(8 % bits_per_element == 0);
+
         constexpr int elements_per_byte = 8 / bits_per_element;
+        constexpr auto cast = [](NativeT x) -> uint8_t {
+          if constexpr (primitive_util::IsFloatingPointType(primitive_type)) {
+            return Eigen::numext::bit_cast<uint8_t>(x);
+          }
+          return static_cast<uint8_t>(x);
+        };
 
         int64_t bytes = elements.size() / elements_per_byte;
         for (int64_t i = 0; i < bytes; ++i) {

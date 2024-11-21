@@ -885,6 +885,47 @@ llvm::Value* EmitF4e2m1fnToF16(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
   return b->CreateBitCast(f16_signed, b->getHalfTy());
 }
 
+llvm::Value* EmitF32ToF8e8m0fnu(llvm::Value* f32_value, llvm::IRBuilder<>* b) {
+  llvm::Value* as_int32 = b->CreateBitCast(f32_value, b->getInt32Ty());
+
+  // Result is NaN if input is zero, negative, infinity or NaN.
+  auto i32_const = [&](int val) {
+    return llvm::ConstantInt::get(b->getInt32Ty(), val);
+  };
+  llvm::Value* is_denorm = b->CreateICmpULE(as_int32, i32_const(0x400000));
+  llvm::Value* is_nan =
+      b->CreateOr(b->CreateICmpSLE(as_int32, i32_const(0)),
+                  b->CreateICmpSGE(as_int32, i32_const(0x7F400000)));
+
+  // Round the value and extract exponent.
+  llvm::Value* rounded = b->CreateAdd(as_int32, i32_const(0x400000));
+  llvm::Value* shifted = b->CreateAShr(rounded, 23);
+  llvm::Value* finite = b->CreateSelect(is_denorm, i32_const(0x00), shifted);
+  llvm::Value* f32_result = b->CreateSelect(is_nan, i32_const(0xFF), finite);
+
+  // Truncate to the result type.
+  return b->CreateTrunc(f32_result, b->getInt8Ty());
+}
+
+llvm::Value* EmitF8e8m0fnuToF32(llvm::Value* f8_value, llvm::IRBuilder<>* b) {
+  // Shift exponent to the left for the normal case.
+  llvm::Value* as_int32 = b->CreateZExt(f8_value, b->getInt32Ty());
+  llvm::Value* shifted = b->CreateShl(as_int32, 23);
+
+  // Special values for 0x00 (denorm) and 0xFF (NaN).
+  auto i32_const = [&](int val) {
+    return llvm::ConstantInt::get(b->getInt32Ty(), val);
+  };
+  llvm::Value* is_zero = b->CreateICmpEQ(as_int32, i32_const(0));
+  llvm::Value* is_nan = b->CreateICmpEQ(as_int32, i32_const(0xFF));
+  llvm::Value* denorm_or_shifted =
+      b->CreateSelect(is_zero, i32_const(0x00400000), shifted);
+  llvm::Value* f32_result =
+      b->CreateSelect(is_nan, i32_const(0x7FC00000), denorm_or_shifted);
+
+  return b->CreateBitCast(f32_result, b->getFloatTy());
+}
+
 llvm::Value* EmitIntegralToFloating(llvm::Value* integer_value,
                                     PrimitiveType from_type,
                                     PrimitiveType to_type, llvm::Module* module,
@@ -982,6 +1023,12 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitIntegerUnaryOp(
         if (to_type == F4E2M1FN) {
           return EmitF16ToF4e2m1fn(
               EmitIntegralToFloating(operand_value, from_type, F16, module_,
+                                     b_),
+              b_);
+        }
+        if (to_type == F8E8M0FNU) {
+          return EmitF32ToF8e8m0fnu(
+              EmitIntegralToFloating(operand_value, from_type, F32, module_,
                                      b_),
               b_);
         }
@@ -1198,10 +1245,21 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
           return operand_value;
         }
       }
+      if (from_type == F8E8M0FNU) {
+        TF_RET_CHECK(to_type != F8E8M0FNU);
+        operand_value = EmitF8e8m0fnuToF32(operand_value, b_);
+        from_type = F32;
+        if (from_type == to_type) {
+          return operand_value;
+        }
+      }
       if (from_type == F8E5M2FNUZ || from_type == F8E4M3FNUZ) {
         TF_RET_CHECK(to_type != from_type);
         PrimitiveType cast_type =
             primitive_util::IsFloatingPointType(to_type) ? to_type : F16;
+        if (to_type == F8E8M0FNU) {
+          cast_type = F32;
+        }
         TF_ASSIGN_OR_RETURN(operand_value,
                             EmitF8fnuzToFloating(from_type, operand_value,
                                                  cast_type, b_, module_));
@@ -1281,6 +1339,14 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
               operand_value, llvm_ir::PrimitiveTypeToIrType(F16, module_));
         }
         return EmitF16ToF4e2m1fn(operand_value, b_);
+      }
+      if (to_type == F8E8M0FNU) {
+        // Cast to F32 first. Casts to F8E8M0FNU must be from F32.
+        if (from_type != F32) {
+          operand_value = b_->CreateFPCast(
+              operand_value, llvm_ir::PrimitiveTypeToIrType(F32, module_));
+        }
+        return EmitF32ToF8e8m0fnu(operand_value, b_);
       }
       if (to_type == F8E5M2FNUZ || to_type == F8E4M3FNUZ) {
         return EmitFloatingToF8fnuz(from_type, operand_value, to_type, b_);
@@ -1835,6 +1901,9 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
       } else if (operand_type == F4E2M1FN) {
         lhs_value = EmitF4e2m1fnToF16(lhs_value, b_);
         rhs_value = EmitF4e2m1fnToF16(rhs_value, b_);
+      } else if (operand_type == F8E8M0FNU) {
+        lhs_value = EmitF8e8m0fnuToF32(lhs_value, b_);
+        rhs_value = EmitF8e8m0fnuToF32(rhs_value, b_);
       } else if (operand_type == F8E5M2FNUZ || operand_type == F8E4M3FNUZ) {
         TF_ASSIGN_OR_RETURN(
             lhs_value,

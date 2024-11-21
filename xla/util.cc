@@ -217,6 +217,11 @@ std::string RoundTripFpToString(tsl::float8_e3m4 value) {
   return result;
 }
 
+std::string RoundTripFpToString(tsl::float8_e8m0fnu value) {
+  std::string result = GenericRoundTripFpToString(value);
+  return result;
+}
+
 std::string RoundTripFpToString(bfloat16 value) {
   std::string result = GenericRoundTripFpToString(value);
   RoundTripNanPayload(value, &result);

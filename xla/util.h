@@ -440,6 +440,9 @@ std::string RoundTripFpToString(tsl::float8_e4m3fnuz value);
 // Returns a string which can losslessly round trip to a float8 E3M4.
 std::string RoundTripFpToString(tsl::float8_e3m4 value);
 
+// Returns a string which can losslessly round trip to a float8 E8M0FNU.
+std::string RoundTripFpToString(tsl::float8_e8m0fnu value);
+
 // Returns a string which can losslessly round trip to a bfloat.
 std::string RoundTripFpToString(tsl::bfloat16 value);
 
@@ -666,6 +669,12 @@ auto SignAndMagnitude(T x) {
   return std::make_pair(x_sign, x_abs_bits);
 }
 
+template <>
+inline auto SignAndMagnitude(tsl::float8_e8m0fnu x) {
+  uint8_t x_bits = Eigen::numext::bit_cast<uint8_t>(x);
+  return std::make_pair(static_cast<uint8_t>(0), x_bits);
+}
+
 template <typename T>
 auto SignAndMagnitudeToTwosComplement(T sign, T magnitude) {
   static_assert(!std::numeric_limits<T>::is_signed);
@@ -678,6 +687,11 @@ template <typename T>
 auto ToSignMagnitude(T input) {
   auto [sign, magnitude] = SignAndMagnitude(input);
   return SignAndMagnitudeToTwosComplement(sign, magnitude);
+}
+
+template <>
+inline auto ToSignMagnitude(tsl::float8_e8m0fnu x) {
+  return Eigen::numext::bit_cast<uint8_t>(x);
 }
 
 template <typename T>

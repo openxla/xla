@@ -208,6 +208,9 @@ absl::StatusOr<DevicePutResultFn> HandleNumpyScalar(
   } else if (std::is_same<T, tsl::float8_e5m2fnuz>()) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
     type = F8E5M2FNUZ;
+  } else if (std::is_same<T, tsl::float8_e8m0fnu>()) {
+    PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<2>());
+    type = F8E8M0FNU;
   } else if (std::is_same<T, SquashedT>() || !options.squash_64bit_types) {
     PyArray_ScalarAsCtype(h.ptr(), &data.template emplace<0>());
     type = primitive_util::NativeToPrimitiveType<T>();
@@ -422,6 +425,10 @@ absl::StatusOr<DevicePutResultFn> DevicePut(nb::handle arg,
             HandleNumpyScalar<tsl::float8_e4m3fnuz>;
         (*p)[dtypes.np_float8_e5m2fnuz.ptr()] =
             HandleNumpyScalar<tsl::float8_e5m2fnuz>;
+        if (dtypes.np_float8_e8m0fnu.has_value()) {
+          (*p)[dtypes.np_float8_e8m0fnu->ptr()] =
+              HandleNumpyScalar<tsl::float8_e8m0fnu>;
+        }
         (*p)[dtypes.np_bfloat16.ptr()] = HandleNumpyScalar<bfloat16>;
         (*p)[dtypes.np_float16.ptr()] = HandleNumpyScalar<half>;
         (*p)[dtypes.np_float32.ptr()] = HandleNumpyScalar<float>;
@@ -605,6 +612,7 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         // (*p)[dtypes.np_float4_e2m1fn.ptr()] = numpy_array_handler;
         // (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
         // (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
+        // (*p)[dtypes.np_float8_e8m0fnu.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e5m2.ptr()] = numpy_array_handler;

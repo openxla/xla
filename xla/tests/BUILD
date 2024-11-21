@@ -883,6 +883,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:test",
         "//xla:types",
+        "//xla:util",
         "//xla/client:global_data",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",

@@ -29,10 +29,11 @@ namespace {
 template <typename T>
 class LiteralComparisonTest : public ::testing::Test {};
 
-using TestedTypes = ::testing::Types<tsl::float4_e2m1fn, tsl::float8_e3m4,
-                                     tsl::float8_e4m3, tsl::float8_e4m3b11fnuz,
-                                     tsl::float8_e4m3fn, tsl::float8_e4m3fnuz,
-                                     tsl::float8_e5m2, tsl::float8_e5m2fnuz>;
+using TestedTypes =
+    ::testing::Types<tsl::float4_e2m1fn, tsl::float8_e3m4, tsl::float8_e4m3,
+                     tsl::float8_e4m3b11fnuz, tsl::float8_e4m3fn,
+                     tsl::float8_e4m3fnuz, tsl::float8_e5m2,
+                     tsl::float8_e5m2fnuz, tsl::float8_e8m0fnu>;
 TYPED_TEST_SUITE(LiteralComparisonTest, TestedTypes);
 
 TYPED_TEST(LiteralComparisonTest, CompareNear_Equal) {
@@ -53,6 +54,8 @@ TYPED_TEST(LiteralComparisonTest, CompareNear_NotEqual_1ulp) {
     expV = 1.0625;
   else if (type == F4E2M1FN)
     expV = 1.5;
+  else if (type == F8E8M0FNU)
+    expV = 2.0;
   auto expected = LiteralUtil::CreateR0<TypeParam>(TypeParam{expV});
   auto error_spec = ErrorSpec(0.0, 0.0);
   EXPECT_IS_NOT_OK(literal_comparison::Near(expected, actual, error_spec,
@@ -75,6 +78,8 @@ TYPED_TEST(LiteralComparisonTest, CompareNear_NotEqual_4ulps) {
     expV = 1.25;
   else if (type == F4E2M1FN)
     expV = 4.0;
+  else if (type == F8E8M0FNU)
+    expV = 16.0;
   auto expected = LiteralUtil::CreateR0<TypeParam>(TypeParam{expV});
   auto error_spec = ErrorSpec(0.0, 0.0);
   error_spec.low_precision_fp_error_spec.type = type;
@@ -99,6 +104,8 @@ TYPED_TEST(LiteralComparisonTest, FloatUsingCompareNear_NotEqual_4ulps) {
     expV = 1.26;
   else if (type == F4E2M1FN)
     expV = 4.1;
+  else if (type == F8E8M0FNU)
+    expV = 16.5;
   auto expected = LiteralUtil::CreateR0<float>(expV);
   auto error_spec = ErrorSpec(0.0, 0.0);
   error_spec.low_precision_fp_error_spec.type = type;

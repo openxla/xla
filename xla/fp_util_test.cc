@@ -172,6 +172,23 @@ TEST(FPDistanceTest, F4E2M1FNDistance) {
             4);
 }
 
+TEST(FPDistanceTest, F8E8M0FNUDistance) {
+  // a & b are equal
+  EXPECT_EQ(CalculateDistanceInFloats<tsl::float8_e8m0fnu>(
+                tsl::float8_e8m0fnu(1.0), tsl::float8_e8m0fnu(1.0)),
+            0);
+
+  // one step apart
+  EXPECT_EQ(CalculateDistanceInFloats<tsl::float8_e8m0fnu>(
+                tsl::float8_e8m0fnu(1.0), tsl::float8_e8m0fnu(2.0)),
+            1);
+
+  // two steps apart
+  EXPECT_EQ(CalculateDistanceInFloats<tsl::float8_e8m0fnu>(
+                tsl::float8_e8m0fnu(0.5), tsl::float8_e8m0fnu(2.0)),
+            2);
+}
+
 TEST(FPDistanceTest, F8E3M4Distance) {
   // a & b are equal
   EXPECT_EQ(CalculateDistanceInFloats<tsl::float8_e3m4>(tsl::float8_e3m4(8.0),

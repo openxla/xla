@@ -1,0 +1,99 @@
+diff --git a/include/float8.h b/include/float8.h
+index 51d91fd..c53eb45 100644
+--- a/include/float8.h
++++ b/include/float8.h
+@@ -1021,11 +1021,11 @@ struct numeric_limits_float8_e8m0fnu : public numeric_limits_float8_base {
+   static inline constexpr const int max_digits10 =
+       MaxDigits10FromDigits(digits);
+   // 2**-127 smallest valid normalized value..
+-  static inline constexpr const int min_exponent = -127 + 1;
++  static inline constexpr const int min_exponent = -kExponentBias + 1;
+   static inline constexpr const int min_exponent10 =
+       MinExponent10FromMinExponent(min_exponent);
+   // 128 encoding using for NaN
+-  static inline constexpr const int max_exponent = 127;
++  static inline constexpr const int max_exponent = kExponentBias + 1;
+   static inline constexpr const int max_exponent10 =
+       MaxExponent10FromMaxExponentAndDigits(max_exponent, digits);
+   static inline constexpr const bool is_iec559 = false;
+@@ -1292,7 +1292,8 @@ struct Traits<float8_e8m0fnu> : public TraitsBase<float8_e8m0fnu> {
+ };
+
+ template <typename Bits>
+-constexpr inline Bits RoundBitsToNearestEven(Bits bits, int roundoff) {
++constexpr inline Bits RoundBitsToNearestEven(Bits bits, int roundoff,
++                                             bool use_implicit_bit) {
+   // Round to nearest even by adding a bias term.
+   // Consider a bit pattern
+   //   FFF...FLRTT...T,
+@@ -1301,9 +1302,12 @@ constexpr inline Bits RoundBitsToNearestEven(Bits bits, int roundoff) {
+   // - L is 1, R is 1, OR
+   // - L is 0, R is 1, any T is one.
+   // We do this by adding L to a bit pattern consisting of all T = 1.
+-  Bits bias = roundoff == 0
+-                  ? 0
+-                  : ((bits >> roundoff) & 1) + (Bits{1} << (roundoff - 1)) - 1;
++  //
++  // When rounding to zero mantissa (E8M0 type), the L bit is implicitly 1 (do
++  // not use the exponent bits for rounding). Add only the R bit in this case.
++  Bits bias = !use_implicit_bit
++                  ? ((bits >> roundoff) & 1) + (Bits{1} << (roundoff - 1)) - 1
++                  : Bits{1} << (roundoff - 1);
+   return bits + bias;
+ }
+
+@@ -1443,6 +1447,7 @@ struct ConvertImpl<From, To, kSaturate, kTruncate,
+     }
+
+     const int biased_from_exponent = from_bits >> kFromMantissaBits;
++    const bool to_zero_mantissa = kToMantissaBits == 0;
+
+     // `To` supports more exponents near zero which means that some subnormal
+     // values in `From` may become normal.
+@@ -1473,11 +1478,14 @@ struct ConvertImpl<From, To, kSaturate, kTruncate,
+         }
+
+         // Truncate/round mantissa if necessary.
+-        if constexpr (kDigitShift > 0) {
++        if constexpr (kDigitShift >= 0) {
+           bits <<= kDigitShift;
+         } else {
+           if constexpr (!kTruncate) {
+-            bits = RoundBitsToNearestEven(bits, -kDigitShift);
++            // When converting float to e8m0, the bits represent a denormal,
++            // so don't use the implicit mantissa bit for rounding.
++            bits = RoundBitsToNearestEven(
++                bits, -kDigitShift, to_zero_mantissa && kExponentOffset != 0);
+           }
+           bits >>= -kDigitShift;
+         }
+@@ -1514,8 +1522,8 @@ struct ConvertImpl<From, To, kSaturate, kTruncate,
+               // otherwise the lower precision bits may already be lost.  There
+               // is an edge-case where rounding to a normalized value would
+               // normally round down, but for a subnormal, we need to round up.
+-              rounded_from_bits =
+-                  RoundBitsToNearestEven(rounded_from_bits, exponent_shift);
++              rounded_from_bits = RoundBitsToNearestEven(rounded_from_bits,
++                                                         exponent_shift, false);
+             }
+             bits = rounded_from_bits >> exponent_shift;
+           }
+@@ -1532,7 +1540,8 @@ struct ConvertImpl<From, To, kSaturate, kTruncate,
+     WideBits rounded_from_bits = from_bits;
+     if constexpr (kDigitShift < 0) {
+       if constexpr (!kTruncate) {
+-        rounded_from_bits = RoundBitsToNearestEven(from_bits, -kDigitShift);
++        rounded_from_bits =
++            RoundBitsToNearestEven(from_bits, -kDigitShift, to_zero_mantissa);
+       }
+       // Zero-out tail bits.
+       rounded_from_bits &= ~((WideBits{1} << (-kDigitShift)) - 1);
+@@ -1602,7 +1611,7 @@ struct ConvertImpl<Eigen::half, float8_e5m2, kSaturate, kTruncate> {
+     }
+
+     if constexpr (!kTruncate) {
+-      from_bits = RoundBitsToNearestEven(from_bits, 8);
++      from_bits = RoundBitsToNearestEven(from_bits, 8, false);
+       // Rounding can cause an overflow to infinity. Clamp to the largest finite
+       // value if saturation is requested.
+       if constexpr (kSaturate) {
