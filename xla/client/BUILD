@@ -2,6 +2,7 @@
 #   XLA client libraries.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 
 package(
@@ -99,6 +100,24 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ],
 )
+
+xla_cc_test(
+    name = "executable_build_options_test",
+    srcs = ["executable_build_options_test.cc"],
+    deps = [
+        ":executable_build_options",
+        "//xla:protobuf_util",
+        "//xla:test",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:computation_placer",
+        "//xla/service:test_compilation_environment_proto_cc",
+        "//xla/tsl/lib/core:status_test_util",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
 
 cc_library(
     name = "local_client",
