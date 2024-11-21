@@ -1733,7 +1733,8 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
       // For async collective done ops, save their corresponding start ops to
       // the map
-      if (hlo_query::IsAsyncCollectiveDoneOp(&n->GetInstr(), true)) {
+      if (hlo_query::IsAsyncCollectiveDoneOp(&n->GetInstr(),
+                                             /*include_send_recv=*/true)) {
         CHECK(hlo_query::IsAsyncCollectiveStartOp(n->GetInstr().operand(0),
                                                   true));
         sched_state->resource_occupiers_in_flight[resource.first].insert(

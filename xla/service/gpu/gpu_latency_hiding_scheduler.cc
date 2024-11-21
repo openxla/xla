@@ -182,7 +182,9 @@ bool GpuScheduleCrossesOverlapLimit(
     }
   }
 
-  if (node->GetResources().size() == 0) return false;
+  if (node->GetResources().size() == 0) {
+    return false;
+  }
   auto resource_type = node->GetResources().at(0).first;
   // If the candidate collective has more than 1 overlapping ranks with
   // in-flight collectives, they can form cyclic dependency and cannot be
@@ -206,7 +208,6 @@ bool GpuScheduleCrossesOverlapLimit(
           // Number of overlapping ranks between this occupier and candidate
           size_t overlapping_count = CountOverlappingRanks(
               curr_start_inst->replica_groups(), occupier->replica_groups());
-          // VLOG(0) << "overlapping_count: " << overlapping_count;
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count
