@@ -4776,46 +4776,52 @@ TEST_F(ShapeInferenceTest, CollectivePermuteStart) {
                           ParseShape("(f32[8, 8], f32[8, 8])"));
   TF_ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
                           ShapeInference::InferCollectivePermuteStartShape(
-                              /*operand_shapes=*/{{&operand}}, {}));
+                              /*operand_shapes=*/{&operand}, {}));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
 TEST_F(ShapeInferenceTest, CombinedCollectivePermute) {
-  TF_ASSERT_OK_AND_ASSIGN(const Shape operand,
-                          ParseShape("(f32[8, 8], f32[8, 8])"));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand_0, ParseShape("f32[8, 8]"));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand_1, ParseShape("f32[16, 16]"));
   TF_ASSERT_OK_AND_ASSIGN(const Shape expected,
-                          ParseShape("(f32[8, 8], f32[8, 8])"));
-  TF_ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectivePermuteShape(
-                              /*operand_shape=*/&operand, false));
+                          ParseShape("(f32[8, 8], f32[16, 16])"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferCollectivePermuteShape(
+          /*operand_shapes=*/{&operand_0, &operand_1}, false));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
 TEST_F(ShapeInferenceTest, CombinedCollectivePermuteStart) {
-  TF_ASSERT_OK_AND_ASSIGN(const Shape operand,
-                          ParseShape("(f32[8, 8], f32[8, 8])"));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand_0, ParseShape("f32[8, 8]"));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand_1, ParseShape("f32[16, 16]"));
   TF_ASSERT_OK_AND_ASSIGN(
       const Shape expected,
-      ParseShape("((f32[8, 8], f32[8, 8]), (f32[8, 8], f32[8, 8]))"));
-  TF_ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
-                          ShapeInference::InferCollectivePermuteStartShape(
-                              /*operand_shape=*/&operand, {}, false));
+      ParseShape("((f32[8, 8], f32[16, 16]), (f32[8, 8], f32[16, 16]))"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferCollectivePermuteStartShape(
+          /*operand_shapes=*/{&operand_0, &operand_1}, {}, false));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
-TEST_F(ShapeInferenceTest, CombinedPartialCollectivePermute) {
+TEST_F(ShapeInferenceTest, CombinedInplaceCollectivePermute) {
   TF_ASSERT_OK_AND_ASSIGN(const Shape operand,
                           ParseShape("(f32[2,3], f32[2,3], u32[], u32[])"));
   TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[2,3]"));
+  std::vector<const Shape*> operand_shapes;
+  absl::c_transform(
+      operand.tuple_shapes(), std::back_inserter(operand_shapes),
+      [](const Shape& shape) { return &shape; });
   TF_ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
                           ShapeInference::InferCollectivePermuteShape(
-                              /*operand_shape=*/&operand, true));
+                              /*operand_shapes=*/operand_shapes, true));
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected);

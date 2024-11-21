@@ -798,6 +798,6 @@ void BuildOpsSubmodule(nb::module_& m) {
   UNARY_OP(Conj);
   UNARY_OP(OptimizationBarrier);
 #undef UNARY_OP
-}
+}  // NOLINT(readability/fn_size)
 
 }  // namespace xla

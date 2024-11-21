@@ -1118,7 +1118,9 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
         const HloValueSet& operand_value_set =
             GetValueSet(collective_permute_start->operand(oprd_idx), {i});
         HloValueSet& value_set =
-            GetValueSet(collective_permute_start, {0, oprd_idx, i});
+            (collective_permute_start->operands().size() > 1)
+                ? GetValueSet(collective_permute_start, {0, oprd_idx, i})
+                : GetValueSet(collective_permute_start, {0, i});
         if (value_set != operand_value_set) {
           value_set = operand_value_set;
           changed = true;
@@ -1128,7 +1130,9 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
       const HloValueSet& operand_value_set =
           GetValueSet(collective_permute_start->operand(oprd_idx));
       HloValueSet& value_set =
-          GetValueSet(collective_permute_start, {0, oprd_idx});
+          (collective_permute_start->operands().size() > 1)
+              ? GetValueSet(collective_permute_start, {0, oprd_idx})
+              : GetValueSet(collective_permute_start, {0});
       if (value_set != operand_value_set) {
         value_set = operand_value_set;
         changed = true;

@@ -4093,9 +4093,9 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
   return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
     HloInstructionProto instr;
-    TF_ASSIGN_OR_RETURN(Shape shape,
-                        ShapeInference::InferCollectivePermuteShape(
-                            {{operand_shape}}, inplace));
+    TF_ASSIGN_OR_RETURN(
+        Shape shape,
+        ShapeInference::InferCollectivePermuteShape({operand_shape}, inplace));
     *instr.mutable_shape() = shape.ToProto();
 
     for (const auto& pair : source_target_pairs) {
@@ -4127,7 +4127,7 @@ XlaOp XlaBuilder::CollectivePermuteImpl(
       TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
       operand_shapes.push_back(operand_shape);
     }
-    CHECK(operand_shapes.size() > 1);
+    CHECK_GT(operand_shapes.size(), 1);
     HloInstructionProto instr;
     TF_ASSIGN_OR_RETURN(
         Shape shape,

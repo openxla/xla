@@ -90,7 +90,6 @@ absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
     HloInstruction* instruction, absl::Span<const Shape> context_shapes) {
   auto* cp = Cast<HloCollectivePermuteInstruction>(instruction);
   HloInstruction* start;
-  HloInstruction* operand = cp->mutable_operand(0);
   std::vector<const Shape*> operand_shapes;
   absl::c_transform(
       cp->operands(), std::back_inserter(operand_shapes),
@@ -110,9 +109,10 @@ absl::StatusOr<ReplacedAsync> CreateAsyncCollectivePermute(
             ShapeInference::InferCollectivePermuteStartShape(
                 operand_shapes, context_shapes, true)
                 .value(),
-            operand, cp->mutable_operand(1), cp->mutable_operand(2),
-            cp->mutable_operand(3), cp->source_target_pairs(),
-            cp->dynamic_slice_sizes_list(), cp->channel_id()));
+            cp->mutable_operand(0), cp->mutable_operand(1),
+            cp->mutable_operand(2), cp->mutable_operand(3),
+            cp->source_target_pairs(), cp->dynamic_slice_sizes_list(),
+            cp->channel_id()));
     if (HasDisjointReadWriteRegionsAttr(cp)) {
       SetDisjointReadWriteRegionsAttr(start);
     }
