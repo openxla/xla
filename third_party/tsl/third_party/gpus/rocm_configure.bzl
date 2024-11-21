@@ -37,7 +37,6 @@ load(
 load(
     ":cuda_configure.bzl",
     "enable_cuda",
-    "to_list_of_strings",
 )
 load(
     ":sycl_configure.bzl",
