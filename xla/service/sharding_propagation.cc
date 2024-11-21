@@ -325,6 +325,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kOutfeed:
     case HloOpcode::kParameter:
     case HloOpcode::kPartitionId:
+    case HloOpcode::kRaggedDot:
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kReduce:
@@ -2464,12 +2465,14 @@ bool ShardingPropagation::InferShardingFromOperands(
       CHECK(sort);
       const int64_t sort_dim = sort->sort_dimension();
       if (!operand->sharding().IsTileMaximal() &&
-          operand->sharding().tile_assignment().dim(sort_dim) != 1) {
+          operand->sharding().tile_assignment().dim(sort_dim) != 1 &&
+          !hlo_sharding_util::GetFirstMergeableDimForSortOperand(
+               operand->shape(), operand->sharding(), sort_dim)
+               .has_value()) {
         // In case of a sort operand sharded along the sort dimension, the
-        // sharding is propagated only if there exists a free (unsharded)
-        // dimension that we can later move the sharding into.
-        if (!hlo_sharding_util::IsSortOperandShardingMovable(operand, sort_dim))
-          return false;
+        // sharding is propagated only if there exists a mergeable dimension
+        // that we can later move the sharding into.
+        return false;
       }
 
       if (instruction->shape().IsTuple()) {
@@ -2504,15 +2507,15 @@ bool ShardingPropagation::InferShardingFromOperands(
       const GatherDimensionNumbers& dnums =
           instruction->gather_dimension_numbers();
       if (!dnums.operand_batching_dims().empty()) {
-        hlo_sharding_util::GatherScatterParallelDims explict_batch_dims;
-        explict_batch_dims.operand_parallel_dims.assign(
+        hlo_sharding_util::GatherScatterParallelDims explicit_batch_dims;
+        explicit_batch_dims.operand_parallel_dims.assign(
             dnums.operand_batching_dims().begin(),
             dnums.operand_batching_dims().end());
-        explict_batch_dims.indices_parallel_dims.assign(
+        explicit_batch_dims.indices_parallel_dims.assign(
             dnums.start_indices_batching_dims().begin(),
             dnums.start_indices_batching_dims().end());
         changed |= InferGatherParallelShardingFromOperands(
-            instruction, explict_batch_dims, may_combine_partial_sharding);
+            instruction, explicit_batch_dims, may_combine_partial_sharding);
       }
 
       if (hlo_sharding_util::IsSpatiallyPartitioned(instruction->operand(1))) {
@@ -2559,15 +2562,15 @@ bool ShardingPropagation::InferShardingFromOperands(
       const ScatterDimensionNumbers& dnums =
           instruction->scatter_dimension_numbers();
       if (!dnums.input_batching_dims().empty()) {
-        hlo_sharding_util::GatherScatterParallelDims explict_batch_dims;
-        explict_batch_dims.operand_parallel_dims.assign(
+        hlo_sharding_util::GatherScatterParallelDims explicit_batch_dims;
+        explicit_batch_dims.operand_parallel_dims.assign(
             dnums.input_batching_dims().begin(),
             dnums.input_batching_dims().end());
-        explict_batch_dims.indices_parallel_dims.assign(
+        explicit_batch_dims.indices_parallel_dims.assign(
             dnums.scatter_indices_batching_dims().begin(),
             dnums.scatter_indices_batching_dims().end());
         changed |= InferScatterParallelShardingFromOperands(
-            instruction, explict_batch_dims, may_combine_partial_sharding);
+            instruction, explicit_batch_dims, may_combine_partial_sharding);
       }
 
       const int64_t operand_count = scatter.scatter_operand_count();

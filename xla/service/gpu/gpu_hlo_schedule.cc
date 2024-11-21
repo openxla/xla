@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/collective_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
@@ -451,28 +452,12 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
 
   const DebugOptions& options = module->config().debug_options();
   const bool enable_latency_hiding_scheduler =
-      options.xla_gpu_enable_latency_hiding_scheduler();
+      options.xla_gpu_enable_latency_hiding_scheduler() ||
+      hlo_query::ExecTimeOptimizationEffort(*module) >=
+          kExtraCollectiveOptimizations;
 
   if (!enable_latency_hiding_scheduler) {
     return ScheduleMetadata{memory_limit};
-  }
-
-  if (options.xla_gpu_pgle_profile_file_or_directory_path().empty() &&
-      module->config().fdo_profile().empty() &&
-      options.xla_gpu_pgle_accuracy_checker() ==
-          DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
-    return absl::InvalidArgumentError(
-        "xla_gpu_pgle_accuracy_checker is set to ERROR, but no profile "
-        "path specified in xla_gpu_pgle_profile_file_or_directory_path");
-  }
-
-  if (options.xla_gpu_pgle_profile_file_or_directory_path().empty() &&
-          module->config().fdo_profile().empty() &&
-          options.xla_gpu_pgle_accuracy_checker(),
-      DebugOptions::PGLE_STRICTNESS_LEVEL_WARN) {
-    LOG(WARNING)
-        << "xla_gpu_pgle_accuracy_checker is set to WARN, but no profile path "
-           "specified in xla_gpu_pgle_profile_file_or_directory_path";
   }
 
   SchedulerConfig config = GetSchedulerConfig(

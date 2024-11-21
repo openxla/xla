@@ -142,6 +142,11 @@ class HorizontalLoopFusionImpl {
   std::string prefix_;
 };  // HorizontalLoopFusionImpl
 
+bool IsConcatenationInputFusion(const HloInstruction& instr) {
+  return instr.IsInputFusion() &&
+         instr.fused_expression_root()->opcode() == HloOpcode::kConcatenate;
+}
+
 bool IsFusibleCandidate(const HloInstruction& instr) {
   // For now, we do not support fusing instruction with control flow.
   if (!instr.control_successors().empty() ||
@@ -149,7 +154,8 @@ bool IsFusibleCandidate(const HloInstruction& instr) {
     return false;
   }
 
-  if (IsNestableVariadicReduction(instr)) {
+  if (IsNestableVariadicReduction(instr) ||
+      IsNestableVariadicReduceWindow(instr)) {
     return false;
   }
 
@@ -158,8 +164,7 @@ bool IsFusibleCandidate(const HloInstruction& instr) {
     return true;
   }
 
-  // Exclude fusions other than kLoop.
-  if (!instr.IsLoopFusion()) {
+  if (!(instr.IsLoopFusion() || IsConcatenationInputFusion(instr))) {
     return false;
   }
 
@@ -196,7 +201,8 @@ bool IsProfitableFusionCandidate(const HloInstruction& instr,
   // GPU thread can only process 1 element. From experience, we enable larger
   // tensor size threshold for kLoop fusion.
   const int64_t kShapeThreshold =
-      sliced_input_fusion ? 128 * 2048 : 8192 * 8192;
+      (sliced_input_fusion || IsConcatenationInputFusion(instr)) ? 128 * 2048
+                                                                 : 8192 * 8192;
   const int64_t kInstrCountThreshold = sliced_input_fusion ? 30 : 128;
   const HloInstruction* root = (instr.opcode() == HloOpcode::kFusion)
                                    ? instr.fused_expression_root()
@@ -232,27 +238,6 @@ bool IsProfitableFusionCandidate(const HloInstruction& instr,
   return true;
 }
 
-// Returns whether `fusion_instr` has only row-major layouts.
-// The horizontal fusion excludes computations with non-row-major layouts,
-// because fusing computations with different layouts can result in uncoalesced
-// memory accesses and cause great performance overhead.
-bool HasOnlyRowMajorLayout(const HloInstruction& instr) {
-  if (instr.opcode() != HloOpcode::kFusion) {
-    return LayoutUtil::IsMonotonicWithDim0Major(instr.shape().layout());
-  }
-
-  auto fused_instrs = instr.fused_instructions_computation()->instructions();
-  for (HloInstruction* i : fused_instrs) {
-    if (!LayoutUtil::IsDenseArray(i->shape())) {
-      continue;
-    }
-    if (!LayoutUtil::IsMonotonicWithDim0Major(i->shape().layout())) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // Returns whether any operand of `instr` is a parameter instruction that
 // is shared with `fusion_instrs`.
 bool AnyOpndIsParamSharedAmongFusions(
@@ -266,6 +251,14 @@ bool AnyOpndIsParamSharedAmongFusions(
   });
 }
 
+HloInstruction* LatestNonTrivialAncestor(HloInstruction* hlo) {
+  if (hlo->opcode() == HloOpcode::kGetTupleElement ||
+      hlo->opcode() == HloOpcode::kBitcast) {
+    return LatestNonTrivialAncestor(hlo->mutable_operand(0));
+  }
+  return hlo;
+}
+
 void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
     HloInstruction* consumer) {
   // First, find out all potential target candidates. We will filter out
@@ -273,9 +266,7 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
   absl::flat_hash_set<HloInstruction*> fusible_candidates;
   std::vector<HloInstruction*> ordered_fusible_candidates;
   for (HloInstruction* opnd : consumer->operands()) {
-    HloInstruction* predecessor = opnd->LatestNonGteAncestor();
-    // We support kLoop fusion and element-wise HLOs now. We may extend the
-    // support list if needs arise.
+    HloInstruction* predecessor = LatestNonTrivialAncestor(opnd);
     if (IsFusibleCandidate(*predecessor)) {
       if (fusible_candidates.insert(predecessor).second) {
         // Add unseen fusion to ordered list.
@@ -295,11 +286,8 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
               << " rejects may-not-be profitable fusion instr"
               << instr->ToString();
       continue;
-    } else if (!HasOnlyRowMajorLayout(*instr)) {
-      VLOG(2) << "sliced_input_fusion=" << sliced_input_fusion_
-              << " rejects non-row-major fusion instr " << instr->ToString();
-      continue;
-    } else if (AnyOpndIsParamSharedAmongFusions(instr, fusible_candidates)) {
+    } else if (sliced_input_fusion_ &&
+               AnyOpndIsParamSharedAmongFusions(instr, fusible_candidates)) {
       // Don't fuse fusions whose operands are parameter instructions that are
       // shared among fusions because we cannot i/o alias the produced
       // horizontal fusion due to the concat insertion.
@@ -316,10 +304,9 @@ void HorizontalLoopFusionImpl::FusionCandidates::Initialize(
 
   // Sort `fusible_instrs_` according to output types, the number of outputs,
   // instruction counts, output tensor element count. For sliced input fusion,
-  // we only fuse instructions with the same number/type of outputs and whose
-  // computations have the same instruction count. For kLoop fusion, we requires
-  // the fused instructions to have the same number/type of outputs and also the
-  // same output shape. We did a sort here so the fusion candidates is
+  // we only fuse instructions with the same number/type of outputs.
+  // For kLoop fusion, we in addition require the same output shape.
+  // We did a sort here so the fusion candidates is
   // populating a continuous span.
   std::stable_sort(
       fusible_instrs_.begin(), fusible_instrs_.end(),
@@ -384,15 +371,6 @@ HorizontalLoopFusionImpl::FusionCandidates::GetNextSpanOfFusions() {
         GetOutputSizeOfFusible(*fusible_instrs_[right])) {
       // Cannot fuse computations who have different numbers of outputs.
       VLOG(2) << "different number of outputs";
-      break;
-    }
-    if (GetInstrCountOfFusible(*fusible_instrs_[left]) !=
-        GetInstrCountOfFusible(*fusible_instrs_[right])) {
-      // Do not fuse computations of different instruction counts as it may
-      // introduce control divergence. This is a very simple heuristic to avoid
-      // fusing computations with too much discrepancy and we may improve it
-      // when the needs arise.
-      VLOG(2) << "different instruction count";
       break;
     }
     if (!sliced_input_fusion_ &&
@@ -553,6 +531,13 @@ absl::Status HorizontalLoopFusionImpl::CreateFusedComputation(
         if (new_output->shape().dimensions_size() == 1) {
           instr_outputs[j] = new_output;
         } else {
+          if (!LayoutUtil::IsMonotonicWithDim0Major(
+                  new_output->shape().layout())) {
+            new_output = comp->AddInstruction(HloInstruction::CreateBitcast(
+                ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
+                    new_output->shape()),
+                new_output));
+          }
           Shape new_shape = ShapeUtil::MakeShapeWithDenseLayout(
               new_output->shape().element_type(),
               {ShapeUtil::ElementsIn(new_output->shape())},
@@ -714,7 +699,7 @@ absl::StatusOr<bool> HorizontalLoopFusionImpl::Run() {
         bool loop_fusion_changed,
         FuseConsumerOperands(consumer, false, to_fuse_candidates));
 
-    // for the remaining operands with diffent shape, we further try fuse them
+    // for the remaining operands with different shape, we further try fuse them
     // into kInput fusion instruction.
     TF_ASSIGN_OR_RETURN(
         bool sliced_input_fusion_changed,

@@ -72,7 +72,6 @@ limitations under the License.
 
 namespace xla {
 
-
 namespace {
 // Creates an HloModule from the given proto.
 absl::StatusOr<std::unique_ptr<HloModule>> HloTextToModule(
@@ -333,6 +332,10 @@ absl::StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
     debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
                                             XlaProtoDumpMode::kDumpAsProto);
   }
+  // TODO(b/378832773) The flag is temporary, this line should be removed when
+  // default is changed / or flag is removed.
+  build_options.mutable_debug_options()->set_xla_pjrt_allow_auto_layout_in_hlo(
+      true);
 
   switch (raw_options.hlo_passes_mode) {
     case HloPassesMode::kRunXLABackendOnly:
@@ -582,7 +585,8 @@ FunctionalHloRunner::ReadModuleFromHloTextFile(absl::string_view hlo_file) {
   std::string hlo_string;
   TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
                                            std::string(hlo_file), &hlo_string));
-  return ParseAndReturnUnverifiedModule(hlo_string);
+  return ParseAndReturnUnverifiedModule(
+      hlo_string, {}, HloParserOptions().set_fill_missing_layouts(false));
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>>
@@ -1026,7 +1030,7 @@ FunctionalHloRunner::RunInternal(
         running_options.profiler->CreateSession();
       }
     }
-    execute_options.launch_id = repeat;
+    execute_options.launch_id = repeat + 1;
     futures->clear();
     TF_ASSIGN_OR_RETURN(
         output_buffers,

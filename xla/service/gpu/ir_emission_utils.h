@@ -108,23 +108,9 @@ bool IsSliceWithUnitStrides(const HloInstruction* instr);
 // operates on a contiguous slice of the input buffer.
 bool IsContiguousSlice(const HloInstruction& instr);
 
-// Emits code to shuffle data between threads of a warp. This has the same
-// semantics as the PTX "shfl.sync.down" instruction but works for values that
-// aren't 32 bits in size. The last operand of the emitted "shfl" is
-// `WarpSize() - 1`.
-//
-// This function emits a "full-warp" shuffle, which all threads of a warp
-// participate in.  *Do not use this function from a divergent context:* You
-// can't correctly do so on both Volta and earlier GPUs.
-//
-// https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-shfl-sync
-llvm::Value* EmitFullWarpShuffleDown(
-    llvm::Value* value, llvm::Value* offset, llvm::IRBuilder<>* builder,
-    const se::DeviceDescription& gpu_device_info);
-
 // Emits code that determines whether the current thread is thread 0 within
 // block 0 of the kernel.
-llvm::Value* IsBlock0Thread0(llvm::IRBuilder<>* b);
+llvm::Value* IsBlock0Thread0(llvm::IRBuilderBase* b);
 
 absl::StatusOr<BufferAllocation::Slice> GetAllocationSlice(
     const BufferAssignment& buffer_assignment, const HloInstruction* instr,
@@ -210,13 +196,7 @@ void VerifyModule(const llvm::Module& module);
 //    range of i32.
 // Otherwise, the return type is i64.
 llvm::Type* GetIndexTypeForKernel(const HloInstruction* hlo,
-                                  int64_t launch_size, llvm::IRBuilder<>* b);
-
-// Whether the module's target is an AMD GPU.
-bool IsAMDGPU(const llvm::Module* module);
-
-// Whether the module's target is a SPIR.
-bool IsSPIR(const llvm::Module* module);
+                                  int64_t launch_size, llvm::IRBuilderBase* b);
 
 // This class stores either a non-owning reference or owns data that represents
 // a dense array in XLA format. It is used for intermediate storage during IR
@@ -253,15 +233,6 @@ absl::StatusOr<DenseDataIntermediate> LiteralToXlaFormat(
 // Returns a deterministic encoded string representation of the proto message.
 absl::StatusOr<std::string> GetProtoFingerprint(
     const tsl::protobuf::MessageLite&);
-
-// Returns a deterministic encoded string representation of the backend config.
-template <typename ConfigType>
-absl::StatusOr<std::string> GetBackendConfigFingerprint(
-    const BackendConfigWrapper& wrapper) {
-  ConfigType proto;
-  TF_RETURN_IF_ERROR(wrapper.GetProto(&proto));
-  return GetProtoFingerprint(proto);
-}
 
 // Returns concatenated fingerprint of an HLO instruction without its backend
 // config and its backend config's deterministic fingerprint.

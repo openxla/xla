@@ -1158,6 +1158,191 @@ ENTRY entry {
       absl::StrReplaceAll(kModuleReplicatedStr, replacements_), opts);
 }
 
+// E2E tests comparing the results with and without pipelining of collectives.
+class CollectiveOpsTestE2EPipelinedNonPipelined : public CollectiveOpsTestE2E {
+ public:
+  void CollectiveOpsComparePipelinedNonPipelined(absl::string_view hlo_string) {
+    const int64_t kNumReplicas = 1;
+    const int64_t kNumPartitions = 2;
+    SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+
+    HloModuleConfig config =
+        GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+    auto opts = GetDebugOptionsForTest();
+    opts.set_xla_gpu_enable_pipelined_collectives(true);
+    config.set_debug_options(opts);
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(hlo_string, config));
+    auto fake_arguments = xla::MakeFakeArguments(module.get()).value();
+    std::vector<Literal*> fake_ptrs(fake_arguments.size());
+    for (int i = 0; i < fake_arguments.size(); ++i) {
+      fake_ptrs[i] = &fake_arguments[i];
+    }
+
+    DeviceAssignment assn(/*replica_count=*/kNumReplicas,
+                          /*computation_count=*/kNumPartitions);
+    for (int64_t i = 0; i < kNumPartitions; ++i) {
+      assn(0, i) = i;
+    }
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> results,
+        HloTestBase::ExecuteReplicated(
+            std::move(module), fake_ptrs, kNumPartitions, &assn,
+            /*run_hlo_passes=*/true, /*use-threads=*/true));
+    ASSERT_EQ(results.size(), kNumPartitions);
+
+    HloModuleConfig ref_config =
+        GetModuleConfigForTest(kNumReplicas, kNumPartitions);
+    auto ref_opts = GetDebugOptionsForTest();
+    ref_opts.set_xla_gpu_enable_pipelined_collectives(false);
+    ref_config.set_debug_options(ref_opts);
+    TF_ASSERT_OK_AND_ASSIGN(
+        auto ref_module, ParseAndReturnVerifiedModule(hlo_string, ref_config));
+    auto fake_ref_arguments = xla::MakeFakeArguments(ref_module.get()).value();
+    std::vector<Literal*> ref_fake_ptrs(fake_ref_arguments.size());
+    for (int i = 0; i < fake_ref_arguments.size(); ++i) {
+      ref_fake_ptrs[i] = &fake_ref_arguments[i];
+    }
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<Literal> ref_results,
+        HloTestBase::ExecuteReplicated(
+            std::move(ref_module), ref_fake_ptrs, kNumPartitions, &assn,
+            /*run_hlo_passes=*/true, /*use-threads=*/true));
+    ASSERT_EQ(ref_results.size(), kNumPartitions);
+    ErrorSpec error_spec{1e-5, 1e-5};
+    // Expect same results with and without pipelining of collectives.
+    for (int i = 0; i < kNumPartitions; ++i) {
+      EXPECT_TRUE(
+          LiteralTestUtil::Near(ref_results[i], results[i], error_spec));
+    }
+  }
+};
+
+TEST_F(CollectiveOpsTestE2EPipelinedNonPipelined, CollectivePipelinerForward) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(bf16[5,8,16])->bf16[5,8,16]}, allow_spmd_sharding_propagation_to_parameters={false,false}, num_partitions=2
+
+add {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT add = bf16[] add(lhs, rhs)
+}
+
+while_cond {
+  param = (s32[], bf16[5,8,16], bf16[5,8,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  c5 = s32[] constant(5)
+  ROOT cmp = pred[] compare(loop_index, c5), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[5,8,16], bf16[5,8,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  partial_output = bf16[5,8,16] get-tuple-element(param), index=1
+  slice_input = bf16[5,8,16] get-tuple-element(param), index=2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  next_loop_index = s32[] add(loop_index, c1)
+  dynamic_slice = bf16[1,8,16] dynamic-slice(slice_input, loop_index, c0, c0), dynamic_slice_sizes={1,8,16}
+  all_reduce = bf16[1,8,16] all-reduce(dynamic_slice), replica_groups={}, to_apply=add, channel_id=1
+  updated_partial_output = bf16[5,8,16] dynamic-update-slice(partial_output, all_reduce, loop_index, c0, c0)
+  ROOT tuple = (s32[], bf16[5,8,16], bf16[5,8,16]) tuple(next_loop_index, updated_partial_output, slice_input)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[5,8,16] parameter(0)
+  tuple = (s32[], bf16[5,8,16], bf16[5,8,16]) tuple(c0, p0, p0)
+  while = (s32[], bf16[5,8,16], bf16[5,8,16]) while(tuple), condition=while_cond, body=while_body
+  ROOT gte = bf16[5,8,16] get-tuple-element(while), index=1
+}
+)";
+
+  CollectiveOpsComparePipelinedNonPipelined(hlo_string);
+}
+
+TEST_F(CollectiveOpsTestE2EPipelinedNonPipelined, CollectivePipelinerBackward) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(bf16[5,4,16], bf16[5,1,2,16])->bf16[5,4,16]}, allow_spmd_sharding_propagation_to_parameters={false,false}, num_partitions=2
+
+while_cond {
+  param = (s32[], bf16[5,4,16], bf16[5,1,2,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  c5 = s32[] constant(5)
+  ROOT cmp = pred[] compare(loop_index, c5), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[5,4,16], bf16[5,1,2,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  partial_output = bf16[5,4,16] get-tuple-element(param), index=1
+  slice_input = bf16[5,1,2,16] get-tuple-element(param), index=2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  next_loop_index = s32[] add(loop_index, c1)
+  dynamic_slice = bf16[1,1,2,16] dynamic-slice(slice_input, loop_index, c0, c0, c0), dynamic_slice_sizes={1,1,2,16}
+  dynamic_slice_reshape = bf16[1,2,16] reshape(dynamic_slice)
+  all_gather = bf16[1,4,16] all-gather(dynamic_slice_reshape), dimensions={1}, replica_groups={}
+  updated_partial_output = bf16[5,4,16] dynamic-update-slice(partial_output, all_gather, loop_index, c0, c0)
+  ROOT tuple = (s32[], bf16[5,4,16], bf16[5,1,2,16]) tuple(next_loop_index, updated_partial_output, slice_input)
+}
+
+ENTRY entry {
+  c0 = s32[] constant(0)
+  p0 = bf16[5,4,16] parameter(0)
+  p1 = bf16[5,1,2,16] parameter(1)
+  tuple = (s32[], bf16[5,4,16], bf16[5,1,2,16]) tuple(c0, p0, p1)
+  while = (s32[], bf16[5,4,16], bf16[5,1,2,16]) while(tuple), condition=while_cond, body=while_body
+  ROOT gte = bf16[5,4,16] get-tuple-element(while), index=1
+}
+)";
+
+  CollectiveOpsComparePipelinedNonPipelined(hlo_string);
+}
+
+TEST_F(CollectiveOpsTestE2EPipelinedNonPipelined,
+       CollectivePipelinerBackwardStartFromOne) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, entry_computation_layout={(bf16[5,4,16], bf16[5,1,2,16])->bf16[5,4,16]}, allow_spmd_sharding_propagation_to_parameters={false,false}, num_partitions=2
+
+while_cond {
+  param = (s32[], bf16[5,4,16], bf16[5,1,2,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  c6 = s32[] constant(6)
+  ROOT cmp = pred[] compare(loop_index, c6), direction=LT
+}
+
+while_body {
+  param = (s32[], bf16[5,4,16], bf16[5,1,2,16]) parameter(0)
+  loop_index = s32[] get-tuple-element(param), index=0
+  partial_output = bf16[5,4,16] get-tuple-element(param), index=1
+  slice_input = bf16[5,1,2,16] get-tuple-element(param), index=2
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  next_loop_index = s32[] add(loop_index, c1)
+  loop_index_minus_one = s32[] subtract(loop_index, c1)
+  dynamic_slice = bf16[1,1,2,16] dynamic-slice(slice_input, loop_index_minus_one, c0, c0, c0), dynamic_slice_sizes={1,1,2,16}
+  dynamic_slice_reshape = bf16[1,2,16] reshape(dynamic_slice)
+  all_gather = bf16[1,4,16] all-gather(dynamic_slice_reshape), dimensions={1}, replica_groups={}
+  updated_partial_output = bf16[5,4,16] dynamic-update-slice(partial_output, all_gather, loop_index_minus_one, c0, c0)
+  ROOT tuple = (s32[], bf16[5,4,16], bf16[5,1,2,16]) tuple(next_loop_index, updated_partial_output, slice_input)
+}
+
+ENTRY entry {
+  c1 = s32[] constant(1)
+  p0 = bf16[5,4,16] parameter(0)
+  p1 = bf16[5,1,2,16] parameter(1)
+  tuple = (s32[], bf16[5,4,16], bf16[5,1,2,16]) tuple(c1, p0, p1)
+  while = (s32[], bf16[5,4,16], bf16[5,1,2,16]) while(tuple), condition=while_cond, body=while_body
+  ROOT gte = bf16[5,4,16] get-tuple-element(while), index=1
+}
+)";
+
+  CollectiveOpsComparePipelinedNonPipelined(hlo_string);
+}
+
 TEST_F(CollectiveOpsTestE2E, AllToAllQuantizeCollectiveQuantizer) {
   absl::string_view kModuleReplicatedStr = R"(
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={()->bf16[2]}, num_partitions=2
@@ -1260,6 +1445,53 @@ ENTRY entry {
   ASSERT_EQ(results.size(), kNumPartitions);
   LiteralTestUtil::ExpectR1Equal<float>({4., 4.}, results[0]);
   LiteralTestUtil::ExpectR1Equal<float>({8., 8.}, results[1]);
+}
+
+TEST_F(CollectiveOpsTestE2E, AllGatherQuantizeCollectiveQuantizer) {
+  absl::string_view kModuleReplicatedStr = R"(
+HloModule module, entry_computation_layout={(f32[2], f32[1])->bf16[4]}, num_partitions=4
+max {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT max = f32[] maximum(a, b)
+  }
+
+ENTRY entry {
+  param = f32[2] parameter(0)
+  all-gather = f32[4] all-gather(param), dimensions={0}, replica_groups={{0,1},{2,3}}, channel_id=1, use_global_device_ids=true
+  scale = f32[1] parameter(1), sharding={devices=[4]<=[4]}
+  scalar_scale = f32[] reshape(scale)
+  all_reduced_scale = f32[] all-reduce(scalar_scale), to_apply=max, replica_groups={{0,1},{2,3}}, channel_id=2, use_global_device_ids=true
+  scale_bcast = f32[4] broadcast(all_reduced_scale), dimensions={}
+  divide = f32[4] divide(all-gather, scale_bcast)
+  clamp_lower = f32[] constant(-448.0)
+  clamp_lower_bcast = f32[4] broadcast(clamp_lower), dimensions={}
+  clamp_upper = f32[] constant(448.0)
+  clamp_upper_bcast = f32[4] broadcast(clamp_upper), dimensions={}
+  clamp = f32[4] clamp(clamp_lower_bcast, divide, clamp_upper_bcast)
+  ROOT convert = bf16[4] convert(clamp)
+}
+)";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.set_num_partitions(kNumPartitions);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kModuleReplicatedStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CreateExecutable(std::move(module),
+                                           /*run_hlo_passes=*/true));
+  EXPECT_TRUE(executable->has_module());
+  HloInstruction* all_gather =
+      FindInstruction(&executable->module(), HloOpcode::kAllGatherStart);
+
+  EXPECT_THAT(all_gather, NotNull());
+  EXPECT_EQ(all_gather->shape().tuple_shapes(0).element_type(), BF16);
+  EXPECT_EQ(all_gather->shape().tuple_shapes(1).element_type(), BF16);
 }
 
 TEST_F(CollectiveOpsTestE2E, NoErrorOnDuplicateChannelId) {

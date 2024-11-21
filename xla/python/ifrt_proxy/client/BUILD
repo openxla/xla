@@ -49,6 +49,7 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:unbounded_work_queue",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -97,6 +98,7 @@ cc_library(
         ":host_buffer",
         "//xla/python/ifrt",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
+        "//xla/python/ifrt_proxy/common:prof_util",
         "//xla/python/ifrt_proxy/common:test_utils",
         "//xla/python/ifrt_proxy/common:types",
         "//xla/tsl/profiler/utils:xplane_schema",
@@ -159,11 +161,13 @@ cc_library(
         "//xla/python/ifrt_proxy/common:common_serdes",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "//xla/python/ifrt_proxy/common:types",
+        "//xla/python/ifrt_proxy/common:versions",
         "//xla/python/pjrt_ifrt:pjrt_attribute_map_util",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -226,6 +230,7 @@ cc_library(
     srcs = ["array.cc"],
     hdrs = ["array.h"],
     deps = [
+        ":global_flags",
         ":rpc_helper",
         "//xla:status_macros",
         "//xla/python/ifrt",
@@ -234,6 +239,7 @@ cc_library(
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "//xla/python/ifrt_proxy/common:types",
         "//xla/python/ifrt_proxy/common:types_proto_cc",
+        "//xla/python/ifrt_proxy/common:versions",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
@@ -286,7 +292,6 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt_proxy/common:ifrt_service_proto_cc",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -401,7 +406,6 @@ cc_library(
     hdrs = ["host_buffer.h"],
     deps = [
         "//xla/python/ifrt",
-        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
@@ -415,8 +419,6 @@ cc_library(
     deps = [
         ":host_buffer",
         "//xla/python/ifrt",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:cord",
         "@com_google_googletest//:gtest",
@@ -433,6 +435,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_proto_cc",
+        "//xla/python/ifrt_proxy/common:prof_util",
         "//xla/tsl/protobuf:status_proto_cc",
         "@com_github_grpc_grpc//:grpc++",
         "@com_google_absl//absl/log",
@@ -440,7 +443,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:unbounded_work_queue",
     ],
 )
@@ -450,6 +452,7 @@ cc_library(
     srcs = ["grpc_client.cc"],
     deps = [
         ":client",
+        ":global_flags",
         ":grpc_client_session",
         ":grpc_host_buffer",
         ":registry",
@@ -464,7 +467,6 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:log_entry",
-        "@com_google_absl//absl/log:log_sink",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -480,9 +482,11 @@ cc_library(
     srcs = ["registry.cc"],
     hdrs = ["registry.h"],
     deps = [
+        ":global_flags",
         "//xla/python/ifrt",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -508,6 +512,7 @@ cc_library(
 cc_library(
     name = "version",
     hdrs = ["version.h"],
+    deps = ["//xla/python/ifrt_proxy/common:versions"],
 )
 
 ifrt_proxy_cc_test(
@@ -568,8 +573,38 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
         "@nanobind",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:statusor",
     ],
+)
+
+# Export headers referenced by the google-internal-version of global_flags.
+exports_files(
+    ["global_flags.h"],
+    visibility = if_google(
+        ["//xla/python/ifrt_proxy/client/google:__pkg__"],
+        ["//visibility:private"],
+    ),
+)
+
+cc_library(
+    name = "global_flags_oss",
+    srcs = [
+        "global_flags.h",
+        "global_flags_oss.cc",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_google_absl//absl/debugging:leak_check",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "global_flags",
+    hdrs = ["global_flags.h"],
+    deps = [if_google("//xla/python/ifrt_proxy/client/google:global_flags_google", ":global_flags_oss")],
 )

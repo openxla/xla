@@ -13,8 +13,7 @@ package(
 
 package_group(
     name = "friends",
-    packages = [
-        "//platforms/...",
+    packages = xla_internal(["..."]) + [
         "//xla/hlo/experimental/auto_sharding/...",
         "//xla/service/gpu/...",
     ],
@@ -355,8 +354,24 @@ cc_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         "//xla:array",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "auto_sharding_config",
+    hdrs = ["auto_sharding_config.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
     ],
 )
 

@@ -25,9 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#if GOOGLE_CUDA
-#include "third_party/gpus/cuda/include/cuda.h"
-#endif
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -40,9 +37,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/gpu/gpu_types.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -66,6 +61,7 @@ using GraphNodeHandle = GpuCommandBuffer::GraphNodeHandle;
 using GraphConditionalHandle = GpuCommandBuffer::GraphConditionalHandle;
 using GraphConditionalHandles = absl::Span<const GraphConditionalHandle>;
 
+namespace {
 std::string_view to_string(State state) {
   switch (state) {
     case State::kCreate:
@@ -81,6 +77,7 @@ absl::Status UnsupportedStateError(State state) {
   return absl::InternalError(
       absl::StrCat("Unsupported command buffer state: ", to_string(state)));
 }
+}  // namespace
 
 //===----------------------------------------------------------------------===//
 // GpuCommandBuffer resource usage tracking
@@ -89,12 +86,12 @@ absl::Status UnsupportedStateError(State state) {
 static std::atomic<int64_t> allocated_execs(0);
 static std::atomic<int64_t> alive_execs(0);
 
-static int64_t NotifyExecCreated() {
+/*static*/ int64_t GpuCommandBuffer::NotifyExecCreated() {
   alive_execs.fetch_add(1, std::memory_order_relaxed);
   return allocated_execs.fetch_add(1, std::memory_order_relaxed);
 }
 
-static int64_t NotifyExecDestroyed() {
+/*static*/ int64_t GpuCommandBuffer::NotifyExecDestroyed() {
   DCHECK_GE(alive_execs.load(std::memory_order_relaxed), 1);
   return alive_execs.fetch_sub(1, std::memory_order_relaxed) - 1;
 }
@@ -107,55 +104,9 @@ static int64_t NotifyExecDestroyed() {
 // GpuCommandBuffer implementation
 //===----------------------------------------------------------------------===//
 
-static std::string_view ModeToString(CommandBuffer::Mode mode) {
-  switch (mode) {
-    case CommandBuffer::Mode::kPrimary:
-      return "primary";
-    case CommandBuffer::Mode::kNested:
-      return "nested";
-  }
-}
-
-GpuCommandBuffer::GpuCommandBuffer(Mode mode, GpuExecutor* parent,
-                                   GpuGraphHandle graph, bool is_owned_graph)
-    : mode_(mode),
-      parent_(parent),
-      graph_(graph),
-      is_owned_graph_(is_owned_graph) {
-  VLOG(5) << "Created command buffer for graph " << graph_
-          << "; mode=" << ModeToString(mode)
-          << "; is_owned_graph=" << is_owned_graph_;
+GpuCommandBuffer::GpuCommandBuffer(Mode mode, StreamExecutor* parent)
+    : mode_(mode), parent_(parent) {
   execution_scopes_.try_emplace(kDefaulExecutionScope);
-}
-
-GpuCommandBuffer::~GpuCommandBuffer() {
-  if (exec_ != nullptr && is_owned_graph_exec_) {
-    VLOG(5) << "Destroy GPU command buffer executable graph " << exec_ << " "
-            << "(remaining alive executable graphs: " << NotifyExecDestroyed()
-            << ")";
-    if (auto status = GpuDriver::DestroyGraphExec(exec_); !status.ok()) {
-      LOG(ERROR) << "Failed to destroy GPU graph exec: " << status.message();
-    }
-  }
-  if (graph_ != nullptr && is_owned_graph_) {
-    if (auto status = GpuDriver::DestroyGraph(graph_); !status.ok()) {
-      LOG(ERROR) << "Failed to destroy GPU graph: " << status.message();
-    }
-  }
-}
-
-GpuCommandBuffer::ScopedGpuGraphExec::ScopedGpuGraphExec(
-    GpuCommandBuffer* cmd_buffer, GpuGraphExecHandle exec)
-    : cmd_buffer(cmd_buffer),
-      restore(cmd_buffer->exec_),
-      restore_is_owned(cmd_buffer->is_owned_graph_exec_) {
-  cmd_buffer->exec_ = exec;
-  cmd_buffer->is_owned_graph_exec_ = false;
-}
-
-GpuCommandBuffer::ScopedGpuGraphExec::~ScopedGpuGraphExec() {
-  cmd_buffer->exec_ = restore;
-  cmd_buffer->is_owned_graph_exec_ = restore_is_owned;
 }
 
 GpuCommandBuffer::Dependencies GpuCommandBuffer::GetBarrier(
@@ -545,7 +496,7 @@ absl::Status GpuCommandBuffer::UpdateConditionalCommandBuffers(
     absl::Span<const ConditionBuilder> builders) {
   for (size_t i = 0; i < command_buffers.size(); ++i) {
     // Use parent graph executable for conditional command buffer update.
-    ScopedGpuGraphExec scoped_exec(command_buffers[i].get(), exec_);
+    auto scoped_update_mode = ActivateUpdateMode(command_buffers[i].get());
 
     // Update command buffer using user-provided builder callback.
     TF_RETURN_IF_ERROR(command_buffers[i]->Update());
@@ -780,45 +731,29 @@ absl::Status GpuCommandBuffer::Finalize() {
   }
 
   if (mode_ == Mode::kPrimary && state_ == State::kCreate) {
-    // If this is the first time we finalize command buffer after construction,
-    // we need to instantiate it to an executable graph.
-    GpuDriver::GraphInstantiateFlags flags;
-
     uint64_t start_nanos = tsl::Env::Default()->NowNanos();
 
-    // If we get a "resource exhausted error" we retry instantiating Gpu graph
-    // one more time after releasing unused device memory allocated for graphs.
-    auto instantiated = GpuDriver::GraphInstantiate(&exec_, graph_, flags);
+    // If this is the first time we finalize command buffer after construction,
+    // we need to instantiate it to an executable graph.
+    auto instantiated = InstantiateGraph();
+
     if (instantiated.code() == absl::StatusCode::kResourceExhausted) {
-      LOG(WARNING) << "Retry CUDA graph instantiation after OOM error"
-                   << "; execution_scopes: " << execution_scopes_.size()
-                   << "; nodes: " << num_nodes
-                   << "; conditionals: " << num_cond_cmd_buffers
-                   << "; alive executable graphs: " << AliveExecs();
-
-      TF_RETURN_IF_ERROR(parent_->TrimGraphMemory());
-
-      auto retry = GpuDriver::GraphInstantiate(&exec_, graph_, flags);
-      if (retry.code() == absl::StatusCode::kResourceExhausted) {
-        return absl::ResourceExhaustedError(absl::StrFormat(
-            "CUDA driver ran out of memory trying to instantiate CUDA graph "
-            "with %d nodes and %d conditionals (total of %d alive CUDA graphs "
-            "in the process). You can try to (a) Give more memory to CUDA "
-            "driver by reducing XLA_CLIENT_MEM_FRACTION (b) Disable "
-            "CUDA graph with 'XLA_FLAGS=--xla_gpu_enable_command_buffer=' "
-            "(empty set). Original error: %s",
-            num_nodes, num_cond_cmd_buffers, AliveExecs(), retry.message()));
-      } else {
-        TF_RETURN_IF_ERROR(retry);
-      }
-    } else {
-      TF_RETURN_IF_ERROR(instantiated);
+      return absl::ResourceExhaustedError(absl::StrFormat(
+          "Underlying backend ran out of memory trying to instantiate graph "
+          "with %d nodes and %d conditionals (total of %d alive graphs "
+          "in the process). You can try to (a) Give more memory to the "
+          "driver by reducing XLA_CLIENT_MEM_FRACTION (b) Disable "
+          "command buffers with 'XLA_FLAGS=--xla_gpu_enable_command_buffer=' "
+          "(empty set). Original error: %s",
+          num_nodes, num_cond_cmd_buffers, AliveExecs(),
+          instantiated.message()));
     }
+    TF_RETURN_IF_ERROR(instantiated);
 
     uint64_t end_nanos = tsl::Env::Default()->NowNanos();
 
-    VLOG(5) << "Instantiated executable graph #" << NotifyExecCreated() << " "
-            << exec_ << " in " << (end_nanos - start_nanos) / 1000 << " μs"
+    VLOG(5) << "Instantiated executable graph #" << NotifyExecCreated()
+            << " in " << (end_nanos - start_nanos) / 1000 << " μs"
             << "; execution_scopes: " << execution_scopes_.size()
             << "; nodes: " << num_nodes
             << "; conditionals: " << num_cond_cmd_buffers
@@ -833,8 +768,8 @@ absl::Status GpuCommandBuffer::Finalize() {
   } else if (mode_ == Mode::kPrimary && state_ == State::kUpdate) {
     // If this is a finalization after update, we don't have to do anything as
     // each individual command already updated executable graph.
-    VLOG(5) << "Finalize executable graph " << exec_ << " update #"
-            << num_updates_++ << " "
+    VLOG(5) << "Finalize executable graph of command buffer " << this
+            << " update #" << num_updates_++ << " "
             << "(alive executable graphs: " << AliveExecs() << ")";
 
   } else if (mode_ == Mode::kNested) {
@@ -848,18 +783,16 @@ absl::Status GpuCommandBuffer::Finalize() {
 }
 
 absl::Status GpuCommandBuffer::Update() {
-  if (exec_ == nullptr) {
-    return absl::InternalError(
-        "Command buffer has to have a graph executable to be updated");
-  }
+  TF_RETURN_IF_ERROR(CheckCanBeUpdated());
 
   if (state_ != State::kFinalized) {
     return absl::InternalError(
         "Command buffer has to be finalized first before it can be updated");
   }
 
-  VLOG(5) << "Begin " << (mode_ == Mode::kPrimary ? "primary" : "nested")
-          << " command buffer update for executable graph " << exec_;
+  VLOG(5) << "Begin update of"
+          << (mode_ == Mode::kPrimary ? "primary" : "nested")
+          << " command buffer " << this;
 
   state_ = State::kUpdate;
   for (auto& [_, execution_scope] : execution_scopes_) {

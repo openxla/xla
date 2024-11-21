@@ -79,7 +79,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 56
+#define PJRT_API_MINOR 57
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1577,11 +1577,6 @@ struct PJRT_Executable_DeserializeAndLoad_Args {
   const char* serialized_executable;
   size_t serialized_executable_size;
   PJRT_LoadedExecutable* loaded_executable;  // out
-  // Serialized CompileOptionsProto or null (to use the options
-  // from the serialized executable).
-  // (https://github.com/openxla/xla/blob/main/xla/pjrt/compile_options.proto)
-  const char* overridden_serialized_compile_options;
-  size_t overridden_serialized_compile_options_size;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_Executable_DeserializeAndLoad_Args,
                           loaded_executable);
@@ -1763,6 +1758,20 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_IsDeleted_Args, is_deleted);
 
 // True if and only if PJRT_Buffer_Delete has previously been called.
 typedef PJRT_Error* PJRT_Buffer_IsDeleted(PJRT_Buffer_IsDeleted_Args* args);
+
+struct PJRT_Buffer_CopyRawToHost_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  PJRT_Buffer* buffer;
+  void* dst;
+  int64_t offset;
+  int64_t transfer_size;
+  PJRT_Event* event;  // out
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_Buffer_CopyRawToHost_Args, event);
+
+typedef PJRT_Error* PJRT_Buffer_CopyRawToHost(
+    PJRT_Buffer_CopyRawToHost_Args* args);
 
 struct PJRT_Buffer_CopyToDevice_Args {
   size_t struct_size;
@@ -2255,11 +2264,11 @@ typedef struct PJRT_Api {
 
   _PJRT_API_STRUCT_FIELD(PJRT_ExecuteContext_Create);
   _PJRT_API_STRUCT_FIELD(PJRT_ExecuteContext_Destroy);
+  _PJRT_API_STRUCT_FIELD(PJRT_Buffer_CopyRawToHost);
 } PJRT_Api;
 
 enum {
-  PJRT_Api_STRUCT_SIZE =
-      PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_TopologyDescription)
+  PJRT_Api_STRUCT_SIZE = PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Buffer_CopyRawToHost)
 };
 
 #undef _PJRT_API_STRUCT_FIELD

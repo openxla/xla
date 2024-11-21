@@ -25,24 +25,61 @@ package(
     licenses = ["notice"],
 )
 
+cc_library(
+    name = "opt_main",
+    testonly = True,
+    srcs = ["opt_main.cc"],
+    deps = [
+        ":cpu_opt",
+        ":opt_lib",
+        "//xla:debug_options_flags",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_runner",
+        "//xla/service:platform_util",
+        "//xla/tools:hlo_module_loader",
+        "//xla/tools:run_hlo_module_lib",
+        "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ] + if_gpu_is_configured([
+        ":gpu_opt",
+    ]) + if_cuda_is_configured([
+        "//xla/stream_executor:cuda_platform",
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor:rocm_platform",
+    ]),
+)
+
 # Includes a macro to register a provider.
 cc_library(
     name = "opt_lib",
     srcs = ["opt_lib.cc"],
-    hdrs = ["opt_lib.h"],
+    hdrs = [
+        "opt_lib.h",
+        "transforms_example_passes.h",
+    ],
     deps = [
-        "//xla:debug_options_flags",
-        "//xla:types",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:compiler",
-        "//xla/service:executable",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:platform_util",
-        "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -53,12 +90,33 @@ cc_library(
 )
 
 cc_library(
+    name = "compiled_opt_lib",
+    srcs = ["compiled_opt_lib.cc"],
+    hdrs = ["compiled_opt_lib.h"],
+    deps = [
+        ":opt_lib",
+        "//xla:debug_options_flags",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "gpu_opt",
     testonly = True,
     srcs = if_gpu_is_configured(["gpu_opt.cc"]),
     tags = ["gpu"],
     deps = [
-        ":opt_lib",
+        ":compiled_opt_lib",
         "//xla:debug_options_flags",
         "//xla:types",
         "//xla/hlo/ir:hlo",
@@ -99,7 +157,7 @@ cc_library(
     testonly = True,
     srcs = ["cpu_opt.cc"],
     deps = [
-        ":opt_lib",
+        ":compiled_opt_lib",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",
         "//xla/service:executable",
@@ -114,41 +172,6 @@ cc_library(
     alwayslink = True,  # Initializer needs to run.
 )
 
-cc_library(
-    name = "opt_main",
-    testonly = True,
-    srcs = ["opt_main.cc"],
-    deps = [
-        "cpu_opt",
-        ":opt_lib",
-        "//xla:debug_options_flags",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:hlo_runner",
-        "//xla/service:platform_util",
-        "//xla/tools:hlo_module_loader",
-        "//xla/tools:run_hlo_module_lib",
-        "//xla/tsl/util:command_line_flags",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:platform_port",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-    ] + if_gpu_is_configured([
-        ":gpu_opt",
-    ]) + if_cuda_is_configured([
-        "//xla/stream_executor:cuda_platform",
-    ]) + if_rocm_is_configured([
-        "//xla/stream_executor:rocm_platform",
-    ]),
-)
-
 lit_test_suite(
     name = "hlo_opt_tests",
     srcs = enforce_glob(
@@ -161,6 +184,9 @@ lit_test_suite(
             "gpu_hlo_llvm.hlo",
             "gpu_hlo_ptx.hlo",
             "gpu_hlo_unoptimized_llvm.hlo",
+            "transforms_hlo_single_pass.hlo",
+            "transforms_hlo_multiple_passes.hlo",
+            "gpu_hlo_html.hlo",
         ],
         include = [
             "*.hlo",

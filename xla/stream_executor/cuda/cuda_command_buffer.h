@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
@@ -28,12 +29,15 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/scoped_gpu_graph_exec.h"
+#include "xla/stream_executor/gpu/scoped_update_mode.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor::gpu {
 
@@ -42,13 +46,23 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
  public:
   // Creates a new CUDA command buffer and the underlying CUDA graph.
   static absl::StatusOr<std::unique_ptr<CudaCommandBuffer>> Create(
-      Mode mode, GpuExecutor* parent);
+      Mode mode, StreamExecutor* parent, CudaContext* cuda_context);
+
+  ~CudaCommandBuffer() override;
 
  private:
-  CudaCommandBuffer(Mode mode, GpuExecutor* parent, CUgraph graph,
+  CudaCommandBuffer(Mode mode, StreamExecutor* parent,
+                    CudaContext* cuda_context, CUgraph graph,
                     bool is_owned_graph)
-      : GpuCommandBuffer(mode, parent, graph, is_owned_graph),
-        parent_(parent) {}
+      : GpuCommandBuffer(mode, parent),
+        parent_(parent),
+        cuda_context_(cuda_context),
+        graph_(graph),
+        is_owned_graph_(is_owned_graph) {
+    VLOG(5) << "Created command buffer for graph " << graph_
+            << "; mode=" << ModeToString(mode)
+            << "; is_owned_graph=" << is_owned_graph_;
+  }
 
   absl::Status LaunchSetIfConditionKernel(
       ExecutionScopeId execution_scope_id,
@@ -130,6 +144,17 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
 
   absl::Status WriteGraphToDotFile(absl::string_view path) override;
 
+  absl::Status InstantiateGraph() override;
+
+  using ScopedCudaGraphExec = ScopedGraphExec<CUgraphExec>;
+  std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
+      GpuCommandBuffer* nested_cmd_buffer) override;
+
+  absl::Status CheckCanBeUpdated() override;
+
+  absl::StatusOr<std::vector<GraphNodeHandle>> GetNodeDependencies(
+      GraphNodeHandle node) override;
+
   // A signature of a device kernels updating conditional handle(s).
   using SetIfConditionKernel =
       TypedKernel<CUgraphConditionalHandle, DeviceMemory<bool>>;
@@ -160,7 +185,19 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
   SetWhileConditionKernel set_while_condition_kernel_;
   NoOpKernel noop_kernel_;
 
-  GpuExecutor* parent_;
+  StreamExecutor* parent_;
+
+  CudaContext* cuda_context_;
+
+  static_assert(std::is_pointer_v<CUgraph>, "CUgraph must be a pointer");
+  static_assert(std::is_pointer_v<CUgraphExec>,
+                "CUgraphExec must be a pointer");
+
+  CUgraph graph_ = nullptr;     // owned if `is_owned_graph_`
+  bool is_owned_graph_ = true;  // ownership of `graph_`
+
+  CUgraphExec exec_ = nullptr;       // owned if `is_owned_graph_exec_`
+  bool is_owned_graph_exec_ = true;  // ownership of `is_owned_graph_exec_`
 };
 
 }  // namespace stream_executor::gpu

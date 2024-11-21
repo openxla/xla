@@ -142,26 +142,30 @@ void AssertArrayContent(Client* client, Array* array,
   }
 };
 
+// Returns an array spec that expresses an array sharded across
+// `device_indices`. The array shape is [2 * device_indices.size(), 3]. Each
+// shard has a shape of [2, 3].
+absl::StatusOr<ArraySpec> CreateArraySpec(
+    Client* client, absl::Span<const int> device_indices) {
+  TF_ASSIGN_OR_RETURN(tsl::RCReference<DeviceList> device_list,
+                      test_util::GetDevices(client, device_indices));
+  Shape shard_shape({2, 3});
+  Shape shape({2 * static_cast<int64_t>(device_indices.size()), 3});
+  return ArraySpec{/*dtype=*/DType(DType::kS32),
+                   /*shape=*/shape,
+                   /*sharding=*/
+                   ConcreteEvenSharding::Create(device_list, MemoryKind(),
+                                                shape, shard_shape)};
+}
+
 TEST(RemapImplTest, ExtractSingleShard) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
   RemapPlan plan;
   plan.input_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({8, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {0, 1, 2, 3}).value(),
-                    MemoryKind(), /*shape=*/Shape({8, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 1}).value());
   plan.output_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({2, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {1}).value(),
-                    MemoryKind(), /*shape=*/Shape({2, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{1}).value());
   // arrays[0].shards[1:2:1] is mapped into out_arrays[0].shards[0:1:1].
   plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();
   plan.mappings->push_back(
@@ -171,10 +175,9 @@ TEST(RemapImplTest, ExtractSingleShard) {
   TF_ASSERT_OK(plan.Validate());
 
   std::vector<tsl::RCReference<Array>> arrays;
-  TF_ASSERT_OK_AND_ASSIGN(
-      arrays.emplace_back(),
-      CreateArray(client.get(), /*base_values=*/{0, 6, 100, 106},
-                  /*device_indices=*/{0, 1, 2, 3}));
+  TF_ASSERT_OK_AND_ASSIGN(arrays.emplace_back(),
+                          CreateArray(client.get(), /*base_values=*/{0, 6},
+                                      /*device_indices=*/{0, 1}));
 
   {
     TF_ASSERT_OK_AND_ASSIGN(
@@ -196,34 +199,16 @@ TEST(RemapImplTest, ExtractSingleShard) {
   }
 }
 
-TEST(RemapImplTest, InterleaveArrays) {
+TEST(RemapImplTest, InterleaveArraysDonate) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
   RemapPlan plan;
   plan.input_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({4, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {0, 1}).value(),
-                    MemoryKind(), /*shape=*/Shape({4, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 1}).value());
   plan.input_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({4, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {2, 3}).value(),
-                    MemoryKind(), /*shape=*/Shape({4, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{2, 3}).value());
   plan.output_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({8, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {0, 2, 1, 3}).value(),
-                    MemoryKind(), /*shape=*/Shape({8, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 2, 1, 3}).value());
   // arrays[0].shards[0:2:1] is mapped into out_arrays[0].shards[0:4:2].
   plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();
   plan.mappings->reserve(2);
@@ -246,13 +231,6 @@ TEST(RemapImplTest, InterleaveArrays) {
                           CreateArray(client.get(), /*base_values=*/{100, 106},
                                       /*device_indices=*/{2, 3}));
 
-  EXPECT_THAT(
-      client->RemapArrays(plan, absl::MakeSpan(arrays),
-                          ArrayCopySemantics::kReuseInput),
-      StatusIs(
-          absl::StatusCode::kInvalidArgument,
-          HasSubstr("kDonateInput is required if multiple inputs are used")));
-
   TF_ASSERT_OK_AND_ASSIGN(
       auto out_arrays, client->RemapArrays(plan, absl::MakeSpan(arrays),
                                            ArrayCopySemantics::kDonateInput));
@@ -267,34 +245,55 @@ TEST(RemapImplTest, InterleaveArrays) {
                      /*device_indices=*/{0, 2, 1, 3});
 }
 
+TEST(RemapImplTest, InterleaveArraysReuse) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
+
+  RemapPlan plan;
+  plan.input_specs.push_back(
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 1}).value());
+  plan.input_specs.push_back(
+      CreateArraySpec(client.get(), /*device_indices=*/{2, 3}).value());
+  plan.output_specs.push_back(
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 2, 1, 3}).value());
+  // arrays[0].shards[0:2:1] is mapped into out_arrays[0].shards[0:4:2].
+  plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();
+  plan.mappings->reserve(2);
+  plan.mappings->push_back(
+      RemapPlan::Mapping{/*in_array=*/0, /*out_array=*/0,
+                         /*from=*/{RemapPlan::Interval{0, 2, 1}},
+                         /*to=*/{RemapPlan::Interval{0, 4, 2}}});
+  // arrays[1].shards[0:2:1] is mapped into out_arrays[0].shards[1:4:2].
+  plan.mappings->push_back(
+      RemapPlan::Mapping{/*in_array=*/1, /*out_array=*/0,
+                         /*from=*/{RemapPlan::Interval{0, 2, 1}},
+                         /*to=*/{RemapPlan::Interval{1, 4, 2}}});
+  TF_ASSERT_OK(plan.Validate());
+
+  std::vector<tsl::RCReference<Array>> arrays;
+  TF_ASSERT_OK_AND_ASSIGN(arrays.emplace_back(),
+                          CreateArray(client.get(), /*base_values=*/{0, 6},
+                                      /*device_indices=*/{0, 1}));
+  TF_ASSERT_OK_AND_ASSIGN(arrays.emplace_back(),
+                          CreateArray(client.get(), /*base_values=*/{100, 106},
+                                      /*device_indices=*/{2, 3}));
+
+  EXPECT_THAT(client->RemapArrays(plan, absl::MakeSpan(arrays),
+                                  ArrayCopySemantics::kReuseInput),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("kDonateInput is required if multiple inputs "
+                                 "are mapped to one output")));
+}
+
 TEST(RemapImplTest, DeinterleaveArrays) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, test_util::GetClient());
 
   RemapPlan plan;
   plan.input_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({8, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {0, 2, 1, 3}).value(),
-                    MemoryKind(), /*shape=*/Shape({8, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 2, 1, 3}).value());
   plan.output_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({4, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {0, 1}).value(),
-                    MemoryKind(), /*shape=*/Shape({4, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{0, 1}).value());
   plan.output_specs.push_back(
-      ArraySpec{/*dtype=*/DType(DType::kS32),
-                /*shape=*/Shape({4, 3}),
-                /*sharding=*/
-                ConcreteEvenSharding::Create(
-                    test_util::GetDevices(client.get(), {2, 3}).value(),
-                    MemoryKind(), /*shape=*/Shape({4, 3}),
-                    /*shard_shape=*/Shape({2, 3}))});
+      CreateArraySpec(client.get(), /*device_indices=*/{2, 3}).value());
   // arrays[0].shards[0:4:2] is mapped into out_arrays[0].shards[0:2:1].
   plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();
   plan.mappings->reserve(2);

@@ -74,8 +74,10 @@ def LowerTensorsPass : Pass<"xla-gpu-lower-tensors", "mlir::ModuleOp"> {
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
+    "mlir::complex::ComplexDialect",
     "mlir::func::FuncDialect",
     "mlir::gpu::GPUDialect",
+    "mlir::math::MathDialect",
     "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect",
     "xla::gpu::XlaGpuDialect",
@@ -232,28 +234,6 @@ def LowerToLLVMPass :
     Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
            "True if AMD GPU.">,
   ];
-}
-
-def RewriteReductionsPass : Pass<
-    "xla-gpu-rewrite-reductions", "mlir::func::FuncOp"> {
-  let summary = "Rewrites reductions to pieces that can efficiently be emitted.";
-
-  let description = [{
-    This pass rewrites reductions so they can be emitted efficiently.
-
-    For example, a row reduction of 1024 elements to one may be rewritten to two
-    reductions, the first one to 32 elements, the second one to one element.
-    This way, the reduction can be emitted as two warp shuffle reduces.
-
-    A column reduction will be rewritten to a transpose followed by a row
-    reduction.
-  }];
-
-  let dependentDialects = [
-    "xla::gpu::XlaGpuDialect",
-  ];
-
-  let constructor = "CreateRewriteReductionsPass()";
 }
 
 def VectorizeLoadsAndStoresPass :

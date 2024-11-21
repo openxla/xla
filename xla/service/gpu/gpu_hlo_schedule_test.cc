@@ -86,7 +86,7 @@ class GpuHloScheduleTest : public HloTestBase {
     debug_options.set_xla_gpu_lhs_enable_gpu_async_tracker(
         enable_gpu_async_tracker);
     config.set_debug_options(debug_options);
-    *config.mutable_fdo_profile() = fdo_profile;
+    config.set_fdo_profile(fdo_profile);
     return config;
   }
 
@@ -1095,7 +1095,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined1) {
 
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv-done.2", main));
   EXPECT_LT(get_index("recv-done.2", main), get_index("send-done.2", main));
   EXPECT_LT(get_index("send-done.2", main), get_index("while-result", main));
@@ -1289,7 +1289,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined2) {
   EXPECT_TRUE(HasValidFingerprint(module.get()));
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv.3", main));
   EXPECT_EQ(get_index("recv.3", main) + 1, get_index("send.3", main));
   EXPECT_LT(get_index("send.3", main), get_index("recv-done.2", main));
@@ -1695,31 +1695,6 @@ TEST_F(GpuHloScheduleTest, CopyStartDoneScheduled) {
 // CHECK: tanh.14 = f32[512,1024]{1,0} tanh
 // CHECK: copy-done.3 = f32[512,1024]{1,0} copy-done
 )"));
-}
-
-TEST_F(GpuHloScheduleTest, InvalidPGLEOptions) {
-  const char* hlo = R"(
-    HloModule test
-    ENTRY add {
-      a = s32[] parameter(0)
-      b = s32[] parameter(1)
-      ROOT add = add(a,b)
-    }
-  )";
-
-  HloModuleConfig config;
-  DebugOptions options;
-  options.set_xla_gpu_pgle_accuracy_checker(
-      DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR);
-  options.set_xla_gpu_enable_latency_hiding_scheduler(true);
-  config.set_debug_options(options);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(hlo, config));
-
-  GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(BuildHloOrdering(module.get()),
-               "xla_gpu_pgle_accuracy_checker is set to ERROR, but no profile "
-               "path specified in xla_gpu_pgle_profile_file_or_directory_path");
 }
 
 }  // namespace gpu

@@ -263,6 +263,7 @@ enum StatType {
   kModelFlops,
   kBytesAccessed,
   kMemoryAccessBreakdown,
+  kShapeWithLayout,
   kSourceInfo,
   kModelName,
   kModelVersion,
@@ -286,6 +287,10 @@ enum StatType {
   kDevCapComputeCapMinor,
   kDevCapPeakTeraflopsPerSecond,
   kDevCapPeakHbmBwGigabytesPerSecond,
+  kDevCapPeakCmemRdBwGigabytesPerSecond,
+  kDevCapPeakCmemWrBwGigabytesPerSecond,
+  kDevCapPeakVmemRdBwGigabytesPerSecond,
+  kDevCapPeakVmemWrBwGigabytesPerSecond,
   kDevCapPeakSramRdBwGigabytesPerSecond,
   kDevCapPeakSramWrBwGigabytesPerSecond,
   kDevVendor,
@@ -362,7 +367,8 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleNetworkTransportLatency,
   kMegaScaleTransmissionBudgetUs,
   kMegaScaleDelayBudgetUs,
-  kLastMegaScaleStatType = kMegaScaleDelayBudgetUs,
+  kMegaScaleHloModule,
+  kLastMegaScaleStatType = kMegaScaleHloModule,
 };
 
 enum TaskEnvStatType {

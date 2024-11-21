@@ -15,14 +15,17 @@ limitations under the License.
 
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 
+#include <stdbool.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <ostream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -65,6 +68,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/algorithm.h"
 #include "xla/service/memory_space_assignment/allocation.h"
+#include "xla/service/memory_space_assignment/allocation_value.h"
 #include "xla/service/memory_space_assignment/buffer_interval_comparator.h"
 #include "xla/service/memory_space_assignment/cost_analysis.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.pb.h"
@@ -77,7 +81,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -98,7 +101,7 @@ using ::testing::_;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
 
-constexpr float kAsyncCopyBandwidth = 100;
+constexpr float kDefaultMemBandwidth = 100;
 constexpr float kAlternateMemBandwidth = 1000;
 constexpr float kBytesPerSecond = 100;
 constexpr float kFlopsPerSecond = 1000;
@@ -161,7 +164,7 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
     Options options;
     options.max_size_in_bytes = 128;
     options.alignment_in_bytes = 8;
-    options.verify = true;
+    options.verify = false;
     options.alternate_memory_space = kAlternateMemorySpace;
     options.max_outstanding_prefetches = -1;
     options.max_outstanding_evictions = -1;
@@ -171,7 +174,7 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
 
   CostAnalysisOptions DefaultCostAnalysisOptions() {
     CostAnalysisOptions options;
-    options.async_copy_bandwidth_bytes_per_second = kAsyncCopyBandwidth;
+    options.default_mem_bandwidth_bytes_per_second = kDefaultMemBandwidth;
     options.alternate_mem_bandwidth_bytes_per_second = kAlternateMemBandwidth;
     return options;
   }
@@ -1169,6 +1172,270 @@ ENTRY %entry (p0.2: f32[10,2,3], p1: f32[10,2,3], p2: pred[]) -> f32[10,2,3] {
   EXPECT_THAT(tuple->operand(2),
               op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace,
                             tuple->operand(1)));
+}
+
+// Added for b/376344953 that was introduced when we tried to
+// convert a sync copy that was used by a conditional into an async copy.
+TEST_F(MemorySpaceAssignmentTest, ConditionalCopyReplacement) {
+  absl::string_view hlo_string = R"(
+  HloModule CondAllocation, is_scheduled=true
+
+  true_computation {
+    p0 = (f32[3]{0}) parameter(0)
+    gte = f32[3]{0} get-tuple-element(p0), index=0
+    ROOT neg1 = f32[3]{0} negate(gte)
+  }
+
+  false_computation {
+    p0 = (f32[3]{0}) parameter(0)
+    gte = f32[3]{0} get-tuple-element(p0), index=0
+    ROOT neg2 = f32[3]{0} negate(gte)
+  }
+
+  ENTRY entry {
+    p0_main = f32[3]{0} parameter(0)
+    p1 = pred[] parameter(1)
+    copy = f32[3]{0} copy(p0_main)
+    tuple = (f32[3]{0}) tuple(copy)
+    ROOT conditional = f32[3]{0} conditional(p1, tuple, tuple), true_computation=true_computation, false_computation=false_computation
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_sync_copy_replacement = true;
+  AssignMemorySpace(module.get(), options);
+  auto conditional =
+      module->GetComputationWithName("entry")->GetInstructionWithName(
+          "conditional");
+  CHECK_NE(conditional, nullptr);
+  auto p0 = module->GetComputationWithName("entry")->GetInstructionWithName(
+      "p0_main");
+  CHECK_NE(p0, nullptr);
+  auto copy = conditional->operand(1)->operand(0);
+  CHECK_NE(copy, nullptr);
+  EXPECT_THAT(copy,
+              op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace, p0));
+}
+
+TEST_F(MemorySpaceAssignmentTest, AllocationRequestAndResultModifierTest) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[2,3]{1,0} parameter(0)
+  p1 = f32[2,3]{1,0} parameter(1)
+  negate0 = f32[2,3]{1,0} negate(p1)
+  negate1 = f32[2,3]{1,0} negate(negate0)
+  negate2 = f32[2,3]{1,0} negate(negate1)
+  negate3 = f32[2,3]{1,0} negate(negate2)
+  negate4 = f32[2,3]{1,0} negate(negate3)
+  negate5 = f32[2,3]{1,0} negate(negate4)
+  negate6 = f32[2,3]{1,0} negate(negate5)
+  negate7 = f32[2,3]{1,0} negate(negate6)
+  ROOT add0 = f32[2,3]{1,0} add(p0, negate7)
+  }
+  )";
+  // The baseline behavior is to prefetch p0 at add0.
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> baseline_module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  AssignMemorySpace(baseline_module.get(), options);
+  HloInstruction* add0 = FindInstruction(baseline_module.get(), "add0");
+  ASSERT_NE(add0, nullptr);
+  HloInstruction* p0 = FindInstruction(baseline_module.get(), "p0");
+  ASSERT_NE(p0, nullptr);
+  EXPECT_THAT(add0->operand(0),
+              op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace, p0));
+
+  // We should be able to prevent prefetching p0 at add0 using
+  // allocation_result_modifier_testing_fn.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> result_modifier_module,
+      ParseAndReturnVerifiedModule(hlo_string));
+  options.max_retries = 1;
+  options.allocation_request_modifier_testing_fn = nullptr;
+  options.allocation_result_modifier_testing_fn =
+      [](const AllocationRequest& request, AllocationResult& result) {
+        if (request.allocation_value_to_update->defining_instruction()
+                    ->name() == "p0" &&
+            request.use->hlo_use.instruction->name() == "add0") {
+          result = AllocationResult::kFailRequiresUncommit;
+        }
+      };
+  AssignMemorySpace(result_modifier_module.get(), options);
+  add0 = FindInstruction(result_modifier_module.get(), "add0");
+  ASSERT_NE(add0, nullptr);
+  p0 = FindInstruction(result_modifier_module.get(), "p0");
+  ASSERT_NE(p0, nullptr);
+  EXPECT_EQ(add0->operand(0), p0);
+
+  // We should be able to enforce an earlier prefetch of p0 at add0 using
+  // allocation_request_modifier_testing_fn.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> request_modifier_module,
+      ParseAndReturnVerifiedModule(hlo_string));
+  options.max_retries = 1;
+  options
+      .allocation_request_modifier_testing_fn = [](AllocationRequest& request) {
+    if (request.allocation_value_to_update->defining_instruction()->name() ==
+            "p0" &&
+        request.use->hlo_use.instruction->name() == "add0") {
+      // Schedule the copy-done before negate4 (scheduled at 6).
+      request.latest_prefetch_time = 6;
+    }
+  };
+  options.allocation_result_modifier_testing_fn = nullptr;
+  AssignMemorySpace(request_modifier_module.get(), options);
+  add0 = FindInstruction(request_modifier_module.get(), "add0");
+  CHECK_NE(add0, nullptr);
+  p0 = FindInstruction(request_modifier_module.get(), "p0");
+  CHECK_NE(p0, nullptr);
+  EXPECT_THAT(add0->operand(0),
+              op::AsyncCopy(kAlternateMemorySpace, kDefaultMemorySpace, p0));
+  // The copy-done should have been scheduled before negate4.
+  HloInstruction* negate4 =
+      FindInstruction(request_modifier_module.get(), "negate4");
+  CHECK_NE(negate4, nullptr);
+  const HloInstructionSequence& sequence =
+      request_modifier_module->schedule().sequence(
+          request_modifier_module->entry_computation());
+  auto find_index = [&](const HloInstruction* instruction) {
+    return std::distance(sequence.instructions().begin(),
+                         std::find(sequence.instructions().begin(),
+                                   sequence.instructions().end(), instruction));
+  };
+
+  int negate4_index = find_index(negate4);
+  int copy_done_index = find_index(add0->operand(0));
+  EXPECT_LT(copy_done_index, negate4_index);
+}
+
+// Added for b/372277844#comment15 that was introduced when the allocation
+// failed while trying to convert a sync slice to an async one, but not due to
+// the conversion itself. In this case, associated buffer with the slice
+// (p0_copy) is too large to fit in alternate memory. Hence, the
+// allocation_values will be empty in retries, previously causing a crash in
+// MsaAlgorithm::GetInefficientAllocationSites().
+TEST_F(MemorySpaceAssignmentTest, SyncReplacementLargeBuffers) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[10,2,3]{2,1,0} parameter(0)
+  p1 = f32[10,2,3]{2,1,0} parameter(1)
+  p0_copy = f32[10,2,3]{2,1,0} copy(p0)
+  negate0 = negate(p1)
+  negate1 = negate(negate0)
+  negate2 = negate(negate1)
+  negate3 = negate(negate2)
+  negate4 = negate(negate3)
+  negate5 = negate(negate4)
+  slice = f32[1,2,3] slice(p0_copy), slice={[0:1], [0:2], [0:3]}
+  ROOT concat = f32[11,2,3] concatenate(negate5, slice), dimensions={0}
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.max_size_in_bytes = 64;
+  options.max_retries = 2;
+  options.enable_sync_copy_replacement = false;
+  options.enable_sync_slice_replacement = true;
+  options.is_async_slice_implemented_fn =
+      [](const HloInstruction* instruction) { return true; };
+  // Force the allocation of p0_copy to fail for the concat use with only
+  // AllocationResult::kFailRequiresUncommit. This means that while the slice
+  // replacement was successful, the algorithm must retry one more time without
+  // sync slice conversion target, so that maybe other constraints of the
+  // allocation can be satisfied.
+  options.allocation_result_modifier_testing_fn =
+      [](const AllocationRequest& request, AllocationResult& result) {
+        if (request.allocation_value->defining_instruction()->name() ==
+                "p0_copy" &&
+            request.use->hlo_use.instruction->name() == "concat") {
+          result = AllocationResult::kFailRequiresUncommit;
+        }
+      };
+  // options.inefficient_use_to_copy_ratio must be greater than 0 and the cost
+  // model must be set to trigger the inefficient allocation site logic.
+  options.inefficient_use_to_copy_ratio = 1.0;
+  AssignMemorySpaceUsingCostAnalysis(module.get(), options);
+
+  HloInstruction* p0_copy = FindInstruction(module.get(), "p0_copy");
+  ASSERT_NE(p0_copy, nullptr);
+  HloInstruction* concat = FindInstruction(module.get(), "concat");
+  ASSERT_NE(concat, nullptr);
+  EXPECT_THAT(concat->operand(1), op::Slice(p0_copy));
+}
+
+// Added for b/376869021, which surfaced when we tried to convert a sync slice
+// that had to extend the allocation of its operand in the alternate memory. In
+// this test, we expect the slice0 operand (p0_copy) maintain a valid allocation
+// in the alternate memory, until it gets transferred by the async replacement
+// of slice0. We hence stress-test such validity by delaying the allocation of
+// slice0 by 3 steps.
+TEST_F(MemorySpaceAssignmentTest, SyncReplacementAllocationExtensionBug) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[2,2,3]{2,1,0} parameter(0)
+  p1 = f32[4,2,3]{2,1,0} parameter(1)
+  p0_copy = f32[2,2,3]{2,1,0} copy(p0)
+  negate0 = negate(p1)
+  negate1 = negate(negate0)
+  negate2 = negate(negate1)
+  p0_copy0_negate = negate(p0_copy)
+  copy_negate2 = copy(negate2)
+  slice0 = f32[1,2,3] slice(p0_copy), slice={[0:1], [0:2], [0:3]}
+  negate3 = negate(copy_negate2)
+  negate4 = negate(negate3)
+  negate5 = negate(negate4)
+  negate6 = negate(negate5)
+  negate7 = negate(negate6)
+  neg_slice0 = negate(slice0)
+  ROOT tuple = tuple(negate7, neg_slice0)
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  Options options = DefaultMemorySpaceOptions();
+  options.enable_sync_copy_replacement = false;
+  options.enable_sync_slice_replacement = true;
+  options.verify = true;
+  options.is_async_slice_implemented_fn =
+      [](const HloInstruction* instruction) { return true; };
+  options.max_size_in_bytes = 96;
+  options.is_position_allowed_in_alternate_mem_fn =
+      [](const HloPosition& position) {
+        return position.instruction->name() != "p0_copy";
+      };
+  // Delay the allocation of slice0 by 3 steps to allow copy_negate2 to be
+  // allocated in alternate memory.
+  options.allocation_request_modifier_testing_fn =
+      [](AllocationRequest& request) {
+        if (request.only_extend_existing_allocation) {
+          request.inclusive_start_time += 3;
+          request.end_time += 3;
+        }
+      };
+  const std::string text_proto = R"pb(
+    overrides {
+      hlo_position_matcher { instruction_name_regex: "copy_negate2|p0_copy" }
+      override_options { assign_first: true }
+    })pb";
+  TF_ASSERT_OK_AND_ASSIGN(auto msa_sort_order_overrides,
+                          ParseTextProto<MsaSortOrderOverrides>(text_proto));
+  auto preset_assignments = AssignMemorySpaceUsingCostAnalysis(
+      module.get(), options,
+      /*cost_analysis_options_override=*/std::nullopt,
+      /*hlo_cost_options_override=*/std::nullopt,
+      /*optional_msa_sort_order_overrides=*/msa_sort_order_overrides);
+  HloInstruction* p0_copy = FindInstruction(module.get(), "p0_copy");
+  ASSERT_NE(p0_copy, nullptr);
+  HloInstruction* neg_slice0 = FindInstruction(module.get(), "neg_slice0");
+  ASSERT_NE(neg_slice0, nullptr);
+  EXPECT_THAT(neg_slice0->operand(0), op::AsyncDone(op::AsyncStart(p0_copy)));
 }
 
 TEST_F(MemorySpaceAssignmentTest, AlwaysSpillJitPrefetchTest) {
@@ -10503,6 +10770,8 @@ ENTRY main {
   HloCostAnalysis hlo_cost_analysis(HloCostAnalysis::DefaultShapeSize,
                                     properties);
   CostAnalysisOptions cost_analysis_options;
+  cost_analysis_options.default_mem_bandwidth_bytes_per_second =
+      kBytesPerSecond;
   HloCostAnalysisCosts hlo_cost_analysis_costs(hlo_cost_analysis);
   TF_ASSERT_OK_AND_ASSIGN(
       auto cost_analysis,

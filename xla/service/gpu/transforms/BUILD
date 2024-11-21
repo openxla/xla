@@ -21,6 +21,7 @@ cc_library(
     srcs = ["dot_algorithm_rewriter.cc"],
     hdrs = ["dot_algorithm_rewriter.h"],
     deps = [
+        "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -30,6 +31,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -468,7 +470,7 @@ xla_cc_test(
     deps = [
         ":collective_send_recv_combiner",
         "//xla/hlo/ir:hlo",
-        "//xla/tests:filecheck",
+        "//xla/hlo/testlib:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -507,6 +509,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
     ],
 )
@@ -517,6 +520,7 @@ xla_cc_test(
     deps = [
         ":collective_select_folder",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
@@ -715,7 +719,7 @@ cc_library(
     hdrs = ["convert_async_collectives_to_sync.h"],
     deps = [
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/transforms:convert_async_collectives_to_sync",
+        "//xla/hlo/transforms/collectives:convert_async_collectives_to_sync",
         "//xla/service/gpu:backend_configs_cc",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
@@ -1459,7 +1463,7 @@ xla_test(
         "gpu_p100",
         "gpu_v100",
         "gpu_amd_any",
-    ],
+    ] + if_oss(["gpu_b100"]),
     deps = if_gpu_is_configured(
         [
             ":dot_operand_converter",
@@ -1618,7 +1622,6 @@ xla_cc_test(
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:stream",
-        "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:statusor",
@@ -1792,18 +1795,36 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "gemm_rewriter_test_lib",
+    testonly = True,
+    srcs = ["gemm_rewriter_test_lib.cc"],
+    hdrs = ["gemm_rewriter_test_lib.h"],
+    tags = ["gpu"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
 xla_test(
     name = "gemm_rewriter_test",
     srcs = ["gemm_rewriter_test.cc"],
     backends = ["gpu"],
-    shard_count = 5,
     deps = [
         ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
         "//xla:error_spec",
         "//xla:test",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/testlib:filecheck",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
@@ -1815,12 +1836,64 @@ xla_test(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tests:filecheck",
-        "//xla/tests:verified_hlo_module",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
+    name = "cublas_gemm_rewriter_test",
+    srcs = ["cublas_gemm_rewriter_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:test",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
+    name = "gemm_rewriter_fp8_test",
+    size = "large",
+    srcs = ["gemm_rewriter_fp8_test.cc"],
+    backends = ["gpu"],
+    shard_count = 5,
+    deps = [
+        ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:test",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
@@ -1986,6 +2059,7 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -2230,6 +2304,7 @@ xla_cc_test(
     deps = [
         ":pipelined_p2p_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings:string_view",
@@ -2327,6 +2402,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:collective_opt_utils",
         "//xla/service:hlo_module_config",
+        "//xla/service/gpu:backend_configs_cc",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
@@ -2345,6 +2421,7 @@ xla_cc_test(
         "//xla/service:hlo_module_config",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
+        "//xla/service/gpu:backend_configs_cc",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
@@ -3104,14 +3181,13 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ],
+    ] + if_oss(["gpu_b100"]),
     deps = [
         ":triton_fusion_numerics_verifier",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/service:backend",
         "//xla/service:platform_util",
         "//xla/service/gpu/autotuning:autotuner_compile_util",
         "//xla/service/gpu/autotuning:autotuner_util",
@@ -3236,10 +3312,10 @@ xla_cc_test(
     deps = [
         ":pgle_accuracy_checker",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:profile_guided_latency_estimator",
         "//xla/service/gpu:gpu_latency_hiding_scheduler",
-        "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",

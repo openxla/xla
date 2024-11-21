@@ -23,10 +23,15 @@ limitations under the License.
 #include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassOptions.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/ir/atom_program_compiler.h"
+#include "xla/python/ifrt/ir/ifrt_ir_program.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -49,7 +54,7 @@ CreateIfrtMergeReshardsPass();
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 CreateIfrtOutlineAtomProgramToModulePass();
 
-std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+std::unique_ptr<mlir::OperationPass<mlir::func::FuncOp>>
 CreateIfrtVerifyDonationPass();
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
@@ -113,6 +118,32 @@ CreateIfrtCompileAndPropagateShardingsPass(
         compile_options,
     std::shared_ptr<AtomExecutableMap> atom_executable_map);
 
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+CreateIfrtPrecompileAtomProgramPreprocessingPass(
+    IfrtPrecompileAtomProgramPreprocessingPassOptions options = {});
+
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+CreateIfrtVerifyDeviceTypeConsistencyPass(
+    IfrtVerifyDeviceTypeConsistencyPassOptions options = {});
+
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+CreateIfrtAtomProgramsToVhloPass(
+    tsl::protobuf::RepeatedPtrField<IfrtIrAtomProgramProto>* atom_programs,
+    std::string vhlo_target_version);
+
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+CreateIfrtAtomProgramsFromVhloPass(
+    const tsl::protobuf::RepeatedPtrField<IfrtIrAtomProgramProto>&
+        atom_programs);
+
+void populateIfrtToVifrtPatterns(mlir::RewritePatternSet* patterns,
+                                 mlir::TypeConverter* converter,
+                                 mlir::MLIRContext* context);
+
+void populateVifrtToIfrtPatterns(mlir::RewritePatternSet* patterns,
+                                 mlir::TypeConverter* converter,
+                                 mlir::MLIRContext* context);
+
 // Generated definitions. This should be placed after all Pass creations.
 #define GEN_PASS_REGISTRATION
 #include "xla/python/ifrt/ir/transforms/passes.h.inc"  // IWYU pragma: export
@@ -153,6 +184,23 @@ void CreateIfrtToOutlinedAtomProgramsPipeline(
 
 // Creates pipeline to lower an IFRT XLA program to be ready for compilation.
 void CreateIfrtCompileXlaPreprocessingPipeline(mlir::OpPassManager& pm);
+
+// Creates a pipeline that converts an IFRT IR program to a versioned IFRT IR
+// program, and a versioned VHLO programs populated within `IfrtIrProgramProto`.
+void CreateIfrtToVersionedPipeline(mlir::OpPassManager& pm,
+                                   std::string ifrt_target_version,
+                                   std::string vhlo_target_version,
+                                   IfrtIrProgramProto& ifrt_ir_program);
+
+// Creates a pipeline that converts a versioned IFRT IR program to an IFRT IR
+// program.
+// The pipeline runs over a versioned IFRT IR module without any atom programs
+// present inside the module. The atom programs are expected to be present and
+// versioned in the given `ifrt_ir_program`. The pipeline will convert these
+// atom programs (i.e., from VHLO to StableHLO) and add them to the IFRT IR
+// program.
+void CreateIfrtFromVersionedPipeline(mlir::OpPassManager& pm,
+                                     const IfrtIrProgramProto& ifrt_ir_program);
 
 // Registers passes and pipelines to ifrt-opt.
 void RegisterIfrtPassesAndPipelines(

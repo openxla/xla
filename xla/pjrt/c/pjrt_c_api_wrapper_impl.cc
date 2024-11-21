@@ -1570,20 +1570,9 @@ PJRT_Error* PJRT_Executable_DeserializeAndLoad(
   absl::string_view serialized(args->serialized_executable,
                                args->serialized_executable_size);
 
-  std::optional<xla::CompileOptions> overriden_options;
-
-  if (args->overridden_serialized_compile_options &&
-      args->overridden_serialized_compile_options_size > 0) {
-    PJRT_ASSIGN_OR_RETURN(
-        overriden_options,
-        ParseCompileOptions(absl::string_view(
-            args->overridden_serialized_compile_options,
-            args->overridden_serialized_compile_options_size)));
-  }
-
   PJRT_ASSIGN_OR_RETURN(std::unique_ptr<xla::PjRtLoadedExecutable> executable,
                         args->client->client->DeserializeExecutable(
-                            serialized, overriden_options));
+                            serialized, /*options=*/std::nullopt));
 
   args->loaded_executable =
       new PJRT_LoadedExecutable(std::move(executable), args->client);
@@ -1750,6 +1739,16 @@ PJRT_Error* PJRT_Buffer_IsDeleted(PJRT_Buffer_IsDeleted_Args* args) {
       "PJRT_Buffer_IsDeleted_Args", PJRT_Buffer_IsDeleted_Args_STRUCT_SIZE,
       args->struct_size));
   args->is_deleted = args->buffer->buffer->IsDeleted();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Buffer_CopyRawToHost(PJRT_Buffer_CopyRawToHost_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Buffer_CopyRawToHost_Args",
+      PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE, args->struct_size));
+  xla::PjRtFuture<> wrapped_promise = args->buffer->buffer->CopyRawToHost(
+      args->dst, args->offset, args->transfer_size);
+  args->event = new PJRT_Event{std::move(wrapped_promise)};
   return nullptr;
 }
 
@@ -2530,6 +2529,7 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
 
       /*PJRT_ExecuteContext_Create=*/execute_context_create_fn,
       /*PJRT_ExecuteContext_Destroy=*/pjrt::PJRT_ExecuteContext_Destroy,
+      /*PJRT_Buffer_CopyRawToHost=*/pjrt::PJRT_Buffer_CopyRawToHost,
   };
 }
 

@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/dump.h"
+#include "xla/service/gpu/autotuning/autotuner_status_key.h"
 #include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/shape.h"
@@ -261,10 +262,12 @@ void SerializeAutotuneEntry(AutotuneResults* results, const AutotuneCacheKey& k,
 }  // namespace
 
 /*static*/ absl::Status AutotunerUtil::SerializeAutotuneResults(
-    AutotuneResults* results) {
+    AutotuneResults* results, std::optional<const AutotuneCacheKeySet*> keys) {
   absl::MutexLock lock(&autotune_cache_mu);
   for (const auto& [k, result] : autotune_cache) {
-    SerializeAutotuneEntry(results, k, &result);
+    if (!keys.has_value() || keys.value()->contains(k)) {
+      SerializeAutotuneEntry(results, k, &result);
+    }
   }
 
   results->set_version(kVersion);
@@ -595,9 +598,6 @@ AutotunerUtil::CreateRedzoneAllocator(const AutotuneConfig& config,
   absl::MutexLock lock(&autotune_cache_mu);
   autotune_cache_stats = CacheStats();
 }
-
-constexpr absl::string_view kAutotuneCacheRequiredErrorPayloadKey =
-    "https://openxla.org/gpu/autotune_cache_hit_required/";
 
 }  // namespace gpu
 }  // namespace xla
