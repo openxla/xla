@@ -24,6 +24,7 @@ import pipes
 
 # Template values set by rocm_configure.bzl.
 CPU_COMPILER = ('%{cpu_compiler}')
+USE_CLANG = ('%{compiler}' == 'clang')
 
 HIPCC_PATH = '%{hipcc_path}'
 HIPCC_ENV = '%{hipcc_env}'
@@ -258,6 +259,8 @@ def main():
     # this).
     cpu_compiler_flags = [flag for flag in sys.argv[1:]
                                if not flag.startswith(('--rocm_log'))]
+    if not USE_CLANG:
+      cpu_compiler_flags.append('-fno-canonical-system-headers')
 
     # XXX: SE codes need to be built with gcc, but need this macro defined
     cpu_compiler_flags.append("-D__HIP_PLATFORM_HCC__")
