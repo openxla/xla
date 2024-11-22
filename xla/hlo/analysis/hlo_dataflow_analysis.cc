@@ -1108,19 +1108,30 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
   bool changed = false;
   // CollectivePermuteStart forwards the operand value to element {0} of its
   // output.
-  for (int oprd_idx = 0; oprd_idx < collective_permute_start->operands().size();
-       ++oprd_idx) {
-    if (collective_permute_start->operand(oprd_idx)->shape().IsTuple()) {
-      for (int i = 0;
-           i < ShapeUtil::TupleElementCount(
-                   collective_permute_start->operand(oprd_idx)->shape());
+  if (!Cast<HloCollectivePermuteInstruction>(collective_permute_start)
+           ->inplace() &&
+      collective_permute_start->operands().size() > 1) {
+    for (int oprd_idx = 0;
+         oprd_idx < collective_permute_start->operands().size(); ++oprd_idx) {
+      const HloValueSet& operand_value_set =
+          GetValueSet(collective_permute_start->operand(oprd_idx));
+      HloValueSet& value_set =
+          GetValueSet(collective_permute_start, {0, oprd_idx});
+      if (value_set != operand_value_set) {
+        value_set = operand_value_set;
+        changed = true;
+      }
+    }
+  } else {
+    // TODO support multi-operand in-place collective-permute and unify in-place
+    // collective-permute with normal ones
+    if (collective_permute_start->operand(0)->shape().IsTuple()) {
+      for (int i = 0; i < ShapeUtil::TupleElementCount(
+                              collective_permute_start->operand(0)->shape());
            ++i) {
         const HloValueSet& operand_value_set =
-            GetValueSet(collective_permute_start->operand(oprd_idx), {i});
-        HloValueSet& value_set =
-            (collective_permute_start->operands().size() > 1)
-                ? GetValueSet(collective_permute_start, {0, oprd_idx, i})
-                : GetValueSet(collective_permute_start, {0, i});
+            GetValueSet(collective_permute_start->operand(0), {i});
+        HloValueSet& value_set = GetValueSet(collective_permute_start, {0, i});
         if (value_set != operand_value_set) {
           value_set = operand_value_set;
           changed = true;
@@ -1128,11 +1139,8 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteStartValueSet(
       }
     } else {
       const HloValueSet& operand_value_set =
-          GetValueSet(collective_permute_start->operand(oprd_idx));
-      HloValueSet& value_set =
-          (collective_permute_start->operands().size() > 1)
-              ? GetValueSet(collective_permute_start, {0, oprd_idx})
-              : GetValueSet(collective_permute_start, {0});
+          GetValueSet(collective_permute_start->operand(0));
+      HloValueSet& value_set = GetValueSet(collective_permute_start, {0});
       if (value_set != operand_value_set) {
         value_set = operand_value_set;
         changed = true;
