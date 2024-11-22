@@ -1426,3 +1426,72 @@ cc_library(
         "@tsl//tsl/platform:errors",
     ],
 )
+
+cc_library(
+    name = "compilation_options",
+    hdrs = ["compilation_options.h"],
+    deps = ["@com_google_absl//absl/strings:str_format"],
+)
+
+cc_test(
+    name = "compilation_options_test",
+    srcs = ["compilation_options_test.cc"],
+    deps = [
+        ":compilation_options",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
+    name = "compilation_provider",
+    hdrs = ["compilation_provider.h"],
+    deps = [
+        ":compilation_options",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "subprocess_compilation_provider",
+    srcs = ["subprocess_compilation_provider.cc"],
+    hdrs = ["subprocess_compilation_provider.h"],
+    deps = [
+        ":compilation_options",
+        ":compilation_provider",
+        ":subprocess_compilation",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/gpu:gpu_asm_opts",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "compilation_provider_test",
+    srcs = ["compilation_provider_test.cc"],
+    deps = [
+        ":compilation_options",
+        ":compilation_provider",
+        ":subprocess_compilation",
+        ":subprocess_compilation_provider",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
+)
