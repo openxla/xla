@@ -135,8 +135,7 @@ class CudnnFusedMhaRewriterTestHloTest : public HloTestBase {
   std::optional<absl::string_view> skip_reason_;
 };
 
-constexpr absl::string_view
-    hlo_base_pattern = R"(
+constexpr absl::string_view hlo_base_pattern = R"(
 HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,HEAD_DIM]{3,2,1,0},bf16[16,16,256,HEAD_DIM]{3,2,1,0},bf16[16,16,256,HEAD_DIM]{3,2,1,0})->bf16[16,16,256,HEAD_DIM]{3,2,1,0}}
 
 region_0.7 {
@@ -176,8 +175,8 @@ std::string ReplacePlaceholder(absl::string_view str,
   std::string result(str.begin(), str.end());
   std::string::size_type pos = 0;
   while ((pos = result.find(placeholder, pos)) != std::string::npos) {
-      result.replace(pos, placeholder.size(), value);
-      pos += value.size();
+    result.replace(pos, placeholder.size(), value);
+    pos += value.size();
   }
   return result;
 }
@@ -185,10 +184,9 @@ std::string ReplacePlaceholder(absl::string_view str,
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
        BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  bool support_large_head_dim = (
-      GetRealCudaComputeCapability().IsAtLeastHopper() &&
-      GetRealCudnnVersion() >= se::dnn::VersionInfo(9, 5, 0)
-  );
+  bool support_large_head_dim =
+      (GetRealCudaComputeCapability().IsAtLeastHopper() &&
+       GetRealCudnnVersion() >= se::dnn::VersionInfo(9, 5, 0));
   int head_dim = support_large_head_dim ? 256 : 64;
   std::string hlo = ReplacePlaceholder(hlo_base_pattern, "HEAD_DIM",
                                        std::to_string(head_dim));
