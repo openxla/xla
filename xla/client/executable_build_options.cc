@@ -198,10 +198,6 @@ absl::StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto()
     output.mutable_auto_spmd_partitioning_mesh_ids()->Add(s);
   }
   output.set_use_shardy_partitioner(use_shardy_partitioner());
-  if (key_value_store() != nullptr) {
-    return InvalidArgument(
-        "Cannot serialize ExecutableBuildOptions::key_value_store");
-  }
   output.set_process_index(process_index());
   output.set_process_count(process_count());
   return output;

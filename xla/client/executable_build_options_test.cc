@@ -19,7 +19,6 @@ limitations under the License.
 
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
-#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/test_compilation_environment.pb.h"
@@ -81,22 +80,6 @@ TEST(ExecutableBuildOptionsTest, ProtoRoundTripWorks) {
 }
 
 TEST(ExecutableBuildOptionsTest, SerializationFailsOnNonSerializableFields) {
-  class MockStore : public KeyValueStoreInterface {
-   public:
-    MockStore() = default;
-    absl::StatusOr<std::string> Get(std::string_view, absl::Duration) override {
-      return absl::OkStatus();
-    }
-    absl::Status Set(std::string_view, std::string_view) override {
-      return absl::OkStatus();
-    }
-  };
-  {
-    ExecutableBuildOptions options;
-    options.set_key_value_store(std::make_shared<MockStore>());
-    EXPECT_THAT(options.ToProto(),
-                tsl::testing::StatusIs(absl::StatusCode::kInvalidArgument));
-  }
   {
     ExecutableBuildOptions options;
     tsl::thread::ThreadPool pool{tsl::Env::Default(), tsl::ThreadOptions(), "",

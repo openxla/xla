@@ -108,7 +108,6 @@ xla_cc_test(
         ":executable_build_options",
         "//xla:protobuf_util",
         "//xla:test",
-        "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_placer",
         "//xla/service:test_compilation_environment_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
