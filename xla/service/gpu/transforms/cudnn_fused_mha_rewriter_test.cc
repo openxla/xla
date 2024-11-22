@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/transforms/cudnn_fused_mha_transpose_fusion.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
@@ -83,6 +84,12 @@ class CudnnFusedMhaRewriterTestHloTest : public HloTestBase {
     return se::dnn::VersionInfo(9, 0, 0);
   }
 
+  se::dnn::VersionInfo GetRealCudnnVersion() {
+    auto* stream_executor = backend().default_stream_executor();
+    auto cudnn_version = GetDnnVersionInfoOrDefault(stream_executor);
+    return cudnn_version;
+  }
+
   CudnnFusedMhaRewriterTestHloTest()
       : HloTestBase(/*verifier_layout_sensitive=*/false,
                     /*allow_mixed_precision_in_hlo_verifier=*/false,
@@ -129,8 +136,8 @@ class CudnnFusedMhaRewriterTestHloTest : public HloTestBase {
 };
 
 constexpr absl::string_view
-    hlo_BF16Bmm1SoftmaxBmm2Pattern_k_hidden_not_most_minor = R"(
-HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0},bf16[16,16,256,64]{3,2,1,0})->bf16[16,16,256,64]{3,2,1,0}}
+    hlo_base_pattern = R"(
+HloModule fmha_test, entry_computation_layout={(bf16[16,16,256,HEAD_DIM]{3,2,1,0},bf16[16,16,256,HEAD_DIM]{3,2,1,0},bf16[16,16,256,HEAD_DIM]{3,2,1,0})->bf16[16,16,256,HEAD_DIM]{3,2,1,0}}
 
 region_0.7 {
   Arg_0.8 = bf16[] parameter(0)
@@ -145,9 +152,9 @@ region_1.19 {
 }
 
 ENTRY main.6 {
-  Arg_2.3 = bf16[16,16,256,64]{3,2,1,0} parameter(2)
-  Arg_0.1 = bf16[16,16,256,64]{3,2,1,0} parameter(0)
-  Arg_1.2 = bf16[16,16,256,64]{2,3,1,0} parameter(1)
+  Arg_2.3 = bf16[16,16,256,HEAD_DIM]{3,2,1,0} parameter(2)
+  Arg_0.1 = bf16[16,16,256,HEAD_DIM]{3,2,1,0} parameter(0)
+  Arg_1.2 = bf16[16,16,256,HEAD_DIM]{2,3,1,0} parameter(1)
   dot.0 = bf16[16,16,256,256]{3,2,1,0} dot(Arg_0.1, Arg_1.2), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={3}, metadata={}
   constant = bf16[] constant(-inf)
   reduce.11 = bf16[16,16,256]{2,1,0} reduce(dot.0, constant), dimensions={3}, to_apply=region_0.7
@@ -160,17 +167,34 @@ ENTRY main.6 {
   convert.2 = bf16[16,16,256]{2,1,0} convert(reduce.23)
   broadcast.4 = bf16[16,16,256,256]{3,2,1,0} broadcast(convert.2), dimensions={0,1,2}
   divide = bf16[16,16,256,256]{3,2,1,0} divide(exponential.1, broadcast.4)
-  ROOT dot.1 = bf16[16,16,256,64]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
+  ROOT dot.1 = bf16[16,16,256,HEAD_DIM]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
 })";
+
+std::string ReplacePlaceholder(absl::string_view str,
+                               const std::string& placeholder,
+                               const std::string& value) {
+  std::string result(str.begin(), str.end());
+  std::string::size_type pos = 0;
+  while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+      result.replace(pos, placeholder.size(), value);
+      pos += value.size();
+  }
+  return result;
+}
 
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
        BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto m, ParseAndReturnVerifiedModule(
-                  hlo_BF16Bmm1SoftmaxBmm2Pattern_k_hidden_not_most_minor));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
-                                         GetCudnnVersion()};
+  bool support_large_head_dim = (
+      GetRealCudaComputeCapability().IsAtLeastHopper() &&
+      GetRealCudnnVersion() >= se::dnn::VersionInfo(9, 5, 0)
+  );
+  int head_dim = support_large_head_dim ? 256 : 64;
+  std::string hlo = ReplacePlaceholder(hlo_base_pattern, "HEAD_DIM",
+                                       std::to_string(head_dim));
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+  CudnnFusedMHARewriter fusedMhaRewriter{GetRealCudaComputeCapability(),
+                                         GetRealCudnnVersion()};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
   EXPECT_TRUE(result);
   const HloInstruction* fmha;
@@ -180,7 +204,7 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
       m->entry_computation()->root_instruction(),
       GmockMatch(m::GetTupleElement(
                      m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
-                     .WithShape(BF16, {16, 16, 256, 64})));
+                     .WithShape(BF16, {16, 16, 256, head_dim})));
   TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
                           fmha->backend_config<GpuBackendConfig>());
   const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
