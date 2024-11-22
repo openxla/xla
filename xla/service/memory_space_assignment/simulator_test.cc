@@ -27,11 +27,11 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/memory_space_assignment/allocation.h"
@@ -89,12 +89,14 @@ class MemorySpaceAssignmentSimulatorTest : public HloTestBase {
     hlo_cost_analysis_costs_ =
         std::make_unique<memory_space_assignment::HloCostAnalysisCosts>(
             *hlo_cost_analysis_);
-    CostAnalysisOptions _options;
+    CostAnalysisOptions cost_analysis_options;
     // Assume 2 byte per second for testing.
-    _options.alternate_mem_bandwidth_bytes_per_second = 2;
-    TF_ASSIGN_OR_RETURN(
-        cost_analysis_,
-        CostAnalysis::Create(*hlo_cost_analysis_costs_, _options, *module_));
+    cost_analysis_options.alternate_mem_bandwidth_bytes_per_second = 2;
+    cost_analysis_options.default_mem_bandwidth_bytes_per_second = 1.0;
+
+    TF_ASSIGN_OR_RETURN(cost_analysis_,
+                        CostAnalysis::Create(*hlo_cost_analysis_costs_,
+                                             cost_analysis_options, *module_));
 
     TF_ASSIGN_OR_RETURN(alias_analysis_, HloAliasAnalysis::Run(module_.get()));
     TF_ASSIGN_OR_RETURN(hlo_live_range_,
@@ -492,9 +494,12 @@ TEST_F(SimulateAsyncCopyLikeDoneTest,
   const HloInstruction* copy_start_1_inst = instruction_map_["copy-start.1"];
   const HloInstruction* neg_inst = instruction_map_["neg"];
 
-  float compute_elapsed_time = runtime_simulator_->SimulateComputeInstruction(
-      neg_inst, /*operands_in_alternate_memory=*/{},
-      /*outputs_in_alternate_memory=*/{});
+  float compute_elapsed_time =
+      runtime_simulator_
+          ->SimulateComputeInstruction(neg_inst,
+                                       /*operands_in_alternate_memory=*/{},
+                                       /*outputs_in_alternate_memory=*/{})
+          .elapsed_time;
 
   // The compute operand requires 32 FLOPs and 32 * 4 * 2 bytes access, which
   // requires 32 and 256 secs respectively. Thus, it is default memory access
@@ -533,9 +538,13 @@ TEST_F(SimulateAsyncCopyLikeDoneTest,
   // process the async copies in this time. Both queues are not empty, so the
   // bandwidth is shared. Each of the request at the front of the queue process
   // 64 sec * 0.5 bytes/sec = 32 bytes.
-  float compute_elapsed_time = runtime_simulator_->SimulateComputeInstruction(
-      instruction_map_["neg"], /*operands_in_alternate_memory=*/{{0, {}}},
-      /*outputs_in_alternate_memory=*/{});
+  float compute_elapsed_time =
+      runtime_simulator_
+          ->SimulateComputeInstruction(
+              instruction_map_["neg"],
+              /*operands_in_alternate_memory=*/{{0, {}}},
+              /*outputs_in_alternate_memory=*/{})
+          .elapsed_time;
   // 64 secs for alternate memory access + 128 secs for default memory access
   EXPECT_EQ(compute_elapsed_time, 192);
 
@@ -571,9 +580,13 @@ TEST_F(SimulateAsyncCopyLikeDoneTest,
   // 64 secs idle time to process async copies. Since only the read queue is not
   // empty, we can use the full bandwidth and process 64 sec * 1 bytes/sec = 64
   // bytes.
-  float compute_elapsed_time = runtime_simulator_->SimulateComputeInstruction(
-      instruction_map_["neg"], /*operands_in_alternate_memory=*/{{0, {}}},
-      /*outputs_in_alternate_memory=*/{});
+  float compute_elapsed_time =
+      runtime_simulator_
+          ->SimulateComputeInstruction(
+              instruction_map_["neg"],
+              /*operands_in_alternate_memory=*/{{0, {}}},
+              /*outputs_in_alternate_memory=*/{})
+          .elapsed_time;
   // 64 secs for alternate memory access + 128 secs for default memory access
   EXPECT_EQ(compute_elapsed_time, 192);
 
@@ -596,9 +609,12 @@ TEST_F(SimulateAsyncCopyLikeDoneTest,
 
   TF_ASSERT_OK(Initialize(hlo_string));
 
-  float compute_elapsed_time = runtime_simulator_->SimulateComputeInstruction(
-      instruction_map_["neg"], /*operands_in_alternate_memory=*/{},
-      /*outputs_in_alternate_memory=*/{});
+  float compute_elapsed_time =
+      runtime_simulator_
+          ->SimulateComputeInstruction(instruction_map_["neg"],
+                                       /*operands_in_alternate_memory=*/{},
+                                       /*outputs_in_alternate_memory=*/{})
+          .elapsed_time;
   // Execution time: 128 * 4 * 2 / 1 for default access
   EXPECT_EQ(compute_elapsed_time, 1024);
   // The queues should remain empty.

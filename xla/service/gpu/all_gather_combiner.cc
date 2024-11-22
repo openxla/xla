@@ -25,7 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/all_gather_combiner.h"
+#include "xla/hlo/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_collective_combiner_utils.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -65,13 +65,6 @@ absl::StatusOr<bool> GpuAllGatherCombiner::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   // Combiner threshold is specified. Running parent pass code.
   if (combine_threshold_in_bytes_ != default_combine_threshold_in_bytes_) {
-    return AllGatherCombiner::Run(module, execution_threads);
-  }
-
-  // Pass configuration heuristics are not enabled. Running parent pass code.
-  if (!module->config()
-           .debug_options()
-           .xla_gpu_enable_heuristic_pass_configuration()) {
     return AllGatherCombiner::Run(module, execution_threads);
   }
 

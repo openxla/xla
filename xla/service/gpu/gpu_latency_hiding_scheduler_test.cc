@@ -15,13 +15,17 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
@@ -55,17 +59,17 @@ int GetIndexByName(absl::Span<HloInstruction* const> instruction_sequence,
 class GpuLatencyHidingSchedulerBaseTest : public HloTestBase {
  protected:
   absl::StatusOr<HloModule*> ScheduleModule(
-      HloModule* module, int64_t num_parallel_resources = 1) {
+      HloModule* module, int64_t num_parallel_resources = 1,
+      DebugOptions::PGLEStrictnessLevel strictness =
+          DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
     auto& test_backend = backend();
     const auto& gpu_device_info =
         test_backend.default_stream_executor()->GetDeviceDescription();
-    HloModuleConfig config(module->config());
-    DebugOptions dboptions(config.debug_options());
-    dboptions.set_xla_gpu_enable_pgle_accuracy_checker(true);
-    dboptions.set_xla_gpu_experimental_parallel_collective_overlap_limit(
+    DebugOptions& options = module->mutable_config().mutable_debug_options();
+    options.set_xla_gpu_experimental_parallel_collective_overlap_limit(
         num_parallel_resources);
-    config.set_debug_options(dboptions);
-    module->set_config(config);
+    options.set_xla_gpu_pgle_accuracy_checker(strictness);
+
     TF_RETURN_IF_ERROR(
         ScheduleGpuModule(module, /*pointer_size=*/8, gpu_device_info)
             .status());
@@ -78,7 +82,7 @@ class GpuLatencyHidingSchedulerBaseTest : public HloTestBase {
     debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
     debug_options.set_xla_gpu_lhs_enable_gpu_async_tracker(true);
     config.set_debug_options(debug_options);
-    *config.mutable_fdo_profile() = fdo_profile;
+    config.set_fdo_profile(fdo_profile);
     return config;
   }
 };

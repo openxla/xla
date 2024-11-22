@@ -1,7 +1,8 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@tsl//tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_oss")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -145,8 +146,9 @@ xla_test(
         "//xla/service/gpu/runtime:sequential_thunk",
         "//xla/service/gpu/runtime:thunk",
         "//xla/service/gpu/transforms:dynamic_slice_fusion_rewriter",
-        "//xla/stream_executor",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
         "//xla/stream_executor/gpu:gpu_types_header",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
@@ -225,17 +227,7 @@ cc_library(
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu:ir_emission_utils",
-        "//xla/service/gpu/fusions/legacy:concatenate",
-        "//xla/service/gpu/fusions/legacy:in_place_dynamic_update_slice",
-        "//xla/service/gpu/fusions/legacy:input_slices",
-        "//xla/service/gpu/fusions/legacy:loop",
-        "//xla/service/gpu/fusions/legacy:reduction",
-        "//xla/service/gpu/fusions/legacy:scatter",
-        "//xla/service/gpu/fusions/legacy:transpose",
-        "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
     ],
@@ -425,7 +417,7 @@ xla_test(
     srcs = if_cuda_is_configured(["cudnn_test.cc"]),
     backends = [
         "gpu_h100",
-    ],
+    ] + if_oss(["gpu_b100"]),
     deps = [
         "//xla:comparison_util",
         "//xla:debug_options_flags",

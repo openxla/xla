@@ -1189,6 +1189,68 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
   }
 }
 
+TEST_P(HloDataflowAnalysisTest, AsyncCallWithConditional) {
+  std::string hlo_str = R"(
+HloModule AsyncCall
+
+%cond_computation.1 (param_0: f32[4096]) -> f32[4096] {
+  ROOT %param_0 = f32[4096]{0} parameter(0)
+}
+
+%cond_computation.2 (param_1: f32[4096]) -> f32[4096] {
+  %param_1 = f32[4096]{0} parameter(0)
+  ROOT %negate_1 = f32[4096]{0} negate(f32[4096]{0} %param_1)
+}
+
+%called_computation (param_0: pred[], param_1: f32[4096]) -> f32[4096] {
+  %param_0 = pred[] parameter(0)
+  %param_1 = f32[4096]{0} parameter(1)
+  ROOT %conditional = f32[4096]{0} conditional(pred[] %param_0, f32[4096]{0} %param_1, f32[4096]{0} %param_1), true_computation=%cond_computation.1, false_computation=%cond_computation.2
+}
+
+ENTRY %main (a: f32[4096], pred: pred[]) -> f32[4096] {
+  %a = f32[4096]{0} parameter(1)
+  %p = pred[] parameter(0)
+  %async-start = ((pred[], f32[4096]{0}), f32[4096]{0}, u32[]) call-start(pred[] %p, f32[4096]{0} %a), to_apply=%called_computation
+  ROOT %async-done = f32[4096]{0} call-done(%async-start)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  bool ssa_form = GetParam();
+  const HloDataflowAnalysis& analysis = RunAnalysis(ssa_form);
+
+  const HloInstruction* a = FindInstruction(module_.get(), "a");
+  const HloInstruction* p = FindInstruction(module_.get(), "p");
+  // const HloInstruction* async_done =
+  //     FindInstruction(module_.get(), "async-done");
+  const HloInstruction* conditional =
+      FindInstruction(module_.get(), "conditional");
+
+  for (std::string async_name : {"async-start", "async-done"}) {
+    const HloInstruction* async_op = FindInstruction(module_.get(), async_name);
+    const HloComputation* called_computation =
+        async_op->async_wrapped_instruction()->called_computations()[0];
+    const HloInstruction* parameter0 =
+        called_computation->parameter_instruction(0);
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(parameter0));
+    EXPECT_THAT(HloValuesAt(parameter0),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(p)));
+    const HloInstruction* parameter1 =
+        called_computation->parameter_instruction(1);
+    EXPECT_FALSE(analysis.ValueIsDefinedAt(parameter1));
+    EXPECT_THAT(HloValuesAt(parameter1),
+                UnorderedElementsAre(&analysis.GetValueDefinedAt(a)));
+    if (ssa_form) {
+      EXPECT_EQ(HloValuesAt(conditional).size(), 1);
+      EXPECT_TRUE(HloValuesAt(conditional)[0]->is_phi());
+    } else {
+      EXPECT_EQ(HloValuesAt(conditional).size(), 2);
+    }
+  }
+}
+
 TEST_P(HloDataflowAnalysisTest, TupleShapedAsyncOp) {
   std::string hlo_str = R"(
   HloModule module
@@ -3437,6 +3499,40 @@ TEST_F(GetInPlaceInputOutputPairsTest, DUSOutputFusionWithCollective) {
   auto in_place_pairs = HloDataflowAnalysis::GetInPlaceInputOutputPairs(fusion);
   std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
   expected_pairs.push_back({HloOperandIndex{0, {}}, {1}});
+  EXPECT_EQ(in_place_pairs, expected_pairs);
+}
+
+TEST_F(GetInPlaceInputOutputPairsTest, DUSLoopFusionWithBitcast) {
+  const char* kModule = R"(
+    HloModule DUSLoopFusionWithBitcast
+
+    fused_dynamic_update_slice {
+      param_1.133 = bf16[32,1,4096,18432]{2,3,1,0} parameter(1)
+      bitcast.8539.1 = bf16[32,1,18432,4096]{3,2,1,0} bitcast(param_1.133)
+      param_0.168 = bf16[1,4096,18432]{1,0,2} parameter(0)
+      bitcast.8543.1 = bf16[1,1,18432,4096]{3,2,1,0} bitcast(param_0.168)
+      param_2.98 = s32[] parameter(2)
+      constant_2153_8 = s32[] constant(0)
+      compare.753.6 = pred[] compare(param_2.98, constant_2153_8), direction=LT
+      constant_2154_12 = s32[] constant(96)
+      add.950.6 = s32[] add(param_2.98, constant_2154_12)
+      select.883.5 = s32[] select(compare.753.6, add.950.6, param_2.98)
+      ROOT dynamic-update-slice.178.1 = bf16[32,1,18432,4096]{3,2,1,0} dynamic-update-slice(bitcast.8539.1, bitcast.8543.1, select.883.5, constant_2153_8, constant_2153_8, /*index=5*/constant_2153_8)
+    }
+
+    ENTRY entry {
+      p0 = bf16[1,4096,18432]{1,0,2} parameter(0)
+      p1 = bf16[32,1,4096,18432]{2,3,1,0} parameter(1)
+      p2 = s32[] parameter(2)
+      ROOT fusion1 = bf16[32,1,18432,4096]{3,2,1,0} fusion(p0, p1, p2), kind=kLoop, calls=fused_dynamic_update_slice
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  auto in_place_pairs = HloDataflowAnalysis::GetInPlaceInputOutputPairs(fusion);
+  std::vector<std::pair<HloOperandIndex, ShapeIndex>> expected_pairs;
+  // p1 should be aliased with fusion1
+  expected_pairs.push_back({HloOperandIndex{1, {}}, {}});
   EXPECT_EQ(in_place_pairs, expected_pairs);
 }
 

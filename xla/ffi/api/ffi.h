@@ -477,6 +477,22 @@ class AnyBuffer {
 
   void* untyped_data() const { return buf_->data; }
 
+  template <typename T>
+  T* typed_data() const {
+    assert(internal::NativeTypeToCApiDataType<T>() == buf_->dtype &&
+           "Template type must match the underlying buffer dtype");
+    return reinterpret_cast<T*>(buf_->data);
+  }
+
+  template <typename T>
+  T* reinterpret_data() const {
+    assert(sizeof(T) == ByteWidth(element_type()) &&
+           !(reinterpret_cast<std::uintptr_t>(buf_->data) % alignof(T)) &&
+           "Requested type must have the same byte width and alignment as the "
+           "underlying buffer type");
+    return reinterpret_cast<T*>(buf_->data);
+  }
+
  private:
   const XLA_FFI_Buffer* buf_;
 };

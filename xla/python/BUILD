@@ -22,6 +22,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
         ":friends",
+        "//third_party/py/jax:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -565,7 +566,7 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = [":friends"],  # For the functions to access C++ flags/thread-local variables
+    visibility = ["//visibility:private"],  # For the functions to access C++ flags/thread-local variables
     deps = [
         ":nb_absl_inlined_vector",
         ":nb_absl_span",
@@ -707,8 +708,10 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = ["//visibility:private"],
     deps = [
+        ":config",
         ":guard_lib",
         ":jax_jit",
+        ":nb_class_ptr",
         ":nb_helpers",
         ":nb_numpy",
         ":py_client",
@@ -756,6 +759,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = ["//visibility:private"],
     deps = [
+        ":config",
         ":jax_jit",
         ":nb_class_ptr",
         ":nb_helpers",
@@ -825,7 +829,6 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":nb_class_ptr",
-        ":nb_helpers",
         ":pytree_proto_cc",
         # placeholder for index annotation deps
         "@com_google_absl//absl/algorithm:container",
@@ -840,6 +843,45 @@ cc_library(
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform:logging",
     ],
+)
+
+cc_library(
+    name = "config",
+    srcs = ["config.cc"],
+    hdrs = ["config.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":python_ref_manager",
+        # placeholder for index annotation deps
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+py_strict_test(
+    name = "config_test",
+    srcs = ["config_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
+    deps = [
+        ":xla_client",
+        ":xla_extension",
+        "@absl_py//absl/flags",
+        "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
 )
 
 cc_library(
@@ -981,7 +1023,7 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = [":friends"],
+    visibility = ["//visibility:private"],
     deps = [
         # placeholder for index annotation deps
         "@com_google_absl//absl/base:core_headers",
@@ -1031,6 +1073,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
+        "@local_config_python//:python_headers",
         "//xla/pjrt:lru_cache",
     ],
 )
@@ -1079,19 +1122,19 @@ cc_library(
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms:flatten_call_graph",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/hlo/transforms:tuple_simplifier",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:status_casters",
         "//xla/service:call_inliner",
         "//xla/service:computation_placer",
         "//xla/service:custom_call_target_registry",
-        "//xla/service:flatten_call_graph",
-        "//xla/service:hlo_dce",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
-        "//xla/service:tuple_simplifier",
         "//xla/tsl/lib/strings:proto_serialization",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -1201,6 +1244,7 @@ tsl_pybind_extension(
     pytype_srcs = glob(["xla_extension/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = [
+        ":config",
         ":custom_call_sharding",
         ":dlpack",
         ":guard_lib",
@@ -1272,12 +1316,12 @@ tsl_pybind_extension(
         "//xla/service/cpu:collectives_interface",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "//xla/tsl/platform/cloud:gcs_file_system",
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform/cloud:gcs_file_system",
     ] + select({
         # gloo tcp transport only builds on linux
         "//xla/tsl:macos": [

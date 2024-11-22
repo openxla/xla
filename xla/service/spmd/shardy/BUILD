@@ -1,7 +1,7 @@
 # Integrates Shardy into the current XLA pipeline.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
+load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 package(
@@ -15,10 +15,9 @@ package(
 
 package_group(
     name = "friends",
-    packages = [
+    packages = xla_internal(["..."]) + [
         "//learning/deepmind/jax/ocean/...",
         "//learning/deepmind/partir/...",
-        "//platforms/xla/...",
         "//third_party/openxla/shardy/...",
     ],
 )
@@ -123,10 +122,10 @@ xla_cc_binary(
         "//xla/service/spmd/shardy/mhlo_round_trip:mhlo_import",
         "//xla/service/spmd/shardy/mhlo_round_trip:shard_map_export",
         "//xla/service/spmd/shardy/mhlo_round_trip:shard_map_import",
-        "//xla/service/spmd/shardy/round_trip_common:convert_sharding_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:export_named_computations",
         "//xla/service/spmd/shardy/round_trip_common:import_backend_func_calls",
         "//xla/service/spmd/shardy/round_trip_common:import_constants",
+        "//xla/service/spmd/shardy/round_trip_common:import_sdy_custom_calls",
         "//xla/service/spmd/shardy/round_trip_common:open_while_free_vars_sharding",
         "//xla/service/spmd/shardy/sdy_round_trip:export_ops",
         "//xla/service/spmd/shardy/sdy_round_trip:export_shardy_attrs",

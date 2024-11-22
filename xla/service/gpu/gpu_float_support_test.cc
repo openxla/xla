@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/float_normalization.h"
+#include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_verifier.h"
@@ -264,6 +264,36 @@ HloModule m
 ENTRY main {
   p0 = bf16[] parameter(0)
   ROOT r = bf16[] reduce-precision(p0), exponent_bits=8, mantissa_bits=7
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_FALSE(Normalize(module.get(), cc, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, Bf16ExpIsNotNormalized) {
+  auto cc = se::CudaComputeCapability::Ampere();
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  ROOT r = bf16[] exponential(p0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kHloModule));
+  EXPECT_FALSE(Normalize(module.get(), cc, BF16, F32));
+}
+
+TEST_F(FloatSupportTest, Bf16LogIsNotNormalized) {
+  auto cc = se::CudaComputeCapability::Ampere();
+  constexpr absl::string_view kHloModule = R"(
+HloModule m
+
+ENTRY main {
+  p0 = bf16[] parameter(0)
+  ROOT r = bf16[] log(p0)
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,

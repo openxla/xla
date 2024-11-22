@@ -84,7 +84,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     }
     ReductionDimensions reduction_dims =
         GetReductionKindAndContiguousComponents(*hlo);
-    if (ReductionIsRaceFree(config, reduction_dims)) {
+    if (ReductionIsRaceFree(reduction_dims)) {
       VLOG(3) << "Base case: dimensions fit";
       return absl::OkStatus();
     }
@@ -110,17 +110,8 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
   bool MatchReductionForSplit(HloReduceInstruction *reduce,
                               const HloModuleConfig &config) {
     // MLIR emitters only support race-free reductions.
-    // TODO(jreiffers: Verify performance and implement atomics for reductions
+    // TODO(jreiffers): Verify performance and implement atomics for reductions
     // if needed.
-    bool reductions_via_mlir_disabled =
-        config.debug_options().xla_gpu_mlir_emitter_level() < 4;
-    if (reductions_via_mlir_disabled && IsMinMaxReduction(reduce)) {
-      // TODO(cheshire): Also enable for integers.
-      VLOG(1) << "Not performing tree expansion on min/max-reduction: "
-              << reduce->ToString()
-              << " since min/max operations are associative";
-      return false;
-    }
     if (!IsReductionFromOrToContiguousDimensions(*reduce)) {
       VLOG(3) << "Is not a reduction from or to contiguous dimensions";
       return false;
@@ -200,8 +191,7 @@ class ReductionRewriterVisitor : public DfsHloRewriteVisitor {
     // will have a power of 2 in that range.
     uint64_t k2 =
         static_cast<uint64_t>(std::floor(std::sqrt(reduced_dim_size)));
-    int64_t race_free_bound = ReductionDimensionRaceFreeBound(
-        reduce->GetModule()->config(), reduction_dims);
+    int64_t race_free_bound = ReductionDimensionRaceFreeBound(reduction_dims);
     if (k2 > race_free_bound) {
       // This means we need more than one split. It is best to limit the n/k
       // dimension to the maximum size that doesn't require further splitting.

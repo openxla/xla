@@ -121,6 +121,10 @@ inline auto OneDnnFusibleInstr(HloInstruction** instr) {
       m::CustomCall(instr, {"__onednn$convolution"}));
 }
 
+inline bool IsOneDnnMatmulInstr(HloInstruction* instr) {
+  return Match(instr, m::CustomCall({"__onednn$matmul"}));
+}
+
 inline auto ConvertBF16ToF32(HloInstruction** instr) {
   return m::Convert(m::Op(instr).WithElementType(PrimitiveType::BF16))
       .WithElementType(PrimitiveType::F32);
@@ -679,7 +683,8 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
           m::Op(&addend));
       if (!Match(addend_intermediate, addend_pattern)) return absl::OkStatus();
 
-      if (optional_addend_broadcast && addend->shape().rank() != 1) {
+      if (optional_addend_broadcast &&
+        (IsOneDnnMatmulInstr(contraction) || addend->shape().rank() != 1)) {
         auto new_shape =
             AdjustBiasShape(optional_addend_broadcast, contraction->shape());
         if (new_shape.ok()) {
@@ -710,7 +715,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
       // fused op. Remove this restriction once oneDNN has an optimized
       // implementation for broadcasted add across all dimensions.
       OneDnnFusionConfig_FusionKind kind =
-          (addend->shape().rank() == 1)
+          (ShapeUtil::TrueRank(addend->shape()) == 1)
               ? (fusions_config->ops().empty() ? OneDnnFusionConfig::BIAS
                                                : OneDnnFusionConfig::UNDEFINED)
               : OneDnnFusionConfig::BINARY_ADD;

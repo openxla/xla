@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/collective_device_list.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "xla/service/backend.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -86,7 +86,7 @@ class GpuHloScheduleTest : public HloTestBase {
     debug_options.set_xla_gpu_lhs_enable_gpu_async_tracker(
         enable_gpu_async_tracker);
     config.set_debug_options(debug_options);
-    *config.mutable_fdo_profile() = fdo_profile;
+    config.set_fdo_profile(fdo_profile);
     return config;
   }
 
@@ -566,7 +566,8 @@ TEST_F(GpuHloScheduleTest, ProfileGuidedCostModelFailsWithIncompleteProfile) {
 
   HloModuleConfig config(module->config());
   DebugOptions dboptions(config.debug_options());
-  dboptions.set_xla_gpu_enable_pgle_accuracy_checker(true);
+  dboptions.set_xla_gpu_pgle_accuracy_checker(
+      DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR);
   config.set_debug_options(dboptions);
   module->set_config(config);
 
@@ -1094,7 +1095,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined1) {
 
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv-done.2", main));
   EXPECT_LT(get_index("recv-done.2", main), get_index("send-done.2", main));
   EXPECT_LT(get_index("send-done.2", main), get_index("while-result", main));
@@ -1288,7 +1289,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined2) {
   EXPECT_TRUE(HasValidFingerprint(module.get()));
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv.3", main));
   EXPECT_EQ(get_index("recv.3", main) + 1, get_index("send.3", main));
   EXPECT_LT(get_index("send.3", main), get_index("recv-done.2", main));

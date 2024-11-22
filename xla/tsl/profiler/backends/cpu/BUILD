@@ -16,6 +16,7 @@ cc_library(
         "//tensorflow/lite:__pkg__",
     ]),
     deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:thread_annotations",
@@ -34,7 +35,8 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
-        "@tsl//tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
         "//xla/tsl/profiler:__pkg__",
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_internal",
@@ -43,11 +45,10 @@ cc_library(
         "//xla/tsl/profiler/utils:lock_free_queue",
         "//xla/tsl/profiler/utils:per_thread",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:thread_annotations",
         "@tsl//tsl/platform:types",
     ],
     alwayslink = True,
@@ -136,7 +137,8 @@ cc_library(
     hdrs = ["threadpool_listener.h"],
     visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
-        "@tsl//tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
         "//xla/tsl/profiler:__pkg__",
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_internal",
@@ -164,5 +166,6 @@ cc_library(
     hdrs = ["threadpool_listener_state.h"],
     visibility = internal_visibility([
         "@tsl//tsl/platform:__subpackages__",
+        "//xla/tsl/platform:__subpackages__",
     ]),
 )

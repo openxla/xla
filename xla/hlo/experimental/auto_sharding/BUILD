@@ -13,8 +13,7 @@ package(
 
 package_group(
     name = "friends",
-    packages = [
-        "//platforms/...",
+    packages = xla_internal(["..."]) + [
         "//xla/hlo/experimental/auto_sharding/...",
         "//xla/service/gpu/...",
     ],
@@ -198,6 +197,7 @@ cc_library(
         ":auto_sharding_device_mesh",
         ":auto_sharding_util",
         "//xla:array",
+        "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -355,8 +355,24 @@ cc_library(
     compatible_with = get_compatible_with_libtpu_portable(),
     deps = [
         "//xla:array",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "auto_sharding_config",
+    hdrs = ["auto_sharding_config.h"],
+    compatible_with = get_compatible_with_libtpu_portable(),
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
     ],
 )
 
@@ -385,14 +401,13 @@ xla_cc_test(
         "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/transforms:hlo_memory_scheduler",
         "//xla/hlo/utils:hlo_live_range",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:buffer_value",
         "//xla/service:hlo_value",
-        "//xla/tests:hlo_test_base",
-        "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -404,6 +419,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -422,7 +438,6 @@ xla_cc_test(
         ":auto_sharding_proto_cc",
         ":auto_sharding_solver",  # build_cleaner: keep
         ":auto_sharding_strategy",
-        "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
@@ -430,5 +445,6 @@ xla_cc_test(
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
     ] + if_google(["@com_google_ortools//ortools/linear_solver:linear_solver_scip"]),
 )

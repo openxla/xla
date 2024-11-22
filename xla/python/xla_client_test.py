@@ -3284,7 +3284,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       version = self.backend.platform_version
       logging.info("platform_version:\n%s", version)
       if self.backend.platform == "cpu":
-        self.assertEqual(version, "<unknown>")
+        self.assertEqual(version, "cpu")
       elif self.backend.platform in ("gpu", "cuda", "rocm"):
         # Following is false if not built with --config=cuda
         if version != "<unknown>":
@@ -3378,6 +3378,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       deb_opt.xla_gpu_kernel_cache_file = "/foo/bar"
       deb_opt.xla_gpu_enable_llvm_module_compilation_parallelism = True
       deb_opt.xla_gpu_per_fusion_autotune_cache_dir = "/bar/foo/"
+      deb_opt.xla_gpu_experimental_autotune_cache_mode = (
+          xla_client.AutotuneCacheMode.READ
+      )
 
       b = options.SerializeAsString()
       restored = xla_client.CompileOptions.ParseFromString(b)
@@ -3398,6 +3401,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           "xla_gpu_kernel_cache_file",
           "xla_gpu_enable_llvm_module_compilation_parallelism",
           "xla_gpu_per_fusion_autotune_cache_dir",
+          "xla_gpu_experimental_autotune_cache_mode",
       ):
         self.assertEqual(
             getattr(options.executable_build_options.debug_options, name),

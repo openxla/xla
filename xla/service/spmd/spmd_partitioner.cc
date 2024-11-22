@@ -49,6 +49,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout_util.h"
@@ -58,14 +61,11 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_layout.h"
-#include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo_cse.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/shape_inference.h"
 #include "xla/service/spmd/custom_call_handler.h"
 #include "xla/service/spmd/spmd_partitioner_util.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -2754,8 +2754,7 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
   }
   // Special handling for sort in TopK when first operand partitioined at
   // sort dimension.
-  auto k = GetKValueInTopKWhenPartitionSortDim(hlo);
-  if (k.has_value()) {
+  if (std::optional<int64_t> k = GetKValueInTopKWhenPartitionSortDim(hlo)) {
     // When the first operand partitioned at sort dimension:
     //   1. Partition sort computation to different partitions;
     //   2. Slice TopK value and index from different partitions;
@@ -2870,56 +2869,20 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
   // -- output tuple elements have the same sharding
   // -- the current sharding is tiled
   if (subshape.rank() > 1 && same_subsharding && cur_sharding.IsTiled() &&
-      !cur_sharding.IsTileMaximal() &&
       cur_sharding.tile_assignment().dim(sort_dim) != 1) {
-    std::vector<int64_t> tile_assignment_dims(
-        cur_sharding.tile_assignment().dimensions().begin(),
-        cur_sharding.tile_assignment().dimensions().end());
     // Pick the new dimension to move the sharding into
-    int64_t picked_dim = -1;
-    int64_t first_nonsort_nonsharded_dim = -1;
-    auto nshards = tile_assignment_dims[sort_dim];
-    for (int64_t dim = 0; dim < subshape.rank(); ++dim) {
-      if (dim == sort_dim || tile_assignment_dims[dim] != 1 ||
-          subshape.dimensions(dim) == 1) {
-        continue;
-      }
-      if (first_nonsort_nonsharded_dim == -1) {
-        first_nonsort_nonsharded_dim = dim;
-      }
-      if (subshape.dimensions(dim) % nshards != 0) {
-        continue;
-      }
-      picked_dim = dim;
-      break;
-    }
-    if (picked_dim == -1) {
-      picked_dim = first_nonsort_nonsharded_dim;
-    }
     std::vector<HloInstruction*> new_operands;
     std::vector<HloSharding> new_shardings;
     std::optional<HloSharding> new_output_sharding;
-    if (picked_dim != -1) {
-      VLOG(2) << "Sort partitioning - picked target dimension to move the "
-                 "sharding: "
-              << picked_dim;
-      // The sharding cannot exist in the sort dimension if there are no free
-      // dimensions to move the sharding into. In other words, we propagated the
-      // operand sharding which is on the sort dimension only because we knew we
-      // could pick a free dimension to move it into now.
-      CHECK_NE(picked_dim, -1)
-          << "Sort partitioning - sharding cannot exist in the sort dimension "
-             "if "
-             "there are no free dimensions to move it into";
-      // Move the sharding to the picked dimension
-      std::vector<int64_t> permutation(
-          cur_sharding.tile_assignment().dimensions().begin(),
-          cur_sharding.tile_assignment().dimensions().end());
-      absl::c_iota(permutation, 0);
-      std::swap(permutation[sort_dim], permutation[picked_dim]);
-      auto new_sharding =
-          hlo_sharding_util::TransposeSharding(cur_sharding, permutation);
-      VLOG(2) << "Sort partitioning - new sharding: "
+    if (std::optional<int64_t> picked_dim =
+            hlo_sharding_util::GetFirstMergeableDimForSortOperand(
+                subshape, cur_sharding, sort_dim)) {
+      // We can move the sharding tiles from the sort dimension to the picked
+      // dimension.
+      auto new_sharding = hlo_sharding_util::MoveAndMergeShardingTiles(
+          cur_sharding, sort_dim, *picked_dim);
+      VLOG(2) << "Move sharding tiles from sort dim " << sort_dim
+              << " to target dim " << *picked_dim << " to get the new sharding "
               << new_sharding.ToString();
       for (auto& operand : hlo->operands()) {
         new_operands.push_back(
@@ -5391,8 +5354,9 @@ absl::Status SpmdPartitioner::PreprocessHlos(
             auto* merged_dim = merged_padding->mutable_dimensions(i);
             merged_dim->set_edge_padding_low(dim.edge_padding_low() -
                                              hlo->slice_starts(i));
-            merged_dim->set_edge_padding_high(hlo->slice_limits(i) -
-                                              operand->shape().dimensions(i));
+            merged_dim->set_edge_padding_high(
+                hlo->slice_limits(i) -
+                (operand->shape().dimensions(i) - dim.edge_padding_high()));
           }
           if (merged_padding.has_value() && may_have_multi_halo_exchanges) {
             // Rewrite to a single Pad.

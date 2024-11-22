@@ -1975,7 +1975,8 @@ PjRtStreamExecutorBuffer::CopyToDevice(PjRtDevice* dst_device) {
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 PjRtStreamExecutorBuffer::CopyToDeviceMemorySpace(
     PjRtDevice* dst_device, PjRtMemorySpace* dst_memory_space) {
-  if (dst_device == device_ && dst_memory_space == memory_space()) {
+  if (dst_device == device_ && dst_memory_space == memory_space() &&
+      dst_memory_space->kind_id() != PinnedHostMemorySpace::kKindId) {
     return InvalidArgument(
         "CopyToDeviceMemorySpace cannot accept the same source and destination "
         "devices/memory");
@@ -3148,6 +3149,24 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
   return Result({/*future=*/std::move(future), /*buffers=*/std::move(outputs)});
 }
 
+absl::Status PjRtStreamExecutorLoadedExecutable::VerifyCompatibleDevices()
+    const {
+  const int num_addressable_devices = addressable_devices_.size();
+  for (int i = 0; i < num_addressable_devices; ++i) {
+    PjRtDevice* device = addressable_devices_[i];
+    const int device_ordinal =
+        tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
+            ->local_device_state()
+            ->local_device_id()
+            .value();
+    const int partition = addressable_device_logical_ids_[i].partition;
+    const int executable_idx = executables_.size() > 1 ? partition : 0;
+    TF_RETURN_IF_ERROR(executables_[executable_idx]->VerifyRunDeviceCompatible(
+        device_ordinal));
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<std::vector<std::vector<std::unique_ptr<PjRtBuffer>>>>
 PjRtStreamExecutorLoadedExecutable::Execute(
     absl::Span<const std::vector<PjRtBuffer*>> argument_handles,
@@ -3172,6 +3191,7 @@ PjRtStreamExecutorLoadedExecutable::Execute(
         num_partitions());
   }
 
+  TF_RETURN_IF_ERROR(VerifyCompatibleDevices());
   VLOG(1) << "Executing computation " << name()
           << "; num_replicas=" << num_replicas()
           << " num_partitions=" << num_partitions()
@@ -3427,9 +3447,16 @@ PjRtStreamExecutorClient::GetExecutableExtras(CompileOptions* options) {
     std::optional<std::vector<Shape>> argument_layouts =
         options->argument_layouts;
     Shape result_layout;
+    const bool allow_auto_layout =
+        build_options.has_debug_options() &&
+        build_options.debug_options().xla_pjrt_allow_auto_layout_in_hlo();
     TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
         XlaComputation(module.ToProto()),
-        [local_client = local_client](Shape shape) {
+        [local_client,
+         allow_auto_layout](Shape shape) -> absl::StatusOr<Shape> {
+          if (allow_auto_layout && !shape.has_layout()) {
+            return shape;
+          }
           return local_client->backend()
               .transfer_manager()
               ->ChooseCompactLayoutForShape(shape);
@@ -3494,6 +3521,10 @@ PjRtStreamExecutorClient::CompileInternal(
     CompileOptions options) {
   tsl::profiler::TraceMe traceme("PjRtStreamExecutorClient::Compile");
   VLOG(1) << "PjRtStreamExecutorClient::Compile";
+  if (key_value_store().has_value() &&
+      !options.executable_build_options.key_value_store()) {
+    options.executable_build_options.set_key_value_store(*key_value_store());
+  }
   options.executable_build_options.set_process_index(process_index());
   TF_RET_CHECK(device_count() % addressable_device_count() == 0)
       << "Each process is expected to have the same number of devices";
@@ -3599,9 +3630,18 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 PjRtStreamExecutorClient::Compile(const XlaComputation& computation,
                                   CompileOptions options) {
   std::vector<const Shape*> argument_layout_pointers;
+  const ExecutableBuildOptions& build_options =
+      options.executable_build_options;
+  const bool allow_auto_layout =
+      build_options.has_debug_options() &&
+      build_options.debug_options().xla_pjrt_allow_auto_layout_in_hlo();
   TF_RETURN_IF_ERROR(DetermineArgumentLayoutsFromCompileOptions(
       computation,
-      [local_client = client()](Shape shape) {
+      [local_client = client(),
+       allow_auto_layout](Shape shape) -> absl::StatusOr<Shape> {
+        if (allow_auto_layout && !shape.has_layout()) {
+          return shape;
+        }
         return local_client->backend()
             .transfer_manager()
             ->ChooseCompactLayoutForShape(shape);

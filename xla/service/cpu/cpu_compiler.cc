@@ -78,6 +78,8 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/cpu_function_runtime.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/analysis/indexed_array_analysis.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -89,30 +91,58 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
+#include "xla/hlo/transforms/expanders/cholesky_expander.h"
+#include "xla/hlo/transforms/expanders/comparison_expander.h"
+#include "xla/hlo/transforms/expanders/dot_decomposer.h"
+#include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
+#include "xla/hlo/transforms/expanders/eigh_expander.h"
+#include "xla/hlo/transforms/expanders/logistic_expander.h"
+#include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
+#include "xla/hlo/transforms/expanders/qr_expander.h"
+#include "xla/hlo/transforms/expanders/reduce_decomposer.h"
+#include "xla/hlo/transforms/expanders/reshape_decomposer.h"
+#include "xla/hlo/transforms/expanders/rng_bit_generator_expander.h"
+#include "xla/hlo/transforms/expanders/rng_expander.h"
+#include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
+#include "xla/hlo/transforms/operand_upcaster.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
+#include "xla/hlo/transforms/simplifiers/broadcast_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
+#include "xla/hlo/transforms/simplifiers/convolution_group_converter.h"
+#include "xla/hlo/transforms/simplifiers/dynamic_dimension_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/float_normalization.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
+#include "xla/hlo/transforms/simplifiers/optimize_input_output_buffer_alias.h"
+#include "xla/hlo/transforms/simplifiers/reduce_window_rewriter.h"
+#include "xla/hlo/transforms/simplifiers/reshape_mover.h"
+#include "xla/hlo/transforms/simplifiers/result_caster.h"
+#include "xla/hlo/transforms/simplifiers/sort_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/sub_byte_normalization.h"
+#include "xla/hlo/transforms/simplifiers/tree_reduction_rewriter.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
+#include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
 #include "xla/literal.h"
 #include "xla/map_util.h"
 #include "xla/mlir_hlo/transforms/passes.h"
 #include "xla/primitive_util.h"
-#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_to_all_decomposer.h"
-#include "xla/service/batch_dot_simplification.h"
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
-#include "xla/service/bitcast_dtypes_expander.h"
-#include "xla/service/broadcast_canonicalizer.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/change_op_data_type.h"
-#include "xla/service/cholesky_expander.h"
-#include "xla/service/comparison_expander.h"
 #include "xla/service/compiler.h"
-#include "xla/service/conditional_canonicalizer.h"
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/conditional_to_select.h"
-#include "xla/service/convolution_group_converter.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/compiler_functor.h"
@@ -125,73 +155,44 @@ limitations under the License.
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/ir_emitter2.h"
+#include "xla/service/cpu/metrics.h"
 #include "xla/service/cpu/parallel_task_assignment.h"
 #include "xla/service/cpu/simple_orc_jit.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/cpu/thunk_emitter.h"
 #include "xla/service/cpu_gpu_shape_verifier.h"
-#include "xla/service/dot_decomposer.h"
 #include "xla/service/dump.h"
 #include "xla/service/dynamic_dimension_inference.h"
-#include "xla/service/dynamic_dimension_simplifier.h"
-#include "xla/service/dynamic_index_splitter.h"
 #include "xla/service/dynamic_padder.h"
-#include "xla/service/eigh_expander.h"
 #include "xla/service/executable.h"
-#include "xla/service/flatten_call_graph.h"
-#include "xla/service/float_normalization.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gather_expander.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_constant_folding.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_cse.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_execution_profile.h"
-#include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/hlo_verifier.h"
-#include "xla/service/indexed_array_analysis.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/llvm_compiler.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
-#include "xla/service/logistic_expander.h"
 #include "xla/service/map_inliner.h"
-#include "xla/service/operand_upcaster.h"
-#include "xla/service/optimization_barrier_expander.h"
-#include "xla/service/optimize_input_output_buffer_alias.h"
-#include "xla/service/qr_expander.h"
-#include "xla/service/reduce_decomposer.h"
-#include "xla/service/reduce_window_rewriter.h"
-#include "xla/service/reshape_decomposer.h"
-#include "xla/service/reshape_mover.h"
-#include "xla/service/result_caster.h"
-#include "xla/service/rng_bit_generator_expander.h"
-#include "xla/service/rng_expander.h"
 #include "xla/service/scatter_expander.h"
 #include "xla/service/select_and_scatter_expander.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/service/sharding_remover.h"
 #include "xla/service/slow_operation_alarm.h"
-#include "xla/service/sort_simplifier.h"
 #include "xla/service/spmd/shardy/shardy_xla_pass.h"
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
-#include "xla/service/stochastic_convert_decomposer.h"
-#include "xla/service/sub_byte_normalization.h"
 #include "xla/service/topk_rewriter.h"
 #include "xla/service/transpose_folding.h"
-#include "xla/service/tree_reduction_rewriter.h"
 #include "xla/service/triangular_solve_expander.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/service/while_loop_constant_sinking.h"
 #include "xla/service/while_loop_invariant_code_motion.h"
 #include "xla/service/while_loop_simplifier.h"
-#include "xla/service/while_loop_trip_count_annotator.h"
-#include "xla/service/zero_sized_hlo_elimination.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -221,10 +222,10 @@ limitations under the License.
 #endif
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
+#include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
 #include "xla/service/cpu/cpu_float_support.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
 #include "xla/service/cpu/onednn_ops_rewriter.h"
-#include "xla/service/simplify_fp_conversions.h"
 #endif
 
 namespace xla {
@@ -365,14 +366,6 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 
 namespace {
 
-// LLVM makes certain options configurable only through its command-line
-// options; it provide the ParseCommandLineOptions function that lets us set
-// flags at runtime. However, since these flags are global we want to avoid
-// multiple invocations of the LLVM compilation pipeline with a different set of
-// flags. Therefore, we only pass command-line flags to LLVM once, before the
-// first module is compiled.
-absl::once_flag llvm_command_line_options_initialized;
-
 // This visitor records which HLO instructions should have profiling information
 // recorded.
 class CollectProfileCandidates : public DfsHloVisitorWithDefault {
@@ -481,7 +474,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pre_sharding_pipeline.AddPass<BatchedGatherScatterNormalizer>();
   TF_RETURN_IF_ERROR(pre_sharding_pipeline.Run(module).status());
 
-  const DebugOptions& debug_options = module->config().debug_options();
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -525,7 +517,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
         SubByteNormalization::SET_ELEMENT_SIZE);
     TF_RETURN_IF_ERROR(subbyte_packer_pipeline.Run(module).status());
   }
-
   HloPassPipeline pipeline("HLO passes through layout assignment");
   AddHloVerifier(&pipeline);
 
@@ -569,7 +560,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // Rewrite to custom calls with target as oneDNN library calls.
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
   // AOT compiled code runs in single thread.
-  bool is_thunk_runtime = debug_options.xla_cpu_use_thunk_runtime();
+  bool is_thunk_runtime =
+      module->config().debug_options().xla_cpu_use_thunk_runtime();
   if (!is_aot_compile && !is_thunk_runtime) {
     // Placing OneDnnOpsRewriter here to match the flax patterns
     // TODO: Decide where would be the appropriate place for this pass to make
@@ -642,11 +634,14 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
 
-  if (debug_options.xla_reduce_window_rewrite_base_length() != 0) {
+  if (module->config()
+          .debug_options()
+          .xla_reduce_window_rewrite_base_length() != 0) {
     pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(
-        debug_options.xla_reduce_window_rewrite_base_length());
+        module->config()
+            .debug_options()
+            .xla_reduce_window_rewrite_base_length());
   }
-
   auto dynamic_padder_options = DynamicPadderOptions();
   // TODO(pgavin): ShapeChecks were never implemented correctly by the dynamic
   // padder.  The mode defaults to kIgnore, and it was not overridden for nested
@@ -760,7 +755,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<SubByteNormalization>(
         SubByteNormalization::SET_ELEMENT_SIZE);
   }
-
   return pipeline.Run(module).status();
 }
 
@@ -1044,11 +1038,6 @@ CreateOrcJITPostCompilationHook(const HloModule* module,
                                         obj_file.getData().size()));
     }
   };
-}
-
-void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
-  llvm_ir::InitializeLLVMCommandLineOptions(
-      config.debug_options().xla_backend_extra_options());
 }
 
 struct ComputationToEmit {
@@ -1715,21 +1704,23 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
     [[maybe_unused]] se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
   VLOG(1) << "Compiling: " << module->name();
+  RecordCpuCompilerStacktrace();
   XLA_SCOPED_LOGGING_TIMER(
       absl::StrFormat("Compiling [%s] for CPU using JIT", module->name()));
   std::string slow_compilation_msg =
       absl::StrCat("Compiling module ", module->name());
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
-
-  absl::call_once(llvm_command_line_options_initialized,
-                  &InitializeLLVMCommandLineOptions, module->config());
+  auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
+      module->config().debug_options().xla_backend_extra_options());
+  llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
   std::unique_ptr<CpuExecutable> cpu_executable;
   TF_ASSIGN_OR_RETURN(cpu_executable,
                       CompileLegacyCpuExecutable(std::move(module)));
 
   cpu_executable->set_debug_info(
-      cpu_executable->buffer_assignment().GetStats().ToString());
+      cpu_executable->buffer_assignment().StatsString(
+          /*report_total_fragmentation=*/true));
   VLOG(1) << "Compilation finished";
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
@@ -1741,8 +1732,9 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   std::vector<std::unique_ptr<HloModule>> modules =
       module_group->ConsumeModules();
 
-  absl::call_once(llvm_command_line_options_initialized,
-                  &InitializeLLVMCommandLineOptions, modules[0]->config());
+  auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
+      modules[0]->config().debug_options().xla_backend_extra_options());
+  llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
   // We can pass just one llvm::TargetOptions when we compile the LLVM module,
   // so we bail if the configs have conflicting flags. At the moment, the only

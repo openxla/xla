@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -66,7 +67,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/framework/allocator.h"
@@ -393,11 +393,20 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCApiClient::Compile(
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> PjRtCApiClient::Compile(
     mlir::ModuleOp module, CompileOptions options) {
   if (!pjrt_c_api()) llvm::report_fatal_error("pjrt_c_api is null");
-  TF_ASSIGN_OR_RETURN(
-      std::string serialized,
-      xla::Serialize(module,
-                     xla::GetDefaultStablehloVersion(
-                         plugin_attributes()->pjrt_c_api_minor_version)));
+
+  auto attributes = plugin_attributes()->attributes;
+  std::string version_string;
+  auto version = attributes.find("stablehlo_current_version");
+  if (version != attributes.end()) {
+    std::vector<int64_t> v = std::get<std::vector<int64_t>>(version->second);
+    version_string = absl::StrFormat("%d.%d.%d", v[0], v[1], v[2]);
+  } else {
+    version_string = xla::GetDefaultStablehloVersion(
+        plugin_attributes()->pjrt_c_api_minor_version);
+  }
+
+  TF_ASSIGN_OR_RETURN(std::string serialized,
+                      xla::Serialize(module, version_string));
   std::string format(pjrt::kMlirFormat);
   return InitializeArgsAndCompile(this, c_api_, c_client_.get(), options,
                                   serialized, format);
@@ -1997,6 +2006,21 @@ bool PjRtCApiBuffer::IsDeleted() {
   return args.is_deleted;
 }
 
+PjRtFuture<> PjRtCApiBuffer::CopyRawToHost(void* dst, int64_t offset,
+                                           int64_t transfer_size) {
+  PJRT_Buffer_CopyRawToHost_Args args;
+  args.struct_size = PJRT_Buffer_CopyRawToHost_Args_STRUCT_SIZE;
+  args.extension_start = nullptr;
+  args.buffer = buffer_.get();
+  args.dst = dst;
+  args.offset = offset;
+  args.transfer_size = transfer_size;
+  const PJRT_Api* api = pjrt_c_api();
+  RETURN_FUTURE_IF_ERROR(api->PJRT_Buffer_CopyRawToHost(&args), api);
+  CHECK(args.event != nullptr);
+  return pjrt::ConvertCEventToCppFuture(args.event, api);
+}
+
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> PjRtCApiBuffer::CopyToDevice(
     PjRtDevice* dst_device) {
   if (dst_device->client() == client_) {
@@ -2330,7 +2354,13 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetCApiClient(
   if (c_api == nullptr) {
     return Internal("PJRT C API is nullptr for %s", device_type);
   }
+  return WrapClientAroundCApi(c_api, create_options, kv_store);
+}
 
+absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
+    const PJRT_Api* c_api,
+    const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
+    std::shared_ptr<KeyValueStoreInterface> kv_store) {
   PJRT_Client_Create_Args init_args;
   init_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   init_args.extension_start = nullptr;

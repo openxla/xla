@@ -57,6 +57,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
@@ -71,13 +74,10 @@ limitations under the License.
 #include "xla/service/call_inliner.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/name_uniquer.h"
-#include "xla/service/tuple_simplifier.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
@@ -1093,6 +1093,11 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       },
       nb::arg("platform"));
 
+  nb::enum_<DebugOptions::AutotuneCacheMode>(m, "AutotuneCacheMode")
+      .value("UNSPECIFIED", DebugOptions::AUTOTUNE_CACHE_MODE_UNSPECIFIED)
+      .value("UPDATE", DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE)
+      .value("READ", DebugOptions::AUTOTUNE_CACHE_MODE_READ);
+
   nb::class_<DebugOptions>(m, "DebugOptions")
       .def("__repr__", &DebugOptions::DebugString)
       .def_prop_rw("xla_backend_optimization_level",
@@ -1239,7 +1244,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    &DebugOptions::xla_gpu_per_fusion_autotune_cache_dir,
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_gpu_per_fusion_autotune_cache_dir(value);
-                   });
+                   })
+      .def_prop_rw("xla_gpu_experimental_autotune_cache_mode",
+                   &DebugOptions::xla_gpu_experimental_autotune_cache_mode,
+                   &DebugOptions::set_xla_gpu_experimental_autotune_cache_mode);
 
   nb::class_<ExecutableBuildOptions>(m, "ExecutableBuildOptions")
       .def(nb::init<>())
@@ -1279,6 +1287,12 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                        : std::nullopt;
           },
           &ExecutableBuildOptions::set_device_assignment)
+      .def_prop_rw("exec_time_optimization_effort",
+                   &ExecutableBuildOptions::exec_time_optimization_effort,
+                   &ExecutableBuildOptions::set_exec_time_optimization_effort)
+      .def_prop_rw("memory_fitting_effort",
+                   &ExecutableBuildOptions::memory_fitting_effort,
+                   &ExecutableBuildOptions::set_memory_fitting_effort)
       .def_prop_rw("use_spmd_partitioning",
                    &ExecutableBuildOptions::use_spmd_partitioning,
                    &ExecutableBuildOptions::set_use_spmd_partitioning)

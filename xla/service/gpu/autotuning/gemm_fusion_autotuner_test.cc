@@ -297,7 +297,7 @@ TEST_F(StatelessAutotunerTest,
 
 class GemmFusionAutotunerTest : public StatelessAutotunerTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         StatelessAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_triton_gemm(true);
@@ -349,7 +349,7 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
 class GemmFusionAutotunerTestWithMorePreciseReduction
     : public GemmFusionAutotunerTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         GemmFusionAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(
@@ -850,7 +850,7 @@ ENTRY e {
 class GemmFusionAutotunerLevelTest : public StatelessAutotunerTest,
                                      public ::testing::WithParamInterface<int> {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         StatelessAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_autotune_level(GetParam());
@@ -937,7 +937,7 @@ INSTANTIATE_TEST_SUITE_P(GemmFusionAutotunerLevelSweep,
 
 class GemmFusionAutotunerExhaustiveTest : public GemmFusionAutotunerTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         GemmFusionAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_exhaustive_tiling_search(true);
@@ -969,7 +969,7 @@ ENTRY e {
 // on small block_k values depending on the bit-width of the inputs to the
 // dot. For this test case, it should skip any block_k values that are <= 16
 // since the smallest type has a bit-width of 8.
-TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfig) {
+TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfigWithConvert) {
   std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
 HloModule module
 ENTRY e {
@@ -993,9 +993,36 @@ ENTRY e {
       [](const TritonGemmConfig& config) { return config.block_k > 16; }));
 }
 
+// TODO(b/337839570): Triton currently has a limitation where it crashes
+// on small block_k values depending on the bit-width of the inputs to the
+// dot. For this test case, it should skip any block_k values that are <= 16
+// since the smallest type has a bit-width of 8.
+TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfigNoConvert) {
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+HloModule module
+ENTRY e {
+  x = f8e4m3fn[33,33]{1,0} parameter(0)
+  y = f8e4m3fn[33,33]{1,0} parameter(1)
+  ROOT out = bf16[33,33]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)")
+                                                  .value();
+  const se::CudaComputeCapability compute_capability{
+      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
+      GetPossibleMatmulAutotuneTritonConfigs(
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          compute_capability, GetToolkitVersion(), GetDebugOptionsForTest()));
+  EXPECT_TRUE(std::all_of(
+      configs.begin(), configs.end(),
+      [](const TritonGemmConfig& config) { return config.block_k > 16; }));
+}
+
 class GemmFusionAutotunerDisableSplitK : public GemmFusionAutotunerTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options =
         GemmFusionAutotunerTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_split_k_autotuning(false);

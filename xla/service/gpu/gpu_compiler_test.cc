@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -62,6 +63,8 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/lib/monitoring/collected_metrics.h"
+#include "xla/tsl/lib/monitoring/collection_registry.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
@@ -78,6 +81,8 @@ namespace {
 namespace m = ::xla::match;
 
 using ::testing::IsEmpty;
+using ::testing::IsSupersetOf;
+using ::testing::Matches;
 using ::testing::Not;
 using ::testing::TempDir;
 
@@ -121,6 +126,44 @@ ENTRY main {
                         /*is_autotuning_compilation=*/false})
           .value();
   EXPECT_EQ(GetCompiledProgramsCount(), 1);
+}
+
+TEST_F(GpuCompilerTest, RecordsStreamzStackTrace) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY main {
+  p = f32[10]{0} parameter(0)
+  ROOT neg = f32[10]{0} negate(p)
+}
+)";
+
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+
+  std::unique_ptr<Executable> executable =
+      backend()
+          .compiler()
+          ->RunBackend(std::move(module), backend().default_stream_executor(),
+                       {/*device_allocator=*/nullptr,
+                        /*thread_pool=*/nullptr,
+                        /*layout_canonicalization_callback=*/{},
+                        /*is_autotuning_compilation=*/false})
+          .value();
+
+  const std::string kGpuCompilerStacktraceMetricName =
+      "/xla/service/gpu/compiler_stacktrace_count";
+  tsl::monitoring::CollectionRegistry::CollectMetricsOptions options;
+  std::unique_ptr<tsl::monitoring::CollectedMetrics> metrics =
+      tsl::monitoring::CollectionRegistry::Default()->CollectMetrics(options);
+
+  EXPECT_TRUE(metrics->point_set_map.find(kGpuCompilerStacktraceMetricName) !=
+              metrics->point_set_map.end());
+
+  // Since Streamz is recorded every call, we expect at least one point.
+  // All other callers may increment the counter as well.
+  EXPECT_GT(
+      metrics->point_set_map[kGpuCompilerStacktraceMetricName]->points.size(),
+      0);
 }
 
 TEST_F(GpuCompilerTest, GenerateDebugInfoForNonAutotuningCompilations) {
@@ -289,7 +332,7 @@ ENTRY e {
     return str;
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options = HloTestBase::GetDebugOptionsForTest();
     options.set_xla_gpu_dump_autotune_results_to(
         xla_gpu_dump_autotune_results_to_);
@@ -348,6 +391,72 @@ int64_t CountCopies(const HloModule& module) {
     count += CountCopies(*computation);
   }
   return count;
+}
+
+TEST_F(GpuCompilerTest, AnnotatesPipelinedInstructions) {
+  // Simple IR with AllReduce subjectible to pipelining.
+  absl::string_view kHloString = R"(
+     HloModule module
+      add {
+        lhs = bf16[] parameter(0)
+        rhs = bf16[] parameter(1)
+        ROOT add = bf16[] add(lhs, rhs)
+      }
+
+      while_cond {
+        param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+        gte = s32[] get-tuple-element(param), index=0
+        constant.1 = s32[] constant(3)
+        ROOT cmp = pred[] compare(gte, constant.1), direction=LT
+      }
+
+      while_body {
+        param = (s32[], bf16[3,8,128], bf16[3,8,128]) parameter(0)
+        current-loop-index = s32[] get-tuple-element(param), index=0
+        output-buffer = bf16[3,8,128] get-tuple-element(param), index=1
+        input-buffer = bf16[3,8,128] get-tuple-element(param), index=2
+        constant.1 = s32[] constant(1)
+        next-loop-index = s32[] add(current-loop-index, constant.1)
+        constant.0 = s32[] constant(0)
+        sliced-input-buffer = bf16[1,8,128] dynamic-slice(input-buffer,
+          current-loop-index, constant.0, constant.0),
+            dynamic_slice_sizes={1,8,128}
+        all-reduce = bf16[1,8,128] all-reduce(sliced-input-buffer),
+          replica_groups={}, to_apply=add, channel_id=1
+        dynamic-update-slice = bf16[3,8,128] dynamic-update-slice(output-buffer,
+          all-reduce, current-loop-index, constant.0, constant.0)
+        ROOT tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(
+        next-loop-index, dynamic-update-slice, input-buffer)
+      }
+
+      ENTRY entry {
+        c0 = s32[] constant(0)
+        p0 = bf16[3,8,128] parameter(0)
+        tuple = (s32[], bf16[3,8,128], bf16[3,8,128]) tuple(c0, p0, p0)
+        while = (s32[], bf16[3,8,128], bf16[3,8,128]) while(tuple),
+          condition=while_cond, body=while_body
+        ROOT gte1 = bf16[3,8,128] get-tuple-element(while), index=1
+      }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  auto& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_enable_pipelined_all_reduce(true);
+  debug_options.set_xla_gpu_all_reduce_combine_threshold_bytes(0);
+  TF_ASSERT_OK_AND_ASSIGN(auto parsed,
+                          ParseAndReturnVerifiedModule(kHloString, config));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          GetOptimizedModule(std::move(parsed)));
+
+  absl::string_view kExpected = R"(
+    CHECK: all-reduce-start{{.*}}"is_pipelined":true
+  )";
+  HloPrintOptions options;
+  options.set_print_operand_shape(false);
+  options.set_print_result_shape(false);
+  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                          RunFileCheck(module->ToString(options), kExpected));
+  EXPECT_TRUE(filecheck_matched);
 }
 
 TEST_F(GpuCompilerTest, RemovesUnnecessaryCopyAfterScheduling) {
@@ -552,8 +661,6 @@ INSTANTIATE_TEST_SUITE_P(
         std::make_pair(PrimitiveType::F8E5M2, PrimitiveType::F8E5M2)));
 
 TEST_P(FloatNormalizationTest, Fp8Normalization) {
-  // TODO(b/344573710) Make this test not require a GPU when AutotuneCacheKey is
-  // more stable.
   const PrimitiveType lhs_type = GetParam().first;
   const PrimitiveType rhs_type = GetParam().second;
   const std::string lhs_name =
@@ -711,11 +818,11 @@ ENTRY test_computation {
 CHECK:       recv-done
 CHECK-SAME:    channel_id=[[CHANNEL_ID:[0-9]+]]
 CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0"}
+CHECK:       %[[AFTER_ALL:.*]] = after-all
 CHECK:       send-done
 CHECK-SAME:    channel_id=[[CHANNEL_ID]]
 CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0"}
 CHECK:       %[[CUSTOM_CALL:.*]] = custom-call
-CHECK:       %[[AFTER_ALL:.*]] = after-all
 CHECK:       %[[RESULT_RECV:.*]] = recv(%[[AFTER_ALL]])
 CHECK-SAME:    channel_id=[[CHANNEL_ID]]
 CHECK-SAME:    frontend_attributes={_xla_send_recv_pipeline="0",
@@ -785,15 +892,18 @@ class KernelCacheTest : public HloTestBase {
     CHECK(tsl::Env::Default()->LocalTempFilename(&cache_file_name_));
     HloModuleConfig config;
     config.set_debug_options(GetDebugOptionsForTest());
-    TF_ASSERT_OK_AND_ASSIGN(bool can_use_link_modules,
-                            dynamic_cast<GpuCompiler*>(backend().compiler())
-                                ->CanUseLinkModules(config));
+    TF_ASSERT_OK_AND_ASSIGN(
+        bool can_use_link_modules,
+        dynamic_cast<GpuCompiler*>(backend().compiler())
+            ->CanUseLinkModules(
+                config,
+                backend().default_stream_executor()->GetDeviceDescription()));
     if (!can_use_link_modules) {
       GTEST_SKIP() << "Caching compiled kernels requires support of linking.";
     }
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_kernel_cache_file(cache_file_name_);
     debug_options.set_xla_gpu_enable_llvm_module_compilation_parallelism(true);
@@ -953,7 +1063,7 @@ ENTRY e {
 
 class KernelCacheTestSingleThreaded : public KernelCacheTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = KernelCacheTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_force_compilation_parallelism(1);
     return debug_options;
@@ -970,7 +1080,7 @@ TEST_F(KernelCacheTestSingleThreaded, CacheIsGenerated) {
 
 class NoKernelCacheTest : public KernelCacheTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = KernelCacheTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
     return debug_options;
@@ -1210,17 +1320,30 @@ ENTRY main {
 
 class PassOrderTest : public GpuCompilerTest {
  public:
+  struct PassRange {
+    int first_pass_run_index;
+    int second_pass_run_index;
+  };
   void SetDebugOptions(const DebugOptions& options) {
     HloModuleConfig config = GetModuleConfigForTest();
     config.set_debug_options(options);
     CompileModule(config);
   }
 
+  void SetAndCompileEfficiencyEffort(float exec_effort) {
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.set_exec_time_optimization_effort(exec_effort);
+    CompileModule(config);
+  }
+
   // Fails if any of the passes with names matching the regular expression
-  // first_pass_regex run after any of the passes matching last_pass_regex or if
-  // none of the executed passes matches first_pass_regex or last_pass_regex.
-  void VerifyPassOrder(absl::string_view first_pass_regex,
-                       absl::string_view last_pass_regex) {
+  // `first_pass_regex` run after any of the passes matching `last_pass_regex`
+  // or if none of the executed passes matches `first_pass_regex` or
+  // `last_pass_regex`. Returns a PassRange with the latest run index of any
+  // passes with names matching `first_pass_regex` and the earliest run index of
+  // any passes with names matching 'last_pass_regex'.
+  PassRange VerifyPassOrder(absl::string_view first_pass_regex,
+                            absl::string_view last_pass_regex) {
     if (!optimized_module_) {
       CompileModule(GetModuleConfigForTest());
     }
@@ -1249,9 +1372,30 @@ class PassOrderTest : public GpuCompilerTest {
     EXPECT_LE(first_pass_latest_run, last_pass_earliest_run)
         << "One or more passes matching " << first_pass_regex
         << " ran after passes matching " << last_pass_regex;
+    return {first_pass_latest_run, last_pass_earliest_run};
   }
 
- private:
+  // Checks that no pass that matches `pass_regex` runs strictly in between
+  // `pass_range.first_pass_run_index` and `pass_range.second_pass_run_index`.
+  void VerifyNotRunInBetween(const PassRange& pass_range,
+                             absl::string_view pass_regex) {
+    int run_index = 0;
+    for (const HloPassMetadata& pass_metadata :
+         optimized_module_->metadata()->proto().pass_metadata()) {
+      if (run_index >= pass_range.second_pass_run_index) {
+        break;
+      }
+      if (run_index++ <= pass_range.first_pass_run_index) {
+        continue;
+      }
+      EXPECT_FALSE(RE2::FullMatch(pass_metadata.pass_name(), pass_regex))
+          << "Ran " << pass_metadata.pass_name() << " in the given range";
+    }
+  }
+
+ protected:
+  absl::Status ScheduleModule() { return Schedule(optimized_module_.get()); }
+
   void CompileModule(const HloModuleConfig& config) {
     constexpr absl::string_view constant_module = R"(
 ENTRY main {
@@ -1301,6 +1445,75 @@ TEST_F(PassOrderTest, CollectivePipelinerRunsAfterCollectiveQuantizer) {
 
   VerifyPassOrder(/*first_pass_regex=*/"collective-quantizer",
                   /*last_pass_regex=*/"collective-pipeliner.*");
+}
+
+TEST_F(PassOrderTest,
+       AllGatherDynamicSliceSimplifierRunsAfterAllGatherOptimizer) {
+  VerifyPassOrder(
+      /*first_pass_regex=*/".*all-gather-optimizer.*",
+      /*last_pass_regex=*/".*all-gather-dynamic-slice-simplifier.*");
+}
+
+TEST_F(PassOrderTest, StableSortExpanderRunsAfterDynamicPadder) {
+  VerifyPassOrder(
+      /*first_pass_regex=*/"dynamic_padder",
+      /*last_pass_regex=*/"stable-sort-expander");
+}
+
+MATCHER_P(HasExpectedPasses, expected_pass_names, "") {
+  std::vector<absl::string_view> run_pass_names;
+  auto metadata = arg->metadata()->proto();
+  run_pass_names.reserve(metadata.pass_metadata_size());
+  for (auto& pass_metadata : metadata.pass_metadata()) {
+    run_pass_names.push_back(pass_metadata.pass_name());
+  }
+  return Matches(IsSupersetOf(expected_pass_names))(run_pass_names);
+}
+
+TEST_F(PassOrderTest, ExecEffortAt0point2RunsSpecifiedPasses) {
+  HloModuleConfig config = GetModuleConfigForTest();
+  CompileModule(config);
+  TF_ASSERT_OK(ScheduleModule());
+
+  // Make sure passes are not enabled by default.
+  std::vector<std::string> kExpectedPasses = {
+      "loop-double-buffer-transformer",
+      "collective-pipeliner-forward",
+      "collective-pipeliner-backward",
+      "latency-hiding-scheduler",
+  };
+  EXPECT_THAT(optimized_module_, Not(HasExpectedPasses(kExpectedPasses)));
+
+  // Make sure only after setting the correct optimization effort they are
+  // enabled.
+  config.set_exec_time_optimization_effort(0.2);
+  CompileModule(config);
+  TF_ASSERT_OK(ScheduleModule());
+  EXPECT_THAT(optimized_module_, HasExpectedPasses(kExpectedPasses));
+}
+
+TEST_F(PassOrderTest, GemmFusionRunsAfterDotNormalizer) {
+  auto cc = backend()
+                .default_stream_executor()
+                ->GetDeviceDescription()
+                .cuda_compute_capability();
+  if (!cc.IsAtLeastAmpere()) {
+    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
+  }
+  DebugOptions options = GetDebugOptionsForTest();
+  options.set_xla_gpu_enable_triton_gemm(true);
+  SetDebugOptions(options);
+  auto pass_range = VerifyPassOrder(
+      /*first_pass_regex=*/"dot_normalizer",
+      /*last_pass_regex=*/"triton-gemm-rewriter");
+  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
+}
+
+TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
+  auto pass_range = VerifyPassOrder(
+      /*first_pass_regex=*/"dot_normalizer",
+      /*last_pass_regex=*/"cublas-gemm-rewriter");
+  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
 }  // namespace

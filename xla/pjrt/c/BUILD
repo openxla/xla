@@ -4,10 +4,6 @@ load(
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
-load(
     "//xla:xla.bzl",
     "xla_cc_binary",
     "xla_cc_test",
@@ -18,6 +14,10 @@ load(
     "if_google",
     "if_macos",
     "internal_visibility",
+)
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
 )
 
 package(
@@ -155,6 +155,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -185,6 +186,7 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -350,6 +352,7 @@ cc_library(
         ":pjrt_c_api_helpers",
         "//xla:shape_util",
         "//xla/client:executable_build_options",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
@@ -393,9 +396,11 @@ xla_test(
         "//xla/service:custom_call_target_registry",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:status_matchers",

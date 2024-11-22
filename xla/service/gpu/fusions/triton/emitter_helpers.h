@@ -143,7 +143,9 @@ ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder& b, mlir::Type type,
   if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
     auto result =
         b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
-            tensor_type, mlir::APInt(int_type.getIntOrFloatBitWidth(), value)));
+            tensor_type,
+            mlir::APInt(int_type.getIntOrFloatBitWidth(), value,
+                        /*isSigned=*/false, /*implicitTrunc=*/true)));
     return ScalarOrTensor(result);
   }
   if (auto float_type = mlir::dyn_cast<mlir::FloatType>(type)) {
@@ -188,16 +190,20 @@ mlir::Value Cast(mlir::ImplicitLocOpBuilder& b, mlir::Value value,
 absl::StatusOr<ScalarOrTensor> EmitConstant(mlir::ImplicitLocOpBuilder& b,
                                             const HloInstruction& constant);
 
+bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo);
+
+// Should only be called if IsSupportedElementwiseLibdeviceFunction() returns
+// true for `hlo`, otherwise an error is returned.
+absl::StatusOr<mlir::Value> EmitElementwiseLibdeviceFunction(
+    mlir::ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
+    const se::DeviceDescription& device_info, const HloInstruction& hlo,
+    mlir::ValueRange inputs);
+
 absl::StatusOr<mlir::Value> EmitElementwise(
     mlir::ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info, const HloInstruction& hlo,
     mlir::ValueRange inputs);
 
-// Emit sequence of operations for unpacking 2xi4 -> i8.
-absl::StatusOr<mlir::Value> EmitUnpackInt4(mlir::ImplicitLocOpBuilder& b,
-                                           const HloInstruction* hlo,
-                                           int64_t unpack_dim_idx,
-                                           mlir::Value value);
 }  // namespace xla::gpu::triton
 
 #endif  // XLA_SERVICE_GPU_FUSIONS_TRITON_EMITTER_HELPERS_H_

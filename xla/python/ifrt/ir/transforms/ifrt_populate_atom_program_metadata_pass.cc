@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
+#include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 
 namespace xla {
@@ -76,6 +77,10 @@ mlir::LogicalResult PopulateMetadata(CallOp call_op, mlir::ModuleOp module_op,
     }
     arg_attrs.push_back(
         builder.getNamedAttr(kIfrtShardingAttrName, array.getShardingAttr()));
+    if (array.getMemoryKindAttr()) {
+      arg_attrs.push_back(builder.getNamedAttr(kIfrtMemoryKindAttrName,
+                                               array.getMemoryKindAttr()));
+    }
     callee_op.setArgAttrs(i, arg_attrs);
   }
 
@@ -94,6 +99,10 @@ mlir::LogicalResult PopulateMetadata(CallOp call_op, mlir::ModuleOp module_op,
     }
     res_attrs.push_back(
         builder.getNamedAttr(kIfrtShardingAttrName, array.getShardingAttr()));
+    if (array.getMemoryKindAttr()) {
+      res_attrs.push_back(builder.getNamedAttr(kIfrtMemoryKindAttrName,
+                                               array.getMemoryKindAttr()));
+    }
     callee_op.setResultAttrs(i, res_attrs);
   }
 

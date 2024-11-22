@@ -11,12 +11,12 @@ load(
     "tf_exec_properties",
 )
 load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
-load(
     "//xla/tsl:tsl.bzl",
     "tsl_copts",
+)
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
 )
 
 def xla_py_proto_library(**_kwargs):
@@ -39,6 +39,7 @@ _XLA_SHARED_OBJECT_SENSITIVE_DEPS = if_static(extra_deps = [], otherwise = [
     Label("//xla:xla_proto_cc_impl"),
     Label("//xla/service:buffer_assignment_proto_cc_impl"),
     Label("//xla/service:hlo_proto_cc_impl"),
+    Label("//xla/service:metrics_proto_cc_impl"),
     Label("//xla/service/gpu:backend_configs_cc_impl"),
     Label("//xla/service/gpu/model:hlo_op_profile_proto_cc_impl"),
     Label("//xla/service/memory_space_assignment:memory_space_assignment_proto_cc_impl"),
@@ -91,7 +92,7 @@ def xla_bzl_library(name = "xla_bzl_library"):
             "//xla/tsl:tsl_bzl",
             "@local_config_rocm//rocm:build_defs_bzl",
             "@tsl//tsl/platform:build_config_root_bzl",
-            "@tsl//tsl/platform/default:cuda_build_defs_bzl",
+            "//xla/tsl/platform/default:cuda_build_defs_bzl",
             "@bazel_skylib//:bzl_library",
         ],
     )

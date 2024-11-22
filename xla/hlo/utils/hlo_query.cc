@@ -34,7 +34,8 @@ namespace hlo_query {
 
 bool IsCollectiveCommunicationOp(HloOpcode op) {
   return op == HloOpcode::kAllReduce || op == HloOpcode::kAllGather ||
-         op == HloOpcode::kAllToAll || op == HloOpcode::kCollectivePermute ||
+         op == HloOpcode::kAllToAll || op == HloOpcode::kRaggedAllToAll ||
+         op == HloOpcode::kCollectivePermute ||
          op == HloOpcode::kCollectiveBroadcast ||
          op == HloOpcode::kReduceScatter || op == HloOpcode::kAllReduceStart ||
          op == HloOpcode::kAllGatherStart ||
@@ -177,6 +178,13 @@ bool IsBroadcastOfParameter(const HloInstruction& instr) {
          instr.operand(0)->opcode() == HloOpcode::kParameter;
 }
 
+bool IsEffectiveParameter(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kParameter ||
+         ((instr.opcode() == HloOpcode::kBitcast ||
+           instr.opcode() == HloOpcode::kGetTupleElement) &&
+          IsEffectiveParameter(*instr.operand(0)));
+}
+
 HloInstruction* GetFirstInstructionWithOpcode(const HloComputation& computation,
                                               const HloOpcode opcode) {
   auto instructions = computation.instructions();
@@ -294,6 +302,17 @@ HloInstruction* FindInstruction(const HloComputation* computation,
     if (instruction->opcode() == opcode) return instruction;
   }
   return nullptr;
+}
+
+float ExecTimeOptimizationEffort(const HloModule& module) {
+  float flag_exec_effort =
+      module.config()
+          .debug_options()
+          .xla_experimental_exec_time_optimization_effort();
+  if (flag_exec_effort != 0.0) {
+    return flag_exec_effort;
+  }
+  return module.config().exec_time_optimization_effort();
 }
 
 }  // namespace hlo_query

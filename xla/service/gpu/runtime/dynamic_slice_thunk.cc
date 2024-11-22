@@ -57,7 +57,12 @@ DynamicSliceThunk::DynamicSliceThunk(
     : Thunk(Kind::kDynamicSlice, thunk_info),
       embedded_thunk_(std::make_unique<SequentialThunk>(
           ThunkInfo(), std::move(*embedded_thunk))),
-      fake_allocations_(std::move(fake_allocations)) {
+      arguments_(arguments),
+      fake_allocations_(std::move(fake_allocations)),
+      offsets_(offsets),
+      orig_shapes_(orig_shapes),
+      sliced_shapes_(sliced_shapes),
+      offset_byte_sizes_(offset_byte_sizes) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
@@ -77,34 +82,6 @@ DynamicSliceThunk::DynamicSliceThunk(
     offsets_allocs_base_.push_back(offsets_allocs_size_);
     if (slice.sliced_shape.has_value()) {
       offsets_allocs_size_ += slice.sliced_shape->rank() * sizeof(int64_t);
-    }
-  }
-}
-
-DynamicSliceThunk::OffsetArray::OffsetArray(const Literal& l) {
-  CHECK(l.shape().IsArray()) << "Expected array literal, got " << l.ToString();
-  for (int i = 0; i < l.element_count(); i++) {
-    switch (l.shape().element_type()) {
-      case S32:
-        values.push_back(l.data<int32_t>()[i]);
-        break;
-      case S64:
-        values.push_back(l.data<int64_t>()[i]);
-        break;
-      case U32:
-        values.push_back(l.data<uint32_t>()[i]);
-        break;
-      case U64:
-        CHECK(l.data<uint64_t>()[i] <
-              static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-            << "Offset value: " << l.data<uint64_t>()[i]
-            << " cannot fit in int64_t";
-        values.push_back(l.data<uint64_t>()[i]);
-        break;
-      default:
-        CHECK(false) << "Offset array must be of a supported integer type "
-                        "(S32, S64, U32, U64), found: "
-                     << l.shape().element_type();
     }
   }
 }
@@ -204,20 +181,6 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
                 << "]: constant offset = " << *const_offset;
         offset_value(argument_idx, offset_idx) = *const_offset;
 
-      } else if (std::holds_alternative<LoopIter>(offset)) {
-        // Get slice offset from the current loop iteration.
-        TF_ASSIGN_OR_RETURN(int64_t iter, WhileThunk::CurrentLoopIteration());
-        VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
-                << "]: loop iteration offset = " << iter;
-        offset_value(argument_idx, offset_idx) = iter;
-
-      } else if (OffsetArray* offset_array =
-                     std::get_if<OffsetArray>(&offset)) {
-        TF_ASSIGN_OR_RETURN(int64_t iter, WhileThunk::CurrentLoopIteration());
-        VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
-                << "]: offset array offset = " << offset_array->values[iter];
-        offset_value(argument_idx, offset_idx) = offset_array->values[iter];
-
       } else {
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
@@ -251,6 +214,10 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
       int64_t start_index =
           std::min(std::max(offset_value(argument_idx, offset_idx), int64_t{0}),
                    src_dim - dst_dim);
+      VLOG(2) << "arg idx: " << argument_idx << " offset_idx " << offset_idx
+              << " with offset_value " << offset_value(argument_idx, offset_idx)
+              << " start_idx: " << start_index << " src_dim: " << src_dim
+              << " dst_dim:" << dst_dim;
       slice_starts.push_back(start_index);
     }
 
