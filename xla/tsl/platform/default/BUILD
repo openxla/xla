@@ -338,6 +338,7 @@ cc_library(
         "@tsl//tsl/platform:cpu_info.cc",
     ],
     hdrs = [
+        "//xla/tsl/platform/profile_utils:cpu_utils.h",
         "@tsl//tsl/platform:cpu_info.h",
         "@tsl//tsl/platform:demangle.h",
         "@tsl//tsl/platform:host_info.h",
@@ -345,7 +346,6 @@ cc_library(
         "@tsl//tsl/platform:mem.h",
         "@tsl//tsl/platform:numa.h",
         "@tsl//tsl/platform:snappy.h",
-        "@tsl//tsl/platform/profile_utils:cpu_utils.h",
     ],
     copts = tsl_copts(),
     defines = ["TF_USE_SNAPPY"] + select({
@@ -359,6 +359,7 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//xla/tsl/platform/profile_utils:profile_utils_cpu_utils",
         "@com_google_absl//absl/base",
         "@snappy",
         "@tsl//tsl/platform",
@@ -367,7 +368,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/platform/profile_utils:profile_utils_cpu_utils",
     ] + select({
         # TF Additional NUMA dependencies
         "//xla/tsl:with_numa_support": [
@@ -598,8 +598,8 @@ filegroup(
         "status.h",
         "statusor.h",
         "tracing_impl.h",
-        "@tsl//tsl/platform/profile_utils:cpu_utils.h",
-        "@tsl//tsl/platform/profile_utils:i_cpu_utils_helper.h",
+        "//xla/tsl/platform/profile_utils:cpu_utils.h",
+        "//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
     visibility = internal_visibility([
         "//tensorflow/core/platform:__pkg__",
