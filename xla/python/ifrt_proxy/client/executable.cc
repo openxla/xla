@@ -43,6 +43,7 @@
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/future.h"
@@ -154,9 +155,10 @@ absl::StatusOr<absl::Cord> ExecuteLoadedHostCallback(
 // Same as `ExecuteLoadedHostCallback`, except that it uses host buffer store to
 // retrieve operands and store results.
 absl::StatusOr<uint64_t> PrepareAndExecuteLoadedHostCallback(
-    ClientHostBufferStore* host_buffer_store,
-    xla::ifrt::LoadedHostCallback* loaded_host_callback,
+    RpcHelper* rpc_helper, xla::ifrt::LoadedHostCallback* loaded_host_callback,
     uint64_t operand_handle) {
+  ClientHostBufferStore* host_buffer_store =
+      rpc_helper->host_buffer_store().get();
   TF_ASSIGN_OR_RETURN(absl::Cord operands,
                       host_buffer_store->Lookup(operand_handle).Await());
   absl::Cleanup cleanup = [&]() {
@@ -171,7 +173,7 @@ absl::StatusOr<uint64_t> PrepareAndExecuteLoadedHostCallback(
       absl::Cord results,
       ExecuteLoadedHostCallback(loaded_host_callback, std::move(operands)));
 
-  const uint64_t result_handle = host_buffer_store->NextHandle();
+  const uint64_t result_handle = rpc_helper->NextHandle();
   TF_RETURN_IF_ERROR(host_buffer_store->Store(result_handle, results).Await());
   return result_handle;
 }
@@ -354,12 +356,12 @@ std::optional<std::vector<OpSharding>> LoadedExecutable::GetOutputShardings()
   return (*info)->output_shardings;
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<Layout>>>
+absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
 LoadedExecutable::GetParameterLayouts() const {
   TF_ASSIGN_OR_RETURN(auto info, metadata_future_.Await());
   TF_RETURN_IF_ERROR(info->parameter_layouts.status());
 
-  std::vector<std::unique_ptr<Layout>> result;
+  std::vector<std::unique_ptr<xla::PjRtLayout>> result;
   result.reserve(info->parameter_layouts->size());
   for (const xla::Layout& layout : *info->parameter_layouts) {
     result.push_back(std::make_unique<xla::PjRtXlaLayout>(layout));
@@ -367,12 +369,12 @@ LoadedExecutable::GetParameterLayouts() const {
   return result;
 }
 
-absl::StatusOr<std::vector<std::unique_ptr<Layout>>>
+absl::StatusOr<std::vector<std::unique_ptr<xla::PjRtLayout>>>
 LoadedExecutable::GetOutputLayouts() const {
   TF_ASSIGN_OR_RETURN(auto info, metadata_future_.Await());
   TF_RETURN_IF_ERROR(info->output_layouts.status());
 
-  std::vector<std::unique_ptr<Layout>> result;
+  std::vector<std::unique_ptr<xla::PjRtLayout>> result;
   result.reserve(info->output_layouts->size());
   for (const xla::Layout& layout : *info->output_layouts) {
     result.push_back(std::make_unique<xla::PjRtXlaLayout>(layout));
@@ -399,9 +401,10 @@ absl::StatusOr<xla::ifrt::AttributeMap> LoadedExecutable::GetCostAnalysis()
 }
 
 absl::StatusOr<xla::ifrt::LoadedExecutable::ExecuteResult>
-LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
-                          const ExecuteOptions& options,
-                          std::optional<xla::ifrt::DeviceList> devices) {
+LoadedExecutable::Execute(
+    absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
+    const ExecuteOptions& options,
+    std::optional<tsl::RCReference<xla::ifrt::DeviceList>> devices) {
   auto req = std::make_unique<LoadedExecutableExecuteRequest>();
   req->set_loaded_executable_handle(handle_);
   for (const auto& arg : args) {
@@ -414,7 +417,7 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
   }
   TF_ASSIGN_OR_RETURN(*req->mutable_execute_options(), options.ToProto());
   if (devices.has_value()) {
-    for (const auto* device : *devices) {
+    for (const auto* device : (*devices)->devices()) {
       req->add_device_ids(device->Id().value());
     }
   }
@@ -430,7 +433,12 @@ LoadedExecutable::Execute(absl::Span<tsl::RCReference<xla::ifrt::Array>> args,
 
   // Populate the execution status future. `CheckFuture` deletes the server-side
   // futures after its completion.
-  result.status = rpc_helper_->CheckFuture(response->status_handle());
+  //
+  // Starting version 6, the server populates the status future only if it was
+  // explicitly requested via `options.fill_status`.
+  if (rpc_helper_->version().protocol_version() < 6 || options.fill_status) {
+    result.status = rpc_helper_->CheckFuture(response->status_handle());
+  }
 
   // Create output arrays. The cleanup logic ensures that all handles are
   // properly cleaned up on early return.
@@ -510,8 +518,7 @@ void LoadedExecutable::PollLoadedHostCallback(
   auto f = [rpc_helper = rpc_helper_, handle,
             loaded_host_callback = std::move(loaded_host_callback)]() {
     while (true) {
-      const uint64_t operand_handle =
-          rpc_helper->host_buffer_store()->NextHandle();
+      const uint64_t operand_handle = rpc_helper->NextHandle();
 
       auto poll_req = std::make_unique<LoadedHostCallbackPollRequest>();
       poll_req->set_loaded_host_callback_handle(handle);
@@ -536,8 +543,7 @@ void LoadedExecutable::PollLoadedHostCallback(
 
       absl::StatusOr<uint64_t> result_handle =
           PrepareAndExecuteLoadedHostCallback(
-              rpc_helper->host_buffer_store().get(), loaded_host_callback.get(),
-              operand_handle);
+              rpc_helper.get(), loaded_host_callback.get(), operand_handle);
       if (result_handle.ok()) {
         ret_req->set_result_host_buffer_handle(*result_handle);
       } else {

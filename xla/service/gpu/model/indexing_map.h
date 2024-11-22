@@ -19,33 +19,50 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/gpu/model/affine_map_printer.h"
 
 namespace xla {
 namespace gpu {
 
+enum class VariableKind : char {
+  kDefault = 0,
+  // GPU Block IDs.
+  kBlockX,
+  kBlockY,
+  kBlockZ,
+  // GPU Thread IDs.
+  kThreadX,
+  kThreadY,
+  kThreadZ,
+  // GPU warp ID.
+  kWarp,
+  // GPU thread ID in the warp.
+  kWarpThread
+};
+
+std::string_view ToVariableName(VariableKind var_kind);
+VariableKind ToVariableType(std::string_view var_name);
+std::ostream& operator<<(std::ostream& out, VariableKind var_type);
+
 // Interval represents a closed interval [lower_bound, upper_bound].
 struct Interval {
   std::string ToString() const;
-  void Print(std::ostream& out) const;
-
   bool IsPoint() const { return lower == upper; }
   bool IsFeasible() const { return lower <= upper; }
 
@@ -144,12 +161,9 @@ struct Interval {
   int64_t upper = 0;
 };
 
-std::ostream& operator<<(std::ostream& out, const Interval& range);
+std::ostream& operator<<(std::ostream& out, const Interval& interval);
 inline llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
-                                     const Interval& interval) {
-  os << absl::StrFormat("[%d, %d]", interval.lower, interval.upper);
-  return os;
-}
+                                     const Interval& interval);
 
 template <typename H>
 H AbslHashValue(H h, const Interval& range) {
@@ -188,82 +202,15 @@ class RangeEvaluator {
   bool use_constraints_;
 };
 
-// Dimension variable represents a dimension of a tensor or a GPU grid.
-// Dimensions correspond to the dimension parameter of `affine_map_`.
-struct DimVar {
-  Interval bounds;
-};
-bool operator==(const DimVar& lhs, const DimVar& rhs);
-inline bool operator!=(const DimVar& lhs, const DimVar& rhs) {
-  return !(lhs == rhs);
-}
-
-template <typename H>
-H AbslHashValue(H h, const DimVar& dimension) {
-  return H::combine(std::move(h), dimension.bounds);
-}
-
-inline size_t hash_value(const DimVar& dim_var) {
-  return llvm::hash_combine(dim_var.bounds);
-}
-
-// RangeSymbol variable represents a range of values, e.g. to compute a single
-// element of the reduction's result we need a range of values from the input
-// tensor. RangeSymbol variables correspond to the front portion of the
-// symbols in `affine_map_`.
-struct RangeVar {
-  Interval range;
-};
-bool operator==(const RangeVar& lhs, const RangeVar& rhs);
-inline bool operator!=(const RangeVar& lhs, const RangeVar& rhs) {
-  return !(lhs == rhs);
-}
-
-template <typename H>
-H AbslHashValue(H h, const RangeVar& range_var) {
-  return H::combine(std::move(h), range_var.range);
-}
-
-inline size_t hash_value(const RangeVar& range_var) {
-  return llvm::hash_combine(range_var.range);
-}
-
-// RTSymbol variable represents a runtime symbol, e.g. a dynamic offset in
-// HLO dynamic-update-slice op. RTSymbol variables correspond to the back
-// portion of the symbols in `affine_map_`.
-struct RTVar {
-  Interval feasible_values;
-  const HloInstruction* hlo;
-  // This is a map from the iteration space of the corresponding indexing map to
-  // the iteration space of `hlo`. It shows what element of `hlo` we need to
-  // extract to get the runtime value for the RTVar.
-  mlir::AffineMap map;
-};
-bool operator==(const RTVar& lhs, const RTVar& rhs);
-inline bool operator!=(const RTVar& lhs, const RTVar& rhs) {
-  return !(lhs == rhs);
-}
-
-template <typename H>
-H AbslHashValue(H h, const RTVar& rt_var) {
-  llvm::hash_code map_hash = llvm::hash_combine(rt_var.map);
-  return H::combine(std::move(h), rt_var.feasible_values, rt_var.hlo,
-                    static_cast<size_t>(map_hash));
-}
-
-std::vector<DimVar> DimVarsFromTensorSizes(
-    absl::Span<const int64_t> tensor_sizes);
-
-std::vector<RangeVar> RangeVarsFromTensorSizes(
-    absl::Span<const int64_t> tensor_sizes);
-
-// Contains an affine map with N dimension expressions and M symbols:
-//   (d0, ..., d_{N - 1})[s_0, ..., s_{M - 1}] -> f(d_i, s_j)
-// Dimensions d_i correspond to the iteration space of the output tensor. Some
-// or all of the dimensions of the input operands can be expressed as a function
-// of dimensions of output. For example, for broadcasts and cwise ops all
-// dimensions of the inputs are covered by the output dimensions.
-// Domain specifies for what ranges of values the indexing map is specified.
+// Contains an affine map with N dimension expressions and M + K symbols:
+// (d0, ..., d_{N - 1})[s_0, ..., s_{M - 1}]{r_0, ..., r_{K - 1}} -> f(d_i, s_j)
+// Dimensions d_i correspond to the iteration space of the output tensor.
+// Symbols s_j correspond to ranges of the input dimensions.
+// Runtime variables r_k correspond to the runtime variables.
+// Some or all of the dimensions of the input operands can be expressed as a
+// function of dimensions of output. For example, for broadcasts and cwise ops
+// all dimensions of the inputs are covered by the output dimensions. Domain
+// specifies for what ranges of values the indexing map is specified.
 //
 // Example:
 //
@@ -281,17 +228,34 @@ std::vector<RangeVar> RangeVarsFromTensorSizes(
 //  reverse = f32[1, 17, 9, 9] reverse(%p0), dimensions={1, 2}
 // ```
 // can be written as `(d0, d1, d2, d3) -> (d0, -d1 + 16, -d2 + 8, d3)` with
-// d0 in [0, 1), d1 in [0, 16], d2 in [0, 8] and d3 in [0, 8].
+// d0 in [0, 0], d1 in [0, 16], d2 in [0, 8] and d3 in [0, 8].
 class IndexingMap {
  public:
+  // Variable represents dimension, range or runtime variable.
+  struct Variable {
+    Variable() = default;
+    explicit Variable(Interval bounds, llvm::StringRef name = "")
+        : bounds(bounds), name(name) {}
+    Variable(int64_t lb, int64_t ub, llvm::StringRef name = "")
+        : Variable(Interval{lb, ub}, name) {}
+
+    Interval bounds;
+    std::string name = "";
+  };
+
   IndexingMap(
-      mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
-      std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
+      mlir::AffineMap affine_map, std::vector<Variable> dimensions,
+      std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
       absl::Span<std::pair<mlir::AffineExpr, Interval> const> constraints = {});
 
-  IndexingMap(mlir::AffineMap affine_map, std::vector<DimVar> dimensions,
-              std::vector<RangeVar> range_vars, std::vector<RTVar> rt_vars,
+  IndexingMap(mlir::AffineMap affine_map, std::vector<Variable> dimensions,
+              std::vector<Variable> range_vars, std::vector<Variable> rt_vars,
               const llvm::DenseMap<mlir::AffineExpr, Interval>& constraints);
+
+  IndexingMap(const IndexingMap&) = default;
+  IndexingMap(IndexingMap&&) = default;
+  IndexingMap& operator=(const IndexingMap&) = default;
+  IndexingMap& operator=(IndexingMap&&) = default;
 
   // Returns an undefined indexing map.
   static IndexingMap GetUndefined() { return IndexingMap(); }
@@ -300,13 +264,15 @@ class IndexingMap {
       mlir::AffineMap affine_map, absl::Span<const int64_t> dim_upper_bounds,
       absl::Span<const int64_t> symbol_upper_bounds);
 
-  std::string ToString(
-      const AffineMapPrinter& printer = AffineMapPrinter()) const;
+  // Returns true if the indexing map is valid.
+  bool Verify(std::ostream& out) const;
 
-  void Print(std::ostream& out, const AffineMapPrinter& printer) const;
+  // If kPreserve, then point dimensions will not be simplified to constants.
+  enum class SimplifyPointDimensions { kPreserve, kReplace };
 
   // Returns true if the map was simplified.
-  bool Simplify();
+  bool Simplify(SimplifyPointDimensions simplify_point_dimensions =
+                    SimplifyPointDimensions::kReplace);
 
   // Return MLIRContext.
   mlir::MLIRContext* GetMLIRContext() const;
@@ -315,22 +281,25 @@ class IndexingMap {
   mlir::AffineMap GetAffineMap() const { return affine_map_; }
   mlir::AffineMap& GetMutableAffineMap() { return affine_map_; }
 
+  // Returns the number of indexing map results.
+  int64_t GetNumResults() const { return affine_map_.getNumResults(); }
+
   // Returns the range evaluator for the indexing map's domain.
   RangeEvaluator GetRangeEvaluator() const;
 
   // Getters for dimension vars.
-  const DimVar& GetDimVars(int64_t id) const { return dim_vars_[id]; }
-  const std::vector<DimVar>& GetDimVars() const { return dim_vars_; }
+  const Variable& GetDimVars(int64_t id) const { return dim_vars_[id]; }
+  const std::vector<Variable>& GetDimVars() const { return dim_vars_; }
   int64_t GetDimVarsCount() const { return dim_vars_.size(); }
 
   // Getters for range vars.
-  const RangeVar& GetRangeVar(int64_t id) const { return range_vars_[id]; }
-  const std::vector<RangeVar>& GetRangeVars() const { return range_vars_; }
+  const Variable& GetRangeVar(int64_t id) const { return range_vars_[id]; }
+  const std::vector<Variable>& GetRangeVars() const { return range_vars_; }
   int64_t GetRangeVarsCount() const { return range_vars_.size(); }
 
   // Getters for runtime vars.
-  const RTVar& GetRTVar(int64_t id) const { return rt_vars_[id]; }
-  const std::vector<RTVar>& GetRTVars() const { return rt_vars_; }
+  const Variable& GetRTVar(int64_t id) const { return rt_vars_[id]; }
+  const std::vector<Variable>& GetRTVars() const { return rt_vars_; }
   int64_t GetRTVarsCount() const { return rt_vars_.size(); }
 
   // Gets bounds of `affine_map_` dimensions.
@@ -369,6 +338,9 @@ class IndexingMap {
       llvm::ArrayRef<mlir::AffineExpr> dim_const_exprs,
       llvm::ArrayRef<mlir::AffineExpr> symbol_const_exprs) const;
 
+  // Returns true if there is a constraint on the given symbol.
+  bool IsSymbolConstrained(int64_t symbol_id) const;
+
   // Returns true if the domain is empty. If it returns false, that does not
   // mean that the domain is not effectively empty.
   // For example, if there are two constraints 0 <= d0 mod 7 <= 0 and
@@ -403,16 +375,20 @@ class IndexingMap {
             rt_vars_, constraints_};
   }
 
+  // Returns a new indexing map with all RangeVars and RTVars converted to
+  // DimVars.
+  // For example,
+  // (d0, d1, d2)[s0, s1]{r0} -> (d0, d1, d2, s0, s1, r0)
+  // will be converted to
+  // (d0, d1, d2, d3, d4, d5) -> (d0, d1, d2, d3, d4, d5)
+  IndexingMap ConvertSymbolsToDimensions() const;
+
  private:
   IndexingMap() = default;
 
   // Merges "mod" constraints for the same AffineExpr.
   // Returns true if simplification was performed.
   bool MergeModConstraints();
-
-  // Replace RTVars that yield constants by indexing expressions.
-  // Returns true if simplification was performed.
-  bool ReplaceConstantRTVars();
 
   // Removes DimVars, RangeVars, RTVars that correspond to the unused dimensions
   // and symbols. If unused_dims is empty, then dims won't be removed. The same
@@ -421,8 +397,8 @@ class IndexingMap {
                     const llvm::SmallBitVector& unused_symbols);
 
   // Resets the indexing map to the canonical "known" empty indexing map, i.e.
-  // (d0...)[s0...] -> (0...) affine map. Does not change the number of symbols,
-  // dimensions or results.
+  // (d0...)[s0...]{r0...} -> (0...) affine map.
+  // Does not change the number of symbols, dimensions or results.
   void ResetToKnownEmpty();
 
   // Verify if all intervals for DimVars, RangeVars and RTVars are feasible.
@@ -432,9 +408,22 @@ class IndexingMap {
   bool VerifyConstraintIntervals();
 
   mlir::AffineMap affine_map_;
-  std::vector<DimVar> dim_vars_;
-  std::vector<RangeVar> range_vars_;
-  std::vector<RTVar> rt_vars_;
+
+  // Dimension variable represents a dimension of a tensor or a GPU grid.
+  // Dimensions correspond to the dimension parameter of `affine_map_`.
+  std::vector<Variable> dim_vars_;
+
+  // RangeSymbol variable represents a range of values, e.g. to compute a single
+  // element of the reduction's result we need a range of values from the input
+  // tensor. RangeSymbol variables correspond to the front portion of the
+  // symbols in `affine_map_`.
+  std::vector<Variable> range_vars_;
+
+  // RTSymbol variable represents a runtime symbol, e.g. a dynamic offset in
+  // HLO dynamic-update-slice op. RTSymbol variables correspond to the back
+  // portion of the symbols in `affine_map_`.
+  std::vector<Variable> rt_vars_;
+
   // Inequality constraints for affine expressions. They restrict the feasible
   // set for the domain of the indexing map. It contains affine expressions
   // other than AffineDimExpr and AffineSymbolExpr.
@@ -449,24 +438,25 @@ inline bool operator!=(const IndexingMap& lhs, const IndexingMap& rhs) {
 }
 IndexingMap operator*(const IndexingMap& lhs, const IndexingMap& rhs);
 
+bool operator==(const IndexingMap::Variable& lhs,
+                const IndexingMap::Variable& rhs);
+inline bool operator!=(const IndexingMap::Variable& lhs,
+                       const IndexingMap::Variable& rhs) {
+  return !(lhs == rhs);
+}
+
+template <typename H>
+H AbslHashValue(H h, const IndexingMap::Variable& dimension) {
+  return H::combine(std::move(h), dimension.bounds);
+}
+
+inline size_t hash_value(const IndexingMap::Variable& dim_var) {
+  return llvm::hash_combine(dim_var.bounds);
+}
+
 // Composes affine maps, i.e. second ∘ first.
 IndexingMap ComposeIndexingMaps(const IndexingMap& first,
                                 const IndexingMap& second);
-
-// Prints the RTVars.
-//
-// This is exposed to allow SymbolicTile to reuse it.
-//
-// `first_rt_var_symbol_index`: The index of the symbol associated with the
-// first RTVar. The RTVars will be printed with consequent symbol indices
-// starting with `first_rt_var_symbol_index`. For example, if `rt_vars.size()
-// == 3` and `first_rt_var_symbol_index == 4`, then the symbol names "s4",
-// "s5" and "s6" will be used.
-//
-// TODO(b/334043862): Unexpose this function if possible.
-void PrintRTVars(const std::vector<RTVar>& rt_vars,
-                 int first_rt_var_symbol_index, std::ostream& out,
-                 const AffineMapPrinter& printer);
 
 template <typename H>
 H AbslHashValue(H h, const IndexingMap& indexing_map) {
@@ -484,6 +474,15 @@ H AbslHashValue(H h, const IndexingMap& indexing_map) {
                            constraint_hashes.end());
   return h;
 }
+
+std::vector<IndexingMap::Variable> DimVarsFromTensorSizes(
+    absl::Span<const int64_t> tensor_sizes);
+
+std::vector<IndexingMap::Variable> DimVarsFromGPUGrid(
+    absl::Span<const int64_t> grid_sizes);
+
+std::vector<IndexingMap::Variable> RangeVarsFromTensorSizes(
+    absl::Span<const int64_t> tensor_sizes);
 
 }  // namespace gpu
 }  // namespace xla

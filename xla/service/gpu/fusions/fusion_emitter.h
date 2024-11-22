@@ -100,31 +100,6 @@ class KernelFusionInterface : public FusionInterface {
       const Shape& shape, mlir::MLIRContext* ctx);
 };
 
-// Base class for fusions that are implemented using a single kernel, which is
-// generated using LLVM.
-class KernelFusionEmitterBase : public KernelFusionInterface {
- public:
-  absl::StatusOr<FusionEmissionResult> Emit(
-      IrEmitterContext& ir_emitter_context,
-      const HloFusionInstruction& fusion) const final;
-
- protected:
-  // Creates initializer thunks that need to run before the main kernel.
-  virtual absl::StatusOr<FusionEmissionResult> EmitInitializers(
-      IrEmitterContext& ir_emitter_context,
-      const HloFusionInstruction& fusion) const {
-    // No initializers by default.
-    return FusionEmissionResult{};
-  }
-
-  virtual absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,
-                                  const HloFusionInstruction& fusion,
-                                  const LaunchDimensions& launch_dims,
-                                  std::vector<llvm_ir::IrArray> inputs,
-                                  std::vector<llvm_ir::IrArray> outputs,
-                                  llvm::IRBuilder<>* builder) const = 0;
-};
-
 absl::StatusOr<
     std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray /*inputs*/>,
                std::vector<llvm_ir::IrArray> /*outputs*/>>
@@ -133,7 +108,7 @@ BuildKernelPrototype(IrEmitterContext& ir_emitter_context,
                      absl::Span<const KernelArgument> arguments,
                      size_t num_inputs,
                      const LaunchDimensions& launch_dimensions,
-                     llvm::IRBuilder<>* builder);
+                     llvm::IRBuilderBase* builder);
 absl::StatusOr<
     std::tuple<llvm::Function*, std::vector<llvm_ir::IrArray /*inputs*/>,
                std::vector<llvm_ir::IrArray> /*outputs*/>>
@@ -142,7 +117,7 @@ BuildKernelPrototypeFromUniqueName(IrEmitterContext& ir_emitter_context,
                                    absl::Span<const KernelArgument> arguments,
                                    size_t num_inputs,
                                    const LaunchDimensions& launch_dimensions,
-                                   llvm::IRBuilder<>* builder);
+                                   llvm::IRBuilderBase* builder);
 
 // Compute the kernel name. The opcode string may contain "-" which cannot be
 // in a PTX function name, so sanitize the name before uniquifying it.

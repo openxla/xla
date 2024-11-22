@@ -42,6 +42,7 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/spmd/shardy/constants.h"
+#include "xla/service/spmd/shardy/utils.h"
 
 namespace mhlo = ::mlir::mhlo;
 
@@ -61,8 +62,8 @@ using ::mlir::StringRef;
 using ::mlir::success;
 
 using ::mlir::sdy::ConstantOp;
-using ::mlir::sdy::IdentityOp;
 using ::mlir::sdy::ShardingConstraintOp;
+using ::mlir::sdy::ShardingGroupOp;
 using ::mlir::sdy::TensorShardingAttr;
 using ::mlir::sdy::TensorShardingPerValueAttr;
 
@@ -77,20 +78,6 @@ class ConstantPattern : public OpConversionPattern<ConstantOp> {
     // added to the new op.
     rewriter.replaceOpWithNewOp<mhlo::ConstantOp>(
         op, op->getResultTypes(), adaptor.getOperands(), op->getAttrs());
-    return success();
-  }
-};
-
-// Removes `sdy::IdentityOp`.
-class IdentityPattern : public OpConversionPattern<IdentityOp> {
- public:
-  using OpConversionPattern::OpConversionPattern;
-
- private:
-  LogicalResult matchAndRewrite(
-      IdentityOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter& rewriter) const override {
-    rewriter.replaceOp(op, adaptor.getInput());
     return success();
   }
 };
@@ -122,6 +109,25 @@ class ShardingConstraintPattern
   }
 };
 
+class ShardingGroupPattern : public OpConversionPattern<ShardingGroupOp> {
+ public:
+  using OpConversionPattern::OpConversionPattern;
+
+ private:
+  LogicalResult matchAndRewrite(
+      ShardingGroupOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter& rewriter) const override {
+    auto customCallOp = rewriter.replaceOpWithNewOp<mhlo::CustomCallOp>(
+        op, op->getResultTypes(), adaptor.getInput());
+
+    customCallOp.setCallTargetName(kShardingGroupCustomCallTargetName);
+    addFrontendAttribute(customCallOp, kShardingGroupIdAttr,
+                         op.getGroupIdAttr());
+    customCallOp.setHasSideEffectAttr(rewriter.getBoolAttr(true));
+    return success();
+  }
+};
+
 class SdyRoundTripExportOpsPass
     : public PassWrapper<SdyRoundTripExportOpsPass, OperationPass<ModuleOp>> {
  public:
@@ -130,11 +136,12 @@ class SdyRoundTripExportOpsPass
   void runOnOperation() final {
     mlir::MLIRContext& context = getContext();
     mlir::ConversionTarget target(context);
-    target.addIllegalOp<ConstantOp, IdentityOp, ShardingConstraintOp>();
+    target.addIllegalOp<ConstantOp, ShardingConstraintOp>();
     target.addLegalOp<mhlo::ConstantOp, mhlo::CustomCallOp>();
     mlir::RewritePatternSet patterns(&context);
-    patterns.add<ConstantPattern, IdentityPattern, ShardingConstraintPattern>(
-        &context);
+    patterns
+        .add<ConstantPattern, ShardingConstraintPattern, ShardingGroupPattern>(
+            &context);
     if (mlir::failed(mlir::applyPartialConversion(getOperation(), target,
                                                   std::move(patterns)))) {
       signalPassFailure();

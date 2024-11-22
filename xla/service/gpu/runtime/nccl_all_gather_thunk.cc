@@ -66,7 +66,8 @@ absl::Status CheckImplementableInst(const HloAllGatherInstruction* inst) {
 
 NcclAllGatherStartThunk::NcclAllGatherStartThunk(
     ThunkInfo thunk_info, NcclApi* nccl_api,
-    const HloAllGatherInstruction* inst, std::vector<Buffer> buffers)
+    const HloAllGatherInstruction* inst, std::vector<Buffer> buffers,
+    bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclAllGatherStart, thunk_info, nccl_api,
                           IsSyncCollective(inst)),
       config_(impl::GetNcclAllGatherConfig(inst)),
@@ -103,7 +104,7 @@ absl::Status RunAllGather(NcclApi* nccl_api,
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-gather from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, device_ordinal, buffers, comm));
+      MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
 
   TF_RETURN_IF_ERROR(nccl_api->GroupStart());
 

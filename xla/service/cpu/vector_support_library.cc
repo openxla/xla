@@ -15,16 +15,40 @@ limitations under the License.
 
 #include "xla/service/cpu/vector_support_library.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <initializer_list>
+#include <iterator>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "absl/algorithm/container.h"
-#include "llvm/Support/raw_ostream.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/types/span.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Casting.h"
 #include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
 VectorSupportLibrary::VectorSupportLibrary(PrimitiveType primitive_type,
                                            int64_t vector_size,
-                                           llvm::IRBuilder<>* b,
+                                           llvm::IRBuilderBase* b,
                                            std::string name)
     : vector_size_(vector_size),
       primitive_type_(primitive_type),
@@ -410,7 +434,7 @@ llvm::Value* VectorSupportLibrary::GetZeroScalar() {
   return llvm::Constant::getNullValue(scalar_type());
 }
 
-LlvmVariable::LlvmVariable(llvm::Type* type, llvm::IRBuilder<>* b) : b_(b) {
+LlvmVariable::LlvmVariable(llvm::Type* type, llvm::IRBuilderBase* b) : b_(b) {
   alloca_ = llvm_ir::EmitAllocaAtFunctionEntry(type, "", b_);
 }
 

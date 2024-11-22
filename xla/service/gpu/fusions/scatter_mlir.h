@@ -25,7 +25,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/service/gpu/fusions/loop.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/mlir_fusion_emitter.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -41,8 +40,6 @@ class MlirScatterFusion : public MlirFusionEmitterBase {
   explicit MlirScatterFusion(const HloFusionAnalysis& analysis);
 
   LaunchDimensions launch_dimensions() const override;
-
-  static bool IsSupported(const HloFusionAnalysis& analysis);
 
   std::optional<IndexingMap> ComputeThreadIdToOutputIndexing(
       int64_t root_index, mlir::MLIRContext* ctx) const override;

@@ -19,12 +19,14 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
@@ -48,6 +50,7 @@ limitations under the License.
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/future.h"
@@ -62,6 +65,7 @@ limitations under the License.
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
+#include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
@@ -70,6 +74,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
@@ -78,6 +83,40 @@ namespace nb = nanobind;
 namespace xla {
 
 namespace {
+
+class CompileOnlyMemory
+    : public llvm::RTTIExtends<CompileOnlyMemory, ifrt::Memory> {
+ public:
+  explicit CompileOnlyMemory(
+      int id, const PjRtMemorySpaceDescription* memory_description,
+      ifrt::Device* device)
+      : id_(id),
+        kind_(memory_description->kind()),
+        debug_string_(absl::StrFormat("CompileOnlyMemory(id=%d, kind=%s)", id,
+                                      memory_description->kind())),
+        device_(device) {}
+
+  ifrt::MemoryId Id() const override { return ifrt::MemoryId(id_); }
+
+  const ifrt::MemoryKind& Kind() const override { return kind_; }
+
+  absl::string_view ToString() const override { return debug_string_; }
+  absl::string_view DebugString() const override { return debug_string_; }
+
+  absl::Span<ifrt::Device* const> Devices() const override {
+    return absl::Span<ifrt::Device* const>{&device_, 1};
+  }
+
+  static char ID;  // NOLINT
+
+ private:
+  int id_;
+  ifrt::MemoryKind kind_;
+  std::string debug_string_;
+  ifrt::Device* device_;
+};
+
+[[maybe_unused]] char CompileOnlyMemory::ID = 0;
 
 class CompileOnlyDevice
     : public llvm::RTTIExtends<CompileOnlyDevice, ifrt::Device> {
@@ -108,16 +147,31 @@ class CompileOnlyDevice
     return description_->DebugString();
   }
 
-  absl::Span<ifrt::Memory* const> Memories() const override { return {}; }
+  absl::Span<ifrt::Memory* const> Memories() const override {
+    return unowned_memories_;
+  }
   absl::StatusOr<ifrt::Memory*> DefaultMemory() const override {
+    if (default_memory_) {
+      return default_memory_;
+    }
     return Unimplemented("DefaultMemory is not supported");
   }
 
   const ifrt::AttributeMap& Attributes() const override { return attributes_; }
 
+  void AttachMemory(std::unique_ptr<ifrt::Memory> memory) {
+    unowned_memories_.push_back(memory.get());
+    owned_memories_.push_back(std::move(memory));
+  }
+
+  void SetDefaultMemory(ifrt::Memory* memory) { default_memory_ = memory; }
+
  private:
   const PjRtDeviceDescription* description_;
   ifrt::AttributeMap attributes_;
+  ifrt::Memory* default_memory_ = nullptr;
+  std::vector<ifrt::Memory*> unowned_memories_;
+  std::vector<std::unique_ptr<ifrt::Memory>> owned_memories_;
 };
 
 class InvalidIfrtCompiler final
@@ -153,10 +207,24 @@ class CompileOnlyIfRtClient final
       : topology_(std::move(topology)),
         descriptions_(topology_->DeviceDescriptions()),
         attributes_(ifrt::AttributeMap::Map()) {
+    int offset = 0;
     for (auto& description : descriptions_) {
       owned_devices_.push_back(
           std::make_unique<CompileOnlyDevice>(description.get()));
-      devices_.push_back(owned_devices_.back().get());
+      auto* device = owned_devices_.back().get();
+      devices_.push_back(device);
+      if (description->process_index() == process_index()) {
+        auto default_memory = description->default_memory_space();
+        for (auto* memory_description : description->memory_spaces()) {
+          auto memory = std::make_unique<CompileOnlyMemory>(
+              offset, memory_description, device);
+          if (default_memory.ok() && memory_description == *default_memory) {
+            device->SetDefaultMemory(memory.get());
+          }
+          device->AttachMemory(std::move(memory));
+          ++offset;
+        }
+      }
     }
   }
 
@@ -179,10 +247,20 @@ class CompileOnlyIfRtClient final
         "AssembleArrayFromSingleDeviceArrays not available with compile-only "
         "client.");
   }
+  absl::StatusOr<tsl::RCReference<ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      ifrt::Shape shape, std::shared_ptr<const ifrt::Sharding> sharding,
+      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
+      ifrt::ArrayCopySemantics array_copy_semantics,
+      ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override {
+    return Unimplemented(
+        "AssembleArrayFromSingleDeviceArrays not available with compile-only "
+        "client.");
+  }
 
   absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> CopyArrays(
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
-      std::optional<ifrt::DeviceList> devices,
+      std::optional<tsl::RCReference<ifrt::DeviceList>> devices,
       std::optional<ifrt::MemoryKind> memory_kind,
       ifrt::ArrayCopySemantics semantics) override {
     return Unimplemented("CopyArrays not available with compile-only client.");
@@ -228,6 +306,9 @@ class CompileOnlyIfRtClient final
     return {};
   }
   int process_index() const override { return 0; }
+  absl::Span<xla::ifrt::Device* const> GetAllDevices() const override {
+    return devices_;
+  }
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override {
     return Unimplemented(
@@ -252,7 +333,7 @@ class CompileOnlyIfRtClient final
   const ifrt::PjRtTopology& topology() const { return *topology_; }
 
   absl::StatusOr<std::shared_ptr<ifrt::Topology>> GetTopologyForDevices(
-      const xla::ifrt::DeviceList& devices) const override {
+      const tsl::RCReference<xla::ifrt::DeviceList>& devices) const override {
     return topology_;
   }
 
@@ -301,6 +382,11 @@ class CompileOnlyPyClient : public PyClient {
     mlir::MLIRContext context;
     TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                         ParseMlirModuleString(mlir_module, context));
+    if (options.executable_build_options.use_shardy_partitioner()) {
+      // Since Shardy is located in the middle of the XLA pipeline, we need to
+      // export it before going to HLO while preserving Shardy ops and attrs.
+      TF_RETURN_IF_ERROR(ExportShardyForHloRoundTrip(*module));
+    }
     auto* ifrt_client =
         llvm::dyn_cast_or_null<CompileOnlyIfRtClient>(this->ifrt_client());
     CHECK(ifrt_client) << "CompileOnlyPyClient requires ifrt_client be a "

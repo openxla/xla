@@ -48,7 +48,7 @@ absl::Status RunAllReduce(NcclApi* nccl_api, ReductionKind reduction_kind,
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-reduce from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, device_ordinal, buffers, comm));
+      MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
 
   TF_RETURN_IF_ERROR(nccl_api->GroupStart());
   for (DeviceBufferPair& buffer : buffers) {
@@ -156,7 +156,8 @@ NcclAllReduceReduceScatterThunkBase::NcclAllReduceReduceScatterThunkBase(
 
 NcclAllReduceStartThunk::NcclAllReduceStartThunk(
     ThunkInfo thunk_info, NcclApi* nccl_api,
-    const HloAllReduceInstruction* inst, std::vector<Buffer> buffers)
+    const HloAllReduceInstruction* inst, std::vector<Buffer> buffers,
+    bool p2p_memcpy_enabled)
     : NcclAllReduceReduceScatterThunkBase(
           Thunk::kNcclAllReduceStart, thunk_info, nccl_api,
           impl::GetNcclAllReduceConfigInst(inst), std::move(buffers),
@@ -189,7 +190,8 @@ absl::Status NcclAllReduceStartThunk::RunNcclCollective(
 
 NcclReduceScatterStartThunk::NcclReduceScatterStartThunk(
     ThunkInfo thunk_info, NcclApi* nccl_api,
-    const HloReduceScatterInstruction* inst, std::vector<Buffer> buffers)
+    const HloReduceScatterInstruction* inst, std::vector<Buffer> buffers,
+    bool p2p_memcpy_enabled)
     : NcclAllReduceReduceScatterThunkBase(
           Thunk::kNcclReduceScatterStart, thunk_info, nccl_api,
           impl::GetNcclAllReduceConfigInst(inst), std::move(buffers),
@@ -230,7 +232,7 @@ absl::Status RunReduceScatter(NcclApi* nccl_api, ReductionKind reduction_kind,
   VLOG(3) << "Performing reduce-scatter from device ordinal: "
           << device_ordinal;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, device_ordinal, buffers, comm));
+      MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
 
   TF_ASSIGN_OR_RETURN(int32_t num_participants, nccl_api->CommCount(comm));
 

@@ -19,6 +19,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include <gmock/gmock.h>
 #include "absl/status/statusor.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
@@ -48,6 +50,10 @@ char MockHostCallback::ID = 0;
 char MockLoadedHostCallback::ID = 0;
 char MockSharding::ID = 0;
 
+namespace {
+using ::testing::_;
+}
+
 // LINT.IfChange(MockArrayDelegation)
 MockArray::MockArray(tsl::RCReference<xla::ifrt::Array> delegated)
     : delegated_(std::move(delegated)) {
@@ -59,9 +65,6 @@ MockArray::MockArray(tsl::RCReference<xla::ifrt::Array> delegated)
   });
   ON_CALL(*this, IsDeleted).WillByDefault([this]() {
     return delegated_->IsDeleted();
-  });
-  ON_CALL(*this, DebugString).WillByDefault([this]() {
-    return delegated_->DebugString();
   });
   ON_CALL(*this, dtype).WillByDefault([this]() { return delegated_->dtype(); });
   ON_CALL(*this, shape).WillByDefault([this]() -> const Shape& {
@@ -77,10 +80,17 @@ MockArray::MockArray(tsl::RCReference<xla::ifrt::Array> delegated)
       .WillByDefault([this]() -> absl::StatusOr<std::unique_ptr<PjRtLayout>> {
         return delegated_->layout();
       });
-  ON_CALL(*this, DisassembleIntoSingleDeviceArrays)
+  ON_CALL(*this, DisassembleIntoSingleDeviceArrays(_))
       .WillByDefault([this](ArrayCopySemantics semantics) {
         return delegated_->DisassembleIntoSingleDeviceArrays(semantics);
       });
+  ON_CALL(*this, DisassembleIntoSingleDeviceArrays(_, _))
+      .WillByDefault(
+          [this](ArrayCopySemantics array_copy_semantics,
+                 SingleDeviceShardSemantics single_device_shard_semantics) {
+            return delegated_->DisassembleIntoSingleDeviceArrays(
+                array_copy_semantics, single_device_shard_semantics);
+          });
   ON_CALL(*this, FullyReplicatedShard)
       .WillByDefault([this](ArrayCopySemantics semantics) {
         return delegated_->FullyReplicatedShard(semantics);
@@ -109,7 +119,7 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
             data, dtype, std::move(shape), byte_strides, std::move(sharding),
             semantics, std::move(on_done_with_host_buffer));
       });
-  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays)
+  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _))
       .WillByDefault([this](Shape shape,
                             std::shared_ptr<const Sharding> sharding,
                             absl::Span<tsl::RCReference<Array>> arrays,
@@ -117,12 +127,23 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
         return delegated_->AssembleArrayFromSingleDeviceArrays(
             std::move(shape), std::move(sharding), arrays, semantics);
       });
+  ON_CALL(*this, AssembleArrayFromSingleDeviceArrays(_, _, _, _, _))
+      .WillByDefault(
+          [this](Shape shape, std::shared_ptr<const Sharding> sharding,
+                 absl::Span<tsl::RCReference<Array>> arrays,
+                 ArrayCopySemantics array_copy_semantics,
+                 SingleDeviceShardSemantics single_device_shard_semantics) {
+            return delegated_->AssembleArrayFromSingleDeviceArrays(
+                std::move(shape), std::move(sharding), arrays,
+                array_copy_semantics, single_device_shard_semantics);
+          });
   ON_CALL(*this, CopyArrays)
       .WillByDefault([this](absl::Span<tsl::RCReference<Array>> arrays,
-                            std::optional<DeviceList> devices,
+                            std::optional<tsl::RCReference<DeviceList>> devices,
                             std::optional<MemoryKind> memory_kind,
                             ArrayCopySemantics semantics) {
-        return delegated_->CopyArrays(arrays, devices, memory_kind, semantics);
+        return delegated_->CopyArrays(arrays, std::move(devices), memory_kind,
+                                      semantics);
       });
   ON_CALL(*this, RemapArrays)
       .WillByDefault([this](const RemapPlan& plan,
@@ -169,6 +190,9 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   ON_CALL(*this, process_index).WillByDefault([this]() {
     return delegated_->process_index();
   });
+  ON_CALL(*this, GetAllDevices).WillByDefault([this]() {
+    return delegated_->GetAllDevices();
+  });
   ON_CALL(*this, GetDefaultDeviceAssignment)
       .WillByDefault([this](int num_replicas, int num_partitions) {
         return delegated_->GetDefaultDeviceAssignment(num_replicas,
@@ -185,9 +209,10 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
     return delegated_->GetDefaultCompiler();
   });
   ON_CALL(*this, GetTopologyForDevices)
-      .WillByDefault([this](const xla::ifrt::DeviceList& devices) {
-        return delegated_->GetTopologyForDevices(devices);
-      });
+      .WillByDefault(
+          [this](const tsl::RCReference<xla::ifrt::DeviceList>& devices) {
+            return delegated_->GetTopologyForDevices(devices);
+          });
   ON_CALL(*this, GetDefaultLayoutForDevice)
       .WillByDefault([this](xla::ifrt::DType dtype,
                             absl::Span<const int64_t> dims,
@@ -210,12 +235,6 @@ MockDevice::MockDevice(Device* delegated) : delegated_(delegated) {
     return delegated_->ProcessIndex();
   });
   ON_CALL(*this, Kind).WillByDefault([this]() { return delegated_->Kind(); });
-  ON_CALL(*this, DebugString).WillByDefault([this]() {
-    return delegated_->DebugString();
-  });
-  ON_CALL(*this, ToString).WillByDefault([this]() {
-    return delegated_->ToString();
-  });
   ON_CALL(*this, Attributes).WillByDefault([this]() -> const AttributeMap& {
     return delegated_->Attributes();
   });

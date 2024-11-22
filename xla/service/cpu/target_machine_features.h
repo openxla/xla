@@ -16,10 +16,14 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
 #define XLA_SERVICE_CPU_TARGET_MACHINE_FEATURES_H_
 
+#include <cstdint>
+#include <string>
+
 #include "absl/container/flat_hash_map.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/Target/TargetMachine.h"
 #include "xla/primitive_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {
@@ -57,6 +61,8 @@ class TargetMachineFeatures {
   // them to specific micro-architectures (though currently XLA does not use
   // this functionality).
   virtual int vector_register_count(const llvm::Function& function) const = 0;
+
+  virtual std::string get_target_feature_string() const = 0;
 
   // Returns the minimum alignment for a buffer of size size_bytes.
   virtual int64_t minimum_alignment_for_allocation(
@@ -100,6 +106,8 @@ class LLVMTargetMachineFeatures : public TargetMachineFeatures {
   }
 
   int64_t minimum_alignment_for_allocation(int64_t size_bytes) const override;
+
+  std::string get_target_feature_string() const override;
 
  private:
   llvm::TargetTransformInfo* GetTargetTransformInfoFor(

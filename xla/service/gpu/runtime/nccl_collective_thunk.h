@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/global_device_id.h"
@@ -48,7 +49,6 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -283,9 +283,16 @@ absl::Status AddOpDescription(absl::Status status, OpT op,
 
 //===----------------------------------------------------------------------===//
 
-size_t GetNumLocalParticipants(
-    const std::vector<GlobalDeviceId>& participants,
-    const std::vector<GlobalDeviceId>* local_devices);  // may be null
+absl::StatusOr<NcclCliqueKey> GetNcclCliqueKey(
+    const Thunk::CollectiveExecuteParams& params,
+    const std::vector<ReplicaGroup>& replica_groups,
+    CollectiveOpGroupMode group_mode, NcclStreamId stream_id,
+    AsyncStreamKind stream_kind);
+
+absl::StatusOr<size_t> GetNumLocalParticipants(
+    const Thunk::CollectiveExecuteParams& params,
+    const std::vector<ReplicaGroup>& replica_groups,
+    CollectiveOpGroupMode group_mode);
 
 // Returns a nccl comm handle and a flag indicating if
 // it's a local communicator.
@@ -319,7 +326,8 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 // communicator to enable zero-copy collectives.
 //
 // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/bufferreg.html
-absl::Status MaybeRegisterBuffers(NcclApi* nccl_api, int device_ordinal,
+absl::Status MaybeRegisterBuffers(NcclApi* nccl_api,
+                                  se::StreamExecutor* executor,
                                   const std::vector<DeviceBufferPair>& buffers,
                                   NcclApi::NcclCommHandle comm);
 

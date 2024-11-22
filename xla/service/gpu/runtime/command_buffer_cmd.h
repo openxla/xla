@@ -26,12 +26,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -40,18 +42,22 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_fused_mha_runner.h"
 #include "xla/service/gpu/kernels/custom_kernel.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/runtime/custom_call_thunk.h"
+#include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/kernel.h"
+#include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -79,10 +85,10 @@ namespace xla::gpu {
   V(kCollectiveCmd, "CollectiveCmd")                     \
   V(kAllReduceCmd, "AllReduceCmd")                       \
   V(kReduceScatter, "ReduceScatterCmd")                  \
+  V(kAllToAll, "AllToAllCmd")                            \
   V(kAllGatherCmd, "AllGatherCmd")                       \
   V(kCollectiveBroadcastCmd, "CollectiveBroadcastCmd")   \
-  V(kFusedMHACmd, "FusedMHACmd")                         \
-  V(kFusedMHABackwardCmd, "FusedMHABackwardCmd")         \
+  V(kDynamicSliceFusionCmd, "DynamicSliceFusionCmd")     \
   V(kUnknownCmd, "UnknownCmd") \
   // clang-format on
 
@@ -783,112 +789,6 @@ class GemmCmd : public TracedCommandBufferCmd {
 };
 
 //===----------------------------------------------------------------------===//
-// FusedMHACmd
-//===----------------------------------------------------------------------===//
-
-class FusedMHACmd : public TracedCommandBufferCmd {
- public:
-  FusedMHACmd(ExecutionStreamId execution_stream_id, GpufMHAConfig config,
-              BufferAllocation::Slice lhs_bmm1,
-              BufferAllocation::Slice rhs_bmm1,
-              BufferAllocation::Slice rhs_bmm2, BufferAllocation::Slice output,
-              BufferAllocation::Slice scratch, BufferAllocation::Slice mask,
-              BufferAllocation::Slice bias, BufferAllocation::Slice activation,
-              BufferAllocation::Slice seqlen_q,
-              BufferAllocation::Slice seqlen_k);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params,
-                          StateManager& state) override;
-
-  absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const RecordParams& record_params,
-                      se::CommandBuffer* command_buffer) override;
-
-  BufferUsageVector buffers() override;
-
-  bool IsNestedCommandBuffer() const final { return true; }
-
- private:
-  FusedMultiHeadedAttentionRunner& GetOrCreateRunner(
-      const stream_executor::Stream* stream);
-
-  const GpufMHAConfig config_;
-  BufferAllocation::Slice lhs_bmm1_buffer_;
-  BufferAllocation::Slice rhs_bmm1_buffer_;
-  BufferAllocation::Slice rhs_bmm2_buffer_;
-  BufferAllocation::Slice output_buffer_;
-  BufferAllocation::Slice scratch_buffer_;
-  BufferAllocation::Slice bias_buffer_;
-  BufferAllocation::Slice activation_buffer_;
-  BufferAllocation::Slice seqlen_q_buffer_;
-  BufferAllocation::Slice seqlen_k_buffer_;
-
-  // FusedMHA config
-  absl::Mutex mutex_;
-  absl::flat_hash_map<const stream_executor::Stream*,
-                      std::unique_ptr<FusedMultiHeadedAttentionRunner>>
-      runner_cache_ ABSL_GUARDED_BY(mutex_);
-};
-
-//===----------------------------------------------------------------------===//
-// FusedMHABackwardCmd
-//===----------------------------------------------------------------------===//
-
-class FusedMHABackwardCmd : public TracedCommandBufferCmd {
- public:
-  FusedMHABackwardCmd(
-      ExecutionStreamId execution_stream_id, GpufMHABackwardConfig config,
-      BufferAllocation::Slice bmm1_grad_gemm1_rhs,
-      BufferAllocation::Slice bmm1_grad_gemm2_rhs,
-      BufferAllocation::Slice bmm2_grad_gemm1_lhs,
-      BufferAllocation::Slice bmm2_grad_gemm2_rhs,
-      BufferAllocation::Slice d_output, BufferAllocation::Slice scratch,
-      BufferAllocation::Slice d_bmm1_lhs, BufferAllocation::Slice d_bmm1_rhs,
-      BufferAllocation::Slice d_bmm2_rhs, BufferAllocation::Slice d_s,
-      BufferAllocation::Slice d_bias, BufferAllocation::Slice fwd_output,
-      BufferAllocation::Slice bias, BufferAllocation::Slice seqlen_q,
-      BufferAllocation::Slice seqlen_k);
-
-  absl::Status Initialize(const Thunk::InitializeParams& params,
-                          StateManager& state) override;
-
-  absl::Status Record(const Thunk::ExecuteParams& execute_params,
-                      const RecordParams& record_params,
-                      se::CommandBuffer* command_buffer) override;
-
-  BufferUsageVector buffers() override;
-
-  bool IsNestedCommandBuffer() const final { return true; }
-
- private:
-  FusedMultiHeadedAttentionBackwardRunner& GetOrCreateRunner(
-      const stream_executor::Stream* stream);
-
-  const GpufMHABackwardConfig config_;
-  BufferAllocation::Slice bmm1_grad_gemm1_rhs_buffer_;
-  BufferAllocation::Slice bmm1_grad_gemm2_rhs_buffer_;
-  BufferAllocation::Slice bmm2_grad_gemm1_lhs_buffer_;
-  BufferAllocation::Slice bmm2_grad_gemm2_rhs_buffer_;
-  BufferAllocation::Slice d_output_buffer_;
-  BufferAllocation::Slice scratch_buffer_;
-  BufferAllocation::Slice d_bmm1_lhs_buffer_;
-  BufferAllocation::Slice d_bmm1_rhs_buffer_;
-  BufferAllocation::Slice d_bmm2_rhs_buffer_;
-  BufferAllocation::Slice d_s_buffer_;
-  BufferAllocation::Slice d_bias_buffer_;
-  BufferAllocation::Slice fwd_output_buffer_;
-  BufferAllocation::Slice bias_buffer_;
-  BufferAllocation::Slice seqlen_q_buffer_;
-  BufferAllocation::Slice seqlen_k_buffer_;
-
-  // FusedMHA config
-  absl::Mutex mutex_;
-  absl::flat_hash_map<const stream_executor::Stream*,
-                      std::unique_ptr<FusedMultiHeadedAttentionBackwardRunner>>
-      runner_cache_ ABSL_GUARDED_BY(mutex_);
-};
-
-//===----------------------------------------------------------------------===//
 // CublasLtCmd
 //===----------------------------------------------------------------------===//
 
@@ -997,25 +897,28 @@ class CustomCallCmd : public CommandBufferCmd {
   // has different meaning in different translation units. We need to get rid of
   // GOOGLE_CUDA defines all over XLA to fix this! As a workaround just keep
   // constructor in a header file.
-  CustomCallCmd(ExecutionStreamId execution_stream_id,
+  CustomCallCmd(ExecutionStreamId execution_stream_id, std::string target_name,
                 CustomCallTarget call_target,
                 std::vector<std::optional<Slice>> operands,
                 std::vector<std::optional<Slice>> results,
                 absl::string_view opaque)
       : CommandBufferCmd(CommandBufferCmdType::kCustomCallCmd,
                          execution_stream_id),
+        target_name_(std::move(target_name)),
         call_target_(std::move(call_target)),
         opaque_(opaque),
         operands_(std::move(operands)),
         results_(std::move(results)) {}
 
-  CustomCallCmd(ExecutionStreamId execution_stream_id, XLA_FFI_Handler* handler,
+  CustomCallCmd(ExecutionStreamId execution_stream_id, std::string target_name,
+                XLA_FFI_Handler* handler,
                 std::vector<std::optional<Slice>> operands,
                 std::vector<std::optional<Slice>> results,
                 AttributesMap attributes,
                 const HloComputation* called_computation)
       : CommandBufferCmd(CommandBufferCmdType::kCustomCallCmd,
                          execution_stream_id),
+        target_name_(std::move(target_name)),
         handler_(handler),
         attributes_(std::move(attributes)),
         called_computation_(called_computation),
@@ -1036,6 +939,8 @@ class CustomCallCmd : public CommandBufferCmd {
   absl::Status RecordXlaFfiCall(const Thunk::ExecuteParams& execute_param,
                                 const RecordParams& record_params,
                                 se::CommandBuffer* command_buffer);
+
+  std::string target_name_;
 
   // This is a legacy custom call API that is discouraged, and will be
   // deprecated once XLA:FFI mechanism is ready.
@@ -1183,6 +1088,32 @@ class ReduceScatterCmd : public CollectiveCmd {
 };
 
 //===----------------------------------------------------------------------===//
+// AllToAllCmd
+//===----------------------------------------------------------------------===//
+
+class AllToAllCmd : public CollectiveCmd {
+ public:
+  AllToAllCmd(ExecutionStreamId execution_stream_id,
+              ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
+              NcclCollectiveConfig config, bool has_split_dimension,
+              absl::Span<const NcclCollectiveThunk::Buffer> buffers);
+
+  absl::Status Record(const Thunk::ExecuteParams& execute_params,
+                      const RecordParams& record_params,
+                      se::CommandBuffer* command_buffer) override;
+
+  BufferUsageVector buffers() override;
+
+  AsyncStreamKind GetAsyncStreamKind() override {
+    return AsyncStreamKind::kCollective;
+  };
+
+ private:
+  bool has_split_dimension_;
+  std::vector<NcclCollectiveThunk::Buffer> buffers_;
+};
+
+//===----------------------------------------------------------------------===//
 // AllGatherCmd
 //===----------------------------------------------------------------------===//
 
@@ -1226,6 +1157,62 @@ class CollectiveBroadcastCmd : public CollectiveCmd {
 
  private:
   std::vector<NcclCollectiveThunk::Buffer> buffers_;
+};
+
+//===----------------------------------------------------------------------===//
+// DynamicSliceFusionCmd
+//===----------------------------------------------------------------------===//
+
+class DynamicSliceFusionCmd : public CommandBufferCmd {
+ public:
+  DynamicSliceFusionCmd(
+      ExecutionStreamId execution_stream_id,
+      std::unique_ptr<CommandBufferCmdSequence> embedded_commands,
+      std::vector<std::optional<BufferAllocation::Slice>> arguments,
+      std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_,
+      std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>>
+          offsets,
+      std::vector<std::optional<Shape>> orig_shapes,
+      std::vector<std::optional<Shape>> sliced_shapes,
+      std::vector<std::optional<uint64_t>> offset_byte_sizes);
+
+  absl::Status Initialize(const Thunk::InitializeParams& params,
+                          StateManager& state);
+
+  absl::Status Prepare(const Thunk::PrepareParams& params,
+                       Thunk::ResourceRequests& resource_requests) final;
+
+  absl::Status Record(const Thunk::ExecuteParams& execute_params,
+                      const RecordParams& record_params,
+                      se::CommandBuffer* command_buffer) override;
+
+  BufferUsageVector buffers() override;
+
+  bool force_update() override;
+
+  bool IsNestedCommandBuffer() const final { return true; }
+
+ private:
+  std::unique_ptr<CommandBufferCmdSequence> embedded_commands_;
+  std::vector<DynamicSliceThunk::SliceDef> slices_;
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations_;
+
+  // Pinned host memory for transferring offset values from device to host.
+  absl::Mutex mutex_;
+  absl::flat_hash_map<se::StreamExecutor*,
+                      std::unique_ptr<se::MemoryAllocation>>
+      offsets_allocs_ ABSL_GUARDED_BY(mutex_);
+
+  // Pre-computed size requirement for `offsets_allocs_`.
+  int64_t offsets_allocs_size_ = 0;
+
+  // A mapping from argument index to the base offset in the `offsets_allocs_`.
+  std::vector<int64_t> offsets_allocs_base_;
+
+  // mapping from original allocation index to allocation index of embedded
+  // command sequences.
+  absl::flat_hash_map<int64_t, std::optional<BufferAllocation::Slice>>
+      embeded_to_origin_slice_map_;
 };
 
 }  // namespace xla::gpu

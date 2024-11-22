@@ -3,8 +3,8 @@ syntax = "proto3";
 package xla.gpu;
 
 import "xla/autotuning.proto";
+import "xla/tsl/protobuf/dnn.proto";
 import "xla/xla_data.proto";
-import "tsl/protobuf/dnn.proto";
 
 // Backend configs for XLA:GPU.
 //
@@ -124,6 +124,9 @@ message BitcastBackendConfig {
 message CollectiveBackendConfig {
   bool is_sync = 1;
   bool no_parallel_custom_call = 2;
+  // Determines whether the collective op of interested has been pipelined
+  // within a loop.
+  bool is_pipelined = 3;
 }
 
 // Backend config for cost model estimates.
@@ -261,6 +264,10 @@ message CudnnfMHABackendConfig {
 
   // Whether force deterministic for bwd
   bool force_deterministic = 23;
+
+  // Sliding window length
+  // ignored if the value <= 0
+  int32 sliding_window_length = 24;
 }
 
 // Generic backend config for XLA:GPU

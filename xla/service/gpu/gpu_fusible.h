@@ -27,23 +27,17 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/hlo_traversal.h"
+#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/stream_executor/device_description.h"
 
 // TODO(b/112957171): Extract logic to determine fusibility of HLO ops from
-// GpuInstructionFusion, FusionMerger, and GpuMultiOutputFusion.
+// GpuInstructionFusion, FusionMerger, and MultiOutputFusion.
 
 namespace xla {
 namespace gpu {
-
-// Check if the operation accesses the same inputs multiple times
-// while generating its outputs.
-bool IfFusedReadsElementsMultipleTimes(const HloInstruction& instr);
-
-// Check if the operation is memory or computationally expensive
-// to repeat.
-bool IsExpensiveToRepeat(const HloInstruction& instr);
 
 // Fusion passes frequently do checks across all pairs of "interesting" nodes.
 // Computing e.g. FusionFitsInBudget(a, b) requires computing expensive
@@ -118,6 +112,14 @@ bool IsInputFusibleReduction(const HloInstruction& instr);
 // or a loop fusion rooted with such.
 bool IsNestableVariadicReduction(const HloInstruction& instr);
 
+// Whether `instr` is a nestable variadic reduce-window
+// or a loop fusion rooted with such.
+bool IsNestableVariadicReduceWindow(const HloInstruction& instr);
+
+// Whether `instr` is a nestable variadic reduction
+// or a loop fusion rooted with such.
+bool IsNestableVariadicReduction(const HloInstruction& instr);
+
 // Whether `instr` is fusible as root of a scatter input fusions, i.e. `instr`
 // is either an unfused scatter op or a scatter input fusion.
 bool IsInputFusibleScatter(const HloInstruction& instr);
@@ -132,12 +134,6 @@ FusionDecision FusionFitsInBudget(const HloInstruction& instr1,
                                   const se::DeviceDescription& device_info,
                                   bool is_consumer_producer_fusion = false,
                                   FusionInfoCache* cache = nullptr);
-
-// Check if fusing producer and consumer will generate a heavy computation, e.g.
-// producer has a complex computation per output and consumer calls this
-// computations multiple times.
-bool CreatesHeavyComputation(const HloInstruction& producer,
-                             const HloInstruction& consumer);
 
 // Returns the instruction that determines the emitter used for lowering,
 // sometimes referred to as "the real hero".
@@ -164,13 +160,6 @@ FusionDecision ShapesCompatibleForMultiOutputFusion(
 // handled by the scatter emitter.
 FusionDecision CanEmitInputFusedScatter(const HloInstruction& producer,
                                         const HloInstruction& consumer);
-
-// Whether the instructions are compatible for producer-consumer fusion
-// i.e. whether the producer and consumer are loop/input fusible and
-// they are not library calls.
-// Used both by instruction fusion and fusion-fusion merging.
-FusionDecision IsProducerConsumerFusible(const HloInstruction& producer,
-                                         const HloInstruction& consumer);
 
 // Whether the producer is a valid candidate for a multi-output fusion.
 // That is, the root tuple of the multi-output fusion will contain the results
@@ -225,6 +214,15 @@ bool IsGenericTritonFusion(const HloInstruction& instr);
 // Whether the fusion will likely behave poorly with vectorization due to the
 // instructions it contains.
 bool MayPreventVectorization(const HloFusionAdaptor& fusion);
+
+// Returns the max loop unroll factor.
+inline constexpr int64_t MaxUnrollFactor() { return 4; }
+
+LaunchDimensionsConfig ComputeLoopFusionConfig(
+    const HloFusionAnalysis& analysis);
+
+LaunchDimensionsConfig ComputeLoopFusionConfig(
+    const HloFusionAnalysis& analysis, const Shape& shape);
 
 }  // namespace gpu
 }  // namespace xla

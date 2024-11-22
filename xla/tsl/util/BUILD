@@ -220,6 +220,7 @@ cc_library(
         "@tsl//tsl:__subpackages__",
     ]),
     deps = [
+        "//xla/tsl/protobuf:test_log_proto_cc",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:env_impl",
         "@tsl//tsl/platform:errors",
@@ -227,7 +228,6 @@ cc_library(
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:types",
-        "@tsl//tsl/protobuf:test_log_proto_cc",
     ],
 )
 

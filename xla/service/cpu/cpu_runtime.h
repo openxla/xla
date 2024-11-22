@@ -26,6 +26,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_CPU_RUNTIME_H_
 #define XLA_SERVICE_CPU_CPU_RUNTIME_H_
 
+#include <cstdint>
+
 #include "xla/executable_run_options.h"
 #include "xla/service/cpu/xfeed_manager.h"
 
@@ -62,6 +64,8 @@ extern const char* const kDuccSingleThreadedFftSymbolName;
 extern const char* const kEigenSingleThreadedMatMulF16SymbolName;
 extern const char* const kEigenSingleThreadedMatMulF32SymbolName;
 extern const char* const kEigenSingleThreadedMatMulF64SymbolName;
+extern const char* const kEigenSingleThreadedMatMulF8E4M3FNSymbolName;
+extern const char* const kEigenSingleThreadedMatMulF8E5M2SymbolName;
 extern const char* const kEigenSingleThreadedMatMulC64SymbolName;
 extern const char* const kEigenSingleThreadedMatMulC128SymbolName;
 extern const char* const kEigenSingleThreadedMatMulS32SymbolName;

@@ -22,7 +22,6 @@ limitations under the License.
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/service/gpu/fusions/triton/sparse_extensions.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
@@ -57,8 +56,6 @@ absl::Status CreateTritonPipeline(
     mlir::OpPassManager& pm, const se::GpuComputeCapability& cc,
     const BlockLevelParameters& block_level_parameters,
     mt::nvidia_gpu::ClusterInfo& out_cluster_info) {
-  // TODO(ROCm): Check whether value different than 0 can be used.
-  const int ccAsInt = 0;
   // TODO(ROCm): Check why some test fail when threadsPerWarp is set to 64.
   const int threadsPerWarp = 32;
   auto ccRocm = std::get<se::RocmComputeCapability>(cc);
@@ -73,6 +70,7 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSymbolDCEPass());
+  pm.addPass(mt::createLoopUnrollPass());
 
   // Based on make_ttgir() in
   // @triton//:third_party/amd/backend/compiler.py
@@ -90,15 +88,19 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
   if (block_level_parameters.num_stages == kAmdDoubleBuffering &&
       ccRocm.has_amd_matrix_core()) {
-    pm.addPass(mlir::createTritonAMDGPUStreamPipelinePass());
+    pm.addPass(mlir::createTritonAMDGPUStreamPipelineV2Pass(
+        block_level_parameters.num_stages));
     pm.addPass(mlir::createCanonicalizerPass());
   }
+  pm.addPass(mt::createTritonAMDGPUInsertInstructionSchedHintsPass());
   pm.addPass(mt::gpu::createTritonGPUOptimizeDotOperands({true}));
   pm.addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mt::gpu::createTritonGPUReduceDataDuplication());
   if (block_level_parameters.num_stages != kAmdDoubleBuffering) {
     pm.addPass(mt::gpu::createTritonGPUReorderInstructions());
   }
+  pm.addPass(mlir::createTritonAMDGPUCanonicalizePointersPass());
+  pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createSymbolDCEPass());
 
@@ -122,7 +124,9 @@ absl::Status CreateTritonPipeline(
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createSymbolDCEPass());
-  pm.addPass(mt::createConvertBuiltinFuncToLLVMPass());
+  pm.addPass(mt::createTritonAMDGPULowerInstructionSchedHintsPass(
+      block_level_parameters.num_stages, "default"));
+  pm.addPass(mt::createConvertBuiltinFuncToLLVMPass(/*ftz=*/true));
   // There is no clusters in ROCm for now.
   out_cluster_info.clusterDimX = 1;
   out_cluster_info.clusterDimY = 1;

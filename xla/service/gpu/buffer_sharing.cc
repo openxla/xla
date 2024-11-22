@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -66,10 +67,10 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
     }
     // The buffers needed for 'user_subshape' and 'operand_shape' need to have
     // the same size, otherwise they cannot be shared. We already checked that
-    // the number of elements are the same, so now we check the number of bytes
+    // the number of elements are the same, so now we check the number of bits
     // needed for the element types.
-    if (ShapeUtil::ByteSizeOfPrimitiveType(operand_shape.element_type()) !=
-        ShapeUtil::ByteSizeOfPrimitiveType(user_subshape.element_type())) {
+    if (primitive_util::BitWidth(operand_shape.element_type()) !=
+        primitive_util::BitWidth(user_subshape.element_type())) {
       return false;
     }
   }
@@ -79,7 +80,7 @@ std::optional<bool> FusionCanShareBufferHint(const HloInstruction* user,
   // first, i.e. before processing other outputs (that may overwrite the input).
   stream_executor::GpuDeviceInfoProto device_info;
   stream_executor::DeviceDescription device_description(device_info);
-  auto analysis = HloFusionAnalysis::Create(fusion, &device_description);
+  auto analysis = HloFusionAnalysis::Create(*user, device_description);
   bool is_reduction_emitter = analysis.GetEmitterFusionKind() ==
                               HloFusionAnalysis::EmitterFusionKind::kReduction;
   const HloInstruction* reduction_hero =

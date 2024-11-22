@@ -72,11 +72,12 @@ tf_proto_library(
         "//xla/pjrt:execute_options_proto",
         "//xla/python/ifrt:attribute_map_proto",
         "//xla/python/ifrt:dtype_proto",
+        "//xla/python/ifrt:execute_options_proto",
         "//xla/python/ifrt:remap_plan_proto",
         "//xla/python/ifrt:serdes_proto",
         "//xla/python/ifrt:shape_proto",
         "//xla/python/ifrt:sharding_proto",
-        "@tsl//tsl/protobuf:status_proto",
+        "//xla/tsl/protobuf:status_proto",
     ],
 )
 
@@ -105,6 +106,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
@@ -119,9 +121,6 @@ ifrt_proxy_cc_test(
         ":types",
         ":types_proto_cc",
         "//xla/pjrt:pjrt_common",
-        "//xla/python/ifrt",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
@@ -129,16 +128,23 @@ ifrt_proxy_cc_test(
     ],
 )
 
+tf_proto_library(
+    name = "array_util_proto",
+    srcs = ["array_util.proto"],
+)
+
 cc_library(
     name = "array_util",
     srcs = ["array_util.cc"],
     hdrs = ["array_util.h"],
     deps = [
+        ":array_util_proto_cc",
         "//xla/python/ifrt",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
     ],
@@ -150,6 +156,7 @@ ifrt_proxy_cc_test(
     deps = [
         ":array_util",
         "//xla/python/ifrt",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
@@ -163,6 +170,7 @@ cc_library(
     deps = [
         "//xla/python/ifrt:plugin_program_serdes",
         "//xla/python/ifrt/hlo:hlo_program_serdes",
+        "//xla/python/ifrt/ir:ifrt_ir_program_serdes",
     ],
     alwayslink = True,
 )
@@ -180,11 +188,54 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "test_utils",
+    srcs = ["test_utils.cc"],
+    hdrs = ["test_utils.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/debugging:leak_check",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+cc_library(
+    name = "prof_util",
+    hdrs = ["prof_util.h"],
+    deps = [
+        ":ifrt_service_proto_cc",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:random",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+cc_library(
+    name = "versions",
+    hdrs = ["versions.h"],
+)
+
 # copybara:uncomment_begin
 # bzl_library(
 #     name = "ifrt_proxy_bzl",
 #     srcs = ["ifrt_proxy.bzl"],
 #     parse_tests = False,
 #     visibility = ["//visibility:private"],
+# )
+#
+# bzl_library(
+#     name = "ifrt_proxy_google_bzl",
+#     srcs = ["ifrt_proxy.google.bzl"],
+#     parse_tests = False,
+#     visibility = ["//visibility:private"],
+#     deps = [
+#         "//devtools/build_cleaner/skylark:build_defs_lib",
+#         "//xla:xla_bzl",
+#     ],
 # )
 # copybara:uncomment_end

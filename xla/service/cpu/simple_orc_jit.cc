@@ -18,31 +18,48 @@ limitations under the License.
 #include <stdint.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <list>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>  // NOLINT
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/Orc/AbsoluteSymbols.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h"
+#include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
+#include "llvm/ExecutionEngine/RuntimeDyld.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/IR/FMF.h"
 #include "llvm/IR/Mangler.h"
-#include "llvm/IR/Operator.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CodeGen.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
+#include "xla/service/cpu/compiler_functor.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/cpu/orc_jit_memory_mapper.h"
 #include "xla/service/cpu/runtime_conv2d.h"
@@ -65,8 +82,9 @@ limitations under the License.
 #include "xla/service/cpu/runtime_topk.h"
 #include "xla/service/cpu/windows_compatibility.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/types.h"
+#include "xla/service/llvm_compiler.h"
 #include "xla/util.h"
+#include "tsl/platform/cpu_info.h"
 #include "tsl/platform/logging.h"
 
 #if defined(INTEL_MKL) && defined(ENABLE_ONEDNN_V3)
@@ -82,17 +100,7 @@ extern "C" uint16_t __truncsfbf2(float);
 // Converts an F64 value to a BF16.
 extern "C" uint16_t __truncdfbf2(double);
 
-namespace xla {
-namespace cpu {
-
-std::vector<std::string> DetectMachineAttributes() {
-  std::vector<std::string> result;
-  for (const auto& [feature, enabled] : llvm::sys::getHostCPUFeatures()) {
-    result.push_back((enabled ? '+' : '-') + std::string(feature));
-  }
-  return result;
-}
-
+namespace xla::cpu {
 namespace {
 
 class DefaultMemoryMapper final
@@ -289,24 +297,167 @@ bool ContiguousSectionMemoryManager::finalizeMemory(std::string* err_msg) {
   return false;
 }
 
+using tsl::port::CPUFeature;
+
+// Returns the earliest CPU generation that supports the instruction set.
+llvm::StringRef CPUTargetFromMaxFeature(CPUFeature max_feature) {
+  switch (max_feature) {
+    case CPUFeature::SSE4_2:
+      return "nehalem";
+    case CPUFeature::AVX:
+      return "sandybridge";
+    case CPUFeature::AVX2:
+      return "haswell";
+    case CPUFeature::AVX512F:
+      return "skylake-avx512";
+    case CPUFeature::AVX512_VNNI:
+      return "cascadelake";
+    case CPUFeature::AVX512_BF16:
+      return "cooperlake";
+    case CPUFeature::AMX_BF16:
+    case CPUFeature::AMX_INT8:
+      return "sapphirerapids";
+    case CPUFeature::AMX_FP16:
+      return "graniterapids";
+    default:
+      LOG(FATAL) << "Unsupported max feature: " << max_feature;
+  }
+}
+
 }  // namespace
+
+std::optional<CPUFeature> ISAStringToFeature(
+    const absl::string_view feature_string) {
+  if (feature_string.empty()) return std::nullopt;
+
+  // Non-exhaustive list of CPU features. (Only the ones we care about.)
+  // TODO(penporn): Handle ARM
+  static auto* x86 = [] {
+    return new absl::flat_hash_map<std::string, CPUFeature>(
+        {{"SSE4_2", CPUFeature::SSE4_2},
+         {"AVX", CPUFeature::AVX},
+         {"AVX2", CPUFeature::AVX2},
+         {"AVX512", CPUFeature::AVX512F},
+         {"AVX512_VNNI", CPUFeature::AVX512_VNNI},
+         {"AVX512_BF16", CPUFeature::AVX512_BF16},
+         {"AMX", CPUFeature::AMX_BF16},  // Includes AMX_INT8.
+         {"AMX_FP16", CPUFeature::AMX_FP16}});
+  }();
+
+  // Assume that `feature_string` always contains all uppercase letters.
+  if (auto it = x86->find(feature_string); it != x86->end()) return it->second;
+  LOG(WARNING) << "Unknown CPU ISA: " << feature_string;
+  return std::nullopt;
+}
+
+// Disable any feature that is newer than `max_feature`.
+bool ShouldEnableCPUFeature(const llvm::StringRef feature,
+                            const CPUFeature& max_feature) {
+  // x86 CPUs have backward compatibility so newer CPUs have all features of
+  // older CPUs. We go through switch cases from oldest features to newest.
+  //   - Each case looks for features that are introduced in the next
+  //     generation, i.e., features that should be disabled if `max_feature` is
+  //     older or equal to the case's ISA.
+  //   - We combine all features that needs to be disabled from all ISAs newer
+  //     than `max_feature` by falling through cases.
+  //
+  // For example, if `max_feature` is AVX2, we start by disabling
+  // AVX512-generation features in the AVX2 case, then fall through to the
+  // AVX512 case to disable next-gen features (AVX512_VNNI), etc, all the way
+  // down to the newest one.
+  //
+  // TODO(https://github.com/openxla/xla/issues/17758): Figure out if we need to
+  // support AVX10 and where to put it.
+  switch (max_feature) {
+    case CPUFeature::SSE4_2:
+      if (feature.starts_with("avx") || feature == "f16c" ||
+          feature == "vpclmulqdq" || feature == "vaes") {
+        return false;
+      }
+      [[fallthrough]];
+    case CPUFeature::AVX:
+      if (feature.starts_with("avx2") || feature.starts_with("fma")) {
+        return false;
+      }
+      [[fallthrough]];
+    case CPUFeature::AVX2:
+      if (feature.starts_with("avx512") || feature == "evex512") return false;
+      [[fallthrough]];
+    case CPUFeature::AVX512F:
+      if (feature == "avx512vnni") return false;
+      [[fallthrough]];
+    case CPUFeature::AVX512_VNNI:
+      if (feature == "avx512bf16") return false;
+      [[fallthrough]];
+    case CPUFeature::AVX512_BF16:
+      if (feature.starts_with("amx")) return false;
+      [[fallthrough]];
+    case CPUFeature::AMX_INT8:
+    case CPUFeature::AMX_BF16:
+      if (feature == "amx-fp16") return false;
+      [[fallthrough]];
+    default:
+      // Leave all other features enabled.
+      return true;
+  }
+}
+
+DetectedMachineAttributes DetectMachineAttributes(
+    std::optional<CPUFeature> max_feature) {
+  DetectedMachineAttributes result;
+  result.features_filtered = false;
+  // We only have x86 constraints. Skip the check if we are on non-x86 CPUs.
+  bool no_feature_constraint =
+      !max_feature.has_value() || !tsl::port::IsX86CPU();
+  for (const auto& [feature, enabled] : llvm::sys::getHostCPUFeatures()) {
+    bool should_enable =
+        enabled && (no_feature_constraint ||
+                    ShouldEnableCPUFeature(feature, *max_feature));
+    result.features.push_back(
+        absl::StrCat(should_enable ? "+" : "-", std::string(feature)));
+    result.features_filtered |= (should_enable != enabled);
+  }
+  std::sort(result.features.begin(), result.features.end());
+  return result;
+}
+
+std::vector<std::string> DetectMachineAttributes() {
+  return DetectMachineAttributes(std::nullopt).features;
+}
 
 /*static*/ std::unique_ptr<llvm::TargetMachine>
 SimpleOrcJIT::InferTargetMachineForJIT(
-    const llvm::TargetOptions& target_options,
-    llvm::CodeGenOptLevel opt_level) {
-  std::vector<std::string> attrs = DetectMachineAttributes();
-  llvm::SmallVector<std::string, 0> llvm_attrs(attrs.begin(), attrs.end());
+    const llvm::TargetOptions& target_options, llvm::CodeGenOptLevel opt_level,
+    absl::string_view max_cpu_isa) {
+  std::optional<CPUFeature> max_feature = ISAStringToFeature(max_cpu_isa);
+  auto result = DetectMachineAttributes(max_feature);
+  llvm::SmallVector<std::string, 0> llvm_attrs(result.features.begin(),
+                                               result.features.end());
+  // If `max_feature` is newer than the host CPU, we should keep the host CPU
+  // name, e.g., we don't want to set the target CPU to Skylake when we are on
+  // a Broadwell host.
+  llvm::StringRef target_cpu = result.features_filtered
+                                   ? CPUTargetFromMaxFeature(*max_feature)
+                                   : llvm::sys::getHostCPUName();
   std::unique_ptr<llvm::TargetMachine> target_machine(
       llvm::EngineBuilder()
           .setTargetOptions(target_options)
           .setOptLevel(opt_level)
           .selectTarget(
               /*TargetTriple=*/llvm::Triple(), /*MArch=*/"",
-              /*MCPU=*/llvm::sys::getHostCPUName(),
+              /*MCPU=*/target_cpu,
               /*MAttrs=*/llvm_attrs));
   CHECK(target_machine != nullptr);
   return target_machine;
+}
+
+static CompilerFunctor::TargetMachineBuilder CreateTargetMachineBuilder(
+    llvm::TargetOptions target_options, llvm::CodeGenOptLevel opt_level,
+    absl::string_view max_cpu_isa) {
+  return [target_options, opt_level, max_cpu_isa]() {
+    return SimpleOrcJIT::InferTargetMachineForJIT(target_options, opt_level,
+                                                  max_cpu_isa);
+  };
 }
 
 SimpleOrcJIT::SimpleOrcJIT(
@@ -317,8 +468,11 @@ SimpleOrcJIT::SimpleOrcJIT(
     bool disable_slp_vectorizer, llvm::FastMathFlags fast_math_flags,
     LLVMCompiler::ModuleHook pre_optimization_hook,
     LLVMCompiler::ModuleHook post_optimization_hook,
-    absl::AnyInvocable<void(const llvm::object::ObjectFile&)> post_codegen_hook)
-    : target_machine_(InferTargetMachineForJIT(target_options, opt_level)),
+    absl::AnyInvocable<void(const llvm::object::ObjectFile&)> post_codegen_hook,
+    size_t num_jit_dylibs, absl::string_view max_cpu_isa)
+    : target_machine_builder_(
+          CreateTargetMachineBuilder(target_options, opt_level, max_cpu_isa)),
+      target_machine_(target_machine_builder_()),
       target_triple_(target_machine_->getTargetTriple()),
       data_layout_(target_machine_->createDataLayout()),
       target_process_control_(std::move(target_process_control)),
@@ -331,12 +485,11 @@ SimpleOrcJIT::SimpleOrcJIT(
       compile_layer_(
           *execution_session_, object_layer_,
           std::make_unique<CompilerFunctor>(
-              target_machine_.get(), static_cast<int>(opt_level),
+              target_machine_builder_, static_cast<int>(opt_level),
               optimize_for_size, disable_expensive_passes,
               disable_slp_vectorizer, fast_math_flags,
               std::move(pre_optimization_hook),
               std::move(post_optimization_hook), std::move(post_codegen_hook))),
-      main_jit_dylib_(&execution_session_->createBareJITDylib("<main>")),
       gdb_jit_event_listener_(
           llvm::JITEventListener::createGDBRegistrationListener()),
       perf_jit_event_listener_(
@@ -368,8 +521,17 @@ SimpleOrcJIT::SimpleOrcJIT(
       return llvm::Error::success();
     }
   };
-  main_jit_dylib_->addGenerator(
-      std::make_unique<RuntimeSymbolGenerator>(*this));
+
+  // Always create at least one dylib.
+  num_jit_dylibs = std::max(size_t{1}, num_jit_dylibs);
+  jit_dylibs_.resize(num_jit_dylibs);
+  for (size_t i = 0; i < num_jit_dylibs; ++i) {
+    jit_dylibs_[i] = &execution_session_->createBareJITDylib(
+        absl::StrCat("<xla_jit_dylib_", i, ">"));
+    jit_dylibs_[i]->addGenerator(
+        std::make_unique<RuntimeSymbolGenerator>(*this));
+  }
+
   object_layer_.registerJITEventListener(*this);
   if (perf_jit_event_listener_) {
     object_layer_.registerJITEventListener(*perf_jit_event_listener_);
@@ -394,8 +556,8 @@ llvm::Expected<std::unique_ptr<SimpleOrcJIT>> SimpleOrcJIT::Create(
     bool disable_slp_vectorizer, llvm::FastMathFlags fast_math_flags,
     LLVMCompiler::ModuleHook pre_optimization_hook,
     LLVMCompiler::ModuleHook post_optimization_hook,
-    absl::AnyInvocable<void(const llvm::object::ObjectFile&)>
-        post_codegen_hook) {
+    absl::AnyInvocable<void(const llvm::object::ObjectFile&)> post_codegen_hook,
+    size_t num_jit_dylibs, absl::string_view max_cpu_isa) {
   auto SSP = std::make_shared<llvm::orc::SymbolStringPool>();
   auto target_process_control =
       llvm::orc::SelfExecutorProcessControl::Create(std::move(SSP));
@@ -409,7 +571,8 @@ llvm::Expected<std::unique_ptr<SimpleOrcJIT>> SimpleOrcJIT::Create(
       std::move(*target_process_control), std::move(execution_session),
       target_options, opt_level, optimize_for_size, disable_expensive_passes,
       disable_slp_vectorizer, fast_math_flags, std::move(pre_optimization_hook),
-      std::move(post_optimization_hook), std::move(post_codegen_hook));
+      std::move(post_optimization_hook), std::move(post_codegen_hook),
+      num_jit_dylibs, std::move(max_cpu_isa));
 }
 
 llvm::orc::ExecutorSymbolDef SimpleOrcJIT::ResolveRuntimeSymbol(
@@ -427,11 +590,15 @@ llvm::orc::ExecutorSymbolDef SimpleOrcJIT::ResolveRuntimeSymbol(
   }
 
   if (func_addr == nullptr) {
-    LOG(ERROR)
-        << "Unable to resolve runtime symbol: `" << name.str()
-        << "'. Hint: if the symbol a custom call target, make sure you've "
-           "registered it with the JIT using "
-           "XLA_CPU_REGISTER_CUSTOM_CALL_TARGET.";
+    // If symbol corresponds to a kernel function, then it must be defined in
+    // another LLVM module part (another dylib).
+    if (!kernel_symbols_.contains(name)) {
+      LOG(ERROR)
+          << "Unable to resolve runtime symbol: `" << name.str()
+          << "'. Hint: if the symbol a custom call target, make sure you've "
+             "registered it with the JIT using "
+             "XLA_CPU_REGISTER_CUSTOM_CALL_TARGET.";
+    }
     return {};
   }
   return {llvm::orc::ExecutorAddr(reinterpret_cast<uint64_t>(func_addr)),
@@ -451,12 +618,13 @@ void SimpleOrcJIT::notifyFreeingObject(llvm::JITEventListener::ObjectKey key) {
 }
 
 llvm::Error SimpleOrcJIT::AddObjFile(
-    std::unique_ptr<llvm::MemoryBuffer> obj_file) {
-  return object_layer_.add(*main_jit_dylib_, std::move(obj_file));
+    std::unique_ptr<llvm::MemoryBuffer> obj_file, size_t dylib_index) {
+  return object_layer_.add(*jit_dylibs_[dylib_index], std::move(obj_file));
 }
 
-llvm::Error SimpleOrcJIT::AddModule(llvm::orc::ThreadSafeModule module) {
-  return compile_layer_.add(*main_jit_dylib_, std::move(module));
+llvm::Error SimpleOrcJIT::AddModule(llvm::orc::ThreadSafeModule module,
+                                    size_t dylib_index) {
+  return compile_layer_.add(*jit_dylibs_[dylib_index], std::move(module));
 }
 
 void SimpleOrcJIT::DoneCompiling() {
@@ -467,7 +635,7 @@ void SimpleOrcJIT::DoneCompiling() {
 
 llvm::Expected<llvm::orc::ExecutorSymbolDef> SimpleOrcJIT::FindCompiledSymbol(
     const std::string& name) {
-  return execution_session_->lookup({main_jit_dylib_}, name);
+  return execution_session_->lookup(jit_dylibs_, name);
 }
 
 #if defined(PLATFORM_WINDOWS)
@@ -524,6 +692,8 @@ bool RegisterKnownJITSymbols() {
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConv3DF32);
   REGISTER_CPU_RUNTIME_SYMBOL(DuccSingleThreadedFft);
+  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF8E4M3FN);
+  REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF8E5M2);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF16);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF64);
@@ -679,7 +849,6 @@ bool RegisterKnownJITSymbols() {
 }
 
 bool unused = RegisterKnownJITSymbols();
-}  // namespace
 
-}  // namespace cpu
-}  // namespace xla
+}  // namespace
+}  // namespace xla::cpu

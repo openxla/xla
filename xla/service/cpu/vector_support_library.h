@@ -16,11 +16,20 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_VECTOR_SUPPORT_LIBRARY_H_
 #define XLA_SERVICE_CPU_VECTOR_SUPPORT_LIBRARY_H_
 
+#include <cstdint>
+#include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "absl/types/span.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/TypeSize.h"
 #include "xla/primitive_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -33,8 +42,9 @@ namespace cpu {
 
 inline llvm::APFloat GetIeeeF32(float f) { return llvm::APFloat(f); }
 inline llvm::APFloat GetIeeeF32FromBitwiseRep(int32_t bitwise_value) {
-  return llvm::APFloat(llvm::APFloat::IEEEsingle(),
-                       llvm::APInt(/*numBits=*/32, /*val=*/bitwise_value));
+  return llvm::APFloat(
+      llvm::APFloat::IEEEsingle(),
+      llvm::APInt(/*numBits=*/32, /*val=*/bitwise_value, /*isSigned=*/true));
 }
 
 // A thin wrapper around llvm_util.h to make code generating vector math flow
@@ -46,7 +56,7 @@ class VectorSupportLibrary {
   // instance (i.e. LoadVector will load a vector of type <`vector_size` x
   // `primitive_type`>).
   VectorSupportLibrary(PrimitiveType primitive_type, int64_t vector_size,
-                       llvm::IRBuilder<>* b, std::string name);
+                       llvm::IRBuilderBase* b, std::string name);
 
   llvm::Value* Mul(llvm::Value* lhs, llvm::Value* rhs);
   llvm::Value* Mul(int64_t lhs, llvm::Value* rhs) {
@@ -227,7 +237,7 @@ class VectorSupportLibrary {
   llvm::Value* GetZeroVector();
   llvm::Value* GetZeroScalar();
 
-  llvm::IRBuilder<>* b() const { return b_; }
+  llvm::IRBuilderBase* b() const { return b_; }
   int64_t vector_size() const { return vector_size_; }
   llvm::Type* vector_type() const { return vector_type_; }
   llvm::Type* vector_pointer_type() const { return vector_pointer_type_; }
@@ -285,7 +295,7 @@ class VectorSupportLibrary {
 
   int64_t vector_size_;
   PrimitiveType primitive_type_;
-  llvm::IRBuilder<>* b_;
+  llvm::IRBuilderBase* b_;
   llvm::Type* vector_type_;
   llvm::Type* vector_pointer_type_;
   llvm::Type* scalar_type_;
@@ -297,14 +307,14 @@ class VectorSupportLibrary {
 // can later convert to a SSA value.
 class LlvmVariable {
  public:
-  LlvmVariable(llvm::Type*, llvm::IRBuilder<>* b);
+  LlvmVariable(llvm::Type*, llvm::IRBuilderBase* b);
 
   llvm::Value* Get() const;
   void Set(llvm::Value* new_value);
 
  private:
   llvm::AllocaInst* alloca_;
-  llvm::IRBuilder<>* b_;
+  llvm::IRBuilderBase* b_;
 };
 
 class VectorVariable : public LlvmVariable {

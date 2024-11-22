@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_client.h"
 
-#include "xla/service/hlo.pb.h"
-#include "xla/xla_data.pb.h"
-
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -28,6 +25,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -35,21 +33,23 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
-#include "xla/client/xla_computation.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
+#include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
-#include "xla/service/hlo_parser.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tests/test_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/types.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/file_system.h"
@@ -154,7 +154,8 @@ TEST(TfrtCpuClientTest, HloSnapshot) {
 
   CpuClientOptions cpu_options;
   cpu_options.cpu_device_count = 1;
-  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(cpu_options));
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetTfrtCpuClient(std::move(cpu_options)));
   TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
                           ParseAndReturnUnverifiedModule(kProgram, {}));
 
@@ -245,6 +246,34 @@ TEST(TfrtCpuClientTest, AsyncTransferLiteral) {
   TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteralSync());
   EXPECT_THAT(received_literal->data<float>(),
               ElementsAreArray(literal.data<float>()));
+}
+
+TEST(TfrtCpuClientTest, AsyncTransferLiteralInt4) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(S4, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
+                          client->CreateBuffersForAsyncHostToDevice(
+                              {shape}, client->addressable_devices()[0]));
+  auto buffer = transfer_manager->RetrieveBuffer(0);
+  auto ready_future = buffer->GetReadyFuture();
+  EXPECT_THAT(ready_future.IsReady(), IsFalse());
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
+  TF_ASSERT_OK(transfer_manager->TransferLiteralToBuffer(0, literal, []() {}));
+  TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteralSync());
+  EXPECT_THAT(received_literal->data<s4>(),
+              ElementsAreArray(literal.data<s4>()));
+}
+
+TEST(TfrtCpuClientTest, BufferFromLiteralInt4) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));
+  xla::Shape shape = xla::ShapeUtil::MakeShape(S4, {128, 256});
+  TF_ASSERT_OK_AND_ASSIGN(auto literal, xla::MakeFakeLiteral(shape));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostLiteral(literal, client->addressable_devices()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(auto received_literal, buffer->ToLiteralSync());
+  EXPECT_THAT(received_literal->data<s4>(),
+              ElementsAreArray(literal.data<s4>()));
 }
 
 TEST(TfrtCpuClientTest, AsyncTransferCallsOnDone) {

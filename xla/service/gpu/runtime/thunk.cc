@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/service/global_device_id.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -43,7 +44,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/translate/mhlo_to_hlo/location_exporter.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -235,7 +235,7 @@ Thunk::ExecuteParams::ExecuteParams(
   case Thunk::x: \
     return #x
   switch (kind) {
-    CASE(kAddressComputation);
+    CASE(kDynamicSlice);
     CASE(kCholesky);
     CASE(kCommandBuffer);
     CASE(kConditional);
@@ -259,6 +259,8 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kNcclCollectivePermute);
     CASE(kNcclCollectivePermuteStart);
     CASE(kNcclCollectivePermuteDone);
+    CASE(kNcclGroupStart);
+    CASE(kNcclGroupDone);
     CASE(kNcclReduceScatter);
     CASE(kNcclReduceScatterStart);
     CASE(kNcclReduceScatterDone);
@@ -286,8 +288,6 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kSequential);
     CASE(kTriangularSolve);
     CASE(kWhile);
-    CASE(kFusedMHA);
-    CASE(kFusedMHABackward);
     CASE(kWaitForStreams);
     CASE(kCuDnn);
   }
@@ -353,6 +353,8 @@ bool Thunk::IsCollective() const {
     case kNcclSendDone:
     case kNcclRecv:
     case kNcclRecvDone:
+    case kNcclGroupStart:
+    case kNcclGroupDone:
       return true;
     default:
       return false;

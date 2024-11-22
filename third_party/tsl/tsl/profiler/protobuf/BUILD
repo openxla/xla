@@ -8,14 +8,17 @@ load("//tsl/platform:build_config.bzl", "tf_proto_library")
 package_group(
     name = "friends",
     includes = [
-        "//tsl/profiler:friends",
+        "@xla//xla/tsl/profiler:friends",
     ],
 )
 
 tf_proto_library(
     name = "xplane_proto",
     srcs = ["xplane.proto"],
-    cc_api_version = 2,
+    local_defines = [
+        "PROTOBUF_USE_DLLS",
+        "LIBPROTOBUF_EXPORTS",
+    ],
     make_default_target_header_only = True,
     visibility = internal_visibility([":friends"]),
 )
@@ -23,7 +26,6 @@ tf_proto_library(
 tf_proto_library(
     name = "profiler_options_proto",
     srcs = ["profiler_options.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     visibility = ["//visibility:public"],
 )
@@ -31,7 +33,6 @@ tf_proto_library(
 tf_proto_library(
     name = "profiler_service_monitor_result_proto",
     srcs = ["profiler_service_monitor_result.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     visibility = ["//visibility:public"],
 )
@@ -40,7 +41,6 @@ tf_proto_library(
     name = "profiler_service_proto",
     srcs = ["profiler_service.proto"],
     has_services = 1,
-    cc_api_version = 2,
     create_grpc_library = True,
     create_java_proto = False,
     create_kotlin_proto = False,
@@ -57,7 +57,6 @@ tf_proto_library(
     name = "profiler_analysis_proto",
     srcs = ["profiler_analysis.proto"],
     has_services = 1,
-    cc_api_version = 2,
     create_grpc_library = True,
     create_java_proto = False,
     create_kotlin_proto = False,
@@ -70,14 +69,12 @@ tf_proto_library(
 tf_proto_library(
     name = "trace_events_proto",
     srcs = ["trace_events.proto"],
-    cc_api_version = 2,
     visibility = internal_visibility([":friends"]),
 )
 
 # copybara:uncomment_begin(google-only)
 # py_proto_library(
 #     name = "trace_events_py_pb2",
-#     api_version = 2,
 #     visibility = ["//visibility:public"],
 #     deps = [":trace_events_proto"],
 # )
@@ -95,10 +92,9 @@ exports_files(
 tf_proto_library(
     name = "profile_proto",
     srcs = ["profile.proto"],
-    cc_api_version = 2,
     visibility = internal_visibility([
         "@xla//xla/python:__pkg__",
-        "//tsl/profiler:internal",
+        "@xla//xla/tsl/profiler:internal",
     ]),
 )
 
@@ -118,7 +114,6 @@ tf_proto_library(
 # copybara:uncomment_begin(google-only)
 # py_proto_library(
 #     name = "xplane_py_pb2",
-#     api_version = 2,
 #     visibility = internal_visibility([":friends"]),
 #     deps = [":xplane_proto"],
 # )
@@ -127,7 +122,6 @@ tf_proto_library(
 tf_proto_library(
     name = "profiled_instructions_proto",
     srcs = ["profiled_instructions.proto"],
-    cc_api_version = 2,
     make_default_target_header_only = True,
     visibility = internal_visibility([":friends"]),
 )

@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
@@ -117,146 +118,6 @@ XLA_TEST_F(CollectivePipelineParallelismTest,
   LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {1, 1}}, results[3]);
 }
 
-// Naive implementation of pipeline parallelism:
-//   - 4 devices
-//   - 4 microbatches
-//   - no circular repeat
-//   - no disabled collectives
-//   - no collective pipelining
-//
-// Every stage of the pipeline is a single linear layer.
-XLA_TEST_F(CollectivePipelineParallelismTest, NaiveDFSMicrobatch4Replica4) {
-  const absl::string_view kModuleStr = R"(
-  HloModule test
-
-  get_circ_buffer_index {
-    offset = u32[] parameter(0)
-    index = u32[] parameter(1)
-    size = u32[] parameter(2)
-    t0 = u32[] add(offset, index)
-    t1 = u32[] divide(t0, size)
-    t2 = u32[] multiply(t1, size)
-    ROOT t4 = u32[] subtract(t0, t2)
-  }
-
-  is_input_replica {
-    replica_id = u32[] replica-id()
-    c0 = u32[] constant(0)
-    ROOT predicate = pred[] compare(replica_id, c0), direction=EQ
-  }
-
-  is_output_replica {
-    replica_id = u32[] replica-id()
-    c1 = u32[] constant(1)
-    ROOT predicate = pred[] compare(replica_id, c1), direction=EQ
-  }
-
-  while_condition {
-    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) parameter(0)
-    i = u32[] get-tuple-element(tuple), index=4
-    n = u32[] constant(7)
-    ROOT predicate = pred[] compare(i, n), direction=LT
-  }
-
-  while_body {
-    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) parameter(0)
-    weights = f32[16,16] get-tuple-element(tuple), index=0
-    input = f32[4,16] get-tuple-element(tuple), index=1
-    output = f32[4,16] get-tuple-element(tuple), index=2
-    tmp = f32[16] get-tuple-element(tuple), index=3
-    i = u32[] get-tuple-element(tuple), index=4
-
-    c1 = u32[] constant(1)
-    c0 = u32[] constant(0)
-    c4 = u32[] constant(4)
-
-    input_idx = u32[] call(c0, i, c4), to_apply=get_circ_buffer_index
-    input_slice = f32[1,16] dynamic-slice(input, input_idx, c0),
-        dynamic_slice_sizes={1,16}
-    input_slice_ = f32[16] reshape(input_slice)
-
-    prev_stage_slice = f32[16] collective-permute(tmp),
-        source_target_pairs={{0,1}, {1,2}, {2,3}, {3,0}}
-
-    read_input = pred[] call(), to_apply=is_input_replica
-    compute_in = f32[16] select(read_input, input_slice_, prev_stage_slice)
-
-    compute_out = f32[16] dot(weights, compute_in), lhs_contracting_dims={1},
-        rhs_contracting_dims={0}
-
-    output_index = u32[] call(c1, i, c4), to_apply=get_circ_buffer_index
-    output_slice = f32[1,16] reshape(compute_out)
-    output_ = f32[4,16] dynamic-update-slice(output, output_slice, output_index,
-        c0)
-
-    i_ = add(i, c1)
-
-    ROOT tuple1 = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) tuple(
-        weights, input, output_, compute_out, i_)
-  }
-
-  ENTRY main {
-    weights = f32[16,16] parameter(0)
-    input = f32[4,16] parameter(1)
-
-    cf0 = f32[] constant(0)
-    output = f32[4,16] broadcast(cf0), dimensions={}
-    tmp = f32[16] broadcast(cf0), dimensions={}
-    c0 = u32[] constant(0)
-
-    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) tuple(weights,
-        input, output, tmp, c0)
-    tuple_ = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) while(tuple),
-        condition=while_condition, body=while_body
-
-    ROOT output_ = f32[4,16] get-tuple-element(tuple_), index=2
-  }
-  )";
-
-  const int64_t kNumReplicas = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
-
-  HloModuleConfig config =
-      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr, config));
-
-  // This pipeline consists of 4 layers, each of which is a single linear layer.
-  // We assign the weights to the replicas such that the layers scale the input
-  // data by 1.0, 2.0, 3.0 and 4.0. The combined effect is to scale the input
-  // data by 24.0.
-  const int64_t kInputSize = 16;
-  Literal weights_r0 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 1.0);
-  Literal weights_r1 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 2.0);
-  Literal weights_r2 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 3.0);
-  Literal weights_r3 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 4.0);
-
-  // Only the first replica holds the input to the pipeline in this naive
-  // implementation. The remaining replicas get zero/dummy input.
-  const int64_t kMicrobatches = 4;
-  Literal real_input =
-      LiteralUtil::CreateFingerprintMatixR2<float>(kMicrobatches, kInputSize);
-  Literal fake_input =
-      LiteralUtil::CreateFull<float>({kMicrobatches, kInputSize}, 0.0);
-
-  std::vector<std::vector<Literal *>> args = {{&weights_r0, &real_input},
-                                              {&weights_r1, &fake_input},
-                                              {&weights_r2, &fake_input},
-                                              {&weights_r3, &fake_input}};
-  TF_ASSERT_OK_AND_ASSIGN(
-      std::vector<Literal> results,
-      ExecuteReplicated(std::move(module), args, kNumReplicas,
-                        /*run_hlo_passes=*/true));
-
-  // Check pipeline output for last replica.
-  // The combined effect of the pipeline is to scale the input data by 24.0.
-  const float kExpectedFactor = 1.0 * 2.0 * 3.0 * 4.0;
-  Literal expected_output = LiteralUtil::CreateFingerprintMatixR2<float>(
-      kMicrobatches, kInputSize, kExpectedFactor);
-  EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
-                                           ErrorSpec{1e-5, 1e-5}));
-}
-
 std::string GetModuleStrWithCommonComputations(
     const std::string name, const std::string more_computations) {
   static constexpr char kCommonComputationsStr[] = R"(
@@ -346,13 +207,130 @@ std::string GetModuleStrWithCommonComputations(
 
 // Naive implementation of pipeline parallelism:
 //   - 4 devices
+//   - 4 microbatches
+//   - no circular repeat
+//   - no disabled collectives
+//   - no collective pipelining
+//
+// Every stage of the pipeline is a single linear layer.
+XLA_TEST_F(CollectivePipelineParallelismTest, NaiveBFSMicrobatch4Replica4) {
+  constexpr char kMoreComputationsStr[] = R"(
+  while_condition {
+    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) parameter(0)
+    i = u32[] get-tuple-element(tuple), index=4
+    n = u32[] constant(7)
+    ROOT predicate = pred[] compare(i, n), direction=LT
+  }
+
+  while_body {
+    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) parameter(0)
+    weights = f32[16,16] get-tuple-element(tuple), index=0
+    input = f32[4,16] get-tuple-element(tuple), index=1
+    output = f32[4,16] get-tuple-element(tuple), index=2
+    prev_iteration_compute_res = f32[16] get-tuple-element(tuple), index=3
+    i = u32[] get-tuple-element(tuple), index=4
+
+    c0 = u32[] constant(0)
+    c1 = u32[] constant(1)
+    c4 = u32[] constant(4)
+
+    // Read from buffers.
+    input_slice = f32[16] call(input, c0, i), to_apply=read_buffer_mb4
+
+    // Shift data to the next stage in the pipeline.
+    prev_stage_slice = f32[16] collective-permute(prev_iteration_compute_res),
+        source_target_pairs={{0,1}, {1,2}, {2,3}, {3,0}}
+
+    // Select compute argument from previous stage or from input and perform
+    // compute.
+    read_input = pred[] call(), to_apply=is_input_replica
+    compute_arg = f32[16] select(read_input, input_slice, prev_stage_slice)
+    compute_res = f32[16] dot(weights, compute_arg), lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+
+    // Update buffers.
+    output_ = call(output, compute_res, c1, i), to_apply=update_buffer_mb4
+
+    i_ = add(i, c1)
+
+    ROOT tuple1 = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) tuple(
+        weights, input, output_, compute_res, i_)
+  }
+
+  ENTRY main {
+    weights = f32[16,16] parameter(0)
+    input = f32[4,16] parameter(1)
+
+    cf0 = f32[] constant(0)
+    output = f32[4,16] broadcast(cf0), dimensions={}
+    prev_iteration_compute_res = f32[16] broadcast(cf0), dimensions={}
+    c0 = u32[] constant(0)
+
+    tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) tuple(weights,
+        input, output, prev_iteration_compute_res, c0)
+    tuple_ = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) while(tuple),
+        condition=while_condition, body=while_body
+
+    ROOT output_ = f32[4,16] get-tuple-element(tuple_), index=2
+  }
+  )";
+
+  const int64_t kNumReplicas = 4;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(GetModuleStrWithCommonComputations(
+                                       /*name=*/"test", kMoreComputationsStr),
+                                   config));
+
+  // This pipeline consists of 4 layers, each of which is a single linear layer.
+  // We assign the weights to the replicas such that the layers scale the input
+  // data by 1.0, 2.0, 3.0 and 4.0. The combined effect is to scale the input
+  // data by 24.0.
+  const int64_t kInputSize = 16;
+  Literal weights_r0 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 1.0);
+  Literal weights_r1 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 2.0);
+  Literal weights_r2 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 3.0);
+  Literal weights_r3 = LiteralUtil::MakeScalarMatrixR2<float>(kInputSize, 4.0);
+
+  // Only the first replica holds the input to the pipeline in this naive
+  // implementation. The remaining replicas get zero/dummy input.
+  const int64_t kMicrobatches = 4;
+  Literal real_input =
+      LiteralUtil::CreateFingerprintMatixR2<float>(kMicrobatches, kInputSize);
+  Literal fake_input =
+      LiteralUtil::CreateFull<float>({kMicrobatches, kInputSize}, 0.0);
+
+  std::vector<std::vector<Literal *>> args = {{&weights_r0, &real_input},
+                                              {&weights_r1, &fake_input},
+                                              {&weights_r2, &fake_input},
+                                              {&weights_r3, &fake_input}};
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), args, kNumReplicas,
+                        /*run_hlo_passes=*/true));
+
+  // Check pipeline output for last replica.
+  // The combined effect of the pipeline is to scale the input data by 24.0.
+  const float kExpectedFactor = 1.0 * 2.0 * 3.0 * 4.0;
+  Literal expected_output = LiteralUtil::CreateFingerprintMatixR2<float>(
+      kMicrobatches, kInputSize, kExpectedFactor);
+  EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
+                                           ErrorSpec{1e-5, 1e-5}));
+}
+
+// Naive implementation of pipeline parallelism:
+//   - 4 devices
 //   - 5 microbatches
 //   - no circular repeat
 //   - no disabled collectives
 //   - no collective pipelining
 //
 // Every stage of the pipeline is a single linear layer.
-XLA_TEST_F(CollectivePipelineParallelismTest, NaiveDFSMicrobatch5Replica4) {
+XLA_TEST_F(CollectivePipelineParallelismTest, NaiveBFSMicrobatch5Replica4) {
   constexpr char kMoreComputationsStr[] = R"(
   while_condition {
     tuple = (f32[16,16], f32[5,16], f32[5,16], f32[16], u32[]) parameter(0)
@@ -470,7 +448,7 @@ XLA_TEST_F(CollectivePipelineParallelismTest, NaiveDFSMicrobatch5Replica4) {
 //
 // Every stage of the pipeline is a single linear layer.
 XLA_TEST_F(CollectivePipelineParallelismTest,
-           NaiveDFSMicrobatch4CircularRepeat2Replica4) {
+           NaiveBFSMicrobatch4CircularRepeat2Replica4) {
   constexpr char kMoreComputationsStr[] = R"(
   while_condition {
     tuple = (f32[16,16], f32[4,16], f32[4,16], f32[16], u32[]) parameter(0)
@@ -590,7 +568,7 @@ XLA_TEST_F(CollectivePipelineParallelismTest,
 //
 // Every stage of the pipeline is a single linear layer.
 XLA_TEST_F(CollectivePipelineParallelismTest,
-           NaiveDFSMicrobatch5CircularRepeat2Replica4) {
+           NaiveBFSMicrobatch5CircularRepeat2Replica4) {
   constexpr char kMoreComputationsStr[] = R"(
   while_condition {
     tuple = (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16], u32[])
@@ -728,7 +706,7 @@ XLA_TEST_F(CollectivePipelineParallelismTest,
 //
 // Every stage of the pipeline is a single linear layer.
 XLA_TEST_F(CollectivePipelineParallelismTest,
-           NaiveWoDirectBufferDependencyDFSMicrobatch5CircularRepeat2Replica4) {
+           NaiveWoDirectBufferDependencyBFSMicrobatch5CircularRepeat2Replica4) {
   constexpr char kMoreComputationsStr[] = R"(
   while_condition {
     tuple = (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16], u32[])
@@ -853,6 +831,367 @@ XLA_TEST_F(CollectivePipelineParallelismTest,
                         /*run_hlo_passes=*/true));
   EXPECT_TRUE(LiteralTestUtil::NearOrEqual(expected_output, results[3],
                                            ErrorSpec{1e-5, 1e-5}));
+}
+
+XLA_TEST_F(CollectivePipelineParallelismTest, SendRecvLoop) {
+  const absl::string_view kModuleStr = R"(
+    HloModule test, num_partitions=4
+
+    while_condidtion {
+      param = (u32[], f32[2,2]) parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      c3 = u32[] constant(3)
+      ROOT cmp = pred[] compare(i, c3), direction=LT
+    }
+
+    while_body {
+      param = (u32[], f32[2,2]) parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      data = f32[2,2] get-tuple-element(param), index=1
+
+      // Send data from GPU i to i+1. Break cycle to avoid deadlock.
+      after_all = token[] after-all()
+      send_ctx = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=1
+      recv_ctx = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      data_ = f32[2,2] get-tuple-element(recv_done), index=0
+
+      c1 = u32[] constant(1)
+      i_ = u32[] add(i, c1)
+      ROOT result = (u32[], f32[2,2]) tuple(i_, data_)
+    }
+
+    ENTRY test_computation {
+      data = f32[2,2] parameter(0)
+      i = u32[] constant(0)
+      init = (u32[], f32[2,2]) tuple(i, data)
+      while = (u32[], f32[2,2]) while(init), condition=while_condidtion,
+          body=while_body
+      ROOT data_ = f32[2,2] get-tuple-element(while), index=1
+    }
+  )";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+
+  // Parse HLO module.
+  HloModuleConfig config = GetModuleConfigForTest(
+      /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  // Create input data.
+  std::vector<Literal> literals;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    float val = i + 1;
+    literals.push_back(LiteralUtil::CreateR2<float>({{val, val}, {val, val}}));
+  }
+  std::vector<std::vector<Literal *>> inputs;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    inputs.push_back({&literals[i]});
+  }
+
+  // Create device assignment running across partitions.
+  DeviceAssignment device_assignment(/*replica_count=*/kNumReplicas,
+                                     /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    device_assignment(0, i) = i;
+  }
+
+  // Execute and check results.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), inputs,
+                        /*num_replicas=*/kNumPartitions,
+                        /*run_hlo_passes=*/false, &device_assignment));
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[0]);
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[1]);
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[2]);
+  LiteralTestUtil::ExpectR2Equal<float>({{1, 1}, {1, 1}}, results[3]);
+}
+
+XLA_TEST_F(CollectivePipelineParallelismTest, SendRecvLoop2Devices) {
+  const absl::string_view kModuleStr = R"(
+    HloModule test, num_partitions=2
+
+    // 1 iteration so that we can test on 2 GPUs.
+    while_condidtion {
+      param = (u32[], f32[2,2]) parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      c1 = u32[] constant(1)
+      ROOT cmp = pred[] compare(i, c1), direction=LT
+    }
+
+    while_body {
+      param = (u32[], f32[2,2]) parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      data = f32[2,2] get-tuple-element(param), index=1
+
+      // Just send from GPU 0 to GPU 1 to avoid deadlock.
+      after_all = token[] after-all()
+      send_ctx = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}},
+          channel_id=1
+      recv_ctx = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}},
+          channel_id=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      data_ = f32[2,2] get-tuple-element(recv_done), index=0
+
+      c1 = u32[] constant(1)
+      i_ = u32[] add(i, c1)
+      ROOT result = (u32[], f32[2,2]) tuple(i_, data_)
+    }
+
+    ENTRY test_computation {
+      data = f32[2,2] parameter(0)
+      i = u32[] constant(0)
+      init = (u32[], f32[2,2]) tuple(i, data)
+      while = (u32[], f32[2,2]) while(init), condition=while_condidtion,
+          body=while_body
+      ROOT data_ = f32[2,2] get-tuple-element(while), index=1
+    }
+  )";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 2;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+
+  // Parse HLO module.
+  HloModuleConfig config = GetModuleConfigForTest(
+      /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  // Create input data.
+  std::vector<Literal> literals;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    float val = i + 1;
+    literals.push_back(LiteralUtil::CreateR2<float>({{val, val}, {val, val}}));
+  }
+  std::vector<std::vector<Literal *>> inputs;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    inputs.push_back({&literals[i]});
+  }
+
+  // Create device assignment running across partitions.
+  DeviceAssignment device_assignment(/*replica_count=*/kNumReplicas,
+                                     /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    device_assignment(0, i) = i;
+  }
+
+  // Execute and check results.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), inputs,
+                        /*num_replicas=*/kNumPartitions,
+                        /*run_hlo_passes=*/false, &device_assignment));
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[0]);
+  LiteralTestUtil::ExpectR2Equal<float>({{1, 1}, {1, 1}}, results[1]);
+}
+
+XLA_TEST_F(CollectivePipelineParallelismTest,
+           PartiallyPipelinedAsyncSendRecvLoop) {
+  const absl::string_view kModuleStr = R"(
+    HloModule test, num_partitions=4
+
+    while_condidtion {
+      param = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      c2 = u32[] constant(2)
+      ROOT cmp = pred[] compare(i, c2), direction=LT
+    }
+
+    while_body {
+      param = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      send_ctx = get-tuple-element(param), index=1
+      recv_ctx = get-tuple-element(param), index=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      data = get-tuple-element(recv_done), index=0
+      after_all = token[] after-all()
+      send_ctx_ = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=1
+      recv_ctx_ = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=2
+      c1 = u32[] constant(1)
+      i_ = u32[] add(i, c1)
+      ROOT result = (u32[], (f32[2,2], u32[], token[]),
+          (f32[2,2], u32[], token[])) tuple(i_, send_ctx_, recv_ctx_)
+    }
+
+    ENTRY test_computation {
+      data = f32[2,2] parameter(0)
+      i = u32[] constant(0)
+      after_all = token[] after-all()
+      send_ctx_ = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=1
+      recv_ctx_ = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={
+          _xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}, channel_id=2
+      init = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          tuple(i, send_ctx_, recv_ctx_)
+      while = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          while(init), condition=while_condidtion, body=while_body
+      send_ctx = get-tuple-element(while), index=1
+      recv_ctx = get-tuple-element(while), index=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      ROOT data_ = get-tuple-element(recv_done), index=0
+    }
+  )";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 4;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+
+  // Parse HLO module.
+  HloModuleConfig config = GetModuleConfigForTest(
+      /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  // Create input data.
+  std::vector<Literal> literals;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    float val = i + 1;
+    literals.push_back(LiteralUtil::CreateR2<float>({{val, val}, {val, val}}));
+  }
+  std::vector<std::vector<Literal *>> inputs;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    inputs.push_back({&literals[i]});
+  }
+
+  // Create device assignment running across partitions.
+  DeviceAssignment device_assignment(/*replica_count=*/kNumReplicas,
+                                     /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    device_assignment(0, i) = i;
+  }
+
+  // Execute and check results.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), inputs,
+                        /*num_replicas=*/kNumPartitions,
+                        /*run_hlo_passes=*/false, &device_assignment));
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[0]);
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[1]);
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[2]);
+  LiteralTestUtil::ExpectR2Equal<float>({{1, 1}, {1, 1}}, results[3]);
+}
+
+XLA_TEST_F(CollectivePipelineParallelismTest,
+           PartiallyPipelinedAsyncSendRecvLoop2Devices) {
+  const absl::string_view kModuleStr = R"(
+    HloModule test, num_partitions=2
+
+    while_condidtion {
+      param = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      c2 = u32[] constant(2)
+      ROOT cmp = pred[] compare(i, c2), direction=LT
+    }
+
+    while_body {
+      param = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          parameter(0)
+      i = u32[] get-tuple-element(param), index=0
+      send_ctx = get-tuple-element(param), index=1
+      recv_ctx = get-tuple-element(param), index=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      data = get-tuple-element(recv_done), index=0
+      after_all = token[] after-all()
+      send_ctx_ = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}}, 
+          channel_id=1
+      recv_ctx_ = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}}, 
+          channel_id=2
+      c1 = u32[] constant(1)
+      i_ = u32[] add(i, c1)
+      ROOT result = (u32[], (f32[2,2], u32[], token[]),
+          (f32[2,2], u32[], token[])) tuple(i_, send_ctx_, recv_ctx_)
+    }
+
+    ENTRY test_computation {
+      data = f32[2,2] parameter(0)
+      i = u32[] constant(0)
+      after_all = token[] after-all()
+      send_ctx_ = (f32[2,2], u32[], token[]) send(data, after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}},
+          channel_id=1
+      recv_ctx_ = (f32[2,2], u32[], token[]) recv(after_all),
+          frontend_attributes={_xla_send_recv_source_target_pairs={{0,1}}}, 
+          channel_id=2
+      init = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          tuple(i, send_ctx_, recv_ctx_)
+      while = (u32[], (f32[2,2], u32[], token[]), (f32[2,2], u32[], token[]))
+          while(init), condition=while_condidtion, body=while_body
+      send_ctx = get-tuple-element(while), index=1
+      recv_ctx = get-tuple-element(while), index=2
+      send_done = token[] send-done(send_ctx), channel_id=1
+      recv_done = (f32[2,2], token[]) recv-done(recv_ctx), channel_id=2
+      ROOT data_ = get-tuple-element(recv_done), index=0
+    }
+  )";
+
+  const int64_t kNumReplicas = 1;
+  const int64_t kNumPartitions = 2;
+  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+
+  // Parse HLO module.
+  HloModuleConfig config = GetModuleConfigForTest(
+      /*replica_count=*/kNumReplicas, /*num_partitions=*/kNumPartitions);
+  std::unique_ptr<VerifiedHloModule> module;
+  TF_ASSERT_OK_AND_ASSIGN(module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  // Create input data.
+  std::vector<Literal> literals;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    float val = i + 1;
+    literals.push_back(LiteralUtil::CreateR2<float>({{val, val}, {val, val}}));
+  }
+  std::vector<std::vector<Literal *>> inputs;
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    inputs.push_back({&literals[i]});
+  }
+
+  // Create device assignment running across partitions.
+  DeviceAssignment device_assignment(/*replica_count=*/kNumReplicas,
+                                     /*computation_count=*/kNumPartitions);
+  for (int64_t i = 0; i < kNumPartitions; ++i) {
+    device_assignment(0, i) = i;
+  }
+
+  // Execute and check results.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<Literal> results,
+      ExecuteReplicated(std::move(module), inputs,
+                        /*num_replicas=*/kNumPartitions,
+                        /*run_hlo_passes=*/false, &device_assignment));
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[0]);
+  LiteralTestUtil::ExpectR2Equal<float>({{0, 0}, {0, 0}}, results[1]);
 }
 
 }  // namespace

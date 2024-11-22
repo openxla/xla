@@ -25,9 +25,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
@@ -43,8 +42,11 @@ limitations under the License.
 #include "xla/service/gpu/model/affine_map_evaluator.h"
 #include "xla/service/gpu/model/indexing_analysis.h"
 #include "xla/service/gpu/model/indexing_map.h"
+#include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -97,15 +99,94 @@ bool IsReadCoalescedHeuristic(HloFusionAnalysis::EmitterFusionKind fusion_kind,
   return true;
 }
 
+double BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
+    const TiledHloInstruction& hbm_access_instr,
+    const se::DeviceDescription& device_info) {
+  const HloInstruction* hlo = hbm_access_instr.hlo();
+  const Shape& shape = hlo->shape();
+
+  // Compute the number of elements in the contiguous part of the tile.
+  int64_t contiguous_elements = 1;
+  for (const auto dim_idx : shape.layout().minor_to_major()) {
+    // This dimension is strided, so it's not contiguous.
+    if (hbm_access_instr.tile_stride(dim_idx) != 1) {
+      break;
+    }
+
+    int64_t tile_size = hbm_access_instr.tile_size(dim_idx);
+    int64_t dim_size = shape.dimensions(dim_idx);
+
+    // Make sure to ignore the mask if there is one.
+    contiguous_elements *= std::min(tile_size, dim_size);
+
+    // This dimension is only partially captured, so more major dimensions are
+    // necessarily not captured contiguously.
+    if (tile_size < dim_size) {
+      break;
+    }
+  }
+
+  // Compute the size of the contiguous part of the tile in bytes.
+  int64_t contiguous_bytes_accessed =
+      contiguous_elements *
+      ShapeUtil::ByteSizeOfPrimitiveType(hlo->shape().element_type());
+
+  // Memory accesses are fully coalesced if the memory access uses exactly a
+  // multiple of the DRAM->L2 cache line size contiguously.
+  int64_t transaction_size_bytes =
+      device_info.dram_to_l2_transaction_size_bytes();
+  int64_t effective_bytes_accessed =
+      transaction_size_bytes *
+      CeilOfRatio(contiguous_bytes_accessed, transaction_size_bytes);
+  return 1.0 * contiguous_bytes_accessed / effective_bytes_accessed;
+}
+
+bool IsTiledReadCoalescedHeuristic(const TiledHloInstruction& operand,
+                                   const se::DeviceDescription& device_info) {
+  const Shape& shape = operand.hlo()->shape();
+
+  // Compute the number of elements in the contiguous part of the tile.
+  int64_t contiguous_read_elements = 1;
+  for (const auto dim_idx : shape.layout().minor_to_major()) {
+    // This dimension is strided, so it's not contiguous.
+    if (operand.tile_stride(dim_idx) != 1) {
+      break;
+    }
+
+    int64_t tile_size = operand.tile_size(dim_idx);
+    int64_t dim_size = shape.dimensions(dim_idx);
+
+    // Make sure to ignore the mask if there is one.
+    contiguous_read_elements *= std::min(tile_size, dim_size);
+
+    // This dimension is only partially captured, so more major dimensions are
+    // necessarily not captured contiguously.
+    if (tile_size < dim_size) {
+      break;
+    }
+  }
+
+  // Compute the size of the contiguous part of the tile in bytes.
+  int64_t contiguous_bytes_accessed =
+      contiguous_read_elements *
+      ShapeUtil::ByteSizeOfPrimitiveType(operand.hlo()->shape().element_type());
+
+  // We consider a read coalesced if the contiguous part of the read covers the
+  // whole DRAM->L2 cache line.
+  //
+  // TODO(b/332714755): note that we don't check that we fully exploit all the
+  // cache lines we read from if we happen to read through several of them.
+  return contiguous_bytes_accessed >=
+         device_info.dram_to_l2_transaction_size_bytes();
+}
+
 namespace {
 
 using ::mlir::AffineBinaryOpExpr;
 using ::mlir::AffineConstantExpr;
-using ::mlir::AffineDimExpr;
 using ::mlir::AffineExpr;
 using ::mlir::AffineExprKind;
 using ::mlir::AffineMap;
-using ::mlir::AffineSymbolExpr;
 using ::mlir::getAffineConstantExpr;
 using ::mlir::MLIRContext;
 
@@ -233,11 +314,10 @@ void AssignValuesToRTVars(IndexingMap* indexing_map) {
     symbol_replacements.push_back(
         mlir::getAffineSymbolExpr(symbol_id, mlir_context));
   }
-  for (const RTVar& rt_var : indexing_map->GetRTVars()) {
+  for (const IndexingMap::Variable& rt_var : indexing_map->GetRTVars()) {
     // Take midpoint of the feasible interval for the RT variable.
     symbol_replacements.push_back(getAffineConstantExpr(
-        (rt_var.feasible_values.lower + rt_var.feasible_values.upper) / 2,
-        mlir_context));
+        (rt_var.bounds.lower + rt_var.bounds.upper) / 2, mlir_context));
   }
   AffineMap thread_x_to_input_no_dim_symbols =
       indexing_map->GetAffineMap().replaceDimsAndSymbols(
@@ -263,7 +343,7 @@ void AssignValuesToOuterLoopIVs(IndexingMap* indexing_map) {
   for (int64_t symbol_id = 0; symbol_id < indexing_map->GetRangeVarsCount() - 1;
        ++symbol_id) {
     symbol_replacements.push_back(getAffineConstantExpr(
-        indexing_map->GetRangeVar(symbol_id).range.lower, mlir_context));
+        indexing_map->GetRangeVar(symbol_id).bounds.lower, mlir_context));
   }
   symbol_replacements.push_back(mlir::getAffineSymbolExpr(0, mlir_context));
 
@@ -498,7 +578,7 @@ bool IsIndexingCoalesced(IndexingMap& thread_x_to_linearized_input,
   AffineExpr c0 = getAffineConstantExpr(0, mlir_context);
   IndexingMap thread_x_first_32_elements{
       AffineMap::get(1, 0, {thread_x_dim, c0, c0, c0, c0, c0}, mlir_context),
-      {DimVar{{0, 31}}},
+      {IndexingMap::Variable{{0, 31}}},
       /*range_vars=*/{},
       /*rt_vars=*/{}};
   IndexingMap thread_x_to_input_sample =

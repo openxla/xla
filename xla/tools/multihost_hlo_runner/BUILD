@@ -30,7 +30,7 @@ cc_library(
     srcs = ["hlo_runner_main.cc"],
     compatible_with = None,
     tags = [
-        "nomac",
+        "no_mac",
     ],
     deps = [
         ":create_client",
@@ -72,7 +72,7 @@ xla_cc_binary(
     name = "hlo_runner_main",
     testonly = True,
     tags = [
-        "nomac",
+        "no_mac",
     ],
     deps = [
         ":hlo_runner_main_lib",
@@ -83,8 +83,9 @@ xla_cc_binary(
     name = "hlo_runner_main_gpu",
     testonly = True,
     tags = [
+        "cuda-only",
         "gpu",
-        "nomac",
+        "no_mac",
     ] + tf_gpu_tests_tags(),
     deps = [
         ":hlo_runner_main_lib",
@@ -110,6 +111,8 @@ cc_library(
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:service",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -134,8 +137,10 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/client:executable_build_options",
-        "//xla/client:xla_computation",
+        "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/pjrt:host_memory_spaces",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
@@ -145,8 +150,6 @@ cc_library(
         "//xla/service:computation_layout",
         "//xla/service:computation_placer_hdr",
         "//xla/service:hlo_module_config",
-        "//xla/service:hlo_parser",
-        "//xla/service:hlo_pass_pipeline",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:test_utils",
         "//xla/tools:hlo_control_flow_flattening",
@@ -171,12 +174,10 @@ xla_test(
     name = "functional_hlo_runner_test",
     srcs = ["functional_hlo_runner_test.cc"],
     backend_tags = {
-        # This test is tagged "manual" because it requires multiple (2) GPUs.
         "gpu": [
-            "manual",
-            "multi_gpu",
+            "multi_gpu_h100",
             "no_oss",
-            "notap",
+            "nomsan",
         ],
     },
     backends = [
@@ -184,20 +185,22 @@ xla_test(
         "gpu",
     ],
     data = [
-        "data/multiple_gemm_fusions.hlo",
+        "data/multiple_gemm_fusions_1.hlo",
+        "data/multiple_gemm_fusions_2.hlo",
         "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
+        "data/single_gemm_fusion.hlo",
     ],
-    tags = ["nomac"],
+    tags = ["no_mac"],
     deps = [
         ":create_client",
         ":functional_hlo_runner",
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:filecheck",
         "//xla/pjrt:pjrt_client",
-        "//xla/tests:filecheck",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log:check",

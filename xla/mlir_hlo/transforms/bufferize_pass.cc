@@ -66,6 +66,7 @@ limitations under the License.
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -235,8 +236,9 @@ struct OneShotBufferizePass
     opts.allowReturnAllocsFromLoops = true;
     opts.bufferizeFunctionBoundaries = true;
     opts.functionArgTypeConverterFn =
-        [=](TensorType tensorType, Attribute memorySpace, func::FuncOp funcOp,
-            const bufferization::BufferizationOptions& options) {
+        [=](TensorType tensorType, Attribute memorySpace,
+            FunctionOpInterface funcOp,
+            const bufferization::BufferizationOptions& /*options*/) {
           // Functions created by fusion outlining should have fully dynamic
           // layout. All other functions (for now only "main") gets static
           // layout.
@@ -255,6 +257,37 @@ struct OneShotBufferizePass
     }
   }
 };
+
+namespace {
+// In a finalizing bufferize conversion, we know that all tensors have been
+// converted to memrefs, thus, this op becomes an identity.
+class BufferizeToTensorOp
+    : public OpConversionPattern<bufferization::ToTensorOp> {
+ public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      bufferization::ToTensorOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter& rewriter) const override {
+    rewriter.replaceOp(op, adaptor.getMemref());
+    return success();
+  }
+};
+
+// In a finalizing bufferize conversion, we know that all tensors have been
+// converted to memrefs, thus, this op becomes an identity.
+class BufferizeToMemrefOp
+    : public OpConversionPattern<bufferization::ToMemrefOp> {
+ public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      bufferization::ToMemrefOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter& rewriter) const override {
+    rewriter.replaceOp(op, adaptor.getTensor());
+    return success();
+  }
+};
+
+}  // namespace
 
 struct FinalBufferizePass
     : public impl::FinalBufferizePassBase<FinalBufferizePass> {
@@ -336,7 +369,8 @@ struct FinalBufferizePass
         typesAreLegal);
 
     RewritePatternSet patterns(&getContext());
-    populateEliminateBufferizeMaterializationsPatterns(converter, patterns);
+    patterns.add<BufferizeToTensorOp, BufferizeToMemrefOp>(converter,
+                                                           &getContext());
     populateExtraBufferizePatterns(&getContext(), &converter, &patterns);
     scf::populateSCFStructuralTypeConversionsAndLegality(converter, patterns,
                                                          target);
