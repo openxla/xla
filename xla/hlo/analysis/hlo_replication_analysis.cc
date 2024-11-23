@@ -52,9 +52,9 @@ namespace {
 std::vector<std::vector<std::vector<int64_t>>> GroupsForReplicas(
     absl::Span<const ReplicaGroup> groups, int64_t num_partitions,
     int64_t replica_count, bool cross_partition_spmd) {
-  std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas(
-      cross_partition_spmd ? replica_count : num_partitions);
   int64_t num_replicas = cross_partition_spmd ? replica_count : num_partitions;
+  std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas(
+      num_replicas);
   for (const ReplicaGroup& group : groups) {
     for (int64_t idx = 0; idx < num_replicas; ++idx) {
       std::vector<int64_t> ids;
@@ -97,7 +97,6 @@ std::vector<std::vector<int64_t>> MergeGroups(
     LOG(FATAL) << "Unable to find target.";
   };
 
-  std::vector<std::vector<int64_t>> merged_groups;
   absl::flat_hash_map<std::pair<int64_t, int64_t>, std::vector<int64_t>>
       groups_idxs_to_elements;
   for (int groups0_idx = 0; groups0_idx < groups0.size(); ++groups0_idx) {
@@ -106,6 +105,7 @@ std::vector<std::vector<int64_t>> MergeGroups(
       groups_idxs_to_elements[{groups0_idx, groups1_idx}].push_back(element);
     }
   }
+  std::vector<std::vector<int64_t>> merged_groups;
   for (const auto& [pair, group] : groups_idxs_to_elements) {
     merged_groups.emplace_back(std::move(group));
   }
@@ -650,11 +650,11 @@ HloReplicationAnalysis::HloReplication::Merge(
         case State::kUniqueOnAllDevices:
           return other;
         case State::kPartiallyReplicated: {
-          std::vector<std::vector<std::vector<int64_t>>>
-              merged_groups_for_replicas(groups_for_replicas_.size());
-          // Merge the groups for each replica or partition.
           CHECK_EQ(groups_for_replicas_.size(),
                    other.groups_for_replicas_.size());
+          // Merge the groups for each replica or partition.
+          std::vector<std::vector<std::vector<int64_t>>>
+              merged_groups_for_replicas(groups_for_replicas_.size());
           std::transform(groups_for_replicas_.begin(),
                          groups_for_replicas_.end(),
                          other.groups_for_replicas_.begin(),
