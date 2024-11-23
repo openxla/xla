@@ -94,6 +94,7 @@ namespace xla::gpu {
 namespace ma = ::mlir::arith;
 namespace mm = ::mlir::math;
 namespace mt = ::mlir::triton;
+namespace mh = ::mlir::mhlo;
 
 using ::llvm::SmallVector;
 using ::mlir::ArrayRef;
@@ -149,13 +150,12 @@ Type StorageType(mlir::OpBuilder b, Type t) {
 
 // Create a scalar constant.
 template <typename T>
-mlir::arith::ConstantOp CreateConst(mlir::ImplicitLocOpBuilder b,
-                                    mlir::Type type, T value) {
+ma::ConstantOp CreateConst(ImplicitLocOpBuilder b, Type type, T value) {
   if (mlir::isa<mlir::IntegerType>(type)) {
-    return b.create<mlir::arith::ConstantOp>(b.getIntegerAttr(type, value));
+    return b.create<ma::ConstantOp>(b.getIntegerAttr(type, value));
   }
   if (mlir::isa<mlir::FloatType>(type)) {
-    return b.create<mlir::arith::ConstantOp>(
+    return b.create<ma::ConstantOp>(
         b.getFloatAttr(type, static_cast<double>(value)));
   }
   LOG(FATAL) << "Constant type not supported: " << llvm_ir::DumpToString(type);
@@ -163,17 +163,16 @@ mlir::arith::ConstantOp CreateConst(mlir::ImplicitLocOpBuilder b,
 
 // Create a tensor constant.
 template <typename T>
-mlir::arith::ConstantOp CreateConst(mlir::ImplicitLocOpBuilder& b,
-                                    mlir::Type type, T value,
-                                    llvm::ArrayRef<int64_t> shape) {
+ma::ConstantOp CreateConst(ImplicitLocOpBuilder& b, Type type, T value,
+                           llvm::ArrayRef<int64_t> shape) {
   auto tensor_type = mlir::RankedTensorType::get(shape, type);
   if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
-    return b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
+    return b.create<ma::ConstantOp>(mlir::DenseElementsAttr::get(
         tensor_type, mlir::APInt(int_type.getIntOrFloatBitWidth(), value,
                                  /*isSigned=*/std::is_signed_v<T>)));
   }
   if (auto float_type = mlir::dyn_cast<mlir::FloatType>(type)) {
-    return b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
+    return b.create<ma::ConstantOp>(mlir::DenseElementsAttr::get(
         tensor_type, b.getFloatAttr(type, static_cast<double>(value))));
   }
   LOG(FATAL) << "Constant type not supported: " << llvm_ir::DumpToString(type);
@@ -297,20 +296,17 @@ Value Cast(ImplicitLocOpBuilder& b, Value value, Type dst_element_ty) {
     int64_t max = llvm::maxIntN(dst_element_ty.getIntOrFloatBitWidth());
 
     // value <= static_cast<float>(INT_MIN) ? INT_MIN : ...
-    auto clamped = b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OLE, value,
-                                      cst_float(min)),
+    auto clamped = b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::OLE, value, cst_float(min)),
         cst_int(min), fptosi);
     // value >= static_cast<float>(INT_MAX) ? INT_MAX : ...
-    clamped = b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OGE, value,
-                                      cst_float(max)),
+    clamped = b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::OGE, value, cst_float(max)),
         cst_int(max), clamped);
     // isnan(value) ? 0 : ...
-    return b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::UNO, value,
-                                      value),
-        cst_int(0), clamped);
+    return b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::UNO, value, value), cst_int(0),
+        clamped);
   }
 
   LOG(FATAL) << "Type conversion not supported: "
@@ -327,19 +323,18 @@ Value Subtract(ImplicitLocOpBuilder& b, ValueRange values) {
 }
 
 Value Compare(ImplicitLocOpBuilder& b, ValueRange values,
-              mlir::mhlo::ComparisonDirection direction) {
+              mh::ComparisonDirection direction) {
   const Type type = mlir::getElementTypeOrSelf(values[0]);
   if (mlir::isa<mlir::IntegerType>(type)) {
-    return b.create<ma::CmpIOp>(
-        mlir::mhlo::impl::getCmpPredicate<ma::CmpIPredicate>(
-            direction,
-            /*isSigned=*/!type.isInteger(1))
-            .value(),
-        values[0], values[1]);
+    return b.create<ma::CmpIOp>(mh::impl::getCmpPredicate<ma::CmpIPredicate>(
+                                    direction,
+                                    /*isSigned=*/!type.isInteger(1))
+                                    .value(),
+                                values[0], values[1]);
   }
   return b.create<ma::CmpFOp>(
-      mlir::mhlo::impl::getCmpPredicate<ma::CmpFPredicate>(direction,
-                                                           /*isSigned=*/true)
+      mh::impl::getCmpPredicate<ma::CmpFPredicate>(direction,
+                                                   /*isSigned=*/true)
           .value(),
       values[0], values[1]);
 }
@@ -355,10 +350,10 @@ Value Maximum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
   // This also works, but we wanted to make it similar to minimum.
   // logic: isNaN(lhs) || lhs >= rhs ? lhs : rhs
   Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mlir::mhlo::ComparisonDirection::NE);
+      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
   Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mlir::mhlo::ComparisonDirection::EQ);
-  Value lhs_is_ge = Compare(b, values, mlir::mhlo::ComparisonDirection::GE);
+      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
+  Value lhs_is_ge = Compare(b, values, mh::ComparisonDirection::GE);
   return b.create<ma::SelectOp>(
       b.create<ma::OrIOp>(lhs_is_nan,
                           b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_ge)),
@@ -377,10 +372,10 @@ Value Minimum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
   // minimum(x, NaN):
   // logic: isNaN(lhs) || lhs <= rhs ? lhs : rhs
   Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mlir::mhlo::ComparisonDirection::NE);
+      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
   Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mlir::mhlo::ComparisonDirection::EQ);
-  Value lhs_is_le = Compare(b, values, mlir::mhlo::ComparisonDirection::LE);
+      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
+  Value lhs_is_le = Compare(b, values, mh::ComparisonDirection::LE);
   return b.create<ma::SelectOp>(
       b.create<ma::OrIOp>(lhs_is_nan,
                           b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_le)),
@@ -462,16 +457,16 @@ absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
     case HloOpcode::kCompare:
       return Compare(
           b, inputs,
-          mlir::mhlo::symbolizeComparisonDirection(
+          mh::symbolizeComparisonDirection(
               ComparisonDirectionToString(hlo.comparison_direction()))
               .value());
     case HloOpcode::kSelect:
       return b.create<ma::SelectOp>(
           Compare(b, {inputs[0], ZerosLike(b, inputs[0])},
-                  mlir::mhlo::ComparisonDirection::NE),
+                  mh::ComparisonDirection::NE),
           inputs[1], inputs[2]);
     case HloOpcode::kReducePrecision:
-      return mlir::mhlo::reducePrecision<mt::BitcastOp>(
+      return mh::reducePrecision<mt::BitcastOp>(
           b.getLoc(), inputs[0], hlo.exponent_bits(), hlo.mantissa_bits(), &b);
     default:
       return absl::InvalidArgumentError(
@@ -638,11 +633,15 @@ absl::StatusOr<Value> EmitBroadcast(ImplicitLocOpBuilder& b,
   Value expanded_input = tensor_input;
   int dim_idx = 0;
   for (const DimProperties& dim : side.tiled_dims) {
-    if (auto* spec = analysis->IterSpec(side.scope, &broadcast, dim.index);
-        spec != nullptr && spec->at(0).stride > 0) {
-      if (analysis->IterSpec(side.scope, broadcast.operand(0), dim.index) ==
-          nullptr) {
-        // Broadcasted dimension.
+    const auto* output_spec =
+        analysis->IterSpec(side.scope, &broadcast, dim.index);
+    if (output_spec != nullptr && output_spec->at(0).stride > 0) {
+      const auto* input_spec =
+          analysis->IterSpec(side.scope, broadcast.operand(0), dim.index);
+      // A dimension is broadcasted if it's either absent in the input or
+      // if its size is increased from the input to the output.
+      if (input_spec == nullptr ||
+          output_spec->at(0).count > input_spec->at(0).count) {
         expanded_input = b.create<mt::ExpandDimsOp>(expanded_input, dim_idx);
       }
       ++dim_idx;
@@ -1090,8 +1089,38 @@ class MatMulEmitterHelper {
     } else if (scope == TritonFusionAnalysis::Scope::RHS) {
       return dims_.rhs_noncontracting_dim_idx;
     } else {
-      CHECK(false) << "This shouldn't be called for the output scope.";
+      CHECK(false) << "This shouldn't be called for the other scopes.";
     }
+  }
+
+  bool IsNonTrivialTiledDimension(TritonFusionAnalysis::Scope scope,
+                                  int64_t dim_index) {
+    switch (scope) {
+      case TritonFusionAnalysis::Scope::LHS:
+        return (dim_index == dims_.lhs_noncontracting_dim_idx && dims_.m > 1) ||
+               (dim_index == dims_.lhs_contracting_dim_idx && dims_.k > 1);
+      case TritonFusionAnalysis::Scope::RHS:
+        return (dim_index == dims_.rhs_noncontracting_dim_idx && dims_.n > 1) ||
+               (dim_index == dims_.rhs_contracting_dim_idx && dims_.k > 1);
+      case TritonFusionAnalysis::Scope::OUTPUT:
+        return (dim_index == dims_.out_lhs_noncontracting_dim_idx &&
+                dims_.m > 1) ||
+               (dim_index == dims_.out_rhs_noncontracting_dim_idx &&
+                dims_.n > 1);
+      default:
+        break;
+    }
+    return false;
+  }
+
+  bool NonTrivialTiledDimensionHasNoIterationAtParameter(
+      TritonFusionAnalysis::Scope scope, const HloInstruction& hlo,
+      int64_t dim_index) {
+    const TensorIterationSpec::DimIterationSpec* spec =
+        analysis_.IterSpec(scope, &hlo, dim_index);
+    return spec == nullptr ||
+           (IsNonTrivialTiledDimension(scope, dim_index) && spec->size() == 1 &&
+            (spec->at(0).count <= 1 || spec->at(0).stride == 0));
   }
 
   // Return the batch stride of the HLO passed as a parameter. If the
@@ -1207,7 +1236,12 @@ class MatMulEmitterHelper {
     }
 
     auto add_dim = [&](const DimProperties& properties) -> absl::Status {
-      if (analysis_.IterSpec(side.scope, hlo, properties.index) == nullptr) {
+      if (NonTrivialTiledDimensionHasNoIterationAtParameter(side.scope, *hlo,
+                                                            properties.index)) {
+        // If a non-trivial tiled dimension has only one element at
+        // the parameter, it's being broadcasted. Skip it in the tensor
+        // pointer to prevent it from being padded to the tile size on load
+        // instead of being broadcasted.
         return absl::OkStatus();
       }
       Value pid_offset =
@@ -1401,7 +1435,7 @@ class MatMulEmitterHelper {
     if (dims_.out_split_k_dim_idx.has_value()) {
       const TensorIterationSpec::DimIterationSpec* spec = analysis_.IterSpec(
           TritonFusionAnalysis::Scope::OUTPUT, hlo, *dims_.out_split_k_dim_idx);
-      if (spec != nullptr) {
+      if (spec != nullptr && spec->at(0).count > 1) {
         TF_RET_CHECK(pid_k != nullptr);
         base = AddPtr(b_, base,
                       b_.create<ma::MulIOp>(ConvertScalar(pid_k),
@@ -2107,9 +2141,8 @@ absl::Status EmitMatMul(mlir::OpBuilder builder,
       CHECK(values[index].insert({param_hlo, param_value}).second);
       SmallVector<Value> increments;
       for (const DimProperties& dim : side.tiled_dims) {
-        const TensorIterationSpec::DimIterationSpec* spec =
-            analysis.IterSpec(side.scope, iter_args_to_inputs[i], dim.index);
-        if (spec == nullptr || spec->at(0).stride == 0) {
+        if (emitter.NonTrivialTiledDimensionHasNoIterationAtParameter(
+                side.scope, *iter_args_to_inputs[i], dim.index)) {
           continue;
         }
         // Only the contracting dimensions are advanced.

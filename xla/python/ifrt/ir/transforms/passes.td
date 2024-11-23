@@ -464,4 +464,24 @@ This pass fails if
   ];
 }
 
+def IfrtLegalizeToVifrtPass : Pass<"ifrt-legalize-to-vifrt", "mlir::ModuleOp"> {
+  let summary = "Legalize IFRT to VIFRT.";
+  let dependentDialects = ["xla::ifrt::VifrtDialect"];
+}
+
+def VifrtLegalizeToIfrtPass : Pass<"vifrt-legalize-to-ifrt", "mlir::ModuleOp"> {
+  let summary = "Legalize VIFRT to IFRT.";
+  let dependentDialects = ["xla::ifrt::IfrtDialect"];
+}
+
+def VifrtToVersionPass : Pass<"vifrt-to-version", "mlir::ModuleOp"> {
+  let summary = "Convert between versions of VIFRT.";
+  let options = [
+    Option<"target_version", "target_version", "std::string", "",
+           "The VIFRT target version. Must be a version of the form #.#.#.">,
+  ];
+  let constructor = "CreateVifrtToVersionPass()";
+  let dependentDialects = ["xla::ifrt::VifrtDialect"];
+}
+
 #endif  // XLA_PYTHON_IFRT_IR_TRANSFORMS_PASSES_TD_

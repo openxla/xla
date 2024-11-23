@@ -156,6 +156,14 @@ void SetThreadName(HloComputation* called_computation,
   }
 }
 
+bool IsValidResultAccuracy(const ResultAccuracy& accuracy) {
+  bool valid_mode = ResultAccuracy::Mode_IsValid(accuracy.mode());
+  bool valid_tolerance =
+      (accuracy.tolerance().rtol() >= 0 && accuracy.tolerance().ulps() >= 0 &&
+       accuracy.tolerance().atol() >= 0);
+  return valid_mode && valid_tolerance;
+}
+
 }  // namespace
 
 HloBatchNormInstruction::HloBatchNormInstruction(
@@ -706,8 +714,6 @@ void HloChannelInstruction::set_channel_id(
 HloInstructionProto HloChannelInstruction::ToProto() const {
   HloInstructionProto proto = HloInstruction::ToProto();
   if (channel_id_) {
-    CHECK_GT(channel_id_.value(), 0)
-        << "Non-positive channel id is equivalent to no channel id";
     proto.set_channel_id(*channel_id_);
   }
   return proto;
@@ -4203,6 +4209,34 @@ HloRngBitGeneratorInstruction::CloneWithNewOperandsImpl(
   CHECK_EQ(new_operands.size(), 1);
   return std::make_unique<HloRngBitGeneratorInstruction>(shape, new_operands[0],
                                                          algorithm());
+}
+
+HloUnaryInstruction::HloUnaryInstruction(const Shape& shape, HloOpcode opcode,
+                                         HloInstruction* operand,
+                                         ResultAccuracy result_accuracy)
+    : HloInstruction(opcode, shape), result_accuracy_(result_accuracy) {
+  if (!IsValidResultAccuracy(result_accuracy)) {
+    LOG(FATAL) << "Invalid result accuracy";
+  }
+  AppendOperand(operand);
+}
+
+void HloUnaryInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  // Don't print anything if the result accuracy is set to default.
+  if (result_accuracy_.mode() != ResultAccuracy::DEFAULT) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("result_accuracy={mode=");
+      printer->Append(ResultAccuracyToString(result_accuracy_.mode()));
+      printer->Append("}");
+    });
+  } else if (result_accuracy_.has_tolerance()) {
+    printer.Next([this](Printer* printer) {
+      AppendCat(printer, "result_accuracy={",
+                ResultAccuracyToleranceToString(result_accuracy_.tolerance()),
+                "}");
+    });
+  }
 }
 
 }  // namespace xla

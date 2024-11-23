@@ -17,6 +17,7 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
@@ -62,7 +64,7 @@ class IfrtIRProgramSerDes
   absl::StatusOr<std::string> Serialize(
       Serializable& serializable,
       std::unique_ptr<SerializeOptions> options) override {
-    const auto& program = llvm::cast<IfrtIRProgram>(serializable);
+    auto& program = llvm::cast<IfrtIRProgram>(serializable);
     if (program.mlir_module == nullptr) {
       return absl::InvalidArgumentError("Unable to serialize null MLIR module");
     }
@@ -88,13 +90,20 @@ class IfrtIRProgramSerDes
       }
     } else {
       program_proto.set_ifrt_version(serialize_options->ifrt_version);
-
+      mlir::OwningOpRef<mlir::ModuleOp> cloned;
+      mlir::ModuleOp mlir_module;
+      if (serialize_options->version_in_place) {
+        mlir_module = program.mlir_module;
+      } else {
+        cloned = program.mlir_module.clone();
+        mlir_module = *cloned;
+      }
       // Run the pipeline to convert IFRT IR program to a versioned artifact.
-      mlir::PassManager pm(program.mlir_module->getContext());
+      mlir::PassManager pm(mlir_module->getContext());
       CreateIfrtToVersionedPipeline(pm, serialize_options->ifrt_version,
                                     serialize_options->atom_program_version,
                                     program_proto);
-      if (mlir::failed(pm.run(program.mlir_module))) {
+      if (mlir::failed(pm.run(mlir_module))) {
         return absl::InvalidArgumentError(
             absl::StrFormat("Failed to version IFRT IR program: %s",
                             diagnostic_handler.ConsumeStatus().message()));
@@ -114,7 +123,7 @@ class IfrtIRProgramSerDes
       mlir::BytecodeWriterConfig writer_config(bytecode_version_string);
       writer_config.setDesiredBytecodeVersion(*fail_or_bytecode_version);
       if (mlir::failed(mlir::writeBytecodeToFile(
-              program.mlir_module, ifrt_ir_program_stream, writer_config))) {
+              mlir_module, ifrt_ir_program_stream, writer_config))) {
         return absl::InvalidArgumentError(absl::StrFormat(
             "Failed to serialize versioned IFRT IR module string: %s",
             diagnostic_handler.ConsumeStatus().message()));
@@ -131,12 +140,29 @@ class IfrtIRProgramSerDes
   // IFRT IR versions or VHLO version are outside of the compatibility window.
   absl::StatusOr<std::unique_ptr<Serializable>> Deserialize(
       const std::string& serialized,
-      std::unique_ptr<DeserializeOptions>) override {
+      std::unique_ptr<DeserializeOptions> options) override {
+    const auto* deserialize_options =
+        llvm::dyn_cast_or_null<DeserializeIfrtIRProgramOptions>(options.get());
+    bool use_existing_context = false;
+    std::unique_ptr<mlir::MLIRContext> context;
+    if (!deserialize_options || !deserialize_options->context) {
+      context = std::make_unique<mlir::MLIRContext>();
+    } else {
+      use_existing_context = true;
+      context =
+          std::unique_ptr<mlir::MLIRContext>(deserialize_options->context);
+    }
+    absl::Cleanup release_context_pointer = [&]() {
+      if (use_existing_context) {
+        // Release the pointer s.t. the existing context is not freed.
+        context.release();
+      }
+    };
+
     IfrtIrProgramProto program_proto;
     if (!program_proto.ParseFromString(serialized)) {
       return absl::InvalidArgumentError("Failed to parse IfrtIrProgramProto");
     }
-    auto context = std::make_unique<mlir::MLIRContext>();
     TF_ASSIGN_OR_RETURN(
         auto module,
         support::ParseMlirModuleString(program_proto.ifrt_program(), *context));
@@ -144,8 +170,12 @@ class IfrtIRProgramSerDes
     if (program_proto.ifrt_version().empty()) {
       // The program was not versioned on serialization. The whole IFRT IR
       // program was serialized to bytecode.
-      return std::make_unique<IfrtIRProgram>(std::move(context),
-                                             std::move(module));
+      if (use_existing_context) {
+        return std::make_unique<IfrtIRProgram>(module.release());
+      } else {
+        return std::make_unique<IfrtIRProgram>(std::move(context),
+                                               std::move(module));
+      }
     } else {
       // Run the pipeline to convert a versioned IFRT IR program artifact to
       // an IFRT IR program.
@@ -158,8 +188,12 @@ class IfrtIRProgramSerDes
             diagnostic_handler.ConsumeStatus().message()));
       }
 
-      return std::make_unique<IfrtIRProgram>(std::move(context),
-                                             std::move(module));
+      if (use_existing_context) {
+        return std::make_unique<IfrtIRProgram>(module.release());
+      } else {
+        return std::make_unique<IfrtIRProgram>(std::move(context),
+                                               std::move(module));
+      }
     }
   }
 

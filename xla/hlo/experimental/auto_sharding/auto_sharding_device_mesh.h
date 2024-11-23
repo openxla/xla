@@ -16,12 +16,17 @@ limitations under the License.
 #ifndef XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_DEVICE_MESH_H_
 #define XLA_HLO_EXPERIMENTAL_AUTO_SHARDING_AUTO_SHARDING_DEVICE_MESH_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 
 namespace xla {
 namespace spmd {
@@ -82,9 +87,49 @@ class DeviceMesh {
     device_array_.Each(f);
   }
 
+  absl::StatusOr<std::vector<int64_t>> GetMeshDimPermutationOrderInShardingSpec(
+      const HloSharding& sharding, bool consider_reverse_device_meshes) const;
+
  private:
   Array<int64_t> device_array_;
   bool is_iota_;
+
+  class MeshDimPermutationOrderCacheKey {
+   public:
+    MeshDimPermutationOrderCacheKey(const HloSharding& sharding,
+                                    bool consider_reverse_device_meshes)
+        : sharding_string_(sharding.ToString()),
+          consider_reverse_device_meshes_(consider_reverse_device_meshes) {}
+
+    bool operator==(const MeshDimPermutationOrderCacheKey& other) const {
+      return this->sharding_string_ == other.sharding_string_ &&
+             this->consider_reverse_device_meshes_ ==
+                 other.consider_reverse_device_meshes_;
+    };
+
+    template <typename H>
+    friend H AbslHashValue(H h, const MeshDimPermutationOrderCacheKey& key) {
+      return H::combine(std::move(h), key.sharding_string_,
+                        key.consider_reverse_device_meshes_);
+    }
+
+   private:
+    // NB: We use sharding.ToString() instead of key.sharding as the latter will
+    // materialize the tile assignment array of the sharding (if it is V2, as
+    // are a majority of our sharding objects). This is necessary has a sharding
+    // can have a V1 or a V2 representation. Hashing the ToString repr of the
+    // sharding is much faster as it won't materialize the tile assignment
+    // array. This can, however, mean that equivalent shardings can have
+    // different hash values. In this case, this is okay, as a cache miss will
+    // merely invoke the function again, and the faster hashing more than
+    // compensates for the potentially lower hit rate.
+    const std::string sharding_string_;
+    bool consider_reverse_device_meshes_;
+  };
+
+  mutable absl::flat_hash_map<MeshDimPermutationOrderCacheKey,
+                              std::vector<int64_t>>
+      mesh_dim_permutation_order_cache_;
 };
 
 template <class T>

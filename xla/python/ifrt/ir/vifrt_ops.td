@@ -17,35 +17,17 @@ limitations under the License.
 #define XLA_PYTHON_IFRT_IR_VIFRT_OPS_TD_
 
 include "mlir/IR/OpBase.td"
-include "mlir/IR/BuiltinTypes.td"
-include "mlir/IR/SymbolInterfaces.td"
-include "mlir/Interfaces/CallInterfaces.td"
 include "xla/python/ifrt/ir/vifrt_dialect.td"
-include "xla/python/ifrt/ir/vifrt_types.td"
-include "xla/python/ifrt/ir/vifrt_attrs.td"
+include "xla/python/ifrt/ir/vifrt_interfaces.td"
 
-def Vifrt_VersionedOpInterface : OpInterface<"VifrtVersionedOpInterface"> {
-  let cppNamespace = "::xla::ifrt";
-  let methods = [
-    InterfaceMethod<
-      "The min version of the VIFRT dialect an op is supported in.",
-      "::xla::ifrt::Version", "getMinVersion">,
-    InterfaceMethod<
-      "The max version (inclusive) of the VIFRT dialect an op is supported in.",
-      "::xla::ifrt::Version", "getMaxVersion">,
-  ];
-}
-
-def Vifrt_VersionedOpConstraintInterface : OpInterface<"VifrtVersionedOpConstraintInterface"> {
-  let cppNamespace = "::xla::ifrt";
-  let methods = [
-    InterfaceMethod<
-      [{Validates versioned constraints on a versioned op.
-       Used if the specified constraints of an op change over time.}],
-      "mlir::LogicalResult", "validateConstraint",
-      (ins "mlir::Operation*":$op, "::xla::ifrt::Version":$targetVersion)>,
-  ];
-}
+// VIFRT is a bare mininum versioned copy of IFRT. In the pursuit of minimality,
+// it adopts the following conventions (similar to VHLO):
+// 1) Use Vifrt_AnyType or Variading<Vifrt_AnyType> for all operands and
+//    results.
+// 2) Use traits only when strictly necessary (e.g., `AttrSizedOperandSegments`
+//    when multiple variable operands are present).
+// 3) Use Vifrt_AnyAttr for all attributes.
+// 4) Don't use verifiers.
 
 class Vifrt_Op<string mnemonic, string min_version, string max_version, list<Trait> traits = []> :
     Op<Vifrt_Dialect, mnemonic,
@@ -63,15 +45,6 @@ class Vifrt_Op<string mnemonic, string min_version, string max_version, list<Tra
     }
   }];
 }
-
-// VIFRT is a bare mininum versioned copy of IFRT. In the pursuit of minimality,
-// it adopts the following conventions (similar to VHLO):
-// 1) Use Vifrt_AnyType or Variading<Vifrt_AnyType> for all operands and
-//    results.
-// 2) Use traits only when strictly necessary (e.g., `AttrSizedOperandSegments`
-//    when multiple variable operands are present).
-// 3) Use Vifrt_AnyAttr for all attributes.
-// 4) Don't use verifiers.
 
 def Vifrt_ReshardOpV1 : Vifrt_Op<"ReshardV1", "0.1.0", "current",
     [AttrSizedOperandSegments]> {
@@ -157,6 +130,37 @@ def Vifrt_LoadedExecutableOpV1 : Vifrt_Op<"LoadedExecutableV1", "0.1.0",
 def Vifrt_AfterOpV1 : Vifrt_Op<"AfterV1", "0.1.0", "current", []> {
   let arguments = (ins Variadic<Vifrt_AnyType>:$inputs);
   let results = (outs Vifrt_AnyType:$control_output);
+}
+
+//===---------------------------------------------------------------------------
+// Ops for the subset of `func` dialect used by IFRT.
+//===---------------------------------------------------------------------------
+
+// Each used op from the `func` dialect is versioned because of the following
+// two reasons:
+// 1) To avoid breaking stable serialization if the `func` dialect changes.
+// 2) To avoid custom conversion logic and type checking for these ops. By
+//    verioning them we can use the same generic conversion logic as for other
+//    VIFRT ops.
+
+def Vifrt_FuncOpV1 : Vifrt_Op<"FuncV1", "0.1.0", "current"> {
+  let arguments = (ins
+    Vifrt_AnyAttr:$sym_name,
+    Vifrt_AnyAttr:$function_type,
+    Vifrt_AnyAttr:$sym_visibility,
+    Vifrt_AnyAttr:$arg_attrs,
+    Vifrt_AnyAttr:$res_attrs);
+  let regions = (region Vifrt_AnyRegion:$body);
+  let assemblyFormat = "custom<FunctionBody>($sym_name, $body, $function_type) attr-dict";
+}
+
+def VIfrt_ReturnOpV1 : Vifrt_Op<"ReturnV1", "0.1.0", "current", [Terminator]> {
+  let arguments = (ins Variadic<Vifrt_AnyType>:$results);
+}
+
+def Vifrt_CallFuncOpV1 : Vifrt_Op<"CallFuncV1", "0.1.0", "current"> {
+  let arguments = (ins Vifrt_AnyAttr:$callee, Variadic<Vifrt_AnyType>:$operands);
+  let results = (outs Variadic<Vifrt_AnyType>:$results);
 }
 
 #endif  // XLA_PYTHON_IFRT_IR_VIFRT_OPS_TD_

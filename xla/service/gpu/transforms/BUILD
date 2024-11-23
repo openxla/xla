@@ -1,7 +1,3 @@
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/stream_executor:build_defs.bzl",
@@ -9,6 +5,10 @@ load(
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,6 +21,7 @@ cc_library(
     srcs = ["dot_algorithm_rewriter.cc"],
     hdrs = ["dot_algorithm_rewriter.h"],
     deps = [
+        "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
@@ -30,6 +31,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1793,18 +1795,36 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "gemm_rewriter_test_lib",
+    testonly = True,
+    srcs = ["gemm_rewriter_test_lib.cc"],
+    hdrs = ["gemm_rewriter_test_lib.h"],
+    tags = ["gpu"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/service/gpu/tests:gpu_codegen_test",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 xla_test(
     name = "gemm_rewriter_test",
     srcs = ["gemm_rewriter_test.cc"],
     backends = ["gpu"],
-    shard_count = 5,
     deps = [
         ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
         "//xla:error_spec",
         "//xla:test",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/testlib:filecheck",
         "//xla/service:buffer_assignment",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
@@ -1816,12 +1836,64 @@ xla_test(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/tests:filecheck",
-        "//xla/tests:verified_hlo_module",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
+    name = "cublas_gemm_rewriter_test",
+    srcs = ["cublas_gemm_rewriter_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:test",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+xla_test(
+    name = "gemm_rewriter_fp8_test",
+    size = "large",
+    srcs = ["gemm_rewriter_fp8_test.cc"],
+    backends = ["gpu"],
+    shard_count = 5,
+    deps = [
+        ":gemm_rewriter",
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:test",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_module_config",
+        "//xla/service:pattern_matcher",
+        "//xla/service:pattern_matcher_gmock",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
@@ -3069,12 +3141,16 @@ cc_library(
     hdrs = ["triton_fusion_numerics_verifier.h"],
     tags = ["gpu"],
     deps = [
+        ":fusion_wrapper",
+        ":priority_fusion",
+        ":tree_reduction_rewriter",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/service:dump",
         "//xla/service:executable",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_module_config",
@@ -3084,9 +3160,6 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu/autotuning:autotuner_compile_util",
         "//xla/service/gpu/autotuning:autotuner_util",
-        "//xla/service/gpu/transforms:fusion_wrapper",
-        "//xla/service/gpu/transforms:priority_fusion",
-        "//xla/service/gpu/transforms:tree_reduction_rewriter",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream",
         "//xla/tools:hlo_decomposer_lib",
@@ -3096,6 +3169,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
@@ -3240,10 +3314,10 @@ xla_cc_test(
     deps = [
         ":pgle_accuracy_checker",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:profile_guided_latency_estimator",
         "//xla/service/gpu:gpu_latency_hiding_scheduler",
-        "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",

@@ -43,6 +43,14 @@ message DebugOptions {
   //--------------------------------------------------------------------------//
   // go/keep-sorted start
 
+  // The execution time optimization effort to expend during compilation.
+  // See `exec_time_optimization_effort` for accepted ranges. This flag will
+  // override any changes set in `ExecutionOptions`. Most likely this is just a
+  // temporary measure before https://github.com/jax-ml/jax/issues/24715 is in.
+  //
+  // TODO(b/377871215): Check whether we still need this.
+  float xla_experimental_exec_time_optimization_effort = 346;
+
   // go/keep-sorted end
 
   //--------------------------------------------------------------------------//
@@ -596,10 +604,11 @@ message DebugOptions {
     CUBLAS = 2;
     CUDNN = 3;
     COLLECTIVES = 4;
-    CONDITIONALS = 5;
-    CUSTOM_CALL = 6;
-    CUBLASLT = 7;
-    DYNAMIC_SLICE = 8;
+    CONDITIONAL = 5;
+    WHILE = 6;
+    CUSTOM_CALL = 7;
+    CUBLASLT = 8;
+    DYNAMIC_SLICE_FUSION = 9;
   }
 
   // Determine the types of commands that are recorded into command buffers.
@@ -966,8 +975,20 @@ message DebugOptions {
   // but potentially higher the performance.
   int32 xla_gpu_cudnn_gemm_max_plans = 318;
 
+  enum LibNvJitLinkMode {
+    // LibNvJitLink is used if it is available and no buggy version has been
+    // detected.
+    LIB_NV_JIT_LINK_MODE_AUTO = 0;
+    // LibNvJitLink is never used.
+    LIB_NV_JIT_LINK_MODE_DISABLED = 1;
+    // LibNvJitLink is used always. If it is not available, compilation will
+    // fail.
+    LIB_NV_JIT_LINK_MODE_ENABLED = 2;
+  }
+
   // If enabled, uses the libnvjitlink library for PTX compilation and linking
-  bool xla_gpu_enable_libnvjitlink = 319;
+  LibNvJitLinkMode xla_gpu_libnvjitlink_mode = 343;
+  reserved 319;  // was xla_gpu_enable_libnvjitlink with boolean type.
 
   // If true, XLA will wrap `dot` operations into async computations in an
   // effort to parallelize matrix operations.
@@ -1030,7 +1051,16 @@ message DebugOptions {
   }
   PGLEStrictnessLevel xla_gpu_pgle_accuracy_checker = 341;
 
-  // Next id: 343
+  bool xla_pjrt_allow_auto_layout_in_hlo = 344;
+
+  // Enable the scatter determinism expander, an optimized pass that
+  // rewrites scatter operations to ensure deterministic behavior with high
+  // performance.
+  // Note that even when this flag is disabled, scatter operations may still
+  // be deterministic, although with additional overhead.
+  bool xla_gpu_enable_scatter_determinism_expander = 345;
+
+  // Next id: 347
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

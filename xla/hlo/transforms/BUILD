@@ -2,12 +2,12 @@
 #   Implementation of XLA’s HLO transformations.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "tsl_copts")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -646,10 +646,12 @@ cc_library(
         "//xla/hlo/ir:hlo_instruction_utils",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/utils:hlo_sharding_util",
+        "//xla/service:gather_scatter_utils",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:hlo_creation_utils",
         "//xla/service:hlo_module_config",
         "//xla/service:host_memory_offload_annotations_hdr",
+        "//xla/service:host_offload_utils",
         "//xla/service:pattern_matcher",
         "//xla/service:shape_inference",
         "@com_google_absl//absl/algorithm:container",
@@ -1460,6 +1462,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
@@ -1491,6 +1494,22 @@ xla_cc_test(
         "@tsl//tsl/platform:test_main",
     ],
 )
+
+# copybara:uncomment_begin(google-only)
+# xla_cc_test(
+#     name = "hlo_constant_folding_peak_heap_test",
+#     srcs = ["simplifiers/hlo_constant_folding_peak_heap_test.cc"],
+#     deps = [
+#         ":hlo_constant_folding",
+#         "@com_google_googletest//:gtest",
+#         "@com_google_absl//absl/strings:str_format",
+#         "//xla:test",
+#         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+#         "@tsl//tsl/platform:statusor",
+#         "@tsl//tsl/platform:test_main",
+#     ],
+# )
+# copybara:uncomment_end
 
 cc_library(
     name = "hlo_element_type_converter",

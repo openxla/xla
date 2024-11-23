@@ -60,9 +60,11 @@ struct IfrtIRProgram : llvm::RTTIExtends<IfrtIRProgram, Program> {
 struct SerializeIfrtIRProgramOptions
     : llvm::RTTIExtends<SerializeIfrtIRProgramOptions, SerializeOptions> {
   explicit SerializeIfrtIRProgramOptions(std::string ifrt_version,
-                                         std::string atom_program_version)
+                                         std::string atom_program_version,
+                                         bool version_in_place = true)
       : ifrt_version(std::move(ifrt_version)),
-        atom_program_version(std::move(atom_program_version)) {}
+        atom_program_version(std::move(atom_program_version)),
+        version_in_place(version_in_place) {}
 
   static char ID;  // NOLINT
 
@@ -71,6 +73,23 @@ struct SerializeIfrtIRProgramOptions
   // String of the form "major.minor.patch", representing the atom program
   // version (currently VHLO version).
   std::string atom_program_version;
+  // Whether to version the IFRT IR ModuleOp in-place.
+  bool version_in_place;
+};
+
+// Options for deserializing IFRT IR programs.
+// If `context` is not nullptr then deserialization will create a new MLIR
+// context, which will be owned by the deserialized program. Otherwise, the
+// deserialization will use the provided MLIR context and the returned program
+// will not own a MLIR context.
+struct DeserializeIfrtIRProgramOptions
+    : llvm::RTTIExtends<DeserializeIfrtIRProgramOptions, DeserializeOptions> {
+  explicit DeserializeIfrtIRProgramOptions(mlir::MLIRContext* context)
+      : context(context) {}
+
+  static char ID;  // NOLINT
+
+  mlir::MLIRContext* context;
 };
 
 // CompileOptions for an IFRT IR program.

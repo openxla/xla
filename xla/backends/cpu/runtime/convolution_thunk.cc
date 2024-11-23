@@ -349,19 +349,19 @@ ConvolutionThunk::HandleEigen2DConvolution(const ExecuteParams& params,
   };
 
   if (options_.multi_threaded) {
-    auto state = std::make_shared<ExecuteState>(feature_group_count_);
-    auto done_callback = [state] { state->Notify(); };
+    tsl::CountDownAsyncValueRef<ExecuteEvent> state(feature_group_count_);
+    auto done_callback = [state]() mutable { state.CountDown(); };
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), *params.intra_op_threadpool, done_callback);
+      dispatch(Eigen::half{}, *params.intra_op_threadpool, done_callback);
     } else {
       dispatch(float(), *params.intra_op_threadpool, done_callback);
     }
-    return state->event;
+    return state.AsRef();
   } else {
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), Eigen::DefaultDevice());
+      dispatch(Eigen::half{}, Eigen::DefaultDevice());
     } else {
-      dispatch(float(), Eigen::DefaultDevice());
+      dispatch(float{}, Eigen::DefaultDevice());
     }
     return OkExecuteEvent();
   }
@@ -390,19 +390,19 @@ ConvolutionThunk::HandleEigen3DConvolution(const ExecuteParams& params,
   };
 
   if (options_.multi_threaded) {
-    auto state = std::make_shared<ExecuteState>(feature_group_count_);
-    auto done_callback = [state] { state->Notify(); };
+    tsl::CountDownAsyncValueRef<ExecuteEvent> state(feature_group_count_);
+    auto done_callback = [state]() mutable { state.CountDown(); };
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), *params.intra_op_threadpool, done_callback);
+      dispatch(Eigen::half{}, *params.intra_op_threadpool, done_callback);
     } else {
-      dispatch(float(), *params.intra_op_threadpool, done_callback);
+      dispatch(float{}, *params.intra_op_threadpool, done_callback);
     }
-    return state->event;
+    return state.AsRef();
   } else {
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), Eigen::DefaultDevice());
+      dispatch(Eigen::half{}, Eigen::DefaultDevice());
     } else {
-      dispatch(float(), Eigen::DefaultDevice());
+      dispatch(float{}, Eigen::DefaultDevice());
     }
     return OkExecuteEvent();
   }

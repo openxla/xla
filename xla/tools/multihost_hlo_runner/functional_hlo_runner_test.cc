@@ -27,8 +27,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/util/command_line_flags.h"
@@ -290,9 +290,10 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
               /*overwrite=*/true);
   TF_ASSIGN_OR_RETURN(
       PjRtEnvironment env,
-      xla::GetPjRtClient("gpu", "127.0.0.1:12345", node_id, kNumNodes,
-                         /*enable_mock_nccl=*/false,
-                         /*init_timeout=*/absl::Seconds(120)));
+      xla::GetPjRtEnvironment(xla::PjRtDeviceType::kGpu, "127.0.0.1:12345",
+                              node_id, kNumNodes,
+                              /*enable_mock_nccl=*/false,
+                              /*init_timeout=*/absl::Seconds(120)));
   CHECK(env.kv_store != nullptr);
   // Make HLO module IDs of multiple_gemm_fusions.hlo differ: the autotuner
   // should not rely on them.
@@ -326,6 +327,13 @@ absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
     // The nodes autotune different fusions.
     CHECK_NE(results0, results1);
   }
+  // Compile another module to test that the autotuner doesn't fail trying to
+  // exchange again cached results for the previous module.
+  TF_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
+      *env.client, GetDebugOptionsFromFlags(),
+      FunctionalHloRunner::PreprocessingOptions{},
+      FunctionalHloRunner::RawCompileOptions{},
+      GetHloPath("single_gemm_fusion.hlo"), InputFormat::kText));
   return absl::OkStatus();
 }
 
