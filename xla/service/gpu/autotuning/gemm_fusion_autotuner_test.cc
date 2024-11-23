@@ -182,15 +182,20 @@ class StatelessAutotunerTest : public HloTestBase {
   absl::StatusOr<std::vector<GemmFusionAutotunerImpl::BackendConfig>>
   GetPossibleMatmulAutotuneConfigs(
       const HloModule& module,
-      const se::CudaComputeCapability& compute_capability,
+      const se::GpuComputeCapability& compute_capability,
       const se::SemanticVersion& toolkit_version,
       const DebugOptions& debug_options) {
     const HloFusionInstruction& fusion = *Cast<HloFusionInstruction>(
         module.entry_computation()->root_instruction());
-    se::GpuDeviceInfoProto deviceless_proto;
-    auto ccc = deviceless_proto.mutable_cuda_compute_capability();
-    ccc->set_major(compute_capability.major);
-    ccc->set_minor(compute_capability.minor);
+    if (std::holds_alternative<se::CudaComputeCapability>(
+            compute_capability)) {
+      auto cu_compute_capability =
+        std::get<se::CudaComputeCapability>(compute_capability);
+      se::GpuDeviceInfoProto deviceless_proto;
+      auto ccc = deviceless_proto.mutable_cuda_compute_capability();
+      ccc->set_major(cu_compute_capability.major);
+      ccc->set_minor(cu_compute_capability.minor);
+    }
 
     DeviceConfig test_config{backend().default_stream_executor(),
                              backend().memory_allocator()};
@@ -205,6 +210,11 @@ class StatelessAutotunerTest : public HloTestBase {
         .default_stream_executor()
         ->GetDeviceDescription()
         .cuda_compute_capability();
+  }
+
+  const stream_executor::GpuComputeCapability& GpuComputeComp() {
+    return backend().default_stream_executor()
+                    ->GetDeviceDescription().gpu_compute_capability();
   }
 
   // Returns the config for the current device.
@@ -280,18 +290,25 @@ TEST_F(StatelessAutotunerTest,
 
   TF_ASSERT_OK_AND_ASSIGN(auto configs,
                           GetPossibleMatmulAutotuneConfigs(*module));
-  switch (GetCudaComputeCapability().major) {
-    case se::CudaComputeCapability::AMPERE:
-      EXPECT_TRUE(hasCublasConfig(configs))
-          << "There is a cublas implementation for dot_bf16_bf16_f32 on Ampere";
-      break;
-    case se::CudaComputeCapability::HOPPER:
-      EXPECT_TRUE(hasCublasConfig(configs))
-          << "There is a cublas implementation for dot_bf16_bf16_f32 on Hopper";
-      break;
-    default:
-      // We don't know what to expect for other compute capabilities.
-      EXPECT_FALSE(hasCublasConfig(configs));
+  if (std::holds_alternative<se::CudaComputeCapability>(
+            GpuComputeComp())) {
+    switch (GetCudaComputeCapability().major) {
+      case se::CudaComputeCapability::AMPERE:
+        EXPECT_TRUE(hasCublasConfig(configs))
+            << "There is a cublas implementation for dot_bf16_bf16_f32 on Ampere";
+        break;
+      case se::CudaComputeCapability::HOPPER:
+        EXPECT_TRUE(hasCublasConfig(configs))
+            << "There is a cublas implementation for dot_bf16_bf16_f32 on Hopper";
+        break;
+      default:
+        // We don't know what to expect for other compute capabilities.
+        EXPECT_FALSE(hasCublasConfig(configs));
+    }
+  }
+  else {
+    // ROCm
+    EXPECT_TRUE(hasCublasConfig(configs));
   }
 }
 
@@ -306,13 +323,26 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
     return debug_options;
   }
 
+  stream_executor::GpuComputeCapability CudaAmpereOrRocm() {
+    if (std::holds_alternative<stream_executor::RocmComputeCapability>(
+            GpuComputeComp())) {
+      return stream_executor::GpuComputeCapability{
+          backend().default_stream_executor()->
+            GetDeviceDescription().rocm_compute_capability()};
+    } else {
+      return stream_executor::GpuComputeCapability{
+          stream_executor::CudaComputeCapability{
+              stream_executor::CudaComputeCapability::AMPERE, 0}};
+    }
+  }
+
   void CheckTritonAutotuning(absl::string_view hlo,
                              absl::string_view expected) {
     HloPassPipeline pipeline("gemm_rewrite");
     pipeline.AddPass<GemmFusion>(backend()
                                      .default_stream_executor()
                                      ->GetDeviceDescription()
-                                     .cuda_compute_capability());
+                                     .gpu_compute_capability());
     tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "",
                                         tsl::port::MaxParallelism());
     DebugOptions opts;
@@ -376,6 +406,10 @@ GetPossibleMatmulAutotuneTritonConfigs(
 }
 
 TEST_F(GemmFusionAutotunerTest, AmpereUsesMoreThanTwoStages) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
 ENTRY e {
   p0 = f32[1024,1024] parameter(0)
@@ -565,6 +599,10 @@ ENTRY e {
 
 // TODO(b/344770374): Make this test not fragile.
 TEST_F(GemmFusionAutotunerTest, DoNotRunAutotuningKernelSpillingRegisters) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   const std::string kHloText = R"(
 HloModule m
 
@@ -758,6 +796,9 @@ ENTRY main {
 }
 
 TEST_F(GemmFusionAutotunerDumpTest, DumpingWorks) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "cuBLAS not selected on ROCM.";
+  }
   HloModuleConfig config;
   DebugOptions options = GetDebugOptionsForTest();
   options.set_xla_gpu_cublas_fallback(true);
@@ -823,6 +864,9 @@ CHECK: cublas
 }
 
 TEST_F(GemmFusionAutotunerTest, AutotuneCuDnnFusion) {
+  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
+    GTEST_SKIP() << "No CuDnnFusion on ROCM.";
+  }
   const std::string kHlo = R"(
 fusion1 {
   p0 = f32[3,28,32] parameter(0)
@@ -895,7 +939,7 @@ ENTRY e {
   pipeline.AddPass<GemmFusion>(backend()
                                    .default_stream_executor()
                                    ->GetDeviceDescription()
-                                   .cuda_compute_capability());
+                                   .gpu_compute_capability());
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "",
                                       tsl::port::MaxParallelism());
   DebugOptions opts;
@@ -1139,6 +1183,10 @@ ENTRY entry {
 }
 
 TEST_F(GemmFusionAutotunerTest, CreatesCustomKernelFusionConfigs) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   const std::string kHlo = R"(
   HloModule module, entry_computation_layout={(bf16[1024,1024]{1,0}, bf16[1024,1024]{1,0})->f32[1024,1024]{1,0}}
 
@@ -1158,8 +1206,8 @@ TEST_F(GemmFusionAutotunerTest, CreatesCustomKernelFusionConfigs) {
 
   std::unique_ptr<VerifiedHloModule> module =
       ParseAndReturnVerifiedModule(kHlo).value();
-  const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+
+  const se::GpuComputeCapability compute_capability{CudaAmpereOrRocm()};
 
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<GemmFusionAutotunerImpl::BackendConfig> configs,
@@ -1175,6 +1223,10 @@ TEST_F(GemmFusionAutotunerTest, CreatesCustomKernelFusionConfigs) {
 }
 
 TEST_F(GemmFusionAutotunerTest, GeneratesConfigForUpcastGemmWithPrologue) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   const std::string kHlo = R"(
   HloModule module
 
@@ -1216,6 +1268,10 @@ TEST_F(GemmFusionAutotunerTest, GeneratesConfigForUpcastGemmWithPrologue) {
 
 TEST_F(GemmFusionAutotunerTest,
        GeneratesConfigForUpcastGemmWithPrologueAndEpilogue) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   const std::string kHlo = R"(
   HloModule module
 
@@ -1260,6 +1316,10 @@ TEST_F(GemmFusionAutotunerTest,
 }
 
 TEST_F(GemmFusionAutotunerTest, RewritesGemmFusionToCustomKernelFusion) {
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          GpuComputeComp())) {
+    GTEST_SKIP() << "Not supported on ROCm.";
+  }
   const std::string kHlo = R"(
   HloModule module, entry_computation_layout={(bf16[1024,1024]{1,0}, bf16[1024,1024]{1,0})->f32[1024,1024]{1,0}}
 

@@ -12,6 +12,10 @@ load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
 )
+load(
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -28,7 +32,9 @@ package_group(
 
 cc_library(
     name = "gemm_fusion_autotuner",
-    srcs = ["gemm_fusion_autotuner.cc"],
+    srcs = ["gemm_fusion_autotuner.cc"] +
+            if_cuda_is_configured(["gemm_fusion_autotuner_cuda.cc"]) +
+            if_rocm_is_configured(["gemm_fusion_autotuner_rocm.cc"]),
     hdrs = ["gemm_fusion_autotuner.h"],
     tags = [
         "cuda-only",
