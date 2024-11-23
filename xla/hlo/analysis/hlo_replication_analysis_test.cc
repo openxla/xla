@@ -35,8 +35,8 @@ class HloReplicationAnalysisTest : public HloHardwareIndependentTestBase {
       std::vector<std::vector<int>> replica_ids) {
     std::vector<ReplicaGroup> replica_groups(replica_ids.size());
     for (int i = 0; i < replica_ids.size(); ++i) {
-      for (int j = 0; j < replica_ids[i].size(); ++j) {
-        replica_groups[i].add_replica_ids(replica_ids[i][j]);
+      for (int id : replica_ids[i]) {
+        replica_groups[i].add_replica_ids(id);
       }
     }
     return replica_groups;
@@ -861,7 +861,9 @@ ENTRY entry {
   const int replica_count = 3;
   const int num_partitions = 6;
   const bool cross_partition_spmd = true;
-  const std::vector<ReplicaGroup> replica_groups =
+  const std::vector<ReplicaGroup> replica_groups0 =
+      CreateReplicaGroups({{0, 1}, {2, 3}, {4, 5}});
+  const std::vector<ReplicaGroup> replica_groups1 =
       CreateReplicaGroups({{0, 1, 2}, {3, 4, 5}});
 
   TF_ASSERT_OK_AND_ASSIGN(
@@ -872,8 +874,10 @@ ENTRY entry {
       HloReplicationAnalysis::RunWithPartialReplication(module.get(),
                                                         cross_partition_spmd));
 
+  EXPECT_TRUE(partition_analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "all_gather"), {}, replica_groups0));
   EXPECT_FALSE(partition_analysis->HloInstructionIsReplicatedAt(
-      FindInstruction(module.get(), "all_gather"), {}, replica_groups));
+      FindInstruction(module.get(), "all_gather"), {}, replica_groups1));
 }
 
 TEST_F(HloReplicationAnalysisTest,
@@ -914,9 +918,9 @@ TEST_F(HloReplicationAnalysisTest,
     param1 = f32[4] parameter(1)
     all_gather0 = f32[8] all-gather(param0), dimensions={0}, replica_groups={{0,1,2,3},{4,5,6,7},{8,9,10,11},{12,13,14,15}}, use_global_device_ids=true, channel_id=1
     all_gather1 = f32[8] all-gather(param1), dimensions={0}, replica_groups={{0,1},{2,3},{4,5},{6,7},{8,9},{10,11},{12,13},{14,15}}, use_global_device_ids=true, channel_id=2
-    all_gather2 = f32[8] all-gather(param1), dimensions={0}, replica_groups={{0,1},{4,5},{2,3},{6,7},{8,9},{10,11},{12,13},{14,15}}, use_global_device_ids=true, channel_id=3
+    all_gather2 = f32[8] all-gather(param0), dimensions={0}, replica_groups={{0,3,4,5},{1,2,6,7},{8,11,12,13},{9,10,14,15}}, use_global_device_ids=true, channel_id=3
     add0 = f32[8] add(all_gather0, all_gather1)
-    add1 = f32[8] add(all_gather1, all_gather2)
+    add1 = f32[8] add(all_gather0, all_gather2)
     ROOT tuple = (f32[8], f32[8]) tuple(add0, add1)
     }
   )";
@@ -927,6 +931,8 @@ TEST_F(HloReplicationAnalysisTest,
       CreateReplicaGroups({{0, 1, 2, 3}, {4, 5, 6, 7}});
   const std::vector<ReplicaGroup> replica_groups1 =
       CreateReplicaGroups({{0, 1}, {2, 3}, {4, 5}, {6, 7}});
+  const std::vector<ReplicaGroup> replica_groups2 =
+      CreateReplicaGroups({{1, 2}, {0, 3}, {4, 5}, {6, 7}});
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto module,
@@ -940,8 +946,8 @@ TEST_F(HloReplicationAnalysisTest,
       FindInstruction(module.get(), "add0"), {}, replica_groups1));
   EXPECT_FALSE(analysis->HloInstructionIsReplicatedAt(
       FindInstruction(module.get(), "add1"), {}, replica_groups0));
-  EXPECT_FALSE(analysis->HloInstructionIsReplicatedAt(
-      FindInstruction(module.get(), "add1"), {}, replica_groups1));
+  EXPECT_TRUE(analysis->HloInstructionIsReplicatedAt(
+      FindInstruction(module.get(), "add1"), {}, replica_groups2));
 }
 
 TEST_F(HloReplicationAnalysisTest, OptimizationBarrier) {

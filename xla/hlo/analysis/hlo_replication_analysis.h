@@ -95,14 +95,12 @@ class HloReplicationAnalysis {
     // Empty if state_ is kReplicatedOnAllDevices or kUniqueOnAllDevices.
     //
     // If cross_partition_spmd is true, groups_for_replicas_[k] holds the
-    // replica groups of an all-gather, all-reduce or dynamic-slice for
-    // replica k with each element of a replica group describing a partition
-    // ID.
+    // replica groups for replica k. Each replica group is a vector of partition
+    // IDs across which the HLO instruction is replicated.
     //
     // Similarly, if cross_partition_spmd is false, groups_for_replicas_[k]
-    // holds the replica groups of an all-gather, all-reduce or dynamic-slice
-    // for partition k with each element of a replica group describing a replica
-    // ID.
+    // holds the replica groups for partition k. Each replica group is a vector
+    // of replica IDs across which the HLO instruction is replicated.
     std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas_;
   };
 
