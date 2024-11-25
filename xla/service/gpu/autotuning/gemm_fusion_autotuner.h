@@ -158,6 +158,8 @@ class GemmFusionAutotunerImpl {
   bool IsAutotuningEnabled() const;
   static std::string ToString(const BackendConfig& config);
 
+  static const int64_t BLAS_GEMM_DEFAULT;
+
  private:
   // Measures the performance of a single executable candidate.
   //
@@ -187,6 +189,17 @@ class GemmFusionAutotunerImpl {
     return config_.GetGpuComputeCapability();
   }
 
+  bool isRocm() const {
+    return std::holds_alternative<se::RocmComputeCapability>(
+          GetComputeCapability()) ? true : false;
+  }
+
+  bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind);
+
+  bool AddLibConfigs(const HloFusionInstruction& fusion,
+                     const HloDotInstruction* dot,
+                     std::vector<BackendConfig> &configs);
+
   std::vector<TritonGemmConfig> GetDefaultTritonConfigs() const;
   std::vector<TritonGemmConfig> GetExhaustiveTritonConfigs() const;
 
@@ -196,26 +209,6 @@ class GemmFusionAutotunerImpl {
   tsl::thread::ThreadPool* thread_pool_;
   std::vector<TritonGemmConfig> triton_configs_;
 };
-
-struct TileSizeLimit {
-  int block_m = 0;
-  int block_n = 0;
-  int block_k = 0;
-};
-
-absl::StatusOr<TileSizeLimit> GetLimits(const HloDotInstruction& dot);
-bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind);
-
-// Minimum tile size.
-constexpr int kMinTileSize = 16;
-
-using BackendConfig = GemmFusionAutotunerImpl::BackendConfig;
-
-std::vector<BackendConfig> GenerateCustomKernelFusionConfigs(
-    const HloFusionInstruction& fusion,
-    se::DeviceDescription device_description);
-
-extern const int64_t BLAS_GEMM_DEFAULT;
 
 }  // namespace gpu
 }  // namespace xla
