@@ -169,18 +169,6 @@ ENTRY main.6 {
   ROOT dot.1 = bf16[16,16,256,HEAD_DIM]{3,2,1,0} dot(divide, Arg_2.3), lhs_batch_dims={0,1}, lhs_contracting_dims={3}, rhs_batch_dims={0,1}, rhs_contracting_dims={2}, metadata={}
 })";
 
-std::string ReplacePlaceholder(absl::string_view str,
-                               const std::string& placeholder,
-                               const std::string& value) {
-  std::string result(str.begin(), str.end());
-  std::string::size_type pos = 0;
-  while ((pos = result.find(placeholder, pos)) != std::string::npos) {
-    result.replace(pos, placeholder.size(), value);
-    pos += value.size();
-  }
-  return result;
-}
-
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
        BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
@@ -188,8 +176,8 @@ TEST_F(CudnnFusedMhaRewriterTestHloTest,
       (GetRealCudaComputeCapability().IsAtLeastHopper() &&
        GetRealCudnnVersion() >= se::dnn::VersionInfo(9, 5, 0));
   int head_dim = support_large_head_dim ? 256 : 64;
-  std::string hlo = ReplacePlaceholder(hlo_base_pattern, "HEAD_DIM",
-                                       std::to_string(head_dim));
+  const std::string hlo = absl::StrReplaceAll(
+      hlo_base_pattern, {{"HEAD_DIM", std::to_string(head_dim)}});
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
   CudnnFusedMHARewriter fusedMhaRewriter{GetRealCudaComputeCapability(),
                                          GetRealCudnnVersion()};
