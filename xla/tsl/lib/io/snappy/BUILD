@@ -1,13 +1,13 @@
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load(
-    "@tsl//tsl/platform:build_config.bzl",
+    "//xla/tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
-load("//xla/tsl:tsl.bzl", "internal_visibility")
 
 # Snappy targets.
 
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 

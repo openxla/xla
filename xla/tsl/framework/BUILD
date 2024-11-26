@@ -4,20 +4,20 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
-    "@tsl//tsl/platform:build_config.bzl",
+    "//xla/tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "@tsl//tsl/platform:build_config_root.bzl",
+    "//xla/tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
-load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
-load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

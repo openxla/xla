@@ -1,6 +1,6 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:strict.default.bzl", "py_strict_test")
 load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
 
