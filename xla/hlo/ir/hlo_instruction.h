@@ -793,9 +793,9 @@ class HloInstruction {
 
   // Creates a unary instruction (one operand).
   // Precondition: opcode must be a legitimate unary operation.
-  static std::unique_ptr<HloInstruction> CreateUnary(const Shape& shape,
-                                                     HloOpcode opcode,
-                                                     HloInstruction* operand);
+  static std::unique_ptr<HloInstruction> CreateUnary(
+      const Shape& shape, HloOpcode opcode, HloInstruction* operand,
+      std::optional<ResultAccuracy> result_accuracy = std::nullopt);
 
   // Creates a binary instruction (two operands).
   // Precondition: opcode must be a legitimate binary operation.
@@ -879,6 +879,15 @@ class HloInstruction {
       const PrecisionConfig& precision_config,
       std::vector<SparsityDescriptor> sparsity = {},
       absl::Span<HloInstruction* const> sparse_meta = {});
+
+  // Creates a ragged dot op with operands 'lhs', 'rhs', and 'group_sizes', with
+  // contracting, batch, ragged, and group dimensions specified in
+  // 'dimension_numbers'.
+  static std::unique_ptr<HloInstruction> CreateRaggedDot(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      HloInstruction* group_sizes,
+      const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig& precision_config);
 
   // Creates a reduce-precision op, where operand is the data to reduce in
   // precision, and exponent_bits and mantissa_bits describe the precision to
@@ -1067,10 +1076,10 @@ class HloInstruction {
   // The ragged all-to-all HLO has the following arguments:
   // input: ragged input data tensor.
   // input_offsets: ragged input offsets tensor.
-  // input_sizes: ragged input sizes tensor.
+  // send_sizes: ragged send sizes tensor.
   // output: ragged output data tensor.
   // output_offsets: ragged output offsets tensor.
-  // output_sizes: ragged output sizes tensor.
+  // recv_sizes: ragged recv sizes tensor.
   //
   // The '*_offsets' and '*_sizes' tensors must have the same shape.
   // The output buffer is passed in as an input (and aliased in the output),
@@ -1526,6 +1535,9 @@ class HloInstruction {
   static bool IsThreadIncluded(
       absl::string_view execution_thread,
       const absl::flat_hash_set<absl::string_view>& execution_threads_set);
+
+  // Returns true if the opcode is a unary op supports tunable accuracy.
+  static bool IsUnaryOpWithResultAccuracy(HloOpcode opcode);
 
   // Returns the opcode for this instruction.
   HloOpcode opcode() const { return opcode_; }
@@ -2613,6 +2625,9 @@ class HloInstruction {
   // Delegates to HloDotInstruction::dot_dimension_numbers().
   const DotDimensionNumbers& dot_dimension_numbers() const;
 
+  // Delegates to HloRaggedDotInstruction::ragged_dot_dimension_numbers().
+  const RaggedDotDimensionNumbers& ragged_dot_dimension_numbers() const;
+
   // Delegates to HloDomainInstruction::operand_side_metadata().
   const DomainMetadata& operand_side_metadata() const;
 
@@ -2971,11 +2986,16 @@ std::string PaddingConfigToString(const PaddingConfig& padding);
 std::string FrontendAttributesToString(
     const FrontendAttributes& frontend_attributes);
 std::string StatisticsVizToString(const StatisticsViz& statistics_viz);
+std::string ResultAccuracyToleranceToString(
+    const ResultAccuracy::Tolerance& tolerance);
 std::string RandomAlgorithmToString(const RandomAlgorithm& algorithm);
 std::string RandomDistributionToString(const RandomDistribution& distribution);
 std::string PrecisionToString(const PrecisionConfig::Precision& precision);
+std::string ResultAccuracyToString(ResultAccuracy::Mode accuracy_mode);
 std::string AlgorithmToString(const PrecisionConfig::Algorithm& algorithm);
 std::string DotDimensionNumbersToString(const DotDimensionNumbers& dnums);
+std::string RaggedDotDimensionNumbersToString(
+    const RaggedDotDimensionNumbers& dnums);
 std::string ConvolutionDimensionNumbersToString(
     const ConvolutionDimensionNumbers& dnums);
 
@@ -2987,6 +3007,8 @@ absl::StatusOr<PrecisionConfig::Precision> StringToPrecision(
     const std::string& name);
 absl::StatusOr<PrecisionConfig::Algorithm> StringToAlgorithm(
     const std::string& name);
+absl::StatusOr<ResultAccuracy::Mode> StringToResultAccuracy(
+    absl::string_view name);
 absl::StatusOr<CustomCallSchedule> StringToCustomCallSchedule(
     absl::string_view name);
 absl::StatusOr<CustomCallApiVersion> StringToCustomCallApiVersion(

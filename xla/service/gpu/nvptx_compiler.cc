@@ -93,19 +93,20 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
 #include "xla/stream_executor/cuda/cuda_diagnostics.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/driver_compilation.h"
 #include "xla/stream_executor/cuda/nvjitlink.h"
+#include "xla/stream_executor/cuda/nvjitlink_known_issues.h"
 #include "xla/stream_executor/cuda/nvjitlink_support.h"
 #include "xla/stream_executor/cuda/ptx_compilation_method.h"
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 #include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/cuda/ptx_linking_method.h"
+#include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/util/env_var.h"
@@ -575,12 +576,11 @@ HloDataflowAnalysis::CanShareBuffer NVPTXCompiler::GetCanShareBuffer() const {
 constexpr const uint8_t kPtxPrefix[] = {'P', 'T', 'X', ':', ' '};
 
 absl::StatusOr<GpuCompiler::BackendCompileResult>
-NVPTXCompiler::CompileTargetBinary(const HloModuleConfig& module_config,
-                                   llvm::Module* llvm_module,
-                                   se::GpuComputeCapability gpu_version,
-                                   bool relocatable,
-                                   const HloModule* debug_module,
-                                   const CompileOptions& options) {
+NVPTXCompiler::CompileTargetBinary(
+    const HloModuleConfig& module_config, llvm::Module* llvm_module,
+    const stream_executor::DeviceDescription& device_description,
+    bool relocatable, const HloModule* debug_module,
+    const CompileOptions& options) {
   std::unique_ptr<llvm::Module> loaded_module =
       MaybeLoadLLVMFromFile(debug_module, llvm_module);
   llvm::Module* selected_module = nullptr;
@@ -601,9 +601,10 @@ NVPTXCompiler::CompileTargetBinary(const HloModuleConfig& module_config,
             (debug_module != nullptr ? debug_module->name() : "(unknown")),
         !options.is_autotuning_compilation);
     uint64_t start_usecs = tsl::Env::Default()->NowMicros();
-    TF_ASSIGN_OR_RETURN(ptx,
-                        nvptx::CompileToPtx(selected_module, gpu_version,
-                                            module_config.debug_options()));
+    TF_ASSIGN_OR_RETURN(
+        ptx, nvptx::CompileToPtx(selected_module,
+                                 device_description.gpu_compute_capability(),
+                                 module_config.debug_options()));
 
     uint64_t end_usecs = tsl::Env::Default()->NowMicros();
     // This won't record values for calls that error out (because if they error
@@ -611,8 +612,9 @@ NVPTXCompiler::CompileTargetBinary(const HloModuleConfig& module_config,
     RecordLlvmPassesAndLlvmToPtxDuration(end_usecs - start_usecs);
   }
 
-  TF_ASSIGN_OR_RETURN(se::PtxLinkingMethod linking_method,
-                      ChooseLinkingMethod(module_config.debug_options()));
+  TF_ASSIGN_OR_RETURN(
+      se::PtxLinkingMethod linking_method,
+      ChooseLinkingMethod(module_config.debug_options(), device_description));
 
   if (linking_method == se::PtxLinkingMethod::kNvJitLink && relocatable) {
     VLOG(2) << "Deferring the PTX to CUBIN compilation of the relocatable "
@@ -629,7 +631,10 @@ NVPTXCompiler::CompileTargetBinary(const HloModuleConfig& module_config,
 
   absl::StatusOr<std::vector<uint8_t>> maybe_cubin =
       CompileGpuAsmOrGetCachedResult(
-          ptx, std::get<se::CudaComputeCapability>(gpu_version), module_config,
+          ptx,
+          std::get<se::CudaComputeCapability>(
+              device_description.gpu_compute_capability()),
+          module_config,
           (debug_module != nullptr ? debug_module->name() : "(unknown)"),
           relocatable, options);
 
@@ -670,8 +675,35 @@ absl::StatusOr<PtxCompilationMethod> ChooseCompilationMethod(
     }
   };
 
-  if (!debug_options.xla_gpu_enable_libnvjitlink()) {
-    VLOG(3) << "Discarding NvJitLink since it is disabled.";
+  // This is true if the user explicitly requested the use of libNvJitLink
+  // through the command line flag. In that case we bypass all the sanity checks
+  // and enable its usage. It means compilation might fail which is a better
+  // diagnostic to the user instead of silently discarding NvJitLink.
+  const bool libnvjitlink_force_enabled =
+      debug_options.xla_gpu_libnvjitlink_mode() ==
+      DebugOptions::LIB_NV_JIT_LINK_MODE_ENABLED;
+
+  if (!stream_executor::IsLibNvJitLinkSupported() &&
+      !libnvjitlink_force_enabled) {
+    VLOG(3) << "Discarding NvJitLink since it is not supported in this build.";
+    remove_compilation_method(PtxCompilationMethod::kNvJitLink);
+  } else if (stream_executor::LoadedNvJitLinkHasKnownIssues() &&
+             !libnvjitlink_force_enabled) {
+    auto formatted_version = [&]() -> std::string {
+      absl::StatusOr<stream_executor::NvJitLinkVersion> version =
+          stream_executor::GetNvJitLinkVersion();
+      if (version.ok()) {
+        return absl::StrCat(std::get<0>(*version), ".", std::get<1>(*version));
+      }
+      return "unknown";
+    }();
+
+    VLOG(3) << "Discarding NvJitLink since the loaded library version ("
+            << formatted_version << ") has known issues.";
+    remove_compilation_method(PtxCompilationMethod::kNvJitLink);
+  } else if (debug_options.xla_gpu_libnvjitlink_mode() ==
+             DebugOptions::LIB_NV_JIT_LINK_MODE_DISABLED) {
+    VLOG(3) << "Discarding NvJitLink since it was explicitly disabled.";
     remove_compilation_method(PtxCompilationMethod::kNvJitLink);
   }
   if (!debug_options.xla_gpu_enable_libnvptxcompiler()) {
@@ -734,7 +766,7 @@ static absl::StatusOr<std::vector<uint8_t>> AssembleOptionsAndCompile(
     switch (compilation_method) {
       case PtxCompilationMethod::kNvJitLink:
         return se::CompileAndLinkUsingLibNvJitLink(
-            cc.major, cc.minor,
+            cc,
             {se::NvJitLinkInput{
                 se::NvJitLinkInput::Type::kPtx,
                 absl::Span<const uint8_t>{
@@ -743,11 +775,11 @@ static absl::StatusOr<std::vector<uint8_t>> AssembleOptionsAndCompile(
             ptxas_config, cancel_if_reg_spill);
 
       case PtxCompilationMethod::kNvPtxCompiler:
-        return se::CompileGpuAsmUsingLibNvPtxCompiler(
-            cc.major, cc.minor, ptx.c_str(), ptxas_config, cancel_if_reg_spill);
+        return se::CompileGpuAsmUsingLibNvPtxCompiler(cc, ptx, ptxas_config,
+                                                      cancel_if_reg_spill);
       case PtxCompilationMethod::kPtxas:
-        return se::CompileGpuAsmUsingPtxAs(cc.major, cc.minor, ptx.c_str(),
-                                           ptxas_config, cancel_if_reg_spill);
+        return se::CompileGpuAsmUsingPtxAs(cc, ptx, ptxas_config,
+                                           cancel_if_reg_spill);
     }
   }();
 
@@ -897,14 +929,24 @@ static absl::StatusOr<stream_executor::SemanticVersion> GetAsmCompilerVersion(
 }
 
 absl::StatusOr<se::PtxLinkingMethod> NVPTXCompiler::ChooseLinkingMethod(
-    const DebugOptions& debug_options) {
+    const DebugOptions& debug_options,
+    const stream_executor::DeviceDescription& device_description) {
   se::GpuAsmOpts ptxas_config = PtxOptsFromDebugOptions(debug_options);
   std::string& preferred_cuda_dir = ptxas_config.preferred_cuda_dir;
 
   using LinkingMethod = se::PtxLinkingMethod;
 
+  // If the user has explicitly requested NvJitLink we will try to use it and
+  // fail later during linking if it is not available or has known issues.
+  if (debug_options.xla_gpu_libnvjitlink_mode() ==
+      DebugOptions::LIB_NV_JIT_LINK_MODE_ENABLED) {
+    return LinkingMethod::kNvJitLink;
+  }
+
   if (stream_executor::IsLibNvJitLinkSupported() &&
-      debug_options.xla_gpu_enable_libnvjitlink()) {
+      !stream_executor::LoadedNvJitLinkHasKnownIssues() &&
+      debug_options.xla_gpu_libnvjitlink_mode() !=
+          DebugOptions::LIB_NV_JIT_LINK_MODE_DISABLED) {
     return se::PtxLinkingMethod::kNvJitLink;
   }
 
@@ -917,19 +959,24 @@ absl::StatusOr<se::PtxLinkingMethod> NVPTXCompiler::ChooseLinkingMethod(
     return LinkingMethod::kNvLink;
   }
 
-  int ptxas_version =
-      asm_compiler_version.major() * 1000 + asm_compiler_version.minor() * 10;
-  TF_ASSIGN_OR_RETURN(int driver_version,
-                      se::gpu::GpuDriver::GetDriverVersion());
+  stream_executor::SemanticVersion driver_version =
+      device_description.driver_version();
 
-  if (driver_version >= ptxas_version) {
+  auto greater_equal_major_minor =
+      [](const stream_executor::SemanticVersion& a,
+         const stream_executor::SemanticVersion& b) {
+        return std::make_tuple(a.major(), a.minor()) >=
+               std::make_tuple(b.major(), b.minor());
+      };
+
+  // The patch level version has no meaning when comparing driver to ptxas
+  // versions.
+  if (greater_equal_major_minor(driver_version, asm_compiler_version)) {
     return LinkingMethod::kDriver;
   }
 
   LOG_FIRST_N(WARNING, 1)
-      << "The NVIDIA driver's CUDA version is "
-      << absl::StrFormat("%d.%d", driver_version / 1000,
-                         (driver_version % 1000) / 10)
+      << "The NVIDIA driver's CUDA version is " << driver_version
       << " which is older than the PTX compiler version "
       << asm_compiler_version
       << ". Because the driver is older than the PTX compiler version, XLA is "
@@ -941,25 +988,27 @@ absl::StatusOr<se::PtxLinkingMethod> NVPTXCompiler::ChooseLinkingMethod(
 }
 
 absl::StatusOr<bool> NVPTXCompiler::CanUseLinkModules(
-    const HloModuleConfig& hlo_module_config) {
+    const HloModuleConfig& hlo_module_config,
+    const stream_executor::DeviceDescription& device_description) {
   // TODO(phawkins): rather than comparing version numbers, it might be more
   // robust if we simply tried to link something the first time we compile.
   TF_ASSIGN_OR_RETURN(se::PtxLinkingMethod linking_method,
-                      ChooseLinkingMethod(hlo_module_config.debug_options()));
+                      ChooseLinkingMethod(hlo_module_config.debug_options(),
+                                          device_description));
   return linking_method != se::PtxLinkingMethod::kNone;
 }
 
 absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
-    se::GpuComputeCapability compute_capability,
+    const stream_executor::DeviceDescription& device_description,
     se::StreamExecutor* stream_exec, std::vector<std::vector<uint8_t>> modules,
     const DebugOptions& debug_options) {
   if (modules.empty()) return std::vector<uint8_t>{};
 
-  auto cc =
-      std::get<stream_executor::CudaComputeCapability>(compute_capability);
+  auto cc = std::get<stream_executor::CudaComputeCapability>(
+      device_description.gpu_compute_capability());
 
   TF_ASSIGN_OR_RETURN(se::PtxLinkingMethod linking_method,
-                      ChooseLinkingMethod(debug_options));
+                      ChooseLinkingMethod(debug_options, device_description));
   VLOG(1) << "Linking " << modules.size()
           << " modules with linking method: " << linking_method;
 
@@ -985,24 +1034,15 @@ absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
 
     se::GpuAsmOpts ptxas_config = PtxOptsFromDebugOptions(debug_options);
     return stream_executor::CompileAndLinkUsingLibNvJitLink(
-        cc.major, cc.minor, nvjitlink_inputs, ptxas_config,
+        cc, nvjitlink_inputs, ptxas_config,
         /*cancel_if_reg_spill=*/false);
   }
 
-  std::vector<stream_executor::CubinOrPTXImage> cubin_images;
-  cubin_images.reserve(modules.size());
-  for (std::vector<uint8_t>& module : modules) {
-    {
-      std::string profile = absl::StrCat("sm_", cc.major, cc.minor);
-      cubin_images.push_back({std::move(profile), std::move(module)});
-    }
+  if (linking_method == se::PtxLinkingMethod::kNvLink) {
+    return LinkUsingNvlink(cc, debug_options.xla_gpu_cuda_data_dir(), modules);
   }
 
-  if (linking_method == se::PtxLinkingMethod::kNvLink) {
-    return LinkUsingNvlink(cc, debug_options.xla_gpu_cuda_data_dir(),
-                           cubin_images);
-  }
-  return LinkGpuAsm(cc, stream_exec, cubin_images);
+  return LinkGpuAsmUsingDriver(stream_exec, cc, modules);
 }
 
 }  // namespace gpu

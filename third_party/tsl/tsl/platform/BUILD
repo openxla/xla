@@ -55,6 +55,7 @@ exports_files(
     visibility = internal_visibility([
         "//tensorflow/core/platform:__subpackages__",
         "//tsl:__subpackages__",
+        "@xla//xla/tsl:__subpackages__",
     ]),
 )
 
@@ -500,10 +501,10 @@ filegroup(
         "stringprintf.h",
         "subprocess.h",
         "thread_annotations.h",
-        "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
-        "//tsl/platform/profile_utils:clock_cycle_profiler.h",
-        "//tsl/platform/profile_utils:cpu_utils.h",
-        "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:clock_cycle_profiler.h",
+        "@xla//xla/tsl/platform/profile_utils:cpu_utils.h",
+        "@xla//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
     compatible_with = get_compatible_with_portable(),
 )
@@ -619,7 +620,7 @@ filegroup(
         "//conditions:default": [
             "file_system_helper.cc",
             "tracing.cc",
-            "//tsl/platform/default:mobile_srcs_no_runtime",
+            "@xla//xla/tsl/platform/default:mobile_srcs_no_runtime",
         ],
     }),
     compatible_with = get_compatible_with_portable(),
@@ -636,11 +637,11 @@ filegroup(
         "test_benchmark.h",
         "threadpool_options.h",
         "unbounded_work_queue.h",
-        "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.cc",
-        "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
-        "//tsl/platform/profile_utils:cpu_utils.cc",
-        "//tsl/platform/profile_utils:cpu_utils.h",
-        "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.cc",
+        "@xla//xla/tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:cpu_utils.cc",
+        "@xla//xla/tsl/platform/profile_utils:cpu_utils.h",
+        "@xla//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ] + if_not_fuchsia([
         "subprocess.h",
     ]),
@@ -661,10 +662,10 @@ filegroup(
             "dynamic_annotations.h",
         ],
     ) + [
-        "//tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
-        "//tsl/platform/profile_utils:clock_cycle_profiler.h",
-        "//tsl/platform/profile_utils:cpu_utils.h",
-        "//tsl/platform/profile_utils:i_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
+        "@xla//xla/tsl/platform/profile_utils:clock_cycle_profiler.h",
+        "@xla//xla/tsl/platform/profile_utils:cpu_utils.h",
+        "@xla//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
     ],
     compatible_with = get_compatible_with_portable(),
 )

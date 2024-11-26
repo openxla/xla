@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -51,20 +50,12 @@ struct DeviceConfig {
   // memory while timing the various convolution algorithms.  If it's null,
   // we'll use the default allocator on the StreamExecutor.
   se::DeviceMemoryAllocator* allocator = nullptr;  // may be null
-
-  se::Stream* compute_stream = nullptr;
 };
 
 struct DevicelessConfig {
   // The device description of the target device.
   se::DeviceDescription device_description;
 };
-
-// Status payload key to put errors at when autotune cache hits are required.
-// See absl::Status docs for full details, but methods like
-// {Get,Set,Clear}Payload allow manipulating it. The value of the payload is not
-// specified and individual sources of this error may provide different values.
-extern const absl::string_view kAutotuneCacheRequiredErrorPayloadKey;
 
 class AutotuneCacheKey {
  public:
@@ -105,6 +96,8 @@ class AutotuneCacheKey {
   std::string model_str_;
   std::string hlo_canonical_;
 };
+
+using AutotuneCacheKeySet = absl::flat_hash_set<AutotuneCacheKey>;
 
 class AutotuneConfig {
  public:
@@ -180,14 +173,7 @@ class AutotuneConfig {
 
   absl::StatusOr<se::Stream*> GetStream() const {
     CHECK(std::holds_alternative<DeviceConfig>(config_));
-    se::Stream* stream = std::get<DeviceConfig>(config_).compute_stream;
-    if (stream == nullptr) {
-      if (owned_stream_ == nullptr) {
-        TF_ASSIGN_OR_RETURN(owned_stream_, GetExecutor()->CreateStream());
-      }
-      stream = owned_stream_.get();
-    }
-    return stream;
+    return GetAllocator()->GetStream(GetExecutor()->device_ordinal());
   }
 
   const se::GpuComputeCapability& GetGpuComputeCapability() const {
@@ -211,7 +197,6 @@ class AutotuneConfig {
   bool exhaustive_tiling_search_;
   bool require_complete_aot_autotune_results_;
   mutable std::unique_ptr<se::DeviceMemoryAllocator> allocator_;
-  mutable std::unique_ptr<se::Stream> owned_stream_;
   std::string autotune_cache_dir_;
   DebugOptions::AutotuneCacheMode autotune_cache_mode_;
 };
@@ -296,8 +281,11 @@ struct AutotunerUtil {
   static absl::StatusOr<std::string> SerializeAutotuneResults(
       bool as_textproto = false);
 
-  // Serializes autotune results into the given proto.
-  static absl::Status SerializeAutotuneResults(AutotuneResults* results);
+  // Serializes autotune results into the given proto. If optional keys are
+  // provided, serializes results only for these keys.
+  static absl::Status SerializeAutotuneResults(
+      AutotuneResults* results,
+      std::optional<const AutotuneCacheKeySet*> keys = {});
 
   // Loads autotune results from the given string of bytes.
   //
@@ -364,8 +352,7 @@ struct AutotunerUtil {
 absl::StatusOr<std::string> AutotuneResultsToString(
     const AutotuneResults& results, bool as_textproto);
 
-// Exposed only for testing. Returns the SHA-256 hash of the input string,
-// encoded in base64.
+// Returns the SHA-256 hash of the input string, encoded in base64.
 //
 // SHA-256 was chosen to follow industry best practices and avoid collisions.
 // Git is also transitioning to SHA-256. This is probably better than

@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/status_casters.h"
+#include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/topology.h"
@@ -88,6 +89,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/python/config.h"
 #include "xla/python/custom_call_sharding.h"
 #include "xla/python/dlpack.h"
 #include "xla/python/guard_lib.h"
@@ -224,6 +226,12 @@ NB_MODULE(xla_extension, m_nb) {
   PyDevice::RegisterPythonType(m_nb);
   PyMemorySpace::RegisterPythonType(m_nb);
   PyClient::RegisterPythonTypes(m_nb);
+
+  nb::enum_<ifrt::ArrayCopySemantics>(m_nb, "ArrayCopySemantics",
+                                      nb::is_arithmetic())
+      .value("ALWAYS_COPY", ifrt::ArrayCopySemantics::kAlwaysCopy)
+      .value("REUSE_INPUT", ifrt::ArrayCopySemantics::kReuseInput)
+      .value("DONATE_INPUT", ifrt::ArrayCopySemantics::kDonateInput);
 
   nb::class_<PjRtLayout>(m_nb, "PjRtLayout")
       .def("__str__", &PjRtLayout::ToString)
@@ -587,6 +595,7 @@ NB_MODULE(xla_extension, m_nb) {
            nb::arg("gpu_backend").none() = nb::none(),
            nb::arg("device_id").none() = nb::none());
 
+  jax::BuildConfigSubmodule(m_nb);
   BuildIfrtProgramsSubmodule(m_nb);
   BuildProfilerSubmodule(m_nb);
   BuildOpsSubmodule(m_nb);

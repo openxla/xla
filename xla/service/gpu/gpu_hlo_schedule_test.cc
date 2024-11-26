@@ -86,7 +86,7 @@ class GpuHloScheduleTest : public HloTestBase {
     debug_options.set_xla_gpu_lhs_enable_gpu_async_tracker(
         enable_gpu_async_tracker);
     config.set_debug_options(debug_options);
-    *config.mutable_fdo_profile() = fdo_profile;
+    config.set_fdo_profile(fdo_profile);
     return config;
   }
 
@@ -1095,7 +1095,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined1) {
 
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv-done.2", main));
   EXPECT_LT(get_index("recv-done.2", main), get_index("send-done.2", main));
   EXPECT_LT(get_index("send-done.2", main), get_index("while-result", main));
@@ -1289,7 +1289,7 @@ TEST_F(GpuHloScheduleTest, LHSSendRecvPipelined2) {
   EXPECT_TRUE(HasValidFingerprint(module.get()));
   // The pipelined Send-Recv in the main. A pipelined Recv is scheduled right
   // after its corresponding Send due to kForceEarly.
-  EXPECT_EQ(get_index("recv.2", main) + 1, get_index("send.2", main));
+  EXPECT_EQ(get_index("recv.2", main) + 3, get_index("send.2", main));
   EXPECT_LT(get_index("send.2", main), get_index("recv.3", main));
   EXPECT_EQ(get_index("recv.3", main) + 1, get_index("send.3", main));
   EXPECT_LT(get_index("send.3", main), get_index("recv-done.2", main));

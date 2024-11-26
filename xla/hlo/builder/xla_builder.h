@@ -609,6 +609,12 @@ class XlaBuilder {
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
+  XlaOp RaggedDot(
+      XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+      const RaggedDotDimensionNumbers& dimension_numbers,
+      const PrecisionConfig* precision_config = nullptr,
+      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
   XlaOp Conv(
       XlaOp lhs, XlaOp rhs, absl::Span<const int64_t> window_strides,
       Padding padding, int64_t feature_group_count = 1,
@@ -1207,6 +1213,12 @@ class XlaBuilder {
 
   FrontendAttributes frontend_attributes_;
 
+  // If the user cannot provide a token for infeed/outfeed, assume they are
+  // being added to the computation in the correct order. Implicitly reuse
+  // the tokens from the previous op to guarantee the user intended ordering.
+  XlaOp infeed_token_;
+  XlaOp outfeed_token_;
+
   friend XlaOp Parameter(XlaBuilder* builder, int64_t parameter_number,
                          const Shape& shape, const std::string& name,
                          const std::vector<bool>& replicated_at_leaf_buffers);
@@ -1295,6 +1307,10 @@ class XlaBuilder {
                          absl::Span<const XlaOp> sparse_meta,
                          absl::Span<const SparsityDescriptor> sparsity,
                          const DotDimensionNumbers& dimension_number,
+                         const PrecisionConfig* precision_config,
+                         std::optional<PrimitiveType> preferred_element_type);
+  friend XlaOp RaggedDot(XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+                         const RaggedDotDimensionNumbers& dimension_numbers,
                          const PrecisionConfig* precision_config,
                          std::optional<PrimitiveType> preferred_element_type);
   friend XlaOp Conv(XlaOp lhs, XlaOp rhs,
@@ -2160,6 +2176,13 @@ XlaOp SparseDot(
     XlaOp lhs, XlaOp rhs, absl::Span<const XlaOp> sparse_meta,
     absl::Span<const SparsityDescriptor> sparsity,
     const DotDimensionNumbers& dimension_numbers,
+    const PrecisionConfig* precision_config = nullptr,
+    std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
+// Enqueues a ragged dot instruction onto the computation.
+XlaOp RaggedDot(
+    XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
+    const RaggedDotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config = nullptr,
     std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 

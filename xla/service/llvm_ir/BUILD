@@ -2,13 +2,13 @@
 #    Libraries for helping construct LLVM IR for XLA backends.
 
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -110,9 +110,16 @@ cc_library(
 
 cc_library(
     name = "llvm_command_line_options",
+    srcs = ["llvm_command_line_options.cc"],
     hdrs = ["llvm_command_line_options.h"],
     deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:logging",
     ],

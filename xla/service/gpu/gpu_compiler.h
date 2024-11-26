@@ -118,7 +118,8 @@ class GpuCompiler : public LLVMCompiler {
   }
 
   virtual absl::StatusOr<bool> CanUseLinkModules(
-      const HloModuleConfig& config) {
+      const HloModuleConfig& config,
+      const stream_executor::DeviceDescription& device_description) {
     return false;
   }
 
@@ -197,14 +198,16 @@ class GpuCompiler : public LLVMCompiler {
   absl::StatusOr<BackendCompileResult> CompileAndLink(
       const HloModuleConfig& module_config,
       CompileModuleResults& compile_module_results,
-      se::GpuComputeCapability gpu_version, se::StreamExecutor* stream_exec,
-      const CompileOptions& options, const HloModule* debug_module);
+      const stream_executor::DeviceDescription& device_description,
+      se::StreamExecutor* stream_exec, const CompileOptions& options,
+      const HloModule* debug_module);
 
   absl::StatusOr<BackendCompileResult> CompileSingleModule(
       const HloModuleConfig& module_config,
-      se::GpuComputeCapability gpu_version, const HloModule* debug_module,
-      llvm::Module* llvm_module, bool relocatable,
-      const CompileOptions& options, std::optional<int> shard_number);
+      const stream_executor::DeviceDescription& device_description,
+      const HloModule* debug_module, llvm::Module* llvm_module,
+      bool relocatable, const CompileOptions& options,
+      std::optional<int> shard_number);
 
   absl::Status LoadAutotuneResultsFromFile(const DebugOptions& debug_options);
   absl::Status SerializeAutotuneResultsToFile(
@@ -232,30 +235,19 @@ class GpuCompiler : public LLVMCompiler {
   // that accommodates both HLO and MLIR.
   virtual absl::StatusOr<BackendCompileResult> CompileTargetBinary(
       const HloModuleConfig& module_config, llvm::Module* llvm_module,
-      se::GpuComputeCapability gpu_version, bool relocatable,
-      const HloModule* debug_module, const CompileOptions& options) = 0;
+      const stream_executor::DeviceDescription& device_description,
+      bool relocatable, const HloModule* debug_module,
+      const CompileOptions& options) = 0;
 
   absl::Status PrepareHloModuleForIrEmitting(HloModule* hlo_module);
 
   virtual absl::StatusOr<std::vector<uint8_t>> LinkModules(
-      se::GpuComputeCapability gpu_compute_capability,
+      const stream_executor::DeviceDescription& device_description,
       se::StreamExecutor* stream_exec,
       std::vector<std::vector<uint8_t>> modules,
       const DebugOptions& debug_options) {
     return Unimplemented("LinkModules is not implemented.");
   }
-
-  // Creates an AutotuneConfig for the given options.
-  absl::StatusOr<AutotuneConfig> GetAutotuneConfig(
-      se::StreamExecutor* stream_exec, const DebugOptions& debug_options,
-      const GpuCompiler::CompileOptions& options,
-      const Compiler::TargetConfig& gpu_target_config);
-
-  // Runs verification passes after fusion.
-  absl::Status RunPostFusionVerificationPasses(
-      HloModule* hlo_module, se::StreamExecutor* stream_exec,
-      const GpuCompiler::CompileOptions& options,
-      const Compiler::TargetConfig& gpu_target_config);
 
   se::Platform::Id platform_id_;
 
@@ -267,9 +259,6 @@ class GpuCompiler : public LLVMCompiler {
 
   // The size in bytes of a pointer. Used by ShapeSizeBytesFunction.
   const int64_t pointer_size_;
-
-  // A stream to use for autotuning if none is provided.
-  std::unique_ptr<se::Stream> compute_stream_;
 
   GpuCompiler(const GpuCompiler&) = delete;
   GpuCompiler& operator=(const GpuCompiler&) = delete;

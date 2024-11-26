@@ -1,10 +1,21 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+
+package_group(
+    name = "internal",
+    packages = [
+        "//xla/python/ifrt/ir/...",
+    ],
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = internal_visibility([
+        ":internal",
+    ]),
     licenses = ["notice"],
 )
 
@@ -161,6 +172,7 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
+        ":sharding_param_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -169,6 +181,12 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:errors",
     ],
+)
+
+tf_proto_library(
+    name = "sharding_param_proto",
+    srcs = ["sharding_param.proto"],
+    visibility = ["//xla/python/ifrt:friends"],
 )
 
 cc_library(
@@ -181,6 +199,7 @@ cc_library(
         ":ifrt_ir_compile_options_proto_cc",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
@@ -190,6 +209,11 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
     ],
+)
+
+tf_proto_library(
+    name = "ifrt_ir_program_proto",
+    srcs = ["ifrt_ir_program.proto"],
 )
 
 tf_proto_library(
@@ -222,16 +246,23 @@ cc_library(
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
         ":ifrt_ir_program",
+        ":ifrt_ir_program_proto_cc",
+        ":version",
+        "//xla:status_macros",
         "//xla/mlir/utils:error_util",
         "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:statusor",
     ],
@@ -244,6 +275,7 @@ xla_cc_test(
     deps = [
         ":ifrt_ir_program",
         ":ifrt_ir_program_serdes",
+        ":version",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt/support:module_parsing",
         "@com_google_absl//absl/status",
@@ -251,6 +283,7 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
     ],
@@ -268,5 +301,165 @@ cc_library(
         "//xla/python/ifrt/hlo:hlo_program",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "version",
+    srcs = ["version.cc"],
+    hdrs = ["version.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+)
+
+td_library(
+    name = "vifrt_td",
+    srcs = [
+        "vifrt_dialect.td",
+        "vifrt_interfaces.td",
+        "vifrt_ops.td",
+    ],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "@llvm-project//mlir:BuiltinDialectTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:ShapeOpsTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "vifrt_interfaces_inc_gen",
+    compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            ["-gen-attr-interface-decls"],
+            "vifrt_attr_interfaces.h.inc",
+        ),
+        (
+            ["-gen-attr-interface-defs"],
+            "vifrt_attr_interfaces.cc.inc",
+        ),
+        (
+            ["-gen-type-interface-decls"],
+            "vifrt_type_interfaces.h.inc",
+        ),
+        (
+            ["-gen-type-interface-defs"],
+            "vifrt_type_interfaces.cc.inc",
+        ),
+        (
+            ["-gen-op-interface-decls"],
+            "vifrt_op_interfaces.h.inc",
+        ),
+        (
+            ["-gen-op-interface-defs"],
+            "vifrt_op_interfaces.cc.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "vifrt_interfaces.td",
+    test = True,
+    deps = [":vifrt_td"],
+)
+
+gentbl_cc_library(
+    name = "vifrt_dialect_inc_gen",
+    compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=vifrt",
+            ],
+            "vifrt_dialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=vifrt",
+            ],
+            "vifrt_dialect.cc.inc",
+        ),
+        (
+            [
+                "-gen-typedef-decls",
+                "--typedefs-dialect=vifrt",
+            ],
+            "vifrt_types.h.inc",
+        ),
+        (
+            [
+                "-gen-typedef-defs",
+                "--typedefs-dialect=vifrt",
+            ],
+            "vifrt_types.cc.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-decls",
+                "--attrdefs-dialect=vifrt",
+            ],
+            "vifrt_attrs.h.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-defs",
+                "--attrdefs-dialect=vifrt",
+            ],
+            "vifrt_attrs.cc.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "vifrt_dialect.td",
+    test = True,
+    deps = [":vifrt_td"],
+)
+
+gentbl_cc_library(
+    name = "vifrt_ops_inc_gen",
+    compatible_with = get_compatible_with_portable(),
+    tbl_outs = [
+        (
+            ["-gen-op-decls"],
+            "vifrt_ops.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "vifrt_ops.cc.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "vifrt_ops.td",
+    test = True,
+    deps = [":vifrt_td"],
+)
+
+cc_library(
+    name = "vifrt",
+    srcs = [
+        "vifrt_bytecode.cc",
+        "vifrt_dialect.cc",
+    ],
+    hdrs = [
+        "vifrt_bytecode.h",
+        "vifrt_dialect.h",
+    ],
+    compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla/python/ifrt:friends"],
+    deps = [
+        ":sharding_param",
+        ":version",
+        ":vifrt_dialect_inc_gen",
+        ":vifrt_interfaces_inc_gen",
+        ":vifrt_ops_inc_gen",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeOpInterface",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
     ],
 )

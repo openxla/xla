@@ -56,16 +56,14 @@ using tsl::testing::IsOkAndHolds;
 
 using ExecutionScopeId = CommandBuffer::ExecutionScopeId;
 
+static GpuCommandBuffer* CastToGpuCommandBuffer(CommandBuffer* command_buffer) {
+  return static_cast<GpuCommandBuffer*>(command_buffer);
+}
+
 static Platform* GpuPlatform() {
   auto name = absl::AsciiStrToUpper(
       xla::PlatformUtil::CanonicalPlatformName("gpu").value());
   return PlatformManager::PlatformWithName(name).value();
-}
-
-static MultiKernelLoaderSpec GetAddI32KernelSpec() {
-  MultiKernelLoaderSpec spec(/*arity=*/3);
-  spec.AddInProcessSymbol(internal::GetAddI32Kernel(), "AddI32");
-  return spec;
 }
 
 using AddI32Kernel =
@@ -409,7 +407,7 @@ TEST(GpuCommandBufferTest, Barriers) {
   ASSERT_EQ(transfer_buffers(), expected);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
   ASSERT_EQ(gpu_cmd_buffer->nodes().size(), 6);
   ASSERT_EQ(gpu_cmd_buffer->barriers().size(), 6);
 
@@ -492,7 +490,7 @@ TEST(GpuCommandBufferTest, IndependentExecutionScopes) {
   ASSERT_EQ(transfer_buffers(), expected);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
   auto nodes0 = gpu_cmd_buffer->nodes(s0);
   auto nodes1 = gpu_cmd_buffer->nodes(s1);
@@ -568,7 +566,7 @@ TEST(GpuCommandBufferTest, ExecutionScopeBarriers) {
   ASSERT_EQ(transfer_buffers(), expected);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
   auto nodes0 = gpu_cmd_buffer->nodes(s0);
   auto nodes1 = gpu_cmd_buffer->nodes(s1);
@@ -665,7 +663,7 @@ TEST(GpuCommandBufferTest, ExecutionScopeOneDirectionalBarriers) {
   ASSERT_EQ(transfer_buffers(), expected);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
   auto nodes0 = gpu_cmd_buffer->nodes(s0);
   auto nodes1 = gpu_cmd_buffer->nodes(s1);
@@ -1480,7 +1478,7 @@ TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
   ASSERT_EQ(transfer_buffers(), expected);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
   auto nodes0 = gpu_cmd_buffer->nodes(s0);
   auto nodes1 = gpu_cmd_buffer->nodes(s1);
@@ -1588,7 +1586,7 @@ TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
   EXPECT_EQ(c_dst, 42);
 
   // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = GpuCommandBuffer::Cast(cmd_buffer.get());
+  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
   auto nodes0 = gpu_cmd_buffer->nodes(s0);
   auto nodes1 = gpu_cmd_buffer->nodes(s1);

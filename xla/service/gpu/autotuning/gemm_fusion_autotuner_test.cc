@@ -53,7 +53,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/semantic_version.h"
-#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
@@ -193,10 +192,8 @@ class StatelessAutotunerTest : public HloTestBase {
     ccc->set_major(compute_capability.major);
     ccc->set_minor(compute_capability.minor);
 
-    static se::Stream* stream =
-        backend().default_stream_executor()->CreateStream().value().release();
     DeviceConfig test_config{backend().default_stream_executor(),
-                             backend().memory_allocator(), stream};
+                             backend().memory_allocator()};
     AutotuneConfig autotune_config{test_config, debug_options};
     GemmFusionAutotunerImpl autotuner(autotune_config, toolkit_version,
                                       debug_options, nullptr);
@@ -213,12 +210,8 @@ class StatelessAutotunerTest : public HloTestBase {
   // Returns the config for the current device.
   absl::StatusOr<std::vector<GemmFusionAutotunerImpl::BackendConfig>>
   GetPossibleMatmulAutotuneConfigs(const HloModule& module) {
-    static se::Stream* stream =
-        backend().default_stream_executor()->CreateStream().value().release();
-
     DeviceConfig device_config{backend().default_stream_executor(),
                                backend().memory_allocator()};
-    device_config.compute_stream = stream;
     AutotuneConfig autotune_config{device_config, GetDebugOptionsForTest()};
     GemmFusionAutotunerImpl autotuner(autotune_config, GetToolkitVersion(),
                                       GetDebugOptionsForTest(), nullptr);
@@ -324,14 +317,11 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
                                         tsl::port::MaxParallelism());
     DebugOptions opts;
     MultiProcessKeyValueStore key_value_store;
-    static se::Stream* stream =
-        backend().default_stream_executor()->CreateStream().value().release();
-    DeviceConfig device_config{backend().default_stream_executor(),
-                               backend().memory_allocator()};
-    device_config.compute_stream = stream;
-    pipeline.AddPass<GemmFusionAutotuner>(AutotuneConfig{device_config, opts},
-                                          GetToolkitVersion(), &thread_pool,
-                                          key_value_store);
+    pipeline.AddPass<GemmFusionAutotuner>(
+        AutotuneConfig{DeviceConfig{backend().default_stream_executor(),
+                                    backend().memory_allocator()},
+                       opts},
+        GetToolkitVersion(), &thread_pool, key_value_store);
 
     RunAndFilecheckHloRewrite(
         hlo, std::move(pipeline), expected, [](const HloModule* m) {
@@ -713,12 +703,9 @@ ENTRY main {
                           ParseAndReturnVerifiedModule(kHloText));
 
   DebugOptions opts;
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
-                          backend().default_stream_executor()->CreateStream());
-
   AutotuneConfig autotune_config{
       DeviceConfig{backend().default_stream_executor(),
-                   backend().memory_allocator(), stream.get()},
+                   backend().memory_allocator()},
       opts};
   AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
                              *module->entry_computation()->root_instruction());
@@ -982,7 +969,7 @@ ENTRY e {
 // on small block_k values depending on the bit-width of the inputs to the
 // dot. For this test case, it should skip any block_k values that are <= 16
 // since the smallest type has a bit-width of 8.
-TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfig) {
+TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfigWithConvert) {
   std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
 HloModule module
 ENTRY e {
@@ -990,6 +977,33 @@ ENTRY e {
   c = f16[33,33]{1,0} convert(x)
   y = f16[33,33]{1,0} parameter(1)
   ROOT out = f16[33,33]{1,0} dot(c, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)")
+                                                  .value();
+  const se::CudaComputeCapability compute_capability{
+      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+  TF_ASSERT_OK_AND_ASSIGN(
+      const std::vector<TritonGemmConfig> configs,
+      GetPossibleMatmulAutotuneTritonConfigs(
+          *Cast<HloDotInstruction>(
+              module->entry_computation()->root_instruction()),
+          compute_capability, GetToolkitVersion(), GetDebugOptionsForTest()));
+  EXPECT_TRUE(std::all_of(
+      configs.begin(), configs.end(),
+      [](const TritonGemmConfig& config) { return config.block_k > 16; }));
+}
+
+// TODO(b/337839570): Triton currently has a limitation where it crashes
+// on small block_k values depending on the bit-width of the inputs to the
+// dot. For this test case, it should skip any block_k values that are <= 16
+// since the smallest type has a bit-width of 8.
+TEST_F(GemmFusionAutotunerExhaustiveTest, SkipsCrashingTileKConfigNoConvert) {
+  std::unique_ptr<VerifiedHloModule> module = ParseAndReturnVerifiedModule(R"(
+HloModule module
+ENTRY e {
+  x = f8e4m3fn[33,33]{1,0} parameter(0)
+  y = f8e4m3fn[33,33]{1,0} parameter(1)
+  ROOT out = bf16[33,33]{1,0} dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 }
 )")
                                                   .value();
@@ -1267,12 +1281,11 @@ TEST_F(GemmFusionAutotunerTest, RewritesGemmFusionToCustomKernelFusion) {
   std::unique_ptr<VerifiedHloModule> module =
       ParseAndReturnVerifiedModule(kHlo).value();
 
-  static se::Stream* stream =
-      backend().default_stream_executor()->CreateStream().value().release();
   DebugOptions opts;
-  DeviceConfig device_config{backend().default_stream_executor(),
-                             backend().memory_allocator(), stream};
-  AutotuneConfig autotune_config{device_config, opts};
+  AutotuneConfig autotune_config{
+      DeviceConfig{backend().default_stream_executor(),
+                   backend().memory_allocator()},
+      opts};
   AutotuneCacheKey cache_key(autotune_config.GetModelStr(),
                              *module->entry_computation()->root_instruction());
   TF_ASSERT_OK_AND_ASSIGN(AutotuneResults autotune_results_override,

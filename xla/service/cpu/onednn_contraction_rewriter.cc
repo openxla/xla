@@ -115,18 +115,14 @@ inline auto OneDnnConvolutionInstr(HloInstruction** instr) {
   return m::CustomCall(instr, {"__onednn$convolution"});
 }
 
-inline bool IsOneDnnConvolutionInstr(HloInstruction* instr) {
-  return Match(instr, m::CustomCall({"__onednn$convolution"}));
-}
-
-inline bool IsOneDnnMatmulInstr(HloInstruction* instr) {
-  return Match(instr, m::CustomCall({"__onednn$matmul"}));
-}
-
 inline auto OneDnnFusibleInstr(HloInstruction** instr) {
   return m::AnyOf<HloInstruction>(
       m::CustomCall(instr, {"__onednn$matmul"}),
       m::CustomCall(instr, {"__onednn$convolution"}));
+}
+
+inline bool IsOneDnnMatmulInstr(HloInstruction* instr) {
+  return Match(instr, m::CustomCall({"__onednn$matmul"}));
 }
 
 inline auto ConvertBF16ToF32(HloInstruction** instr) {
@@ -704,7 +700,8 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
         m::Op(&addend));
     if (!Match(addend_intermediate, addend_pattern)) return absl::OkStatus();
 
-    if (optional_addend_broadcast && addend->shape().rank() != 1) {
+    if (optional_addend_broadcast &&
+        (IsOneDnnMatmulInstr(contraction) || addend->shape().rank() != 1)) {
       auto new_shape =
           AdjustBiasShape(optional_addend_broadcast, contraction->shape());
       if (new_shape.ok()) {
@@ -733,7 +730,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     // implementation for broadcasted add across all dimensions.
     OneDnnFusionConfig_FusionKind kind = OneDnnFusionConfig::UNDEFINED;
     kind =
-        (addend->shape().rank() == 1)
+        (ShapeUtil::TrueRank(addend->shape()) == 1)
             ? (GetKernelConfig<config>(&backend_config)->fusions().ops().empty()
                    ? OneDnnFusionConfig::BIAS
                    : OneDnnFusionConfig::UNDEFINED)

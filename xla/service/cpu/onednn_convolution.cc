@@ -198,9 +198,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
 
   auto bias_md = memory::desc();
 
-  dnnl::post_ops post_ops = PopulateOneDnnPostOps(
-      cpu_engine, fused_mds, &conv_config.fusions(), new_res_md.get_ndims(),
-      &fused_operands_ref, &bias_md, true);
+  dnnl::post_ops post_ops =
+      PopulateOneDnnPostOps(cpu_engine, fused_mds, &conv_config.fusions(),
+                            &fused_operands_ref, &bias_md);
 
   auto any_ker_md =
       memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),

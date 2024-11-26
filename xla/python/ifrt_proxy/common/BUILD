@@ -170,6 +170,7 @@ cc_library(
     deps = [
         "//xla/python/ifrt:plugin_program_serdes",
         "//xla/python/ifrt/hlo:hlo_program_serdes",
+        "//xla/python/ifrt/ir:ifrt_ir_program_serdes",
     ],
     alwayslink = True,
 )
@@ -199,6 +200,24 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
+)
+
+cc_library(
+    name = "prof_util",
+    hdrs = ["prof_util.h"],
+    deps = [
+        ":ifrt_service_proto_cc",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:random",
+        "@tsl//tsl/profiler/lib:traceme",
+        "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+cc_library(
+    name = "versions",
+    hdrs = ["versions.h"],
 )
 
 # copybara:uncomment_begin

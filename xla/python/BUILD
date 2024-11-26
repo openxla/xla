@@ -22,6 +22,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
         ":friends",
+        "//third_party/py/jax:__subpackages__",
     ]),
     licenses = ["notice"],
 )
@@ -707,6 +708,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = ["//visibility:private"],
     deps = [
+        ":config",
         ":guard_lib",
         ":jax_jit",
         ":nb_class_ptr",
@@ -757,6 +759,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = ["//visibility:private"],
     deps = [
+        ":config",
         ":jax_jit",
         ":nb_class_ptr",
         ":nb_helpers",
@@ -840,6 +843,45 @@ cc_library(
         "//xla/pjrt:exceptions",
         "@tsl//tsl/platform:logging",
     ],
+)
+
+cc_library(
+    name = "config",
+    srcs = ["config.cc"],
+    hdrs = ["config.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":python_ref_manager",
+        # placeholder for index annotation deps
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+py_strict_test(
+    name = "config_test",
+    srcs = ["config_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],  # TODO(phawkins): This test passes, but requires --config=monolithic.
+    deps = [
+        ":xla_client",
+        ":xla_extension",
+        "@absl_py//absl/flags",
+        "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+    ] + xla_py_test_deps(),
 )
 
 cc_library(
@@ -1031,6 +1073,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
+        "@local_config_python//:python_headers",
         "//xla/pjrt:lru_cache",
     ],
 )
@@ -1201,6 +1244,7 @@ tsl_pybind_extension(
     pytype_srcs = glob(["xla_extension/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = [
+        ":config",
         ":custom_call_sharding",
         ":dlpack",
         ":guard_lib",
@@ -1272,12 +1316,12 @@ tsl_pybind_extension(
         "//xla/service/cpu:collectives_interface",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "//xla/tsl/platform/cloud:gcs_file_system",
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform/cloud:gcs_file_system",
     ] + select({
         # gloo tcp transport only builds on linux
         "//xla/tsl:macos": [

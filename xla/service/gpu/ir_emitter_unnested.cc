@@ -94,7 +94,6 @@ limitations under the License.
 #include "xla/service/gpu/fusions/fusions.h"
 #include "xla/service/gpu/fusions/thunk_util.h"
 #include "xla/service/gpu/fusions/triton/triton_fusion_emitter.h"
-#include "xla/service/gpu/gpu_asm_opts_util.h"
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/gpu_norm_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
@@ -131,6 +130,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_permute_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
+#include "xla/service/gpu/runtime/nccl_group_thunk.h"
 #include "xla/service/gpu/runtime/nccl_p2p_thunk_common.h"
 #include "xla/service/gpu/runtime/nccl_recv_thunk.h"
 #include "xla/service/gpu/runtime/nccl_send_thunk.h"
@@ -175,16 +175,6 @@ limitations under the License.
 
 namespace xla {
 namespace gpu {
-namespace {
-
-// Construct the key for looking up the AsyncEvents for Send and Recv. Input
-// kind is the thunk kind for the corresponding done thunk.
-inline std::pair<bool, int64_t> GetSendRecvAsyncEventsKey(Thunk::Kind kind,
-                                                          int64_t channel_id) {
-  return std::make_pair(kind == Thunk::Kind::kNcclRecvDone, channel_id);
-}
-
-}  // namespace
 
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
@@ -1060,8 +1050,7 @@ absl::Status IrEmitterUnnested::EmitCholeskyThunk(const HloInstruction* instr) {
   }
 
   thunks.push_back(std::make_unique<CholeskyThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(instr), options,
-      PtxOptsFromDebugOptions(ir_emitter_context_->debug_options()), a_buffer,
+      Thunk::ThunkInfo::WithProfileAnnotation(instr), options, a_buffer,
       workspace_buffer, info_buffer, shape.element_type(), batch_size, n));
 
   // Elide the sequential thunk if there's no copy.
@@ -1318,7 +1307,6 @@ absl::Status IrEmitterUnnested::EmitTriangularSolveCustomCall(
   int64_t b_batch_stride = m * n * elem_size;
   thunks.push_back(std::make_unique<TriangularSolveThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), backend_config,
-      PtxOptsFromDebugOptions(ir_emitter_context_->debug_options()),
       /*a_buffer=*/a_slice, /*b_buffer=*/result_slice, temp_slice, elem_ty,
       batch_size, m, n, a_batch_stride, b_batch_stride));
 
@@ -1990,6 +1978,11 @@ static const HloInstruction* FindCanonicalSendRecvStartOp(
         inst->opcode() == HloOpcode::kRecv ||
         inst->opcode() == HloOpcode::kSendDone ||
         inst->opcode() == HloOpcode::kRecvDone);
+  // If the instruction is wrapped in an async computation, return the
+  // instruction itself.
+  if (inst->parent()->IsAsyncComputation()) {
+    return inst;
+  }
 
   // Find container while loop and index for the send/recv case or return
   // canonical start op directly.
@@ -2063,9 +2056,36 @@ static const HloInstruction* FindCanonicalSendRecvStartOp(
   return canonical_start_op;
 }
 
-absl::Status IrEmitterUnnested::EmitNcclGroupDoneThunk(
-    const HloInstruction* instr) {
-  return absl::UnimplementedError("EmitNcclGroupDoneThunk not implemented");
+absl::Status IrEmitterUnnested::EmitNcclGroupThunk(const HloInstruction* instr,
+                                                   Thunk::Kind kind) {
+  emit_group_thunks_ = true;
+  for (const HloInstruction* instr :
+       instr->async_wrapped_computation()->instructions()) {
+    if (kind == Thunk::Kind::kNcclGroupStart) {
+      TF_RETURN_IF_ERROR(EmitHloInstruction(instr));
+    } else {
+      // For kNcclGroupDone, we only need to emit the corresponding async done
+      // instructions. For now, only send/recv is supported.
+      switch (instr->opcode()) {
+        case HloOpcode::kSend:
+          TF_RETURN_IF_ERROR(
+              EmitNcclAsyncDone(Thunk::Kind::kNcclSendDone, instr));
+          break;
+        case HloOpcode::kRecv:
+          TF_RETURN_IF_ERROR(
+              EmitNcclAsyncDone(Thunk::Kind::kNcclRecvDone, instr));
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  auto thunk = std::make_unique<NcclGroupThunk>(
+      instr, kind, std::move(scoped_thunk_sequence_));
+  // TODO (rosiezou): use absl cleanup to automatically reset this boolean.
+  emit_group_thunks_ = false;
+  AddThunkToThunkSequence(std::move(thunk));
+  return absl::OkStatus();
 }
 
 absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
@@ -2376,15 +2396,19 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
     CollectivesAsyncEvents& collectives_async_events =
         GetCollectivesAsyncEvents();
 
-    // Wire up async events.
-    const HloInstruction* canonical_send_instr =
-        FindCanonicalSendRecvStartOp(instr);
-    if (collectives_async_events.contains(canonical_send_instr)) {
-      thunk->set_async_events(collectives_async_events[canonical_send_instr]);
+    // Wire up async events if the send thunk isn't emitted as a part of a
+    // group thunk.
+    if (!emit_group_thunks_) {
+      const HloInstruction* canonical_send_instr =
+          FindCanonicalSendRecvStartOp(instr);
+      if (collectives_async_events.contains(canonical_send_instr)) {
+        thunk->set_async_events(collectives_async_events[canonical_send_instr]);
+      } else {
+        collectives_async_events.try_emplace(instr, thunk->async_events());
+      }
     } else {
       collectives_async_events.try_emplace(instr, thunk->async_events());
     }
-
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2449,14 +2473,17 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
         GetCollectivesAsyncEvents();
 
     // Wire up async events.
-    const HloInstruction* canonical_recv_instr =
-        FindCanonicalSendRecvStartOp(instr);
-    if (collectives_async_events.contains(canonical_recv_instr)) {
-      thunk->set_async_events(collectives_async_events[canonical_recv_instr]);
+    if (!emit_group_thunks_) {
+      const HloInstruction* canonical_recv_instr =
+          FindCanonicalSendRecvStartOp(instr);
+      if (collectives_async_events.contains(canonical_recv_instr)) {
+        thunk->set_async_events(collectives_async_events[canonical_recv_instr]);
+      } else {
+        collectives_async_events.try_emplace(instr, thunk->async_events());
+      }
     } else {
       collectives_async_events.try_emplace(instr, thunk->async_events());
     }
-
     AddThunkToThunkSequence(std::move(thunk));
     return absl::OkStatus();
   }
@@ -2489,11 +2516,6 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   return absl::OkStatus();
 }
 
-absl::Status IrEmitterUnnested::EmitNcclGroupStartThunk(
-    const HloInstruction* instruction) {
-  return absl::UnimplementedError("EmittNcclGroupStartThunk not implemented");
-}
-
 absl::Status IrEmitterUnnested::EmitHloInstruction(
     const HloInstruction* instr) {
   switch (instr->opcode()) {
@@ -2517,7 +2539,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
     case HloOpcode::kAsyncDone: {
       if (!instr->async_wrapped_computation()
                ->CanExpandIntoSingleInstruction()) {
-        return EmitNcclGroupDoneThunk(instr);
+        return EmitNcclGroupThunk(instr, Thunk::kNcclGroupDone);
       }
       const HloInstruction* wrapped = instr->async_wrapped_instruction();
       switch (wrapped->opcode()) {
@@ -2550,7 +2572,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
       // Multi-op async start will emit a NCCL group thunk.
       if (!instr->async_wrapped_computation()
                ->CanExpandIntoSingleInstruction()) {
-        return EmitNcclGroupStartThunk(instr);
+        return EmitNcclGroupThunk(instr, Thunk::kNcclGroupStart);
       }
       const HloInstruction* wrapped = instr->async_wrapped_instruction();
       switch (wrapped->opcode()) {

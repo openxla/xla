@@ -79,6 +79,10 @@ bool IsBroadcastOfScalarConstant(const HloInstruction& instr);
 // Returns whether the `instr` is a broadcast and its input is a parameter.
 bool IsBroadcastOfParameter(const HloInstruction& instr);
 
+// Returns true for a parameter or a parameter followed by a chain of no-op
+// instructions (bitcast, get-tuple-element).
+bool IsEffectiveParameter(const HloInstruction&);
+
 // Returns first HLO of the computation with the opcode, otherwise nullptr.
 HloInstruction* GetFirstInstructionWithOpcode(const HloComputation& computation,
                                               HloOpcode opcode);
@@ -190,6 +194,12 @@ HloInstruction* FindInstruction(const HloComputation* computation,
 // Returns nullptr if no such instruction can be found.
 HloInstruction* FindInstruction(const HloComputation* computation,
                                 HloOpcode opcode);
+
+// Returns compile time optimization effort in range [-1.0, 1.0] where values <
+// 0.0 indicate skipping passes which might optimize the final runtime (thus
+// improving compile time), and values > 0.0 indicate running additional passes
+// which may improve runtime at the cost of compilation time.
+float ExecTimeOptimizationEffort(const HloModule& module);
 
 }  // namespace hlo_query
 }  // namespace xla

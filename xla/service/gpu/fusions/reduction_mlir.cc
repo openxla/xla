@@ -139,11 +139,6 @@ struct MlirReductionFusion::EmitterState {
                             const HloValueMap& per_thread_values,
                             int max_dist = WarpSize() / 2);
 
-  SmallVector<Value> FusionParams() {
-    return ValueRange(entry_function.getArguments().take_front(
-        fusion.fused_parameters().size()));
-  }
-
   mlir::ValueRange FusionOutputs() {
     return entry_function.getArguments().drop_front(
         fusion.fused_parameters().size());
@@ -366,8 +361,7 @@ MlirReductionFusion::MlirReductionFusion(const HloFusionAnalysis& analysis)
       GetReductionKindAndContiguousComponents(*hero_reduction);
   VLOG(10) << reduction_dimensions_;
 
-  CHECK(ReductionIsRaceFree(hero_reduction->GetModule()->config(),
-                            reduction_dimensions_))
+  CHECK(ReductionIsRaceFree(reduction_dimensions_))
       << "Non-race-free reductions should have been decomposed. Did "
          "tree_reduction_rewriter run?";
 
@@ -782,8 +776,7 @@ MlirRowReductionFusion::MlirRowReductionFusion(
 
   int64_t num_threads_kept = 1;
   int64_t num_threads_reduced = [&] {
-    int64_t max_block_size =
-        MinThreadsXRowReduction(first_reduce_->GetModule()->config());
+    int64_t max_block_size = MinThreadsXRowReduction();
     return std::min(max_block_size,
                     RoundUpTo(CeilOfRatio(shape[kRowMinorReduced],
                                           kMinorReducedElementsPerThread),
@@ -1051,12 +1044,6 @@ IndexingMap MlirMultiRowReductionFusion::ComputeReductionOutputIndexing(
   // by GetIndexingMap (since they don't show up in the output index
   // computation).
   return projected_index;
-}
-
-int MlirMultiRowReductionFusion::GetRowsPerWarp() const {
-  return RowReductionGetRowsPerWarp(
-             input_shape_[ReductionDimensions::kRowMinorReducedDimension]) *
-         tile_sizes_per_thread_[1];
 }
 
 llvm::SmallVector<mlir::Value> MlirMultiRowReductionFusion::EmitReduction(

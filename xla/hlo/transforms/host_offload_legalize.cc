@@ -18,6 +18,7 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/host_memory_offload_annotations.h"
+#include "xla/service/host_offload_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
@@ -414,7 +416,7 @@ Shape RemoveMajormostDimension(const Shape& shape) {
   return ShapeUtil::DeleteDimension(majormost_dim, shape);
 }
 
-absl::Status MoveCopy(
+absl::Status MoveCopyDown(
     const InstructionAndIndex& copy_to_move_instruction_and_index,
     const CallGraph* call_graph,
     absl::flat_hash_set<HloInstruction*>& processed_annotations,
@@ -621,6 +623,40 @@ absl::Status MoveCopy(
   return absl::OkStatus();
 }
 
+// Returns true if the copy should be moved. A copy can be moved if there is
+// always a place for it after being moved back to device.
+bool ShouldMoveCopyDown(InstructionAndIndex copy_to_move) {
+  std::queue<host_offload_utils::InstructionAndShapeIndex> queue;
+  queue.push({copy_to_move.instruction, {}});
+  while (!queue.empty()) {
+    host_offload_utils::InstructionAndShapeIndex current = queue.front();
+    queue.pop();
+    if (current.instruction->IsRoot() &&
+        current.instruction->parent()->IsEntryComputation()) {
+      // It reaches entry computation root without being brought back to the
+      // device. Do not move this copy since there is no place to do this copy
+      // on device.
+      return false;
+    }
+
+    // Push successors onto the queue to be visited.
+    absl::StatusOr<std::vector<host_offload_utils::InstructionAndShapeIndex>>
+        successors = host_offload_utils::GetSuccessors(current);
+    if (!successors.ok()) {
+      return false;
+    }
+    for (const host_offload_utils::InstructionAndShapeIndex& successor :
+         successors.value()) {
+      if (successor.instruction->IsCustomCall(
+              host_memory_offload_annotations::kMoveToDeviceCustomCallTarget)) {
+        continue;
+      }
+      queue.push(successor);
+    }
+  }
+  return true;
+}
+
 absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
     HloInstruction* instruction, const CallGraph* call_graph,
     absl::flat_hash_set<HloInstruction*>& processed_annotations,
@@ -781,13 +817,36 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
     return false;
   }
 
+  bool changed = false;
   // Process all copies one at a time from the last to the first and push it to
   // its specific user.
   for (auto it = copies_to_move.rbegin(); it != copies_to_move.rend(); ++it) {
-    TF_RETURN_IF_ERROR(
-        MoveCopy(*it, call_graph, processed_annotations, to_remove));
+    InstructionAndIndex& copy_to_move_and_index = *it;
+    HloInstruction* copy_to_move = copy_to_move_and_index.instruction;
+    if (ShouldMoveCopyDown(copy_to_move_and_index)) {
+      TF_RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
+                                      processed_annotations, to_remove));
+      changed = true;
+    } else {
+      // We should not move this copy down; maybe we can move it up. For now, we
+      // only check if we can easily move it up by swapping places with its
+      // operand.
+      if (copy_to_move->operand(0)->IsCustomCall(
+              host_memory_offload_annotations::kMoveToHostCustomCallTarget)) {
+        HloInstruction* custom_call = copy_to_move->mutable_operand(0);
+        TF_RETURN_IF_ERROR(copy_to_move->ReplaceAllUsesWith(custom_call));
+        TF_RETURN_IF_ERROR(copy_to_move->ReplaceOperandWith(
+            0, custom_call->mutable_operand(0)));
+        TF_RETURN_IF_ERROR(custom_call->ReplaceOperandWith(0, copy_to_move));
+        copy_to_move->mutable_shape()->mutable_layout()->set_memory_space(
+            Layout::kDefaultMemorySpace);
+        *custom_call->mutable_shape()->mutable_layout() =
+            copy_to_move->shape().layout();
+        changed = true;
+      }
+    }
   }
-  return true;
+  return changed;
 }
 
 // Fixes layout changing copies in between on the path to users.

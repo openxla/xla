@@ -238,8 +238,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_llvm_module_compilation_parallelism(false);
   opts.set_xla_gpu_enable_libnvptxcompiler(
       stream_executor::IsLibNvPtxCompilerSupported());
-  opts.set_xla_gpu_enable_libnvjitlink(
-      stream_executor::IsLibNvJitLinkSupported());
+  opts.set_xla_gpu_libnvjitlink_mode(DebugOptions::LIB_NV_JIT_LINK_MODE_AUTO);
 
   opts.set_xla_gpu_enable_dot_strength_reduction(true);
 
@@ -249,6 +248,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
   opts.set_xla_gpu_multi_streamed_windowed_einsum(false);
 
+  opts.set_xla_gpu_experimental_stream_annotation(false);
   // Minimum combined size of matrices in matrix multiplication to
   // be rewritten to cuBLAS or Triton kernel call.
   // This threshold is a conservative estimate and has been measured
@@ -282,9 +282,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_cudnn_gemm_max_plans(5);
 
-  // TODO: remove this as it is replaced by xla_gpu_pgle_accuracy_checker.
-  opts.set_xla_gpu_enable_pgle_accuracy_checker(false);
-
   opts.set_xla_gpu_pgle_accuracy_checker(
       DebugOptions::PGLE_STRICTNESS_LEVEL_WARN);
 
@@ -295,6 +292,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_dot_merger_threshold_mb(32);
   opts.set_xla_enable_fast_math(false);
   opts.set_xla_gpu_experimental_parallel_collective_overlap_limit(1);
+  opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
+  opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   return opts;
 }
 
@@ -1855,6 +1854,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Use libnvptxcompiler for PTX-to-GPU-assembly compilation instead of "
       "calling ptxas."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_libnvjitlink",
+      [debug_options](bool enabled) {
+        debug_options->set_xla_gpu_libnvjitlink_mode(
+            enabled ? DebugOptions::LIB_NV_JIT_LINK_MODE_ENABLED
+                    : DebugOptions::LIB_NV_JIT_LINK_MODE_DISABLED);
+        return true;
+      },
+      stream_executor::IsLibNvJitLinkSupported(),
+      "Use libnvjitlink for PTX-to-GPU-assembly compilation instead of "
+      "calling ptxas."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_dot_strength_reduction",
       bool_setter_for(&DebugOptions::set_xla_gpu_enable_dot_strength_reduction),
       debug_options->xla_gpu_enable_dot_strength_reduction(),
@@ -2041,6 +2051,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_enable_fast_math(),
                 "Enable optimizations that assume finite math, i.e., no NaN."));
   flag_list->push_back(tsl::Flag(
+      "xla_experimental_exec_time_optimization_effort",
+      float_setter_for(
+          &DebugOptions::set_xla_experimental_exec_time_optimization_effort),
+      debug_options->xla_experimental_exec_time_optimization_effort(),
+      "The execution time optimization effort to expend during compilation. "
+      "Takes range [-1.0, 1.0] where values < 0.0 indicate skipping passes "
+      "which might optimize the final runtime (thus improving compile time), "
+      "and values > 0.0 indicate running additional passes which may improve "
+      "runtime at the cost of compilation time."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_parallel_collective_overlap_limit",
       int32_setter_for(
           &DebugOptions::
@@ -2048,6 +2068,23 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_parallel_collective_overlap_limit(),
       "This controls how many in-flight collectives "
       "latency hiding scheduler can schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_pjrt_allow_auto_layout_in_hlo",
+      bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),
+      debug_options->xla_pjrt_allow_auto_layout_in_hlo(),
+      "Experimental: Make unset entry computation layout mean auto layout "
+      "instead of default layout in HLO when run through PjRT. In other cases "
+      "(StableHLO or non-PjRT) the auto layout is already used."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_scatter_determinism_expander",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_scatter_determinism_expander),
+      debug_options->xla_gpu_enable_scatter_determinism_expander(),
+      "Enable the scatter determinism expander, an optimized pass that "
+      "rewrites scatter operations to ensure deterministic behavior with high "
+      "performance."
+      "Note that even when this flag is disabled, scatter operations may still "
+      "be deterministic, although with additional overhead."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

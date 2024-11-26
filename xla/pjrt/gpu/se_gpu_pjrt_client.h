@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/pjrt_stream_executor_client.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/shape.h"
@@ -67,22 +68,18 @@ using DeviceTopologyPair =
 
 class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
  public:
-  static StreamExecutorGpuTopologyDescription Create(
-      const PjRtPlatformId platform_id, const absl::string_view platform_name,
-      std::shared_ptr<const GpuTopology> gpu_topology) {
-    return StreamExecutorGpuTopologyDescription(platform_id, platform_name,
-                                                gpu_topology);
-  }
-
   StreamExecutorGpuTopologyDescription(
       const PjRtPlatformId platform_id, const absl::string_view platform_name,
       std::shared_ptr<const GpuTopology> gpu_topology,
       const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& attributes =
-          {})
+          {},
+      std::optional<stream_executor::GpuTargetConfigProto> target_config =
+          std::nullopt)
       : platform_id_(platform_id),
         platform_name_(platform_name),
         gpu_topology_(std::move(gpu_topology)),
-        attributes_(attributes) {}
+        attributes_(attributes),
+        target_config_(std::move(target_config)) {}
 
   bool operator==(const StreamExecutorGpuTopologyDescription& other) const {
     return this->platform_id() == other.platform_id() &&
@@ -138,6 +135,11 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
 
   absl::StatusOr<std::string> Serialize() const override;
 
+  const std::optional<stream_executor::GpuTargetConfigProto>& target_config()
+      const {
+    return target_config_;
+  }
+
   // Returns vendor specific attributes about the topology.
   const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
       const override {
@@ -153,6 +155,7 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   const std::string platform_name_;
   std::shared_ptr<const GpuTopology> gpu_topology_;
   absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
+  std::optional<stream_executor::GpuTargetConfigProto> target_config_;
 };
 
 class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
@@ -281,27 +284,6 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     std::optional<std::string_view> mock_gpu_topology = std::nullopt,
     absl::Duration get_local_topology_timeout = absl::Minutes(2),
     absl::Duration get_global_topology_timeout = absl::Minutes(5));
-
-struct GpuClientOptions {
-  GpuAllocatorConfig allocator_config;
-
-  int node_id = 0;
-
-  int num_nodes = 1;
-
-  std::optional<std::set<int>> allowed_devices = std::nullopt;
-
-  std::optional<std::string> platform_name = std::nullopt;
-
-  bool should_stage_host_to_device_transfers = true;
-
-  // kv_store must be non-null if num_nodes > 1.
-  std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr;
-
-  bool enable_mock_nccl = false;
-
-  std::optional<std::string> mock_gpu_topology;
-};
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options);

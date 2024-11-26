@@ -5,13 +5,13 @@ load(
     "@tsl//tsl/platform:build_config.bzl",
     "tf_proto_library",
 )
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_oss")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -36,6 +36,7 @@ cc_library(
     ],
     deps = [
         ":autotuner_compile_util",
+        ":autotuner_status_key",
         ":autotuner_util",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
@@ -146,7 +147,6 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:semantic_version",
-        "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
@@ -214,11 +214,19 @@ cc_library(
 )
 
 cc_library(
+    name = "autotuner_status_key",
+    srcs = ["autotuner_status_key.cc"],
+    hdrs = ["autotuner_status_key.h"],
+    deps = ["@com_google_absl//absl/strings"],
+)
+
+cc_library(
     name = "autotuner_util",
     srcs = ["autotuner_util.cc"],
     hdrs = ["autotuner_util.h"],
     tags = ["gpu"],
     deps = [
+        ":autotuner_status_key",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",
         "//xla:shape_util",
@@ -227,7 +235,6 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:dump",
-        "//xla/service/gpu:gpu_asm_opts_util",
         "//xla/service/gpu:stream_executor_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
@@ -304,8 +311,8 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service:platform_util",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
@@ -333,7 +340,6 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:semantic_version",
-        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/protobuf:dnn_proto_cc",
@@ -440,7 +446,6 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:platform",
-        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings:string_view",
@@ -501,12 +506,10 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/stream_executor:stream",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
@@ -534,6 +537,7 @@ xla_cc_test(
         "gpu",
     ],
     deps = [
+        ":autotuner_status_key",
         ":autotuner_util",
         "//xla:autotune_results_proto_cc",
         "//xla:autotuning_proto_cc",

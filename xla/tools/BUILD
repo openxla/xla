@@ -8,10 +8,6 @@ load(
     "tf_proto_library",
 )
 load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load(
     "//xla:xla.bzl",
@@ -29,6 +25,10 @@ load(
     "tsl_gpu_library",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -142,6 +142,7 @@ xla_cc_test(
     srcs = ["hlo_extractor_test.cc"],
     deps = [
         ":hlo_extractor",
+        "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:hlo_test_base",
@@ -160,6 +161,9 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:algebraic_simplifier",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/service:call_inliner",
         "//xla/service:compilation_environments",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",

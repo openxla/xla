@@ -366,14 +366,6 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 
 namespace {
 
-// LLVM makes certain options configurable only through its command-line
-// options; it provide the ParseCommandLineOptions function that lets us set
-// flags at runtime. However, since these flags are global we want to avoid
-// multiple invocations of the LLVM compilation pipeline with a different set of
-// flags. Therefore, we only pass command-line flags to LLVM once, before the
-// first module is compiled.
-absl::once_flag llvm_command_line_options_initialized;
-
 // This visitor records which HLO instructions should have profiling information
 // recorded.
 class CollectProfileCandidates : public DfsHloVisitorWithDefault {
@@ -477,11 +469,6 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     LLVMTargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
-  HloPassPipeline pre_sharding_pipeline("pre-spmd-pipeline");
-  // TODO(b/359982037): Run BatchedGatherScatterNormalizer after partitioning.
-  pre_sharding_pipeline.AddPass<BatchedGatherScatterNormalizer>();
-  TF_RETURN_IF_ERROR(pre_sharding_pipeline.Run(module).status());
-
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -527,7 +514,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
   HloPassPipeline pipeline("HLO passes through layout assignment");
   AddHloVerifier(&pipeline);
-
+  pipeline.AddPass<BatchedGatherScatterNormalizer>();
   pipeline.AddPass<ResultCaster>();
   pipeline.AddPass<OperandUpcaster>();
 
@@ -1046,11 +1033,6 @@ CreateOrcJITPostCompilationHook(const HloModule* module,
                                         obj_file.getData().size()));
     }
   };
-}
-
-void InitializeLLVMCommandLineOptions(const HloModuleConfig& config) {
-  llvm_ir::InitializeLLVMCommandLineOptions(
-      config.debug_options().xla_backend_extra_options());
 }
 
 struct ComputationToEmit {
@@ -1723,16 +1705,17 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   std::string slow_compilation_msg =
       absl::StrCat("Compiling module ", module->name());
   auto slow_compile_alarm = SlowCompilationAlarm(slow_compilation_msg);
-
-  absl::call_once(llvm_command_line_options_initialized,
-                  &InitializeLLVMCommandLineOptions, module->config());
+  auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
+      module->config().debug_options().xla_backend_extra_options());
+  llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
   std::unique_ptr<CpuExecutable> cpu_executable;
   TF_ASSIGN_OR_RETURN(cpu_executable,
                       CompileLegacyCpuExecutable(std::move(module)));
 
   cpu_executable->set_debug_info(
-      cpu_executable->buffer_assignment().GetStats().ToString());
+      cpu_executable->buffer_assignment().StatsString(
+          /*report_total_fragmentation=*/true));
   VLOG(1) << "Compilation finished";
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
@@ -1744,8 +1727,9 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   std::vector<std::unique_ptr<HloModule>> modules =
       module_group->ConsumeModules();
 
-  absl::call_once(llvm_command_line_options_initialized,
-                  &InitializeLLVMCommandLineOptions, modules[0]->config());
+  auto llvm_options = llvm_ir::ExtractXlaBackendExtraOptions(
+      modules[0]->config().debug_options().xla_backend_extra_options());
+  llvm_ir::LLVMCommandLineOptionsLock llvm_lock(llvm_options);
 
   // We can pass just one llvm::TargetOptions when we compile the LLVM module,
   // so we bail if the configs have conflicting flags. At the moment, the only
