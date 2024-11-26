@@ -194,11 +194,18 @@ absl::Status CollectSliceInfo(
   if (arg_slice_instr == nullptr) {
     return absl::OkStatus();
   }
+  std::optional<HloInstruction*> async_caller = std::nullopt;
+  if (fusion_instr.parent()->IsAsyncComputation()) {
+    async_caller = fusion_instr.parent()->AsyncStart();
+  }
 
   std::vector<DynamicSliceThunk::Offset> arg_offsets;
   for (auto idx_op : arg_slice_instr->index_operands()) {
     const auto* param = Cast<HloParameterInstruction>(idx_op);
-    const auto* offset_value = fusion_instr.operand(param->parameter_number());
+    const HloInstruction* offset_value =
+        async_caller.has_value()
+            ? (*async_caller)->operand(param->parameter_number())
+            : fusion_instr.operand(param->parameter_number());
 
     if (auto* cst = DynCast<HloConstantInstruction>(offset_value)) {
       // Loop offset is defined by a constant scalar value.
@@ -828,6 +835,8 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion_instr, const HloInstType* instr,
     bool use_global_device_ids) {
+  // If the fusion is async, we do not emit the done thunk at the end.
+  bool is_async = fusion_instr.parent()->IsAsyncComputation();
   Thunk::Kind collective_done_thunk_kind;
   switch (instr->opcode()) {
     case HloOpcode::kReduceScatter:
@@ -964,13 +973,20 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
         /*destination_value=*/nullptr});
     auto collective_start_thunk =
         std::make_unique<NcclThunkType>(thunk_info, instr, buffers);
-    auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
-        /*kind=*/collective_done_thunk_kind,
-        /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
-        /*async_events=*/collective_start_thunk->async_events(),
-        /*async_stream_kind=*/AsyncStreamKind::kCollective);
+    std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events =
+        collective_start_thunk->async_events();
     seq.emplace_back(std::move(collective_start_thunk));
-    seq.emplace_back(std::move(collective_done_thunk));
+    if (!is_async) {
+      auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
+          /*kind=*/collective_done_thunk_kind,
+          /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
+          /*async_events=*/async_events,
+          /*async_stream_kind=*/AsyncStreamKind::kCollective);
+      seq.emplace_back(std::move(collective_done_thunk));
+    } else {
+      ir_emitter_context.collectives_async_events().insert(
+          {fusion_instr.parent()->AsyncStart(), async_events});
+    }
   } else {
     return implementable_status;
   }

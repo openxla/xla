@@ -132,6 +132,7 @@ limitations under the License.
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_permute_decomposer.h"
 #include "xla/service/collective_pipeliner.h"
 #include "xla/service/collective_utils.h"
@@ -166,6 +167,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_p2p_pipeliner.h"
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_unnested.h"
@@ -1310,6 +1312,23 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         se::PlatformManager::PlatformWithId(platform_id));
     pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
+    pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
+      absl::StatusOr<GpuBackendConfig> backend_config =
+          instr->backend_config<GpuBackendConfig>();
+      if (!backend_config.ok()) return false;
+      std::string name =
+          backend_config->fusion_backend_config().custom_fusion_config().name();
+      if (name != "address_computation" &&
+          name != "dynamic_address_computation") {
+        return false;
+      }
+      std::optional<const HloInstruction*> hero_op = HloBfsFindIf(
+          {instr->fused_instructions_computation()->root_instruction()},
+          [](const HloInstruction* instr) -> bool {
+            return IsCollective(instr);
+          });
+      return hero_op.has_value();
+    });
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 
