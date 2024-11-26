@@ -122,6 +122,10 @@ rocm_redist_ubuntu_20_04 = {
                 sha256 = "e74e1907eb90a692344626e881cb88eeed5565ac3b487eb94ad4ac02ffd838ed",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprofiler-register6.2.0/rocprofiler-register6.2.0_0.4.0.60200-66~20.04_amd64.deb",
+                sha256 = "4be88c5010c2cf0223c1dd7dc9d4a430fc54ee401ca093de2dcca60dabea763a",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocrand-dev/rocrand-dev_3.1.0.60200-66~20.04_amd64.deb",
                 sha256 = "ddd0ac44b08470dfc128d6f6d2598a9728879f5a78bc5290645baebf22433b63",
             ),
