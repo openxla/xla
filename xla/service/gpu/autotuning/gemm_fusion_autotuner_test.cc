@@ -224,11 +224,7 @@ class StatelessAutotunerTest : public HloTestBase {
   }
 
   bool isRocm() {
-    if (std::holds_alternative<se::RocmComputeCapability>(
-          GpuComputeComp())) {
-      return true;
-    }
-    return false;
+    return std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp());
   }
 
   // Returns the config for the current device.

@@ -1238,50 +1238,6 @@ GemmFusionAutotunerImpl::GetExhaustiveTritonConfigs() const {
   return configs;
 }
 
-std::vector<TritonGemmConfig> GemmFusionAutotunerImpl::GetDefaultTritonConfigs()
-    const {
-  using Config = TritonGemmConfig;
-  if(isRocm()) {
-    std::vector<Config> configs = {
-          Config(32, 32, 256, 1, 1, 4), Config(64, 32, 32, 16, 1, 4),
-          Config(32, 64, 64, 4, 1, 4),  Config(128, 128, 64, 4, 1, 4),
-          Config(16, 16, 256, 1, 1, 4), Config(16, 128, 32, 16, 1, 4),
-    };
-    return configs;
-  }
-  else {
-    std::vector<Config> configs = {
-        Config(32, 32, 256, 1, 1, 4),   Config(64, 32, 32, 16, 1, 4),
-        Config(32, 64, 64, 4, 1, 4),    Config(128, 128, 64, 4, 1, 4),
-        Config(16, 16, 256, 1, 1, 4),   Config(16, 128, 32, 16, 1, 4),
-        Config(16, 64, 128, 1, 1, 4),   Config(16, 128, 32, 8, 1, 4),
-        Config(16, 16, 512, 1, 1, 4),   Config(32, 16, 512, 1, 1, 4),
-        Config(64, 32, 64, 1, 2, 8),    Config(128, 256, 32, 1, 3, 8),
-        Config(256, 128, 32, 1, 3, 8),  Config(256, 64, 32, 1, 4, 4),
-        Config(64, 256, 32, 1, 4, 4),   Config(128, 64, 32, 1, 4, 4),
-        Config(64, 128, 32, 1, 4, 4),   Config(256, 128, 128, 1, 3, 8),
-        Config(256, 64, 128, 1, 4, 4),  Config(64, 256, 128, 1, 4, 4),
-        Config(128, 128, 128, 1, 4, 4), Config(128, 64, 64, 1, 4, 4),
-        Config(64, 128, 64, 1, 4, 4),   Config(128, 32, 64, 1, 4, 4),
-        Config(64, 32, 64, 1, 4, 4),    Config(32, 128, 32, 1, 4, 4),
-        Config(128, 128, 32, 1, 4, 4),  Config(16, 16, 256, 1, 3, 4),
-        Config(128, 128, 64, 2, 1, 8),  Config(64, 64, 64, 1, 2, 4),
-        Config(16, 64, 256, 8, 1, 4),   Config(256, 256, 128, 1, 3, 8)};
-    auto cu_compute_capability =
-        std::get<se::CudaComputeCapability>(GetComputeCapability());
-    if (cu_compute_capability.IsAtLeastHopper()) {
-      absl::c_copy(
-          std::vector<Config>{
-              Config(16, 32, 32, 8, 1, 2),
-              Config(16, 64, 128, 8, 1, 4),
-              Config(16, 64, 128, 16, 3, 4),
-          },
-          std::back_inserter(configs));
-    }
-    return configs;
-  }
-}
-
 absl::Status DumpAutotuningLogs(const DebugOptions& debug_opts,
                                 const AutotuningLogs& autotuning_logs) {
   if (absl::string_view file_path = debug_opts.xla_gpu_dump_autotune_logs_to();

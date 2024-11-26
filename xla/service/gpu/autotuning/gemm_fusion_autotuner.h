@@ -191,7 +191,7 @@ class GemmFusionAutotunerImpl {
 
   bool isRocm() const {
     return std::holds_alternative<se::RocmComputeCapability>(
-          GetComputeCapability()) ? true : false;
+          GetComputeCapability());
   }
 
   bool IsFusionKind(const HloInstruction& hlo, absl::string_view kind);
