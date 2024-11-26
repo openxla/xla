@@ -159,8 +159,8 @@ ENTRY main.6 {
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
        BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  const std::string hlo = absl::StrReplaceAll(
-      hlo_base_pattern, {{"HEAD_DIM", std::to_string(64)}});
+  const std::string hlo =
+      absl::StrReplaceAll(hlo_base_pattern, {{"HEAD_DIM", std::to_string(64)}});
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
   CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
                                          GetCudnnVersion()};
