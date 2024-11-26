@@ -96,6 +96,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_conv_runner.h"
 #include "xla/service/gpu/gpu_norm_runner.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter.h"
 #include "xla/service/gpu/ir_emitter_context.h"
@@ -2475,6 +2476,24 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   return absl::OkStatus();
 }
 
+// If the fusion instruction is a dynamic slice fusion instruction, with a
+// collective hero operation, then this function returns the collective
+// operation. Returns std::nullopt otherwise.
+std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
+    const HloFusionInstruction* instruction) {
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instruction->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) return std::nullopt;
+  std::string name =
+      backend_config->fusion_backend_config().custom_fusion_config().name();
+  if (name != "address_computation" && name != "dynamic_address_computation") {
+    return std::nullopt;
+  }
+  return HloBfsFindIf(
+      {instruction->fused_instructions_computation()->root_instruction()},
+      [](const HloInstruction* instr) { return IsCollective(instr); });
+}
+
 absl::Status IrEmitterUnnested::EmitHloInstruction(
     const HloInstruction* instr) {
   switch (instr->opcode()) {
@@ -2508,7 +2527,27 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
           return EmitNcclAsyncDone(Thunk::kNcclAllToAllDone, instr);
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
-        case HloOpcode::kFusion:
+        case HloOpcode::kFusion: {
+          auto collective_hero = GetCollectiveHeroForDynamicSliceFusion(
+              Cast<HloFusionInstruction>(wrapped));
+          if (collective_hero.has_value()) {
+            switch ((*collective_hero)->opcode()) {
+              case HloOpcode::kReduceScatter:
+                TF_RETURN_IF_ERROR(
+                    EmitNcclAsyncDone(Thunk::kNcclReduceScatterDone, instr));
+                break;
+              default:
+                return absl::InternalError(absl::StrFormat(
+                    "Unhandled collective in dynamic slice fusion "
+                    "instruction: %s",
+                    (*collective_hero)
+                        ->fused_instructions_computation()
+                        ->ToString()));
+            }
+          }
+          // We still want to emit the stream done thunk.
+          [[clang::fallthrough]];
+        }
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
