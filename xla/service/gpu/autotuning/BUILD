@@ -33,10 +33,9 @@ package_group(
 cc_library(
     name = "gemm_fusion_autotuner_cuda",
     srcs = [
-        "gemm_fusion_autotuner.cc",
         "gemm_fusion_autotuner_cuda.cc",
+        "gemm_fusion_autotuner.h",
     ],
-    hdrs = ["gemm_fusion_autotuner.h"],
     tags = [
         "cuda-only",
         "gpu",
@@ -120,10 +119,9 @@ cc_library(
 cc_library(
     name = "gemm_fusion_autotuner_rocm",
     srcs = [
-        "gemm_fusion_autotuner.cc",
         "gemm_fusion_autotuner_rocm.cc",
+        "gemm_fusion_autotuner.h",
     ],
-    hdrs = ["gemm_fusion_autotuner.h"],
     tags = [
         "gpu",
     ],
@@ -205,6 +203,10 @@ cc_library(
 
 cc_library(
     name = "gemm_fusion_autotuner",
+    srcs = [
+        "gemm_fusion_autotuner.cc",
+    ],
+    hdrs = ["gemm_fusion_autotuner.h"],
     deps = if_cuda_is_configured([":gemm_fusion_autotuner_cuda"])
         + if_rocm_is_configured([":gemm_fusion_autotuner_rocm"]),
 )
