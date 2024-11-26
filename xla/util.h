@@ -658,6 +658,8 @@ template <typename T>
 auto SignAndMagnitude(T x) {
   using BitType = UnsignedIntegerTypeForSizeType<sizeof(T)>;
   BitType x_abs_bits = Eigen::numext::bit_cast<BitType>(Eigen::numext::abs(x));
+  // Eigen implements the sign value to be either all-zeros (for positive input)
+  // or all-ones (for negative input).
   BitType x_sign = Eigen::numext::bit_cast<BitType>(Eigen::numext::signbit(x));
   if constexpr (!has_negative_zero_v<T>) {
     //  f8e4m3b11, f8e4m3fnuz, and f8e5m2fnuz don't support -0, adjust negative

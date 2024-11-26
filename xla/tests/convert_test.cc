@@ -1957,8 +1957,7 @@ XLA_TEST_F(ConvertTest, ConvertF16F4e2m1fnRoundtrip) {
 
       // Denormal tests
       {0x1.0p-1, 0x1.0p-1},  // Denormal without rounding
-      {0x1.4p-1, 0x1.0p-1},  // Round-to-even down
-      {0x1.Cp-1, 0x1.0p0},   // Round-to-even up
+      {0x1.8p-1, 0x1.0p0},   // Round-to-even up
       {0x1.6p-1, 0x1.0p-1},  // Round-to-nearest down
       {0x1.Ep-1, 0x1.0p0},   // Round-to-nearest up
       {0x1p-2, 0},           // Largest number that underflows
@@ -2007,8 +2006,7 @@ XLA_TEST_F(ConvertTest, DISABLED_ON_CPU(ConvertF32F4e2m1fnRoundtrip)) {
 
       // Denormal tests
       {0x1.0p-1, 0x1.0p-1},     // Denormal without rounding
-      {0x1.4p-1, 0x1.0p-1},     // Round-to-even down
-      {0x1.Cp-1, 0x1.0p0},      // Round-to-even up
+      {0x1.8p-1, 0x1.0p0},      // Round-to-even up
       {0x1.6p-1, 0x1.0p-1},     // Round-to-nearest down
       {0x1.Ep-1, 0x1.0p0},      // Round-to-nearest up
       {0x1p-2, 0},              // Largest number that underflows
@@ -2109,7 +2107,7 @@ XLA_TEST_F(ConvertTest, ConvertF32F8e8m0fnuRoundtrip) {
       {inf, nan},
       // clang-format on
       {0x1.8p1, 0x1p2},             // Round-to-even up
-      {0x1.8p2, 0x1p3},             // Round-to-even up (not a mistake)
+      {0x1.8p2, 0x1p3},             // Round-to-even up (always rounds up)
       {0x1p127, 0x1p127},           // Max value
       {0x1.7FFFFEp127, 0x1p127},    // Largest number that doesn't overflow
       {0x1.8p127, nan},             // Smallest number that overflows
@@ -2147,19 +2145,23 @@ XLA_TYPED_TEST(ConvertTestT, ConvertF8e8m0fnuRoundtripExhaustive) {
   this->ComputeAndCompare(&builder, {}, ErrorSpec(0.));
 }
 
-// This test is disabled on CPU, as converting 0x1p-127 from double to float
-// using CVTSD2SS on x64 results in an underflow (even though the result is
-// representable as denormalized float32).
-XLA_TYPED_TEST(ConvertTestT,
-               DISABLED_ON_CPU(ConvertF8e8m0fnuRoundtripExhaustive2)) {
+XLA_TYPED_TEST(ConvertTestT, ConvertF8e8m0fnuRoundtripExhaustive2) {
+#ifdef XLA_TEST_BACKEND_CPU
+  // This test is disabled on CPU, as converting 0x1p-127 from double to float
+  // using CVTSD2SS on x64 results in an underflow (even though the result is
+  // representable as denormalized float32).
+  if (std::is_same_v<TypeParam, double>) {
+    GTEST_SKIP() << "Skipping test for double precision floating point that "
+                    "loses denormal value during conversion";
+  }
+#endif
   // Convert from supported floating point type to FP8.
   XlaBuilder builder(this->TestName());
 
   std::vector<TypeParam> all_f8;
   for (int i = 0; i < 256; i++) {
-    all_f8.push_back(
-        static_cast<TypeParam>(Eigen::numext::bit_cast<tsl::float8_e8m0fnu>(
-            static_cast<uint8_t>(i))));
+    all_f8.push_back(static_cast<TypeParam>(
+        Eigen::numext::bit_cast<tsl::float8_e8m0fnu>(static_cast<uint8_t>(i))));
   }
 
   ConvertElementType(ConstantR1<TypeParam>(&builder, all_f8), F8E8M0FNU);

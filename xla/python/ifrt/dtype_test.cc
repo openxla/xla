@@ -74,7 +74,7 @@ TEST(DTypeTest, BitSize) {
            {DType::kF8E3M4, 8},     {DType::kF8E4M3, 8},
            {DType::kF8E4M3FN, 8},   {DType::kF8E4M3B11FNUZ, 8},
            {DType::kF8E4M3FNUZ, 8}, {DType::kF8E5M2, 8},
-           {DType::kF8E5M2FNUZ, 8}, {DType::kF8E8M0FNU, 4},
+           {DType::kF8E5M2FNUZ, 8}, {DType::kF8E8M0FNU, 8},
            {DType::kS16, 16},       {DType::kU16, 16},
            {DType::kF16, 16},       {DType::kBF16, 16},
            {DType::kS32, 32},       {DType::kU32, 32},

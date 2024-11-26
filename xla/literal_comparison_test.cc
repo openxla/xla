@@ -73,7 +73,7 @@ TYPED_TEST(LiteralComparisonTest, CompareNear_NotEqual_4ulps) {
   auto actual = LiteralUtil::CreateR0<TypeParam>(TypeParam(1.0));
   float expV = 1.5;  // F8E4M3*
   if (type == F8E5M2 || type == F8E5M2FNUZ)
-    expV = 1.75;
+    expV = 2.0;
   else if (type == F8E3M4)
     expV = 1.25;
   else if (type == F4E2M1FN)
@@ -99,7 +99,7 @@ TYPED_TEST(LiteralComparisonTest, FloatUsingCompareNear_NotEqual_4ulps) {
   auto actual = LiteralUtil::CreateR0<float>(1.0);
   float expV = 1.51;  // F8E4M3*
   if (type == F8E5M2 || type == F8E5M2FNUZ)
-    expV = 1.76;
+    expV = 2.01;
   else if (type == F8E3M4)
     expV = 1.26;
   else if (type == F4E2M1FN)

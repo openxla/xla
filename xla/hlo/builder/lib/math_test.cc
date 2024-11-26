@@ -96,12 +96,12 @@ class MathTypedTest : public MathTest {
 
     bool has_inf = std::numeric_limits<T>::has_infinity;
     bool has_nan = std::numeric_limits<T>::has_quiet_NaN;
-    bool is_finite = !has_inf && !has_nan;
-    bool is_nan_only = !has_inf && has_nan;
+    bool has_finite = !has_inf && !has_nan;
+    bool has_nan_only = !has_inf && has_nan;
 
     auto expected = LiteralUtil::MakeTupleOwned(
-        LiteralUtil::CreateR1<bool>({true, true, true, true, true, is_finite,
-                                     is_finite, is_finite, is_finite}),
+        LiteralUtil::CreateR1<bool>({true, true, true, true, true, has_finite,
+                                     has_finite, has_finite, has_finite}),
         LiteralUtil::CreateR1<bool>({false, false, false, false, false, has_inf,
                                      has_inf, false, false}),
         LiteralUtil::CreateR1<bool>(
@@ -109,7 +109,7 @@ class MathTypedTest : public MathTest {
         LiteralUtil::CreateR1<bool>(
             {false, false, false, false, false, false, has_inf, false, false}),
         LiteralUtil::CreateR1<bool>({false, false, false, false, false,
-                                     is_nan_only, is_nan_only, has_nan,
+                                     has_nan_only, has_nan_only, has_nan,
                                      has_nan}));
     ComputeAndCompareLiteral(&b, expected, {});
   }
