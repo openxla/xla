@@ -70,24 +70,11 @@ class CudnnFusedMhaRewriterTestHloTest : public HloTestBase {
     return se::CudaComputeCapability(8, 0);
   }
 
-  se::CudaComputeCapability GetRealCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
-  }
-
   se::dnn::VersionInfo GetCudnnVersion() {
     // Fake a supported compute capability to run tests,
     // we don't run any kernels in these tests so they should be safe
     // to run anywhere.
     return se::dnn::VersionInfo(9, 0, 0);
-  }
-
-  se::dnn::VersionInfo GetRealCudnnVersion() {
-    auto* stream_executor = backend().default_stream_executor();
-    auto cudnn_version = GetDnnVersionInfoOrDefault(stream_executor);
-    return cudnn_version;
   }
 
   CudnnFusedMhaRewriterTestHloTest()
@@ -172,15 +159,38 @@ ENTRY main.6 {
 TEST_F(CudnnFusedMhaRewriterTestHloTest,
        BF16Bmm1SoftmaxBmm2Pattern_bmm1_rhs_contracting_dim_not_most_minor) {
   if (skip_reason_) GTEST_SKIP() << *skip_reason_;
-  bool support_large_head_dim =
-      (GetRealCudaComputeCapability().IsAtLeastHopper() &&
-       GetRealCudnnVersion() >= se::dnn::VersionInfo(9, 5, 0));
-  int head_dim = support_large_head_dim ? 256 : 64;
+  const std::string hlo = absl::StrReplaceAll(
+      hlo_base_pattern, {{"HEAD_DIM", std::to_string(64)}});
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+  CudnnFusedMHARewriter fusedMhaRewriter{GetCudaComputeCapability(),
+                                         GetCudnnVersion()};
+  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
+  EXPECT_TRUE(result);
+  const HloInstruction* fmha;
+
+  SCOPED_TRACE(m->ToString());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::GetTupleElement(
+                     m::CustomCall(&fmha, {kCudnnfMHASoftmaxCallTarget}), 0)
+                     .WithShape(BF16, {16, 16, 256, 64})));
+  TF_ASSERT_OK_AND_ASSIGN(auto gpu_config,
+                          fmha->backend_config<GpuBackendConfig>());
+  const CudnnfMHABackendConfig& config = gpu_config.cudnn_fmha_backend_config();
+  EXPECT_EQ(config.bmm1_dot_dimension_numbers().rhs_contracting_dimensions()[0],
+            2);
+}
+
+TEST_F(CudnnFusedMhaRewriterTestHloTest,
+       BF16Bmm1SoftmaxBmm2Pattern_large_head_dim) {
+  if (skip_reason_) GTEST_SKIP() << *skip_reason_;
+  // Large head dim of 256 is supported by Cudnn 9.5+ on Hopper+ GPUs.
+  int head_dim = 256;
   const std::string hlo = absl::StrReplaceAll(
       hlo_base_pattern, {{"HEAD_DIM", std::to_string(head_dim)}});
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
-  CudnnFusedMHARewriter fusedMhaRewriter{GetRealCudaComputeCapability(),
-                                         GetRealCudnnVersion()};
+  CudnnFusedMHARewriter fusedMhaRewriter{se::CudaComputeCapability(9, 0),
+                                         se::dnn::VersionInfo(9, 5, 0)};
   TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&fusedMhaRewriter, m.get()));
   EXPECT_TRUE(result);
   const HloInstruction* fmha;
