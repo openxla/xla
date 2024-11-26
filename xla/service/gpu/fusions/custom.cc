@@ -695,7 +695,16 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
                       custom_call.api_version());
   }
 
-  auto& backend_config_str = custom_call.raw_backend_config_string();
+  auto backend_config = custom_call.backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    LOG(WARNING) << "Unable to parse backend config for custom call: "
+                 << backend_config.status().message() << "\n"
+                 << "Fall back to parse the raw backend config str.";
+  }
+  auto& backend_config_str =
+      backend_config.ok()
+          ? backend_config->custom_call_backend_config().opaque()
+          : custom_call.raw_backend_config_string();
   switch (custom_call.api_version()) {
     case CustomCallApiVersion::API_VERSION_ORIGINAL:
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING:

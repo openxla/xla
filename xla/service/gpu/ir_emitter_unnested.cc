@@ -1175,7 +1175,17 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
                       instr->api_version());
   }
 
-  auto& backend_config_str = instr->raw_backend_config_string();
+  auto backend_config = instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    LOG(WARNING) << "Unable to parse backend config for custom call: "
+                 << backend_config.status().message() << "\n"
+                 << "Fall back to parse the raw backend config str.";
+  }
+  auto& backend_config_str =
+      backend_config.ok()
+          ? backend_config->custom_call_backend_config().opaque()
+          : instr->raw_backend_config_string();
+
   switch (instr->api_version()) {
     case CustomCallApiVersion::API_VERSION_ORIGINAL:
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
