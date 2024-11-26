@@ -3138,9 +3138,9 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
                           test_runner_as_hlo_runner().ExecutableFromWrapped(
                               wrapped_executable.get()));
   GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec);
-  ASSERT_EQ(gpu_exec->GetThunk().thunks().size(), 2ul);
-  auto& rs_start_thunk = gpu_exec->GetThunk().thunks()[0];
-  auto& rs_done_thunk = gpu_exec->GetThunk().thunks()[1];
+  ASSERT_EQ(gpu_exec->GetThunk().thunks().size(), 4ul);
+  auto& rs_start_thunk = gpu_exec->GetThunk().thunks()[1];
+  auto& rs_done_thunk = gpu_exec->GetThunk().thunks()[2];
   ASSERT_EQ(rs_start_thunk->kind(), Thunk::kNcclReduceScatterStart);
   ASSERT_EQ(rs_done_thunk->kind(), Thunk::kNcclReduceScatterDone);
 
@@ -3277,6 +3277,91 @@ TEST_F(DynamicSliceFusionTest,
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
       /*module_0=*/std::move(module_ref), /*module_1=*/std::move(module_opt),
       /*run_hlo_passes=*/false, /*use_threads=*/true, error));
+}
+
+TEST_F(DynamicSliceFusionTest, AsyncCollective) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      destination = s32[2,2,32] parameter(0)
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      c4 = s32[] constant(4)
+      source = s32[8,32] parameter(1)
+      a = s32[1024,1024] parameter(2)
+      b = s32[1024,1024] parameter(3)
+      slice = s32[4,32] slice(source), slice={[4:8], [0:32]}
+      rs = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      reshape = s32[1,2,32] reshape(rs)
+      dus = s32[2,2,32] dynamic-update-slice(destination, reshape, c1, c0, c0)
+      dot = s32[1024,1024] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT tuple = tuple(dus,dot)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo));
+  std::unique_ptr<HloModule> hlo_module_ref = hlo_module->Clone();
+  hlo_module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(hlo_module,
+                          GetOptimizedModule(std::move(hlo_module)));
+  TF_ASSERT_OK_AND_ASSIGN(hlo_module_ref,
+                          GetOptimizedModule(std::move(hlo_module_ref)));
+  std::unique_ptr<HloModule> hlo_module_opt = hlo_module->Clone();
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          CreateExecutable(std::move(hlo_module), false));
+  GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
+  const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
+
+  // This is only needed to ensure that the next checks don't fail.
+  ASSERT_GE(thunks.size(), 6);
+
+  // In the following checks, only the order of the thunks matter.
+  EXPECT_EQ(thunks[1]->kind(), Thunk::kWaitForStreams);
+  EXPECT_EQ(thunks[2]->kind(), Thunk::kDynamicSlice);
+  EXPECT_EQ(thunks[3]->kind(), Thunk::kKernel);
+  EXPECT_EQ(thunks[4]->kind(), Thunk::kNcclReduceScatterDone);
+  EXPECT_EQ(thunks[5]->kind(), Thunk::kWaitForStreams);
+
+  // Check that the dynamic slice thunk only produces a start thunk, and not a
+  // done thunk.
+  DynamicSliceThunk* dynamic_slice_thunk =
+      dynamic_cast<DynamicSliceThunk*>(thunks[2].get());
+  ASSERT_NE(dynamic_slice_thunk, nullptr);
+  const SequentialThunk* embedded_thunk = dynamic_cast<const SequentialThunk*>(
+      dynamic_slice_thunk->embedded_thunk());
+  ASSERT_NE(embedded_thunk, nullptr);
+  ASSERT_EQ(embedded_thunk->thunks().size(), 1);
+  EXPECT_EQ(embedded_thunk->thunks()[0]->kind(),
+            Thunk::kNcclReduceScatterStart);
+
+  // Check that the offsets were propagated as constants, and not as device
+  // allocated buffers.
+  auto offsets = dynamic_slice_thunk->get_offsets();
+  auto arg_offset = offsets[0];
+  EXPECT_FALSE(arg_offset.has_value());
+  auto result_offset = offsets[1];
+  ASSERT_TRUE(result_offset.has_value());
+  ASSERT_EQ(result_offset->size(), 3);
+  int64_t* result_offset_0 = std::get_if<int64_t>(&result_offset->at(0));
+  int64_t* result_offset_1 = std::get_if<int64_t>(&result_offset->at(1));
+  int64_t* result_offset_2 = std::get_if<int64_t>(&result_offset->at(2));
+  ASSERT_NE(result_offset_0 && result_offset_1 && result_offset_2, false);
+  EXPECT_EQ(*result_offset_0, 1l);
+  EXPECT_EQ(*result_offset_1, 0l);
+  EXPECT_EQ(*result_offset_2, 0l);
+
+  // Finally, compare the results.
+  ErrorSpec error{1e-4, 1e-4};
+  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(hlo_module_ref),
+                                                std::move(hlo_module_opt),
+                                                false, true, error));
 }
 
 }  // namespace

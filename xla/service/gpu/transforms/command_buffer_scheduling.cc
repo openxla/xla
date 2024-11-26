@@ -97,6 +97,19 @@ static bool IsNoOp(const HloInstruction* hlo) {
 // done operation is not part of the same command buffer, we would change the
 // execution semantics and create additional synchronization point.
 
+// Returns true if the hlo instruction is async-start for dynamic-slice-fusion.
+static bool IsAsyncDynamicSliceFusion(const HloInstruction* hlo) {
+  HloInstruction* wrapped = hlo->async_wrapped_instruction();
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      wrapped->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    return false;
+  }
+  std::string name =
+      backend_config->fusion_backend_config().custom_fusion_config().name();
+  return name == "address_computation" || name == "dynamic_address_computation";
+}
+
 static bool IsAsyncStartCommand(const HloInstruction* hlo,
                                 const CommandBufferConfig& config) {
   if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
@@ -109,7 +122,12 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      return config.enabled_commands.contains(DebugOptions::FUSION);
+      if (IsAsyncDynamicSliceFusion(hlo)) {
+        return config.enabled_commands.contains(
+            DebugOptions::DYNAMIC_SLICE_FUSION);
+      } else {
+        return config.enabled_commands.contains(DebugOptions::FUSION);
+      }
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
         hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
@@ -136,7 +154,12 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      return config.enabled_commands.contains(DebugOptions::FUSION);
+      if (IsAsyncDynamicSliceFusion(hlo)) {
+        return config.enabled_commands.contains(
+            DebugOptions::DYNAMIC_SLICE_FUSION);
+      } else {
+        return config.enabled_commands.contains(DebugOptions::FUSION);
+      }
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kReduceScatter ||
         hlo->async_wrapped_opcode() == HloOpcode::kAllToAll) {
