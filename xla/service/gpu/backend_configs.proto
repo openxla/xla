@@ -273,7 +273,12 @@ message CudnnfMHABackendConfig {
 // Backend config for a general custom call instruction, e.g. XLA FFI.
 message CustomCallBackendConfig {
   // Generic configurations that can be parsed by XLA.
-  bytes opaque = 1;
+  oneof raw_backend_config_oneof {
+    // An opaque ASCII string could be parsed by the compiler.
+    string opaque = 1;
+    // Attributes parsed by XLA FFI.
+    string attributes = 2;
+  }
 }
 
 // Generic backend config for XLA:GPU

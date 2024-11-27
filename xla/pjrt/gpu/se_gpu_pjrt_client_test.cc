@@ -468,8 +468,7 @@ TEST(StreamExecutorGpuClientTest, PassAttrToFfiHandler) {
       ROOT %custom-call = f32[4] custom-call(),
           custom_call_target="MemsetFromAttr",
           api_version=API_VERSION_TYPED_FFI,
-          // Takes an encoded version of {"opaque": "{attr = 3.0 : f32}"}
-          backend_config={"custom_call_backend_config": {"opaque": "e2F0dHIgPSAzLjAgOiBmMzJ9"}}
+          backend_config={"custom_call_backend_config": {"attributes": "{attr = 3.0 : f32}"}}
     })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto client,

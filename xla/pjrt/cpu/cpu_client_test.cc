@@ -462,15 +462,14 @@ XLA_FFI_DEFINE_HANDLER(kMemsetFromAttr, MemsetFromAttr,
 XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "MemsetFromAttr", "HOST",
                          kMemsetFromAttr);
 
-TEST(StreamExecutorGpuClientTest, PassAttrToFfiHandler) {
+TEST(TfrtCpuClientTest, PassAttrToFfiHandler) {
   static constexpr char const* kProgram = R"(
     HloModule ffi_handler
     ENTRY main {
       ROOT %custom-call = f32[4] custom-call(),
           custom_call_target="MemsetFromAttr",
           api_version=API_VERSION_TYPED_FFI,
-          // Takes an encoded version of {"opaque": "{attr = 3.0 : f32}"}
-          backend_config={"custom_call_config": {"opaque": "e2F0dHIgPSAzLjAgOiBmMzJ9"}}
+          backend_config={"custom_call_config": {"attributes": "{attr = 3.0 : f32}"}}
     })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetTfrtCpuClient(CpuClientOptions()));

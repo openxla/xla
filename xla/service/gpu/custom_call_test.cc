@@ -400,7 +400,7 @@ TEST_F(CustomCallTest, PassAttributesByBackendConfig) {
   CustomCall(
       &b, "__xla_test$$always_fail", /*operands=*/{},
       ShapeUtil::MakeShape(F32, {}), /*opaque=*/
-      R"({"custom_call_backend_config": {"opaque": "e3ZhbHVlID0gNDIgOiBpMzJ9"}})",
+      R"({"custom_call_backend_config": {"attributes": "{value = 42 : i32}"}})",
       /*has_side_effect=*/false,
       /*output_operand_aliasing=*/{}, /*literal=*/nullptr,
       /*schedule=*/CustomCallSchedule::SCHEDULE_NONE,

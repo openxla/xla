@@ -971,9 +971,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
                  << backend_config.status().message() << "\n"
                  << "Fall back to parse the opaque str.";
   }
-  auto& backend_config_str = backend_config.ok()
-                                 ? backend_config->custom_call_config().opaque()
-                                 : custom_call->opaque();
+  auto& backend_config_str =
+      !backend_config.ok()
+          ? custom_call->opaque()
+          : ((version == API_VERSION_TYPED_FFI)
+                 ? backend_config->custom_call_config().attributes()
+                 : backend_config->custom_call_config().opaque());
   TF_ASSIGN_OR_RETURN(auto op_buffers,
                       GetCustomCallOpBuffers(instruction, buffer_assignment_));
 
