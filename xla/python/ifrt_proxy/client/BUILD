@@ -444,6 +444,7 @@ cc_library(
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:unbounded_work_queue",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
