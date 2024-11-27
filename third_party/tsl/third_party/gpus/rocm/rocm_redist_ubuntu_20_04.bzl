@@ -149,6 +149,22 @@ rocm_redist_ubuntu_20_04 = {
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocsolver-dev6.2.0/rocsolver-dev6.2.0_3.26.0.60200-66~20.04_amd64.deb",
                 sha256 = "21e4aa1957e7bc5d293a418a983d9b3c3917fb78eb79d3d4d55a253b9bae7743",
             ),
+            struct(
+                url = "http://archive.ubuntu.com/ubuntu/pool/main/libd/libdrm/libdrm2_2.4.101-2_amd64.deb",
+                sha256 = "4cd2e10f9486456a2782487f8bfd39f330f35a4d5bd6d693412b9e4ca2a6acbd",
+            ),
+            struct(
+                url = "http://archive.ubuntu.com/ubuntu/pool/main/libd/libdrm/libdrm-amdgpu1_2.4.101-2_amd64.deb",
+                sha256 = "d4567a30f7d68b4dcf794f8677b96e89083693c94e88279fecf577ceba8b9774",
+            ),
+            struct(
+                url = "http://archive.ubuntu.com/ubuntu/pool/main/e/elfutils/libelf1_0.176-1.1build1_amd64.deb",
+                sha256 = "78a8761227efc04a1e37527f2f33ba608c6fb5d6c911616346ada5d7b9b72ee3",
+            ),
+            struct(
+                url = "http://archive.ubuntu.com/ubuntu/pool/main/n/numactl/libnuma1_2.0.12-1_amd64.deb",
+                sha256 = "0b1edf08cf9befecd21fe94e298ac25e476f87fd876ddd4adf42ef713449e637",
+            ),
         ],
         "rocm_root": "opt/rocm-6.2.0",
     },

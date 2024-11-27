@@ -94,6 +94,7 @@ cc_library(
         ":hsa_rocr",
         ":rocm_config",
         ":rocprofiler_register",
+        ":system_libs",
     ],
 )
 
@@ -352,6 +353,21 @@ cc_library(
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
+)
+
+cc_library(
+    name = "libnuma",
+    srcs = glob(["rocm_dist/usr/lib/**/libnuma.so*"]),
+)
+
+cc_library(
+    name = "system_libs",
+    srcs = glob([
+        "rocm_dist/usr/lib/**/libelf.so*",
+        "rocm_dist/usr/lib/**/libdrm.so*",
+        "rocm_dist/usr/lib/**/libnuma.so*",
+        "rocm_dist/usr/lib/**/libdrm_amdgpu.so*",
+    ]),
 )
 
 filegroup(
