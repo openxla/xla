@@ -48,10 +48,11 @@ cc_library(
         ":hiprand",
         ":hipsolver",
         ":hipsparse",
-        ":hsa-rocr",
+        ":hsa_rocr",
         ":miopen",
         ":rocblas",
         ":rocm_config",
+        ":rocprofiler_register",
         ":rocsolver",
         ":roctracer",
     ] + select_threshold(
@@ -63,9 +64,9 @@ cc_library(
 )
 
 cc_library(
-    name = "hsa-rocr",
+    name = "hsa_rocr",
+    srcs = glob(["%{rocm_root}/lib/libhsa-runtime*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hsa/**"]),
-    data = glob(["%{rocm_root}/lib/libhsa-runtime*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -86,6 +87,40 @@ cc_library(
         "%{rocm_root}/include",
     ],
     linkstatic = 1,
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":amd_comgr",
+        ":hsa_rocr",
+        ":rocm_config",
+        ":rocprofiler_register",
+    ],
+)
+
+cc_library(
+    name = "rocprofiler_register",
+    srcs = glob([
+        "%{rocm_root}/lib/librocprofiler-register.so*",
+    ]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [":rocm_config"],
+)
+
+cc_library(
+    name = "amd_comgr",
+    srcs = glob([
+        "%{rocm_root}/lib/libamd_comgr.so*",
+    ]),
+    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],

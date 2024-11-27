@@ -2,8 +2,8 @@ rocm_redist_ubuntu_24_04 = {
     "6.2.0": {
         "archives": [
             struct(
-                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-runtime-amd6.2.0/hip-runtime-amd6.2.0_6.2.41133.60200-66~24.04_amd64.deb",
-                sha256 = "4831c09058882d531d10ead6a13ada15e7e9cbb182bd56ab62f2404207488f3e",
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/c/comgr6.2.0/comgr6.2.0_2.8.0.60200-66~24.04_amd64.deb",
+                sha256 = "7e1ff2d9f2435f5b9db9aa952bb57d1a878a8aa7d96bda61361c107b7e1428e3",
             ),
             struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-dev6.2.0/hip-dev6.2.0_6.2.41133.60200-66~24.04_amd64.deb",

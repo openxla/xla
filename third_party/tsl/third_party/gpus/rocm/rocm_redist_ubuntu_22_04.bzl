@@ -2,6 +2,10 @@ rocm_redist_ubuntu_22_04 = {
     "6.2.0": {
         "archives": [
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/c/comgr6.2.0/comgr6.2.0_2.8.0.60200-66~22.04_amd64.deb",
+                sha256 = "bc5d620e4e0db3746fc6b2279e463f618681f1f95ba973e40b687cef50ca2489",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-runtime-amd6.2.0/hip-runtime-amd6.2.0_6.2.41133.60200-66~22.04_amd64.deb",
                 sha256 = "38e9670bedc7bbdc0b9f38c7a0fe90f73ef80f161cbf63c98d30e422438ce2c5",
             ),

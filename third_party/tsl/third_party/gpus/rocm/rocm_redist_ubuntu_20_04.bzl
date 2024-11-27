@@ -2,6 +2,10 @@ rocm_redist_ubuntu_20_04 = {
     "6.2.0": {
         "archives": [
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/c/comgr6.2.0/comgr6.2.0_2.8.0.60200-66~20.04_amd64.deb",
+                sha256 = "fabf4a831f21b5248932e08654149bc215da2a816613ad8d05b805d4e226171a",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/h/hip-runtime-amd6.2.0/hip-runtime-amd6.2.0_6.2.41133.60200-66~20.04_amd64.deb",
                 sha256 = "215fae8759742bc048699feaacd6256a3ac2138771b69731dab7779325bb1b41",
             ),
