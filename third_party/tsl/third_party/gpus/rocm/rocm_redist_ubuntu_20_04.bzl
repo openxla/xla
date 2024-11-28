@@ -122,6 +122,10 @@ rocm_redist_ubuntu_20_04 = {
                 sha256 = "322ca8425c3a8f2ec17c551bad606b96d957b0c1eea07196dd66ac9f15460ed5",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocm-smi-lib6.2.0/rocm-smi-lib6.2.0_7.3.0.60200-66~20.04_amd64.deb",
+                sha256 = "1bbdb32d21dbc12bf9a736f6ca8726df9673e4401465d2b9b537c47b358b67f1",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprim-dev6.2.0/rocprim-dev6.2.0_3.2.0.60200-66~20.04_amd64.deb",
                 sha256 = "e74e1907eb90a692344626e881cb88eeed5565ac3b487eb94ad4ac02ffd838ed",
             ),

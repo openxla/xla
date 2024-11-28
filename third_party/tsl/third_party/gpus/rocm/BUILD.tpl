@@ -92,6 +92,7 @@ cc_library(
         ":amd_comgr",
         ":hsa_rocr",
         ":rocm_config",
+        ":rocm_smi",
         ":rocprofiler_register",
         ":system_libs",
     ],
@@ -340,6 +341,24 @@ cc_library(
         "%{rocm_root}/lib/libamd_comgr.so*",
     ]),
     hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    deps = [":rocm_config"],
+)
+
+cc_library(
+    name = "rocm_smi",
+    srcs = glob([
+        "%{rocm_root}/lib/librocm_smi64.so*",
+        "%{rocm_root}/lib/libroam.so*",
+    ]),
+    hdrs = glob([
+        "%{rocm_root}/include/oam/**",
+        "%{rocm_root}/include/rocm_smi/**",
+    ]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",

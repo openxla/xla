@@ -126,6 +126,10 @@ rocm_redist_ubuntu_22_04 = {
                 sha256 = "3d859bb735ff8bf1962ce680e9257dcc574ab36224f50069f833fa19c6d7e69d",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocm-smi-lib6.2.0/rocm-smi-lib6.2.0_7.3.0.60200-66~22.04_amd64.deb",
+                sha256 = "ffd4e064e8a1d52b9e72114e8a1d51c78004a960f1d923448af8ed07a1b6f30b",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocprofiler-register6.2.0/rocprofiler-register6.2.0_0.4.0.60200-66~22.04_amd64.deb",
                 sha256 = "66df78d8c5e2d1a0ae43cd4a5e41cf75ec120c870a0bbd7da18a2ba4dec42f9c",
             ),
