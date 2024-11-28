@@ -5,11 +5,7 @@ Book: /_book.yaml
 
 # PJRT - Uniform Device API
 
-PJRT C API is the uniform Device API that we want to add to the ML ecosystem.
-The long term vision is that: (1) frameworks (TF, JAX, etc.) will call PJRT,
-which has device-specific implementations that are opaque to the frameworks; (2)
-each device focuses on implementing PJRT APIs as PJRT plugins, which can be
-opaque to the frameworks.
+[PJRT C API](https://github.com/openxla/xla/blob/main/xla/pjrt/c/pjrt_c_api.h) is the uniform Device API that simplifies the growing complexity of ML workload execution across hardware and frameworks. It provides a hardware and framework independent interface for compilers and runtimes. The goal of PJRT is that: (1) frameworks (JAX, TF, etc.) will call PJRT, which has device-specific implementations that are opaque to the frameworks; (2) each device focuses on implementing PJRT APIs as PJRT plugins, which can be opaque to the frameworks.
 
 ## Communication channels
 
