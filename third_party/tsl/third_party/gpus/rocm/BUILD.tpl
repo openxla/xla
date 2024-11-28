@@ -3,7 +3,7 @@ load("@local_config_rocm//rocm:build_defs.bzl", "rocm_version_number", "select_t
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
-package(default_visibility = ["//visibility:public"])
+package(default_visibility = ["//visibility:private"])
 
 config_setting(
     name = "using_hipcc",
@@ -73,7 +73,6 @@ cc_library(
     ],
     linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
     deps = [":rocm_config"],
 )
 
@@ -96,35 +95,6 @@ cc_library(
         ":rocprofiler_register",
         ":system_libs",
     ],
-)
-
-cc_library(
-    name = "rocprofiler_register",
-    srcs = glob([
-        "%{rocm_root}/lib/librocprofiler-register.so*",
-    ]),
-    include_prefix = "rocm",
-    includes = [
-        "%{rocm_root}/include",
-    ],
-    strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
-)
-
-cc_library(
-    name = "amd_comgr",
-    srcs = glob([
-        "%{rocm_root}/lib/libamd_comgr.so*",
-    ]),
-    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
-    include_prefix = "rocm",
-    includes = [
-        "%{rocm_root}/include",
-    ],
-    strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
-    deps = [":rocm_config"],
 )
 
 cc_library(
@@ -155,6 +125,7 @@ cc_library(
         "%{rocm_root}/include",
     ],
     linkstatic = 1,
+    visibility = ["//visibility:public"],
     deps = [":rocm_config"],
 )
 
@@ -220,15 +191,10 @@ cc_library(
     deps = [":rocm_config"],
 )
 
-filegroup(
-    name = "rocm_bin",
-    srcs = glob(["%{rocm_root}/bin/**/*"]),
-    visibility = ["//visibility:public"],
-)
-
 bzl_library(
     name = "build_defs_bzl",
     srcs = ["build_defs.bzl"],
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -356,8 +322,30 @@ cc_library(
 )
 
 cc_library(
-    name = "libnuma",
-    srcs = glob(["rocm_dist/usr/lib/**/libnuma.so*"]),
+    name = "rocprofiler_register",
+    srcs = glob([
+        "%{rocm_root}/lib/librocprofiler-register.so*",
+    ]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    deps = [":rocm_config"],
+)
+
+cc_library(
+    name = "amd_comgr",
+    srcs = glob([
+        "%{rocm_root}/lib/libamd_comgr.so*",
+    ]),
+    hdrs = glob(["%{rocm_root}/include/amd_comgr/**"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    deps = [":rocm_config"],
 )
 
 cc_library(
@@ -375,9 +363,11 @@ filegroup(
     srcs = [
         "%{rocm_root}/bin/clang-offload-bundler",
     ],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "all_files",
     srcs = glob(["%{rocm_root}/**"]),
+    visibility = ["//visibility:public"],
 )
