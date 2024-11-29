@@ -1,9 +1,5 @@
 # PJRT Examples
 
-You can find a basic example in [xla/pjrt/plugin/example_plugin](https://github.com/openxla/xla/tree/main/xla/pjrt/plugin/example_plugin).
-
-Other examples are provided in the following sections.
-
 ## Example: JAX CUDA plugin
 
 1. PJRT C API implementation through wrapper ([pjrt\_c\_api\_gpu.h](https://github.com/openxla/xla/blob/c23fbd601a017be25726fd6d624b22daa6a8a4e5/xla/pjrt/c/pjrt_c_api_gpu.h)).
@@ -11,7 +7,6 @@ Other examples are provided in the following sections.
 1. Implement an initialize() method ([\_\_init\_\_.py](https://github.com/google/jax/blob/a10854786b6d1bc92a65dd314916b151640789af/plugins/cuda/__init__.py#L31-L51)).
 1. Can be tested with any jax tests for CUDA.
 
-See also See [CUDA plugin](https://pypi.org/project/jax-cuda12-pjrt/).
 
 ## Frameworks Implementations
 
@@ -35,14 +30,9 @@ devices:
 - Full integration plugins (PJRT+MLIR+XLA):
   + [XLA CPU Plugin](https://github.com/openxla/xla/tree/main/xla/pjrt/cpu/cpu_client.cc)
   + [XLA GPU Plugin](https://github.com/openxla/xla/tree/main/xla/pjrt/gpu/se_gpu_pjrt_client.cc)
-  + [Intel XLA Plugin](https://github.com/intel/intel-extension-for-openxla), see also [OpenXLA Support on GPU](https://intel.github.io/intel-extension-for-tensorflow/latest/docs/guide/OpenXLA_Support_on_GPU.html)
-
+  + [Intel XLA Plugin](https://github.com/intel/intel-extension-for-openxla)
 - Light integration plugins (PJRT+MLIR):
   + StableHLO Reference Interpreter plugin
     (MLIR-based, C++ plugin, to be linked after devlabs)
   + [Tenstorrent-XLA plugin](https://github.com/tenstorrent/tt-xla/blob/main/src/common/api_impl.cc)
     (MLIR-based, C plugin)
-
-- [TPU plugin](https://storage.googleapis.com/jax-releases/libtpu_releases.html)
-
-- [Apple Metal plugin](https://developer.apple.com/metal/jax/)
