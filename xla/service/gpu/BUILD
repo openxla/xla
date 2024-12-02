@@ -2518,7 +2518,9 @@ gpu_kernel_library(
     deps = [
         "//xla:shape_util",
         "//xla:types",
-    ],
+    ] + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers"
+    ]),
 )
 
 xla_test(

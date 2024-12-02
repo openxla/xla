@@ -756,6 +756,7 @@ def _create_local_rocm_repository(repository_ctx):
         tpl_paths["crosstool:clang/bin/crosstool_wrapper_driver_rocm"],
         {
             "%{cpu_compiler}": str(cc),
+            "%{compiler}": rocm_defines["%{compiler}"],
             "%{hipcc_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path + "/bin/hipcc")),
             "%{hipcc_env}": _hipcc_env(repository_ctx),
             "%{rocm_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
