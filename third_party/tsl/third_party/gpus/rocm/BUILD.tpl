@@ -103,7 +103,7 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
     # workaround to  bring tensile files to the same fs layout as expected in the lib
     # rocblas assumes that tensile files are located in ../roblas/libraries directory
-    copts = ["-rpath local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/librocblas*.so*",
         "%{rocm_root}/lib/rocblas/**",
@@ -163,7 +163,7 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/rccl/**"]),
     # workaround to  bring miopen db files to the same fs layout as expected in the lib
     # rocblas assumes that miopen db files are located in ../share/miopen/db directory
-    copts = ["-rpath local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
@@ -295,7 +295,7 @@ cc_library(
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
     # workaround to  bring tensile files to the same fs layout as expected in the lib
     # hibplatslt assumes that tensile files are located in ../hipblaslt/libraries directory
-    copts = ["-rpath local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/hipblaslt/**",
         "%{rocm_root}/lib/libhipblaslt.so*",
