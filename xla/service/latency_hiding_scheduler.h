@@ -1019,19 +1019,19 @@ class DefaultSchedulerCore : public SchedulerCore {
       HloCostAnalysis::ShapeSizeFunction shape_size_bytes,
       const AsyncTracker* async_tracker,
       const LatencyEstimator* latency_estimator, const SchedulerConfig& config,
-      OverlapLimitRule scheduling_instruction_crosses_overlap_limit = nullptr,
       TargetSchedulingRule target_scheduling_rule = nullptr,
       TargetSchedulingRule early_target_scheduling_rule = nullptr,
-      PostProcessingFn post_processing_fn = nullptr)
+      PostProcessingFn post_processing_fn = nullptr,
+      OverlapLimitRule scheduling_instruction_crosses_overlap_limit = nullptr)
       : shape_size_bytes_(shape_size_bytes),
         async_tracker_(async_tracker),
         latency_estimator_(latency_estimator),
         config_(config),
-        scheduling_instruction_crosses_overlap_limit_(
-            scheduling_instruction_crosses_overlap_limit),
         target_scheduling_rule_(target_scheduling_rule),
         early_target_scheduling_rule_(early_target_scheduling_rule),
-        post_processing_fn_(post_processing_fn) {}
+        post_processing_fn_(post_processing_fn),
+        scheduling_instruction_crosses_overlap_limit_(
+            scheduling_instruction_crosses_overlap_limit) {}
   absl::Status InitializeScheduler(const HloModule* module) override;
   absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) override;
@@ -1083,8 +1083,8 @@ class DefaultSchedulerCore : public SchedulerCore {
   SchedulerConfig config_;
   TargetSchedulingRule target_scheduling_rule_ = nullptr;
   TargetSchedulingRule early_target_scheduling_rule_ = nullptr;
-  OverlapLimitRule scheduling_instruction_crosses_overlap_limit_ = nullptr;
   PostProcessingFn post_processing_fn_ = nullptr;
+  OverlapLimitRule scheduling_instruction_crosses_overlap_limit_ = nullptr;
   std::unique_ptr<AnnotationTracker> annotation_tracker_;
 };
 

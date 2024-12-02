@@ -206,7 +206,6 @@ bool GpuScheduleCrossesOverlapLimit(
           // Number of overlapping ranks between this occupier and candidate
           size_t overlapping_count = CountOverlappingRanks(
               curr_start_inst->replica_groups(), occupier->replica_groups());
-          // VLOG(0) << "overlapping_count: " << overlapping_count;
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count
