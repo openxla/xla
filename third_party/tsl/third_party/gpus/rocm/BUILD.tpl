@@ -85,9 +85,7 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
-    linkstatic = 1,
     strip_include_prefix = "%{rocm_root}",
-    visibility = ["//visibility:public"],
     deps = [
         ":amd_comgr",
         ":hsa_rocr",
@@ -96,14 +94,12 @@ cc_library(
         ":rocprofiler_register",
         ":system_libs",
     ],
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "rocblas",
     hdrs = glob(["%{rocm_root}/include/rocblas/**"]),
-    # workaround to  bring tensile files to the same fs layout as expected in the lib
-    # rocblas assumes that tensile files are located in ../roblas/libraries directory
-    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/librocblas*.so*",
         "%{rocm_root}/lib/rocblas/**",
@@ -112,6 +108,9 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    # workaround to  bring tensile files to the same fs layout as expected in the lib
+    # rocblas assumes that tensile files are located in ../roblas/libraries directory
+    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -161,9 +160,6 @@ cc_library(
 cc_library(
     name = "miopen",
     hdrs = glob(["%{rocm_root}/include/rccl/**"]),
-    # workaround to  bring miopen db files to the same fs layout as expected in the lib
-    # rocblas assumes that miopen db files are located in ../share/miopen/db directory
-    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/libMIOpen*.so*",
         "%{rocm_root}/share/miopen/**",
@@ -172,6 +168,9 @@ cc_library(
     includes = [
         "%{rocm_root}/include",
     ],
+    # workaround to  bring miopen db files to the same fs layout as expected in the lib
+    # rocblas assumes that miopen db files are located in ../share/miopen/db directory
+    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -293,9 +292,6 @@ cc_library(
 cc_library(
     name = "hipblaslt",
     hdrs = glob(["%{rocm_root}/include/hipblaslt/**"]),
-    # workaround to  bring tensile files to the same fs layout as expected in the lib
-    # hibplatslt assumes that tensile files are located in ../hipblaslt/libraries directory
-    linkopts = ["-Wl,-rpath local_config_rocm/rocm/rocm_dis/lib"],
     data = glob([
         "%{rocm_root}/lib/hipblaslt/**",
         "%{rocm_root}/lib/libhipblaslt.so*",
@@ -304,6 +300,9 @@ cc_library(
     includes = [
         "%{rocm_root}/include/",
     ],
+    # workaround to  bring tensile files to the same fs layout as expected in the lib
+    # hibplatslt assumes that tensile files are located in ../hipblaslt/libraries directory
+    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
