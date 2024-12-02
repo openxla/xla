@@ -2529,6 +2529,12 @@ absl::Status IrEmitter::HandleOneDnnMatMulCalls(
   // Insert OneDnnMatMulConfig.
   auto typed_custom_call = Cast<HloCustomCallInstruction>(custom_call);
   auto backend_config = typed_custom_call->backend_config<BackendConfig>();
+  // update acl backend config which gets used in the matmul routines
+  if (hlo_module_config_.debug_options().xla_cpu_use_mkl_dnn_with_acl()) {
+    backend_config->mutable_onednn_matmul_config()->mutable_optimization_config()->set_with_acl_backend(true);
+  } else {
+    backend_config->mutable_onednn_matmul_config()->mutable_optimization_config()->set_with_acl_backend(false);
+  }
   OneDnnMatMulConfig matmul_config;
   matmul_config.CopyFrom(backend_config->onednn_matmul_config());
   std::string str_config;

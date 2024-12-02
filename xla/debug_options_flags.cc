@@ -82,6 +82,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 #ifdef ENABLE_MKL
   opts.set_xla_cpu_use_mkl_dnn(true);
 #endif  // ENABLE_MKL
+#ifdef DNNL_AARCH64_USE_ACL
+  opts.set_xla_cpu_use_mkl_dnn_with_acl(true);
+#endif
 #ifdef XLA_CPU_USE_ACL
   opts.set_xla_cpu_use_acl(true);
 #endif
@@ -877,6 +880,11 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 bool_setter_for(&DebugOptions::set_xla_cpu_use_mkl_dnn),
                 debug_options->xla_cpu_use_mkl_dnn(),
                 "Generate calls to MKL-DNN in the CPU backend."));
+  flag_list->push_back(
+      tsl::Flag("xla_cpu_use_mkl_dnn_with_acl",
+                bool_setter_for(&DebugOptions::set_xla_cpu_use_mkl_dnn_with_acl),
+                debug_options->xla_cpu_use_mkl_dnn_with_acl(),
+                "Generate calls to MKL-DNN using ACL (Arm Compute Library) in the CPU backend."));
   flag_list->push_back(tsl::Flag(
       "xla_cpu_use_acl", bool_setter_for(&DebugOptions::set_xla_cpu_use_acl),
       debug_options->xla_cpu_use_acl(),

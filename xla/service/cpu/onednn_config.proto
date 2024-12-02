@@ -33,6 +33,7 @@ message OneDnnOptimizationConfig {
   bool weights_prepacked = 1;
   bool user_scratchpad = 2;
   bool bias_broadcast = 3;
+  bool with_acl_backend = 4;
 }
 
 message OneDnnFusionConfig {

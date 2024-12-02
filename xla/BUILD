@@ -12,6 +12,7 @@ load(
     # copybara:uncomment "tf_pyclif_proto_library",
 )
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/mkl:build_defs.bzl", "if_mkldnn_aarch64_acl")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -1118,7 +1119,7 @@ cc_library(
         "debug_options_parsers.h",
     ],
     hdrs = ["debug_options_flags.h"],
-    copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]),
+    copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]) + if_mkldnn_aarch64_acl(["-DDNNL_AARCH64_USE_ACL=1"]),
     visibility = internal_visibility([":friends"]),
     deps =
         [
