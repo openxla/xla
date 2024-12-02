@@ -47,10 +47,8 @@ namespace xla::gpu {
 class StreamAttributeAnnotator : public HloModulePass {
  public:
   explicit StreamAttributeAnnotator(
-      const se::DeviceDescription& device_description,
-      bool annotate_copy_start = false)
-      : device_description_(device_description),
-        annotate_copy_start_(annotate_copy_start) {}
+      const se::DeviceDescription& device_description)
+      : device_description_(device_description) {}
 
   absl::string_view name() const override {
     return "stream-attribute-annotator";
@@ -63,7 +61,6 @@ class StreamAttributeAnnotator : public HloModulePass {
 
  private:
   const se::DeviceDescription& device_description_;
-  bool annotate_copy_start_;
 };
 
 }  // namespace xla::gpu

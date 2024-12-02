@@ -200,7 +200,7 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
                                 instr, instr_gpu_config.value()));
         changed |= comp_result;
       } else if (instr->opcode() == HloOpcode::kCopyStart &&
-                 annotate_copy_start_) {
+                 module->has_schedule()) {
         TF_ASSIGN_OR_RETURN(bool comp_result,
                             AnnotateStreamAttributesForCopyStart(
                                 instr, channel_id, instr_gpu_config.value()));
@@ -209,7 +209,7 @@ absl::StatusOr<bool> StreamAttributeAnnotator::Run(
       } else if (comp->IsAsyncComputation() &&
                  (instr->opcode() == HloOpcode::kDynamicSlice ||
                   instr->opcode() == HloOpcode::kDynamicUpdateSlice) &&
-                 annotate_copy_start_) {
+                 module->has_schedule()) {
         TF_ASSIGN_OR_RETURN(bool comp_result,
                             WrapIntoFusionAndAnnotateStreamAttributes(
                                 instr, channel_id, instr_gpu_config.value(),

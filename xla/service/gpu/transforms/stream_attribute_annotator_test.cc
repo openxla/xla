@@ -185,7 +185,7 @@ TEST_F(StreamAttributeAnnotatorTest, FusionIsAnnotated) {
 
 TEST_F(StreamAttributeAnnotatorTest, CopyStartIsAnnotated) {
   constexpr absl::string_view kHloString = R"(
-  HloModule offloading
+  HloModule offloading, is_scheduled=true
     ENTRY %main (param_0: f32[1024], param_1: f32[1024]) -> f32[1024] {
     %param_1 = f32[1024]{0} parameter(1)
     %param_0 = f32[1024]{0} parameter(0)
@@ -212,8 +212,7 @@ TEST_F(StreamAttributeAnnotatorTest, CopyStartIsAnnotated) {
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                           ParseAndReturnVerifiedModule(kHloString));
 
-  StreamAttributeAnnotator attr_annotator{device_description(),
-                                          /*annotate_copy_start=*/true};
+  StreamAttributeAnnotator attr_annotator{device_description()};
   bool changed;
   TF_ASSERT_OK_AND_ASSIGN(changed, attr_annotator.Run(module.get()));
   EXPECT_TRUE(changed);
@@ -249,10 +248,9 @@ TEST_F(StreamAttributeAnnotatorTest, DynamicUpdateSliceWrappedAndAnnotated) {
                           ParseAndReturnVerifiedModule(kHloString));
   EXPECT_TRUE(module->has_schedule());
 
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          StreamAttributeAnnotator(device_description(),
-                                                   /*annotate_copy_start=*/true)
-                              .Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      StreamAttributeAnnotator(device_description()).Run(module.get()));
   EXPECT_TRUE(changed);
 
   // Check that the dynamic-update-slice instruction is wrapped in a fusion
@@ -314,10 +312,9 @@ TEST_F(StreamAttributeAnnotatorTest, DynamicSliceWrappedAndAnnotated) {
                           ParseAndReturnVerifiedModule(kHloString));
 
   EXPECT_TRUE(module->has_schedule());
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          StreamAttributeAnnotator(device_description(),
-                                                   /*annotate_copy_start=*/true)
-                              .Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      StreamAttributeAnnotator(device_description()).Run(module.get()));
   EXPECT_TRUE(changed);
 
   // Check that the dynamic-slice instruction is wrapped in a fusion
