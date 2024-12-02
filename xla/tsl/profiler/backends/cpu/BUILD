@@ -84,6 +84,7 @@ cc_library(
     ]),
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
     ] + if_static([
@@ -104,6 +105,7 @@ cc_library(
     ]),
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
     ],
