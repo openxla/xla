@@ -2497,6 +2497,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
     ]) + if_rocm_is_configured([
         # keep sorted
+        "@local_config_rocm//rocm:rocm_config",
         "@local_config_rocm//rocm:rocm_headers",
     ]) + [
         "//xla/stream_executor:device_description",
