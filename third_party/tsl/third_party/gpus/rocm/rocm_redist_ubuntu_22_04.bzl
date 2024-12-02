@@ -154,19 +154,19 @@ rocm_redist_ubuntu_22_04 = {
                 sha256 = "4573f99191fbe3a2afab84fdf5a05e024bd230ca7866d7eba71a5f2560a3a0bf",
             ),
             struct(
-                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/6.2.0/libdrm2_2.4.110-1ubuntu1_amd64.deb",
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libdrm2_2.4.110-1ubuntu1_amd64.deb",
                 sha256 = "e5ea68db36b31aab442c790e1c78ecdf53646c16b0cd83db15966632ba04152c",
             ),
             struct(
-                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/6.2.0/libdrm-amdgpu1_2.4.110-1ubuntu1_amd64.deb",
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libdrm-amdgpu1_2.4.110-1ubuntu1_amd64.deb",
                 sha256 = "ae1f0d77668d7275d085ba820206ba91e90833dd1a02b8e251af0c73aa119ba3",
             ),
             struct(
-                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/6.2.0/libelf1_0.186-1build1_amd64.deb",
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libelf1_0.186-1build1_amd64.deb",
                 sha256 = "8effc4d7a0cc341bcf6cb11af0134f3defa6292376ecfdfc697a9b228606345c",
             ),
             struct(
-                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/6.2.0/libnuma1_2.0.14-3ubuntu2_amd64.deb",
+                url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libnuma1_2.0.14-3ubuntu2_amd64.deb",
                 sha256 = "0721c89001fbbd1ada23e89da5d60e762763c1a7b3dc814a2e9a518480a8043d",
             ),
         ],
