@@ -1913,9 +1913,8 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
       // For async collective done ops, save their corresponding start ops to
       // the map
-      if (hlo_query::IsAsyncCollectiveDoneOp(&n->GetInstr(), true)) {
-        CHECK(hlo_query::IsAsyncCollectiveStartOp(n->GetInstr().operand(0),
-                                                  true));
+      if (async_tracker_->IsSupportedAsyncDone(n->GetInstr())) {
+        CHECK(async_tracker_->IsSupportedAsyncStart(*n->GetInstr().operand(0)));
         sched_state->resource_occupiers_in_flight[resource.first].insert(
             n->GetInstr().operand(0));
       } else {
