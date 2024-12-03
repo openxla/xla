@@ -261,6 +261,7 @@ cc_library(
     ],
     deps = [
         "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_rpath",
     ],
 )
 

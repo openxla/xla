@@ -403,7 +403,7 @@ def find_rocm_config(repository_ctx, rocm_path):
     # Parse the dict from stdout.
     return dict([tuple(x.split(": ")) for x in exec_result.stdout.splitlines()])
 
-def _get_rocm_config(repository_ctx, bash_bin, rocm_path):
+def _get_rocm_config(repository_ctx, bash_bin, rocm_path, install_path):
     """Detects and returns information about the ROCm installation on the system.
 
     Args:
@@ -429,6 +429,7 @@ def _get_rocm_config(repository_ctx, bash_bin, rocm_path):
         rocm_version_number = rocm_version_number,
         miopen_version_number = miopen_version_number,
         hipruntime_version_number = hipruntime_version_number,
+        install_path = install_path,
     )
 
 def _tpl_path(repository_ctx, labelname):
@@ -607,12 +608,12 @@ def _setup_rocm_distro_dir(repository_ctx):
         repository_ctx.file("rocm/.index")
         for archive in redist["archives"]:
             _download_package(repository_ctx, archive)
-        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH + "/" + redist["rocm_root"])
+        return _get_rocm_config(repository_ctx, bash_bin, "{}/{}".format(_DISTRIBUTION_PATH, redist["rocm_root"]), "/{}".format(redist["rocm_root"]))
     else:
         rocm_path = repository_ctx.os.environ.get(_ROCM_TOOLKIT_PATH, _DEFAULT_ROCM_TOOLKIT_PATH)
         repository_ctx.report_progress("Using local rocm installation {}".format(rocm_path))  # buildifier: disable=print
         repository_ctx.symlink(rocm_path, _DISTRIBUTION_PATH)
-        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH)
+        return _get_rocm_config(repository_ctx, bash_bin, _DISTRIBUTION_PATH, _DISTRIBUTION_PATH)
 
 def _create_local_rocm_repository(repository_ctx):
     """Creates the repository containing files set up to build with ROCm."""
@@ -670,6 +671,7 @@ def _create_local_rocm_repository(repository_ctx):
 
     repository_dict = {
         "%{rocm_root}": rocm_toolkit_path,
+        "%{rocm_toolkit_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
     }
 
     is_rocm_clang = _use_rocm_clang(repository_ctx)
@@ -689,7 +691,6 @@ def _create_local_rocm_repository(repository_ctx):
     )
 
     # Set up crosstool/
-
     cc = find_cc(repository_ctx, is_rocm_clang)
     host_compiler_includes = get_cxx_inc_directories(
         repository_ctx,
@@ -773,6 +774,25 @@ def _create_local_rocm_repository(repository_ctx):
     # tensorflow/compiler/xla/stream_executor/dso_loader.cc.
     repository_ctx.template(
         "rocm/rocm_config/rocm_config.h",
+        tpl_paths["rocm:rocm_config.h"],
+        {
+            "%{rocm_amdgpu_targets}": ",".join(
+                ["\"%s\"" % c for c in rocm_config.amdgpu_targets],
+            ),
+            "%{rocm_toolkit_path}": rocm_config.install_path,
+            "%{rocm_version_number}": rocm_config.rocm_version_number,
+            "%{miopen_version_number}": rocm_config.miopen_version_number,
+            "%{hipruntime_version_number}": rocm_config.hipruntime_version_number,
+            "%{hipblaslt_flag}": have_hipblaslt,
+            "%{hip_soversion_number}": "6" if int(rocm_config.rocm_version_number) >= 60000 else "5",
+            "%{rocblas_soversion_number}": "4" if int(rocm_config.rocm_version_number) >= 60000 else "3",
+        },
+    )
+
+    # Set up rocm_config.h, which is used by
+    # tensorflow/compiler/xla/stream_executor/dso_loader.cc.
+    repository_ctx.template(
+        "rocm/rocm_config_hermetic/rocm_config.h",
         tpl_paths["rocm:rocm_config.h"],
         {
             "%{rocm_amdgpu_targets}": ",".join(

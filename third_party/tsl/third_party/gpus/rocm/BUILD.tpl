@@ -1,9 +1,22 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_rocm//rocm:build_defs.bzl", "rocm_version_number", "select_threshold")
 
 licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 
 package(default_visibility = ["//visibility:private"])
+
+bool_flag(
+    name = "hermetic",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "build_hermetic",
+    flag_values = {
+        ":hermetic": "True",
+    },
+)
 
 config_setting(
     name = "using_hipcc",
@@ -13,13 +26,34 @@ config_setting(
 )
 
 cc_library(
-    name = "rocm_config",
+    name = "config",
     hdrs = [
         "rocm_config/rocm_config.h",
     ],
     include_prefix = "rocm",
     strip_include_prefix = "rocm_config",
+)
+
+cc_library(
+    name = "config_hermetic",
+    hdrs = [
+        "rocm_config_hermetic/rocm_config.h",
+    ],
+    include_prefix = "rocm",
+    strip_include_prefix = "rocm_config_hermetic",
+)
+
+cc_library(
+    name = "rocm_config",
     visibility = ["//visibility:public"],
+    deps = select({
+        ":build_hermetic": [
+            ":config_hermetic",
+        ],
+        "//conditions:default": [
+            "config",
+        ],
+    }),
 )
 
 cc_library(
@@ -77,7 +111,31 @@ cc_library(
 )
 
 cc_library(
+    name = "rocm_rpath",
+    linkopts = select({
+        ":build_hermetic": [
+            "-Wl,-rpath=%{rocm_toolkit_path}/lib",
+            "-Wl,-rpath=%{rocm_toolkit_path}/lib",
+        ],
+        "//conditions:default": [
+            "-Wl,-rpath=/opt/rocm/lib",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "hip",
+    data = glob(["%{rocm_root}/lib/**"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":rocm_hip",
+        ":rocm_rpath",
+    ],
+)
+
+cc_library(
+    name = "rocm_hip",
     srcs = glob(["%{rocm_root}/lib/libamdhip*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     data = glob(["%{rocm_root}/lib/hip/**"]),
@@ -94,7 +152,6 @@ cc_library(
         ":rocprofiler_register",
         ":system_libs",
     ],
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -110,7 +167,7 @@ cc_library(
     ],
     # workaround to  bring tensile files to the same fs layout as expected in the lib
     # rocblas assumes that tensile files are located in ../roblas/libraries directory
-    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath=local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -170,7 +227,7 @@ cc_library(
     ],
     # workaround to  bring miopen db files to the same fs layout as expected in the lib
     # rocblas assumes that miopen db files are located in ../share/miopen/db directory
-    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath=local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -302,7 +359,7 @@ cc_library(
     ],
     # workaround to  bring tensile files to the same fs layout as expected in the lib
     # hibplatslt assumes that tensile files are located in ../hipblaslt/libraries directory
-    linkopts = ["-Wl,-rpath,$$ORIGIN/local_config_rocm/rocm/rocm_dis/lib"],
+    linkopts = ["-Wl,-rpath=local_config_rocm/rocm/rocm_dis/lib"],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
     deps = [":rocm_config"],
@@ -373,6 +430,9 @@ cc_library(
         "rocm_dist/usr/lib/**/libdrm.so*",
         "rocm_dist/usr/lib/**/libnuma.so*",
         "rocm_dist/usr/lib/**/libdrm_amdgpu.so*",
+    ]),
+    data = glob([
+        "rocm_dist/usr/**",
     ]),
 )
 
