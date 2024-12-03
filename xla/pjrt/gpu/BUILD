@@ -218,7 +218,9 @@ cc_library(
     hdrs = ["nccl_id_store.h"],
     deps = [
         "//xla:status_macros",
+        "//xla:util",
         "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:global_device_id",
         "//xla/service/gpu/runtime:nccl_api",
@@ -228,6 +230,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
