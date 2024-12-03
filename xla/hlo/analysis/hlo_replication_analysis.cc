@@ -671,7 +671,17 @@ bool HloReplicationAnalysis::HloReplication::Equal(
   if (state_ != other.state_) {
     return false;
   }
-  return absl::c_equal(groups_for_replicas_, other.groups_for_replicas_);
+  CHECK_EQ(groups_for_replicas_.size(), other.groups_for_replicas_.size());
+  for (int k = 0; k < groups_for_replicas_.size(); ++k) {
+    for (std::vector<int64_t> group_for_replica : groups_for_replicas_[k]) {
+      if (std::find(other.groups_for_replicas_[k].begin(),
+                    other.groups_for_replicas_[k].end(),
+                    group_for_replica) == other.groups_for_replicas_[k].end()) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 bool HloReplicationAnalysis::HloReplication::IsReplicatedOnAllDevices() const {
@@ -718,10 +728,11 @@ std::string HloReplicationAnalysis::HloReplication::ToString() const {
         for (int l = 0; l < groups_for_replicas_[k].size(); ++l) {
           oss << "{";
           oss << absl::StrJoin(groups_for_replicas_[k][l], ",");
-          oss << (l == groups_for_replicas_[k][l].size() - 1 ? "}" : "},");
+          oss << (l == groups_for_replicas_[k].size() - 1 ? "}" : "},");
         }
-        oss << "}" << std::endl;
+        oss << (k == groups_for_replicas_.size() - 1 ? "}" : "},");
       }
+      oss << std::endl;
       return oss.str();
   }
 }
