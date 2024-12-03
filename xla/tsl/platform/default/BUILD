@@ -255,6 +255,7 @@ cc_library(
     name = "load_library",
     srcs = ["load_library.cc"],
     hdrs = ["@tsl//tsl/platform:load_library.h"],
+    linkstatic = True,
     tags = [
         "manual",
         "no_oss",
