@@ -76,10 +76,10 @@ absl::Status ProfilerController::CollectData(
     if (status_.ok()) {
       status = status_ = profiler_->CollectData(space);
     } else {
-      status = errors::Aborted("Previous call returned an error.");
+      status = errors::Aborted("Previous call returned an error. abcs");
     }
   } else {
-    status = errors::Aborted("CollectData called in the wrong order.");
+    status = errors::Aborted("CollectData called in the wrong order. efg");
   }
   if (!status.ok()) LOG(ERROR) << status;
   return status;
