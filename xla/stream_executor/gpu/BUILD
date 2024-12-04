@@ -247,6 +247,7 @@ tsl_gpu_library(
         "//xla:__subpackages__",
         "//tensorflow/core/common_runtime/gpu:__subpackages__",
         "//tensorflow/stream_executor:__subpackages__",
+        "//tensorflow:__subpackages__",
     ]),
     deps = [
         "//xla/stream_executor:platform",
