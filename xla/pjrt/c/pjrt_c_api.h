@@ -79,7 +79,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 57
+#define PJRT_API_MINOR 58
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -1364,6 +1364,7 @@ struct PJRT_ExecuteOptions {
   // during the call.
   const int64_t* non_donatable_input_indices;
   size_t num_non_donatable_input_indices;
+  PJRT_ExecuteContext* context;
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, num_non_donatable_input_indices);
 
