@@ -13,7 +13,7 @@
 """
 
 load(
-    "@tsl//third_party/gpus/rocm:rocm_redist.bzl",
+    "//third_party/gpus/rocm:rocm_redist.bzl",
     "rocm_redist",
 )
 load(
