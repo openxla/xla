@@ -5,16 +5,55 @@ on:
     branches:
       - main
 
+# name: CPU XLA Benchmark (On Demand)
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       hlo_files:
+#         description: 'Specific HLO files to benchmark (optional, comma-separated). If empty, all files are used.'
+#         required: false
+#         default: ''
+
 jobs:
   benchmark:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-latest  # Or a suitable runner with CPU resources
     steps:
-      - name: "Checking out repository"
-        uses: actions/checkout@e2f20e631ae6d7dd3b768f56a5d2af784dd54791 # v2.5.0
+      - name: Checkout OpenXLA
+        uses: actions/checkout@v3
+        with:
+          repository: 'openxla/xla' # Assuming you're working with OpenXLA's XLA repo
+          path: openxla
 
-      - name: Run benchmarks
-        run: echo "running benchmarks" 
+      - name: Build run_hlo_module
+        working-directory: openxla
+        run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
-      # TODO(juliagmt-google): Add actual benchmark commands here.  
+      - name: Get HLO files
+        id: get_hlo_files
+        working-directory: openxla
+        run: |
+          if [ -z "${{ github.event.inputs.hlo_files }}" ]; then
+            hlo_files=$(find xla/tests/fuzz -name "*.hlo")
+          else
+            hlo_files="${{ github.event.inputs.hlo_files }}"
+          fi
+          echo "hlo_files=${hlo_files}" >> $GITHUB_OUTPUT
+
+      - name: Run Benchmarks
+        working-directory: openxla
+        run: |
+          for hlo_file in ${{ steps.get_hlo_files.outputs.hlo_files }}; do
+            echo "Benchmarking: $hlo_file"
+            ./bazel-bin/xla/tools/run_hlo_module \
+                --input_format=hlo_text \
+                --platform=cpu \
+                --hlo_file="$hlo_file"
+          done
+
+      - name: Upload Results (optional)
+        uses: actions/upload-artifact@v3
+        with:
+          name: cpu-xla-benchmarks
+          path: openxla/results  # Assuming you save results to a 'results' directory
       
