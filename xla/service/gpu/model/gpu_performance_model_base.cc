@@ -142,8 +142,10 @@ void GpuPerformanceModelCache::Invalidate(const HloInstruction& instruction) {
 /*static*/
 LaunchDimensions GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
     const HloFusionAnalysis& fusion_analysis) {
-  auto emitter =
-      GetFusionEmitter(PreBufferAssignmentFusionInfo{fusion_analysis});
+  std::unique_ptr<CallGraph> call_graph = CallGraph::Build(
+      fusion_analysis.fusion_root(0).instruction().GetModule());
+  auto emitter = GetFusionEmitter(
+      PreBufferAssignmentFusionInfo{fusion_analysis}, call_graph.get());
   if (const auto* kernel_emitter =
           dynamic_cast<const KernelFusionInterface*>(emitter.get())) {
     return kernel_emitter->launch_dimensions();

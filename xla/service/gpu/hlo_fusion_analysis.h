@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/service/call_graph.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/device_description.h"
@@ -137,6 +138,8 @@ class HloFusionAnalysis {
   const se::DeviceDescription* device_info_;
   std::optional<TransposeDescription> tiled_transpose_;
   InputOutputInfo input_output_info_;
+
+  std::unique_ptr<CallGraph> call_graph_;
 };
 
 }  // namespace gpu

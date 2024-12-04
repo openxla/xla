@@ -232,6 +232,38 @@ static bool IsCommand(const HloCustomCallInstruction* hlo,
              : false;
 }
 
+bool HasConstantOffsetsInDynamicSliceFusion(
+    const HloFusionInstruction* fusion_instr) {
+  for (const HloInstruction* slice_instr : fusion_instr->fused_instructions()) {
+    if (!HloPredicateIsOp<HloOpcode::kDynamicSlice,
+                          HloOpcode::kDynamicUpdateSlice>(slice_instr)) {
+      continue;
+    }
+    const HloDynamicIndexInstruction* dyn_idx_instr =
+        Cast<HloDynamicIndexInstruction>(slice_instr);
+    for (const HloInstruction* index_operand :
+         dyn_idx_instr->index_operands()) {
+      if (index_operand->opcode() == HloOpcode::kConstant) {
+        continue;
+      } else if (index_operand->opcode() == HloOpcode::kParameter) {
+        const HloInstruction* actual_operand =
+            fusion_instr->operand(index_operand->parameter_number());
+        if (actual_operand->IsConstant()) {
+          continue;
+        } else {
+          // This index is neither a constant nor a parameter that is a
+          // constant.
+          return false;
+        }
+      } else {
+        // This index is neither a constant nor a parameter.
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 static bool IsCommand(const HloInstruction* hlo,
                       const CommandBufferConfig& config) {
   if (auto* fusion = DynCast<HloFusionInstruction>(hlo)) {
@@ -262,6 +294,7 @@ static bool IsCommand(const HloInstruction* hlo,
         // supported by command buffer.
         return (config.enabled_commands.contains(
                     DebugOptions::DYNAMIC_SLICE_FUSION) &&
+                HasConstantOffsetsInDynamicSliceFusion(fusion) &&
                 (IsCommand(hero, config) || IsAsyncStartCommand(hero, config)));
       }
     }

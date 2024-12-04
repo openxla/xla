@@ -782,7 +782,7 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
   BufferAllocation::Slice slice_lhs(&alloc_lhs, 0, lhs_length);
 
   std::vector<DynamicSliceThunk::Offset> lhs_offsets = {
-      DynamicSliceThunk::Offset(2UL), DynamicSliceThunk::Offset(0UL)};
+      DynamicSliceThunk::Offset(2L), DynamicSliceThunk::Offset(0L)};
 
   std::vector<std::optional<BufferAllocation::Slice>> arguments = {
       std::optional<BufferAllocation::Slice>(slice_lhs),
