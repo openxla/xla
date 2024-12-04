@@ -2578,6 +2578,7 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
         case HloOpcode::kCollectiveBroadcast:
           return EmitNcclAsyncDone(Thunk::kNcclCollectiveBroadcastDone, instr);
         case HloOpcode::kFusion:
+        case HloOpcode::kCall:
         case HloOpcode::kCustomCall: {
           // Wait until the concurrent stream has finished.
           auto* async_done = Cast<HloAsyncInstruction>(instr);
@@ -2647,6 +2648,24 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
               Thunk::ThunkInfo::WithProfileAnnotation(instr),
               streams.destination_stream_id, streams.source_stream_id));
           return EmitFusion(Cast<HloFusionInstruction>(wrapped));
+        }
+        case HloOpcode::kCall: {
+          const ExecutionStreamAssignment& stream_assignment =
+              ir_emitter_context_->execution_stream_assignment();
+          TF_ASSIGN_OR_RETURN(
+              auto stream, stream_assignment.GetSyncExecutionStreamId(wrapped));
+          auto ir_emitter = IrEmitterUnnested::Create(ir_emitter_context_);
+          DCHECK_EQ(wrapped->called_computations().size(), 1);
+          auto computation = wrapped->called_computations().front();
+          TF_RETURN_IF_ERROR(ir_emitter->EmitHloComputation(computation));
+          std::unique_ptr<SequentialThunk> thunk_sequence =
+              ir_emitter->ConsumeThunkSequence();
+          for (auto& thunk : thunk_sequence->thunks()) {
+            thunk->set_execution_stream_id(stream);
+          }
+          thunk_sequence->set_execution_stream_id(stream);
+          AddThunkToThunkSequence(std::move(thunk_sequence));
+          return absl::OkStatus();
         }
         case HloOpcode::kCustomCall: {
           return EmitAsyncCustomCallStart(instr);
