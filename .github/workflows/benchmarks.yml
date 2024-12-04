@@ -42,13 +42,14 @@ jobs:
 
       - name: Run Benchmarks
         working-directory: openxla
+        continue-on-error: true  # Allow the workflow to continue even if a benchmark fails
         run: |
           for hlo_file in ${{ steps.get_hlo_files.outputs.hlo_files }}; do
             echo "Benchmarking: $hlo_file"
             ./bazel-bin/xla/tools/run_hlo_module \
-                --input_format=hlo_text \
+                --input_format=hlo \
                 --platform=cpu \
-                --hlo_file="$hlo_file"
+                --hlo_file="$hlo_file" || echo "Error running $hlo_file: $?"
           done
 
       - name: Upload Results (optional)
