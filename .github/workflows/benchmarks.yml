@@ -5,56 +5,31 @@ on:
     branches:
       - main
 
-# name: CPU XLA Benchmark (On Demand)
-
-# on:
-#   workflow_dispatch:
-#     inputs:
-#       hlo_files:
-#         description: 'Specific HLO files to benchmark (optional, comma-separated). If empty, all files are used.'
-#         required: false
-#         default: ''
-
 jobs:
   benchmark:
-    runs-on: ubuntu-latest  # Or a suitable runner with CPU resources
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout OpenXLA
         uses: actions/checkout@v3
         with:
-          repository: 'openxla/xla' # Assuming you're working with OpenXLA's XLA repo
+          repository: 'openxla/xla'
           path: openxla
 
       - name: Build run_hlo_module
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
-      - name: Get HLO files
-        id: get_hlo_files
-        working-directory: openxla
-        run: |
-          if [ -z "${{ github.event.inputs.hlo_files }}" ]; then
-            hlo_files=$(find xla/tests/fuzz -name "*.hlo")
-          else
-            hlo_files="${{ github.event.inputs.hlo_files }}"
-          fi
-          echo "hlo_files=${hlo_files}" >> $GITHUB_OUTPUT
-
       - name: Run Benchmarks
         working-directory: openxla
-        continue-on-error: true  # Allow the workflow to continue even if a benchmark fails
+        continue-on-error: true
         run: |
-          for hlo_file in ${{ steps.get_hlo_files.outputs.hlo_files }}; do
-            echo "Benchmarking: $hlo_file"
-            ./bazel-bin/xla/tools/run_hlo_module \
-                --input_format=hlo \
-                --platform=cpu \
-                --hlo_file="$hlo_file" || echo "Error running $hlo_file: $?"
-          done
+          ./bazel-bin/xla/tools/run_hlo_module \
+              --input_format=hlo \ 
+              --platform=cpu \
+              xla/tests/fuzz/rand_000000.hlo
 
       - name: Upload Results (optional)
         uses: actions/upload-artifact@v3
         with:
           name: cpu-xla-benchmarks
-          path: openxla/results  # Assuming you save results to a 'results' directory
-      
+          path: openxla/results 
