@@ -28,6 +28,10 @@ namespace xla::gpu {
 
 // Base class for GEMM rewriter tests.
 class GemmRewriteTestBase : public GpuCodegenTest {
+ public:
+  GemmRewriteTestBase() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
  protected:
   const stream_executor::GpuComputeCapability& Capability() const;
 

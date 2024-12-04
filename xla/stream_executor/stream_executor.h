@@ -103,6 +103,8 @@ class StreamExecutor {
   // Obtains metadata about the underlying device.
   // The value is cached on first use.
   virtual const DeviceDescription& GetDeviceDescription() const = 0;
+  // To be used in tests only
+  virtual void  SetThreadsPerWarp(const int64_t value) = 0;
 
   // Synchronously allocates an array on the device of type T with element_count
   // elements.

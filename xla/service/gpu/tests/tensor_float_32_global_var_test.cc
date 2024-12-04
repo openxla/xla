@@ -39,6 +39,7 @@ class TensorFloat32GlobalVarTest : public ::testing::WithParamInterface<bool>,
     // The error tolerances are small enough so that the use of TF32 will cause
     // the error to be greater than the tolerances.
     error_spec_ = ErrorSpec{1e-4, 1e-4};
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
   }
 
   ~TensorFloat32GlobalVarTest() override {

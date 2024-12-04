@@ -31,6 +31,9 @@ namespace {
 
 class GpuKernelTilingTest : public GpuCodegenTest {
  protected:
+  GpuKernelTilingTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
   // Most tests in this file want to skip layout assignment, but a few need it
   // enabled.
   HloModuleConfig ConfigWithLayoutAssignment() {

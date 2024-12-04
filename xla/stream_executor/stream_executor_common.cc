@@ -52,4 +52,9 @@ const DeviceDescription& StreamExecutorCommon::GetDeviceDescription() const {
   return *device_description_;
 }
 
+void StreamExecutorCommon::SetThreadsPerWarp(const int64_t value) {
+  absl::MutexLock lock(&mu_);
+  device_description_->set_threads_per_warp(value);
+}
+
 }  // namespace stream_executor
