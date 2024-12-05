@@ -91,15 +91,11 @@ absl::Status AnnotateKernelLaunchDimensions(
     const se::DeviceDescription& device_info,
     const LaunchDimensions& launch_dims, const std::string& kernel_name,
     llvm::Module* llvm_module) {
-  TF_RET_CHECK(
-      (device_info.block_dim_limit().x == 0 ||
-       launch_dims.block_counts().x < device_info.block_dim_limit().x) &&
-      (device_info.block_dim_limit().y == 0 ||
-       launch_dims.block_counts().y < device_info.block_dim_limit().y))
+  TF_RET_CHECK(device_info.block_dim_limit().x == 0 ||
+               launch_dims.block_counts().x < device_info.block_dim_limit().x)
       << "Kernel '" << kernel_name << "' launch needs more blocks ("
-      << launch_dims.block_counts().x << ", " << launch_dims.block_counts().y
-      << ") than allowed by hardware (" << device_info.block_dim_limit().x
-      << ", " << device_info.block_dim_limit().y << ").";
+      << launch_dims.block_counts().x << ") than allowed by hardware ("
+      << device_info.block_dim_limit().x << ").";
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
