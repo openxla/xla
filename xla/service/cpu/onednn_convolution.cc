@@ -184,6 +184,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
+    if (conv_config.fusions().ops(i) == OneDnnFusionConfig::SUM) {
+      arg_indx++;
+      continue;
+    }
     MemrefInfo operand_minfo(args[arg_indx++]);
     fused_mds.push_back(operand_minfo.GetOneDnnMemDesc());
     fused_bufs.push_back(operand_minfo.Data());
@@ -215,6 +219,9 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
         post_ops.append_binary(dnnl::algorithm::binary_add, binary_md);
         fused_operand_idx++;
       } break;
+      case OneDnnFusionConfig::SUM:
+        post_ops.append_sum();
+        break;
       default:
         LOG(FATAL)
             << __FILE__ << ":" << __LINE__
