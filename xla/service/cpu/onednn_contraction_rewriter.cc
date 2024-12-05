@@ -632,18 +632,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                                  HloInstruction* optional_contraction_bitcast) {
     if (!IsSupportedType(contraction->shape().element_type()))
       return absl::OkStatus();
-    // TODO(intel-tf): Remove the condition below when the fusion Contraction +
-    // Add(bias) + Add(e.g., residual) is enabled.
-    auto contraction_config = contraction->backend_config<BackendConfig>();
-    if (!GetKernelConfig<config>(&contraction_config)
-             ->mutable_fusions()
-             ->ops()
-             .empty() &&
-        GetKernelConfig<config>(&contraction_config)
-                ->mutable_fusions()
-                ->ops(0) == OneDnnFusionConfig::BIAS) {
-      return absl::OkStatus();
-    }
+
     std::vector<HloInstruction*> new_operands;
     for (auto operand : contraction->operands()) {
       new_operands.push_back(operand);
