@@ -31,8 +31,16 @@ jobs:
             ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file
           done
 
+      - name: Build CPU benchmarks
+        working-directory: openxla
+        run: bazel build -c opt --dynamic_mode=off  //xla/service/cpu/benchmarks:elementwise_benchmark_test
+          
+      - name: Run CPU benchmarks
+        working-directory: openxla
+        run: ./bazel-bin/xla/service/cpu/benchmarks/elementwise_benchmark_test --benchmark_filter=".*"
+            
       - name: Upload Results
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.platform }}-xla-benchmarks
-          path: openxla/results
+          path: openxla/xla
