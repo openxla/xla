@@ -115,7 +115,6 @@ cc_library(
     linkopts = select({
         ":build_hermetic": [
             "-Wl,-rpath=%{rocm_toolkit_path}/lib",
-            "-Wl,-rpath=%{rocm_toolkit_path}/lib",
         ],
         "//conditions:default": [
             "-Wl,-rpath=/opt/rocm/lib",
