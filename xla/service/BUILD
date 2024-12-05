@@ -269,8 +269,10 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/graphcycles",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -286,7 +288,9 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_query",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tests:hlo_test_base",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -434,6 +438,7 @@ cc_library(
     local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
     deps = [
         ":hlo_graph_dumper",
+        ":hlo_proto_cc",
         ":hlo_proto_util",
         "//xla:util",
         "//xla:xla_proto_cc",
@@ -5427,10 +5432,13 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:blocking_counter",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -5448,6 +5456,8 @@ xla_cc_test(
         ":collective_ops_utils",
         ":computation_placer",
         ":global_device_id",
+        ":hlo_module_config",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
@@ -5455,6 +5465,7 @@ xla_cc_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",

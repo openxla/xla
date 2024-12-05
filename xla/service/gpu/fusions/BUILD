@@ -270,6 +270,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/codegen/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service:scatter_simplifier",
@@ -374,7 +375,7 @@ cc_library(
 xla_cc_test(
     name = "triton_test",
     srcs = ["triton_test.cc"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]),
+    tags = ["gpu"],
     deps = [
         ":fusion_emitter",
         ":fusions",

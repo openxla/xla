@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/gpu_collectives_stub.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
@@ -80,83 +81,8 @@ ScopedPersistentPlanAllocator::~ScopedPersistentPlanAllocator() = default;
 // NcclApiStub
 //===----------------------------------------------------------------------===//
 
-static absl::Status UnimplementedError() {
-  return absl::UnimplementedError("XLA compiled without NCCL support");
-}
-
-class NcclApiStub final : public NcclApi {
+class NcclApiStub final : public GpuCollectivesStub {
  public:
-  absl::StatusOr<CliqueId> GetUniqueId() final { return UnimplementedError(); }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> CommInitRanks(
-      int32_t, const CliqueId&, absl::Span<const DeviceRank>,
-      const Config&) final {
-    return UnimplementedError();
-  }
-
-  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> CommSplit(
-      absl::Span<const Communicator* const>, int32_t, absl::Span<const RankId>,
-      std::optional<Config>) final {
-    return UnimplementedError();
-  }
-
-  absl::Status GroupStart() final { return UnimplementedError(); }
-  absl::Status GroupEnd() final { return UnimplementedError(); }
-
-  absl::Status AllReduce(se::DeviceMemoryBase, se::DeviceMemoryBase,
-                         PrimitiveType, size_t, ReductionKind, Communicator*,
-                         se::Stream*) final {
-    return UnimplementedError();
-  }
-
-  absl::Status Broadcast(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-                         size_t count, size_t root, Communicator* comm,
-                         se::Stream* stream) final {
-    return UnimplementedError();
-  }
-
-  absl::Status ReduceScatter(se::DeviceMemoryBase, se::DeviceMemoryBase,
-                             PrimitiveType, size_t, ReductionKind,
-                             Communicator*, se::Stream*) final {
-    return UnimplementedError();
-  }
-
-  absl::Status AllGather(se::DeviceMemoryBase, se::DeviceMemoryBase,
-                         PrimitiveType, size_t, Communicator*,
-                         se::Stream*) final {
-    return UnimplementedError();
-  }
-
-  absl::Status Send(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
-                    Communicator*, se::Stream*) final {
-    return UnimplementedError();
-  }
-
-  absl::Status SendPtrToPeer(void* ptr, int32_t peer, Communicator* comm,
-                             se::Stream* stream) final {
-    return UnimplementedError();
-  }
-
-  absl::Status Recv(se::DeviceMemoryBase, PrimitiveType, size_t, int32_t,
-                    Communicator*, se::Stream*) final {
-    return UnimplementedError();
-  }
-
-  absl::Status RecvPtrFromPeer(void* ptr, int32_t peer, Communicator* comm,
-                               se::Stream* stream) final {
-    return UnimplementedError();
-  }
-
-  absl::StatusOr<NcclRegisteredBufferHandle> RegisterBuffer(
-      Communicator*, se::DeviceMemoryBase) final {
-    return UnimplementedError();
-  }
-
-  absl::StatusOr<NcclRegisteredBufferHandle> DeregisterBuffer(
-      Communicator*, NcclRegisteredBufferHandle) final {
-    return UnimplementedError();
-  }
 };
 
 NcclApi* NcclApi::Default() {

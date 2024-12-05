@@ -77,6 +77,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
+#include "xla/codegen/ir/xla_ops.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -329,13 +330,13 @@ MlirFusionEmitterBase::CreateMLIRModule(
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment,
     mlir::interpreter::MlirCompilationTrace* trace) const {
-  context.loadDialect<mlir::DLTIDialect, mlir::NVVM::NVVMDialect,
-                      mlir::ROCDL::ROCDLDialect, mlir::affine::AffineDialect,
-                      mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                      mlir::func::FuncDialect, mlir::gpu::GPUDialect,
-                      mlir::math::MathDialect, mlir::mhlo::MhloDialect,
-                      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
-                      mlir::vector::VectorDialect, xla::gpu::XlaGpuDialect>();
+  context.loadDialect<
+      mlir::DLTIDialect, mlir::NVVM::NVVMDialect, mlir::ROCDL::ROCDLDialect,
+      mlir::affine::AffineDialect, mlir::arith::ArithDialect,
+      mlir::cf::ControlFlowDialect, mlir::func::FuncDialect,
+      mlir::gpu::GPUDialect, mlir::math::MathDialect, mlir::mhlo::MhloDialect,
+      mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
+      mlir::vector::VectorDialect, xla::XlaDialect, xla::gpu::XlaGpuDialect>();
   mlir::DialectRegistry registry;
   mlir::LLVM::registerInlinerInterface(registry);
   mlir::func::registerInlinerExtension(registry);
@@ -645,9 +646,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createConvertSCFToCFPass());
-  bool is_amd = std::holds_alternative<se::RocmComputeCapability>(
-      device.gpu_compute_capability());
-  pm.addPass(CreateLowerToLLVMPass(is_amd));
+  pm.addPass(CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }
 

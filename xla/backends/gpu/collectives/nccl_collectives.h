@@ -16,12 +16,50 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_NCCL_COLLECTIVES_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_COLLECTIVES_H_
 
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/core/collectives/clique_id.h"
+#include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
+#include "xla/service/gpu/runtime/nccl_api.h"
 
 namespace xla::gpu {
 
 // XLA host-initiated collectives implemented on top of NCCL.
-class NcclCollectives : public Collectives {};
+//
+// TODO(ezhulenev): Instead of NcclApi, we should inherit from GpuCollectives.
+class NcclCollectives : public NcclApi {
+ public:
+  // Returns true if the collectives backend uses.
+  bool IsGlobalConfig() const final;
+
+  absl::StatusOr<const CliqueIdCallback*> GetCliqueIdCallback(
+      const CliqueIdCallback* clique_id_callback, bool is_local) final;
+
+  absl::StatusOr<CliqueId> CreateUniqueCliqueId() const final;
+
+  absl::Status GroupStart() final;
+  absl::Status GroupEnd() final;
+
+  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
+  CreateCommunicators(int32_t nranks, const CliqueKey& clique_key,
+                      const std::optional<CliqueId>& clique_id,
+                      absl::Span<const DeviceRank> ranks,
+                      const Collectives::Config& config) final;
+
+  absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> SplitCommunicators(
+      absl::Span<const Communicator* const> comms, int32_t color,
+      absl::Span<const RankId> keys, const Collectives::Config& config) final;
+};
 
 }  // namespace xla::gpu
 

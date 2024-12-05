@@ -27,11 +27,13 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_clique_locking.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
@@ -42,7 +44,6 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/gpu/runtime/nccl_clique.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -213,7 +214,7 @@ class Thunk {
   class CollectiveCliques {
    public:
     CollectiveCliques() = default;
-    explicit CollectiveCliques(NcclClique::AcquiredCliquesMap cliques_map);
+    explicit CollectiveCliques(AcquiredCliquesMap cliques_map);
 
     absl::StatusOr<Communicator*> GetComm(const GpuCliqueKey& clique_key,
                                           RankId rank) const;
@@ -229,7 +230,7 @@ class Thunk {
     bool empty() const { return cliques_map_.empty(); }
 
    private:
-    NcclClique::AcquiredCliquesMap cliques_map_;
+    AcquiredCliquesMap cliques_map_;
   };
 
   //===--------------------------------------------------------------------===//
@@ -485,6 +486,9 @@ class Thunk {
 
   // Returns `true` if this thunk requires inter-GPU communication.
   bool IsCollective() const;
+
+  // Invokes `fn` with this thunk and all nested thunks.
+  virtual void ForAllThunks(absl::FunctionRef<void(const Thunk*)> fn) const;
 
  private:
   Kind kind_;
