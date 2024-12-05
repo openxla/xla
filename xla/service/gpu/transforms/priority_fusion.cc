@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusion_deduplication_cache.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -161,6 +161,7 @@ class PriorityFusionQueue {
         mlir_context_(mlir_context),
         fusion_analysis_cache_(fusion_analysis_cache),
         fusion_deduplication_cache_(fusion_deduplication_cache),
+        fusion_info_cache_(*device_info_),
         triton_heroless_fusion_enabled_(triton_heroless_fusion_enabled) {
     VLOG(2) << "Running full HLO cost analysis for " << computation_->name();
     TF_CHECK_OK(computation_->Accept(&cost_analysis_));

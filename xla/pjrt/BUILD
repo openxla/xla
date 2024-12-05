@@ -1,12 +1,11 @@
-load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
-)
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_proto_library",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -909,7 +908,8 @@ xla_cc_test(
         ":tf_pjrt_client",
         "//xla:literal_util",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/pjrt/cpu:cpu_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",

@@ -1,8 +1,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:pytype.default.bzl", "pytype_strict_library")
 load("//xla:strict.default.bzl", "py_strict_library", "py_strict_test")
 load(
@@ -17,6 +15,8 @@ load(
     "internal_visibility",
 )
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -361,6 +361,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
@@ -400,6 +401,7 @@ cc_library(
         "//xla/pjrt/distributed:client",
         "//xla/python/ifrt",
         "//xla/python/ifrt:attribute_map",
+        "//xla/python/ifrt:custom_call_program",
         "//xla/python/ifrt:plugin_program",
         "//xla/python/ifrt:plugin_program_serdes",
         "//xla/python/ifrt/hlo:hlo_program",
@@ -970,6 +972,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
 )
 
@@ -1089,6 +1092,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":dlpack",
         ":nb_absl_span",
         ":nb_helpers",
         ":nb_numpy",
@@ -1099,7 +1103,6 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -1125,6 +1128,7 @@ cc_library(
         "//xla/hlo/transforms:flatten_call_graph",
         "//xla/hlo/transforms:hlo_dce",
         "//xla/hlo/transforms:tuple_simplifier",
+        "//xla/pjrt:compile_options_proto_cc",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:status_casters",
@@ -1300,12 +1304,13 @@ tsl_pybind_extension(
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:status_casters",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
-        "//xla/pjrt/cpu:cpu_client",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/distributed:service",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/python/ifrt",
         "//xla/python/ifrt:plugin_program",
         "//xla/python/ifrt:plugin_program_serdes",
@@ -1514,6 +1519,21 @@ py_strict_test(
         "//third_party/py/numpy",
         "@absl_py//absl/flags",
         "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+        "@absl_py//absl/testing:parameterized",
+    ] + xla_py_test_deps(),
+)
+
+py_strict_test(
+    name = "xla_compiler_test",
+    srcs = ["xla_compiler_test.py"],
+    main = "xla_compiler_test.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],
+    deps = [
+        ":xla_extension",
+        "//third_party/py/numpy",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ] + xla_py_test_deps(),

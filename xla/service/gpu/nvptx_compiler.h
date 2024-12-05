@@ -80,14 +80,12 @@ class NVPTXCompiler : public GpuCompiler {
       const MultiProcessKeyValueStore& key_value_store,
       const se::SemanticVersion& toolkit_version) override;
 
-  absl::Status AddCustomKernelReplacementPasses(
-      HloPassPipeline* pipeline, const DebugOptions& debug_options) override;
-
   absl::Status RunCudnnCompilerPasses(HloModule* module,
                                       se::StreamExecutor* stream_exec,
                                       BinaryMap* dnn_compiled_graphs) override;
 
-  HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer() const override;
+  HloDataflowAnalysis::CanShareBuffer GetCanShareBuffer(
+      const se::DeviceDescription& device_description) const override;
 
   absl::StatusOr<BackendCompileResult> CompileTargetBinary(
       const HloModuleConfig& module_config, llvm::Module* llvm_module,

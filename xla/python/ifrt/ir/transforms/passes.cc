@@ -42,11 +42,7 @@ void CreateIfrtToOutlinedAtomProgramsPipeline(
         mlir::stablehlo::StablehloDialect::getDialectNamespace().str()}}));
   pm.addNestedPass<mlir::func::FuncOp>(CreateIfrtVerifyDonationPass());
 
-  // Passes that outline atom programs to modules and set their metadata.
   pm.addPass(CreateIfrtOutlineAtomProgramToModulePass());
-  pm.addPass(CreateIfrtPopulateAtomProgramMetadataPass());
-  pm.addPass(CreateIfrtDuplicatedCalleeEliminationPass());
-  pm.addPass(mlir::createSymbolDCEPass());
 
   if (!options.propagate_shardings) {
     pm.addPass(CreateIfrtVerifyShardingSpecifiedPass());
@@ -54,6 +50,12 @@ void CreateIfrtToOutlinedAtomProgramsPipeline(
     // are specified.
     pm.addPass(CreateIfrtReshardToCopyArraysPass());
   }
+}
+
+void CreateIfrtPopulateAtomProgramMetadataPipeline(mlir::OpPassManager& pm) {
+  pm.addPass(CreateIfrtPopulateAtomProgramMetadataPass());
+  pm.addPass(CreateIfrtDuplicatedCalleeEliminationPass());
+  pm.addPass(mlir::createSymbolDCEPass());
 }
 
 void CreateIfrtCompileXlaPreprocessingPipeline(mlir::OpPassManager& pm) {
@@ -65,6 +67,7 @@ void CreateIfrtToVersionedPipeline(mlir::OpPassManager& pm,
                                    std::string ifrt_target_version,
                                    std::string vhlo_target_version,
                                    IfrtIrProgramProto& ifrt_ir_program) {
+  pm.addPass(CreateIfrtRemoveAttrsFromOtherDialectsPass());
   pm.addPass(CreateIfrtAtomProgramsToVhloPass(
       ifrt_ir_program.mutable_atom_programs(), std::move(vhlo_target_version)));
   pm.addPass(createIfrtLegalizeToVifrtPass());
@@ -102,6 +105,10 @@ void RegisterIfrtPassesAndPipelines(
       "ifrt-to-outlined-atom-programs-pipeline",
       "Runs passes that do not require compilation-time information",
       CreateIfrtToOutlinedAtomProgramsPipeline);
+  mlir::PassPipelineRegistration<>(
+      "ifrt-populate-atom-program-metadata-pipeline",
+      "Run passes to populate atom program metadata with IFRT info",
+      CreateIfrtPopulateAtomProgramMetadataPipeline);
   mlir::PassPipelineRegistration<>(
       "ifrt-compile-xla-preprocessing-pipeline",
       "Run passes to lower an IFRT XLA program for XLA compilation",

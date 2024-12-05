@@ -38,11 +38,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_constants.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -389,7 +389,7 @@ absl::InlinedVector<HloInstruction*, 4> GetPatternCaptures(
     for (HloInstruction* operand : instr->operands()) {
       if (!matched_instrs.contains(operand) &&
           absl::c_find(captures, operand) == captures.end()) {
-        captures.emplace_back(operand);
+        captures.push_back(operand);
       }
     }
   }

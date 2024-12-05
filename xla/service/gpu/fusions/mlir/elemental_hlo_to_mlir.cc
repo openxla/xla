@@ -61,7 +61,10 @@ limitations under the License.
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/codegen/ir/xla_ops.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -72,14 +75,12 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
-#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/type_util.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -295,9 +296,27 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConcat(
   return generate_concat(0, instr->operand_count());
 }
 
+absl::Status ValidateDynamicIndexIsCanonical(const HloInstruction* instr) {
+  const HloDynamicIndexInstruction* dynamic_index_instruction =
+      Cast<HloDynamicIndexInstruction>(instr);
+  if (!absl::c_all_of(dynamic_index_instruction->index_operands(),
+                      [](const HloInstruction* operand) {
+                        return ShapeUtil::IsScalar(operand->shape());
+                      })) {
+    return absl::FailedPreconditionError(
+        absl::StrCat("Dynamic indexing instruction with non-scalar index is "
+                     "not supported. Make sure that 'dynamic-index-splitter' "
+                     "pass was exectuted to canonicalize the indices: ",
+                     instr->ToString()));
+  }
+  return absl::OkStatus();
+}
+
 absl::StatusOr<SmallVector<Value, 1>> EmitDynamicSlice(
     const HloInstruction* instr, ValueRange indices,
     const OperandProvider& operand_provider, ImplicitLocOpBuilder& b) {
+  TF_RETURN_IF_ERROR(ValidateDynamicIndexIsCanonical(instr));
+
   SmallVector<Value, 3> input_indices(indices);
 
   const auto& input_shape = instr->operand(0)->shape();
@@ -318,6 +337,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicSlice(
 absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
     const HloInstruction* instr, ValueRange indices,
     const OperandProvider& operand_provider, ImplicitLocOpBuilder& b) {
+  TF_RETURN_IF_ERROR(ValidateDynamicIndexIsCanonical(instr));
+
   auto result_element_type =
       PrimitiveTypeToMlirType(instr->shape().element_type(), b);
   Value is_in_bounds = b.create<ConstantOp>(b.getIntegerAttr(b.getI1Type(), 1));
@@ -1558,7 +1579,7 @@ ValueRange EmitXlaLoopOp(ImplicitLocOpBuilder& b, ValueRange dim_values,
     } else {
       results = create_body(ivs, map_results, iter_args);
     }
-    nested_builder.create<xla::gpu::YieldOp>(loc, results);
+    nested_builder.create<xla::YieldOp>(loc, results);
   };
   return b.create<LoopOp>(indexing_map, dim_values, iter_args_inits, bb)
       .getResults();

@@ -1,6 +1,5 @@
 # Tensorflow default + linux implementations of tensorflow/core/platform libraries.
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/tsl:tsl.bzl",
     "if_cuda_tools",
@@ -11,6 +10,7 @@ load(
     "tsl_copts",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup", "tsl_grpc_cc_dependencies")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -18,6 +18,7 @@ package(
         "//tensorflow/core/lib/jpeg:__pkg__",
         "//tensorflow/core/platform:__pkg__",
         "@tsl//tsl/platform:__pkg__",
+        "//xla/tsl/platform:__pkg__",
     ]),
     licenses = ["notice"],
 )
@@ -49,7 +50,10 @@ cc_library(
 cc_library(
     name = "criticality",
     hdrs = ["@tsl//tsl/platform:criticality.h"],
-    tags = ["manual"],
+    tags = [
+        "manual",
+        "nobuilder",
+    ],
     textual_hdrs = ["criticality.h"],
     deps = [
         "@tsl//tsl/platform",
@@ -435,7 +439,7 @@ cc_library(
 cc_library(
     name = "subprocess",
     srcs = ["subprocess.cc"],
-    hdrs = ["@tsl//tsl/platform:subprocess.h"],
+    hdrs = ["//xla/tsl/platform:subprocess.h"],
     tags = [
         "manual",
         "no_oss",

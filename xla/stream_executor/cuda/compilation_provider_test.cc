@@ -27,6 +27,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
+#include "xla/stream_executor/cuda/compilation_provider_test.h"
+#include "xla/stream_executor/cuda/driver_compilation_provider.h"
+#include "xla/stream_executor/cuda/nvjitlink_compilation_provider.h"
+#include "xla/stream_executor/cuda/nvjitlink_support.h"
+#include "xla/stream_executor/cuda/nvptxcompiler_compilation_provider.h"
+#include "xla/stream_executor/cuda/ptx_compiler_support.h"
 #include "xla/stream_executor/cuda/subprocess_compilation.h"
 #include "xla/stream_executor/cuda/subprocess_compilation_provider.h"
 #include "xla/stream_executor/device_description.h"
@@ -37,7 +43,6 @@ limitations under the License.
 #include "tsl/platform/threadpool.h"
 
 namespace stream_executor::cuda {
-namespace {
 using ::testing::_;
 using ::testing::AnyOf;
 using ::testing::HasSubstr;
@@ -47,32 +52,51 @@ using ::tsl::testing::IsOk;
 using ::tsl::testing::IsOkAndHolds;
 using ::tsl::testing::StatusIs;
 
-class CompilationProviderTest
-    : public testing::TestWithParam<std::string_view> {
-  absl::StatusOr<std::unique_ptr<CompilationProvider>>
-  CreateCompilationProvider(std::string_view name);
+void CompilationProviderTest::SetUp() {
+#ifdef ABSL_HAVE_MEMORY_SANITIZER
+  if (GetParam() == kNvJitLinkCompilationProviderName) {
+    GTEST_SKIP() << "nvjitlink is a precompiled and not instrumented binary "
+                    "library, so it's not compatible with MSAN.";
+  }
+  if (GetParam() == kNvptxcompilerCompilationProviderName) {
+    GTEST_SKIP() << "nvptxcompiler is a precompiled and not instrumented "
+                    "binary library, so it's not compatible with MSAN.";
+  }
+#endif
 
-  void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(compilation_provider_,
-                            CreateCompilationProvider(GetParam()));
+  if (GetParam() == kNvJitLinkCompilationProviderName &&
+      !IsLibNvJitLinkSupported()) {
+    GTEST_SKIP() << "nvjitlink is not supported in this build.";
+  }
+  if (GetParam() == kNvptxcompilerCompilationProviderName &&
+      !IsLibNvPtxCompilerSupported()) {
+    GTEST_SKIP() << "nvptxcompiler is not supported in this build.";
   }
 
-  std::unique_ptr<CompilationProvider> compilation_provider_;
-
- protected:
-  CompilationProvider* compilation_provider() {
-    return compilation_provider_.get();
-  }
-};
+  TF_ASSERT_OK_AND_ASSIGN(compilation_provider_,
+                          CreateCompilationProvider(GetParam()));
+}
 
 absl::StatusOr<std::unique_ptr<CompilationProvider>>
 CompilationProviderTest::CreateCompilationProvider(std::string_view name) {
-  if (name == "subprocess") {
+  if (name == kSubprocessCompilationProviderName) {
     TF_ASSIGN_OR_RETURN(auto ptxas,
                         FindCudaExecutable("ptxas", "/does/not/exist"));
     TF_ASSIGN_OR_RETURN(auto nvlink,
                         FindCudaExecutable("nvlink", "/does/not/exist"));
     return std::make_unique<SubprocessCompilationProvider>(ptxas, nvlink);
+  }
+
+  if (name == kNvJitLinkCompilationProviderName) {
+    return std::make_unique<NvJitLinkCompilationProvider>();
+  }
+
+  if (name == kNvptxcompilerCompilationProviderName) {
+    return std::make_unique<NvptxcompilerCompilationProvider>();
+  }
+
+  if (name == kDriverCompilationProviderName) {
+    return std::make_unique<DriverCompilationProvider>();
   }
 
   return absl::NotFoundError(
@@ -234,6 +258,14 @@ TEST_P(CompilationProviderTest, CompileDependentRelocatableModuleSucceeds) {
 
 TEST_P(CompilationProviderTest,
        CompileDependentModuleFailsWithUndefinedReferenceError) {
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+  if (GetParam() == "nvjitlink") {
+    GTEST_SKIP()
+        << "nvjitlink fails with TSAN enabled due to some wrongly unlocked "
+           "mutex. Note that this only happens when the compilation fails.";
+  }
+#endif
+
   CompilationOptions options;
   EXPECT_THAT(compilation_provider()->Compile(kDefaultComputeCapability,
                                               kDependentPtx, options),
@@ -246,6 +278,13 @@ TEST_P(CompilationProviderTest,
   if (!compilation_provider()->SupportsCompileAndLink()) {
     GTEST_SKIP() << "Compilation provider doesn't support CompileAndLink";
   }
+#ifdef ABSL_HAVE_THREAD_SANITIZER
+  if (GetParam() == "nvjitlink") {
+    GTEST_SKIP()
+        << "nvjitlink fails with TSAN enabled due to some wrongly unlocked "
+           "mutex. Note that this only happens when the compilation fails.";
+  }
+#endif
 
   CompilationOptions options;
   EXPECT_THAT(compilation_provider()->CompileAndLink(
@@ -298,6 +337,9 @@ TEST_P(CompilationProviderTest, CompileAndLaterLinkMultipleModulesSucceeds) {
 TEST_P(CompilationProviderTest, CancelsOnRegSpill) {
   if (!compilation_provider()->SupportsCompileAndLink()) {
     GTEST_SKIP() << "Compilation provider doesn't support CompileAndLink";
+  }
+  if (GetParam() == kDriverCompilationProviderName) {
+    GTEST_SKIP() << "Driver compilation doesn't support cancel_if_reg_spill";
   }
 
   std::string dependent_ptx = absl::StrReplaceAll(
@@ -435,8 +477,6 @@ TEST_P(CompilationProviderTest, ParallelCompileAndLinkReturnsSameResult) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(CompilationProviderTest, CompilationProviderTest,
-                         testing::Values("subprocess"));
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CompilationProviderTest);
 
-}  // namespace
 }  // namespace stream_executor::cuda

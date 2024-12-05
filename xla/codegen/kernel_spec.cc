@@ -27,13 +27,11 @@ namespace xla {
 KernelSpec::KernelSpec(se::ClusterDim cluster_dim, se::BlockDim block_dim,
                        se::ThreadDim thread_dim,
                        std::optional<size_t> scratch_bytes,
-                       BufferUses buffer_uses,
-                       std::shared_ptr<KernelSource> kernel_source)
+                       BufferUses buffer_uses)
     : cluster_dim_(cluster_dim),
       block_dim_(block_dim),
       thread_dim_(thread_dim),
       scratch_bytes_(scratch_bytes),
-      buffer_uses_(std::move(buffer_uses)),
-      kernel_source_(std::move(kernel_source)) {}
+      buffer_uses_(std::move(buffer_uses)) {}
 
 }  // namespace xla

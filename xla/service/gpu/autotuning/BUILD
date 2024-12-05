@@ -2,12 +2,15 @@
 #   Components that implement GPU autotuning.
 
 load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
+    "@local_config_rocm//rocm:build_defs.bzl",
+    "if_rocm_is_configured",
 )
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_oss")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_proto_library",
+)
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -27,14 +30,89 @@ package_group(
 )
 
 cc_library(
-    name = "gemm_fusion_autotuner",
-    srcs = ["gemm_fusion_autotuner.cc"],
-    hdrs = ["gemm_fusion_autotuner.h"],
+    name = "gemm_fusion_autotuner_cuda",
+    srcs = [
+        "gemm_fusion_autotuner.h",
+        "gemm_fusion_autotuner_cuda.cc",
+    ],
     tags = [
         "cuda-only",
         "gpu",
     ],
     deps = [
+        ":autotuner_compile_util",
+        ":autotuner_util",
+        "//xla:autotuning_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:algorithm_util",
+        "//xla/service:executable",
+        "//xla/service:shaped_buffer",
+        "//xla/service/gpu:ir_emission_utils",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/service/gpu/transforms:cudnn_fusion_compiler",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:env",
+    ],
+)
+
+cc_library(
+    name = "gemm_fusion_autotuner_rocm",
+    srcs = [
+        "gemm_fusion_autotuner.h",
+        "gemm_fusion_autotuner_rocm.cc",
+    ],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        ":autotuner_compile_util",
+        ":autotuner_util",
+        "//xla:autotuning_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/service:executable",
+        "//xla/service:shaped_buffer",
+        "//xla/service/gpu:matmul_utils",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/rocm:rocblas_plugin",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:env",
+    ],
+)
+
+cc_library(
+    name = "gemm_fusion_autotuner",
+    srcs = [
+        "gemm_fusion_autotuner.cc",
+    ],
+    hdrs = ["gemm_fusion_autotuner.h"],
+    tags = ["gpu"],
+    deps = if_cuda_is_configured([":gemm_fusion_autotuner_cuda"]) + if_rocm_is_configured([
+        ":gemm_fusion_autotuner_rocm",
+    ]) + [
         ":autotuner_compile_util",
         ":autotuner_status_key",
         ":autotuner_util",
@@ -50,6 +128,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms:float_normalization",
         "//xla/hlo/utils:hlo_query",
+        "//xla/hlo/utils:hlo_traversal",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:algorithm_util",
         "//xla/service:call_inliner",
@@ -62,7 +141,6 @@ cc_library(
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:buffer_comparator",
         "//xla/service/gpu:gpu_float_support",
-        "//xla/service/gpu:hlo_traversal",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:matmul_indexing_utils",
         "//xla/service/gpu:matmul_utils",
@@ -71,7 +149,6 @@ cc_library(
         "//xla/service/gpu/kernels:custom_kernel",
         "//xla/service/gpu/kernels:custom_kernel_fusion",
         "//xla/service/gpu/kernels:custom_kernel_fusion_pattern",
-        "//xla/service/gpu/transforms:cudnn_fusion_compiler",
         "//xla/service/gpu/transforms:custom_kernel_fusion_rewriter",
         "//xla/service/gpu/transforms:dot_algorithm_rewriter",
         "//xla/service/gpu/transforms:fusion_wrapper",
@@ -95,10 +172,10 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
@@ -117,7 +194,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     tags = [
         "cuda-only",
         "no_mac",
@@ -132,6 +210,8 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:call_inliner",
         "//xla/service:dump",
@@ -245,6 +325,7 @@ cc_library(
         "//xla/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

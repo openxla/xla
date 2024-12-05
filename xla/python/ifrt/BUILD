@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "friends",
@@ -173,6 +173,20 @@ xla_cc_test(
 tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
+    protodeps = [":attribute_map_proto"],
+)
+
+xla_cc_test(
+    name = "executable_test",
+    size = "small",
+    srcs = ["executable_test.cc"],
+    deps = [
+        ":attribute_map",
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
 )
 
 xla_cc_test(

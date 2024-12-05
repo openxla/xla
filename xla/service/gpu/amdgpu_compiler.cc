@@ -35,11 +35,13 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/autotuning/conv_algorithm_picker.h"
 #include "xla/service/gpu/autotuning/gemm_algorithm_picker.h"
+#include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
@@ -50,7 +52,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/transforms/cudnn_fused_conv_rewriter.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
-#include "xla/service/gpu/transforms/sort_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
@@ -227,14 +228,6 @@ absl::Status AMDGPUCompiler::AddConvAndGemmAutotuningPasses(
   return absl::OkStatus();
 }
 
-absl::Status AMDGPUCompiler::AddCustomKernelReplacementPasses(
-    HloPassPipeline* pipeline, const DebugOptions& debug_options) {
-  if (debug_options.xla_gpu_enable_cub_radix_sort()) {
-    pipeline->AddPass<SortRewriter>();
-  }
-  return absl::OkStatus();
-}
-
 AMDGPUCompiler::AMDGPUCompiler()
     : GpuCompiler(stream_executor::rocm::kROCmPlatformId,
                   amdgpu::TargetTriple(), amdgpu::DataLayout()) {}
@@ -263,6 +256,16 @@ AMDGPUCompiler::CompileTargetBinary(
   }
 
   return BackendCompileResult{"", std::move(hsaco)};
+}
+
+absl::Status AMDGPUCompiler::AddGemmFusionAutotuningPasses(
+    HloPassPipeline* pipeline, HloModule* hlo_module,
+    AutotuneConfig& autotune_config, tsl::thread::ThreadPool* thread_pool,
+    const MultiProcessKeyValueStore& key_value_store,
+    const se::SemanticVersion& toolkit_version) {
+  pipeline->AddPass<GemmFusionAutotuner>(autotune_config, toolkit_version,
+                                         thread_pool, key_value_store);
+  return absl::OkStatus();
 }
 
 }  // namespace gpu

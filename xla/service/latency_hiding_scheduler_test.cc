@@ -20,7 +20,6 @@ limitations under the License.
 #include <cstdlib>
 #include <functional>
 #include <iterator>
-#include <list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -2604,8 +2603,9 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
   // Extend AsyncTracker for a fake target with one target-defined resource
   class AsyncTrackerForMyTarget : public AsyncTracker {
     enum class MyTargetResourceType {
-      kTargetResource0 = 0,
-      kNumTargetResources = 1,
+      kTargetResource0 =
+          ResourceTypeToIndex(ResourceType::kTargetDefinedResourceTypeBegin),
+      kTargetResourceTypeEnd,
     };
 
    public:
@@ -2615,13 +2615,13 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
           target_resource0_limit_(target_resource0_limit) {}
 
     absl::string_view GetResourceName(int64_t resource_type) const override {
-      const int64_t first_target_resource = GetFirstTargetDefinedResource();
-      if (resource_type < first_target_resource) {
+      CHECK_LT(
+          resource_type,
+          ResourceTypeToIndex(MyTargetResourceType::kTargetResourceTypeEnd));
+      if (resource_type < GetTargetDefinedResourceTypeBegin()) {
         return AsyncTracker::GetResourceName(resource_type);
       }
-      CHECK_LE(resource_type,
-               first_target_resource + GetNumTargetDefinedResources());
-      switch (resource_type - first_target_resource) {
+      switch (resource_type) {
         case static_cast<int64_t>(MyTargetResourceType::kTargetResource0):
           return "kTargetResource0";
         default:
@@ -2631,13 +2631,13 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
 
     ResourceHazardType GetResourceHazardType(
         int64_t resource_type) const override {
-      const int64_t first_target_resource = GetFirstTargetDefinedResource();
-      if (resource_type < first_target_resource) {
+      CHECK_LT(
+          resource_type,
+          ResourceTypeToIndex(MyTargetResourceType::kTargetResourceTypeEnd));
+      if (resource_type < GetTargetDefinedResourceTypeBegin()) {
         return AsyncTracker::GetResourceHazardType(resource_type);
       }
-      CHECK_LE(resource_type,
-               first_target_resource + GetNumTargetDefinedResources());
-      switch (resource_type - first_target_resource) {
+      switch (resource_type) {
         case static_cast<int64_t>(MyTargetResourceType::kTargetResource0):
           return ResourceHazardType::kShareable;
         default:
@@ -2646,18 +2646,20 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
     }
 
     int64_t GetNumTargetDefinedResources() const override {
-      return static_cast<int64_t>(MyTargetResourceType::kNumTargetResources);
+      return ResourceTypeToIndex(MyTargetResourceType::kTargetResourceTypeEnd) -
+             ResourceTypeToIndex(ResourceType::kTargetDefinedResourceTypeBegin);
     }
 
     int64_t GetNumAvailableResources(int64_t resource_type) const override {
-      const int64_t first_target_resource =
-          AsyncTracker::GetFirstTargetDefinedResource();
-      CHECK_GE(resource_type, first_target_resource);
-      CHECK_LT(resource_type,
-               first_target_resource + GetNumTargetDefinedResources());
-      switch (resource_type - first_target_resource) {
+      CHECK_LT(
+          resource_type,
+          ResourceTypeToIndex(MyTargetResourceType::kTargetResourceTypeEnd));
+      if (resource_type < GetTargetDefinedResourceTypeBegin()) {
+        return AsyncTracker::GetNumAvailableResources(resource_type);
+      }
+      switch (resource_type) {
         case (static_cast<int64_t>(MyTargetResourceType::kTargetResource0)):
-          return static_cast<int64_t>(target_resource0_limit_);
+          return target_resource0_limit_;
         default:
           return 1;
       }
@@ -2675,7 +2677,7 @@ TEST_F(LatencyHidingSchedulerTest, AsyncTrackerTestForTargetDefinedResources) {
   CHECK_EQ(async_tracker_for_my_target.GetNumTargetDefinedResources(), 1);
   // Get the index of the target-defined resource
   const int64_t target_resource0_index =
-      static_cast<int64_t>(ResourceType::kTargetDefinedResourcesBound) + 1;
+      AsyncTracker::GetTargetDefinedResourceTypeBegin();
   // Check the name of the target-defined resource
   CHECK_EQ(async_tracker_for_my_target.GetResourceName(target_resource0_index),
            "kTargetResource0");
@@ -3161,7 +3163,7 @@ ENTRY %module {
         return ResourceHazardType::kSelective;
       }
       // The first target defined resource is defined as non-extendable.
-      if (resource_type == AsyncTracker::GetFirstTargetDefinedResource()) {
+      if (resource_type == AsyncTracker::GetTargetDefinedResourceTypeBegin()) {
         return ResourceHazardType::kNonextendable;
       }
       return AsyncTracker::GetResourceHazardType(resource_type);
@@ -3173,7 +3175,7 @@ ENTRY %module {
           AsyncTracker::GetResourcesFromInstructionImpl(hlo);
       // There is only one target defined resource (which is non-extendable).
       if (hlo.opcode() == HloOpcode::kAllGatherStart) {
-        result.push_back({AsyncTracker::GetFirstTargetDefinedResource(),
+        result.push_back({AsyncTracker::GetTargetDefinedResourceTypeBegin(),
                           ResourceUsageType::kResourceRelease});
       }
       return result;
@@ -3592,5 +3594,107 @@ ENTRY entry {
             GetIndex(new_instruction_sequence, "cp1d"));
   EXPECT_LT(GetIndex(new_instruction_sequence, "c0"),
             GetIndex(new_instruction_sequence, "cp2d"));
+}
+
+TEST_F(LatencyHidingSchedulerTest, SchedulingAnnotationMakesAnotherGroupReady) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+fused_computation {
+  param0 = f32[16,64,256]{2,1,0} parameter(0)
+  param1 = f32[16,64,256]{2,1,0} parameter(1)
+  ROOT c0 = f32[16,256,256]{2,1,0} convolution(param0, param1), window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="0"}
+}
+
+fused_computation.1 {
+  param0.1 = f32[16,256,256]{2,1,0} parameter(0)
+  param1.1 = f32[16,256,256]{2,1,0} parameter(1)
+  ROOT c1 = f32[1,256,256]{2,1,0} convolution(param0.1, param1.1), window={size=16 stride=15}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="1"}
+}
+
+ENTRY entry {
+  p0 = f32[16,64,256]{2,1,0} parameter(0)
+  p1 = f32[128,2048,2048]{2,1,0} parameter(1)
+  cp0s = (f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}, u32[], u32[]) collective-permute-start(p1), source_target_pairs={{1,0},{0,3},{3,2}}, frontend_attributes={_scheduling_group_id="0"}
+  cp0d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp0s), frontend_attributes={_scheduling_group_id="0"}
+  cp1s = (f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}, u32[], u32[]) collective-permute-start(cp0d), source_target_pairs={{1,0},{0,3},{3,2}}, frontend_attributes={_scheduling_group_id="1"}
+  cp1d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp1s), frontend_attributes={_scheduling_group_id="1"}
+  f0 = f32[16,256,256]{2,1,0} fusion(p0, p0), kind=kOutput, calls=fused_computation, frontend_attributes={_scheduling_group_id="0"}
+  f1 = f32[1,256,256]{2,1,0} fusion(f0, f0), kind=kOutput, calls=fused_computation.1, frontend_attributes={_scheduling_group_id="1"}
+  ROOT tuple = (f32[128,2048,2048]{2,1,0}, f32[1,256,256]{2,1,0}) tuple(cp1d, f1) 
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.aggressive_scheduling_policies = true;
+  EXPECT_TRUE(RunScheduler(hlo_module.get(), sched_config,
+                           std::make_unique<TestLatencyEstimator>())
+                  .ok());
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(hlo_module->entry_computation()).instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+
+  // cp0 and cp1 overlap f0 and f1, respectively.
+  EXPECT_LT(GetIndex(new_instruction_sequence, "cp0s"),
+            GetIndex(new_instruction_sequence, "f0"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "f0"),
+            GetIndex(new_instruction_sequence, "cp0d"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "cp1s"),
+            GetIndex(new_instruction_sequence, "f1"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "f1"),
+            GetIndex(new_instruction_sequence, "cp1d"));
+}
+
+TEST_F(LatencyHidingSchedulerTest, AnnotatedRoot) {
+  absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+fused_computation {
+  param0 = f32[16,64,256]{2,1,0} parameter(0)
+  param1 = f32[16,64,256]{2,1,0} parameter(1)
+  ROOT c0 = f32[16,256,256]{2,1,0} convolution(param0, param1), window={size=16 stride=15 lhs_dilate=16}, dim_labels=0fb_0io->0fb, frontend_attributes={_scheduling_group_id="0"}
+}
+
+ENTRY entry {
+  p0 = f32[16,64,256]{2,1,0} parameter(0)
+  p1 = f32[128,2048,2048]{2,1,0} parameter(1)
+  cp0s = (f32[128,2048,2048]{2,1,0}, f32[128,2048,2048]{2,1,0}, u32[], u32[]) collective-permute-start(p1), source_target_pairs={{1,0},{0,3},{3,2}}, frontend_attributes={_scheduling_group_id="0"}
+  cp0d = f32[128,2048,2048]{2,1,0} collective-permute-done(cp0s), frontend_attributes={_scheduling_group_id="0"}
+  ROOT f0 = f32[16,256,256]{2,1,0} fusion(p0, p0), kind=kOutput, calls=fused_computation, frontend_attributes={_scheduling_group_id="0"} 
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
+  HloSchedule& module_schedule = hlo_module->schedule();
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto sched_config = GetDefaultSchedConfig();
+  sched_config.aggressive_scheduling_policies = true;
+  EXPECT_TRUE(RunScheduler(hlo_module.get(), sched_config,
+                           std::make_unique<TestLatencyEstimator>())
+                  .ok());
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+
+  std::vector<HloInstruction*> new_instruction_sequence =
+      module_schedule.sequence(hlo_module->entry_computation()).instructions();
+  if (VLOG_IS_ON(1)) {
+    for (auto* new_i : new_instruction_sequence) {
+      VLOG(1) << new_i->ToString();
+    }
+  }
+
+  // cp0 overlaps f0.
+  EXPECT_LT(GetIndex(new_instruction_sequence, "cp0s"),
+            GetIndex(new_instruction_sequence, "f0"));
+  EXPECT_LT(GetIndex(new_instruction_sequence, "f0"),
+            GetIndex(new_instruction_sequence, "cp0d"));
 }
 }  // namespace xla

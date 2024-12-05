@@ -87,7 +87,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cudnn_vectorize_convolutions.h"
 #include "xla/service/gpu/transforms/dot_sparsity_rewriter.h"
 #include "xla/service/gpu/transforms/gpusolver_rewriter.h"
-#include "xla/service/gpu/transforms/sort_rewriter.h"
 #include "xla/service/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/service/hlo_cse.h"
 #include "xla/service/hlo_module_config.h"
@@ -418,14 +417,6 @@ absl::Status NVPTXCompiler::AddGemmFusionAutotuningPasses(
   return absl::OkStatus();
 }
 
-absl::Status NVPTXCompiler::AddCustomKernelReplacementPasses(
-    HloPassPipeline* pipeline, const DebugOptions& debug_options) {
-  if (debug_options.xla_gpu_enable_cub_radix_sort()) {
-    pipeline->AddPass<SortRewriter>();
-  }
-  return absl::OkStatus();
-}
-
 absl::Status NVPTXCompiler::RunCudnnCompilerPasses(
     HloModule* module, se::StreamExecutor* stream_exec,
     BinaryMap* dnn_compiled_graphs) {
@@ -569,8 +560,12 @@ NVPTXCompiler::NVPTXCompiler()
     : GpuCompiler(stream_executor::cuda::kCudaPlatformId, nvptx::TargetTriple(),
                   nvptx::DataLayout()) {}
 
-HloDataflowAnalysis::CanShareBuffer NVPTXCompiler::GetCanShareBuffer() const {
-  return &CanShareBufferHint;
+HloDataflowAnalysis::CanShareBuffer NVPTXCompiler::GetCanShareBuffer(
+    const se::DeviceDescription& device_description) const {
+  return [&](const HloInstruction* user, const HloInstruction* operand,
+             const ShapeIndex& user_index) {
+    return CanShareBufferHint(user, operand, user_index, device_description);
+  };
 }
 
 constexpr const uint8_t kPtxPrefix[] = {'P', 'T', 'X', ':', ' '};

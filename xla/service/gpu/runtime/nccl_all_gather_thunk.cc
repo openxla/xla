@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -90,13 +91,13 @@ NcclAllGatherStartThunk::NcclAllGatherStartThunk(
 
 absl::Status NcclAllGatherStartThunk::RunNcclCollective(
     const ExecuteParams& params, se::Stream& stream,
-    NcclCommHandleWrapper comm_wrapper) {
+    CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, buffers_,
                              config_.config.operand_element_type));
   return xla::gpu::RunAllGather(nccl_api(), device_buffers, stream,
-                                comm_wrapper.comm_handle);
+                                comm_handle.comm);
 }
 
 absl::Status RunAllGather(NcclApi* nccl_api,
@@ -110,9 +111,9 @@ absl::Status RunAllGather(NcclApi* nccl_api,
   TF_RETURN_IF_ERROR(nccl_api->GroupStart());
 
   for (DeviceBufferPair& buffer : buffers) {
-    TF_RETURN_IF_ERROR(nccl_api->AllGather(
+    TF_RETURN_IF_ERROR(comm->AllGather(
         buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-        buffer.element_count, comm, &stream));
+        buffer.element_count, GpuCollectives::On(stream)));
   }
 
   TF_RETURN_IF_ERROR(nccl_api->GroupEnd());

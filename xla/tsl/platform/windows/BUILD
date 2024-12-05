@@ -1,8 +1,3 @@
-load(
-    "@tsl//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
-
 # Tensorflow windows-specific implementations of tensorflow/core/platform libraries.
 load(
     "//xla/tsl:tsl.bzl",
@@ -10,6 +5,10 @@ load(
     "tsl_copts",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -232,7 +231,7 @@ cc_library(
 cc_library(
     name = "subprocess",
     srcs = ["subprocess.cc"],
-    hdrs = ["@tsl//tsl/platform:subprocess.h"],
+    hdrs = ["//xla/tsl/platform:subprocess.h"],
     tags = [
         "manual",
         "no_oss",

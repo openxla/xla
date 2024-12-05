@@ -20,11 +20,11 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/fusions/triton/triton_fusion_emitter.h"
 #include "xla/service/gpu/fusions/triton/triton_fusion_emitter_legacy_matmul.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "tsl/platform/test.h"
 
@@ -71,7 +71,7 @@ TEST(TritonStub, CallStubApi) {
 TEST(TritonStub, CallLegacyMatMulApis) {
   HloConstantInstruction constant(Literal{});
   auto adaptor = HloFusionAdaptor::ForInstruction(&constant);
-  EXPECT_FALSE(GetMatMulLaunchDimensions({}, *adaptor.get(), {}).ok());
+  EXPECT_FALSE(GetMatMulLaunchDimensions({}, *adaptor.get(), {}, {}).ok());
 
   mlir::MLIRContext context;
   mlir::OpBuilder builder(&context);

@@ -1,11 +1,13 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = internal_visibility([":friends"]),
     licenses = ["notice"],
 )
 
@@ -13,6 +15,140 @@ package_group(
     name = "friends",
     includes = [
         "//xla:friends",
+    ],
+)
+
+cc_library(
+    name = "gpu_clique",
+    srcs = ["gpu_clique.cc"],
+    hdrs = ["gpu_clique.h"],
+    deps = [
+        ":gpu_clique_key",
+        "//xla/core/collectives:clique",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/service:lockable",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
+    name = "gpu_clique_key",
+    srcs = ["gpu_clique_key.cc"],
+    hdrs = ["gpu_clique_key.h"],
+    deps = [
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/service:global_device_id",
+        "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_clique_key_test",
+    srcs = ["gpu_clique_key_test.cc"],
+    deps = [
+        ":gpu_clique_key",
+        "//xla/core/collectives:clique_id",
+        "//xla/service:global_device_id",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "gpu_clique_locking",
+    srcs = ["gpu_clique_locking.cc"],
+    hdrs = ["gpu_clique_locking.h"],
+    deps = [
+        ":gpu_clique",
+        ":gpu_clique_key",
+        ":gpu_collectives",
+        "//xla:debug_options_flags",
+        "//xla:executable_run_options",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:util",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/service:global_device_id",
+        "//xla/service:lockable",
+        "//xla/service:rendezvous",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:node_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:hash",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "gpu_collectives",
+    srcs = ["gpu_collectives.cc"],
+    hdrs = ["gpu_collectives.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:communicator",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:casts",
+    ],
+)
+
+cc_library(
+    name = "gpu_collectives_stub",
+    hdrs = ["gpu_collectives_stub.h"],
+    deps = [
+        ":gpu_collectives",
+        "//xla:util",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/service/gpu/runtime:nccl_api_header",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
     ],
 )
 
@@ -29,6 +165,46 @@ cc_library(
 
 # TODO(b/380457503): Update visibility to "//visibility:private".
 cc_library(
+    name = "nccl_collectives",
+    srcs = if_gpu_is_configured(["nccl_collectives.cc"]),
+    hdrs = if_gpu_is_configured(["nccl_collectives.h"]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    deps = [
+        ":gpu_collectives",
+        ":nccl_communicator",
+        ":nccl_errors",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/core/collectives",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/service/gpu/runtime:nccl_api_header",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
+    ] + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rccl",
+    ]),
+)
+
+# TODO(b/380457503): Update visibility to "//visibility:private".
+cc_library(
     name = "nccl_communicator",
     srcs = if_gpu_is_configured(["nccl_communicator.cc"]),
     hdrs = if_gpu_is_configured(["nccl_communicator.h"]),
@@ -38,10 +214,22 @@ cc_library(
         "TENSORFLOW_USE_ROCM=1",
     ]),
     deps = [
+        ":gpu_collectives",
         ":nccl_errors",
+        "//xla:shape_util",
+        "//xla:util",
         "//xla/core/collectives:communicator",
+        "//xla/service:collective_ops_utils",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:gpu_stream",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:statusor",
     ] + if_cuda_is_configured([
         "@local_config_nccl//:nccl",
     ]) + if_rocm_is_configured([

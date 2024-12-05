@@ -96,13 +96,6 @@ class GpuCompilerTest : public HloTestBase {
     return tensorflow::down_cast<GpuCompiler*>(compiler)
         ->RunPostSchedulingPipelines(module, 4 * 1024 * 1024, gpu_device_info);
   }
-
-  const stream_executor::GpuComputeCapability& GpuComputeComp() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
 };
 
 TEST_F(GpuCompilerTest, CompiledProgramsCount) {
@@ -1117,10 +1110,10 @@ TEST_F(GpuCompilerTest, TestFlag_xla_gpu_unsafe_pipelined_loop_annotator) {
     })";
 
   const char* kExpected = R"(
-  // CHECK: {{.+}} = send({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{3,0}},_xla_send_recv_validation={{[{]}}{3,9}}}
-  // CHECK: {{.+}} = send({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{0,1},{1,2},{2,3}},_xla_send_recv_validation={{[{]}}{0,6},{1,7},{2,8}}}
   // CHECK: {{.+}} = recv({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{3,0}},_xla_send_recv_validation={{[{]}}{3,9}}}
+  // CHECK: {{.+}} = send({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{3,0}},_xla_send_recv_validation={{[{]}}{3,9}}}
   // CHECK: {{.+}} = recv({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{0,1},{1,2},{2,3}},_xla_send_recv_validation={{[{]}}{0,6},{1,7},{2,8}}}
+  // CHECK: {{.+}} = send({{.+}}), {{.+}}, frontend_attributes={_xla_send_recv_source_target_pairs={{[{]}}{0,1},{1,2},{2,3}},_xla_send_recv_validation={{[{]}}{0,6},{1,7},{2,8}}}
   )";
 
   DebugOptions debug_options;
@@ -1244,10 +1237,6 @@ using GpuCompilerPassTest = GpuCompilerTest;
 
 TEST_F(GpuCompilerPassTest,
        GpuCompilerRunsTritonGemmRewriterByDefaultFromAmpere) {
-  if (std::holds_alternative<se::RocmComputeCapability>(GpuComputeComp())) {
-    GTEST_SKIP() << "TritonGemmRewriter disabled for ROCm until autotuner "
-                 << "is included.";
-  }
   auto cc = backend()
                 .default_stream_executor()
                 ->GetDeviceDescription()

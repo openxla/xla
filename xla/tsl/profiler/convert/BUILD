@@ -1,9 +1,9 @@
-load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
-load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(

@@ -93,20 +93,6 @@ class TritonTest : public GpuCodegenTest {
 
 class TritonGemmTest : public TritonTest {
  public:
-  se::GpuComputeCapability GetGpuComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .gpu_compute_capability();
-  }
-
-  void SetUp() override {
-    if (std::holds_alternative<se::RocmComputeCapability>(
-            GetGpuComputeCapability())) {
-      GTEST_SKIP() << "Not supported on ROCm until Triton is re-enabled.";
-    }
-  }
-
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = TritonTest::GetDebugOptionsForTest();
     // Do not fall back to cuBLAS, we are testing Triton.
@@ -173,24 +159,6 @@ ENTRY e {
 })";
 
   EXPECT_TRUE(Run(kHloText, /*run_hlo_passes=*/false));
-}
-
-TEST_F(TritonGemmTest, RejectDotInt4HLO) {
-  constexpr std::string_view kHloText = R"(
-    HloModule t
-
-    ENTRY main {
-      lhs = s4[16,32,64]{2,1,0} parameter(0)
-      rhs = s4[16,64,16]{2,1,0} parameter(1)
-      ROOT dot = s4[16,32,16]{2,1,0} dot(lhs, rhs),
-          lhs_contracting_dims={2},
-          rhs_contracting_dims={1},
-          lhs_batch_dims={0},
-          rhs_batch_dims={0}
-    }
-  )";
-  EXPECT_THAT(GetOptimizedModule(kHloText).status(),
-              StatusIs(tsl::error::INVALID_ARGUMENT));
 }
 
 TEST_F(TritonGemmTest, Int4NegatePlusConvertHLO) {

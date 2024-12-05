@@ -40,11 +40,11 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusion_pipeline.h"
 #include "xla/service/gpu/fusions/triton/triton_support.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -331,9 +331,9 @@ absl::Status RunFusionPipeline(
   // transform reductions.
   reduction_pipeline.AddPass<ReductionDimensionGrouper>();
   reduction_pipeline.AddPass<HloPassFix<ReductionSplitter>>(
+      device_info,
       /*ignore_small_reduce_dims=*/false);
-  reduction_pipeline.AddPass<HloPassFix<TreeReductionRewriter>>(
-      device_info.gpu_compute_capability());
+  reduction_pipeline.AddPass<HloPassFix<TreeReductionRewriter>>(device_info);
 
   TF_RETURN_IF_ERROR(reduction_pipeline.Run(module).status());
 

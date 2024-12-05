@@ -1,10 +1,4 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
-    # copybara:uncomment "tf_pyclif_proto_library",
-)
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
@@ -12,6 +6,12 @@ load("//xla:package_groups.bzl", "xla_package_groups")
 load("//xla:xla.bzl", "xla_bzl_library", "xla_cc_test", "xla_py_proto_library")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_proto_library",
+    # copybara:uncomment "tf_pyclif_proto_library",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -264,16 +264,6 @@ xla_cc_test(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
-    ],
-)
-
-cc_library(
-    name = "status",
-    hdrs = ["status.h"],
-    deprecation = "Use @com_google_absl//absl/status instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/status",
     ],
 )
 
@@ -1111,12 +1101,12 @@ xla_cc_test(
     deps =
         [
             ":parse_flags_from_env",
+            "//xla/tsl/platform:subprocess",
             "//xla/tsl/util:command_line_flags",
             "@com_google_absl//absl/strings:str_format",
             "@tsl//tsl/platform:env",
             "@tsl//tsl/platform:logging",
             "@tsl//tsl/platform:macros",
-            "@tsl//tsl/platform:subprocess",
             "@tsl//tsl/platform:test",
         ],
 )
@@ -1158,8 +1148,8 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/backends/cpu:alignment",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
     ],
 )
 

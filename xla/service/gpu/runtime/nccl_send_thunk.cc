@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/computation_placer.h"
@@ -65,9 +66,9 @@ absl::Status NcclSendThunk::Initialize(const InitializeParams& params) {
   return absl::OkStatus();
 }
 
-absl::Status NcclSendThunk::RunNcclCollective(
-    const ExecuteParams& params, se::Stream& stream,
-    NcclCommHandleWrapper comm_wrapper) {
+absl::Status NcclSendThunk::RunNcclCollective(const ExecuteParams& params,
+                                              se::Stream& stream,
+                                              CommunicatorHandle comm_handle) {
   TF_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params, {buffer_},
@@ -96,7 +97,7 @@ absl::Status NcclSendThunk::RunNcclCollective(
           << ", current_id: " << current_id << ", group mode: "
           << CollectiveOpGroupModeToString(config_.config.group_mode);
   TF_RETURN_IF_ERROR(MaybeRegisterBuffers(nccl_api(), stream.parent(), {buffer},
-                                          comm_wrapper.comm_handle));
+                                          comm_handle.comm));
 
   const std::optional<int64_t> target_id = source_target.target;
   se::DeviceMemoryBase src_addr = buffer.source_buffer;
@@ -129,9 +130,9 @@ absl::Status NcclSendThunk::RunNcclCollective(
     }
 
     if (should_run) {
-      TF_RETURN_IF_ERROR(nccl_api()->Send(src_addr, buffer.element_type,
-                                          buffer.element_count, *target_id,
-                                          comm_wrapper.comm_handle, &stream));
+      TF_RETURN_IF_ERROR(comm_handle.comm->Send(
+          src_addr, buffer.element_type, buffer.element_count, *target_id,
+          GpuCollectives::On(stream)));
     }
   }
 

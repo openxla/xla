@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 licenses(["notice"])
 

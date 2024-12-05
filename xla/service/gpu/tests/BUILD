@@ -5,10 +5,6 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "tf_cuda_tests_tags",
-)
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load(
     "//xla:xla.bzl",
@@ -18,6 +14,10 @@ load("//xla/stream_executor:build_defs.bzl", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "tf_cuda_tests_tags",
+)
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -320,15 +320,15 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_v100",
+        "gpu_b100",
         "gpu_amd_any",
-    ] + if_oss(["gpu_b100"]),
+    ],
     deps = [
         ":gpu_codegen_test",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
-        "//xla/tests:verified_hlo_module",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -613,8 +613,8 @@ lit_test_suite(
 #     srcs = ["xla-opt.cc"],
 #     deps = [
 #         "//xla/service/gpu/fusions/transforms:passes",
-#         "//xla/service/gpu/fusions/triton:passes",
 #         "//xla/service/gpu/fusions/triton:xla_triton",
+#         "//xla/service/gpu/fusions/triton:xla_triton_passes",
 #         "@llvm-project//mlir:AllExtensions",
 #         "@llvm-project//mlir:MlirOptLib",
 #         "@triton//:AllPassesAndDialects",
@@ -684,10 +684,10 @@ xla_test(
     srcs = ["tensor_float_32_global_var_test.cc"],
     backends = [
         "gpu_a100",
+        "gpu_b100",
         "gpu_amd_any",
     ] + if_oss([
         "gpu_any",
-        "gpu_b100",
     ]),
     deps = [
         "//xla:error_spec",
@@ -703,7 +703,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     tags = ["cuda-only"],
     deps = if_cuda_is_configured(
         [
@@ -747,7 +748,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     shard_count = 2,
     deps = [
         ":gpu_codegen_test",

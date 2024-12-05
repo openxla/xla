@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/literal.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dot_as_convolution_util.h"
 #include "xla/shape.h"
@@ -42,10 +43,22 @@ limitations under the License.
 namespace xla {
 namespace hlo_sharding_util {
 
+// Class representing a formatting step
+// TODO(tongfei): We have a similar thing in tpu_cross_replica_sharding_util,
+// but it is buried in sharding config specific to cross-replica sharding.
+// Refactoring could allow us to unify.
+struct FormattingStep {
+  Shape input_shape;
+  Shape output_shape;
+  std::optional<Shape> reverse_input_shape;
+  HloOpcode formatting_opcode;
+  HloInstruction* padding_value;
+};
+
 struct GatherScatterDims {
-  absl::InlinedVector<int64_t, 1> operand_dims;
-  absl::InlinedVector<int64_t, 1> indices_dims;
-  absl::InlinedVector<int64_t, 1> output_dims;
+  DimensionVector operand_dims;
+  DimensionVector indices_dims;
+  DimensionVector output_dims;
 
   void append(const GatherScatterDims& other);
 
@@ -56,6 +69,16 @@ struct GatherScatterDims {
       int64_t index_vector_dim,
       absl::Span<const int64_t> offset_or_window_dims);
 };
+
+// Apply the formatting steps.
+HloInstruction* FormatShape(HloInstruction* data,
+                            absl::Span<const FormattingStep> formatting_steps,
+                            HloComputation* computation);
+
+// Reverse the formatting steps.
+HloInstruction* ReverseFormatShape(
+    HloInstruction* data, absl::Span<const FormattingStep> formatting_steps,
+    HloComputation* computation);
 
 // Determines if the first operand 'potential_subsharding' is a subsharding of
 // the second operand 'sharding'. Subsharding means that the tiles in
@@ -168,15 +191,13 @@ bool ContainsTileSharding(const HloModule& module);
 
 // Returns the preferred output sharding for a gather op based on the sharding
 // of the indices.
-HloSharding GatherOutputShardingFromIndex(
-    const HloSharding& index_sharding, const HloInstruction* hlo,
-    bool consider_explicit_batch_dims = true);
+HloSharding GatherOutputShardingFromIndex(const HloSharding& index_sharding,
+                                          const HloInstruction* hlo);
 
 // Returns the preferred index sharding for a gather op based on the sharding
 // of the output.
-HloSharding GatherIndexShardingFromOutput(
-    const HloSharding& output_sharding, const HloInstruction* hlo,
-    bool consider_explicit_batch_dims = true);
+HloSharding GatherIndexShardingFromOutput(const HloSharding& output_sharding,
+                                          const HloInstruction* hlo);
 
 // Returns a new HloSharding for a gather op so that only non offset dimensions
 // are sharded. Assume "result" is returned by this function. It is ensured that
@@ -187,14 +208,12 @@ HloSharding GatherEffectiveOutputSharding(const HloInstruction& hlo);
 // Returns the preferred index sharding for a scatter op based on the sharding
 // of the data.
 HloSharding ScatterIndexShardingFromUpdate(
-    const HloSharding& update_sharding, const HloScatterInstruction* scatter,
-    bool consider_explicit_batch_dims = true);
+    const HloSharding& update_sharding, const HloScatterInstruction* scatter);
 
 // Returns the preferred data sharding for a scatter op based on the sharding
 // of the index.
 HloSharding ScatterUpdateShardingFromIndex(
-    const HloSharding& index_sharding, const HloScatterInstruction* scatter,
-    bool consider_explicit_batch_dims = true);
+    const HloSharding& index_sharding, const HloScatterInstruction* scatter);
 
 // Returns a new index sharding for a scatter op so that we only shard on first
 // "number of scatter_window_dims" dimensions. Assume "result" is returned by
@@ -270,14 +289,6 @@ std::optional<HloSharding> ScatterUpdateShardingFromOutputParallelDimensions(
     const HloSharding& output_sharding, const HloScatterInstruction& scatter,
     const CallGraph& call_graph);
 
-// Returns an output sharding of gather or update operand sharding of scatter by
-// passing through the indices' sharding on index parallel dimensions.
-HloSharding GatherOutputOrScatterUpdateShardingFromIndicesParallelDimensions(
-    const HloSharding& indices_sharding,
-    const int64_t output_or_update_shape_rank,
-    absl::Span<const int64_t> indices_parallel_dims,
-    absl::Span<const int64_t> output_or_update_parallel_dims);
-
 // Returns an identity value and an HloOpcode for reduce computation of scatter
 // instruction.
 // - If computation is add/or, return 0/false with corresponding op code;
@@ -323,6 +334,23 @@ std::optional<HloSharding> TransposeShardingWithCollapsedDims(
     const HloSharding& source, absl::Span<int64_t const> src_to_tgt,
     absl::Span<int64_t const> tgt_to_src);
 
+// Given a `source_sharding`, preserve the tiles along the `source_dims` and
+// replicate the rest. The `target_dims` are used to determine the order of the
+// dimensions in the resulting sharding. If `source_dims` and `target_dims` are
+// in the different order (i.e., different ArgSort results), we need to
+// transpose the tile assignment.
+//
+// Given the following input,
+//   * source_sharding = {devices=[2,3,5,7,11]<=[2310]}
+//   * source_dims = [2, 4, 1]
+//   * target_dims = [2, 1, 3]
+//   * target_shape_rank = 5
+// The result shoule be {devices=[1,11,5,3,1,14]<=[2,3,5,7,11]T(4,2,1,0,3)
+// last_tile_dim_replicate}.
+HloSharding PropagateShardingAlongDimsAndReplicateOthers(
+    const HloSharding& source_sharding, absl::Span<const int64_t> source_dims,
+    absl::Span<const int64_t> target_dims, int64_t target_shape_rank);
+
 // Returns the iota dimension if maybe_iota is an kIota instruction or
 // equivalent to kIota.
 std::optional<int64_t> GetDimensionForIota(const HloInstruction* maybe_iota,
@@ -346,32 +374,27 @@ std::optional<GatherScatterDims> GetGatherParallelBatchDims(
 std::optional<GatherScatterDims> GetScatterParallelBatchDims(
     const HloInstruction& hlo, const CallGraph& call_graph);
 
-// Returns the operand pass-through dimensions for gather operand.
-absl::InlinedVector<int64_t, 1> GetGatherOperandPassthroughOperandDims(
-    const Shape& operand_shape, const HloInstruction& hlo,
-    absl::Span<const int64_t> slice_sizes);
-
-// Returns the operand pass-through dimensions for scatter operand(s).
-absl::InlinedVector<int64_t, 1> GetScatterOperandPassthroughOperandDims(
-    const Shape& operand_shape, const HloSharding& operand_sharding,
+// Returns the operand pass-through dimensions for a gather instruction.
+GatherScatterDims GetGatherOperandPassthroughDims(
     const HloInstruction& hlo, absl::Span<const int64_t> slice_sizes);
 
-absl::InlinedVector<int64_t, 1> GetGatherOperandPassthroughOutputDims(
-    const Shape& output_shape, const Shape& operand_shape,
+// Returns the operand pass-through dimensions for a scatter instruction.
+GatherScatterDims GetScatterOperandPassthroughDims(
     const HloInstruction& hlo, absl::Span<const int64_t> slice_sizes);
-
-absl::InlinedVector<int64_t, 1> GetScatterOperandPassthroughUpdateDims(
-    const Shape& update_shape, const Shape& operand_shape,
-    const HloSharding& operand_sharding, const HloInstruction& hlo,
-    absl::Span<const int64_t> slice_sizes);
 
 // Returns the dims along which sharding can be propagated between indices and
-// output/update for gather/scatter operations.
+// output/update for gather/scatter operations. `excluded_indices_dims` are
+// excluded from the result.
 GatherScatterDims GetGatherConnectedDimsAcrossIndicesAndOutput(
-    int64_t indices_rank, int64_t index_vector_dim,
-    absl::Span<const int64_t> indices_batching_dims, int64_t output_rank,
+    int64_t indices_rank, int64_t index_vector_dim, int64_t output_rank,
     absl::Span<const int64_t> offset_dims,
-    bool consider_explicit_batch_dims = true);
+    absl::Span<const int64_t> excluded_indices_dims = {});
+
+// Returns the index pass-through dimensions, which are defined by
+// GetGatherConnectedDimsAcrossIndicesAndOutput - ExplictBatchDims -
+// GetGatherScatterBatchParallelDims.
+GatherScatterDims GetGatherScatterIndexPassThroughDims(
+    const HloInstruction& hlo, const CallGraph& call_graph);
 
 // Infer output sharding on index parallel dimensions for gather/scatter from
 // gather operand/indices or scatter operands/indices/updates.

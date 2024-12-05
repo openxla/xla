@@ -1,8 +1,8 @@
-load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
@@ -128,6 +128,17 @@ cc_library(
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
+    ],
+)
+
+cc_library(
+    name = "trace_filter_utils",
+    hdrs = ["trace_filter_utils.h"],
+    copts = tf_profiler_copts(),
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
     ],
 )
 

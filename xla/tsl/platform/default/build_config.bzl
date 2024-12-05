@@ -3,13 +3,13 @@
 load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
 load("@com_google_protobuf//:protobuf.bzl", "proto_gen")
 load("@tsl//third_party/py/rules_pywrap:pywrap.bzl", "use_pywrap_rules")
-load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
 load(
     "@xla//xla/tsl:tsl.bzl",
     "clean_dep",
     "if_not_windows",
     "if_tsl_link_protobuf",
 )
+load("@xla//xla/tsl/platform:build_config_root.bzl", "if_static")
 
 def well_known_proto_libs():
     """Set of standard protobuf protos, like Any and Timestamp.
