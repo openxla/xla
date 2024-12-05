@@ -22,11 +22,7 @@ jobs:
       - name: Run Benchmarks
         working-directory: openxla
         continue-on-error: true
-        run: |
-          ./bazel-bin/xla/tools/run_hlo_module \
-              --input_format=hlo \ 
-              --platform=cpu \
-              xla/tests/fuzz/rand_000000.hlo
+        run: ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU xla/tests/fuzz/rand_000000.hlo
 
       - name: Upload Results (optional)
         uses: actions/upload-artifact@v3
