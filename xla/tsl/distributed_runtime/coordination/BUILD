@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl:tsl.bzl", "if_oss", "internal_visibility", "tsl_gpu_library")
 load("//xla/tsl:tsl.default.bzl", "tsl_grpc_cc_dependencies")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library", "tsl_cc_test")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],

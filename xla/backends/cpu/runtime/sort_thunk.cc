@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/call_once.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
@@ -39,8 +40,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
@@ -115,8 +116,7 @@ SortThunk::SortThunk(Info info, absl::Span<const Input> inputs,
       dimension_(dimension),
       is_stable_(is_stable),
       direction_(direction),
-      less_than_(std::move(less_than)),
-      less_than_ptr_(&*less_than_) {}
+      less_than_(std::move(less_than)) {}
 
 SortThunk::SortThunk(Info info, absl::Span<const Input> inputs,
                      int64_t dimension, bool is_stable,
@@ -127,8 +127,7 @@ SortThunk::SortThunk(Info info, absl::Span<const Input> inputs,
       dimension_(dimension),
       is_stable_(is_stable),
       direction_(direction),
-      comparator_name_(std::move(comparator_name)),
-      less_than_ptr_(nullptr) {}
+      comparator_name_(std::move(comparator_name)) {}
 
 namespace {
 
@@ -625,44 +624,18 @@ static absl::Status SortInplace(
     // Sorts array using builtin comparator functor
     auto builtin_sort = [&](PrimitiveType type,
                             SortThunk::SortDirection direction) {
-      switch (type) {
-        case S8:
-          Sort1DArrInplace<S8>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case S16:
-          Sort1DArrInplace<S16>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case S32:
-          Sort1DArrInplace<S32>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case S64:
-          Sort1DArrInplace<S64>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case U8:
-          Sort1DArrInplace<U8>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case U16:
-          Sort1DArrInplace<U16>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case U32:
-          Sort1DArrInplace<U32>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case U64:
-          Sort1DArrInplace<U64>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case F16:
-          Sort1DArrInplace<F16>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case F32:
-          Sort1DArrInplace<F32>(sort_dims, offset, data, is_stable, direction);
-          break;
-        case F64:
-          Sort1DArrInplace<F64>(sort_dims, offset, data, is_stable, direction);
-          break;
-        default:
-          sort(std::integral_constant<size_t, 1>{});
-          break;
-      }
+      primitive_util::ArrayTypeSwitch<void>(
+          [&](auto cst_type) {
+            if constexpr ((primitive_util::IsFloatingPointType(cst_type) ||
+                           primitive_util::IsIntegralType(cst_type)) &&
+                          primitive_util::BitWidth(cst_type) >= 8) {
+              Sort1DArrInplace<cst_type>(sort_dims, offset, data, is_stable,
+                                         direction);
+            } else {
+              sort(std::integral_constant<size_t, 1>{});
+            }
+          },
+          type);
     };
 
     // use "sort" for statically known number of sorted inputs (expected to be
@@ -789,25 +762,32 @@ tsl::AsyncValueRef<SortThunk::ExecuteEvent> SortThunk::Execute(
                                   input.slice.ToString(), data.back().opaque());
   }
 
-  LessThan* less_than = less_than_ptr_.load();
-
   // Because thunks are owned by a parent CpuExecutable, we can safely assume
   // that comparator pointer will not change after we find it the first time,
   // and we can create a comparator adaptor to a LessThan function.
-  if (ABSL_PREDICT_FALSE(less_than == nullptr)) {
-    TF_ASSIGN_OR_RETURN(
-        FunctionRegistry::Comparator comparator,
-        params.function_registry->FindComparator(comparator_name_));
+  absl::call_once(less_than_init_flag_, [&]() {
+    if (less_than_.ok()) {
+      // `less_than_` may already be initialized in the constructor.
+      return;
+    }
+    absl::StatusOr<FunctionLibrary::Comparator*> comparator =
+        params.function_library->ResolveFunction<FunctionLibrary::Comparator>(
+            comparator_name_);
 
-    absl::MutexLock lock(&mutex_);
-    less_than_ = [comparator](const void** data) {
-      bool result;
-      comparator(&result, nullptr, data, nullptr, nullptr, nullptr);
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&result, sizeof(result));
-      return result;
-    };
-    less_than_ptr_.store(less_than = &*less_than_);
-  }
+    if (ABSL_PREDICT_TRUE(comparator.ok())) {
+      less_than_ = [comparator](const void** data) {
+        bool result;
+        (*comparator)(&result, nullptr, data, nullptr, nullptr, nullptr);
+        ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&result, sizeof(result));
+        return result;
+      };
+    } else {
+      less_than_ = std::move(comparator.status());
+    }
+  });
+
+  TF_RETURN_IF_ERROR(less_than_.status());
+  LessThan* less_than = &less_than_.value();
 
   TF_RETURN_IF_ERROR(SortInplace(absl::MakeSpan(data), shapes, dimension_,
                                  is_stable_, less_than, direction_));

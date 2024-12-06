@@ -1,8 +1,8 @@
-load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
@@ -132,6 +132,17 @@ cc_library(
 )
 
 cc_library(
+    name = "trace_filter_utils",
+    hdrs = ["trace_filter_utils.h"],
+    copts = tf_profiler_copts(),
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
     name = "xplane_visitor",
     srcs = ["xplane_visitor.cc"],
     hdrs = ["xplane_visitor.h"],
@@ -157,6 +168,7 @@ cc_library(
     deps = [
         ":math_utils",
         ":timespan",
+        ":xplane_schema",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
@@ -499,6 +511,7 @@ filegroup(
     name = "mobile_srcs_no_runtime",
     srcs = [
         "no_init.h",
+        "trace_filter_utils.h",
     ],
     compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],

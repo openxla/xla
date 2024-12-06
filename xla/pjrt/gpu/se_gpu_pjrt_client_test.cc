@@ -18,6 +18,7 @@ limitations under the License.
 #include <stdlib.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -65,17 +66,18 @@ limitations under the License.
 #include "xla/test.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/subprocess.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
+#include "tsl/platform/mem.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/status_matchers.h"
 #include "tsl/platform/statusor.h"
-#include "tsl/platform/subprocess.h"
 #include "tsl/platform/threadpool.h"
 
 namespace xla {
@@ -441,6 +443,49 @@ TEST(StreamExecutorGpuClientTest, ForwardUserDataToFfiHandler) {
       *result_literal));
 }
 
+static absl::Status MemsetFromAttr(
+    se::Stream* stream, float attr,
+    ffi::Result<ffi::BufferR1<PrimitiveType::F32>> result) {
+  uint32_t pattern;
+  std::memcpy(&pattern, &attr, sizeof(pattern));
+
+  se::DeviceMemoryBase base = result->device_memory();
+  return stream->Memset32(&base, pattern, base.size());
+}
+
+XLA_FFI_DEFINE_HANDLER(kMemsetFromAttr, MemsetFromAttr,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Attr<float>("attr")
+                           .Ret<ffi::BufferR1<PrimitiveType::F32>>());
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "MemsetFromAttr",
+                         PlatformUtil::CanonicalPlatformName("GPU").value(),
+                         kMemsetFromAttr);
+
+TEST(StreamExecutorGpuClientTest, PassAttrToFfiHandler) {
+  static constexpr char const* kProgram = R"(
+    HloModule ffi_handler
+    ENTRY main {
+      ROOT %custom-call = f32[4] custom-call(),
+          custom_call_target="MemsetFromAttr",
+          api_version=API_VERSION_TYPED_FFI,
+          backend_config={"custom_call_backend_config": {"attributes": "{attr = 3.0 : f32}"}}
+    })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  TF_ASSERT_OK_AND_ASSIGN(auto executable,
+                          CompileExecutable(kProgram, *client));
+
+  ExecuteOptions opts;
+  auto result = executable->Execute(/*argument_handles=*/{{}}, opts);
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> result_literal,
+                          ExtractSingleResult(result));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR1<float>({3.0f, 3.0f, 3.0f, 3.0f}), *result_literal));
+}
+
 TEST(StreamExecutorGpuClientTest, ToLiteralAsync) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -798,15 +843,16 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostFullBuffer) {
       std::unique_ptr<PjRtBuffer> buffer,
       client->BufferFromHostLiteral(literal, client->addressable_devices()[0]));
 
-  void* dst = aligned_alloc(buffer->GetOnDeviceSizeInBytes().value(), 0);
+  TF_ASSERT_OK_AND_ASSIGN(int64_t size, buffer->GetOnDeviceSizeInBytes());
+  void* dst =
+      tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
 
-  auto result =
-      buffer->CopyRawToHost(dst, 0, buffer->GetOnDeviceSizeInBytes().value());
+  auto result = buffer->CopyRawToHost(dst, 0, size);
   TF_EXPECT_OK(result.Await());
   EXPECT_EQ(*(static_cast<float*>(dst)), 41.0f);
   EXPECT_EQ(*(static_cast<float*>(dst) + 1), 42.0f);
 
-  free(dst);
+  tsl::port::AlignedSizedFree(dst, tsl::Allocator::kAllocatorAlignment, size);
 }
 
 TEST(StreamExecutorGpuClientTest, CopyRawToHostSubBuffer) {
@@ -817,13 +863,15 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostSubBuffer) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtBuffer> buffer,
       client->BufferFromHostLiteral(literal, client->addressable_devices()[0]));
-  void* dst = aligned_alloc(buffer->GetOnDeviceSizeInBytes().value(), 0);
+  TF_ASSERT_OK_AND_ASSIGN(int64_t size, buffer->GetOnDeviceSizeInBytes());
+  void* dst =
+      tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
 
   auto result = buffer->CopyRawToHost(dst, 0, sizeof(float));
   TF_EXPECT_OK(result.Await());
   EXPECT_EQ(*(static_cast<float*>(dst)), 41.0f);
 
-  free(dst);
+  tsl::port::AlignedSizedFree(dst, tsl::Allocator::kAllocatorAlignment, size);
 }
 
 TEST(StreamExecutorGpuClientTest, CopyRawToHostOutOfRange) {
@@ -834,13 +882,14 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostOutOfRange) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtBuffer> buffer,
       client->BufferFromHostLiteral(literal, client->addressable_devices()[0]));
-  void* dst = aligned_alloc(buffer->GetOnDeviceSizeInBytes().value(), 0);
+  TF_ASSERT_OK_AND_ASSIGN(int64_t size, buffer->GetOnDeviceSizeInBytes());
+  void* dst =
+      tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
 
-  auto result =
-      buffer->CopyRawToHost(dst, 1, buffer->GetOnDeviceSizeInBytes().value());
+  auto result = buffer->CopyRawToHost(dst, 1, size);
   EXPECT_THAT(result.Await(), StatusIs(absl::StatusCode::kInvalidArgument,
                                        HasSubstr("invalid offset 1")));
-  free(dst);
+  tsl::port::AlignedSizedFree(dst, tsl::Allocator::kAllocatorAlignment, size);
 }
 
 TEST(StreamExecutorGpuClientTest, CopyRawToHostFuture) {
@@ -863,7 +912,9 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostFuture) {
   buffer.reset();
   ready.OnReady([dst_promise = std::move(dst_promise),
                  size](absl::Status status) mutable {
-    dst_promise.Set(aligned_alloc(size, 0));
+    void* dst =
+        tsl::port::AlignedMalloc(size, tsl::Allocator::kAllocatorAlignment);
+    dst_promise.Set(dst);
   });
 
   TF_EXPECT_OK(result.Await());
@@ -871,7 +922,7 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostFuture) {
   EXPECT_EQ(*(static_cast<float*>(dst)), 41.0f);
   EXPECT_EQ(*(static_cast<float*>(dst) + 1), 42.0f);
 
-  free(dst);
+  tsl::port::AlignedSizedFree(dst, tsl::Allocator::kAllocatorAlignment, size);
 }
 
 TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {

@@ -1,4 +1,4 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -39,5 +39,6 @@ cc_library(
     deps = [
         ":kernel_spec",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:JITLink",
     ],
 )

@@ -19,10 +19,12 @@ limitations under the License.
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -143,14 +145,8 @@ class AutotuneConfig {
             debug_options.xla_gpu_experimental_autotune_cache_mode()) {}
 
   std::string GetModelStr() const {
-    if (auto deviceless_config = std::get_if<DevicelessConfig>(&config_)) {
-      return AutotuneCacheKey::DeviceDescriptionToCacheKey(
-          deviceless_config->device_description);
-    }
-
-    const auto& device_config = std::get<DeviceConfig>(config_);
     return AutotuneCacheKey::DeviceDescriptionToCacheKey(
-        device_config.stream_exec->GetDeviceDescription());
+        GetDeviceDescription());
   }
 
   se::StreamExecutor* GetExecutor() const {
@@ -177,11 +173,14 @@ class AutotuneConfig {
   }
 
   const se::GpuComputeCapability& GetGpuComputeCapability() const {
-    if (auto c = std::get_if<DeviceConfig>(&config_)) {
-      return c->stream_exec->GetDeviceDescription().gpu_compute_capability();
+    return GetDeviceDescription().gpu_compute_capability();
+  }
+
+  const se::DeviceDescription& GetDeviceDescription() const {
+    if (auto* device_config = std::get_if<DeviceConfig>(&config_)) {
+      return device_config->stream_exec->GetDeviceDescription();
     }
-    return std::get<DevicelessConfig>(config_)
-        .device_description.gpu_compute_capability();
+    return std::get<DevicelessConfig>(config_).device_description;
   }
 
   bool IsDeviceless() const {

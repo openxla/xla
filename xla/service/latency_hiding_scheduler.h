@@ -16,12 +16,14 @@ limitations under the License.
 #ifndef XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 #define XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -68,18 +70,18 @@ class ModulePressureState;
 
 enum class ResourceType {
   kNoResource = 0,
-  kAllToAll = 1,
-  kAllGather = 2,
-  kAllReduce = 3,
-  kCollectivePermute = 4,
-  kCopy = 5,
-  kReduceScatter = 6,
-  kSendRecv = 7,
-  kSendHost = 8,
-  kRecvHost = 9,
-  kCollectiveBroadcast = 10,
-  kNumResources = 11,
-  kTargetDefinedResourcesBound = 10000,
+  kAllToAll,
+  kAllGather,
+  kAllReduce,
+  kCollectivePermute,
+  kCopy,
+  kReduceScatter,
+  kSendRecv,
+  kSendHost,
+  kRecvHost,
+  kCollectiveBroadcast,
+  kNumResources,
+  kTargetDefinedResourceTypeBegin,
 };
 
 enum class ResourceUsageType {
@@ -102,7 +104,8 @@ enum class ResourceHazardType {
   kUnshareable = 4,
 };
 
-constexpr int64_t ResourceTypeToIndex(ResourceType resource_type) {
+template <typename T, typename = typename std::enable_if_t<std::is_enum_v<T>>>
+constexpr int64_t ResourceTypeToIndex(T resource_type) {
   return static_cast<int64_t>(resource_type);
 }
 
@@ -248,8 +251,8 @@ class AsyncTracker {
       ResourceUsageType resource_usage_type) const;
 
   // Returns the first target defined resource's id, regardless of if it exits
-  static int64_t GetFirstTargetDefinedResource() {
-    return static_cast<int64_t>(ResourceType::kTargetDefinedResourcesBound) + 1;
+  static int64_t GetTargetDefinedResourceTypeBegin() {
+    return ResourceTypeToIndex(ResourceType::kTargetDefinedResourceTypeBegin);
   }
 
   // Returns the number of target defined resources
@@ -334,7 +337,7 @@ class SchedulerCore {
 class AnnotationTracker {
  public:
   explicit AnnotationTracker(const HloModule* module) : module_(module) {
-    for (const HloComputation* comp : module_->computations()) {
+    for (const HloComputation* comp : module_->MakeNonfusionComputations()) {
       absl::flat_hash_set<int64_t> annotations;
       for (const HloInstruction* instr : comp->instructions()) {
         if (auto annotation = GetAnnotation(instr)) {
@@ -1106,7 +1109,8 @@ class LatencyHidingScheduler : public HloModulePass {
         async_tracker_(std::move(async_tracker)),
         scheduler_core_(std::move(scheduler_core)),
         shape_size_bytes_(shape_size_bytes) {}
-  absl::string_view name() const override { return "latency-hiding-scheduler"; }
+  constexpr static absl::string_view kName = "latency-hiding-scheduler";
+  absl::string_view name() const override { return kName; }
 
   // Returns some printable statistics about the latency hiding for
   // operations that can run in parallel to help evaluating the performance of

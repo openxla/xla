@@ -6,12 +6,12 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:package_groups.bzl", "xla_tests_package_groups")
 load("//xla:xla.bzl", "tests_build_defs_bzl_deps", "xla_cc_binary", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "generate_backend_test_macros", "xla_test", "xla_test_library")
-load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -137,7 +137,8 @@ cc_library(
     ],
     deps = [
         ":pjrt_client_registry",
-        "//xla/pjrt/cpu:cpu_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
     ],
 )
 
@@ -161,8 +162,8 @@ cc_library(
     hdrs = ["hlo_test_base.h"],
     deps = [
         ":filecheck",
+        ":hlo_runner_agnostic_test_base",
         ":literal_test_util",
-        ":new_hlo_test_base",
         ":pjrt_client_registry",
         ":test_utils",
         ":verified_hlo_module",
@@ -211,10 +212,10 @@ cc_library(
 )
 
 cc_library(
-    name = "new_hlo_test_base",
+    name = "hlo_runner_agnostic_test_base",
     testonly = True,
-    srcs = ["new_hlo_test_base.cc"],
-    hdrs = ["new_hlo_test_base.h"],
+    srcs = ["hlo_runner_agnostic_test_base.cc"],
+    hdrs = ["hlo_runner_agnostic_test_base.h"],
     deps = [
         ":filecheck",
         ":literal_test_util",
@@ -260,7 +261,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -689,6 +689,7 @@ xla_test(
         ":literal_test_util",
         ":test_macros_header",
         ":xla_internal_test_main",
+        "//xla:types",
         "//xla/client:global_data",
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
@@ -866,7 +867,6 @@ cc_library(
         ":client_library_test_base",
         ":hlo_test_base",
         ":test_macros_header",
-        ":xla_internal_test_main",
         "//xla:execution_options_util",
         "//xla:status_macros",
         "//xla:test",
@@ -1242,6 +1242,7 @@ xla_test(
         "test_xla_cpu_thunks",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:error_spec",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1265,6 +1266,8 @@ xla_test(
         "optonly",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:array3d",
+        "//xla:literal_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1285,6 +1288,8 @@ xla_test(
         "test_xla_cpu_thunks",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:array3d",
+        "//xla:literal_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1305,6 +1310,7 @@ xla_test(
         "optonly",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:error_spec",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1322,6 +1328,8 @@ xla_test(
         "optonly",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:array3d",
+        "//xla:literal_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1335,6 +1343,7 @@ xla_test(
     backends = ["gpu"],
     shard_count = 25,
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:error_spec",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1349,6 +1358,8 @@ xla_test(
     shard_count = 25,
     tags = ["cuda-only"],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:array3d",
+        "//xla:literal_util",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1366,6 +1377,7 @@ xla_test(
         "optonly",
     ],
     deps = CONVOLUTION_TEST_DEPS + [
+        "//xla:error_spec",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/strings",
     ],
@@ -1427,7 +1439,8 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     data = ["data/cudnn_reproducer.hlo"],
     deps = [
         ":hlo_test_base",
@@ -1745,7 +1758,6 @@ xla_test_library(
         ":client_library_test_base",
         ":hlo_test_base",
         ":test_macros_header",
-        ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:array4d",
@@ -1781,7 +1793,10 @@ xla_test(
         "test_xla_cpu_thunks",
     ],
     xla_test_library_deps = [":reduce_window_test_library"],
-    deps = [":test_macros_header"],
+    deps = [
+        ":test_macros_header",
+        ":xla_internal_test_main",
+    ],
 )
 
 xla_test(
@@ -2477,15 +2492,24 @@ xla_test(
         ":test_macros_header",
         ":test_utils",
         ":xla_internal_test_main",
+        "//xla:array",
+        "//xla:error_spec",
         "//xla:literal",
+        "//xla:literal_util",
+        "//xla:types",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_matchers",
+        "//xla/service:computation_placer_hdr",
+        "//xla/service:executable",
         "//xla/service:hlo_module_config",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/stream_executor:device_description",
-        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -3374,7 +3398,7 @@ bzl_library(
         ":plugin_bzl",
         "//xla:xla_bzl",
         "//xla/stream_executor:build_defs_bzl",
-        "@tsl//tsl/platform:build_config_root_bzl",
+        "//xla/tsl/platform:build_config_root_bzl",
     ] + tests_build_defs_bzl_deps(),
 )
 

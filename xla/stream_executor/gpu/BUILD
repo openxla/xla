@@ -14,14 +14,6 @@ load(
     "@local_config_sycl//sycl:build_defs.bzl",
     "if_sycl_is_configured",
 )
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "if_static",
-)
-load(
-    "@tsl//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/service/gpu:build_defs.bzl",
@@ -41,6 +33,14 @@ load(
     "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
+)
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "if_static",
+)
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
 )
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
@@ -340,6 +340,7 @@ gpu_only_cc_library(
         "//tensorflow/core/kernels:__subpackages__",
     ]),
     deps = [
+        "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -350,7 +351,6 @@ gpu_only_cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:subprocess",
     ],
 )
 

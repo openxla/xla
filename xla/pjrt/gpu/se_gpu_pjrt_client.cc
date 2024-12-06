@@ -1175,8 +1175,8 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   if (num_nodes > 1) {
     auto nccl_id_store = std::make_shared<NcclIdStore>(node_id, device_to_node,
                                                        std::move(kv_store));
-    gpu_executable_run_options->set_nccl_clique_id_callback(
-        [nccl_id_store](const gpu::NcclCliqueKey& key) {
+    gpu_executable_run_options->set_clique_id_callback(
+        [nccl_id_store](const CliqueKey& key) {
           return nccl_id_store->GetNcclUniqueId(key);
         });
   }
@@ -1300,8 +1300,15 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
 
   auto gpu_run_options = std::make_unique<gpu::GpuExecutableRunOptions>();
   if (options.enable_mock_nccl) {
-    gpu_run_options->set_enable_mock_nccl_collectives();
+    gpu_run_options->set_enable_mock_collectives();
   }
+
+  static const bool xla_gpu_require_exclusive_lock =
+      xla::GetDebugOptionsFromFlags().xla_gpu_require_exclusive_lock();
+  if (xla_gpu_require_exclusive_lock) {
+    gpu_run_options->set_requires_exclusive_lock_on_gpu();
+  }
+
   std::shared_ptr<KeyValueStoreInterface> kv_store = options.kv_store;
   if (options.enable_mock_nccl) {
     kv_store = std::make_shared<InMemoryKeyValueStore>();

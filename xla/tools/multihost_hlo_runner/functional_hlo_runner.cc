@@ -332,11 +332,6 @@ absl::StatusOr<CompileOptions> FunctionalHloRunner::CreateCompileOptions(
     debug_options.set_xla_dump_hlo_as_proto(raw_options.xla_proto_dump_mode ==
                                             XlaProtoDumpMode::kDumpAsProto);
   }
-  // TODO(b/378832773) The flag is temporary, this line should be removed when
-  // default is changed / or flag is removed.
-  build_options.mutable_debug_options()->set_xla_pjrt_allow_auto_layout_in_hlo(
-      true);
-
   switch (raw_options.hlo_passes_mode) {
     case HloPassesMode::kRunXLABackendOnly:
       build_options.set_run_backend_only(true);
@@ -468,7 +463,6 @@ FunctionalHloRunner::LoadHloModuleAndArguments(absl::string_view hlo_file,
   HloModuleAndArguments hlo_module_and_arguments;
   switch (input_format) {
     case InputFormat::kText: {
-      std::string hlo_text;
       TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
                           ReadModuleFromHloTextFile(hlo_file));
     } break;
@@ -585,8 +579,7 @@ FunctionalHloRunner::ReadModuleFromHloTextFile(absl::string_view hlo_file) {
   std::string hlo_string;
   TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
                                            std::string(hlo_file), &hlo_string));
-  return ParseAndReturnUnverifiedModule(
-      hlo_string, {}, HloParserOptions().set_fill_missing_layouts(false));
+  return ParseAndReturnUnverifiedModule(hlo_string, {}, HloParserOptions());
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>>
@@ -736,7 +729,8 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
   }
 
   if (preproc_options.flatten_while_loop() ||
-      preproc_options.remove_infeed_outfeed) {
+      preproc_options.remove_infeed_outfeed ||
+      preproc_options.flatten_conditional) {
     // The pipeline will check for the presence of
     // debug_options().xla_disable_hlo_passes().
     HloPassPipeline pipeline("control-flow-flattening-pipeline");
@@ -751,7 +745,13 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
             while_execution_count,
             /*remove_infeed_outfeed=*/preproc_options.remove_infeed_outfeed,
             /*flatten_while_loop=*/preproc_options.flatten_while_loop(),
-            /*remove_comm=*/false, /*remove_host_transfer=*/true});
+            /*remove_comm=*/false,
+            /*remove_host_transfer=*/true,
+            /*remove_id=*/false,
+            /*flatten_conditional=*/
+            preproc_options.flatten_conditional,
+            /*conditional_value=*/
+            preproc_options.conditional_value});
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
   return absl::OkStatus();

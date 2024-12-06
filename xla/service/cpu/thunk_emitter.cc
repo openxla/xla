@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/cpu/runtime/all_to_all_thunk.h"
@@ -63,10 +64,10 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
 #include "xla/service/cpu/ir_emission_utils.h"
 #include "xla/service/cpu/ir_emitter2.h"
-#include "xla/service/cpu/target_machine_features.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
@@ -964,13 +965,24 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
   }
 
   // Get backend config and buffer assignments.
-  auto backend_config = custom_call->opaque();
+  auto backend_config = custom_call->backend_config<BackendConfig>();
+  if (!backend_config.ok()) {
+    LOG(WARNING) << "Unable to parse backend config for custom call: "
+                 << backend_config.status().message() << "\n"
+                 << "Fall back to parse the opaque str.";
+  }
+  auto& backend_config_str =
+      !backend_config.ok()
+          ? custom_call->opaque()
+          : ((version == API_VERSION_TYPED_FFI)
+                 ? backend_config->custom_call_config().attributes()
+                 : backend_config->custom_call_config().opaque());
   TF_ASSIGN_OR_RETURN(auto op_buffers,
                       GetCustomCallOpBuffers(instruction, buffer_assignment_));
 
   return ThunkSequence::Of<CustomCallThunk>(ThunkInfo(instruction),
                                             custom_call_target, op_buffers,
-                                            backend_config, version);
+                                            backend_config_str, version);
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceToDynamicThunk(

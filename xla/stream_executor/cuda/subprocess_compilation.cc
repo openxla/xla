@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_asm_opts.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/tsl/platform/subprocess.h"
 #include "xla/util.h"
 #include "tsl/platform/cuda_root_path.h"
 #include "tsl/platform/env.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "tsl/platform/regexp.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
-#include "tsl/platform/subprocess.h"
 
 namespace stream_executor {
 static absl::StatusOr<std::string> GetToolVersionString(
@@ -213,7 +213,7 @@ absl::StatusOr<std::string> FindCudaExecutable(
                             kNoExcludedVersions);
 }
 
-static absl::StatusOr<std::string> FindPtxAsExecutable(
+absl::StatusOr<std::string> FindPtxAsExecutable(
     std::string_view preferred_cuda_dir) {
   static constexpr SemanticVersion kMinimumSupportedPtxAsVersion{11, 8, 0};
   static constexpr SemanticVersion kBuggyPtxAsVersions[] = {{12, 3, 103}};
@@ -263,6 +263,9 @@ absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingPtxAs(
 absl::StatusOr<std::vector<uint8_t>> CompileGpuAsmUsingPtxAs(
     std::string_view ptxas_path, const CudaComputeCapability& cc,
     std::string_view ptx, GpuAsmOpts options, bool cancel_if_reg_spill) {
+  TF_ASSIGN_OR_RETURN(auto version, GetToolVersion(ptxas_path));
+  WarnIfBadPtxasVersion("ptxas", cc, version);
+
   // Write ptx into a temporary file.
   std::string ptx_path;
   auto env = tsl::Env::Default();
@@ -450,7 +453,7 @@ absl::StatusOr<std::vector<uint8_t>> BundleGpuAsmUsingFatbin(
   return std::vector<uint8_t>(result_blob.begin(), result_blob.end());
 }
 
-static absl::StatusOr<std::string> FindNvlinkExecutable(
+absl::StatusOr<std::string> FindNvlinkExecutable(
     std::string_view preferred_cuda_dir) {
   static constexpr SemanticVersion kMinimumNvlinkVersion{11, 8, 0};
   static constexpr absl::Span<const SemanticVersion> kNoExcludedVersions{};

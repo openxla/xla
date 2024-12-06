@@ -42,6 +42,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/map_util.h"
+#include "xla/service/call_graph.h"
+#include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -1419,7 +1421,9 @@ void HloDataflowAnalysis::Propagate() {
           add_to_worklist(
               callsite.instruction()->while_condition()->parameter_instruction(
                   0));
-        } else if (call_graph_node.context() == CallContext::kControlFlow) {
+        } else if (call_graph_node.context() == CallContext::kControlFlow ||
+                   callsite.instruction()->opcode() ==
+                       HloOpcode::kConditional) {
           add_to_worklist(callsite.instruction());
         }
       }
@@ -2036,6 +2040,8 @@ HloDataflowAnalysis::GetInPlaceInputOutputPairs(
       in_place_pairs.push_back({HloOperandIndex{0, {}}, {}});
     }
     return in_place_pairs;
+  } else if (instruction->opcode() == HloOpcode::kRaggedAllToAll) {
+    return {{HloOperandIndex{1, {}}, {}}};
   }
 
   return {};
