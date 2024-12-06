@@ -1913,10 +1913,7 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   }
   ++sched_state->scheduled_count;
   for (auto& resource : n->GetResources()) {
-    // No need to release non-extendable resources
-    if (resource.second == ResourceUsageType::kResourceRelease &&
-        async_tracker_->GetResourceHazardType(resource.first) !=
-            ResourceHazardType::kNonextendable) {
+    if (resource.second == ResourceUsageType::kResourceRelease) {
       sched_state->resource_occupiers_in_flight.at(resource.first)
           .erase(&n->GetInstr());
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
