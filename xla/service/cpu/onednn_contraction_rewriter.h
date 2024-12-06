@@ -83,26 +83,6 @@ struct PrimitiveTrait<config, OneDnnOptimizationConfig*> {
   }
 };
 
-using OneDnnContractionVariant =
-    std::variant<PrimitiveTrait<kOnednnConvConfig>,
-                 PrimitiveTrait<kOnednnMatmulConfig>>;
-
-template <BackendConfigOneofCase config>
-struct PrimitiveTrait<config, OneDnnFusionConfig*> {
-  static OneDnnFusionConfig* GetTransformationConfig(
-      typename PrimitiveTrait<config>::pointer_type kernel_config) {
-    return kernel_config->mutable_fusions();
-  }
-};
-
-template <BackendConfigOneofCase config>
-struct PrimitiveTrait<config, OneDnnOptimizationConfig*> {
-  static OneDnnOptimizationConfig* GetTransformationConfig(
-      typename PrimitiveTrait<config>::pointer_type kernel_config) {
-    return kernel_config->mutable_optimization_config();
-  }
-};
-
 }  // namespace cpu
 }  // namespace xla
 
