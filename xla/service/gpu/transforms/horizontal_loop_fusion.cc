@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/sub_byte_normalization.h"
 #include "xla/layout_util.h"
-#include "xla/primitive_util.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
@@ -231,7 +230,7 @@ bool IsProfitableFusionCandidate(const HloInstruction& instr,
                                    : &instr;
 
   // Too large shapes are not easily profitable.
-  if (root->opcode() == HloOpcode::kTuple) {
+  if (HloPredicateIsOp<HloOpcode::kTuple>(root)) {
     // Since all output shapes are the same, use the first shape as the
     // representative.
     root = root->operand(0);
@@ -265,8 +264,7 @@ bool AnyOperandIsSharedAmongFusions(
 }
 
 HloInstruction* LatestNonTrivialAncestor(HloInstruction* hlo) {
-  if (hlo->opcode() == HloOpcode::kGetTupleElement ||
-      hlo->opcode() == HloOpcode::kBitcast) {
+  if (HloPredicateIsOp<HloOpcode::kGetTupleElement, HloOpcode::kBitcast>(hlo)) {
     return LatestNonTrivialAncestor(hlo->mutable_operand(0));
   }
   return hlo;
@@ -442,7 +440,7 @@ absl::StatusOr<bool> HorizontalLoopFusionImpl::FuseConsumerOperands(
     std::vector<HloInstruction*> fusion_instrs;
     for (HloInstruction* instr : fusibles) {
       VLOG(2) << "next candidate: " << instr->ToString();
-      if (instr->opcode() == HloOpcode::kFusion) {
+      if (HloPredicateIsOp<HloOpcode::kFusion>(instr)) {
         fusion_instrs.push_back(instr);
       } else {
         TF_ASSIGN_OR_RETURN(
@@ -503,8 +501,9 @@ absl::Status HorizontalLoopFusionImpl::CreateFusedComputation(
                                 ->fused_instructions_computation()
                                 ->MakeInstructionPostOrder();
     for (HloInstruction* old_instr : def_to_use_order) {
-      if (old_instr->opcode() == HloOpcode::kParameter ||
-          (sliced_input_fusion && old_instr->opcode() == HloOpcode::kTuple &&
+      if (HloPredicateIsOp<HloOpcode::kParameter>(old_instr) ||
+          (sliced_input_fusion &&
+           HloPredicateIsOp<HloOpcode::kTuple>(old_instr) &&
            old_instr == fused_fusion_instrs[i]->fused_expression_root())) {
         // Parameters have been created, and we don't need tuples from
         // multi-output fusions, as we will directly reference the tuple
@@ -737,11 +736,19 @@ absl::StatusOr<bool> HorizontalLoopFusion::Run(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "Run horizontal fusion.";
 
-  // Run on the entry computation is actually enough.
-  TF_ASSIGN_OR_RETURN(bool changed,
-                      RunOnComputation(module->entry_computation()));
+  bool any_changed = false;
+  if (only_entry_computation_) {
+    TF_ASSIGN_OR_RETURN(any_changed,
+                        RunOnComputation(module->entry_computation()));
+  } else {
+    for (HloComputation* computation :
+         GetFusibleComputations(*module, execution_threads)) {
+      TF_ASSIGN_OR_RETURN(bool changed, RunOnComputation(computation));
+      any_changed |= changed;
+    }
+  }
 
-  if (changed) {
+  if (any_changed) {
     // Correctly set element_size_in_bits for any sub-byte added slice and
     // concatenate instructions
     TF_ASSIGN_OR_RETURN(
@@ -750,7 +757,7 @@ absl::StatusOr<bool> HorizontalLoopFusion::Run(
             module));
   }
 
-  return changed;
+  return any_changed;
 }
 
 }  // namespace gpu

@@ -579,8 +579,7 @@ FunctionalHloRunner::ReadModuleFromHloTextFile(absl::string_view hlo_file) {
   std::string hlo_string;
   TF_RETURN_IF_ERROR(tsl::ReadFileToString(tsl::Env::Default(),
                                            std::string(hlo_file), &hlo_string));
-  return ParseAndReturnUnverifiedModule(
-      hlo_string, {}, HloParserOptions().set_fill_missing_layouts(false));
+  return ParseAndReturnUnverifiedModule(hlo_string, {}, HloParserOptions());
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>>
@@ -730,7 +729,8 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
   }
 
   if (preproc_options.flatten_while_loop() ||
-      preproc_options.remove_infeed_outfeed) {
+      preproc_options.remove_infeed_outfeed ||
+      preproc_options.flatten_conditional) {
     // The pipeline will check for the presence of
     // debug_options().xla_disable_hlo_passes().
     HloPassPipeline pipeline("control-flow-flattening-pipeline");
@@ -745,7 +745,13 @@ absl::Status FunctionalHloRunner::PrepareHloModuleForCompilation(
             while_execution_count,
             /*remove_infeed_outfeed=*/preproc_options.remove_infeed_outfeed,
             /*flatten_while_loop=*/preproc_options.flatten_while_loop(),
-            /*remove_comm=*/false, /*remove_host_transfer=*/true});
+            /*remove_comm=*/false,
+            /*remove_host_transfer=*/true,
+            /*remove_id=*/false,
+            /*flatten_conditional=*/
+            preproc_options.flatten_conditional,
+            /*conditional_value=*/
+            preproc_options.conditional_value});
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
   return absl::OkStatus();

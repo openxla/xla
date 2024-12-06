@@ -297,27 +297,6 @@ filegroup(
 )
 
 cc_library(
-    name = "mutex",
-    srcs = [
-        "mutex.cc",
-        "mutex_data.h",
-        "@tsl//tsl/platform:mutex.h",
-    ],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    textual_hdrs = ["mutex.h"],
-    deps = [
-        "@nsync//:nsync_cpp",
-        "@tsl//tsl/platform",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:thread_annotations",
-    ],
-)
-
-cc_library(
     name = "net",
     srcs = ["net.cc"],
     hdrs = [
@@ -616,8 +595,6 @@ filegroup(
     srcs = [
         "casts.h",
         "error_logging.cc",
-        "mutex.h",
-        "mutex_data.h",
         "unbounded_work_queue.cc",
         "unbounded_work_queue.h",
     ] + if_not_fuchsia([

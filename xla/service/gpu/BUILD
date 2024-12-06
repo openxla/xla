@@ -23,7 +23,6 @@ load("//xla/tests:build_defs.bzl", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
-    "if_oss",
     "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
@@ -97,6 +96,7 @@ cc_library(
     deps = [
         "//xla:executable_run_options",
         "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/core/collectives:clique_id",
         "//xla/core/collectives:clique_key",
         "//xla/service:global_device_id",
@@ -376,7 +376,6 @@ cc_library(
         "//xla/service/gpu/runtime:nccl_all_gather_thunk",
         "//xla/service/gpu/runtime:nccl_all_reduce_thunk",
         "//xla/service/gpu/runtime:nccl_all_to_all_thunk",
-        "//xla/service/gpu/runtime:nccl_api",
         "//xla/service/gpu/runtime:nccl_collective_broadcast_thunk",
         "//xla/service/gpu/runtime:nccl_collective_permute_thunk",
         "//xla/service/gpu/runtime:nccl_collective_thunk",
@@ -556,9 +555,6 @@ cc_library(
     hdrs = [
         "gpu_executable.h",
     ],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     deps = [
         ":backend_configs_cc",
         ":buffer_allocations",
@@ -585,7 +581,6 @@ cc_library(
         "//xla/service:stream_pool",
         "//xla/service:xla_debug_info_manager",
         "//xla/service/gpu/runtime:annotation",
-        "//xla/service/gpu/runtime:nccl_api",
         "//xla/service/gpu/runtime:sequential_thunk",
         "//xla/service/gpu/runtime:thunk",
         "//xla/stream_executor:device_description",
@@ -615,6 +610,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/types:variant",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:env_time",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:random",
@@ -952,9 +948,6 @@ cc_library(
     name = "matmul_utils",
     srcs = ["matmul_utils.cc"],
     hdrs = ["matmul_utils.h"],
-    local_defines = if_cuda_is_configured(["GOOGLE_CUDA=1"]) + if_rocm_is_configured([
-        "TENSORFLOW_USE_ROCM=1",
-    ]),
     deps = [
         ":backend_configs_cc",
         ":matmul_indexing_utils",
@@ -967,6 +960,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:algorithm_util",
         "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:numeric_options",
         "//xla/stream_executor:stream",
@@ -1565,6 +1559,7 @@ cc_library(
         "//xla/service/gpu/transforms:sanitize_constant_names",
         "//xla/service/gpu/transforms:scatter_expander",
         "//xla/service/gpu/transforms:scatter_slice_simplifier",
+        "//xla/service/gpu/transforms:simplify_int4_dots",
         "//xla/service/gpu/transforms:softmax_rewriter_triton",
         "//xla/service/gpu/transforms:sort_rewriter",
         "//xla/service/gpu/transforms:stream_attribute_annotator",
@@ -1895,7 +1890,8 @@ xla_test(
     backends = [
         "gpu_v100",
         "gpu_a100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     tags = [
         "cuda-only",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
@@ -2632,7 +2628,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     deps = [
         ":variant_visitor",
         "//xla:error_spec",
@@ -2874,8 +2871,9 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
+        "gpu_b100",
         "gpu_amd_any",
-    ] + if_oss(["gpu_b100"]),
+    ],
     tags = [
         "no_mac",
     ],
@@ -2956,8 +2954,9 @@ xla_test(
     srcs = ["determinism_test.cc"],
     backends = [
         "gpu_a100",
+        "gpu_b100",
         "gpu_amd_any",
-    ] + if_oss(["gpu_b100"]),
+    ],
     deps = [
         "//xla:literal",
         "//xla:xla_proto_cc",

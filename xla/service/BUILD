@@ -329,6 +329,7 @@ cc_library(
     hdrs = ["value_range.h"],
     deps = [
         ":constant_value",
+        ":hlo_value",
         "//xla:comparison_util",
         "//xla:shape_util",
         "//xla/hlo/analysis:hlo_alias_analysis",
@@ -406,6 +407,7 @@ xla_cc_test(
         ":hlo_module_config",
         ":hlo_verifier",
         ":host_memory_offload_annotations_hdr",
+        "//xla:literal_util",
         "//xla:test_helpers",
         "//xla:util",
         "//xla/hlo/ir:hlo",
@@ -414,6 +416,7 @@ xla_cc_test(
         "//xla/hlo/utils:hlo_matchers",
         "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
@@ -421,6 +424,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1183,14 +1187,15 @@ xla_cc_test(
     deps = [
         ":hlo_cost_analysis",
         ":latency_hiding_scheduler",
+        ":legalize_scheduling_annotations",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/collectives:async_collective_creator",
-        "//xla/service:legalize_scheduling_annotations",
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

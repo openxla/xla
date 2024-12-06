@@ -267,7 +267,7 @@ xla_test(
     tags = ["cuda-only"],
     deps = [
         ":cuda_collectives",
-        "//xla/service/gpu/runtime:nccl_api",
+        "//xla/backends/gpu/collectives:gpu_collectives",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
@@ -1006,6 +1006,7 @@ cc_library(
         "//xla/stream_executor/gpu:scoped_activate_context",
         "//xla/tsl/cuda",  # buildcleaner: keep
         "//xla/tsl/cuda:cudart",  # buildcleaner: keep
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",

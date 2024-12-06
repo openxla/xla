@@ -53,7 +53,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/runtime/annotation.h"
-#include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/sequential_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -81,6 +80,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 #include "xla/util.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/env_time.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/random.h"
@@ -132,13 +132,14 @@ GpuExecutable::GpuExecutable(GpuExecutable::Params params)
       constants_(std::move(params.constants)),
       output_info_(std::move(params.output_info)),
       enable_debug_info_manager_(params.enable_debug_info_manager) {
-#if TENSORFLOW_USE_ROCM
-  // ROCm uses hsaco hashes to distinguish between modules.
-  // Bad things happen if multiple modules with identical code are loaded.
-  binary_.resize(binary_.size() + 16);
-  *(uint64_t*)(&binary_[binary_.size() - 16]) = tsl::EnvTime::NowNanos();
-  *(uint64_t*)(&binary_[binary_.size() - 8]) = tsl::random::New64();
-#endif
+  if (std::holds_alternative<stream_executor::RocmComputeCapability>(
+          gpu_version_)) {
+    // ROCm uses hsaco hashes to distinguish between modules.
+    // Bad things happen if multiple modules with identical code are loaded.
+    binary_.resize(binary_.size() + 16);
+    *(uint64_t*)(&binary_[binary_.size() - 16]) = tsl::EnvTime::NowNanos();
+    *(uint64_t*)(&binary_[binary_.size() - 8]) = tsl::random::New64();
+  }
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->RegisterModule(shared_module(),
                                                buffer_assignment_->ToProto());
@@ -259,7 +260,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
 
       bool is_local = r.key.devices().size() == r.num_local_participants;
       TF_ASSIGN_OR_RETURN(const CliqueIdCallback* clique_id_callback,
-                          NcclApi::Default()->GetCliqueIdCallback(
+                          params.collectives->GetCliqueIdCallback(
                               params.nccl_clique_id_callback, is_local));
 
       int64_t max_channels = r.key.stream_kind() == AsyncStreamKind::kCollective
@@ -267,7 +268,7 @@ class ResourceRequests : public Thunk::ResourceRequests {
                                  : params.p2p_max_nchannels;
       TF_ASSIGN_OR_RETURN(
           std::shared_ptr<LockableGpuClique::Lock> clique,
-          AcquireGpuClique(NcclApi::Default(), params.executor, params.run_id,
+          AcquireGpuClique(params.collectives, params.executor, params.run_id,
                            r.key, *clique_id_callback, *rank,
                            r.num_local_participants, cliques_map,
                            max_channels));
