@@ -44,7 +44,7 @@ def ConvertPureCallOpsPass
   }];
   let dependentDialects = [
     "mlir::func::FuncDialect",
-    "xla::gpu::XlaGpuDialect"
+    "xla::XlaDialect"
   ];
   let constructor = "CreateConvertPureCallOpsPass()";
 }
@@ -60,6 +60,7 @@ def FlattenTensorsPass : Pass<"xla-gpu-flatten-tensors", "mlir::ModuleOp"> {
     "mlir::func::FuncDialect",
     "mlir::tensor::TensorDialect",
     "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect",
   ];
   let constructor = "CreateFlattenTensorsPass()";
 }
@@ -74,19 +75,16 @@ def LowerTensorsPass : Pass<"xla-gpu-lower-tensors", "mlir::ModuleOp"> {
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
-    "mlir::complex::ComplexDialect",
     "mlir::func::FuncDialect",
     "mlir::gpu::GPUDialect",
-    "mlir::math::MathDialect",
     "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect",
     "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect",
   ];
   let options = [
-    Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
-           "True if AMD GPU.">,
-    Option<"gpu_arch_", "gpu_arch", "std::string", /*default=*/"",
-           "CUDA or ROCm compute capability.">,
+    Option<"gpu_device_info_", "gpu_device_info", "std::string", /*default=*/"",
+           "Serialized stream_executor::GPUDeviceInfo proto.">,
   ];
   let constructor = "CreateLowerTensorsPass()";
 }
@@ -177,7 +175,8 @@ def LowerXlaGpuToScfPass :
 
   let dependentDialects = [
     "mlir::gpu::GPUDialect", "mlir::LLVM::LLVMDialect", "mlir::scf::SCFDialect",
-    "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect", "mlir::vector::VectorDialect",
+    "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect", "mlir::vector::VectorDialect",
   ];
 
   let options = [
@@ -198,7 +197,9 @@ def LowerXlaGpuLoopsToScfPass : Pass<
 
   let dependentDialects = [
     "mlir::scf::SCFDialect",
-    "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect",
+    "mlir::tensor::TensorDialect",
+    "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect",
   ];
 
   let constructor = "CreateLowerXlaGpuLoopsToScfPass()";
@@ -213,7 +214,8 @@ def EraseDeadFunctionsPass : Pass<"xla-erase-dead-functions", "mlir::ModuleOp"> 
 
   let dependentDialects = [
     "mlir::func::FuncDialect",
-    "xla::gpu::XlaGpuDialect"
+    "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect",
   ];
 
   let constructor = "CreateEraseDeadFunctionsPass()";
@@ -234,9 +236,10 @@ def LowerToLLVMPass :
   ];
 
   let options = [
-    Option<"is_amd_gpu_", "is_amd_gpu", "bool", /*default=*/"false",
-           "True if AMD GPU.">,
+    Option<"gpu_device_info_", "gpu_device_info", "std::string", /*default=*/"",
+           "Serialized stream_executor::GPUDeviceInfo proto.">,
   ];
+  let constructor = "CreateLowerToLLVMPass()";
 }
 
 def VectorizeLoadsAndStoresPass :
@@ -284,7 +287,7 @@ def FuseLoopsPass : Pass<"xla-gpu-fuse-loops", "mlir::func::FuncOp"> {
           xla_gpu.yield %inserted
       }
   }];
-  let dependentDialects = ["xla::gpu::XlaGpuDialect"];
+  let dependentDialects = ["xla::gpu::XlaGpuDialect", "xla::XlaDialect"];
   let constructor = "CreateFuseLoopsPass()";
 }
 
@@ -295,7 +298,7 @@ def PeelLoopsPass : Pass<"xla-gpu-peel-loops", "mlir::func::FuncOp"> {
       as [0, NUM_ITERATIONS - 1) and [NUM_ITERATIONS - 1, NUM_ITERATIONS)
       if it removes a constraint.
   }];
-  let dependentDialects = ["xla::gpu::XlaGpuDialect"];
+  let dependentDialects = ["xla::gpu::XlaGpuDialect", "xla::XlaDialect"];
   let constructor = "CreatePeelLoopsPass()";
 }
 
@@ -311,6 +314,7 @@ def OptimizeLoopsPass :
   let dependentDialects = [
     "mlir::vector::VectorDialect",
     "xla::gpu::XlaGpuDialect",
+    "xla::XlaDialect",
   ];
 
   let constructor = "CreateOptimizeLoopsPass()";

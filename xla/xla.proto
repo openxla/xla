@@ -164,6 +164,9 @@ message DebugOptions {
   // with priority fusion.
   bool xla_gpu_experimental_enable_triton_softmax_priority_fusion = 325;
 
+  // Internal testing flag to switch RaggedAllToAllDecomposer on or off.
+  bool xla_gpu_unsupported_enable_ragged_all_to_all_decomposer = 350;
+
   // Internal debug/testing flag to switch Triton GEMM fusions on or off.
   bool xla_gpu_unsupported_enable_triton_gemm = 322;
 
@@ -450,6 +453,11 @@ message DebugOptions {
   // Denylist for cuDNN convolutions.
   string xla_gpu_algorithm_denylist_path = 128;
 
+  // If true, every time an HLO module is run, we will dump an
+  // HloUnoptimizedSnapshot (essentially, a serialized unoptimizedmodule plus
+  // its inputs) to the --xla_dump_to directory.
+  bool xla_gpu_dump_hlo_unoptimized_snapshots = 352;
+
   reserved 130;  // Was xla_gpu_deterministic_reductions
 
   // Debug options that trigger execution errors when NaN or Inf are detected.
@@ -698,6 +706,9 @@ message DebugOptions {
   // The minimum data size in bytes to trigger collective-permute-decomposer
   // transformation.
   int64 xla_gpu_collective_permute_decomposer_threshold = 237;
+
+  // Experimental optimizations for SPMD-based pipeline parallelism on GPU.
+  bool xla_gpu_enable_experimental_pipeline_parallelism_opt = 351;
 
   enum PartitioningAlgorithm {
     PARTITIONING_ALGORITHM_NOOP = 0;
@@ -1069,7 +1080,7 @@ message DebugOptions {
   // be deterministic, although with additional overhead.
   bool xla_gpu_enable_scatter_determinism_expander = 345;
 
-  // Next id: 350
+  // Next id: 353
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

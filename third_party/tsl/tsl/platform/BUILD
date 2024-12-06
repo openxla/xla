@@ -6,7 +6,6 @@
 
 load(
     "@xla//xla/tsl:tsl.bzl",
-    "if_not_fuchsia",
     "internal_visibility",
     "tsl_copts",
 )
@@ -211,7 +210,12 @@ cc_library(
     name = "mutex",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["mutex.h"],
-    deps = tf_platform_deps("mutex"),
+    deps = [
+        ":macros",
+        ":platform",
+        ":thread_annotations",
+        "@com_google_absl//absl/synchronization",
+    ],
 )
 
 cc_library(
@@ -484,7 +488,6 @@ filegroup(
         "str_util.h",
         "stringpiece.h",
         "stringprintf.h",
-        "subprocess.h",
         "thread_annotations.h",
         "@xla//xla/tsl/platform:lib_hdrs",
         "@xla//xla/tsl/platform/profile_utils:android_armv7a_cpu_utils_helper.h",
@@ -632,9 +635,7 @@ filegroup(
         "@xla//xla/tsl/platform/profile_utils:cpu_utils.cc",
         "@xla//xla/tsl/platform/profile_utils:cpu_utils.h",
         "@xla//xla/tsl/platform/profile_utils:i_cpu_utils_helper.h",
-    ] + if_not_fuchsia([
-        "subprocess.h",
-    ]),
+    ],
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([
         "//tensorflow/core:__pkg__",
@@ -693,7 +694,6 @@ exports_files(
         "rocm_rocdl_path.h",
         "snappy.h",
         "stacktrace_handler.h",
-        "subprocess.h",
         "mutex.h",
         "load_library.h",
         "stringpiece_test.cc",
@@ -987,14 +987,6 @@ cc_library(
         ":macros",
         ":types",
     ],
-)
-
-cc_library(
-    name = "subprocess",
-    textual_hdrs = [
-        "subprocess.h",
-    ],
-    deps = tf_windows_aware_platform_deps("subprocess"),
 )
 
 cc_library(
@@ -1486,27 +1478,6 @@ cc_library(
     hdrs = ["null_file_system.h"],
     deps = [
         ":env",
-    ],
-)
-
-tsl_cc_test(
-    name = "subprocess_test",
-    size = "small",
-    srcs = ["subprocess_test.cc"],
-    data = [
-        "//tsl/platform/testdata:test_echo",
-        "//tsl/platform/testdata:test_echo_argv_1",
-        "//tsl/platform/testdata:test_noop",
-        "//tsl/platform/testdata:test_stderr",
-    ],
-    tags = ["no_oss"],  # TODO(b/327036247): revisit after this moves to XLA
-    deps = [
-        ":path",
-        ":strcat",
-        ":subprocess",
-        ":test",
-        ":test_main",
-        "@xla//xla/tsl/lib/core:status_test_util",
     ],
 )
 

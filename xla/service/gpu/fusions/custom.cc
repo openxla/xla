@@ -35,6 +35,7 @@ limitations under the License.
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -58,13 +59,12 @@ limitations under the License.
 #include "xla/service/gpu/kernels/custom_kernel_fusion.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/runtime/copy_thunk.h"
+#include "xla/service/gpu/runtime/custom_call_target.h"
 #include "xla/service/gpu/runtime/custom_call_thunk.h"
 #include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/gemm_thunk.h"
 #include "xla/service/gpu/runtime/kernel_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
-#include "xla/service/gpu/runtime/nccl_api.h"
-#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/gpu/stream_executor_util.h"
@@ -73,6 +73,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
@@ -485,7 +486,8 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
 
   TF_ASSIGN_OR_RETURN(
       GemmConfig config,
-      GemmConfig::For(static_cast<const HloInstruction*>(&custom_call)));
+      GemmConfig::For(static_cast<const HloInstruction*>(&custom_call),
+                      ir_emitter_context.gpu_compute_capability()));
 
   std::unique_ptr<Thunk> thunk;
   auto thunk_info = Thunk::ThunkInfo::WithProfileAnnotation(&fusion);
@@ -665,26 +667,23 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
   // xla/g3doc/custom_call.md.
   switch (custom_call.api_version()) {
     case CustomCallApiVersion::API_VERSION_ORIGINAL:
-      using original_call_type =
-          void (*)(CustomCallThunk::Stream /*stream*/, void** /*buffers*/,
-                   const char* /*opaque*/, size_t /*opaque_len*/);
-      custom_call_target = [call_target](CustomCallThunk::Stream stream,
-                                         void** buffers, const char* opaque,
-                                         size_t opaque_len,
+      custom_call_target = [call_target](se::Stream* stream, void** buffers,
+                                         const char* opaque, size_t opaque_len,
                                          XlaCustomCallStatus*) {
-        auto typed_call_target =
-            reinterpret_cast<original_call_type>(call_target);
-        typed_call_target(stream, buffers, opaque, opaque_len);
+        reinterpret_cast<CustomCallWithOpaqueStreamHandle>(call_target)(
+            stream->platform_specific_handle().stream, buffers, opaque,
+            opaque_len);
       };
       break;
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
     case CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
-      using status_returning_call_type =
-          void (*)(CustomCallThunk::Stream /*stream*/, void** /*buffers*/,
-                   const char* /*opaque*/, size_t /*opaque_len*/,
-                   XlaCustomCallStatus* /*status*/);
-      custom_call_target =
-          reinterpret_cast<status_returning_call_type>(call_target);
+      custom_call_target = [call_target](se::Stream* stream, void** buffers,
+                                         const char* opaque, size_t opaque_len,
+                                         XlaCustomCallStatus* status) {
+        reinterpret_cast<CustomCallWithStatusAndOpaqueStreamHandle>(
+            call_target)(stream->platform_specific_handle().stream, buffers,
+                         opaque, opaque_len, status);
+      };
       break;
     case CustomCallApiVersion::API_VERSION_TYPED_FFI:
       // We already checked `handler` above.
@@ -963,8 +962,8 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
         /*destination_memory_space=*/dst_shape.layout().memory_space(),
         /*source_value=*/nullptr,
         /*destination_value=*/nullptr});
-    auto collective_start_thunk = std::make_unique<NcclThunkType>(
-        thunk_info, NcclApi::Default(), instr, buffers);
+    auto collective_start_thunk =
+        std::make_unique<NcclThunkType>(thunk_info, instr, buffers);
     auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
         /*kind=*/collective_done_thunk_kind,
         /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
