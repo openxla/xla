@@ -70,6 +70,9 @@ cc_library(
     ],
     strip_include_prefix = "%{rocm_root}",
     visibility = ["//visibility:public"],
+    deps = [
+        ":rocm_rpath",
+    ]
 )
 
 cc_library(
