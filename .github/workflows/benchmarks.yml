@@ -7,10 +7,10 @@ on:
 
 jobs:
   benchmark:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        platform: [CPU, GPU]
+        platform: [CPU]
     steps:
       - name: Checkout OpenXLA
         uses: actions/checkout@v3
@@ -32,20 +32,20 @@ jobs:
         run: |
           for file in xla/tests/fuzz/*.hlo; do
             echo "Running benchmark for ${{ matrix.platform }} on $file"
-            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file > results/$file.log
+            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file
           done
 
       - name: Build CPU Benchmarks
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off //xla/service/cpu/benchmarks:*
 
-      - name: Run all benchmarks and save logs
+      - name: Run CPU Benchmarks
         working-directory: openxla
         continue-on-error: true
         run: |
           for benchmark in $(bazelisk query 'kind("executable", //xla/service/cpu/benchmarks:*)'); do
               echo "Running: $benchmark"
-              ./bazel-bin/$benchmark --benchmark_filter=".*" > results/$benchmark.log
+              ./bazel-bin/$benchmark --benchmark_filter=".*"
           done
             
       - name: Upload Results
