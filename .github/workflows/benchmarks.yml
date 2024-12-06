@@ -22,29 +22,34 @@ jobs:
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
+      - name: Create results directory
+        working-directory: openxla
+        run: mkdir results
+
       - name: Run HLO Module Benchmarks
         working-directory: openxla
         continue-on-error: true
         run: |
           for file in xla/tests/fuzz/*.hlo; do
             echo "Running benchmark for ${{ matrix.platform }} on $file"
-            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file
+            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file > results/$file.log
           done
 
       - name: Build CPU Benchmarks
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off //xla/service/cpu/benchmarks:*
 
-      - name: Run CPU benchmarks
+      - name: Run all benchmarks and save logs
         working-directory: openxla
         continue-on-error: true
         run: |
           for benchmark in $(bazelisk query 'kind("executable", //xla/service/cpu/benchmarks:*)'); do
               echo "Running: $benchmark"
-              ./bazel-bin/$benchmark --benchmark_filter=".*"
+              ./bazel-bin/$benchmark --benchmark_filter=".*" > results/$benchmark.log
+          done
             
       - name: Upload Results
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.platform }}-xla-benchmarks
-          path: openxla/xla
+          path: openxla/result
