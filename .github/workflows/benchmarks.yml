@@ -22,7 +22,7 @@ jobs:
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
-      - name: Run Benchmarks
+      - name: Run HLO Module Benchmarks
         working-directory: openxla
         continue-on-error: true
         run: |
@@ -31,13 +31,17 @@ jobs:
             ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file
           done
 
-      - name: Build CPU benchmarks
+      - name: Build CPU Benchmarks
         working-directory: openxla
-        run: bazel build -c opt --dynamic_mode=off  //xla/service/cpu/benchmarks:elementwise_benchmark_test
-          
+        run: bazelisk build -c opt --dynamic_mode=off //xla/service/cpu/benchmarks:*
+
       - name: Run CPU benchmarks
         working-directory: openxla
-        run: ./bazel-bin/xla/service/cpu/benchmarks/elementwise_benchmark_test --benchmark_filter=".*"
+        continue-on-error: true
+        run: |
+          for benchmark in $(bazelisk query 'kind("executable", //xla/service/cpu/benchmarks:*)'); do
+              echo "Running: $benchmark"
+              ./bazel-bin/$benchmark --benchmark_filter=".*"
             
       - name: Upload Results
         uses: actions/upload-artifact@v3
