@@ -49,32 +49,32 @@ namespace {
 // element of the outermost vector in the returned data structure holds the
 // replica IDs converted from the global IDs in a collective's replica_groups
 // field for partition k.
-std::vector<std::vector<std::vector<int64_t>>> GroupsForReplicas(
+std::vector<absl::flat_hash_set<std::vector<int64_t>>> GroupsForReplicas(
     absl::Span<const ReplicaGroup> groups, int64_t num_partitions,
     int64_t replica_count, bool cross_partition_spmd) {
   int64_t num_replicas = cross_partition_spmd ? replica_count : num_partitions;
-  std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas(
+  std::vector<absl::flat_hash_set<std::vector<int64_t>>> groups_for_replicas(
       num_replicas);
   for (const ReplicaGroup& group : groups) {
-    for (int64_t idx = 0; idx < num_replicas; ++idx) {
-      std::vector<int64_t> ids;
-      for (int64_t id : group.replica_ids()) {
-        int64_t rid = id / num_partitions;
-        int64_t pid = id % num_partitions;
-        if ((cross_partition_spmd ? rid : pid) == idx) {
-          ids.push_back(cross_partition_spmd ? pid : rid);
-        }
+    absl::flat_hash_map<int64_t, std::vector<int64_t>> id_to_ids;
+    for (int64_t id : group.replica_ids()) {
+      int64_t rid = id / num_partitions;
+      int64_t pid = id % num_partitions;
+      if (cross_partition_spmd) {
+        id_to_ids[rid].push_back(pid);
+      } else {
+        id_to_ids[pid].push_back(rid);
       }
-      if (!ids.empty()) {
-        groups_for_replicas[idx].emplace_back(std::move(ids));
-      }
+    }
+    for (const auto& [id, ids] : id_to_ids) {
+      groups_for_replicas[id].emplace(std::move(ids));
     }
   }
   return groups_for_replicas;
 }
 
-// Returns a vector of vectors such that two ints appear in the same inner
-// vector iff they appear in the same inner vector of both groups0 and groups1.
+// Returns a set of vectors such that two ints appear in the same vector iff
+// they appear in the same vector of both groups0 and groups1.
 //
 // Example:
 //
@@ -82,32 +82,31 @@ std::vector<std::vector<std::vector<int64_t>>> GroupsForReplicas(
 //  groups1 = {{0,3,4,5},{1,2,6,7}}
 //
 //  MergeGroups(groups0, groups1) returns {{0,3},{1,2},{4,5},{6,7}}.
-std::vector<std::vector<int64_t>> MergeGroups(
-    absl::Span<const std::vector<int64_t>> groups0,
-    absl::Span<const std::vector<int64_t>> groups1) {
-  auto groups_idx_for_target = [](absl::Span<const std::vector<int64_t>> groups,
-                                  int64_t target) -> int64_t {
-    for (int groups_idx = 0; groups_idx < groups.size(); ++groups_idx) {
-      for (int64_t element : groups[groups_idx]) {
-        if (element == target) {
-          return groups_idx;
-        }
-      }
+absl::flat_hash_set<std::vector<int64_t>> MergeGroups(
+    const absl::flat_hash_set<std::vector<int64_t>>& groups0,
+    const absl::flat_hash_set<std::vector<int64_t>>& groups1) {
+  absl::flat_hash_map<int64_t, int64_t> groups1_idx_for_target;
+  int64_t groups1_idx = 0;
+  for (std::vector<int64_t> group1 : groups1) {
+    for (int64_t element : group1) {
+      groups1_idx_for_target[element] = groups1_idx;
     }
-    LOG(FATAL) << "Unable to find target.";
-  };
+    ++groups1_idx;
+  }
 
   absl::flat_hash_map<std::pair<int64_t, int64_t>, std::vector<int64_t>>
       groups_idxs_to_elements;
-  for (int groups0_idx = 0; groups0_idx < groups0.size(); ++groups0_idx) {
-    for (int64_t element : groups0[groups0_idx]) {
-      int64_t groups1_idx = groups_idx_for_target(groups1, element);
+  int64_t groups0_idx = 0;
+  for (std::vector<int64_t> group0 : groups0) {
+    for (int64_t element : group0) {
+      int64_t groups1_idx = groups1_idx_for_target[element];
       groups_idxs_to_elements[{groups0_idx, groups1_idx}].push_back(element);
     }
+    ++groups0_idx;
   }
-  std::vector<std::vector<int64_t>> merged_groups;
+  absl::flat_hash_set<std::vector<int64_t>> merged_groups;
   for (const auto& [pair, group] : groups_idxs_to_elements) {
-    merged_groups.emplace_back(std::move(group));
+    merged_groups.emplace(std::move(group));
   }
   return merged_groups;
 }
@@ -158,14 +157,14 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
       if (support_partial_replication) {
         const int64_t num_partitions =
             hlo->GetModule()->config().num_partitions();
-        std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas(
-            num_partitions);
+        std::vector<absl::flat_hash_set<std::vector<int64_t>>>
+            groups_for_replicas(num_partitions);
         for (const ReplicaGroup& replica_group : hlo->replica_groups()) {
           std::vector<int64_t> group_for_replica;
           for (auto id : replica_group.replica_ids()) {
             group_for_replica.push_back(id);
           }
-          groups_for_replicas[0].push_back(group_for_replica);
+          groups_for_replicas[0].insert(group_for_replica);
         }
         std::fill(groups_for_replicas.begin() + 1, groups_for_replicas.end(),
                   groups_for_replicas.front());
@@ -185,9 +184,10 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
             hlo->GetModule()->config().num_partitions();
         const int64_t replica_count =
             hlo->GetModule()->config().replica_count();
-        std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas =
-            GroupsForReplicas(hlo->replica_groups(), num_partitions,
-                              replica_count, cross_partition_spmd);
+        std::vector<absl::flat_hash_set<std::vector<int64_t>>>
+            groups_for_replicas =
+                GroupsForReplicas(hlo->replica_groups(), num_partitions,
+                                  replica_count, cross_partition_spmd);
 
         // In the fully replicated case, there is one set of partition or
         // replica IDs on each replica or partition. Since the flattened ID
@@ -197,7 +197,7 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
         for (auto groups_for_replica : groups_for_replicas) {
           fully_replicated &=
               groups_for_replica.size() == 1 &&
-              groups_for_replica[0].size() ==
+              (*groups_for_replica.begin()).size() ==
                   (cross_partition_spmd ? num_partitions : replica_count);
         }
         if (fully_replicated) {
@@ -281,10 +281,10 @@ HloReplicationAnalysis::DetermineHloInstructionIsReplicated(
         int64_t num_replicas = cross_partition_spmd
                                    ? hlo_module->config().replica_count()
                                    : hlo_module->config().num_partitions();
-        std::vector<std::vector<std::vector<int64_t>>> groups_for_replicas(
-            num_replicas);
+        std::vector<absl::flat_hash_set<std::vector<int64_t>>>
+            groups_for_replicas(num_replicas);
         for (const auto& value_and_device_set : value_to_device_set) {
-          groups_for_replicas[0].push_back(value_and_device_set.second);
+          groups_for_replicas[0].insert(value_and_device_set.second);
         }
         std::fill(groups_for_replicas.begin() + 1, groups_for_replicas.end(),
                   groups_for_replicas.front());
@@ -612,7 +612,8 @@ HloReplicationAnalysis::HloReplication::HloReplication()
 
 HloReplicationAnalysis::HloReplication::HloReplication(
     HloReplicationAnalysis::HloReplication::State state,
-    absl::Span<const std::vector<std::vector<int64_t>>> groups_for_replicas)
+    absl::Span<const absl::flat_hash_set<std::vector<int64_t>>>
+        groups_for_replicas)
     : state_(state),
       groups_for_replicas_(groups_for_replicas.begin(),
                            groups_for_replicas.end()) {
@@ -631,7 +632,8 @@ HloReplicationAnalysis::HloReplication::UniqueOnAllDevices() {
 
 HloReplicationAnalysis::HloReplication
 HloReplicationAnalysis::HloReplication::PartiallyReplicated(
-    absl::Span<const std::vector<std::vector<int64_t>>> groups_for_replicas) {
+    absl::Span<const absl::flat_hash_set<std::vector<int64_t>>>
+        groups_for_replicas) {
   return HloReplication(State::kPartiallyReplicated, groups_for_replicas);
 }
 
@@ -653,7 +655,7 @@ HloReplicationAnalysis::HloReplication::Merge(
           CHECK_EQ(groups_for_replicas_.size(),
                    other.groups_for_replicas_.size());
           // Merge the groups for each replica or partition.
-          std::vector<std::vector<std::vector<int64_t>>>
+          std::vector<absl::flat_hash_set<std::vector<int64_t>>>
               merged_groups_for_replicas(groups_for_replicas_.size());
           std::transform(groups_for_replicas_.begin(),
                          groups_for_replicas_.end(),
@@ -673,12 +675,8 @@ bool HloReplicationAnalysis::HloReplication::Equal(
   }
   CHECK_EQ(groups_for_replicas_.size(), other.groups_for_replicas_.size());
   for (int k = 0; k < groups_for_replicas_.size(); ++k) {
-    for (std::vector<int64_t> group_for_replica : groups_for_replicas_[k]) {
-      if (std::find(other.groups_for_replicas_[k].begin(),
-                    other.groups_for_replicas_[k].end(),
-                    group_for_replica) == other.groups_for_replicas_[k].end()) {
-        return false;
-      }
+    if (groups_for_replicas_[k] != other.groups_for_replicas_[k]) {
+      return false;
     }
   }
   return true;
@@ -694,7 +692,7 @@ bool HloReplicationAnalysis::HloReplication::IsUniqueOnAllDevices() const {
 
 bool HloReplicationAnalysis::HloReplication::IsReplicatedWithinSubgroup(
     absl::Span<const int64_t> device_ids) const {
-  for (std::vector<std::vector<int64_t>> groups_for_replica :
+  for (absl::flat_hash_set<std::vector<int64_t>> groups_for_replica :
        groups_for_replicas_) {
     // All groups for all replicas must contain all or none of the elements of
     // device_ids.
@@ -725,10 +723,11 @@ std::string HloReplicationAnalysis::HloReplication::ToString() const {
       oss << "PartiallyReplicated";
       for (int k = 0; k < groups_for_replicas_.size(); ++k) {
         oss << " device" << k << "{";
-        for (int l = 0; l < groups_for_replicas_[k].size(); ++l) {
+        int l = 0;
+        for (std::vector<int64_t> group_for_replica : groups_for_replicas_[k]) {
           oss << "{";
-          oss << absl::StrJoin(groups_for_replicas_[k][l], ",");
-          oss << (l == groups_for_replicas_[k].size() - 1 ? "}" : "},");
+          oss << absl::StrJoin(group_for_replica, ",");
+          oss << (++l == groups_for_replicas_[k].size() ? "}" : "},");
         }
         oss << (k == groups_for_replicas_.size() - 1 ? "}" : "},");
       }
