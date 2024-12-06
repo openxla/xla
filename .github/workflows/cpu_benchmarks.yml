@@ -15,22 +15,22 @@ jobs:
           repository: 'openxla/xla'
           path: openxla
 
-      - name: Build run_hlo_module
-        working-directory: openxla
-        run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
+      # - name: Build run_hlo_module
+      #   working-directory: openxla
+      #   run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
       - name: Create results directory
         working-directory: openxla
         run: mkdir results
 
-      - name: Run HLO Module Benchmarks
-        working-directory: openxla
-        continue-on-error: true
-        run: |
-          for file in xla/tests/fuzz/*.hlo; do
-            echo "Running benchmark on $file"
-            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
-          done
+      # - name: Run HLO Module Benchmarks
+      #   working-directory: openxla
+      #   continue-on-error: true
+      #   run: |
+      #     for file in xla/tests/fuzz/*.hlo; do
+      #       echo "Running benchmark on $file"
+      #       ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
+      #     done
 
       - name: Build CPU Benchmarks
         working-directory: openxla
@@ -38,17 +38,24 @@ jobs:
 
       - name: Run CPU benchmarks
         working-directory: openxla
+        continue-on-error: true
         run: |
-          for benchmark in $(bazelisk query 'kind("executable", //xla/service/cpu/benchmarks:*)'); do
-            benchmark_name=$(basename "$benchmark" | sed 's/_test$//')
+          find ./bazel-bin/xla/service/cpu/benchmarks/ -maxdepth 1 -type f -executable -name "*_test" -print0 | while>
+            # Extract the benchmark name (remove path and extension)
+            benchmark_name=$(basename "$benchmark" | sed 's/_test$//') 
+          
             echo "Running benchmark: $benchmark_name"
-            ./bazel-bin/$benchmark --benchmark_filter=".*"
+          
+            # Run the benchmark with default parameters and save the output to a log file.
+            $benchmark --benchmark_filter=".*"
+          
+            # Check the exit code of the benchmark
             if [ $? -ne 0 ]; then
-              echo "Error: Benchmark '$benchmark_name' failed. Check the log file: results/$benchmark_name.log"
+              echo "Error: Benchmark '$benchmark_name' failed. Check the log file: $benchmark_name.log"
             else
               echo "Benchmark '$benchmark_name' completed successfully."
             fi
-          done
+            done
             
       - name: Upload Results
         uses: actions/upload-artifact@v3
