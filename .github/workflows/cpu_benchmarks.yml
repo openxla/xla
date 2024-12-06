@@ -8,9 +8,6 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        platform: [CPU]
     steps:
       - name: Checkout OpenXLA
         uses: actions/checkout@v3
@@ -31,25 +28,30 @@ jobs:
         continue-on-error: true
         run: |
           for file in xla/tests/fuzz/*.hlo; do
-            echo "Running benchmark for ${{ matrix.platform }} on $file"
-            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=${{ matrix.platform }} $file
+            echo "Running benchmark on $file"
+            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
           done
 
       - name: Build CPU Benchmarks
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off //xla/service/cpu/benchmarks:*
 
-      - name: Run CPU Benchmarks
+      - name: Run CPU benchmarks
         working-directory: openxla
-        continue-on-error: true
         run: |
           for benchmark in $(bazelisk query 'kind("executable", //xla/service/cpu/benchmarks:*)'); do
-              echo "Running: $benchmark"
-              ./bazel-bin/$benchmark --benchmark_filter=".*"
+            benchmark_name=$(basename "$benchmark" | sed 's/_test$//')
+            echo "Running benchmark: $benchmark_name"
+            ./bazel-bin/$benchmark --benchmark_filter=".*"
+            if [ $? -ne 0 ]; then
+              echo "Error: Benchmark '$benchmark_name' failed. Check the log file: results/$benchmark_name.log"
+            else
+              echo "Benchmark '$benchmark_name' completed successfully."
+            fi
           done
             
       - name: Upload Results
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.platform }}-xla-benchmarks
-          path: openxla/result
+          path: openxla/xla
