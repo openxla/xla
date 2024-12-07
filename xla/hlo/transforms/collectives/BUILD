@@ -18,6 +18,31 @@ package_group(
 )
 
 cc_library(
+    name = "all_gather_cse",
+    hdrs = ["all_gather_cse.h"],
+    srcs = ["all_gather_cse.cc"],
+    deps = [
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "all_gather_cse_test",
+    srcs = ["all_gather_cse_test.cc"],
+    deps = [
+        ":all_gather_cse",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",  # fixdeps: keep
+    ],
+)
+
+cc_library(
     name = "async_collective_creator",
     srcs = ["async_collective_creator.cc"],
     hdrs = ["async_collective_creator.h"],
