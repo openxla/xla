@@ -16,6 +16,36 @@ package_group(
         "//xla:friends",
     ],
 )
+cc_library(
+    name = "all_gather_code_motion",
+    srcs = ["all_gather_code_motion.cc"],
+    hdrs = ["all_gather_code_motion.h"],
+    deps = [
+        "//xla:frontend_attributes",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:shape_inference",
+        "@com_google_absl//absl/container:flat_hash_set",
+
+    ],
+)
+
+xla_cc_test(
+    name = "all_gather_code_motion_test",
+    srcs = ["all_gather_code_motion_test.cc"],
+    deps = [
+        ":all_gather_code_motion",
+        "//xla:test",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/transforms:hlo_dce",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/utils:hlo_matchers",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test_main",  # fixdeps: keep
+    ],
+)
 
 cc_library(
     name = "async_collective_creator",
