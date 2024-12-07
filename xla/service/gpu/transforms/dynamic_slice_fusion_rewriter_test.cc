@@ -2143,4 +2143,64 @@ TEST_F(DynamicSliceFusionRewriterTest, ReduceScatterDynamicSlice) {
   RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), expected);
 }
 
+TEST_F(DynamicSliceFusionRewriterTest, SimpleLoopIteration) {
+  const char* hlo = R"(
+    HloModule jit_scan, replica_count=2
+
+    %add {
+      %param_0 = f32[] parameter(0)
+      %param_1 = f32[] parameter(1)
+      ROOT %add.1 = f32[] add(%param_0, %param_1)
+    }
+
+    %region_0.14 {
+      %arg_tuple.15 = (s32[], f32[128,128]{1,0}, f32[128,128,128]{2,1,0}, f32[128,128,128]{2,1,0}, f32[128,128]{1,0}) parameter(0)
+      %get-tuple-element.16 = s32[] get-tuple-element(%arg_tuple.15), index=0
+      %constant.21 = s32[] constant(1)
+      %add.37 = s32[] add(%get-tuple-element.16, %constant.21)
+      %get-tuple-element.20 = f32[128,128]{1,0} get-tuple-element(%arg_tuple.15), index=4
+      %get-tuple-element.18 = f32[128,128,128]{2,1,0} get-tuple-element(%arg_tuple.15), index=2
+      %reduce-scatter.1 = f32[64,128]{1,0} reduce-scatter(%get-tuple-element.20), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=%add
+      %bitcast = f32[1,64,128]{2,1,0} bitcast(%reduce-scatter.1)
+      %constant.23 = s32[] constant(0)
+      %constant.33 = s32[] constant(10)
+      %compare.33 = pred[] compare(%get-tuple-element.16, %constant.23), direction=LT
+      %constant.22 = s32[] constant(128)
+      %add.34 = s32[] add(%get-tuple-element.16, %constant.22)
+      %sub.24 = s32[] subtract(%add.34, %constant.33)
+      %select.35 = s32[] select(%compare.33, %sub.24, %get-tuple-element.16)
+      %dynamic-update-slice.36 = f32[128,128,128]{2,1,0} dynamic-update-slice(%get-tuple-element.18, %bitcast, %select.35, %constant.23, %constant.23)
+      %get-tuple-element.19 = f32[128,128,128]{2,1,0} get-tuple-element(%arg_tuple.15), index=3
+      ROOT %tuple.38 = tuple(%add.37, %get-tuple-element.20, %dynamic-update-slice.36, %get-tuple-element.19, %get-tuple-element.20)
+    }
+
+    %region_1.39 {
+      %arg_tuple.40 = (s32[], f32[128,128]{1,0}, f32[128,128,128]{2,1,0}, f32[128,128,128]{2,1,0}, f32[128,128]{1,0}) parameter(0)
+      %get-tuple-element.41 = s32[] get-tuple-element(%arg_tuple.40), index=0
+      %constant.46 = s32[] constant(128)
+      ROOT %compare.47 = pred[] compare(%get-tuple-element.41, %constant.46), direction=LT
+    }
+
+    ENTRY %main.55 {
+      %constant.4 = s32[] constant(0)
+      %Arg_1.2 = f32[128,128]{1,0} parameter(1)
+      %constant.5 = f32[] constant(0)
+      %broadcast.6 = f32[128,128,128]{2,1,0} broadcast(%constant.5), dimensions={}
+      %Arg_2.3 = f32[128,128,128]{2,1,0} parameter(2)
+      %Arg_0.1 = f32[128,128]{1,0} parameter(0)
+      %tuple.7 = tuple(%constant.4, %Arg_1.2, %broadcast.6, %Arg_2.3, %Arg_0.1)
+      %while.48 = while(%tuple.7), condition=%region_1.39, body=%region_0.14
+      %get-tuple-element.50 = f32[128,128]{1,0} get-tuple-element(%while.48), index=1
+      %get-tuple-element.51 = f32[128,128,128]{2,1,0} get-tuple-element(%while.48), index=2
+      ROOT %tuple.54 = tuple(%get-tuple-element.50, %get-tuple-element.51)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(DynamicSliceFusionRewriter("gpu"), module.get()));
+  EXPECT_TRUE(changed);
+}
+
 }  // namespace xla::gpu

@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/sequential_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
+#include "xla/service/gpu/runtime/while_thunk.h"
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -3080,6 +3081,48 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSLoopIterationOffset) {
   EXPECT_TRUE(*RunFileCheck(
       address_computations_opt[0]->FusionInstruction()->parent()->ToString(),
       "// CHECK-NOT: {{.+}} = {{.*}}reduce-scatter"));
+  // Check the dynamic slice fusion thunks in the created executable.
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> exec,
+      CreateExecutable(module_with_adddress_computation->Clone(), false));
+  GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
+  ASSERT_NE(gpu_exec, nullptr);
+  const SequentialThunk& thunk = gpu_exec->GetThunk();
+  const std::unique_ptr<Thunk>& while_thunk = thunk.thunks()[3];
+  const WhileThunk* while_thunk_ = dynamic_cast<WhileThunk*>(while_thunk.get());
+  ASSERT_NE(while_thunk_, nullptr);
+  SequentialThunk* body = while_thunk_->body_thunk_sequence();
+  ASSERT_NE(body, nullptr);
+  std::unique_ptr<Thunk>& dynamic_slice_thunk = body->thunks()[1];
+  const DynamicSliceThunk* dynamic_slice_thunk_ =
+      dynamic_cast<DynamicSliceThunk*>(dynamic_slice_thunk.get());
+  ASSERT_NE(dynamic_slice_thunk_, nullptr);
+  std::string dynamic_slice_thunk_str = dynamic_slice_thunk_->ToString(1);
+  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_status,
+                          RunFileCheck(dynamic_slice_thunk_->ToString(1), R"(
+  // CHECK: offsets={std::nullopt,{HloModule extracted, entry_computation_layout={(s32[])->s32[]}
+  // CHECK:   ENTRY %{{.+}} ({{.+}}: s32[]) -> s32[] {
+  // CHECK:     %{{.+}} = s32[] parameter(0)
+  // CHECK:     %{{.+}} = s32[] constant(0)
+  // CHECK:     %{{.+}} = pred[] compare(s32[] %{{.+}}, s32[] %{{.+}}), direction=LT
+  // CHECK:     %{{.+}} = s32[] constant(128)
+  // CHECK:     %{{.+}} = s32[] add(s32[] %{{.+}}, s32[] %{{.+}})
+  // CHECK:     ROOT %select.3.0 = s32[] select(pred[] %{{.+}}, s32[] %{{.+}}, s32[] %{{.+}})
+  // CHECK:   }
+  // CHECK: ,0,0}},
+  // CHECK-SAME: indvar_init={HloModule extracted, entry_computation_layout={()->s32[]}
+  // CHECK:   ENTRY %{{.+}} () -> s32[] {
+  // CHECK:     %{{.+}} = s32[] constant(0)
+  // CHECK:     ROOT %{{.+}} = s32[] copy(s32[] %{{.+}})
+  // CHECK:   }
+  // CHECK: }, indvar_update={HloModule extracted, entry_computation_layout={(s32[])->s32[]}
+  // CHECK:   ENTRY %{{.+}} ({{.+}}: s32[]) -> s32[] {
+  // CHECK:     %{{.+}} = s32[] parameter(0)
+  // CHECK:     %{{.+}} = s32[] constant(1)
+  // CHECK:     ROOT %{{.+}} = s32[] add(s32[] %{{.+}}, s32[] %{{.+}})
+  // CHECK:   }
+  )"));
+  EXPECT_TRUE(filecheck_status);
 
   ErrorSpec error{/*aabs=*/1e-3, /*arel=*/1e-3};
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
