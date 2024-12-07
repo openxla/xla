@@ -177,6 +177,7 @@ IrEmitter::IrEmitter(mlir::MLIRContext* mlir_context,
       main_builder_(llvm_module->getContext()),
       current_builder_(&main_builder_),
       mlir_context_(mlir_context),
+      allow_reassociation_(false),
       instruction_to_profile_idx_(std::move(instruction_to_profile_idx)),
       computation_to_profile_idx_(std::move(computation_to_profile_idx)),
       computation_transitively_contains_custom_call_(
@@ -1646,6 +1647,7 @@ absl::StatusOr<IrEmitter::ShardedVector>
 IrEmitter::EmitInnerLoopForVectorizedReduction(
     const ReductionGenerator& reduction_generator,
     const llvm_ir::IrArray::Index& output_index,
+    const llvm_ir::IrArray& arg_array, const llvm_ir::IrArray& init_value_array,
     const ShardedVectorType& accumulator_type, HloInstruction* init_value,
     HloInstruction* arg, absl::Span<const int64_t> dimensions,
     llvm::Align element_alignment) {
@@ -1657,7 +1659,7 @@ IrEmitter::EmitInnerLoopForVectorizedReduction(
   }
 
   llvm::Value* init_value_ssa =
-      Load(IrShapeType(init_value->shape()), GetEmittedValueFor(init_value));
+      Load(IrShapeType(init_value->shape()), init_value_array.GetBasePointer());
 
   for (llvm::Value* accumulator_shard : accumulator) {
     llvm::Value* initial_value;
@@ -1681,7 +1683,6 @@ IrEmitter::EmitInnerLoopForVectorizedReduction(
 
   SetToFirstInsertPoint(reduction_loop_nest.GetInnerLoopBodyBasicBlock(), b());
 
-  llvm_ir::IrArray arg_array(GetIrArrayFor(arg));
   llvm_ir::IrArray::Index::const_iterator it = output_index.begin();
 
   for (auto& i : input_multi_index) {
@@ -1744,8 +1745,9 @@ void IrEmitter::EmitShardedVectorStore(
 
 absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
     HloInstruction* reduce, HloInstruction* arg, HloInstruction* init_value,
-    absl::Span<const int64_t> dimensions, HloComputation* function,
-    std::string* failure_reason) {
+    const llvm_ir::IrArray& arg_array, const llvm_ir::IrArray& init_value_array,
+    const llvm_ir::IrArray& output_array, absl::Span<const int64_t> dimensions,
+    HloComputation* function, std::string* failure_reason) {
   if (!reduce->shape().IsArray()) {
     *failure_reason = "vectorization of variadic reduce not implemented";
     return false;
@@ -1793,7 +1795,6 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
   }
 
   CHECK(!reduce->shape().IsTuple());
-  TF_RETURN_IF_ERROR(EmitTargetAddressForOp(reduce));
 
   // We know we're not reducing over the most minor dimension, which means we
   // can lower the reduction loop as:
@@ -1854,16 +1855,16 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
         reduce->shape().element_type(), vectorization_factor);
     llvm_ir::IrArray::Index array_index(array_multi_index, reduce->shape(),
                                         b()->getInt64Ty());
-    TF_ASSIGN_OR_RETURN(std::vector<llvm::Value*> accumulator,
-                        EmitInnerLoopForVectorizedReduction(
-                            reduction_generator, array_index, vector_type,
-                            init_value, arg, dimensions, element_alignment));
+    TF_ASSIGN_OR_RETURN(
+        std::vector<llvm::Value*> accumulator,
+        EmitInnerLoopForVectorizedReduction(
+            reduction_generator, array_index, arg_array, init_value_array,
+            vector_type, init_value, arg, dimensions, element_alignment));
 
-    llvm_ir::IrArray target_array = GetIrArrayFor(reduce);
     llvm::Value* output_address =
-        target_array.EmitArrayElementAddress(array_index, b());
+        output_array.EmitArrayElementAddress(array_index, b());
     EmitShardedVectorStore(output_address, accumulator, element_alignment,
-                           target_array);
+                           output_array);
 
     if (auto exit_terminator = loop->GetExitBasicBlock()->getTerminator()) {
       CHECK_GT(LayoutUtil::MinorToMajor(reduce->shape()).size(), 1);
@@ -1892,16 +1893,16 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
     llvm::FastMathFlags flags = b()->getFastMathFlags();
     flags.setAllowReassoc(true);
     b()->setFastMathFlags(flags);
-    TF_ASSIGN_OR_RETURN(std::vector<llvm::Value*> accumulator,
-                        EmitInnerLoopForVectorizedReduction(
-                            reduction_generator, array_index, vector_type,
-                            init_value, arg, dimensions, element_alignment));
+    TF_ASSIGN_OR_RETURN(
+        std::vector<llvm::Value*> accumulator,
+        EmitInnerLoopForVectorizedReduction(
+            reduction_generator, array_index, arg_array, init_value_array,
+            vector_type, init_value, arg, dimensions, element_alignment));
 
-    llvm_ir::IrArray target_array = GetIrArrayFor(reduce);
     llvm::Value* output_address =
-        target_array.EmitArrayElementAddress(array_index, b());
+        output_array.EmitArrayElementAddress(array_index, b());
     EmitShardedVectorStore(output_address, accumulator, element_alignment,
-                           target_array);
+                           output_array);
   }
 
   if (outermost_loop_exit_block) {
@@ -1914,8 +1915,21 @@ absl::StatusOr<bool> IrEmitter::EmitVectorizedReduce(
 absl::Status IrEmitter::HandleReduce(HloInstruction* reduce) {
   auto arg = reduce->mutable_operand(0);
   auto init_value = reduce->mutable_operand(1);
-  absl::Span<const int64_t> dimensions(reduce->dimensions());
   HloComputation* function = reduce->to_apply();
+
+  TF_RETURN_IF_ERROR(EmitTargetAddressForOp(reduce));
+
+  return HandleReduce(reduce, arg, init_value, GetIrArrayFor(arg),
+                      GetIrArrayFor(init_value), GetIrArrayFor(reduce),
+                      function);
+}
+
+absl::Status IrEmitter::HandleReduce(
+    HloInstruction* reduce, HloInstruction* arg, HloInstruction* init_value,
+    const llvm_ir::IrArray& arg_array, const llvm_ir::IrArray& init_value_array,
+    const llvm_ir::IrArray& output_array, HloComputation* function,
+    bool is_thunk_runtime) {
+  absl::Span<const int64_t> dimensions(reduce->dimensions());
   bool saved_allow_reassociation = allow_reassociation_;
   allow_reassociation_ = true;
   auto cleanup = absl::MakeCleanup([saved_allow_reassociation, this]() {
@@ -1925,8 +1939,9 @@ absl::Status IrEmitter::HandleReduce(HloInstruction* reduce) {
     std::string vectorization_failure_reason;
     TF_ASSIGN_OR_RETURN(
         bool vectorization_successful,
-        EmitVectorizedReduce(reduce, arg, init_value, dimensions, function,
-                             &vectorization_failure_reason));
+        EmitVectorizedReduce(reduce, arg, init_value, arg_array,
+                             init_value_array, output_array, dimensions,
+                             function, &vectorization_failure_reason));
     if (vectorization_successful) {
       VLOG(1) << "Successfully vectorized reduction " << reduce->ToString()
               << "\n";
@@ -1934,6 +1949,11 @@ absl::Status IrEmitter::HandleReduce(HloInstruction* reduce) {
     } else {
       VLOG(1) << "Could not vectorize reduction " << reduce->ToString() << ": "
               << vectorization_failure_reason;
+      if (is_thunk_runtime) {
+        return absl::Status(absl::StatusCode::kUnimplemented,
+                            "Vectorization of reduction failed, continuing "
+                            "with scalar codegen.");
+      }
     }
   }
 
