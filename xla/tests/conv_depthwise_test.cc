@@ -32,7 +32,12 @@ namespace {
 class DepthwiseConvolution2DTest
     : public HloTestBase,
       public ::testing::WithParamInterface<
-          ::testing::tuple<DepthwiseConvolution2DSpec, bool>> {};
+          ::testing::tuple<DepthwiseConvolution2DSpec, bool>> {
+ public:
+  DepthwiseConvolution2DTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
+};
 
 static std::vector<DepthwiseConvolution2DSpec> GetConv2DTestCases() {
   std::vector<DepthwiseConvolution2DSpec> config_set;

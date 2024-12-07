@@ -33,7 +33,9 @@ class SampleFileTest : public HloTestBase {
   SampleFileTest()
       : HloTestBase(
             /*test_platform=*/PlatformUtil::GetPlatform("gpu").value(),
-            /*reference_platform=*/PlatformUtil::GetPlatform("cpu").value()) {}
+            /*reference_platform=*/PlatformUtil::GetPlatform("cpu").value()) {
+      backend().default_stream_executor()->SetThreadsPerWarp(32);
+    }
 };
 
 TEST_F(SampleFileTest, Convolution) {

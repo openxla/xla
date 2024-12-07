@@ -38,6 +38,9 @@ namespace {
 
 class ParallelReductionTest : public GpuCodegenTest {
  protected:
+  ParallelReductionTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // The test contains a MOF fusion and the XLA optimizer passes

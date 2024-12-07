@@ -26,7 +26,12 @@ limitations under the License.
 namespace xla {
 namespace {
 
-class HloTest : public HloTestBase {};
+class HloTest : public HloTestBase {
+ public:
+  HloTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
+};
 
 TEST_F(HloTest, HloTest) {
   std::string path_to_hlo = std::getenv("HLO_PATH");
