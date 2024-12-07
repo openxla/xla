@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 
 namespace tsl {
 namespace profiler {
@@ -104,6 +105,19 @@ inline bool IsRematerialization(absl::string_view hlo_expression,
                                 absl::string_view framework_op_name) {
   return IsHloRematerialization(hlo_expression) ||
          IsFrameworkRematerialization(framework_op_name);
+}
+
+inline bool IsInfeedOrOutfeed(absl::string_view category) {
+  return category == xla::HloOpcodeString(xla::HloOpcode::kInfeed) ||
+         category == xla::HloOpcodeString(xla::HloOpcode::kOutfeed) ||
+         absl::StrContains(category, "infeed") ||
+         absl::StrContains(category, "outfeed");
+}
+inline bool MayHaveInnerOps(absl::string_view category) {
+  return category == xla::HloOpcodeString(xla::HloOpcode::kCall) ||
+         category == xla::HloOpcodeString(xla::HloOpcode::kConditional) ||
+         category == xla::HloOpcodeString(xla::HloOpcode::kWhile) ||
+         category == kHloMegacoreFusion;
 }
 
 }  // namespace profiler

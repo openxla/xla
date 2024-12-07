@@ -34,7 +34,10 @@ cc_library(
         "//xla/tsl/profiler:xla_profiler_backends",
         "//xla/python:__pkg__",
     ]),
-    deps = ["@com_google_absl//absl/strings"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 tsl_cc_test(
