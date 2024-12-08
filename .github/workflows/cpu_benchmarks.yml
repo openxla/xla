@@ -15,6 +15,13 @@ jobs:
           repository: 'openxla/xla'
           path: openxla
           
+      - name: Print machine specs
+        run: |
+          lscpu
+          free -h  # Memory information
+          df -h    # Disk space information
+          uname -a # Kernel information
+          
       - name: Build run_hlo_module
         working-directory: openxla
         run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
