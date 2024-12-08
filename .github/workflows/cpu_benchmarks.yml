@@ -14,18 +14,19 @@ jobs:
         with:
           repository: 'openxla/xla'
           path: openxla
-      # - name: Build run_hlo_module
-      #   working-directory: openxla
-      #   run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
+          
+      - name: Build run_hlo_module
+        working-directory: openxla
+        run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
 
-      # - name: Run HLO Module Benchmarks
-      #   working-directory: openxla
-      #   continue-on-error: true
-      #   run: |
-      #     for file in xla/tests/fuzz/*.hlo; do
-      #       echo "Running benchmark on $file"
-      #       ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
-      #     done
+      - name: Run HLO Module Benchmarks
+        working-directory: openxla
+        continue-on-error: true
+        run: |
+          for file in xla/tests/fuzz/*.hlo; do
+            echo "Running benchmark on $file"
+            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
+          done
 
       - name: Create results directory
         working-directory: openxla
@@ -40,9 +41,7 @@ jobs:
         continue-on-error: true
         run: |
           find ./bazel-bin/xla/service/cpu/benchmarks/ -maxdepth 1 -type f -executable -name "*_test" -print0 | while IFS= read -r -d $'\0' benchmark; do
-            # Extract the benchmark name (remove path and extension)
             benchmark_name=$(basename "$benchmark" | sed 's/_test$//') 
-
             echo "Running benchmark: $benchmark_name"
 
             # Run the benchmark with default parameters.
