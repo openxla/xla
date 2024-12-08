@@ -14,6 +14,18 @@ jobs:
         with:
           repository: 'openxla/xla'
           path: openxla
+      # - name: Build run_hlo_module
+      #   working-directory: openxla
+      #   run: bazelisk build -c opt --dynamic_mode=off xla/tools:run_hlo_module
+
+      # - name: Run HLO Module Benchmarks
+      #   working-directory: openxla
+      #   continue-on-error: true
+      #   run: |
+      #     for file in xla/tests/fuzz/*.hlo; do
+      #       echo "Running benchmark on $file"
+      #       ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
+      #     done
 
       - name: Create results directory
         working-directory: openxla
@@ -33,9 +45,10 @@ jobs:
 
             echo "Running benchmark: $benchmark_name"
 
-            # Run the benchmark with default parameters and save the output to a log file.
+            # Run the benchmark with default parameters.
+            $benchmark --benchmark_filter=".*"
             $benchmark --benchmark_filter=".*" > "results/$benchmark_name.log" 2>&1
-
+            
             # Check the exit code of the benchmark
             if [ $? -ne 0 ]; then
               echo "Error: Benchmark '$benchmark_name' failed. Check the log file: results/$benchmark_name.log"
@@ -45,7 +58,7 @@ jobs:
           done
 
       - name: Upload Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cpu-xla-benchmarks
           path: openxla/results
