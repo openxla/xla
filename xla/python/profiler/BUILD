@@ -40,6 +40,7 @@ tsl_pybind_extension(
         ":profile_data_lib",
         "@nanobind",
         "@tsl//tsl/platform:protobuf",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
