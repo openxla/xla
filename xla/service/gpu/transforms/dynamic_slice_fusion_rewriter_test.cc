@@ -2143,7 +2143,8 @@ TEST_F(DynamicSliceFusionRewriterTest, ReduceScatterDynamicSlice) {
   RunAndFilecheckHloRewrite(hlo, DynamicSliceFusionRewriter("gpu"), expected);
 }
 
-TEST_F(DynamicSliceFusionRewriterTest, OffsetAsFunctionOfIndvarShouldFuse) {
+TEST_F(DynamicSliceFusionRewriterTest,
+       OffsetAsFunctionOfInductionVariableShouldFuse) {
   const char* hlo = R"(
     HloModule test, replica_count=2
     add {

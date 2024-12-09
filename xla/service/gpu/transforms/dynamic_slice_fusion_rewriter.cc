@@ -47,10 +47,8 @@ limitations under the License.
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/ir_emission_utils.h"
-#include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tools/hlo_extractor.h"
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
@@ -60,8 +58,6 @@ namespace xla {
 namespace gpu {
 
 namespace {
-
-namespace m = ::xla::match;
 
 // A dataflow path flowing from a definition to a user.
 using DefUseDataflowPath = absl::InlinedVector<HloInstruction*, 2>;
@@ -159,23 +155,20 @@ bool IsAlignedSlice(const HloInstruction* slice) {
 // instructions. This is a recursive function checking all paths from the
 // `consumer` to the parameters of the computation and if there is any path
 // without `producer`, then it returns false.
-bool is_only_dependent_on(const HloInstruction* consumer,
-                          HloInstruction* producer,
-                          bool allow_replica_partition_id = false) {
-  if (consumer == producer) return true;
-  if ((consumer->opcode() == HloOpcode::kPartitionId &&
-       !allow_replica_partition_id) ||
-      (consumer->opcode() == HloOpcode::kReplicaId &&
-       !allow_replica_partition_id) ||
-      consumer->opcode() == HloOpcode::kParameter)
+bool IsOnlyDependentOn(const HloInstruction* consumer,
+                       HloInstruction* producer) {
+  if (consumer == producer ||
+      HloPredicateIsOp<HloOpcode::kConstant>(consumer)) {
+    return true;
+  }
+  if (consumer->operand_count() == 0 ||
+      HloPredicateIsOp<HloOpcode::kParameter>(consumer)) {
     return false;
-
-  return absl::c_all_of(
-    consumer->operands(),
-    [producer, allow_replica_partition_id](const HloInstruction* operand) {
-      return is_only_dependent_on(operand, producer,
-                                  allow_replica_partition_id);
-    });
+  }
+  return absl::c_all_of(consumer->operands(),
+                        [producer](const HloInstruction* operand) {
+                          return IsOnlyDependentOn(operand, producer);
+                        });
 };
 
 // Returns true if the value is a function of the induction variable within a
@@ -220,12 +213,10 @@ bool IsValueFunctionOfLoopInductionVariable(const HloInstruction& value,
   const HloInstruction* update = while_body->root_instruction()->operand(
       *loop_induction_variable_tuple_idx);
 
-  // We do not allow replica and partition id because they introduce additional
-  // implicit parameters that have to be computed on the host.
-  return is_only_dependent_on(/*consumer=*/update, /*producer=*/indvar,
-                              /*allow_replica_partition_id=*/false) &&
-         is_only_dependent_on(/*consumer=*/&value, /*producer=*/indvar,
-                              /*allow_replica_partition_id=*/false);
+  // The `update` instruction and `value` should only depend on the induction
+  // variable.
+  return IsOnlyDependentOn(/*consumer=*/update, /*producer=*/indvar) &&
+         IsOnlyDependentOn(/*consumer=*/&value, /*producer=*/indvar);
 }
 
 // This returns true for the constants that are handled in the dynamic slice
@@ -250,7 +241,7 @@ bool IsHandledConstantForDynamicSliceFusion(const HloInstruction& offset) {
 // constant or loop iteration offsets.
 bool HasConstantOrLoopIterationOffsets(const HloDynamicIndexInstruction& instr,
                                        CallGraph* call_graph) {
-  return llvm::all_of(
+  return absl::c_all_of(
       instr.index_operands(), [call_graph](const HloInstruction* offset) {
         return IsValueFunctionOfLoopInductionVariable(*offset, call_graph) ||
                IsHandledConstantForDynamicSliceFusion(*offset);
