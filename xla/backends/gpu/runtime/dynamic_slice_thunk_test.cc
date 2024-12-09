@@ -151,15 +151,20 @@ TEST_F(DynamicSliceThunkTest, SlicedGemm) {
   std::vector<DynamicSliceThunk::Offset> lhs_offsets{slice_lhs_offset_0,
                                                      slice_lhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
        std::nullopt, std::nullopt},
-      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -306,17 +311,22 @@ TEST_F(DynamicSliceThunkTest, MulipleSlicedOperandsGemm) {
   std::vector<DynamicSliceThunk::Offset> rhs_offsets{slice_rhs_offset_0,
                                                      slice_rhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, rhs_offsets, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, rhs_offsets, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}),
        ShapeUtil::MakeShape(PrimitiveType::F32, {8, 1}), std::nullopt,
        std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}),
        ShapeUtil::MakeShape(PrimitiveType::F32, {3, 1}), std::nullopt,
        std::nullopt},
-      {sizeof(int64_t), sizeof(int64_t), std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), sizeof(int64_t), std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -483,14 +493,18 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpy) {
   std::vector<DynamicSliceThunk::Offset> slice_offsets{
       slice_offset_0, slice_offset_1, slice_offset_2, slice_offset_3};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_src, slice_dst}, std::move(fake_allocations),
-      {slice_offsets, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_src, slice_dst}, std::move(fake_allocations),
+      /*offsets=*/{slice_offsets, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 8}), std::nullopt},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
       // original slice result and not bitcasted one)
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {1, 1, 8, 8}), std::nullopt},
-      {sizeof(int64_t), std::nullopt});
+      /*offset_byte_sizes=*/{sizeof(int64_t), std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -647,16 +661,20 @@ TEST_F(DynamicSliceThunkTest, SlicedOutputMemcpy) {
       slice_dst_offset_0, slice_dst_offset_1, slice_dst_offset_2,
       slice_dst_offset_3};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_src, slice_dst}, std::move(fake_allocations),
-      {slice_src_offsets, slice_dst_offsets},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_src, slice_dst}, std::move(fake_allocations),
+      /*offsets=*/{slice_src_offsets, slice_dst_offsets},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2, 2, 2})},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
       // original slice result and not bitcasted one)
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {1, 1, 2, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {1, 1, 2, 2})},
-      {sizeof(int64_t), sizeof(int64_t)});
+      /*offset_byte_sizes=*/{sizeof(int64_t), sizeof(int64_t)},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -824,15 +842,20 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryArgumentOrder) {
   std::vector<DynamicSliceThunk::Offset> lhs_offsets{slice_lhs_offset_0,
                                                      slice_lhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
        std::nullopt, std::nullopt},
-      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -973,15 +996,20 @@ TEST_F(DynamicSliceThunkTest, SlicedGemmArbitraryNumberOfArguments) {
   std::vector<DynamicSliceThunk::Offset> lhs_offsets{slice_lhs_offset_0,
                                                      slice_lhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
        std::nullopt, std::nullopt},
-      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -1115,15 +1143,20 @@ TEST_F(DynamicSliceThunkTest, SlicedTupledOperandGemm) {
   std::vector<DynamicSliceThunk::Offset> lhs_offsets{slice_lhs_offset_0,
                                                      slice_lhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
        std::nullopt, std::nullopt},
-      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -1291,16 +1324,21 @@ TEST_F(DynamicSliceThunkTest, SlicedMemcpyOOB) {
       slice_dst_offset_0, slice_dst_offset_1, slice_dst_offset_2,
       slice_dst_offset_3};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_src, slice_dst}, std::move(fake_allocations),
-      {slice_src_offsets, slice_dst_offsets},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_src, slice_dst}, std::move(fake_allocations),
+      /*offsets=*/{slice_src_offsets, slice_dst_offsets},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {8, 8, 10, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {2, 2, 2, 2})},
       // Make sure to pass a dst shape with the same rank as src shape (i.e.
       // original slice result and not bitcasted one)
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::S32, {1, 1, 2, 2}),
        ShapeUtil::MakeShape(PrimitiveType::S32, {1, 1, 2, 2})},
-      {sizeof(int64_t), sizeof(int64_t)});
+      /*offset_byte_sizes=*/{sizeof(int64_t), sizeof(int64_t)},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr,
+      /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.
@@ -1469,15 +1507,20 @@ TEST_F(DynamicSliceThunkTest, SlicedOperandsSameBufferGemm) {
   std::vector<DynamicSliceThunk::Offset> lhs_offsets{slice_lhs_offset_0,
                                                      slice_lhs_offset_1};
   DynamicSliceThunk thunk(
-      Thunk::ThunkInfo(), std::make_unique<ThunkSequence>(std::move(seq)),
-      {slice_lhs, slice_rhs, slice_out, slice_workspace},
-      std::move(fake_allocations),
-      {lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
+      /*arguments=*/{slice_lhs, slice_rhs, slice_out, slice_workspace},
+      /*fake_allocations=*/std::move(fake_allocations),
+      /*offsets=*/{lhs_offsets, std::nullopt, std::nullopt, std::nullopt},
+      /*orig_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {2, 4}), std::nullopt,
        std::nullopt, std::nullopt},
+      /*sliced_shapes=*/
       {ShapeUtil::MakeShape(PrimitiveType::F32, {1, 3}), std::nullopt,
        std::nullopt, std::nullopt},
-      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt});
+      /*offset_byte_sizes=*/
+      {sizeof(int64_t), std::nullopt, std::nullopt, std::nullopt},
+      /*temp_modules=*/{}, /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
 
   // Step 2:
   // Execute address computation thunk.

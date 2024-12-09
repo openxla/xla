@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
