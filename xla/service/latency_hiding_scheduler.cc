@@ -1328,7 +1328,7 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
             // No resources in flight of this kind. Continue.
             auto it = sched_state.resource_occupiers_in_flight.find(resource);
             if (it == sched_state.resource_occupiers_in_flight.end() ||
-                it->second.size() == 0) {
+                it->second.empty()) {
               continue;
             }
             // Number of instances of 'resource' needed if this instruction was
