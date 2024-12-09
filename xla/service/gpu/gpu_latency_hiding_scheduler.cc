@@ -189,8 +189,8 @@ bool GpuScheduleCrossesOverlapLimit(
   // If the candidate collective has more than 1 overlapping ranks with
   // in-flight collectives, they can form cyclic dependency and cannot be
   // overlapped
-  if ((resource_type - AsyncTracker::GetFirstTargetDefinedResource()) ==
-          static_cast<int64_t>(GpuResourceType::kGpuAsyncStreamCollectives) &&
+  if (resource_type == xla::ResourceTypeToIndex(
+                           GpuResourceType::kGpuAsyncStreamCollectives) &&
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
       sched_state.resource_occupiers_in_flight.at(resource_type).size() > 0) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
