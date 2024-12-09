@@ -169,7 +169,7 @@ bool GpuScheduleCrossesOverlapLimit(
     // No resources in flight of this kind. Continue.
     auto it = sched_state.resource_occupiers_in_flight.find(resource);
     if (it == sched_state.resource_occupiers_in_flight.end() ||
-        it->second.size() == 0) {
+        it->second.empty()) {
       continue;
     }
     // Number of instances of 'resource' needed if this instruction was
@@ -192,7 +192,7 @@ bool GpuScheduleCrossesOverlapLimit(
   if (resource_type == xla::ResourceTypeToIndex(
                            GpuResourceType::kGpuAsyncStreamCollectives) &&
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
-      sched_state.resource_occupiers_in_flight.at(resource_type).size() > 0) {
+      !sched_state.resource_occupiers_in_flight.at(resource_type).empty()) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
     if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst)) {
       CHECK(
