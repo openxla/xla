@@ -47,7 +47,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/map_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/hlo_buffer.h"
