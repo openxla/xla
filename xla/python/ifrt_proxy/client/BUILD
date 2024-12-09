@@ -178,6 +178,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -255,6 +256,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -331,6 +333,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:status_to_from_proto",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -405,6 +408,7 @@ cc_library(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:status_to_from_proto",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
