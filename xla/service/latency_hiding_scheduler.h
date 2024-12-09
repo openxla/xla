@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
-#include "absl/container/node_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -962,7 +961,7 @@ class DefaultSchedulerCore : public SchedulerCore {
     // Units of time passed in the schedule. To keep track of latency hiding.
     HloGraphNode::TimeCost current_time = 0;
     // Resources and corresponding occupiers in flight.
-    absl::flat_hash_map<int64_t, absl::node_hash_set<const HloInstruction*>>
+    absl::flat_hash_map<int64_t, absl::flat_hash_set<const HloInstruction*>>
         resource_occupiers_in_flight;
     // Number of instructions using the key resource type in the set waiting to
     // be scheduled.
