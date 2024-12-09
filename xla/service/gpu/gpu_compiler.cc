@@ -167,7 +167,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_p2p_pipeliner.h"
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
-#include "xla/service/gpu/hlo_traversal.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/ir_emitter_unnested.h"
