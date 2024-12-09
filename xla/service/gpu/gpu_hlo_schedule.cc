@@ -524,7 +524,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   };
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       shape_size_in_bytes, async_tracker.get(), latency_estimator.get(), config,
-      nullptr, nullptr, nullptr, GpuScheduleCrossesOverlapLimit);
+      /*target_scheduling_rule=*/nullptr,
+      /*early_target_scheduling_rule=*/nullptr, /*post_processing_fn=*/nullptr,
+      /*scheduling_instruction_crosses_overlap_limit=*/
+      GpuScheduleCrossesOverlapLimit);
   pipeline.AddPass<SchedulingInstructionAnnotator>();
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(latency_estimator), std::move(async_tracker),

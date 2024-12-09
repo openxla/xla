@@ -194,7 +194,7 @@ bool GpuScheduleCrossesOverlapLimit(
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
       sched_state.resource_occupiers_in_flight.at(resource_type).size() > 0) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
-    if (hlo_query::IsAsyncCollectiveDoneOp(&curr_hlo_inst, true)) {
+    if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst)) {
       CHECK(
           hlo_query::IsAsyncCollectiveStartOp(curr_hlo_inst.operand(0), true));
       const HloInstruction* curr_start_inst =
@@ -204,7 +204,7 @@ bool GpuScheduleCrossesOverlapLimit(
       bool can_overlap = true;
       for (const auto occupier :
            sched_state.resource_occupiers_in_flight.at(resource_type)) {
-        if (hlo_query::IsAsyncCollectiveStartOp(occupier, true)) {
+        if (sched_state.async_tracker->IsSupportedAsyncStart(*occupier)) {
           // Number of overlapping ranks between this occupier and candidate
           size_t overlapping_count = CountOverlappingRanks(
               curr_start_inst->replica_groups(), occupier->replica_groups());
