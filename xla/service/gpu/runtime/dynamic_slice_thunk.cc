@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -47,6 +48,13 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+std::unique_ptr<Literal>& Indvar(DynamicSliceThunk* thunk) {
+  static thread_local absl::flat_hash_map<DynamicSliceThunk*,
+                                          std::unique_ptr<Literal>>
+      indvar_map;
+  return indvar_map[thunk];
+}
+
 DynamicSliceThunk::DynamicSliceThunk(
     ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
@@ -54,7 +62,10 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<std::vector<Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
-    std::vector<std::optional<uint64_t>> offset_byte_sizes)
+    std::vector<std::optional<uint64_t>> offset_byte_sizes,
+    std::vector<std::unique_ptr<HloModule>> fake_modules,
+    std::unique_ptr<HloModule> indvar_init,
+    std::unique_ptr<HloModule> indvar_update)
     : Thunk(Kind::kDynamicSlice, thunk_info),
       embedded_thunk_(std::make_unique<SequentialThunk>(
           ThunkInfo(), std::move(*embedded_thunk))),
@@ -63,7 +74,10 @@ DynamicSliceThunk::DynamicSliceThunk(
       offsets_(offsets),
       orig_shapes_(orig_shapes),
       sliced_shapes_(sliced_shapes),
-      offset_byte_sizes_(offset_byte_sizes) {
+      offset_byte_sizes_(offset_byte_sizes),
+      fake_modules_(std::move(fake_modules)),
+      indvar_init_(std::move(indvar_init)),
+      indvar_update_(std::move(indvar_update)) {
   // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
@@ -105,6 +119,10 @@ absl::Status DynamicSliceThunk::Prepare(const PrepareParams& params,
   }
 
   TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params, resource_requests));
+  if (indvar_init_ != nullptr) {
+    Indvar(this) = HloEvaluator().Evaluate(*indvar_init_, {})->CloneToUnique();
+  }
+
   return absl::OkStatus();
 }
 
@@ -176,12 +194,25 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
              *slice.offsets, src_shape.dimensions(), dst_shape.dimensions()))) {
       auto [offset, src_dim, dst_dim] = values;
 
-      if (uint64_t* const_offset = std::get_if<uint64_t>(&offset)) {
+      if (int64_t* const_offset = std::get_if<int64_t>(&offset)) {
         // Forward slice offsets that are known constant values
         VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
                 << "]: constant offset = " << *const_offset;
         offset_value(argument_idx, offset_idx) = *const_offset;
-
+      } else if (HloModule** offset_module = std::get_if<HloModule*>(&offset)) {
+        VLOG(3) << "Offset module: " << (*offset_module)->ToString();
+        TF_ASSIGN_OR_RETURN(
+            Literal offset,
+            HloEvaluator().Evaluate(**offset_module, {Indvar(this)->Clone()}));
+        std::optional<int64_t> offset_literal =
+            LiteralUtil::LiteralAsScalarInt64(offset);
+        CHECK(offset_literal != std::nullopt)
+            << "Offset value is expected to be integer. Found "
+            << offset.ToString();
+        offset_value(argument_idx, offset_idx) = *offset_literal;
+        VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
+                << "]: loop induction variable dependent offset = "
+                << *offset_literal;
       } else {
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
@@ -252,6 +283,14 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Execute the underlying custom call thunk with the new buffers.
   TF_RETURN_IF_ERROR(embedded_thunk_->ExecuteOnStream(new_params));
 
+  // Before ending, we need to update the induction variable.
+  if (indvar_update_ != nullptr) {
+    Indvar(this) = HloEvaluator()
+                       .Evaluate(*indvar_update_, {Indvar(this)->Clone()})
+                       ->CloneToUnique();
+    VLOG(1) << "induction variable = " << Indvar(this)->ToString();
+  }
+
   return absl::OkStatus();
 }
 
@@ -259,6 +298,78 @@ void DynamicSliceThunk::ForAllThunks(
     absl::FunctionRef<void(const Thunk*)> fn) const {
   fn(this);
   embedded_thunk_->ForAllThunks(fn);
+}
+
+std::string DynamicSliceThunk::ToString(int indent) const {
+  std::string arguments = absl::StrJoin(
+      arguments_, ",",
+      [](std::string* out, const std::optional<BufferAllocation::Slice>& arg) {
+        out->append(arg.has_value() ? arg->ToString() : "std::nullopt");
+      });
+  std::string fake_allocations =
+      absl::StrJoin(fake_allocations_, ",",
+                    [](std::string* out,
+                       const std::unique_ptr<BufferAllocation>& allocation) {
+                      out->append(allocation->ToString());
+                    });
+  std::string offsets = absl::StrJoin(
+      offsets_, ",",
+      [](std::string* out, const std::optional<std::vector<Offset>>& offsets) {
+        out->append(
+            offsets.has_value()
+                ? "{" +
+                      absl::StrJoin(
+                          offsets.value(), ",",
+                          [](std::string* out, const Offset& offset) {
+                            if (const int64_t* constant =
+                                    std::get_if<int64_t>(&offset)) {
+                              out->append(std::to_string(*constant));
+                            } else if (const BufferAllocation::Slice* slice =
+                                           std::get_if<BufferAllocation::Slice>(
+                                               &offset)) {
+                              out->append(slice->ToString());
+                            } else if (const HloModule* const* module =
+                                           std::get_if<HloModule*>(&offset)) {
+                              out->append((*module)->ToString());
+                            }
+                          }) +
+                      "}"
+                : "std::nullopt");
+      });
+  std::string orig_shapes = absl::StrJoin(
+      orig_shapes_, ",",
+      [](std::string* out, const std::optional<Shape>& orig_shape) {
+        out->append(orig_shape.has_value() ? orig_shape->ToString()
+                                           : "std::nullopt");
+      });
+  std::string sliced_shapes = absl::StrJoin(
+      sliced_shapes_, ",",
+      [](std::string* out, const std::optional<Shape>& sliced_shape) {
+        out->append(sliced_shape.has_value() ? sliced_shape->ToString()
+                                             : "std::nullopt");
+      });
+  std::string offset_byte_sizes = absl::StrJoin(
+      offset_byte_sizes_, ",",
+      [](std::string* out, const std::optional<uint64_t>& offset_byte_size) {
+        out->append(offset_byte_size.has_value()
+                        ? std::to_string(offset_byte_size.value())
+                        : "std::nullopt");
+      });
+  std::string indvar_init =
+      indvar_init_ == nullptr ? "nullptr" : indvar_init_->ToString();
+  std::string indvar_update =
+      indvar_update_ == nullptr ? "nullptr" : indvar_update_->ToString();
+  std::string fake_modules = absl::StrJoin(
+      fake_modules_, ",",
+      [](std::string* out, const std::unique_ptr<HloModule>& fake_module) {
+        out->append("HloModule " + fake_module->name());
+      });
+  return absl::StrFormat(
+      "{arguments={%s}, fake_allocations={%s}, offsets={%s}, orig_shapes={%s}, "
+      "sliced_shapes={%s}, offset_byte_sizes={%s}, indvar_init={%s}, "
+      "indvar_update={%s}, fake_offset_modules={%s}}",
+      arguments, fake_allocations, offsets, orig_shapes, sliced_shapes,
+      offset_byte_sizes, indvar_init, indvar_update, fake_modules);
 }
 }  // namespace gpu
 }  // namespace xla

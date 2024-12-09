@@ -82,8 +82,8 @@ bool HloFusionInfo::CanEmitDynamicUpdateSliceInPlace() const {
   return ret.ok() && *ret;
 }
 
-std::unique_ptr<FusionInterface> GetFusionEmitter(
-    const FusionInfo& fusion_info) {
+std::unique_ptr<FusionInterface> GetFusionEmitter(const FusionInfo& fusion_info,
+                                                  CallGraph* call_graph) {
   const auto& analysis = fusion_info.analysis();
   const FusionBackendConfig& backend_config = analysis.fusion_backend_config();
 
@@ -91,7 +91,7 @@ std::unique_ptr<FusionInterface> GetFusionEmitter(
     case HloFusionAnalysis::EmitterFusionKind::kCustomFusion: {
       const auto& config = backend_config.custom_fusion_config();
       if (absl::StrContains(config.name(), "address_computation")) {
-        return std::make_unique<DynamicSliceFusion>(analysis);
+        return std::make_unique<DynamicSliceFusion>(analysis, call_graph);
       }
       return std::make_unique<CustomFusion>();
     }

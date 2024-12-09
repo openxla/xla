@@ -332,6 +332,8 @@ class IrEmitterUnnested : public IrEmitter {
   std::shared_ptr<CopyThunk::AsyncEvents> copy_events_;
 
   GpuElementalIrEmitter elemental_emitter_;
+
+  std::unique_ptr<CallGraph> call_graph;
 };
 
 }  // namespace gpu
