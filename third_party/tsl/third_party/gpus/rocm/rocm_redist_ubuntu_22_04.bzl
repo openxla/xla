@@ -90,6 +90,10 @@ rocm_redist_ubuntu_22_04 = {
                 sha256 = "115d0e9ec1b93bf7cba5fa1e3de1428f0d999d931c2dd495e4cdad22b5078936",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocfft6.2.0/rocfft6.2.0_1.0.28.60200-66~22.04_amd64.deb",
+                sha256 = "0d40fc9aa1da617cd8864258cd1259a0e7444ea0da446297d154b5b3422393af",
+            ),
+            struct(
                 url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocfft-dev6.2.0/rocfft-dev6.2.0_1.0.28.60200-66~22.04_amd64.deb",
                 sha256 = "8c1e72cf1c165e20960b0c2f3c499900a809d59340d14a0acff95c543c7087f2",
             ),
