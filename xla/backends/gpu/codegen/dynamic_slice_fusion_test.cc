@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/runtime/while_thunk.h"
 #include "xla/service/gpu/transforms/dynamic_slice_fusion_rewriter.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
@@ -3277,6 +3278,141 @@ TEST_F(DynamicSliceFusionTest,
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
       /*module_0=*/std::move(module_ref), /*module_1=*/std::move(module_opt),
       /*run_hlo_passes=*/false, /*use_threads=*/true, error));
+}
+
+TEST_F(DynamicSliceFusionTest,
+       OffsetAsFunctionOfInductionVariableShouldUseOffsetModules) {
+  const char* hlo_fused = R"(
+    HloModule test, replica_count=2
+    %add (a: s32[], b: s32[]) -> s32[] {
+      %a = s32[] parameter(0)
+      %b = s32[] parameter(1)
+      ROOT %add = s32[] add(%a, %b)
+    }
+    %dynamic-slice-fusion (p0: s32[32,32], p1: s32[32,32], p2: s32[], p3: s32[]) -> s32[32,32] {
+      %p1 = s32[32,32]{1,0} parameter(1)
+      %p0 = s32[32,32]{1,0} parameter(0)
+      %rs.1 = s32[16,32]{1,0} reduce-scatter(%p0), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
+      %p2 = s32[] parameter(2)
+      %p3 = s32[] parameter(3)
+      ROOT %dus.1 = s32[32,32]{1,0} dynamic-update-slice(%p1, %rs.1, %p2, %p3)
+    }
+    %body (param.1: (s32[], s32[32,32], s32[32,32])) -> (s32[], s32[32,32], s32[32,32]) {
+      %param.1 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) parameter(0)
+      %iter.1 = s32[] get-tuple-element(%param.1), index=0
+      %c1 = s32[] constant(1)
+      %add.2 = s32[] add(%iter.1, %c1)
+      %src = s32[32,32]{1,0} get-tuple-element(%param.1), index=1
+      %dest = s32[32,32]{1,0} get-tuple-element(%param.1), index=2
+      
+      // Offset calculation as a function of the induction variable.
+      %add.1 = s32[] add(%iter.1, %iter.1)
+      %c3 = s32[] constant(3)
+      %multiply.1 = s32[] multiply(%add.1, %c3)
+      %c16 = s32[] constant(16)
+      %offset.1 = s32[] subtract(%multiply.1, %c16)
+      
+      %c0 = s32[] constant(0)
+      %address_computation = s32[32,32]{1,0} fusion(%src, %dest, %offset.1, %c0), kind=kCustom, calls=%dynamic-slice-fusion, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation","kernel_index":0}},"force_earliest_schedule":false}
+      ROOT %tuple = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) tuple(%add.2, %src, %address_computation)
+    }
+    %condition (param.2: (s32[], s32[32,32], s32[32,32])) -> pred[] {
+      %param.2 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) parameter(0)
+      %iter.2 = s32[] get-tuple-element(%param.2), index=0
+      %c16.1 = s32[] constant(16)
+      ROOT %compare = pred[] compare(%iter.2, %c16.1), direction=LT
+    }
+    ENTRY %main (src.1: s32[32,32], dest.1: s32[32,32]) -> (s32[], s32[32,32], s32[32,32]) {
+      %c0.1 = s32[] constant(0)
+      %src.1 = s32[32,32]{1,0} parameter(0)
+      %dest.1 = s32[32,32]{1,0} parameter(1)
+      %tuple.1 = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) tuple(%c0.1, %src.1, %dest.1)
+      ROOT %while = (s32[], s32[32,32]{1,0}, s32[32,32]{1,0}) while(%tuple.1), condition=%condition, body=%body
+    })";
+  const char* hlo_unfused = R"(
+    HloModule test, replica_count=2
+    
+    add {
+      a = s32[] parameter(0)
+      b = s32[] parameter(1)
+      ROOT add = s32[] add(a, b)
+    }
+    
+    body {
+      param.1 = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter.1 = s32[] get-tuple-element(param.1), index=0
+      src = s32[32,32] get-tuple-element(param.1), index=1
+      dest = s32[32,32] get-tuple-element(param.1), index=2
+      
+      // Offset calculation as a function of the induction variable.
+      add.1 = s32[] add(iter.1, iter.1)
+      c3 = s32[] constant(3)
+      multiply.1 = s32[] multiply(add.1, c3)
+      c16 = s32[] constant(16)
+      offset.1 = s32[] subtract(multiply.1, c16)
+      
+      c0 = s32[] constant(0)
+      rs = s32[16,32] reduce-scatter(src), dimensions={0}, replica_groups={{0,1}}, to_apply=add
+      dus = s32[32,32] dynamic-update-slice(dest, rs, offset.1, c0)
+      c1 = s32[] constant(1)
+      add.2 = s32[] add(iter.1, c1)
+      ROOT tuple = tuple(add.2, src, dus)
+    }
+    
+    condition {
+      param.2 = (s32[], s32[32,32], s32[32,32]) parameter(0)
+      iter.2 = s32[] get-tuple-element(param.2), index=0
+      c16 = s32[] constant(16)
+      ROOT compare = pred[] compare(iter.2, c16), direction=LT
+    }
+    
+    ENTRY main {
+      src = s32[32,32] parameter(0)
+      dest = s32[32,32] parameter(1)
+      c0 = s32[] constant(0)
+      tuple = (s32[], s32[32,32], s32[32,32]) tuple(c0, src, dest)
+      ROOT while = (s32[], s32[32,32], s32[32,32]) while(tuple), body=body, condition=condition
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> fused_module,
+                          ParseAndReturnVerifiedModule(hlo_fused));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          CreateExecutable(fused_module->Clone(), false));
+  GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
+  ASSERT_NE(gpu_exec, nullptr);
+  auto while_thunk = absl::c_find_if(gpu_exec->GetThunk().thunks(),
+                                     [](const std::unique_ptr<Thunk>& thunk) {
+                                       return thunk->kind() == Thunk::kWhile;
+                                     });
+  ASSERT_NE(while_thunk, gpu_exec->GetThunk().thunks().end());
+  WhileThunk* while_thunk_ptr = dynamic_cast<WhileThunk*>(while_thunk->get());
+  auto ds_thunk =
+      absl::c_find_if(while_thunk_ptr->body_thunk_sequence()->thunks(),
+                      [](const std::unique_ptr<Thunk>& thunk) {
+                        return thunk->kind() == Thunk::kDynamicSlice;
+                      });
+  ASSERT_NE(ds_thunk, while_thunk_ptr->body_thunk_sequence()->thunks().end());
+  DynamicSliceThunk* ds_thunk_ptr =
+      dynamic_cast<DynamicSliceThunk*>(ds_thunk->get());
+  std::vector<std::optional<std::vector<DynamicSliceThunk::Offset>>> offsets =
+      ds_thunk_ptr->get_offsets();
+  // Atleast two offsets: one for the input, and one for the outputs.
+  ASSERT_GE(offsets.size(), 2);
+  ASSERT_TRUE(offsets[1].has_value());
+  std::vector<DynamicSliceThunk::Offset> output_offsets = *offsets[1];
+  ASSERT_EQ(output_offsets.size(), 2);
+  // The first value of offset must be an HloModule
+  HloModule** offset1 = std::get_if<HloModule*>(&output_offsets[0]);
+  ASSERT_NE(offset1, nullptr);
+  ASSERT_NE(*offset1, nullptr);
+  // The second offset must be a constant value
+  ASSERT_EQ(output_offsets[1], DynamicSliceThunk::Offset(0l));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> unfused_module,
+                          ParseAndReturnVerifiedModule(hlo_unfused));
+  ErrorSpec error{1e-5, 1e-5};
+  RunAndCompareTwoModulesReplicated(
+      std::move(fused_module), std::move(unfused_module),
+      /*run_hlo_passes=*/false, /*use_threads=*/true, error);
 }
 
 }  // namespace

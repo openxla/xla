@@ -64,7 +64,11 @@ TEST(ForAllThunksTest, DynamicSliceThunk) {
   thunk_sequence->push_back(std::move(thunk));
 
   DynamicSliceThunk dynamic_slice_thunk(
-      Thunk::ThunkInfo(), std::move(thunk_sequence), {}, {}, {}, {}, {}, {});
+      /*thunk_info=*/Thunk::ThunkInfo(),
+      /*embedded_thunk=*/std::move(thunk_sequence), /*arguments=*/{},
+      /*fake_allocations=*/{}, /*offsets=*/{}, /*orig_shapes=*/{},
+      /*sliced_shapes=*/{}, /*offset_byte_sizes=*/{}, /*temp_modules=*/{},
+      /*indvar_init=*/nullptr, /*indvar_update=*/nullptr);
   EXPECT_THAT(GetAllThunks(&dynamic_slice_thunk),
               // `DynamicSliceThunk` wraps the `embedded_thunk` in a
               // `SequentialThunk`, which is why iterate over more than the
