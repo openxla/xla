@@ -10,14 +10,14 @@ load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [":friends"],
+    default_visibility = [":self"],
     licenses = ["notice"],
 )
 
 package_group(
-    name = "friends",
-    includes = [
-        "//xla:friends",
+    name = "self",
+    packages = [
+        "//xla/backends/cpu/...",
     ],
 )
 
