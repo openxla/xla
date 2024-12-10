@@ -30,6 +30,10 @@ namespace {
 // error isn't caught. We expect and CUDA_ERROR_ILLEGAL_ADDRESS to be
 // thrown with the old buggy code.
 class CopyAloneNoOptTest : public GpuCodegenTest {
+ public:
+  CopyAloneNoOptTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
 };
 
 TEST_F(CopyAloneNoOptTest, CopyTranspose) {

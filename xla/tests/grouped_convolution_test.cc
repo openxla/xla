@@ -50,7 +50,12 @@ struct GroupedConvolution2DSpec {
 class GroupedConvolution2DTest
     : public HloTestBase,
       public ::testing::WithParamInterface<
-          ::testing::tuple<GroupedConvolution2DSpec, bool>> {};
+          ::testing::tuple<GroupedConvolution2DSpec, bool>> {
+ public:
+  GroupedConvolution2DTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
+};
 
 static std::vector<GroupedConvolution2DSpec> GetConv2DTestCases() {
   std::vector<GroupedConvolution2DSpec> config_set;
@@ -209,7 +214,7 @@ std::string BuildHloTextGroupedConvolution2D(
       activation = %s[%s]{%s} parameter(0)
       kernel = %s[%s]{%s} parameter(1)
       ROOT conv = %s[%s]{%s} convolution(%s[%s]{%s} activation, %s[%s]{%s} kernel),
-          window={size=%dx%d stride=%dx1 pad=%d_%dx0_0 lhs_dilate=%dx1}, 
+          window={size=%dx%d stride=%dx1 pad=%d_%dx0_0 lhs_dilate=%dx1},
           dim_labels=b01f_01io->b01f, feature_group_count=%d
     }
     )",

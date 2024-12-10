@@ -51,6 +51,8 @@ class StreamExecutorCommon : public StreamExecutor {
 
   const Platform* GetPlatform() const override { return platform_; }
   const DeviceDescription& GetDeviceDescription() const override;
+  //To be used in tests only
+  void  SetThreadsPerWarp(const int64_t value) override;
   int64_t GetMemoryLimitBytes() const override { return memory_limit_bytes_; }
 
  private:

@@ -47,7 +47,10 @@ namespace {
 
 class MultiOutputFusionTest : public HloTestBase {
  protected:
-  MultiOutputFusionTest() { error_spec_ = ErrorSpec{0.0001, 1e-2}; }
+  MultiOutputFusionTest() {
+    error_spec_ = ErrorSpec{0.0001, 1e-2};
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
 
   // Layout assignment assumes that there are no fusions in the input graph.
   // Since the purpose of this test is to send pre-fused graphs to XLA, we have

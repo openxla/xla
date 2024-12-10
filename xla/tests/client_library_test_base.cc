@@ -80,6 +80,8 @@ ClientLibraryTestBase::ClientLibraryTestBase(
 
   execution_options_.mutable_debug_options()
       ->set_xla_hlo_evaluator_use_fast_path(true);
+
+  client_->backend().default_stream_executor()->SetThreadsPerWarp(32);
 }
 
 ClientLibraryTestBase::ClientLibraryTestBase(se::Platform* platform)
@@ -97,6 +99,8 @@ ClientLibraryTestBase::ClientLibraryTestBase(se::Platform* platform)
 
   execution_options_.mutable_debug_options()
       ->set_xla_hlo_evaluator_use_fast_path(true);
+
+  client_->backend().default_stream_executor()->SetThreadsPerWarp(32);
 }
 
 std::string ClientLibraryTestBase::SuiteName() const {

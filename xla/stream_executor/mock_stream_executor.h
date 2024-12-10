@@ -110,6 +110,7 @@ class MockStreamExecutor : public StreamExecutor {
   MOCK_METHOD(int64_t, GetMemoryLimitBytes, (), (const.override));
   MOCK_METHOD(const DeviceDescription&, GetDeviceDescription, (),
               (const, override));
+  MOCK_METHOD(void, SetThreadsPerWarp, (const int64_t value), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<Event>>, CreateEvent, (),
               (override));
   MOCK_METHOD(void, UnloadKernel, (const Kernel* kernel), (override));
