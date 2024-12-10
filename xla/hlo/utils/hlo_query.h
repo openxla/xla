@@ -203,6 +203,12 @@ HloInstruction* FindInstruction(const HloComputation* computation,
 HloInstruction* FindInstruction(const HloComputation* computation,
                                 HloOpcode opcode);
 
+// Checks if the instruction has replica groups that matches the given replica
+// group.
+bool HasMatchingReplicaGroups(
+    const xla::HloInstruction* instruction,
+    const std::vector<xla::ReplicaGroup> replica_groups);
+
 }  // namespace hlo_query
 }  // namespace xla
 

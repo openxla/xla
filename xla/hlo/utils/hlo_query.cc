@@ -304,5 +304,29 @@ HloInstruction* FindInstruction(const HloComputation* computation,
   return nullptr;
 }
 
+bool HasMatchingReplicaGroups(
+    const xla::HloInstruction* instruction,
+    const std::vector<xla::ReplicaGroup> replica_groups) {
+  bool match = true;
+  if (instruction->replica_groups().size() == replica_groups.size() &&
+      instruction->replica_groups()[0].replica_ids().size() ==
+          replica_groups[0].replica_ids().size()) {
+    for (int i = 0; i < instruction->replica_groups().size(); i++) {
+      for (int j = 0; j < instruction->replica_groups()[0].replica_ids().size();
+           j++) {
+        if (instruction->replica_groups()[i].replica_ids()[j] !=
+            replica_groups[i].replica_ids()[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (!match) break;
+    }
+  } else {
+    match = false;
+  }
+  return match;
+}
+
 }  // namespace hlo_query
 }  // namespace xla
