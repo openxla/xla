@@ -13,21 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/nb_helpers.h"
+#ifndef XLA_BACKENDS_CPU_RUNTIME_XNNPACK_XNN_INTEROP_H_
+#define XLA_BACKENDS_CPU_RUNTIME_XNNPACK_XNN_INTEROP_H_
 
-#include <Python.h>
+#include "xnnpack.h"  // IWYU pragma: keep
 
-#include "nanobind/nanobind.h"
+namespace xla::cpu {}
 
-namespace nb = nanobind;
-
-namespace xla {
-
-bool nb_isinstance(nanobind::handle inst, nanobind::handle cls) {
-  int ret = PyObject_IsInstance(inst.ptr(), cls.ptr());
-  if (ret == -1) {
-    throw nb::python_error();
-  }
-  return ret;
-}
-}  // namespace xla
+#endif  // XLA_BACKENDS_CPU_RUNTIME_XNNPACK_XNN_INTEROP_H_

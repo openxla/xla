@@ -1,57 +1,36 @@
 Auto generated patch. Do not edit or delete it, even if empty.
-diff -ruN --strip-trailing-cr a/llvm/lib/ExecutionEngine/Orc/ExecutionUtils.cpp b/llvm/lib/ExecutionEngine/Orc/ExecutionUtils.cpp
---- a/llvm/lib/ExecutionEngine/Orc/ExecutionUtils.cpp
-+++ b/llvm/lib/ExecutionEngine/Orc/ExecutionUtils.cpp
-@@ -573,7 +573,6 @@
-     // Create __imp_ symbol
-     jitlink::Symbol &Ptr =
-         jitlink::x86_64::createAnonymousPointer(*G, Sec, &Target);
--    auto name = getImpPrefix() + *KV.first;
-     Ptr.setName(G->intern((Twine(getImpPrefix()) + *KV.first).str()));
-     Ptr.setLinkage(jitlink::Linkage::Strong);
-     Ptr.setScope(jitlink::Scope::Default);
-diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/bolt/BUILD.bazel b/utils/bazel/llvm-project-overlay/bolt/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/bolt/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/bolt/BUILD.bazel
-@@ -285,6 +285,7 @@
-         "//llvm:MCParser",
-         "//llvm:Object",
-         "//llvm:ObjectYAML",
-+        "//llvm:OrcShared",
-         "//llvm:Support",
-         "//llvm:TargetParser",
-         "//llvm:config",
-diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/libc/BUILD.bazel b/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/libc/BUILD.bazel
-@@ -1442,7 +1442,10 @@
-     hdrs = glob(["src/__support/time/*.h"]),
-     deps = [
-         ":__support_common",
-+        ":__support_error_or",
-         ":hdr_time_macros",
-+        ":types_clockid_t",
-+        ":types_struct_timespec",
-         ":types_time_t",
-     ],
- )
-@@ -1486,6 +1489,8 @@
-         ":__support_common",
-         ":__support_error_or",
-         ":__support_osutil_vdso",
-+        ":types_clockid_t",
-+        ":types_struct_timespec",
-     ],
- )
+diff -ruN --strip-trailing-cr a/clang/test/CodeGen/AArch64/fixed-register-global.c b/clang/test/CodeGen/AArch64/fixed-register-global.c
+--- a/clang/test/CodeGen/AArch64/fixed-register-global.c
++++ b/clang/test/CodeGen/AArch64/fixed-register-global.c
+@@ -2,13 +2,13 @@
+ /// Regression test for #76426, #109778
+ // REQUIRES: aarch64-registered-target
  
-diff -ruN --strip-trailing-cr a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
---- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-+++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
-@@ -2800,6 +2800,7 @@
-         ":MC",
-         ":MCDisassembler",
-         ":Object",
-+        ":OrcShared",
-         ":OrcTargetProcess",
-         ":Passes",
-         ":Support",
+-// RUN: %clang -c --target=aarch64-none-gnu -ffixed-x15 %s 2>&1 | count 0
++// RUN: %clang -c --target=aarch64-none-gnu -ffixed-x15 %s -o /dev/null 2>&1 | count 0
+ 
+-// RUN: not %clang -c --target=aarch64-none-gnu %s 2>&1 | \
++// RUN: not %clang -c --target=aarch64-none-gnu %s -o /dev/null 2>&1 | \
+ // RUN:   FileCheck %s --check-prefix=ERR_INVREG
+ // ERR_INVREG: error: register 'x15' unsuitable for global register variables on this target
+ 
+-// RUN: not %clang -c --target=aarch64-none-gnu -ffixed-x15 -DTYPE=short %s 2>&1 | \
++// RUN: not %clang -c --target=aarch64-none-gnu -ffixed-x15 -DTYPE=short %s -o /dev/null 2>&1 | \
+ // RUN:   FileCheck %s --check-prefix=ERR_SIZE
+ // ERR_SIZE: error: size of register 'x15' does not match variable size
+ 
+diff -ruN --strip-trailing-cr a/clang/test/Driver/config-file.c b/clang/test/Driver/config-file.c
+--- a/clang/test/Driver/config-file.c
++++ b/clang/test/Driver/config-file.c
+@@ -85,9 +85,9 @@
+ 
+ //--- The linker input flags should be moved to the end of input list and appear only when linking.
+ // RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg %s -lmylib -Wl,foo.a -### 2>&1 | FileCheck %s -check-prefix CHECK-LINKING
+-// RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg -fopenmp %s -lmylib -Wl,foo.a -### 2>&1 | FileCheck %s -check-prefix CHECK-LINKING-LIBOMP-GOES-AFTER
++// RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg -fopenmp=libomp %s -lmylib -Wl,foo.a -### 2>&1 | FileCheck %s -check-prefix CHECK-LINKING-LIBOMP-GOES-AFTER
+ // RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg -S %s -### 2>&1 | FileCheck %s -check-prefix CHECK-NOLINKING
+-// RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg -fopenmp -S %s -### 2>&1 | FileCheck %s -check-prefix CHECK-NOLINKING-OPENMP
++// RUN: %clang --target=aarch64-unknown-linux-gnu --config %S/Inputs/config-l.cfg -fopenmp=libomp -S %s -### 2>&1 | FileCheck %s -check-prefix CHECK-NOLINKING-OPENMP
+ // RUN: %clang --target=x86_64-pc-windows-msvc    --config %S/Inputs/config-l.cfg %s -lmylib -Wl,foo.lib -### 2>&1 | FileCheck %s -check-prefix CHECK-LINKING-MSVC
+ // RUN: %clang --target=x86_64-pc-windows-msvc    --config %S/Inputs/config-l.cfg -S %s -### 2>&1 | FileCheck %s -check-prefix CHECK-NOLINKING-MSVC
+ // CHECK-LINKING: Configuration file: {{.*}}Inputs{{.}}config-l.cfg

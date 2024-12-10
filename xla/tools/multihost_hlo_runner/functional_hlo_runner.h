@@ -211,9 +211,6 @@ class FunctionalHloRunner {
     // Whether to untuple the result of running HLO module into a vector of
     // arrays. If unprovided, use the default in ExecuteOptions.
     std::optional<bool> untuple_result = std::nullopt;
-    // Whether to use the layout on host when allocating buffers for arguments.
-    // Some platforms (e.g. CPU) do not support this yet.
-    bool use_argument_host_layout = false;
 
     // Should we log the inputs and outputs to stderr?
     bool log_input_output() const {
@@ -278,7 +275,8 @@ class FunctionalHloRunner {
       const PreprocessingOptions& preproc_options,
       const RawCompileOptions& raw_compile_options, std::string_view hlo_file,
       InputFormat input_format, int task_id = 0, int num_nodes = 1,
-      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
+      bool use_gpu_count_workaround = true);
 
   // Compiles and runs the given HLO module with the given arguments for each
   // device. The given arguments is a map from device ID to a list of arguments.
