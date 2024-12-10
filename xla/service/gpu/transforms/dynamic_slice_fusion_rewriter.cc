@@ -161,8 +161,7 @@ bool IsOnlyDependentOn(const HloInstruction* consumer,
       HloPredicateIsOp<HloOpcode::kConstant>(consumer)) {
     return true;
   }
-  if (consumer->operand_count() == 0 ||
-      HloPredicateIsOp<HloOpcode::kParameter>(consumer)) {
+  if (consumer->operand_count() == 0) {
     return false;
   }
   return absl::c_all_of(consumer->operands(),
