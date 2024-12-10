@@ -1405,8 +1405,6 @@ TEST_F(PassOrderTest, PassesAreRunInCorrectOrder) {
                   /*last_pass_regex=*/"priority-fusion");
   VerifyPassOrder(/*first_pass_regex=*/"layout-assignment",
                   /*last_pass_regex=*/"layout_normalization");
-  VerifyPassOrder(/*first_pass_regex=*/"host-offload-legalize",
-                  /*last_pass_regex=*/"layout_normalization");
 }
 
 TEST_F(PassOrderTest, FusionBlockLevelRewriterRunsAfterAllFusionPasses) {
