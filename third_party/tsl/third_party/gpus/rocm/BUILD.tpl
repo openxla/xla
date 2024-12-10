@@ -72,7 +72,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_rpath",
-    ]
+    ],
 )
 
 cc_library(
@@ -92,6 +92,7 @@ cc_library(
         ":rocprofiler_register",
         ":rocsolver",
         ":roctracer",
+        ":rocsparse",
     ] + select_threshold(
         above_or_eq = [":hipfft"],
         below = [":rocfft"],
@@ -128,7 +129,6 @@ cc_library(
 
 cc_library(
     name = "hip",
-    data = glob(["%{rocm_root}/lib/**"]),
     visibility = ["//visibility:public"],
     deps = [
         ":rocm_hip",
@@ -140,7 +140,6 @@ cc_library(
     name = "rocm_hip",
     srcs = glob(["%{rocm_root}/lib/libamdhip*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
-    data = glob(["%{rocm_root}/lib/hip/**"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -178,7 +177,6 @@ cc_library(
 cc_library(
     name = "rocfft",
     srcs = glob(["%{rocm_root}/lib/librocfft*.so*"]),
-    data = glob(["%{rocm_root}/lib/librocfft*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -191,7 +189,6 @@ cc_library(
 cc_library(
     name = "hipfft",
     srcs = glob(["%{rocm_root}/lib/libhipfft*.so*"]),
-    data = glob(["%{rocm_root}/lib/libhipfft*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -204,7 +201,6 @@ cc_library(
     name = "hiprand",
     srcs = glob(["%{rocm_root}/lib/libhiprand*.so*"]),
     hdrs = glob(["%{rocm_root}/include/hiprand/**"]),
-    data = glob(["%{rocm_root}/lib/libhiprand*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -239,7 +235,6 @@ cc_library(
     name = "rccl",
     srcs = glob(["%{rocm_root}/lib/librccl*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rccl/**"]),
-    data = glob(["%{rocm_root}/lib/librccl*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include",
@@ -310,7 +305,18 @@ cc_library(
     name = "rocsolver",
     srcs = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
     hdrs = glob(["%{rocm_root}/include/rocsolver/**"]),
-    data = glob(["%{rocm_root}/lib/librocsolver*.so*"]),
+    include_prefix = "rocm",
+    includes = [
+        "%{rocm_root}/include/",
+    ],
+    strip_include_prefix = "%{rocm_root}",
+    visibility = ["//visibility:public"],
+    deps = [":rocm_config"],
+)
+
+cc_library(
+    name = "rocsparse",
+    srcs = glob(["%{rocm_root}/lib/librocsparse*.so*"]),
     include_prefix = "rocm",
     includes = [
         "%{rocm_root}/include/",

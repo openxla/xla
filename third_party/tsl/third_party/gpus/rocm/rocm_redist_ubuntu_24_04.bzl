@@ -162,6 +162,10 @@ rocm_redist_ubuntu_24_04 = {
                 sha256 = "5bb6ae92a25f33488f2ee5f123ac4f67ad130e18e4949161715451509be3b89d",
             ),
             struct(
+                url = "https://repo.radeon.com/rocm/apt/6.2/pool/main/r/rocsparse6.2.0/rocsparse6.2.0_3.2.0.60200-66~24.04_amd64.deb",
+                sha256 = "1867833a569fbf3f87b82c81bc47f5d62085ea40f12d1cb33475c1f2dec89bc4",
+            ),
+            struct(
                 url = "https://mirror.bazel.build/github.com/alekstheod/rocm-deps/releases/download/rocm-6.2.0/libdrm2_2.4.120-2build1_amd64.deb",
                 sha256 = "f5fb4e7ce17921cc466fb7911abf91495ffb181b36772f68e2e82cb621703112",
             ),
