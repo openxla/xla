@@ -19,6 +19,7 @@ xla_cc_test(
     deps = [
         ":cpu_client",
         "//xla/pjrt:pjrt_client_test_common",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
