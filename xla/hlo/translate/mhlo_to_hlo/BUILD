@@ -317,6 +317,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
+        "@stablehlo//:stablehlo_ops",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test_main",
     ],
