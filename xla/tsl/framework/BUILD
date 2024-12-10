@@ -208,7 +208,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:stacktrace",
-        "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
         "@tsl//tsl/profiler/lib:traceme",
