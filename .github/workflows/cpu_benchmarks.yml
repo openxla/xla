@@ -35,6 +35,7 @@ jobs:
         run: |
           for file in xla/tests/fuzz/*.hlo; do
             filename=$(basename "$file")
+            # Skip expected failed hlo files.
             if [[ "$filename" == "rand_000060.hlo" || "$filename" == "rand_000067.hlo" || "$filename" == "rand_000072.hlo" ]]; then
               echo "Skipping benchmark on $file"
               continue
