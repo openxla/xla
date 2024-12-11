@@ -7,14 +7,14 @@ licenses(["restricted"])  # MPL2, portions GPL v3, LGPL v3, BSD-like
 package(default_visibility = ["//visibility:private"])
 
 bool_flag(
-    name = "hermetic",
+    name = "use_rocm_hermetic_rpath",
     build_setting_default = False,
 )
 
 config_setting(
     name = "build_hermetic",
     flag_values = {
-        ":hermetic": "True",
+        ":use_rocm_hermetic_rpath": "True",
     },
 )
 
