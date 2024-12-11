@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/gpu/transforms/pgle_accuracy_checker.h"
@@ -455,8 +456,7 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
 
   const bool enable_latency_hiding_scheduler =
       options.xla_gpu_enable_latency_hiding_scheduler() ||
-      hlo_query::ExecTimeOptimizationEffort(*module) >=
-          kExtraCollectiveOptimizations;
+      IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(*module);
 
   if (!enable_latency_hiding_scheduler) {
     return ScheduleMetadata{memory_limit};
@@ -523,8 +523,11 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
     return GetSizeOfShape(shape, pointer_size);
   };
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
-      shape_size_in_bytes, async_tracker.get(), latency_estimator.get(),
-      config);
+      shape_size_in_bytes, async_tracker.get(), latency_estimator.get(), config,
+      /*target_scheduling_rule=*/nullptr,
+      /*early_target_scheduling_rule=*/nullptr, /*post_processing_fn=*/nullptr,
+      /*scheduling_instruction_crosses_overlap_limit=*/
+      GpuScheduleCrossesOverlapLimit);
   pipeline.AddPass<SchedulingInstructionAnnotator>();
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(latency_estimator), std::move(async_tracker),

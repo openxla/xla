@@ -7,7 +7,6 @@ load(
 )
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_oss")
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -195,7 +194,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     tags = [
         "cuda-only",
         "no_mac",
@@ -369,6 +369,7 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor/cuda:ptx_compiler_helpers",
         "//xla/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",

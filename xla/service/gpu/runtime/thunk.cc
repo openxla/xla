@@ -31,6 +31,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_clique_locking.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/executable_run_options.h"
@@ -40,7 +42,6 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
-#include "xla/service/gpu/runtime/nccl_clique.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "tsl/platform/statusor.h"
@@ -52,8 +53,7 @@ namespace gpu {
 // Thunk::CollectiveCliques
 //===----------------------------------------------------------------------===//
 
-Thunk::CollectiveCliques::CollectiveCliques(
-    NcclClique::AcquiredCliquesMap cliques_map)
+Thunk::CollectiveCliques::CollectiveCliques(AcquiredCliquesMap cliques_map)
     : cliques_map_(std::move(cliques_map)) {}
 
 absl::StatusOr<Communicator*> Thunk::CollectiveCliques::GetComm(
@@ -131,6 +131,10 @@ Thunk::CollectiveExecuteParams::Create(
   const GpuExecutableRunOptions* gpu_options =
       run_options.run_options().gpu_executable_run_options();
 
+  auto* collectives = gpu_options && gpu_options->collectives()
+                          ? gpu_options->collectives()
+                          : GpuCollectives::Default();
+
   auto* device_id_map = gpu_options && gpu_options->gpu_global_device_ids()
                             ? &*gpu_options->gpu_global_device_ids()
                             : nullptr;
@@ -143,20 +147,22 @@ Thunk::CollectiveExecuteParams::Create(
                       GetGlobalDeviceId(device_id_map, local_device_ordinal));
 
   return CollectiveExecuteParams(
-      run_options.stream()->parent(), run_options.run_options().run_id(),
-      async_streams, local_device_ordinal, global_device_id,
-      run_options.run_options().device_assignment(), device_id_map,
-      clique_id_callback, collective_max_nchannels, p2p_max_nchannels);
+      collectives, run_options.stream()->parent(),
+      run_options.run_options().run_id(), async_streams, local_device_ordinal,
+      global_device_id, run_options.run_options().device_assignment(),
+      device_id_map, clique_id_callback, collective_max_nchannels,
+      p2p_max_nchannels);
 }
 
 Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
-    se::StreamExecutor* executor, RunId run_id,
+    GpuCollectives* collectives, se::StreamExecutor* executor, RunId run_id,
     absl::Span<se::Stream* const> async_streams, int64_t local_device_ordinal,
     GlobalDeviceId global_device_id, const DeviceAssignment* device_assn,
     const GlobalDeviceIdMap* global_device_id_map,
     const CliqueIdCallback* nccl_clique_id_callback,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels)
-    : executor(executor),
+    : collectives(collectives),
+      executor(executor),
       run_id(run_id),
       async_streams(async_streams.begin(), async_streams.end()),
       local_device_ordinal(local_device_ordinal),
@@ -275,6 +281,9 @@ Thunk::ExecuteParams::ExecuteParams(
     CASE(kNcclAllToAllDone);
     CASE(kNcclSend);
     CASE(kNcclSendDone);
+    CASE(kNcclRaggedAllToAll);
+    CASE(kNcclRaggedAllToAllStart);
+    CASE(kNcclRaggedAllToAllDone);
     CASE(kNcclRecv);
     CASE(kNcclRecvDone);
     CASE(kFft);

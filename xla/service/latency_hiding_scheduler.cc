@@ -436,6 +436,11 @@ void AsyncTracker::SetConcurrentResourceLimits(
        resource_type <
        GetTargetDefinedResourceTypeBegin() + GetNumTargetDefinedResources();
        ++resource_type) {
+    CHECK_GT(GetNumAvailableResources(resource_type), 0)
+        << "Target-defined resource with id " << resource_type
+        << " has a concurrency limit of 0. Please set it to a positive value "
+           "by making sure GetNumTargetDefinedResources returns the correct "
+           "limit.";
     max_concurrent_resource[resource_type] =
         GetNumAvailableResources(resource_type);
   }
@@ -1139,6 +1144,8 @@ class ReadySetLt {
   const DefaultSchedulerCore::SchedulingState& sched_state_;
   DefaultSchedulerCore::TargetSchedulingRule target_scheduling_rule_;
   DefaultSchedulerCore::TargetSchedulingRule early_target_scheduling_rule_;
+  DefaultSchedulerCore::OverlapLimitRule
+      scheduling_instruction_crosses_overlap_limit_;
 
   int ReadyIfScheduled(const HloGraphNode& gn) const {
     int ready_nodes_if_scheduled = 0;
@@ -1272,9 +1279,9 @@ class ReadySetLt {
             cand.node->GetResources());
     int64_t num_conflicting_resources = 0;
     for (int64_t resource : resources) {
-      if (!sched_state_.resources_in_flight.contains(resource)) continue;
+      if (!sched_state_.resource_occupiers_in_flight.count(resource)) continue;
       num_conflicting_resources +=
-          sched_state_.resources_in_flight.at(resource);
+          sched_state_.resource_occupiers_in_flight.at(resource).size();
     }
     return num_conflicting_resources;
   }
@@ -1313,26 +1320,29 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
   }
   absl::InlinedVector<std::pair<HloGraphNode*, SkipNodeReason>, 2>
       skipped_nodes_and_reasons;
-  auto scheduling_instruction_crosses_overlap_limit =
-      [&sched_state](const HloInstruction& instr) {
-        for (const auto& [resource, limit] :
-             sched_state.max_concurrent_resource) {
-          // No resources in flight of this kind. Continue.
-          auto it = sched_state.resources_in_flight.find(resource);
-          if (it == sched_state.resources_in_flight.end() || it->second == 0) {
-            continue;
+  if (!scheduling_instruction_crosses_overlap_limit_) {
+    scheduling_instruction_crosses_overlap_limit_ =
+        [](const SchedulingState& sched_state, const HloGraphNode* node) {
+          for (const auto& [resource, limit] :
+               sched_state.max_concurrent_resource) {
+            // No resources in flight of this kind. Continue.
+            auto it = sched_state.resource_occupiers_in_flight.find(resource);
+            if (it == sched_state.resource_occupiers_in_flight.end() ||
+                it->second.empty()) {
+              continue;
+            }
+            // Number of instances of 'resource' needed if this instruction was
+            // to be scheduled.
+            const int64_t num_resources_needed =
+                sched_state.async_tracker->GetNumResourcesPerInstruction(
+                    resource, node->GetInstr());
+            if (limit < num_resources_needed) {
+              return true;
+            }
           }
-          // Number of instances of 'resource' needed if this instruction was to
-          // be scheduled.
-          const int64_t num_resources_needed =
-              sched_state.async_tracker->GetNumResourcesPerInstruction(resource,
-                                                                       instr);
-          if (limit < num_resources_needed) {
-            return true;
-          }
-        }
-        return false;
-      };
+          return false;
+        };
+  }
   VLOG(2) << "Current time: " << sched_state.current_time;
   ReadySetLt ready_lt{&sched_state, target_scheduling_rule_,
                       early_target_scheduling_rule_};
@@ -1364,8 +1374,8 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
     }
     // If this node would cause the max_concurrent_resource count to go beyond
     // the limit do not schedule it and pass to the next node.
-    if (scheduling_instruction_crosses_overlap_limit(
-            (*ready_node_it)->GetInstr())) {
+    if (scheduling_instruction_crosses_overlap_limit_(sched_state,
+                                                      *ready_node_it)) {
       if (ready_chosen.node == nullptr) {
         skipped_nodes_and_reasons.push_back(
             {*ready_node_it, SkipNodeReason::kExceedsOverlapLimit});
@@ -1861,14 +1871,14 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       }
     }
     edge.Target().SetReadyTime(ready_time);
+    int64_t annotation = edge.Target().GetAnnotation();
     // We are adding the no-op instructions to a separate set so that we can
     // immediately schedule them when they are ready.
-    if (IsNopInstruction(edge.Target().GetInstr())) {
+    if (IsNopInstruction(edge.Target().GetInstr()) && annotation == -1) {
       sched_state->nop_set.push_back(&edge.Target());
       continue;
     }
     sched_state->ready_set.push_back(&edge.Target());
-    int64_t annotation = edge.Target().GetAnnotation();
     if (annotation != -1) {
       sched_state->ready_num_nodes_with_annotation[annotation]++;
       VLOG(2) << "Annotation: " << annotation
@@ -1903,9 +1913,24 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
   ++sched_state->scheduled_count;
   for (auto& resource : n->GetResources()) {
     if (resource.second == ResourceUsageType::kResourceRelease) {
-      --sched_state->resources_in_flight[resource.first];
+      // Some recv-dones exist without a corresponding recv op in the same
+      // computation. In this case, we cannot find the corresponding start op
+      // and thus cannot erase the start op from the map.
+      if (sched_state->resource_occupiers_in_flight.contains(resource.first)) {
+        sched_state->resource_occupiers_in_flight.at(resource.first)
+            .erase(&n->GetInstr());
+      }
     } else if (resource.second == ResourceUsageType::kResourceOccupy) {
-      ++sched_state->resources_in_flight[resource.first];
+      // For supported async collective done ops, save their corresponding start
+      // ops in the map
+      if (async_tracker_->IsSupportedAsyncDone(n->GetInstr()) &&
+          async_tracker_->IsSupportedAsyncStart(*n->GetInstr().operand(0))) {
+        sched_state->resource_occupiers_in_flight[resource.first].insert(
+            n->GetInstr().operand(0));
+      } else {
+        sched_state->resource_occupiers_in_flight[resource.first].insert(
+            &n->GetInstr());
+      }
     }
   }
   VLOG(10) << "Memory pressure before schedule: "
@@ -2314,6 +2339,21 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
           << memory_pressure_tracker.memory_usage();
   sched_state.ready_set.insert(sched_state.ready_set.end(), roots.begin(),
                                roots.end());
+  for (HloGraphNode* root : roots) {
+    int64_t annotation = root->GetAnnotation();
+    if (annotation != -1) {
+      sched_state.ready_num_nodes_with_annotation[annotation]++;
+      VLOG(2) << "Annotation: " << annotation
+              << " ready_num_nodes_with_annotation: "
+              << sched_state.ready_num_nodes_with_annotation[annotation]
+              << " num_root_instructions: "
+              << annotation_tracker_->GetNumRootInstructions(annotation);
+      if (annotation_tracker_->GetNumRootInstructions(annotation) ==
+          sched_state.ready_num_nodes_with_annotation[annotation]) {
+        sched_state.ready_annotations.push_back(annotation);
+      }
+    }
+  }
   // Schedule in order bottom up.
   while (!sched_state.ready_set.empty() || !sched_state.nop_set.empty()) {
     VLOG(10) << "Current ready time: " << sched_state.current_time;
@@ -2329,16 +2369,15 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
       return absl::StrJoin(sched_state.ready_set, "\n", LogFormatter());
     }());
     if (!sched_state.ready_annotations.empty()) {
-      // TODO (sacer): If more than one annotations are ready, decide the order
-      // with a heuristic.
-      for (int64_t annotation : sched_state.ready_annotations) {
-        VLOG(2) << "------- BEGIN ANNOTATION: " << annotation << " -------";
-        sched_state.ongoing_annotation = annotation;
-        TF_RETURN_IF_ERROR(ScheduleAnnotation(annotation, &sched_state));
-        VLOG(2) << "-------  END ANNOTATION: " << annotation << " --------";
-        sched_state.ongoing_annotation = -1;
-      }
-      sched_state.ready_annotations.clear();
+      // TODO (sacer): If more than one annotations are ready, decide which one
+      // to schedule next with a heuristic.
+      int64_t annotation = sched_state.ready_annotations.back();
+      sched_state.ready_annotations.pop_back();
+      VLOG(2) << "------- BEGIN ANNOTATION: " << annotation << " -------";
+      sched_state.ongoing_annotation = annotation;
+      TF_RETURN_IF_ERROR(ScheduleAnnotation(annotation, &sched_state));
+      VLOG(2) << "-------  END ANNOTATION: " << annotation << " --------";
+      sched_state.ongoing_annotation = -1;
       continue;
     }
     TF_RETURN_IF_ERROR(SchedulingStep(&sched_state));

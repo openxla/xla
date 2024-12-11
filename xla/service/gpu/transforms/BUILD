@@ -20,6 +20,25 @@ package(
 )
 
 cc_library(
+    name = "simplify_int4_dots",
+    srcs = ["simplify_int4_dots.cc"],
+    hdrs = ["simplify_int4_dots.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:pattern_matcher",
+        "//xla/service/gpu/fusions/triton:triton_support",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
     name = "dot_algorithm_rewriter",
     srcs = ["dot_algorithm_rewriter.cc"],
     hdrs = ["dot_algorithm_rewriter.h"],
@@ -335,10 +354,12 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/hlo/utils:hlo_query",
         "//xla/tests:hlo_test_base",
         "//xla/tests:literal_test_util",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1472,8 +1493,9 @@ xla_test(
         "gpu_a100",
         "gpu_p100",
         "gpu_v100",
+        "gpu_b100",
         "gpu_amd_any",
-    ] + if_oss(["gpu_b100"]),
+    ],
     deps = if_gpu_is_configured(
         [
             ":dot_operand_converter",
@@ -1588,11 +1610,13 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/ffi:ffi_api",
+        "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:call_graph",
         "//xla/service:custom_call_target_registry",
-        "//xla/service:pattern_matcher",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:gpu_constants",
@@ -2000,7 +2024,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
-        "//xla/service/gpu:cusolver_context",
+        "//xla/stream_executor:gpu_solver_context",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_memory_allocator",
@@ -2008,6 +2032,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "@com_google_absl//absl/functional:any_invocable",
     ]),
 )
 
@@ -3240,7 +3265,8 @@ xla_test(
     backends = [
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     deps = [
         ":triton_fusion_numerics_verifier",
         "//xla:shape_util",

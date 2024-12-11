@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <map>
@@ -76,6 +77,8 @@ using ::mlir::triton::gpu::getShapePerCTATile;
 using ::mlir::triton::gpu::SharedEncodingAttr;
 using ttn::OperandsAndConstraints;
 
+// TODO: b/382250044 - Declare these functions in the header files of the
+// corresponding C++ files and include them here instead of forward-declaring.
 // The functions below are defined in AccelerateMatmul.cpp.
 namespace mlir::triton::gpu {
 SmallVector<unsigned, 3> getWarpsPerTile(
@@ -93,6 +96,13 @@ int64_t getSwizzlingFromLayout(const triton::gpu::SharedEncodingAttr &layout,
                                uint32_t widthInByte);
 ttn::WGMMAEltType getMmaRetType(Value);
 ttn::WGMMAEltType getMmaOperandType(Value, bool);
+
+// The functions below are defined in MMAv2.cpp.
+using ValueTableV2 = std::map<std::array<int, 3>, Value>;
+ValueTableV2 getValuesFromDotOperandLayoutStruct(
+    const LLVMTypeConverter *typeConverter, Location loc,
+    ConversionPatternRewriter &rewriter, Value value, int batch, int repOuter,
+    int repK, RankedTensorType type);
 
 namespace mlir::triton::xla {
 namespace {
@@ -379,7 +389,7 @@ struct SparseRemoveLayoutConversionPass
           /*vec=*/kMetaElementsPerPackedValue, /*perPhase=*/1, /*maxPhase=*/1,
           triton::gpu::getOrder(src_encoding),
           triton::gpu::getCTALayout(src_encoding));
-      auto mem_type = triton::MemDescType::get(
+      auto mem_type = triton::gpu::MemDescType::get(
           dst_type.getShape(), dst_type.getElementType(), shared_layout,
           builder.getAttr<triton::gpu::SharedMemorySpaceAttr>());
       Value alloc =
@@ -400,7 +410,7 @@ class SparseLocalLoadToLLVM
   LogicalResult matchAndRewrite(
       triton::gpu::LocalLoadOp op, OpAdaptor adaptor,
       ConversionPatternRewriter &rewriter) const override {
-    MemDescType src_ty = op.getSrc().getType();
+    triton::gpu::MemDescType src_ty = op.getSrc().getType();
     if (!isa<triton::gpu::SharedEncodingAttr>(src_ty.getEncoding()))
       return failure();
     RankedTensorType dst_ty = op.getType();
@@ -450,7 +460,7 @@ class SparseLocalLoadToLLVM
 
     // Calculate number of tile repetitions.
     Value tensor = op.getSrc();
-    auto shape = cast<MemDescType>(tensor.getType()).getShape();
+    auto shape = cast<triton::gpu::MemDescType>(tensor.getType()).getShape();
     int rep_m = shape[0] / shape_per_cta_tile[0];
     int rep_k = shape[1] / shape_per_cta_tile[1];
     CHECK_GT(rep_m, 0) << shape[0] << "/" << shape_per_cta_tile[0];
@@ -458,7 +468,7 @@ class SparseLocalLoadToLLVM
 
     // Load sparse metadata from shared memory.
     auto elem_ty = getTypeConverter()->convertType(
-        cast<MemDescType>(tensor.getType()).getElementType());
+        cast<triton::gpu::MemDescType>(tensor.getType()).getElementType());
     auto s_mem_obj = LLVM::getSharedMemoryObjectFromStruct(
         loc, adaptor.getSrc(), elem_ty, rewriter);
     Value stride_m = s_mem_obj.strides[0];
@@ -494,7 +504,6 @@ class SparseLocalLoadToLLVM
     return success();
   }
 };
-
 
 bool IsLocalLoadWithSparseEncoding(Operation *op) {
   auto local_load = mlir::dyn_cast<triton::gpu::LocalLoadOp>(op);
@@ -540,115 +549,11 @@ struct SparseLocalLoadToLLVMPass
   }
 };
 
-using ValueTableV2 = std::map<std::array<int, 3>, Value>;
-
 constexpr int kContractingFactor = 2;  // implied by N:M (2:4)
 constexpr int kCore = 2;               // number of core matrices per batch
 constexpr int kCoreTile = kCore * kContractingFactor;
 
 // ----- Ampere implementation.
-// This replicates the logic in the MMAV2 implementation.
-ValueTableV2 getValuesFromDotOperandLayoutStruct(
-    const LLVMTypeConverter *typeConverter, Location loc,
-    ConversionPatternRewriter &rewriter, Value value, int batch, int repOuter,
-    int repK, RankedTensorType type) {
-  auto elems = unpackLLElements(loc, value, rewriter);
-  auto eltTy = typeConverter->convertType(type.getElementType());
-  int offset{};
-  ValueTableV2 vals;
-  auto bitwidth = eltTy.getIntOrFloatBitWidth();
-  auto numElemsPerVec = 32 / bitwidth;
-  auto vecTy = vec_ty(eltTy, numElemsPerVec);
-
-  auto packVec = [&](std::array<int, 3> dstIdx) {
-    Value vec = undef(vecTy);
-    for (auto i = 0; i < numElemsPerVec; ++i) {
-      vec = insert_element(vec, bitcast(elems[offset + i], eltTy), i32_val(i));
-    }
-    vals[dstIdx] = bitcast(vec, i32_ty);
-    offset += numElemsPerVec;
-  };
-
-  auto dot = cast<DotOperandEncodingAttr>(type.getEncoding());
-  auto kWidth = dot.getKWidth();
-  auto largeK = bitwidth * kWidth > 32;
-  if (largeK) {
-    // For layouts with a large K dimension, the original register layout needs
-    // to be divided into multiple MMAs, where each MMA has contiguous 32 bits
-    // along the K dimension per thread.
-    // Using kWidth = 8 and bitwidth = 2 as an example,
-    // we split the MMA into 4 sub-MMAs, each with a stride 4 x 32-bit along the
-    // K dimension.
-    llvm::SmallVector<unsigned> si;
-
-    if (dot.getOpIdx() == 0) {
-      // Original register layout:
-      //
-      //   [0, 1, 2, 3, 4, 5, 6, 7], [16, 17, 18, 19, 20, 21, 22, 23, 23]
-      //   [8, 9, 10, 11, 12, 13, 14, 15], [24, 25, 26, 27, 28, 29, 30, 31]
-      //
-      // Each element in the layout is a single bf16.
-      //
-      // To derive four independent MMA operations, a stride of 4 is applied to
-      // the original register layout:
-      //
-      //  1st MMA: [[0, 1], [8, 9], [16, 17], [24, 25]]
-      //  2nd MMA: [[2, 3], [10, 11], [18, 19], [26, 27]]
-      //  3rd MMA: [[4, 5], [12, 13], [20, 21], [28, 29]]
-      //  4th MMA: [[6, 7], [14, 15], [22, 23], [30, 31]]
-      for (size_t kRep = 0; kRep < kWidth / numElemsPerVec; ++kRep)
-        for (size_t tile = 0; tile < 4; ++tile)
-          for (size_t e = 0; e < numElemsPerVec; ++e) {
-            si.push_back(kRep * numElemsPerVec + tile * kWidth + e);
-          }
-    } else {
-      // Original register layout:
-      //
-      //   [0, 1, 2, 3, 4, 5, 6, 7]^T, [8, 9, 10, 11, 12, 13, 14, 15]^T
-      //
-      // A stride of 4 is applied to derive four independent MMA operations:
-      //
-      //  1st MMA: [[0, 1], [8, 9]]
-      //  2nd MMA: [[2, 3], [10, 11]]
-      //  3rd MMA: [[4, 5], [12, 13]]
-      //  4th MMA: [[6, 7], [14, 15]]
-      for (size_t kRep = 0; kRep < kWidth / numElemsPerVec; ++kRep)
-        for (size_t tile = 0; tile < 2; ++tile)
-          for (size_t e = 0; e < numElemsPerVec; ++e) {
-            si.push_back(kRep * numElemsPerVec + tile * kWidth + e);
-          }
-    }
-
-    auto step = si.size();
-    SmallVector<Value> perm(step);
-    for (auto i = 0; i < elems.size() / step; ++i) {
-      for (auto j = 0; j < step; ++j) {
-        perm[j] = elems[i * step + si[j]];
-      }
-      std::copy(perm.begin(), perm.end(), elems.begin() + i * step);
-    }
-  }
-
-  if (dot.getOpIdx() == 0) {
-    for (auto b = 0; b < batch; ++b)
-      for (auto m = 0; m < repOuter; ++m)
-        for (auto k = 0; k < repK; ++k) {
-          packVec({b, 2 * m, 2 * k});
-          packVec({b, 2 * m + 1, 2 * k});
-          packVec({b, 2 * m, 2 * k + 1});
-          packVec({b, 2 * m + 1, 2 * k + 1});
-        }
-  } else {
-    for (auto b = 0; b < batch; ++b)
-      for (auto n = 0; n < repOuter; ++n)
-        for (auto k = 0; k < repK; ++k) {
-          packVec({b, n, 2 * k});
-          packVec({b, n, 2 * k + 1});
-        }
-  }
-  return vals;
-}
-
 std::string getMmaSpPtxInstruction(Type type) {
   if (type.isF16()) {
     return "mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32";
@@ -670,11 +575,12 @@ LogicalResult convertSparseMMA(SparseDotOp op, SparseDotOp::Adaptor adaptor,
   assert(layoutA != nullptr && layoutB != nullptr);
 
   int bitwidth = aTensorTy.getElementType().getIntOrFloatBitWidth();
+  int kWidth = layoutA.getKWidth();
   auto mmaEnc = cast<NvidiaMmaEncodingAttr>(layoutA.getParent());
   auto repA = mmaEnc.getRepForOperand(triton::gpu::getShapePerCTA(aTensorTy),
-                                      bitwidth, layoutA.getOpIdx());
+                                      bitwidth, kWidth, layoutA.getOpIdx());
   auto repB = mmaEnc.getRepForOperand(triton::gpu::getShapePerCTA(bTensorTy),
-                                      bitwidth, layoutB.getOpIdx());
+                                      bitwidth, kWidth, layoutB.getOpIdx());
 
   assert(repA[0] == 1 && repB[0] == 1);  // batch size
   assert(repB[1] == repA[2] * kContractingFactor);
@@ -764,8 +670,9 @@ constexpr int kMmaAlignment = 16;
 // Shared memory descriptor builder for WGMMA.
 Value smemDescriptor(int a, int b, ConversionPatternRewriter &rewriter,
                      Location loc, std::vector<unsigned int> instrShape,
-                     bool trans, int dimWpt, Value warpId, MemDescType tensorTy,
-                     Value baseDesc, int minor) {
+                     bool trans, int dimWpt, Value warpId,
+                     triton::gpu::MemDescType tensorTy, Value baseDesc,
+                     int minor) {
   auto sharedLayout = cast<SharedEncodingAttr>(tensorTy.getEncoding());
   int elemBytes = tensorTy.getElementTypeBitWidth() / 8;
   int elemsPerSwizzlingRow =
@@ -794,8 +701,8 @@ LogicalResult convertSparseWGMMA(SparseDotOp op, SparseDotOp::Adaptor adaptor,
                                  ConversionPatternRewriter &rewriter,
                                  Value thread) {
   // Get number of repetitions across the dimensions.
-  auto aTensorTy = cast<MemDescType>(op.getA().getType());
-  auto bTensorTy = cast<MemDescType>(op.getB().getType());
+  auto aTensorTy = cast<triton::gpu::MemDescType>(op.getA().getType());
+  auto bTensorTy = cast<triton::gpu::MemDescType>(op.getB().getType());
   auto dTensorTy = cast<RankedTensorType>(op.getD().getType());
   auto mmaEnc = cast<NvidiaMmaEncodingAttr>(dTensorTy.getEncoding());
 
@@ -822,7 +729,7 @@ LogicalResult convertSparseWGMMA(SparseDotOp op, SparseDotOp::Adaptor adaptor,
   Value warpN = urem(warpMN, i32_val(wpt[1]));
 
   // Create descriptor.
-  auto getSharedData = [&](Value arg, MemDescType tensorTy) {
+  auto getSharedData = [&](Value arg, triton::gpu::MemDescType tensorTy) {
     auto sharedObj = getSharedMemoryObjectFromStruct(
         loc, arg, typeConverter->convertType(tensorTy.getElementType()),
         rewriter);

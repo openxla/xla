@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/literal.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/dot_as_convolution_util.h"
 #include "xla/shape.h"
@@ -42,10 +43,22 @@ limitations under the License.
 namespace xla {
 namespace hlo_sharding_util {
 
+// Class representing a formatting step
+// TODO(tongfei): We have a similar thing in tpu_cross_replica_sharding_util,
+// but it is buried in sharding config specific to cross-replica sharding.
+// Refactoring could allow us to unify.
+struct FormattingStep {
+  Shape input_shape;
+  Shape output_shape;
+  std::optional<Shape> reverse_input_shape;
+  HloOpcode formatting_opcode;
+  HloInstruction* padding_value;
+};
+
 struct GatherScatterDims {
-  absl::InlinedVector<int64_t, 1> operand_dims;
-  absl::InlinedVector<int64_t, 1> indices_dims;
-  absl::InlinedVector<int64_t, 1> output_dims;
+  DimensionVector operand_dims;
+  DimensionVector indices_dims;
+  DimensionVector output_dims;
 
   void append(const GatherScatterDims& other);
 
@@ -56,6 +69,16 @@ struct GatherScatterDims {
       int64_t index_vector_dim,
       absl::Span<const int64_t> offset_or_window_dims);
 };
+
+// Apply the formatting steps.
+HloInstruction* FormatShape(HloInstruction* data,
+                            absl::Span<const FormattingStep> formatting_steps,
+                            HloComputation* computation);
+
+// Reverse the formatting steps.
+HloInstruction* ReverseFormatShape(
+    HloInstruction* data, absl::Span<const FormattingStep> formatting_steps,
+    HloComputation* computation);
 
 // Determines if the first operand 'potential_subsharding' is a subsharding of
 // the second operand 'sharding'. Subsharding means that the tiles in
@@ -351,24 +374,13 @@ std::optional<GatherScatterDims> GetGatherParallelBatchDims(
 std::optional<GatherScatterDims> GetScatterParallelBatchDims(
     const HloInstruction& hlo, const CallGraph& call_graph);
 
-// Returns the operand pass-through dimensions for gather operand.
-absl::InlinedVector<int64_t, 1> GetGatherOperandPassthroughOperandDims(
-    const Shape& operand_shape, const HloInstruction& hlo,
-    absl::Span<const int64_t> slice_sizes);
-
-// Returns the operand pass-through dimensions for scatter operand(s).
-absl::InlinedVector<int64_t, 1> GetScatterOperandPassthroughOperandDims(
-    const Shape& operand_shape, const HloSharding& operand_sharding,
+// Returns the operand pass-through dimensions for a gather instruction.
+GatherScatterDims GetGatherOperandPassthroughDims(
     const HloInstruction& hlo, absl::Span<const int64_t> slice_sizes);
 
-absl::InlinedVector<int64_t, 1> GetGatherOperandPassthroughOutputDims(
-    const Shape& output_shape, const Shape& operand_shape,
+// Returns the operand pass-through dimensions for a scatter instruction.
+GatherScatterDims GetScatterOperandPassthroughDims(
     const HloInstruction& hlo, absl::Span<const int64_t> slice_sizes);
-
-absl::InlinedVector<int64_t, 1> GetScatterOperandPassthroughUpdateDims(
-    const Shape& update_shape, const Shape& operand_shape,
-    const HloSharding& operand_sharding, const HloInstruction& hlo,
-    absl::Span<const int64_t> slice_sizes);
 
 // Returns the dims along which sharding can be propagated between indices and
 // output/update for gather/scatter operations. `excluded_indices_dims` are

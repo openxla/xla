@@ -116,9 +116,6 @@ limitations under the License.
 // VLOG(5): Profiling information for every tiling
 // VLOG(10): Print fusion computations and each configuration
 
-// TODO(b/317016172): Update usages of TritonGemmConfig to use newly exposed
-// parameters.
-
 namespace xla {
 namespace gpu {
 
@@ -242,7 +239,6 @@ absl::StatusOr<TileSizeLimit> GetLimits(const HloDotInstruction& dot) {
                       ContractingDimensionIndex(dot, /*operand_number=*/1));
   // This is not a sharp upper limit, the actual m value can be much smaller
   // based on how much of the m dimension is physically contiguous.
-  // TODO(tdanyluk): Get the exact m value by running a TritonFusionAnalysis.
   const int max_m = tsl::NextPowerOfTwoS64(
       dot.operand(0)->shape().dimensions(non_contracting_index_lhs));
   // Theoretically the same is true as for m, but that is not possible in
@@ -349,11 +345,6 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
     TF_RETURN_IF_ERROR(gemm_rewriter.Run(new_module.get()).status());
     TF_RETURN_IF_ERROR(fusion_pass.Run(new_module.get()).status());
   }
-  // TODO(tdanyluk): Consider running GemmAlgorithmPicker here for better cuBLAS
-  // performance. It is probably not needed on Ampere and later because cuBLAS
-  // ignores the algorithm parameter for those targets. If we run
-  // GemmAlgorithmPicker, we probably should not run this in parallel with other
-  // compilations.
   return new_module;
 }
 
@@ -817,13 +808,9 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
   int minBitWidth =
       std::min({primitive_util::BitWidth(out), primitive_util::BitWidth(in0),
                 primitive_util::BitWidth(in1)});
-  bool isF8Dot = primitive_util::IsF8Type(out) ||
-                 primitive_util::IsF8Type(in0) || primitive_util::IsF8Type(in1);
   for (auto convert : converts) {
     auto in_type = convert->operand(0)->shape().element_type();
     auto out_type = convert->shape().element_type();
-    isF8Dot |=
-        primitive_util::IsF8Type(in_type) || primitive_util::IsF8Type(out_type);
     minBitWidth = std::min({minBitWidth, primitive_util::BitWidth(in_type),
                             primitive_util::BitWidth(out_type)});
   }
@@ -881,11 +868,11 @@ GemmFusionAutotunerImpl::GenerateTritonConfigs(const HloDotInstruction& dot) {
     config.block_k =
         std::max(config.block_k, kLdmatrixGranularity / minBitWidth);
 
-    // Additionally, there are further issues happening on FP8 types and
+    // Additionally, there are further issues happening on 8 bit types and
     // predicates that require additional restriction on block_m when num_warps
     // > 8 (see b/378660935). It's unclear if the issue extends beyond these
     // cases, so restrictions here are conservative to these.
-    if ((isF8Dot || minBitWidth == 1) && config.num_warps > 8) {
+    if (minBitWidth <= 8 && config.num_warps > 8) {
       config.block_m = std::max(config.block_m, 32);
     }
 
