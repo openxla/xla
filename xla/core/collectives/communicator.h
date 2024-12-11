@@ -17,11 +17,16 @@ limitations under the License.
 #define XLA_CORE_COLLECTIVES_COMMUNICATOR_H_
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "xla/service/collective_ops_utils.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -29,6 +34,22 @@ namespace xla {
 class Communicator {
  public:
   virtual ~Communicator() = default;
+
+  // An executor is an abstraction for the underlying resource where collective
+  // operations are executed. For example on GPU backend it could be a device
+  // stream, and on CPU backend it could be a thread pool.
+  class Executor {
+   public:
+    virtual ~Executor() = default;
+  };
+
+  // An RAII handle for buffers registered with the communicator. Child classes
+  // are responsible for unregistering the buffer when the handle is destroyed.
+  class RegisteredBufferHandle {
+   public:
+    virtual ~RegisteredBufferHandle() = default;
+    virtual absl::Status Unregister() = 0;
+  };
 
   // Abort any uncompleted operations and destroys the underlying communicator
   // object. It is undefined behavior to use the communicator after calling
@@ -42,6 +63,61 @@ class Communicator {
 
   // Returns the number of ranks in the communicator.
   virtual absl::StatusOr<size_t> NumRanks() const = 0;
+
+  // Register `buffer` for efficient collective operations (i.e. on NCCL backend
+  // it registers the buffer for zero-copy collective operations).
+  virtual absl::StatusOr<std::unique_ptr<RegisteredBufferHandle>>
+  RegisterBuffer(stream_executor::DeviceMemoryBase buffer) = 0;
+
+  // Reduce buffers of length `count` in `send_buff` using `reduction_kind`
+  // reduction and leaves identical copies of the result on each `recv_buff`.
+  virtual absl::Status AllReduce(stream_executor::DeviceMemoryBase send_buffer,
+                                 stream_executor::DeviceMemoryBase recv_buffer,
+                                 PrimitiveType dtype, size_t count,
+                                 ReductionKind reduction_kind,
+                                 const Executor& executor) = 0;
+
+  // Copy data in `send_buff` from the root device to the `recv_buff` on
+  // all other devices.
+  virtual absl::Status Broadcast(se::DeviceMemoryBase send_buffer,
+                                 se::DeviceMemoryBase recv_buffer,
+                                 PrimitiveType dtype, size_t count, size_t root,
+                                 const Executor& executor) = 0;
+
+  // Reduce data in `send_buff` from all devices using the `reduction_kind`
+  // operation and leave the reduced result scattered over the devices so that
+  // the `recv_buff` on rank `i` will contain the i-th block of the result.
+  virtual absl::Status ReduceScatter(se::DeviceMemoryBase send_buffer,
+                                     se::DeviceMemoryBase recv_buffer,
+                                     PrimitiveType dtype, size_t count,
+                                     ReductionKind reduction_kind,
+
+                                     const Executor& executor) = 0;
+
+  // Gather `count` values from all devices into `recv_buffer`, receiving data
+  // from rank `i` at offset `i * sendcount`.
+  virtual absl::Status AllGather(se::DeviceMemoryBase send_buffer,
+                                 se::DeviceMemoryBase recv_buffer,
+                                 PrimitiveType dtype, size_t count,
+                                 const Executor& executor) = 0;
+
+  // Send data from `send_buff` to rank `peer`.
+  virtual absl::Status Send(se::DeviceMemoryBase send_buffer,
+                            PrimitiveType dtype, size_t count, int32_t peer,
+                            const Executor& executor) = 0;
+
+  // Send a pointer `ptr` to rank `peer`.
+  virtual absl::Status SendPtrToPeer(void* ptr, int32_t peer,
+                                     const Executor& executor) = 0;
+
+  // Receive data from rank `peer` into `recv_buff`.
+  virtual absl::Status Recv(se::DeviceMemoryBase recv_buffer,
+                            PrimitiveType dtype, size_t count, int32_t peer,
+                            const Executor& executor) = 0;
+
+  // Receive a pointer from rank `peer` into `ptr`.
+  virtual absl::Status RecvPtrFromPeer(void* ptr, int32_t peer,
+                                       const Executor& executor) = 0;
 
   virtual std::string ToString() const = 0;
 };

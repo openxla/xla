@@ -152,7 +152,7 @@ bool IsTriviallyFusible(HloInstruction* instr,
     return false;
   }
 
-  if (instr->opcode() == HloOpcode::kBitcast &&
+  if (HloPredicateIsOp<HloOpcode::kBitcast>(instr) &&
       BitcastIsTilingNoop(instr, gpu_version)) {
     return true;
   }
@@ -282,7 +282,7 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamondChain(
       create_computation(operand);
       new_operands.push_back(old_to_new_mapping[operand]);
     }
-    if (instr->opcode() == HloOpcode::kParameter) {
+    if (HloPredicateIsOp<HloOpcode::kParameter>(instr)) {
       old_to_new_mapping[instr] =
           builder.AddInstruction(HloInstruction::CreateParameter(
               param, instr->shape(), absl::StrCat("parameter_", param)));
@@ -365,7 +365,7 @@ EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
   TF_RETURN_IF_ERROR(
       RunFusionPipeline(new_module.get(), device_info, shape_size));
 
-  VLOG(10) << "priority fusion module: " << new_module->ToString();
+  VLOG(3) << "priority fusion module: " << new_module->ToString();
 
   HloComputation* entry_computation = new_module->entry_computation();
   GpuHloCostAnalysis::Options cost_analysis_options{
@@ -424,9 +424,9 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
                         EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
                             softmax_fusion, device_info, shape_size));
 
-    VLOG(5) << "run time estimate if normalization diamond fused together: "
+    VLOG(2) << "run time estimate if normalization diamond fused together: "
             << tiled_runtime_data.runtime_data.exec_time;
-    VLOG(5)
+    VLOG(2)
         << "run time estimate if normalization diamond is not fused together: "
         << run_time_without_softmax_rewriter;
 
@@ -444,7 +444,7 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
        ->mutable_block_level_fusion_config() =
       tiled_runtime_data.block_level_parameters.ToBlockLevelFusionConfig();
   TF_RETURN_IF_ERROR(softmax_fusion->set_backend_config(backend_config));
-  VLOG(5) << "Fusing with backend config: " << backend_config.DebugString();
+  VLOG(2) << "Fusing with backend config: " << backend_config.DebugString();
 
   return FusionDecision::Allow();
 }
@@ -459,7 +459,7 @@ absl::StatusOr<bool> MaybeFuseDiamondChainImpl(
                       MakeFusionForDiamondChain(diamond_chain));
   HloInstruction* root = diamond_chain.root;
 
-  VLOG(5) << "MaybeFuseDiamondChainImpl: " << softmax_fusion->ToString();
+  VLOG(2) << "MaybeFuseDiamondChainImpl: " << softmax_fusion->ToString();
 
   TF_ASSIGN_OR_RETURN(
       FusionDecision fusion_decision,
@@ -468,7 +468,7 @@ absl::StatusOr<bool> MaybeFuseDiamondChainImpl(
           use_cost_model_to_evaluate_fusions));
 
   if (!fusion_decision.CanFuse()) {
-    VLOG(5) << "Not fusing: " << fusion_decision.Explain();
+    VLOG(2) << "Not fusing: " << fusion_decision.Explain();
     softmax_fusion->DetachFromOperandsAndUsers();
     TF_RETURN_IF_ERROR(
         softmax_fusion->parent()->RemoveInstruction(softmax_fusion));
@@ -528,8 +528,8 @@ FusionDecision ShouldFuseReduction(const HloInstruction& reduce,
   // convert of a constant.
   const HloInstruction* identity = reduce.operand(1);
   bool should_fuse_identity =
-      identity->opcode() == HloOpcode::kConstant ||
-      (identity->opcode() == HloOpcode::kConvert &&
+      HloPredicateIsOp<HloOpcode::kConstant>(identity) ||
+      (HloPredicateIsOp<HloOpcode::kConvert>(identity) &&
        identity->operand(0)->opcode() == HloOpcode::kConstant &&
        IsTritonSupportedInstruction(*identity, cc));
   if (!should_fuse_identity) {
@@ -585,8 +585,8 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
   // convert of a constant.
   const HloInstruction* identity = reduce->operand(1);
   bool should_fuse_identity =
-      identity->opcode() == HloOpcode::kConstant ||
-      (identity->opcode() == HloOpcode::kConvert &&
+      HloPredicateIsOp<HloOpcode::kConstant>(identity) ||
+      (HloPredicateIsOp<HloOpcode::kConvert>(identity) &&
        identity->operand(0)->opcode() == HloOpcode::kConstant &&
        IsTritonSupportedInstruction(*identity, cc));
   if (!should_fuse_identity) {
@@ -624,11 +624,11 @@ DiamondMatchingDecision MatchesTritonCompatibleClosedReductionDiamondImpl(
     return FusionDecision::Forbid("Unsupported root-producer connection.");
   }
 
-  VLOG(5) << "Matched Softmax diamond with: ";
-  VLOG(5) << "root: " << instr->ToString();
-  VLOG(5) << "producer: " << producer->ToString();
-  VLOG(5) << "broadcast: " << broadcast->ToString();
-  VLOG(5) << "reduce: " << reduce->ToString();
+  VLOG(2) << "Matched Softmax diamond with: ";
+  VLOG(2) << "root: " << instr->ToString();
+  VLOG(2) << "producer: " << producer->ToString();
+  VLOG(2) << "broadcast: " << broadcast->ToString();
+  VLOG(2) << "reduce: " << reduce->ToString();
 
   return producer;
 }
@@ -662,21 +662,21 @@ absl::StatusOr<std::vector<DiamondChainDescriptor>> FindAllFusibleDiamonds(
         if (can_tile_diamond_chain) {
           matched_diamonds.push_back(diamond_chain);
         } else {
-          VLOG(5) << "Cannot tile the diamond pattern described by "
+          VLOG(2) << "Cannot tile the diamond pattern described by "
                   << "instructions " << instr->ToString() << " and "
                   << std::get<HloInstruction*>(producer)->ToString() << ".";
           continue;
         }
 
       } else {
-        VLOG(5) << "Cannot match the diamond pattern for instruction "
+        VLOG(2) << "Cannot match the diamond pattern for instruction "
                 << instr->ToString()
                 << ". Reason: " << std::get<FusionDecision>(producer).Explain();
       }
     }
   }
 
-  return std::move(matched_diamonds);
+  return matched_diamonds;
 }
 
 // Returns the size of the reduction dimension of the input diamond.
@@ -684,7 +684,7 @@ int64_t GetReductionDimensionSizeForDiamond(
     const DiamondChainDescriptor& diamond_chain) {
   HloInstruction* diamond_root = diamond_chain.root;
   HloInstruction* instr = diamond_root->mutable_operand(1);
-  while (instr->opcode() != HloOpcode::kReduce) {
+  while (HloPredicateIsNotOp<HloOpcode::kReduce>(instr)) {
     instr = ChooseOperandForFusionProcessing(instr);
   }
 

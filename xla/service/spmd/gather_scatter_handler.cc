@@ -49,9 +49,9 @@ namespace xla {
 namespace spmd {
 namespace {
 using hlo_sharding_util::GroupedSharding;
-PartitioningMethod gather_partition_method = PartitioningMethod::kIndexParallel;
+PartitioningMethod gather_partition_method = PartitioningMethod::kExplicitBatch;
 PartitioningMethod scatter_partition_method =
-    PartitioningMethod::kIndexParallel;
+    PartitioningMethod::kExplicitBatch;
 
 // Generates per-group partitioned hlo based on given grouped sharding.
 PartitionedHlo PerGroupPartitionedHlo(
@@ -135,9 +135,8 @@ std::vector<int64_t> GatherOperandDimsByPriority(
                  std::back_inserter(priority_dims_for_operand));
   }
   const auto operand_passthrough_dims =
-      hlo_sharding_util::GetGatherOperandPassthroughOperandDims(
-          operand.base_shape(), *gather, slice_sizes);
-  absl::c_copy(operand_passthrough_dims,
+      hlo_sharding_util::GetGatherOperandPassthroughDims(*gather, slice_sizes);
+  absl::c_copy(operand_passthrough_dims.operand_dims,
                std::back_inserter(priority_dims_for_operand));
   return priority_dims_for_operand;
 }
@@ -182,8 +181,8 @@ std::vector<int64_t> GatherOutputDimsByPriority(
   // priority ordering for scatter update.
   std::vector<int64_t> priority_dims_for_output;
   auto operand_passthrough_output_dims =
-      hlo_sharding_util::GetGatherOperandPassthroughOutputDims(
-          output_shape, operand.base_shape(), *gather, slice_sizes);
+      hlo_sharding_util::GetGatherOperandPassthroughDims(*gather, slice_sizes)
+          .output_dims;
   for (int i = 0; i != output_shape.rank(); ++i) {
     if (!absl::c_linear_search(operand_passthrough_output_dims, i)) {
       priority_dims_for_output.push_back(i);
@@ -294,6 +293,17 @@ absl::StatusOr<HloInstruction*> PartitionGatherIndexPassthroughDimensions(
   const hlo_sharding_util::GatherScatterDims index_passthrough_dims =
       hlo_sharding_util::GetGatherScatterIndexPassThroughDims(
           *gather, visitor->call_graph());
+
+  // Improve indices sharding from the output sharding.
+  HloSharding indices_sharding = indices.sharding();
+  if (hlo_sharding_util::MergeShardingIfCompatible(
+          hlo_sharding_util::PropagateShardingAlongDimsAndReplicateOthers(
+              output_sharding, index_passthrough_dims.output_dims,
+              index_passthrough_dims.indices_dims, indices.rank()),
+          &indices_sharding)) {
+    indices = indices.Reshard(indices_sharding);
+  }
+
   // Compute output sharding.
   HloSharding passthrough_sharding =
       hlo_sharding_util::PropagateShardingAlongDimsAndReplicateOthers(
@@ -365,8 +375,8 @@ absl::StatusOr<HloInstruction*> PartitionGatherOperandPassthroughDimensions(
           GatherOutputShardingFromOperandOperandPassthroughDimensions(
               operand.base_shape(), operand.sharding(), *gather, slice_sizes)) {
     const auto operand_grouping_dims =
-        hlo_sharding_util::GetGatherOperandPassthroughOperandDims(
-            operand.base_shape(), *gather, slice_sizes);
+        hlo_sharding_util::GetGatherOperandPassthroughDims(*gather, slice_sizes)
+            .operand_dims;
     const int64_t num_groups =
         operand.sharding().NumTiles(operand_grouping_dims);
     const int64_t num_tiles = operand.sharding().TotalNumTiles();
@@ -814,8 +824,7 @@ std::pair<int64_t, int64_t> GatherPartitionMethodCostModel(
     absl::Span<const int64_t> slice_sizes, SpmdPartitioningVisitor* visitor) {
   if (partition_method == GetGatherPartitionMethod(gather_partition_method)) {
     // Always prioritize the user's chosen partitioning, and assume it has zero
-    // cost.
-    // This defaults to IndexParallel.
+    // cost. The default method is kExplicitBatch.
     return {0, 0};
   }
   return EvaluatePartitionCost(gather, partition_method, gather, operand,
@@ -995,9 +1004,9 @@ std::vector<int64_t> ScatterOperandDimsByPriority(
                  std::back_inserter(priority_dims_for_operand));
   }
   const auto operand_passthrough_dims =
-      hlo_sharding_util::GetScatterOperandPassthroughOperandDims(
-          operand.base_shape(), operand.sharding(), *scatter, slice_sizes);
-  absl::c_copy(operand_passthrough_dims,
+      hlo_sharding_util::GetScatterOperandPassthroughDims(*scatter,
+                                                          slice_sizes);
+  absl::c_copy(operand_passthrough_dims.operand_dims,
                std::back_inserter(priority_dims_for_operand));
   return priority_dims_for_operand;
 }
@@ -1043,9 +1052,8 @@ std::vector<int64_t> ScatterUpdateDimsByPriority(
   // priority ordering for scatter update.
   std::vector<int64_t> priority_dims_for_output;
   auto operand_passthrough_update_dims =
-      hlo_sharding_util::GetScatterOperandPassthroughUpdateDims(
-          update_shape, operand.base_shape(), operand.sharding(), *scatter,
-          slice_sizes);
+      hlo_sharding_util::GetScatterOperandPassthroughDims(*scatter, slice_sizes)
+          .output_dims;
   for (int i = 0; i != update_shape.rank(); ++i) {
     if (!absl::c_linear_search(operand_passthrough_update_dims, i)) {
       priority_dims_for_output.push_back(i);
@@ -1281,9 +1289,9 @@ absl::StatusOr<HloInstruction*> PartitionScatterOperandPassthroughDimensions(
               operands[0].base_shape(), operands[0].sharding(), *scatter,
               slice_sizes)) {
     const auto operand_grouping_dims =
-        hlo_sharding_util::GetScatterOperandPassthroughOperandDims(
-            operands[0].base_shape(), operands[0].sharding(), *scatter,
-            slice_sizes);
+        hlo_sharding_util::GetScatterOperandPassthroughDims(*scatter,
+                                                            slice_sizes)
+            .operand_dims;
     const int64_t num_groups =
         operands[0].sharding().NumTiles(operand_grouping_dims);
     const int64_t num_tiles = operands[0].sharding().TotalNumTiles();
@@ -1364,10 +1372,21 @@ absl::StatusOr<HloInstruction*> PartitionScatterIndexPassthroughDimensions(
 
   SpmdBuilder* b = visitor->builder();
   // Parse non-variadic computation only. Variadic case will be replicated.
-  const HloSharding original_indices_sharding = indices.sharding();
   const hlo_sharding_util::GatherScatterDims index_passthrough_dims =
       hlo_sharding_util::GetGatherScatterIndexPassThroughDims(
           *scatter, visitor->call_graph());
+
+  // Improve indices sharding from the update sharding.
+  HloSharding indices_sharding = indices.sharding();
+  if (hlo_sharding_util::MergeShardingIfCompatible(
+          hlo_sharding_util::PropagateShardingAlongDimsAndReplicateOthers(
+              updates[0].sharding(), index_passthrough_dims.output_dims,
+              index_passthrough_dims.indices_dims, indices.rank()),
+          &indices_sharding)) {
+    indices = indices.Reshard(indices_sharding);
+  }
+  const HloSharding original_indices_sharding = indices.sharding();
+
   HloSharding passthrough_sharding =
       hlo_sharding_util::PropagateShardingAlongDimsAndReplicateOthers(
           indices.sharding(), index_passthrough_dims.indices_dims,

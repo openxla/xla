@@ -473,10 +473,6 @@ void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
 absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     HloModule* module, bool is_aot_compile,
     TargetMachineFeatures* target_machine_features, bool is_mlir_compile) {
-  HloPassPipeline pre_sharding_pipeline("pre-spmd-pipeline");
-  // TODO(b/359982037): Run BatchedGatherScatterNormalizer after partitioning.
-  pre_sharding_pipeline.AddPass<BatchedGatherScatterNormalizer>();
-  TF_RETURN_IF_ERROR(pre_sharding_pipeline.Run(module).status());
   const int64_t num_partitions = module->config().num_partitions();
   if (num_partitions > 1) {
     if (!module->config().use_spmd_partitioning()) {
@@ -522,7 +518,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   }
   HloPassPipeline pipeline("HLO passes through layout assignment");
   AddHloVerifier(&pipeline);
-
+  pipeline.AddPass<BatchedGatherScatterNormalizer>();
   pipeline.AddPass<ResultCaster>();
   pipeline.AddPass<OperandUpcaster>();
 
@@ -2091,8 +2087,7 @@ CpuExecutableAotCompilationResult::LoadExecutable(
   TF_ASSIGN_OR_RETURN(
       JitCompiler jit_compiler,
       JitCompiler::Create(CompilerTargetOptions(module->config()),
-                          std::move(jit_compiler_options),
-                          /*task_runner=*/nullptr));
+                          std::move(jit_compiler_options)));
 
   // We might have an XLA:CPU executable that has only runtime thunks and
   // doesn't have any corresponding object files, and it's absolutely fine.

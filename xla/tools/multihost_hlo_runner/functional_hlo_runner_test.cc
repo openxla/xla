@@ -288,11 +288,10 @@ TEST_F(FunctionalHloRunnerTest, ShardedAutotuningWorks) {
 }
 
 absl::Status ShardedAutotuningWorksTestBody(const int node_id) {
-  tsl::setenv("CUDA_VISIBLE_DEVICES", std::to_string(node_id).data(),
-              /*overwrite=*/true);
   GpuClientOptions gpu_options;
   gpu_options.node_id = node_id;
   gpu_options.num_nodes = kNumNodes;
+  gpu_options.allowed_devices = {node_id};
   TF_ASSIGN_OR_RETURN(
       PjRtEnvironment env,
       xla::GetPjRtEnvironmentForGpu("127.0.0.1:12345", gpu_options,

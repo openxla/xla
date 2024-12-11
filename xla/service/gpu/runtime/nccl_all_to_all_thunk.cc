@@ -33,7 +33,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/shape.h"
@@ -61,10 +60,9 @@ NcclAllToAllConfig GetNcclAllToAllConfig(const HloAllToAllInstruction* instr) {
 }  // namespace
 
 NcclAllToAllStartThunk::NcclAllToAllStartThunk(
-    ThunkInfo thunk_info, NcclApi* nccl_api,
-    const HloAllToAllInstruction* instr,
+    ThunkInfo thunk_info, const HloAllToAllInstruction* instr,
     std::vector<NcclCollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
-    : NcclCollectiveThunk(Thunk::kNcclAllToAllStart, thunk_info, nccl_api,
+    : NcclCollectiveThunk(Thunk::kNcclAllToAllStart, thunk_info,
                           IsSyncCollective(instr)),
       config_(GetNcclAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
@@ -105,12 +103,14 @@ absl::Status NcclAllToAllStartThunk::Initialize(
   CHECK_GT(device_count_, 0);
   VLOG(5) << "Local device count: " << device_count_;
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
+
   if (is_local() && p2p_memcpy_enabled_) {
     const CollectiveStreamId stream_id = nccl_stream_id();
     AsyncStreamKind stream_kind = GetAsyncStreamKind();
     TF_ASSIGN_OR_RETURN(
         CommunicatorHandle comm_handle,
-        GetNcclComm(nccl_api(), *params.collective_params,
+        GetNcclComm(collectives, *params.collective_params,
                     *params.collective_cliques, config().replica_groups,
                     config().group_mode, stream_id, stream_kind));
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
@@ -135,12 +135,14 @@ absl::Status NcclAllToAllStartThunk::Initialize(
 }
 
 absl::Status NcclAllToAllStartThunk::Cleanup(const CleanupParams& params) {
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
+
   if (p2p_memcpy_enabled_) {
     const CollectiveStreamId stream_id = nccl_stream_id();
     AsyncStreamKind stream_kind = GetAsyncStreamKind();
     TF_ASSIGN_OR_RETURN(
         CommunicatorHandle comm_handle,
-        GetNcclComm(nccl_api(), *params.collective_params,
+        GetNcclComm(collectives, *params.collective_params,
                     *params.collective_cliques, config().replica_groups,
                     config().group_mode, stream_id, stream_kind));
     TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
@@ -176,6 +178,8 @@ absl::Status NcclAllToAllStartThunk::RunNcclCollective(
                              config_.config.operand_element_type));
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm_handle.comm->NumRanks());
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
+
   if (is_local() && p2p_memcpy_enabled_) {
     int local_id = stream.parent()->device_ordinal() % num_ranks;
     absl::flat_hash_map<int64_t, uint64_t>* send_pointer_map = nullptr;
@@ -185,11 +189,11 @@ absl::Status NcclAllToAllStartThunk::RunNcclCollective(
       send_pointer_map = &send_pointer_maps_[local_id];
       receive_pointer_map = &receive_pointer_maps_[local_id];
     }
-    return xla::gpu::RunMemCpyAllToAll(nccl_api(), config_.has_split_dimension,
+    return xla::gpu::RunMemCpyAllToAll(collectives, config_.has_split_dimension,
                                        device_buffers, stream, comm_handle.comm,
                                        *send_pointer_map, *receive_pointer_map);
   }
-  return xla::gpu::RunAllToAll(nccl_api(), config_.has_split_dimension,
+  return xla::gpu::RunAllToAll(collectives, config_.has_split_dimension,
                                device_buffers, stream, comm_handle.comm);
 }
 
@@ -211,17 +215,17 @@ bool NcclAllToAllStartThunk::is_local() const {
   return true;
 }
 
-absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
+absl::Status RunAllToAll(GpuCollectives* collectives, bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
                          se::Stream& stream, Communicator* comm) {
   int device_ordinal = stream.parent()->device_ordinal();
   VLOG(3) << "Performing all-to-all from device ordinal: " << device_ordinal;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
+      MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
-  TF_RETURN_IF_ERROR(nccl_api->GroupStart());
+  TF_RETURN_IF_ERROR(collectives->GroupStart());
 
   // AllToAll can operate in two modes. Either it specifies a split dimension,
   // in which case inputs are split and outputs concatenated in that dimension
@@ -236,18 +240,20 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
 
       for (int peer = 0; peer < num_ranks; ++peer) {
         se::DeviceMemoryBase send_slice =
-            NcclApi::Slice(buffer.source_buffer, buffer.element_type,
-                           peer * chunk_elements, chunk_elements);
+            collectives->Slice(buffer.source_buffer, buffer.element_type,
+                               peer * chunk_elements, chunk_elements);
 
         se::DeviceMemoryBase recv_slice =
-            NcclApi::Slice(buffer.destination_buffer, buffer.element_type,
-                           peer * chunk_elements, chunk_elements);
+            collectives->Slice(buffer.destination_buffer, buffer.element_type,
+                               peer * chunk_elements, chunk_elements);
 
-        TF_RETURN_IF_ERROR(nccl_api->Send(send_slice, buffer.element_type,
-                                          chunk_elements, peer, comm, &stream));
+        TF_RETURN_IF_ERROR(comm->Send(send_slice, buffer.element_type,
+                                      chunk_elements, peer,
+                                      GpuCollectives::On(stream)));
 
-        TF_RETURN_IF_ERROR(nccl_api->Recv(recv_slice, buffer.element_type,
-                                          chunk_elements, peer, comm, &stream));
+        TF_RETURN_IF_ERROR(comm->Recv(recv_slice, buffer.element_type,
+                                      chunk_elements, peer,
+                                      GpuCollectives::On(stream)));
       }
     }
   } else {
@@ -257,21 +263,21 @@ absl::Status RunAllToAll(NcclApi* nccl_api, bool has_split_dimension,
     for (size_t i = 0; i < buffers.size(); ++i) {
       DeviceBufferPair& buffer = buffers[i];
 
-      TF_RETURN_IF_ERROR(
-          nccl_api->Send(buffer.source_buffer, buffer.element_type,
-                         buffer.element_count, i, comm, &stream));
+      TF_RETURN_IF_ERROR(comm->Send(buffer.source_buffer, buffer.element_type,
+                                    buffer.element_count, i,
+                                    GpuCollectives::On(stream)));
 
-      TF_RETURN_IF_ERROR(
-          nccl_api->Recv(buffer.destination_buffer, buffer.element_type,
-                         buffer.element_count, i, comm, &stream));
+      TF_RETURN_IF_ERROR(comm->Recv(buffer.destination_buffer,
+                                    buffer.element_type, buffer.element_count,
+                                    i, GpuCollectives::On(stream)));
     }
   }
 
-  return nccl_api->GroupEnd();
+  return collectives->GroupEnd();
 }
 
 absl::Status RunMemCpyAllToAll(
-    NcclApi* nccl_api, bool has_split_dimension,
+    GpuCollectives* collectives, bool has_split_dimension,
     std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
     Communicator* comm,
     absl::flat_hash_map<int64_t, uint64_t>& send_pointer_map,
@@ -280,7 +286,7 @@ absl::Status RunMemCpyAllToAll(
   VLOG(3) << "Performing mem-copy-all-to-all from device ordinal: "
           << device_ordinal;
   TF_RETURN_IF_ERROR(
-      MaybeRegisterBuffers(nccl_api, stream.parent(), buffers, comm));
+      MaybeRegisterBuffers(collectives, stream.parent(), buffers, comm));
 
   TF_ASSIGN_OR_RETURN(int32_t num_ranks, comm->NumRanks());
 
@@ -295,25 +301,25 @@ absl::Status RunMemCpyAllToAll(
 
       size_t chunk_elements = buffer.element_count / num_ranks;
 
-      TF_RETURN_IF_ERROR(nccl_api->GroupStart());
+      TF_RETURN_IF_ERROR(collectives->GroupStart());
       for (int peer = 0; peer < num_ranks; ++peer) {
         se::DeviceMemoryBase recv_slice =
-            NcclApi::Slice(buffer.destination_buffer, buffer.element_type,
-                           peer * chunk_elements, chunk_elements);
+            collectives->Slice(buffer.destination_buffer, buffer.element_type,
+                               peer * chunk_elements, chunk_elements);
         send_pointer_map[peer] = (uint64_t)recv_slice.opaque();
 
-        TF_RETURN_IF_ERROR(nccl_api->SendPtrToPeer(&send_pointer_map[peer],
-                                                   peer, comm, &stream));
-        TF_RETURN_IF_ERROR(nccl_api->RecvPtrFromPeer(&receive_pointer_map[peer],
-                                                     peer, comm, &stream));
+        TF_RETURN_IF_ERROR(comm->SendPtrToPeer(&send_pointer_map[peer], peer,
+                                               GpuCollectives::On(stream)));
+        TF_RETURN_IF_ERROR(comm->RecvPtrFromPeer(
+            &receive_pointer_map[peer], peer, GpuCollectives::On(stream)));
       }
-      TF_RETURN_IF_ERROR(nccl_api->GroupEnd());
+      TF_RETURN_IF_ERROR(collectives->GroupEnd());
       TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());
 
       for (int peer = 0; peer < num_ranks; ++peer) {
         se::DeviceMemoryBase send_slice =
-            NcclApi::Slice(buffer.source_buffer, buffer.element_type,
-                           peer * chunk_elements, chunk_elements);
+            collectives->Slice(buffer.source_buffer, buffer.element_type,
+                               peer * chunk_elements, chunk_elements);
         se::DeviceMemoryBase dst_addr =
             se::DeviceMemoryBase((void*)receive_pointer_map[peer]);
         TF_RETURN_IF_ERROR(
@@ -324,17 +330,17 @@ absl::Status RunMemCpyAllToAll(
     TF_RET_CHECK(buffers.size() == num_ranks)
         << "Number of inputs didn't match the number of participants.";
 
-    TF_RETURN_IF_ERROR(nccl_api->GroupStart());
+    TF_RETURN_IF_ERROR(collectives->GroupStart());
     for (int peer = 0; peer < num_ranks; ++peer) {
       send_pointer_map[peer] =
           (uint64_t)buffers[peer].destination_buffer.opaque();
 
-      TF_RETURN_IF_ERROR(nccl_api->SendPtrToPeer(&send_pointer_map[peer], peer,
-                                                 comm, &stream));
-      TF_RETURN_IF_ERROR(nccl_api->RecvPtrFromPeer(&receive_pointer_map[peer],
-                                                   peer, comm, &stream));
+      TF_RETURN_IF_ERROR(comm->SendPtrToPeer(&send_pointer_map[peer], peer,
+                                             GpuCollectives::On(stream)));
+      TF_RETURN_IF_ERROR(comm->RecvPtrFromPeer(&receive_pointer_map[peer], peer,
+                                               GpuCollectives::On(stream)));
     }
-    TF_RETURN_IF_ERROR(nccl_api->GroupEnd());
+    TF_RETURN_IF_ERROR(collectives->GroupEnd());
     TF_RETURN_IF_ERROR(stream.BlockHostUntilDone());
 
     for (int peer = 0; peer < num_ranks; ++peer) {
