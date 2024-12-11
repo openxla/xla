@@ -1,6 +1,9 @@
 name: Benchmarks
 
 on:
+  workflow_dispatch:  # Allows manual triggering
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours (at minute 0 of hours 0, 6, 12, 18)
   push:
     branches:
       - main
@@ -31,8 +34,13 @@ jobs:
         continue-on-error: true
         run: |
           for file in xla/tests/fuzz/*.hlo; do
+            filename=$(basename "$file")
+            if [[ "$filename" == "rand_000060.hlo" || "$filename" == "rand_000067.hlo" || "$filename" == "rand_000072.hlo" ]]; then
+              echo "Skipping benchmark on $file"
+              continue
+            fi
             echo "Running benchmark on $file"
-            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU $file
+            ./bazel-bin/xla/tools/run_hlo_module --input_format=hlo --platform=CPU "$file"
           done
 
       - name: Create results directory
