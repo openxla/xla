@@ -60,7 +60,6 @@ Usage:
 
 struct HloOptConfig {
   // Optional flags.
-  bool help{false};
   bool split_input_file{false};
   std::string platform{"transforms"};
   std::string input_file{""};
