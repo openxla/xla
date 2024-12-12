@@ -181,6 +181,7 @@ cc_library(
         "@stablehlo//:stablehlo_ops",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:ml_dtypes",
+        "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:types",
     ],
