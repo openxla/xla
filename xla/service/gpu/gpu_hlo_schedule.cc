@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/collective_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/flag_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
@@ -262,6 +261,18 @@ SchedulerConfig GetSchedulerConfig(int64_t memory_limit,
   config.schedule_send_recvs = true;
   config.memory_limit = memory_limit;
   config.parallel_collective_overlap_limit = collective_resource;
+
+  CHECK((config.collective_broadcast_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_to_all_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_gather_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.all_reduce_overlap_limit <=
+         config.parallel_collective_overlap_limit) &&
+        (config.reduce_scatter_overlap_limit <=
+         config.parallel_collective_overlap_limit));
+
   return config;
 }
 
@@ -416,36 +427,22 @@ std::optional<tensorflow::profiler::ProfiledInstructionsProto> ReadPGLEProfile(
                                        pgle_profile_file_or_dir_path);
   }
 }
-}  // end namespace
 
-static int64_t GetSchedulerMemoryLimit(
-    const HloModule* module, const se::DeviceDescription& gpu_device_info,
-    int pointer_size);
-
-absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
-    HloModule* module, int64_t pointer_size,
-    const se::DeviceDescription& gpu_device_info) {
-  tsl::profiler::TraceMe traceme("GpuCompiler::CompileToBackendResult");
-  int64_t memory_limit =
-      GetSchedulerMemoryLimit(module, gpu_device_info, pointer_size);
-  if (module->has_schedule()) {
-    return ScheduleMetadata{memory_limit};
+// Runs P2P schedule preparation prior any scheduling.
+absl::Status RunP2PSchedulePreparation(HloModule* module,
+                                       const DebugOptions& options) {
+  if (!options.xla_gpu_enable_pipelined_p2p()) {
+    return absl::OkStatus();
   }
+  HloPassPipeline prepare_pipeline("p2p-schedule-preparation");
+  prepare_pipeline.AddPass<P2PSchedulePreparation>();
+  return prepare_pipeline.Run(module).status();
+}
 
-  const DebugOptions& options = module->config().debug_options();
-  if (options.xla_gpu_enable_pipelined_p2p()) {
-    HloPassPipeline prepare_pipeline("p2p-schedule-preparation");
-    prepare_pipeline.AddPass<P2PSchedulePreparation>();
-    TF_RETURN_IF_ERROR(prepare_pipeline.Run(module).status());
-  }
-
-  TF_ASSIGN_OR_RETURN(
-      HloSchedule schedule,
-      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size));
-  TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
-
-  // Tag the module with its 128 bit fingerprint. The fingerprint should include
-  // instruction name with ids.
+// Adds fingerprint to the module before.
+//
+// Returns said fingerprint.
+std::string TagWithFingerprint(HloModule* module) {
   std::string fingerprint = module->GetFingerprint128(
       HloPrintOptions::Canonical().set_print_backend_config(true));
   FrontendAttributes attributes;
@@ -453,40 +450,26 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   module->add_frontend_attributes(attributes);
   VLOG(1) << "Fingerprint before LHS for module " << module->name() << "("
           << module->unique_id() << ") = " << fingerprint;
+  return fingerprint;
+}
 
-  const bool enable_latency_hiding_scheduler =
-      options.xla_gpu_enable_latency_hiding_scheduler() ||
-      IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(*module);
-
-  if (!enable_latency_hiding_scheduler) {
-    return ScheduleMetadata{memory_limit};
-  }
-
-  SchedulerConfig config = GetSchedulerConfig(
-      memory_limit,
-      module->config()
-          .debug_options()
-          .xla_gpu_experimental_parallel_collective_overlap_limit());
-  CHECK((config.collective_broadcast_overlap_limit <=
-         config.parallel_collective_overlap_limit) &&
-        (config.all_to_all_overlap_limit <=
-         config.parallel_collective_overlap_limit) &&
-        (config.all_gather_overlap_limit <=
-         config.parallel_collective_overlap_limit) &&
-        (config.all_reduce_overlap_limit <=
-         config.parallel_collective_overlap_limit) &&
-        (config.reduce_scatter_overlap_limit <=
-         config.parallel_collective_overlap_limit));
+// Returns latency estimator, key abstraction used by LHS which returns how much
+// each instruction takes.
+std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
+    HloModule* module, int pointer_size,
+    const se::DeviceDescription& gpu_device_info,
+    const std::string& fingerprint, const DebugOptions& options,
+    const SchedulerConfig& config, HloPassPipeline& pipeline) {
+  std::unique_ptr<LatencyEstimator> latency_estimator;
   auto gpu_latency_estimator =
       std::make_unique<GpuLatencyEstimator>(pointer_size);
 
-  std::unique_ptr<LatencyEstimator> latency_estimator;
   std::optional<tensorflow::profiler::ProfiledInstructionsProto> profile =
       ReadPGLEProfile(module, fingerprint);
 
-  const bool enable_analytical_latency_estimator =
+  bool enable_analytical_latency_estimator =
       options.xla_gpu_enable_analytical_latency_estimator();
-  HloPassPipeline pipeline("latency-hiding-scheduler");
+
   if (profile.has_value()) {
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
     auto pg_latency_estimator = std::make_unique<ProfileGuidedLatencyEstimator>(
@@ -512,32 +495,103 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   } else {
     latency_estimator = std::move(gpu_latency_estimator);
   }
+  return latency_estimator;
+}
 
-  auto async_tracker = [&]() -> std::unique_ptr<AsyncTracker> {
-    return options.xla_gpu_lhs_enable_gpu_async_tracker()
-               ? std::make_unique<GpuAsyncTracker>(config)
-               : std::make_unique<GpuAsyncTrackerBase>(config);
-  }();
-
+// Adds necessary passes to perform latency hiding estimations for the
+// `pipeline`.
+absl::Status RunLatencyHidingSchedulerPasses(
+    HloModule* module, int pointer_size,
+    const se::DeviceDescription& gpu_device_info,
+    const std::string& fingerprint, const DebugOptions& options,
+    const SchedulerConfig& config) {
   auto shape_size_in_bytes = [pointer_size](const Shape& shape) {
     return GetSizeOfShape(shape, pointer_size);
   };
+
+  auto async_tracker = std::make_unique<GpuAsyncTracker>(config);
+
+  HloPassPipeline pipeline("latency-hiding-scheduler");
+  std::unique_ptr<LatencyEstimator> latency_estimator =
+      GetLatencyEstimator(module, pointer_size, gpu_device_info, fingerprint,
+                          options, config, pipeline);
+
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       shape_size_in_bytes, async_tracker.get(), latency_estimator.get(), config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/nullptr, /*post_processing_fn=*/nullptr,
       /*scheduling_instruction_crosses_overlap_limit=*/
       GpuScheduleCrossesOverlapLimit);
-  pipeline.AddPass<SchedulingInstructionAnnotator>();
+
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(latency_estimator), std::move(async_tracker),
       std::move(scheduler_core), shape_size_in_bytes);
+  pipeline.AddPass<SchedulingInstructionAnnotator>();
+  pipeline.AddPass<SchedulePostprocessing>();
 
-  TF_RETURN_IF_ERROR(pipeline.Run(module).status());
+  return pipeline.Run(module).status();
+}
 
-  HloPassPipeline postprocessing_pipeline("schedule-postprocessing");
-  postprocessing_pipeline.AddPass<SchedulePostprocessing>();
-  TF_RETURN_IF_ERROR(postprocessing_pipeline.Run(module).status());
+}  // end namespace
+
+static int64_t GetSchedulerMemoryLimit(
+    const HloModule* module, const se::DeviceDescription& gpu_device_info,
+    int pointer_size);
+
+absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
+    HloModule* module, int64_t pointer_size,
+    const se::DeviceDescription& gpu_device_info) {
+  tsl::profiler::TraceMe traceme("GpuCompiler::CompileToBackendResult");
+
+  // Tag the module with its 128 bit fingerprint. The fingerprint should include
+  // instruction name with ids.
+  std::string fingerprint = TagWithFingerprint(module);
+  int64_t memory_limit =
+      GetSchedulerMemoryLimit(module, gpu_device_info, pointer_size);
+
+  // Case 1: Module has a schedule.
+  //
+  // Return already existing schedule.
+  if (module->has_schedule()) {
+    return ScheduleMetadata{memory_limit};
+  }
+
+  // Case 2: Module does not have a schedule.
+  //
+  // Running default scheduler.
+  // We need to run it anyway because LHS relies on it track buffers. See
+  // `xla::BufferInfoTracker::BufferInfoTracker()`.
+  const DebugOptions& options = module->config().debug_options();
+
+  TF_RETURN_IF_ERROR(RunP2PSchedulePreparation(module, options));
+
+  bool enable_latency_hiding_scheduler =
+      options.xla_gpu_enable_latency_hiding_scheduler() ||
+      IsPassEnabledAtOptimizationEffort<LatencyHidingScheduler>(*module);
+
+  // Default behaviour. Run the scheduler which minimizes peak memory usage.
+  TF_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, pointer_size));
+  TF_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
+
+  // LHS disabled, we return a default schedule.
+  if (!enable_latency_hiding_scheduler) {
+    return ScheduleMetadata{memory_limit};
+  }
+
+  // Case 3: LHS enabled.
+  //
+  // Run Latency Hiding Scheduler (LHS). It maximizes the compute-communication
+  // overlap, potentially at the cost of memory usage.
+  SchedulerConfig config = GetSchedulerConfig(
+      memory_limit,
+      module->config()
+          .debug_options()
+          .xla_gpu_experimental_parallel_collective_overlap_limit());
+
+  TF_RETURN_IF_ERROR(RunLatencyHidingSchedulerPasses(
+      module, pointer_size, gpu_device_info, fingerprint, options, config));
 
   return ScheduleMetadata{memory_limit};
 }
