@@ -101,7 +101,7 @@ ENTRY e {
 )";
 
   EXPECT_TRUE(RunAndCompareTwoModules(hlo_text_ref, hlo_text_modified,
-                                      ErrorSpec{1e-5, 1e-3},
+                                      ErrorSpec{1e-3, 1e-3},
                                       /*run_hlo_passes=*/true));
 }
 

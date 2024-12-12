@@ -133,6 +133,7 @@ class Triton6xBF16GemmTest : public AlgorithmTest {
 
  protected:
   void SetUp() override {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
     if (!SupportsBF16(GpuComputeComp())) {
       GTEST_SKIP() << "BF16 not supported.";
     }
@@ -944,9 +945,9 @@ TEST_F(TritonAlgorithmTest, Dot_BF16_X6_WithConst) {
 
     ENTRY %entry_computation {
       %p_0 = f32[1,258]{1,0} parameter(0)
-      ROOT %dot = f32[258]{0} fusion(f32[1,258]{1,0} %p_0), 
-        kind=kCustom, 
-        calls=%triton_fusion_dot, 
+      ROOT %dot = f32[258]{0} fusion(f32[1,258]{1,0} %p_0),
+        kind=kCustom,
+        calls=%triton_fusion_dot,
         backend_config={
           "operation_queue_id":"0",
           "wait_on_operation_queues":[],
@@ -1172,6 +1173,7 @@ class TritonCanHandle
       public WithParamInterface<CanHandleTestsParams::TupleType> {
  public:
   TritonCanHandle() : TritonAlgorithmTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
     algorithm_ = AlgorithmToString(std::get<0>(GetParam()));
   }
 

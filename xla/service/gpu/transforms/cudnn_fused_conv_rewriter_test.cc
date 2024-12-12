@@ -105,6 +105,9 @@ class CudnnFusedConvRewriterHloTest : public HloTestBase {
 
 class CudnnFusedConvRewriterTest : public GpuCodegenTest {
  public:
+  CudnnFusedConvRewriterTest() {
+    backend().default_stream_executor()->SetThreadsPerWarp(32);
+  }
   bool IsCuda() const {
     return std::holds_alternative<se::CudaComputeCapability>(
         backend()
