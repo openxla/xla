@@ -21,6 +21,7 @@ cc_library(
         "//xla/tsl/profiler:internal",
     ],
     deps = [
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
     ],

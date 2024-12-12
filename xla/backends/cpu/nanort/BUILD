@@ -59,6 +59,7 @@ xla_cc_test(
         "//xla/tsl/concurrency:async_value",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
