@@ -64,6 +64,8 @@ class DistributedRuntimeCoordinationServiceClient
   absl::Status WaitAtBarrier(
       std::string barrier_id, absl::Duration timeout,
       std::optional<absl::Span<const int32_t>> process_ids) override;
+  absl::StatusOr<std::vector<int32_t>> GetAliveNodes(
+      absl::Span<const int32_t> nodes) override;
   absl::StatusOr<tsl::CoordinationServiceAgent*> GetCoordinationServiceAgent()
       override;
 
@@ -190,6 +192,36 @@ absl::Status DistributedRuntimeCoordinationServiceClient::WaitAtBarrier(
     }
   }
   return coord_agent_->WaitAtBarrier(barrier_id, timeout, tasks);
+}
+
+absl::StatusOr<std::vector<int32_t>>
+DistributedRuntimeCoordinationServiceClient::GetAliveNodes(
+    absl::Span<const int32_t> nodes) {
+  // Note that jax.distributed uses terms "process" and "node", and the
+  // coordination service uses the term "task". These all refer to the same
+  // thing, and it's why you see us use both sets of terms as we cross the
+  // abstraction boundary from jax.distributed into the coordination service.
+
+  // Wrap the the node ids into tasks.
+  std::vector<tensorflow::CoordinatedTask> tasks;
+  for (int32_t task_id : nodes) {
+    tensorflow::CoordinatedTask task;
+    task.set_job_name("jax_worker");
+    task.set_task_id(task_id);
+    tasks.push_back(std::move(task));
+  }
+
+  // Get the set of alive tasks.
+  TF_ASSIGN_OR_RETURN(
+      const std::vector<tensorflow::CoordinatedTask> alive_tasks,
+      coord_agent_->GetAliveTasks(tasks));
+
+  // Extract the node ids from the alive tasks.
+  std::vector<int32_t> alive_nodes(alive_tasks.size());
+  for (int i = 0; i < alive_tasks.size(); ++i) {
+    alive_nodes[i] = alive_tasks[i].task_id();
+  }
+  return alive_nodes;
 }
 
 absl::StatusOr<tsl::CoordinationServiceAgent*>
