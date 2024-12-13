@@ -2892,7 +2892,7 @@ TEST_F(HloParserTest, Empty) {
 
 TEST_F(HloParserTest, Garbage) {
   const std::string original =
-      "HloModule thi$ str1ng makes# N0 sen$e @all!*&^%$";
+      "HloModule this str1ng makes# N0 sen$e @all!*&^%$";
   auto result = ParseAndReturnUnverifiedModule(original);
   EXPECT_NE(absl::OkStatus(), result.status());
 }
