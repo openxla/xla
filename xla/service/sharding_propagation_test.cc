@@ -12484,5 +12484,41 @@ ENTRY main {
   EXPECT_TRUE(instruction->sharding().IsReplicated());
 }
 
+TEST_F(ShardingPropagationTest, PropagateManualSubgroupToPartitionId) {
+  const char* const hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(s32[8]{0})->s32[8]{0}}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=8
+
+ENTRY main.17 {
+  Arg_0.1 = s32[8]{0} parameter(0), sharding={devices=[4,2]<=[8] last_tile_dim_replicate}
+  custom-call.2 = s32[8]{0} custom-call(Arg_0.1), custom_call_target="Sharding", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}
+  custom-call.3 = s32[2]{0} custom-call(custom-call.2), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}
+  partition-id = u32[] partition-id()
+  constant.2 = u32[] constant(1)
+  shift-right-logical = u32[] shift-right-logical(partition-id, constant.2)
+  constant.3 = u32[] constant(3)
+  and = u32[] and(shift-right-logical, constant.3)
+  convert.0 = s32[] convert(and)
+  broadcast.0 = s32[2]{0} broadcast(convert.0), dimensions={}
+  add.0 = s32[2]{0} add(custom-call.3, broadcast.0)
+  custom-call.15 = s32[2]{0} custom-call(add.0), custom_call_target="Sharding", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}
+  ROOT custom-call.16 = s32[8]{0} custom-call(custom-call.15), custom_call_target="SPMDShardToFullShape", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}
+})";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{true},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{true})
+          .Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  XLA_VLOG_LINES(1, module->ToString());
+  auto* instruction = FindInstruction(module.get(), "partition-id");
+  // Check sharding is correctly propagated.
+  EXPECT_TRUE(instruction->sharding().IsManual());
+}
+
 }  // namespace
 }  // namespace xla

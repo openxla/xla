@@ -2720,6 +2720,11 @@ bool ShardingPropagation::InferShardingFromUsers(
         instruction->set_sharding(
             HloSharding::Manual(user->sharding().metadata()));
         return true;
+      } else if (instruction->opcode() == HloOpcode::kPartitionId &&
+                 user->sharding().IsManualSubgroup()) {
+        instruction->set_sharding(
+            HloSharding::Manual(user->sharding().metadata()));
+        return true;
       } else {
         std::optional<HloSharding> user_sharding =
             ShardingPropagation::GetShardingFromUser(
