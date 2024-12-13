@@ -1366,7 +1366,7 @@ struct PJRT_ExecuteOptions {
   size_t num_non_donatable_input_indices;
   PJRT_ExecuteContext* context;
 };
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, num_non_donatable_input_indices);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_ExecuteOptions, context);
 
 struct PJRT_LoadedExecutable_Execute_Args {
   size_t struct_size;
