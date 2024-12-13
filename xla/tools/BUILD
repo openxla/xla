@@ -344,6 +344,7 @@ cc_library(
     deps = [
         ":run_hlo_module_proto_cc",
         "//xla:debug_options_flags",
+        "//xla:util",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -354,6 +355,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_googlesource_code_re2//:re2",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:protobuf",

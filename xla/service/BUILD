@@ -6335,6 +6335,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
