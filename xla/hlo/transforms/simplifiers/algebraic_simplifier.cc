@@ -8233,6 +8233,23 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+absl::Status AlgebraicSimplifierVisitor::HandleReducePrecision(
+    HloInstruction* hlo) {
+  HloReducePrecisionInstruction* reduce_precision =
+      Cast<HloReducePrecisionInstruction>(hlo);
+  PrimitiveType element_type =
+      reduce_precision->operand(0)->shape().element_type();
+  if (reduce_precision->exponent_bits() ==
+          primitive_util::ExponentWidth(element_type) &&
+      reduce_precision->mantissa_bits() + 1 ==
+          primitive_util::SignificandWidth(element_type)) {
+    return ReplaceInstruction(
+        /*old_instruction=*/hlo,
+        /*new_instruction=*/reduce_precision->mutable_operand(0));
+  }
+  return absl::OkStatus();
+}
+
 absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
     HloInstruction* hlo) {
   auto* reduce_window = Cast<HloReduceWindowInstruction>(hlo);
