@@ -12688,5 +12688,31 @@ TEST_F(AlgebraicSimplifierTest, TestNew123) {
   EXPECT_FALSE(simplifier.Run(module.get()).value());
 }
 
+TEST_F(AlgebraicSimplifierTest,
+       ReducePrecisionWithSameDatatypeShouldBeRemoved) {
+  const char* hlo = R"(
+  HloModule test
+  ENTRY main {
+    param.0 = bf16[2,16,64]{2,1,0} parameter(0)
+    param.1 = bf16[32,64]{1,0} parameter(1)
+    reduce-precision.46 = bf16[32,64]{1,0} reduce-precision(param.1), exponent_bits=8, mantissa_bits=7
+    bitcast.7734 = bf16[2,16,64]{2,1,0} bitcast(reduce-precision.46)
+    multiply.1006 = bf16[2,16,64]{2,1,0} multiply(param.0, bitcast.7734)
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(AlgebraicSimplifier(default_options_), module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(module->entry_computation()
+                ->root_instruction()
+                ->operand(1)
+                ->operand(0)
+                ->opcode(),
+            HloOpcode::kParameter);
+}
+
 }  // namespace
 }  // namespace xla
