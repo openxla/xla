@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -747,7 +748,19 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
 
   LogicalResult matchAndRewrite(
       AtomicRMWOp op, mlir::PatternRewriter& rewriter) const override {
-    if (failed(rewriteAsDirectAtomicRMW(op, rewriter))) {
+    auto modifier_parameters = GetAtomicModifierParameters(op);
+    if (modifier_parameters.has_value()) {
+      if (mlir::isa<mlir::VectorType>(modifier_parameters->first.getType()) &&
+          (IsAMD(*device_description_) ||
+           !device_description_->cuda_compute_capability().IsAtLeastHopper())) {
+        return rewriter.notifyMatchFailure(
+            op,
+            "atomic vectorization currently only supported on Hopper or later");
+      }
+    }
+
+    if (!modifier_parameters.has_value() ||
+        failed(rewriteAsDirectAtomicRMW(op, modifier_parameters, rewriter))) {
       rewriteAsAtomicCAS(op, rewriter);
     }
     rewriter.replaceOp(op, op.getInput());
@@ -760,11 +773,10 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
   // If "computation" is one of this kind, emits code to do that and returns
   // true; otherwise, returns false.
   LogicalResult rewriteAsDirectAtomicRMW(
-      AtomicRMWOp op, mlir::PatternRewriter& rewriter) const {
-    auto modifier_parameters = GetAtomicModifierParameters(op);
-    if (!modifier_parameters.has_value()) {
-      return failure();
-    }
+      AtomicRMWOp op,
+      std::optional<std::pair<mlir::Value, mlir::LLVM::AtomicBinOp>>
+          modifier_parameters,
+      mlir::PatternRewriter& rewriter) const {
     Value modifier_arg = modifier_parameters->first;
     Type element_type = modifier_arg.getType();
     ml::AtomicBinOp atomic_bin_op = modifier_parameters->second;
@@ -831,8 +843,14 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
     bool is_supported_f64_atomic =
         element_type.isF64() &&
         cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::PASCAL_);
+    auto vector_type = llvm::dyn_cast_or_null<mlir::VectorType>(element_type);
+    bool is_supported_vector_atomic =
+        vector_type && vector_type.getElementType().isF32() &&
+        vector_type.getNumElements() == 2 &&
+        cuda_compute_capability.IsAtLeast(se::CudaComputeCapability::HOPPER);
     if (!element_type.isF32() && !is_supported_f16_atomic &&
-        !is_supported_bf16_atomic && !is_supported_f64_atomic) {
+        !is_supported_bf16_atomic && !is_supported_f64_atomic &&
+        !is_supported_vector_atomic) {
       return failure();
     }
     b.create<ml::AtomicRMWOp>(loc, ml::AtomicBinOp::fadd, addr, modifier_arg,
