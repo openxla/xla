@@ -1326,9 +1326,9 @@ class PassOrderTest : public GpuCompilerTest {
   }
 
   // Fails if any of the passes matching `other_pass_regex` runs before
-  // the first occurence of the pass matching `first_pass_regex`.
-  void VerifyPassRunsBefore(absl::string_view first_pass_regex,
-                            absl::string_view other_pass_regex) {
+  // the first occurrence of the pass matching `first_pass_regex`.
+  void VerifyPassRunsAtLeastOnceBefore(absl::string_view first_pass_regex,
+                                       absl::string_view other_pass_regex) {
     if (!optimized_module_) {
       CompileModule(GetModuleConfigForTest());
     }
@@ -1442,8 +1442,17 @@ TEST_F(PassOrderTest, PassesAreRunInCorrectOrder) {
 }
 
 TEST_F(PassOrderTest, OffloadingPassesAreRunInCorrectOrder) {
-  VerifyPassRunsBefore(/*first_pass_regex=*/"host-offload-legalize",
-                       /*other_pass_regex=*/"layout_normalization");
+  // HostOffloadLegalize must run before LayoutNormalization to prevent
+  // the creation of invalid transpose/bitcast operations within
+  // host memory offloading segments.
+  VerifyPassRunsAtLeastOnceBefore(/*first_pass_regex=*/"host-offload-legalize",
+                                  /*other_pass_regex=*/"layout_normalization");
+
+  // CSE should not run between HostOffloadLegalize and HostOffloader
+  // because it could break the invariants established
+  // by the legalize pass, such as the buffer initialization broadcasts
+  // before loops having only a single use
+  // (see https://github.com/openxla/xla/issues/20373).
   auto pass_range =
       VerifyPassOrder(/*first_pass_regex=*/"host-offload-legalize",
                       /*last_pass_regex=*/"host-offloader");
