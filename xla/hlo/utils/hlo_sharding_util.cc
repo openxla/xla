@@ -2630,7 +2630,7 @@ GroupedSharding GetGroupedReplicatedSharding(const int64_t num_groups,
 }
 
 GroupedSharding GetManualSubgroupSharding(const HloSharding& sharding) {
-  CHECK(sharding.IsManualSubgroup());
+  CHECK(sharding.IsManualSubgroup()) << "sharding: " << sharding.ToString();
   int64_t tile_dimensions = sharding.tile_assignment().num_dimensions();
   int64_t subgroup_size = sharding.subgroup_types().size();
   int64_t rank = tile_dimensions - subgroup_size;

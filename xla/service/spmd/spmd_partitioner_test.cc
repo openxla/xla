@@ -15332,6 +15332,32 @@ ENTRY entry {
                           op::Shape("f32[1]")));
 }
 
+TEST_P(SpmdPartitioningTest, PartitionCollectivePermute) {
+  absl::string_view hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(s32[8]{0})->s32[8]{0}}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=8
+
+ENTRY %main.18 (Arg_0.1: s32[8]) -> s32[8] {
+  %Arg_0.1 = s32[8]{0} parameter(0), sharding={devices=[4,2]<=[8] last_tile_dim_replicate metadata={op_name="x"}}, metadata={op_name="x"}
+  %copy.3 = s32[8]{0} copy(s32[8]{0} %Arg_0.1), sharding={devices=[4,2]<=[8] last_tile_dim_replicate metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}
+  %custom-call.3 = s32[2]{0} custom-call(s32[8]{0} %copy.3), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated} metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+  %copy.2 = s32[2]{0} copy(s32[2]{0} %custom-call.3), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}
+  %multiply.0 = s32[2]{0} multiply(s32[2]{0} %copy.2, s32[2]{0} %copy.2), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/mul" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=30}
+  %collective-permute.0 = s32[2]{0} collective-permute(s32[2]{0} %multiply.0), channel_id=1, source_target_pairs={{0,6},{2,0},{4,2},{6,4},{1,7},{3,1},{5,3},{7,5}}, sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/ppermute" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=31}
+  %iota.0 = s32[4]{0} iota(), iota_dimension=0, sharding={devices=[4,2]<=[8] last_tile_dim_replicate metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  %copy.1 = s32[4]{0} copy(s32[4]{0} %iota.0), sharding={devices=[4,2]<=[8] last_tile_dim_replicate metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  %custom-call.4 = s32[1]{0} custom-call(s32[4]{0} %copy.1), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  %reshape.0 = s32[] reshape(s32[1]{0} %custom-call.4), sharding={devices=[4,2]0,1,2,3,4,5,6,7 last_tile_dims={manual, replicated} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  %broadcast.0 = s32[2]{0} broadcast(s32[] %reshape.0), dimensions={}, sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/add" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=32}
+  %add.0 = s32[2]{0} add(s32[2]{0} %collective-permute.0, s32[2]{0} %broadcast.0), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual} metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/add" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=32}
+  %copy = s32[2]{0} copy(s32[2]{0} %add.0), sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated} metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}
+  ROOT %custom-call.17 = s32[8]{0} custom-call(s32[2]{0} %copy), custom_call_target="SPMDShardToFullShape", sharding={devices=[4,2]<=[8] last_tile_dim_replicate metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  LOG(INFO) << module->ToString();
+}
+
 }  // namespace
 }  // namespace spmd
 }  // namespace xla

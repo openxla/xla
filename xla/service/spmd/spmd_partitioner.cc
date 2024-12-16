@@ -2526,8 +2526,9 @@ absl::Status SpmdPartitioningVisitor::Preprocess(HloInstruction* hlo) {
           auto old_state = GetPartitionedHlo(operand).state();
           visiting_state_.push_back(old_state);
           if (operand->shape().IsArray() && operand->IsConstant() &&
-              operand->shape().rank() == 0 &&
-              !operand->sharding().IsManualSubgroup()) {
+                  operand->shape().rank() == 0 &&
+                  !operand->sharding().IsManualSubgroup() ||
+              operand->sharding().IsReplicated()) {
             // We allowed scalar constants to be CSE'ed between manual/auto
             // subgraphs. It's possible that it doesn't have a manual subgroup.
             continue;

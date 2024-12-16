@@ -12484,5 +12484,43 @@ ENTRY main {
   EXPECT_TRUE(instruction->sharding().IsReplicated());
 }
 
+TEST_F(ShardingPropagationTest, PropagateShardingToCollectivePermute) {
+  const char* const hlo_string = R"(
+HloModule jit_f, entry_computation_layout={(s32[8]{0})->s32[8]{0}}, allow_spmd_sharding_propagation_to_output={true}, num_partitions=8
+
+ENTRY main.18 {
+  Arg_0.1 = s32[8]{0} parameter(0), sharding={devices=[4,2]<=[8] last_tile_dim_replicate}, metadata={op_name="x"}
+  custom-call.2 = s32[8]{0} custom-call(Arg_0.1), custom_call_target="Sharding", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+  custom-call.3 = s32[2]{0} custom-call(custom-call.2), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+  custom-call.0 = s32[2]{0} custom-call(custom-call.3), custom_call_target="Sharding", sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/sharding_constraint" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=29}
+  multiply.0 = s32[2]{0} multiply(custom-call.0, custom-call.0), metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/mul" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=30}
+  collective-permute.0 = s32[2]{0} collective-permute(multiply.0), channel_id=1, source_target_pairs={{0,6},{2,0},{4,2},{6,4},{1,7},{3,1},{5,3},{7,5}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/ppermute" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=31}
+  iota.0 = s32[4]{0} iota(), iota_dimension=0, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  custom-call.1 = s32[4]{0} custom-call(iota.0), custom_call_target="Sharding", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  custom-call.4 = s32[1]{0} custom-call(custom-call.1), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  reshape.0 = s32[] reshape(custom-call.4), metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/axis_index" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=28}
+  broadcast.0 = s32[2]{0} broadcast(reshape.0), dimensions={}, metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/add" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=32}
+  add.0 = s32[2]{0} add(collective-permute.0, broadcast.0), metadata={op_name="jit(f)/jit(main)/jit(shmap_body)/add" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=32}
+  custom-call.16 = s32[2]{0} custom-call(add.0), custom_call_target="Sharding", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+  ROOT custom-call.17 = s32[8]{0} custom-call(custom-call.16), custom_call_target="SPMDShardToFullShape", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}, metadata={op_name="jit(f)/jit(main)/shard_map" source_file="/root/xai/x/yunlongl/gspmd_in_shard_map.py" source_line=36}, backend_config="unspecified_dims=[0]"
+} // main.18)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      ShardingPropagation(
+          /*is_spmd=*/true, /*propagate_metadata=*/true,
+          /*allow_spmd_sharding_propagation_to_output=*/{true},
+          /*allow_spmd_sharding_propagation_to_parameters=*/{true})
+          .Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  XLA_VLOG_LINES(1, module->ToString());
+  auto* instruction = FindInstruction(module.get(), "collective-permute.0");
+  // Check sharding is correctly propagated.
+  LOG(INFO) << "module:   " << module->ToString();
+  EXPECT_TRUE(instruction->sharding().IsManualSubgroup());
+}
+
 }  // namespace
 }  // namespace xla

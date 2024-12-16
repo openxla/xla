@@ -372,6 +372,7 @@ bool SupportSpatialPartitioning(
   }
   switch (instruction->opcode()) {
     case HloOpcode::kBroadcast:
+    case HloOpcode::kCollectivePermute:
     case HloOpcode::kConcatenate:
     case HloOpcode::kConditional:
     case HloOpcode::kConstant:
@@ -2657,6 +2658,11 @@ bool ShardingPropagation::InferShardingFromOperands(
           inferred_operand_sharding, instruction, may_combine_partial_sharding,
           /*allow_aggressive_resharding=*/ComputeNonRootUsers(instruction) ==
               1);
+    }
+    case HloOpcode::kCollectivePermute: {
+      const HloInstruction* operand = PickRepresentativeOperand(instruction);
+      return MaybeImproveInstructionSharding(operand->sharding(), instruction,
+                                             may_combine_partial_sharding);
     }
     default: {
       if (instruction->IsElementwise() && may_combine_partial_sharding) {
