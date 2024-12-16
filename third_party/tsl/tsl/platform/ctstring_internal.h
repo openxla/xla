@@ -73,7 +73,7 @@ static inline size_t TF_align16(size_t i) { return (i + 0xF) & ~0xF; }
 static inline size_t TF_max(size_t a, size_t b) { return a > b ? a : b; }
 static inline size_t TF_min(size_t a, size_t b) { return a < b ? a : b; }
 
-typedef enum TF_TString_Type {  // NOLINT
+typedef enum TF_TString_Type : int {  // NOLINT
   TF_TSTR_SMALL = 0x00,
   TF_TSTR_LARGE = 0x01,
   TF_TSTR_OFFSET = 0x02,
