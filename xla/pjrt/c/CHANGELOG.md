@@ -1,5 +1,8 @@
 # PJRT C API changelog
 
+## 0.58
+* Added ``context`` field of type ``PJRT_ExecuteContext *`` in ``PJRT_ExecuteOptions``.
+
 ## 0.57
 * Rearranged fields in the PJRT_Api
 * Update outdated struct sizes from previous changes to
