@@ -201,6 +201,7 @@ absl::Status NcclCollectivePermuteStartThunk::Cleanup(
   if (!params.executor->HostMemoryUnregister(&barrier_flags_[current_id])) {
     LOG(ERROR) << "Unregistering barrier flag failed.";
   }
+  return absl::OkStatus();
 }
 
 absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
