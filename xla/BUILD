@@ -74,6 +74,11 @@ tf_proto_library(
 )
 
 cc_library(
+    name = "test_test",
+    hdrs = ["test_test.h"],
+)
+
+cc_library(
     name = "bit_cast",
     hdrs = ["bit_cast.h"],
     visibility = internal_visibility([":friends"]),
