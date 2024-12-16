@@ -2,7 +2,7 @@ diff --git a/BUILD b/BUILD
 index ad85b202..2311b2e4 100644
 --- a/BUILD
 +++ b/BUILD
-@@ -44,7 +44,7 @@ config_setting(
+@@ -45,7 +45,7 @@ exports_files([
 
  config_setting(
      name = "windows",
@@ -10,4 +10,4 @@ index ad85b202..2311b2e4 100644
 +    constraint_values = ["@platforms//os:windows"],
  )
 
- config_setting(
+ upb_fasttable_enabled(

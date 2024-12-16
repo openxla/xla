@@ -1,0 +1,13 @@
+diff --git a/BUILD b/BUILD
+index 97928110..21b1c221 100644
+--- a/BUILD
++++ b/BUILD
+@@ -97,7 +97,7 @@ cc_library(
+         "upb/upb.h",
+         "upb/upb.hpp",
+     ],
+-    copts = UPB_DEFAULT_COPTS,
++    copts = UPB_DEFAULT_COPTS + ["-Wno-gnu-offsetof-extensions"],
+     visibility = ["//visibility:public"],
+     deps = [
+         ":fastdecode",
