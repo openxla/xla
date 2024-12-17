@@ -212,6 +212,9 @@ xla_test(
     deps = [
         ":gpu_codegen_test",
         "//xla:error_spec",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
