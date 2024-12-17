@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "xla/layout.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -51,6 +52,13 @@ absl::StatusOr<OwningDeviceMemory> TfAllocatorAdapter::Allocate(
     data =
         wrapped_->AllocateRaw(tsl::Allocator::kAllocatorAlignment, size, attrs);
     if (data == nullptr) {
+      if (memory_space == xla::Layout::kHostMemorySpace) {
+        return absl::ResourceExhaustedError(absl::StrCat(
+            "Out of host memory while trying to allocate ", size, " bytes. ",
+            "Please set the environment variable ",
+            "XLA_PJRT_GPU_HOST_MEMORY_LIMIT_GB to allocate larger ",
+            "host memory than the default 64 GB."));
+      }
       return absl::ResourceExhaustedError(absl::StrCat(
           "Out of memory while trying to allocate ", size, " bytes."));
     }
