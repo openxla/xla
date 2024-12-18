@@ -194,11 +194,14 @@ bool GpuScheduleCrossesOverlapLimit(
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
       !sched_state.resource_occupiers_in_flight.at(resource_type).empty()) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
-    if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst)) {
-      CHECK(
-          hlo_query::IsAsyncCollectiveStartOp(curr_hlo_inst.operand(0), true));
+    if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst) &&
+        sched_state.async_tracker->IsSupportedAsyncStart(
+            *curr_hlo_inst.operand(0))) {
+      // Some async collectives are not wrapped inside async wrappers.
       const HloInstruction* curr_start_inst =
-          curr_hlo_inst.operand(0)->async_wrapped_instruction();
+          curr_hlo_inst.operand(0)->IsAsynchronous()
+              ? curr_hlo_inst.operand(0)->async_wrapped_instruction()
+              : curr_hlo_inst.operand(0);
 
       // If candidate can be overlapped with in-flight collectives
       bool can_overlap = true;
@@ -207,7 +210,10 @@ bool GpuScheduleCrossesOverlapLimit(
         if (sched_state.async_tracker->IsSupportedAsyncStart(*occupier)) {
           // Number of overlapping ranks between this occupier and candidate
           size_t overlapping_count = CountOverlappingRanks(
-              curr_start_inst->replica_groups(), occupier->replica_groups());
+              curr_start_inst->replica_groups(),
+              occupier->IsAsynchronous()
+                  ? occupier->async_wrapped_instruction()->replica_groups()
+                  : occupier->replica_groups());
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count

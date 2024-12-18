@@ -407,7 +407,16 @@ GpuThunkAotCompilationResult::LoadExecutable(
                                   compiler->BufferSizeBytesFunction(),
                                   /*can_share_buffer=*/nullptr));
 
-  ExecutionStreamAssignment execution_stream_assignment(hlo_module.get());
+  ExecutionStreamAssignment execution_stream_assignment(
+      hlo_module.get(),
+      {/*number_of_compute_execution_streams=*/4,
+       // Cap number_of_collective_execution_streams to 2, beyond 2 might hit
+       // some scenarios not well-assessed by LHS deadlock avoidance mechanism.
+       /*number_of_collective_execution_streams=*/std::min(
+           hlo_module->config()
+               .debug_options()
+               .xla_gpu_experimental_parallel_collective_overlap_limit(),
+           2)});
 
   std::vector<uint8_t> binary(proto_.binary().begin(), proto_.binary().end());
 
