@@ -33,6 +33,21 @@ limitations under the License.
 #include "xla/service/gpu/runtime/thunk.h"
 
 namespace xla::gpu {
+namespace {
+static bool is_async_collective(const HloInstruction* instruction) {
+  if (instruction->IsAsynchronous()) {
+    auto opcode = instruction->async_wrapped_opcode();
+    return opcode == HloOpcode::kAllGather || opcode == HloOpcode::kAllReduce ||
+           opcode == HloOpcode::kCollectiveBroadcast ||
+           opcode == HloOpcode::kCollectivePermute ||
+           opcode == HloOpcode::kReduceScatter;
+  }
+  auto opcode = instruction->opcode();
+  return opcode == HloOpcode::kAllGatherStart ||
+         opcode == HloOpcode::kAllReduceStart ||
+         opcode == HloOpcode::kCollectivePermuteStart;
+};
+}  // namespace
 
 ExecutionStreamAssignment::ExecutionStreamAssignment(
     const HloModule* module, ExecutionStreamAssignmentOptions options) {
@@ -70,24 +85,6 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
     for (HloComputation* computation : callsite.called_computations()) {
       queue.emplace_back(computation, stream);
     }
-  };
-
-  auto is_async_collective = [](HloInstruction* instruction) {
-    if (instruction->IsAsynchronous()) {
-      auto opcode = instruction->async_wrapped_opcode();
-      return opcode == HloOpcode::kAllGather ||
-             opcode == HloOpcode::kAllReduce ||
-             opcode == HloOpcode::kBroadcast ||
-             opcode == HloOpcode::kCollectiveBroadcast ||
-             opcode == HloOpcode::kCollectivePermute ||
-             opcode == HloOpcode::kRecv || opcode == HloOpcode::kReduce ||
-             opcode == HloOpcode::kReduceScatter ||
-             opcode == HloOpcode::kScatter || opcode == HloOpcode::kSend;
-    }
-    auto opcode = instruction->opcode();
-    return opcode == HloOpcode::kAllGatherStart ||
-           opcode == HloOpcode::kAllReduceStart ||
-           opcode == HloOpcode::kCollectivePermuteStart;
   };
 
   // Assigns source and destination streams to an instruction and records it in
@@ -201,9 +198,7 @@ ExecutionStreamAssignment::GetAsyncExecutionStreamIds(
     const HloInstruction* instruction) const {
   CHECK(instruction->IsAsynchronous() ||
         instruction->opcode() == HloOpcode::kCopyStart ||
-        instruction->opcode() == HloOpcode::kAllGatherStart ||
-        instruction->opcode() == HloOpcode::kAllReduceStart ||
-        instruction->opcode() == HloOpcode::kCollectivePermuteStart);
+        is_async_collective(instruction));
   auto streams = async_instructions_.find(instruction);
   if (streams == async_instructions_.end()) {
     return StreamNotFoundError(instruction);
