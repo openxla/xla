@@ -2146,15 +2146,15 @@ XLA_TYPED_TEST(ConvertTestT, ConvertF8e8m0fnuRoundtripExhaustive) {
 }
 
 XLA_TYPED_TEST(ConvertTestT, ConvertF8e8m0fnuRoundtripExhaustive2) {
-#ifdef XLA_TEST_BACKEND_CPU
-  // This test is disabled on CPU, as converting 0x1p-127 from double to float
-  // using CVTSD2SS on x64 results in an underflow (even though the result is
-  // representable as denormalized float32).
-  if (std::is_same_v<TypeParam, double>) {
-    GTEST_SKIP() << "Skipping test for double precision floating point that "
-                    "loses denormal value during conversion";
+  if (this->client_->platform()->Name() == "Host") {
+    // This test is disabled on CPU, as converting 0x1p-127 from double to float
+    // using CVTSD2SS on x64 results in an underflow (even though the result is
+    // representable as denormalized float32).
+    if (std::is_same_v<TypeParam, double>) {
+      GTEST_SKIP() << "Skipping test for double precision floating point that "
+                      "loses denormal value during conversion";
+    }
   }
-#endif
   // Convert from supported floating point type to FP8.
   XlaBuilder builder(this->TestName());
 

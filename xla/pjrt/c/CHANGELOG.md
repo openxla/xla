@@ -1,5 +1,8 @@
 # PJRT C API changelog
 
+## 0.60
+* Added types F4E2M1FN and F8E8M0FNU.
+
 ## 0.59
 * Added ``PJRT_MemoryDescriptions_Extension``.
 

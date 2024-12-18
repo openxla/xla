@@ -960,7 +960,7 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
           << primitive_util::LowercasePrimitiveTypeName(to_type);
     }
   }
-}
+}  // NOLINT(readability/fn_size)
 
 }  // namespace
 }  // namespace xla

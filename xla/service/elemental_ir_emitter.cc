@@ -1436,7 +1436,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
         // Cast to F16 first. Casts to F4E2M1FN must be from F16.
         if (from_type != F16) {
           operand_value = b_->CreateFPCast(
-              operand_value, llvm_ir::PrimitiveTypeToIrType(F16, module_));
+              operand_value,
+              llvm_ir::PrimitiveTypeToIrType(F16, module_->getContext()));
         }
         return EmitF16ToF4e2m1fn(operand_value, b_);
       }
@@ -1444,7 +1445,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
         // Cast to F32 first. Casts to F8E8M0FNU must be from F32.
         if (from_type != F32) {
           operand_value = b_->CreateFPCast(
-              operand_value, llvm_ir::PrimitiveTypeToIrType(F32, module_));
+              operand_value,
+              llvm_ir::PrimitiveTypeToIrType(F32, module_->getContext()));
         }
         return EmitF32ToF8e8m0fnu(operand_value, b_);
       }
