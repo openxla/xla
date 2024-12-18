@@ -138,6 +138,7 @@ cc_library(
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
         "@eigen_archive//:eigen3",
@@ -482,10 +483,10 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:notification",
         "@tsl//tsl/platform:platform_port",
     ],
 )

@@ -18,18 +18,29 @@ limitations under the License.
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "xla/codegen/kernel_emitter.h"
 #include "xla/codegen/kernel_spec.h"
+#include "xla/codegen/llvm_ir_kernel_source.h"
 #include "xla/codegen/testlib/kernel_runner.h"
+#include "xla/comparison_util.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
+#include "xla/shape.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -44,6 +55,18 @@ void KernelRunnerCall(KernelRunner* kernel_runner,
   if (!status.ok()) {
     throw std::runtime_error(std::string(status.message()));
   }
+}
+
+// Need this helper as Literal rquires an explicit clone.
+std::unique_ptr<HloInstruction> CreateConstantHloInstruction(
+    const Literal& literal) {
+  return HloInstruction::CreateConstant(literal.Clone());
+}
+
+std::unique_ptr<HloInstruction> CreateComparisonHloInstruction(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    Comparison::Direction direction) {
+  return HloInstruction::CreateCompare(shape, lhs, rhs, direction);
 }
 
 // A dummy kernel runner that implements a simple elementwise add.
@@ -92,10 +115,18 @@ class DummyAddKernelRunner final : public KernelRunner {
 
 }  // namespace
 
-NB_MODULE(kernel_runner_extention, kernel_runner_module) {
+NB_MODULE(_extention, kernel_runner_module) {
   namespace nb = nanobind;
 
-  nb::class_<KernelSpec>(kernel_runner_module, "KernelSpec");
+  nb::class_<KernelSource>(kernel_runner_module, "KernelSource");
+
+  nb::class_<LlvmIrKernelSource, KernelSource>(kernel_runner_module,
+                                               "LlvmIrKernelSource")
+      .def("__str__", &LlvmIrKernelSource::ToString);
+
+  nb::class_<KernelSpec>(kernel_runner_module, "KernelSpec")
+      .def("kernel_source", &KernelSpec::kernel_source,
+           nb::rv_policy::reference_internal);
 
   nb::class_<KernelEmitter>(kernel_runner_module, "KernelEmitter")
       .def("emit_kernel_spec", [](KernelEmitter* self) {
@@ -113,6 +144,35 @@ NB_MODULE(kernel_runner_extention, kernel_runner_module) {
   nb::class_<DummyAddKernelRunner, KernelRunner>(kernel_runner_module,
                                                  "DummyAddKernelRunner")
       .def(nb::init<>());
+
+  nb::enum_<HloOpcode> hlo_opcode(kernel_runner_module, "HloOpcode");
+#define DECLARE_ENUM(enum_name, opcode_name, ...)                          \
+  hlo_opcode.value(absl::StrReplaceAll(opcode_name, {{"-", "_"}}).c_str(), \
+                   HloOpcode::enum_name);
+  HLO_OPCODE_LIST(DECLARE_ENUM)
+#undef DECLARE_ENUM
+
+  kernel_runner_module.def("opcode_arity", &HloOpcodeArity);
+
+  nb::enum_<Comparison::Direction>(kernel_runner_module, "ComparisonDirection")
+      .value("kEq", Comparison::Direction::kEq)
+      .value("kNe", Comparison::Direction::kNe)
+      .value("kGe", Comparison::Direction::kGe)
+      .value("kGt", Comparison::Direction::kGt)
+      .value("kLe", Comparison::Direction::kLe)
+      .value("kLt", Comparison::Direction::kLt);
+
+  nb::class_<HloInstruction> hlo_instruction(kernel_runner_module,
+                                             "HloInstruction");
+  // Factory methods
+  hlo_instruction
+      .def_static("create_parameter", &HloInstruction::CreateParameter)
+      .def_static("create_constant", &CreateConstantHloInstruction)
+      .def_static("create_unary", &HloInstruction::CreateUnary)
+      .def_static("create_binary", &HloInstruction::CreateBinary)
+      .def_static("create_ternary", &HloInstruction::CreateTernary)
+      .def_static("create_variadic", &HloInstruction::CreateVariadic)
+      .def_static("create_compare", &CreateComparisonHloInstruction);
 }
 
 }  // namespace xla

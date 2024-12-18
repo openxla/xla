@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
@@ -78,7 +79,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_dump_hlo_as_long_text(false);
   opts.set_xla_dump_large_constants(false);
   opts.set_xla_dump_enable_mlir_pretty_form(true);
-  opts.set_xla_gpu_unsupported_annotate_with_emitter_loc(false);
   opts.set_xla_debug_buffer_assignment_show_max(15);
 #ifdef ENABLE_MKL
   opts.set_xla_cpu_use_mkl_dnn(true);
@@ -125,6 +125,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_graph_enable_concurrent_region(false);
   opts.set_xla_cmd_buffer_trace_cache_size(16);
 
+  opts.set_xla_gpu_collectives_use_persistent_cliques(false);
+
   // Despite the name, fast min/max on GPUs does not seem to be any faster, and
   // adds very counter-intuitive "NaN-swallowing" behavior.
   opts.set_xla_gpu_enable_fast_min_max(false);
@@ -167,8 +169,26 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_shape_checks(DebugOptions::RUNTIME);
   opts.set_xla_dump_latency_hiding_schedule(false);
   opts.set_xla_gpu_enable_latency_hiding_scheduler(false);
-  opts.set_xla_gpu_lhs_enable_gpu_async_tracker(true);
   opts.set_xla_gpu_enable_analytical_latency_estimator(false);
+  opts.set_xla_gpu_enable_analytical_sol_latency_estimator(false);
+  auto* sol_estimator_defaults =
+      opts.mutable_xla_gpu_analytical_latency_estimator_options();
+  sol_estimator_defaults->emplace(
+      "nccl_op_launch_us",
+      absl::StrCat(static_cast<int>(100.0f * kDefaultNcclCostModelCoeff)));
+  sol_estimator_defaults->emplace(
+      "nic_speed_gbps",
+      absl::StrCat(static_cast<int>(55.56f * kDefaultNcclCostModelCoeff)));
+  sol_estimator_defaults->emplace(
+      "chunk_prep_us",
+      absl::StrCat(static_cast<int>(13.34f * kDefaultNcclCostModelCoeff)));
+  sol_estimator_defaults->emplace(
+      "rtt_us",
+      absl::StrCat(static_cast<int>(68.89f * kDefaultNcclCostModelCoeff)));
+  sol_estimator_defaults->emplace(
+      "chunk_size_bytes", absl::StrCat(kDefaultNcclCostModelChunkSizeBytes));
+  sol_estimator_defaults->emplace(
+      "gpus_per_node", absl::StrCat(kDefaultNcclCostModelGPUsPerNode));
   opts.set_xla_gpu_pgle_profile_file_or_directory_path("");
   opts.set_xla_gpu_memory_limit_slop_factor(95);
   opts.set_xla_gpu_enable_highest_priority_async_stream(true);
@@ -213,6 +233,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_gb(0);
   opts.set_xla_gpu_auto_spmd_partitioning_memory_budget_ratio(1.1);
+  opts.set_xla_gpu_triton_gemm_disable_reduced_precision_reduction(false);
   opts.set_xla_gpu_unsafe_pipelined_loop_annotator(false);
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
@@ -250,7 +271,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_bf16_3way_gemm(false);
   opts.set_xla_gpu_nccl_collective_max_nchannels(0);
   opts.set_xla_gpu_nccl_p2p_max_nchannels(0);
-  opts.set_xla_gpu_multi_streamed_windowed_einsum(true);
+  opts.set_xla_gpu_multi_streamed_windowed_einsum(false);
 
   opts.set_xla_gpu_experimental_stream_annotation(false);
   // Minimum combined size of matrices in matrix multiplication to
@@ -466,6 +487,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
             debug_options->mutable_xla_backend_extra_options();
         parse_xla_backend_extra_options(extra_options_map,
                                         comma_separated_values);
+        return true;
+      };
+
+  // Custom "sub-parser" lambda for
+  // xla_gpu_analytical_latency_estimator_options.
+  auto setter_for_xla_gpu_analytical_latency_estimator_options =
+      [debug_options](std::string comma_separated_values) {
+        google::protobuf::Map<std::string, std::string>* options_map =
+            debug_options
+                ->mutable_xla_gpu_analytical_latency_estimator_options();
+        parse_xla_backend_extra_options(options_map, comma_separated_values);
         return true;
       };
 
@@ -996,15 +1028,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "us to dump into the directory specified by the environment variable "
       "TEST_UNDECLARED_OUTPUTS_DIR."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_unsupported_annotate_with_emitter_loc",
-      bool_setter_for(
-          &DebugOptions::set_xla_gpu_unsupported_annotate_with_emitter_loc),
-      debug_options->xla_gpu_unsupported_annotate_with_emitter_loc(),
-      "Forces emitters that use MLIR to annotate all the created MLIR "
-      "instructions with the emitter's C++ source file and line number. The "
-      "annotations should appear in the MLIR dumps. The emitters should use "
-      "EmitterLocOpBuilder for that."));
-  flag_list->push_back(tsl::Flag(
       "xla_dump_hlo_as_text",
       bool_setter_for(&DebugOptions::set_xla_dump_hlo_as_text),
       debug_options->xla_dump_hlo_as_text(),
@@ -1363,6 +1386,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
                 debug_options->xla_gpu_enable_cublaslt(),
                 "Use cuBLASLt for GEMMs when possible."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_collectives_use_persistent_cliques",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_collectives_use_persistent_cliques),
+      debug_options->xla_gpu_collectives_use_persistent_cliques(),
+      "Use persistent per-process XLA:GPU collectives cliques"));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_graph_level", setter_for_xla_gpu_graph_level, 1,
       "The legacy flag for setting GPU graph level. Use "
       "xla_gpu_enable_command_buffer in new use cases. 0 = off; 1 = capture "
@@ -1571,16 +1600,30 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Enable analytical latency estimator for latency-hiding scheduler for "
       "XLA:GPU"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_analytical_sol_latency_estimator",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_enable_analytical_sol_latency_estimator),
+      debug_options->xla_gpu_enable_analytical_sol_latency_estimator(),
+      "Enable analytical Speed-of-Light latency estimator for latency-hiding "
+      "scheduler for XLA:GPU, must be used without "
+      "xla_gpu_enable_analytical_latency_estimator. It can also benefit from "
+      "user-passed options in xla_gpu_analytical_latency_estimator_options"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_analytical_latency_estimator_options",
+      setter_for_xla_gpu_analytical_latency_estimator_options, "",
+      "Extra platform-specific options to improve analytical latency "
+      "estimator precision; comma-separated list of 'key=val' "
+      "strings (=val may be omitted); no whitespace around commas."
+      "Available options: "
+      "--xla_gpu_analytical_latency_estimator_options='nccl_op_launch_ms=55,"
+      "nic_speed_gbps=40,chunk_prep_ms=1,rtt_ms=2,gpus_per_node=4,"
+      "chunk_size_bytes=1024'"));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_pgle_profile_file_or_directory_path",
       string_setter_for(
           &DebugOptions::set_xla_gpu_pgle_profile_file_or_directory_path),
       debug_options->xla_gpu_pgle_profile_file_or_directory_path(),
       "Directory or file for PGLE profiles in XLA:GPU"));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_lhs_enable_gpu_async_tracker",
-      bool_setter_for(&DebugOptions::set_xla_gpu_lhs_enable_gpu_async_tracker),
-      debug_options->xla_gpu_lhs_enable_gpu_async_tracker(),
-      "Enable GPU async tracker for latency-hiding scheduler in XLA:GPU"));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_memory_limit_slop_factor",
       int32_setter_for(&DebugOptions::set_xla_gpu_memory_limit_slop_factor),

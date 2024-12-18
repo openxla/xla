@@ -7,6 +7,7 @@ load(
 )
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load(
     "//xla/tsl/platform:build_config.bzl",
     "tf_proto_library",
@@ -159,6 +160,7 @@ cc_library(
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream",
+        "//xla/stream_executor/cuda:ptx_compiler_helpers",
         "//xla/stream_executor/gpu:redzone_allocator",
         "//xla/tools:hlo_decomposer_lib",
         "//xla/tsl/lib/core:bits",
@@ -176,7 +178,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
@@ -297,6 +298,7 @@ cc_library(
     name = "autotuner_status_key",
     srcs = ["autotuner_status_key.cc"],
     hdrs = ["autotuner_status_key.h"],
+    compatible_with = get_compatible_with_portable(),
     deps = ["@com_google_absl//absl/strings"],
 )
 
@@ -304,7 +306,7 @@ cc_library(
     name = "autotuner_util",
     srcs = ["autotuner_util.cc"],
     hdrs = ["autotuner_util.h"],
-    tags = ["gpu"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":autotuner_status_key",
         "//xla:autotune_results_proto_cc",
@@ -322,7 +324,6 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
-        "//xla/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -369,7 +370,6 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/stream_executor:device_memory_allocator",
         "//xla/stream_executor:stream",
-        "//xla/stream_executor/cuda:ptx_compiler_helpers",
         "//xla/stream_executor/gpu:redzone_allocator",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",

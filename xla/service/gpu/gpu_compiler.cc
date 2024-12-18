@@ -22,7 +22,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -36,6 +35,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/blocking_counter.h"
 #include "absl/types/span.h"
 #include "absl/types/variant.h"
 #include "llvm/ADT/DenseMap.h"
@@ -264,7 +264,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/env.h"
@@ -340,7 +339,7 @@ class GpuThunkAotCompilationResult : public AotCompilationResult {
   static absl::StatusOr<std::unique_ptr<GpuThunkAotCompilationResult>>
   FromModule(const HloModule* hlo_module,
              const BufferAssignment* buffer_assignment,
-             std::string_view asm_text, absl::Span<const uint8_t> binary,
+             absl::string_view asm_text, absl::Span<const uint8_t> binary,
              const BinaryMap& dnn_compiled_graphs) {
     CompilationResultProto proto;
     *proto.mutable_hlo_module_with_config() = hlo_module->ToProtoWithConfig();
@@ -1653,6 +1652,12 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
+  // Recover host-offloader invariants (such as the single-use broadcast buffer
+  // initialization before loops) by re-running the offload legalizer.
+  pipeline.AddPass<HostOffloadLegalize>(
+      static_cast<int64_t>(stream_executor::MemoryType::kHost),
+      /* after_layout= */ true);
+
   pipeline.AddPass<LayoutNormalization>(&NormalizeLayoutForGpuCustomCalls);
 
   // Layout normalization will create scatters that are not simplified and
@@ -2146,7 +2151,7 @@ absl::StatusOr<GpuCompiler::BackendCompileResult> GpuCompiler::CompileAndLink(
   };
   std::vector<NamedCompileResult> compile_results(llvm_modules.size());
   if (thread_pool.get() != nullptr) {
-    tsl::BlockingCounter counter(llvm_modules.size());
+    absl::BlockingCounter counter(llvm_modules.size());
     for (int i = 0; i < llvm_modules.size(); ++i) {
       thread_pool.get_mutable()->Schedule(
           [&compile_results, i, &llvm_modules, &counter, this, &module_config,

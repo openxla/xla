@@ -111,6 +111,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/rng_bit_generator_expander.h"
 #include "xla/hlo/transforms/expanders/rng_expander.h"
 #include "xla/hlo/transforms/expanders/stochastic_convert_decomposer.h"
+#include "xla/hlo/transforms/literal_canonicalizer.h"
 #include "xla/hlo/transforms/operand_upcaster.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/batch_dot_simplification.h"
@@ -135,6 +136,7 @@ limitations under the License.
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
 #include "xla/literal.h"
+#include "xla/literal_pool.h"
 #include "xla/map_util.h"
 #include "xla/mlir_hlo/transforms/passes.h"
 #include "xla/primitive_util.h"
@@ -203,9 +205,6 @@ limitations under the License.
 #include "xla/stream_executor/host/host_platform_id.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/concurrency/async_value.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
-#include "xla/tsl/concurrency/chain.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -217,7 +216,6 @@ limitations under the License.
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
-#include "tsl/platform/threadpool_async_executor.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
 
@@ -235,9 +233,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-using tsl::AsyncValue;
-using tsl::AsyncValueRef;
-using tsl::Chain;
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
 
@@ -758,6 +753,12 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<SubByteNormalization>(
         SubByteNormalization::SET_ELEMENT_SIZE);
   }
+
+  // Finally canonicalize all literals larger than 1024 bytes in the module to
+  // reuse the same literal across multiple HLO modules.
+  pipeline.AddPass<LiteralCanonicalizer>(LiteralPool::Default(),
+                                         /*min_size_bytes=*/1024);
+
   return pipeline.Run(module).status();
 }
 
@@ -1031,16 +1032,21 @@ namespace {
 // Post-compilation callback functor for use by SimpleOrcJIT.
 //
 // Dumps machine code if dumping is enabled for the module.
-static std::function<void(const llvm::object::ObjectFile& obj_file)>
-CreateOrcJITPostCompilationHook(const HloModule* module,
+static std::function<void(const llvm::Module&, const llvm::object::ObjectFile&)>
+CreateOrcJITPostCompilationHook(const HloModule* hlo_module,
                                 std::vector<std::string>* obj_files) {
-  return [=](const llvm::object::ObjectFile& obj_file) {
+  return [=](const llvm::Module& llvm_module,
+             const llvm::object::ObjectFile& obj_file) {
     if (obj_files) obj_files->push_back(obj_file.getData().str());
 
-    if (DumpingEnabledForHloModule(*module)) {
-      DumpToFileInDir(*module, /*file_prefix=*/"", /*file_suffix=*/"o",
-                      absl::string_view(obj_file.getData().data(),
-                                        obj_file.getData().size()));
+    if (DumpingEnabledForHloModule(*hlo_module)) {
+      std::string_view id = llvm_module.getModuleIdentifier();
+      size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
+      DumpToFileInDir(
+          *hlo_module, /*file_prefix=*/"",
+          /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
+          absl::string_view(obj_file.getData().data(),
+                            obj_file.getData().size()));
     }
   };
 }
@@ -1324,6 +1330,23 @@ inline void VlogMaxIsa(absl::string_view max_cpu_isa) {
   }
 }
 
+// We keep HloProto in the CpuExecutable, but we don't need to keep literals
+// payload in it as we use it only for debugging and memory analysis.
+static void StripPayloadFromLiteralProto(HloProto& proto) {
+  auto* module = proto.mutable_hlo_module();
+  for (auto& computation : *module->mutable_computations()) {
+    for (auto& instruction : *computation.mutable_instructions()) {
+      // We only keep literal shape to correctly estimate memory usage of the
+      // HLO module, but we don't need the actual literal data.
+      if (instruction.has_literal()) {
+        LiteralProto literal;
+        *literal.mutable_shape() = instruction.literal().shape();
+        *instruction.mutable_literal() = std::move(literal);
+      }
+    }
+  }
+}
+
 absl::StatusOr<std::unique_ptr<CpuExecutable>>
 CpuCompiler::CompileLegacyCpuExecutable(std::unique_ptr<HloModule> module) {
   TraceMe trace([&] {
@@ -1446,6 +1469,7 @@ CpuCompiler::CompileLegacyCpuExecutable(std::unique_ptr<HloModule> module) {
     *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
     *hlo_proto->mutable_buffer_assignment() =
         cpu_executable->buffer_assignment().ToProto();
+    StripPayloadFromLiteralProto(*hlo_proto);
     cpu_executable->set_hlo_proto(std::move(hlo_proto));
     return cpu_executable;
   };
@@ -1687,6 +1711,10 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
     std::unique_ptr<HloModule> module,
     [[maybe_unused]] se::StreamExecutor* stream_exec,
     const CompileOptions& options) {
+  TraceMe trace([&] {
+    return TraceMeEncode("CpuCompiler::RunBackend", {{"name", module->name()}});
+  });
+
   VLOG(1) << "Compiling: " << module->name();
   RecordCpuCompilerStacktrace();
   XLA_SCOPED_LOGGING_TIMER(
@@ -1914,13 +1942,18 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
         TF_RETURN_IF_ERROR(verify_status);
       }
 
-      auto post_codegen_hook = [&](const llvm::object::ObjectFile& obj_file) {
+      auto post_codegen_hook = [&](const llvm::Module& llvm_module,
+                                   const llvm::object::ObjectFile& obj_file) {
         if (!DumpingEnabledForHloModule(*module)) {
           return;
         }
-        DumpToFileInDir(*module, /*file_prefix=*/"", /*file_suffix=*/"o",
-                        absl::string_view(obj_file.getData().data(),
-                                          obj_file.getData().size()));
+        std::string_view id = llvm_module.getModuleIdentifier();
+        size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
+        DumpToFileInDir(
+            *module, /*file_prefix=*/"",
+            /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
+            absl::string_view(obj_file.getData().data(),
+                              obj_file.getData().size()));
       };
 
       IrCompiler::Options ir_compiler_options = {

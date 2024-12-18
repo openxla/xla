@@ -314,19 +314,14 @@ xla_cc_test(
     srcs = ["simplifiers/hlo_computation_deduplicator_test.cc"],
     deps = [
         ":hlo_computation_deduplicator",
-        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:test",
-        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/utils:hlo_matchers",
-        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -2028,6 +2023,40 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "literal_canonicalizer",
+    srcs = ["literal_canonicalizer.cc"],
+    hdrs = ["literal_canonicalizer.h"],
+    deps = [
+        "//xla:literal_pool",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_pipeline",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "literal_canonicalizer_test",
+    srcs = ["literal_canonicalizer_test.cc"],
+    deps = [
+        ":literal_canonicalizer",
+        "//xla:literal_pool",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+        "@tsl//tsl/platform:test_main",
     ],
 )
 

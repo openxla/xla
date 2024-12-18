@@ -13,6 +13,7 @@ load(
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
+        "//xla/hlo/tools/hlo_opt:__subpackages__",
         "//xla/service/gpu:__subpackages__",
         "//xla/tools/hlo_opt:__subpackages__",
     ],
@@ -2182,6 +2183,7 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
         "//xla/service:computation_layout",
         "//xla/service:pattern_matcher",
         "//xla/service:pattern_matcher_gmock",
@@ -2429,7 +2431,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",

@@ -2177,14 +2177,13 @@ xla_test(
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
+        "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-    ] + if_rocm_is_configured([
-        # keep sorted
-        "@local_config_rocm//rocm:rocm_headers",
-    ]),
+    ],
 )
 
 xla_test(
@@ -2451,6 +2450,7 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@ml_dtypes//:float8",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
     ],
@@ -2787,15 +2787,17 @@ xla_test(
     name = "broadcast_test",
     srcs = ["broadcast_test.cc"],
     tags = [
-        "test_hlo_pjrt_runner",
+        "test_migrated_to_hlo_runner_pjrt",
         "test_xla_cpu_thunks",
     ],
     deps = [
-        ":hlo_test_base",
+        ":hlo_pjrt_test_base",
         ":literal_test_util",
         ":test_macros_header",
         ":xla_internal_test_main",
-        "//xla:literal",
+        "//xla:array3d",
+        "//xla:array4d",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",

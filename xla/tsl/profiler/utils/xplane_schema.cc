@@ -276,6 +276,7 @@ const StatTypeMap& GetStatTypeMap() {
        {"flops", kFlops},
        {"model_flops", kModelFlops},
        {"bytes_accessed", kBytesAccessed},
+       {"raw_bytes_accessed", kRawBytesAccessed},
        {"memory_access_breakdown", kMemoryAccessBreakdown},
        {"shape_with_layout", kShapeWithLayout},
        {"source", kSourceInfo},
@@ -316,6 +317,8 @@ const StatTypeMap& GetStatTypeMap() {
        {"peak_sram_wr_bw_gigabytes_per_second",
         kDevCapPeakSramWrBwGigabytesPerSecond},
        {"device_vendor", kDevVendor},
+       {"has_megacore", kDevHasMegacore},
+       {"has_merged_vmem", kDevHasMergedVmem},
        // Batching related.
        {"batch_size_after_padding", kBatchSizeAfterPadding},
        {"padding_amount", kPaddingAmount},

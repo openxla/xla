@@ -22,7 +22,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -241,7 +240,7 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
         c_put_callback_(c_put_callback),
         put_user_arg_(put_user_arg) {}
 
-  absl::StatusOr<std::string> Get(std::string_view key,
+  absl::StatusOr<std::string> Get(absl::string_view key,
                                   absl::Duration timeout) override {
     PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
                                            const char* message,
@@ -264,7 +263,7 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
     return result;
   }
 
-  absl::Status Set(std::string_view key, std::string_view value) override {
+  absl::Status Set(absl::string_view key, absl::string_view value) override {
     PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
                                            const char* message,
                                            size_t message_size) {
@@ -833,6 +832,26 @@ PJRT_Error* PJRT_DeviceDescription_DebugString(
   return nullptr;
 }
 
+PJRT_Error* PJRT_DeviceDescription_MemoryDescriptions(
+    PJRT_DeviceDescription_MemoryDescriptions_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_DeviceDescription_MemoryDescriptions_Args",
+      PJRT_DeviceDescription_MemoryDescriptions_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  absl::Span<const xla::PjRtMemorySpaceDescription* const> memory_spaces =
+      args->device_description->device_description->memory_spaces();
+
+  // We pass each xla::PjRtMemorySpaceDescriptions to the caller through an
+  // opaque pointer.
+  args->memory_descriptions =
+      reinterpret_cast<const PJRT_MemoryDescription* const*>(
+          memory_spaces.data());
+
+  args->num_memory_descriptions = memory_spaces.size();
+  return nullptr;
+}
+
 PJRT_Error* PJRT_DeviceDescription_ToString(
     PJRT_DeviceDescription_ToString_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
@@ -842,6 +861,19 @@ PJRT_Error* PJRT_DeviceDescription_ToString(
       args->device_description->device_description->ToString().data();
   args->to_string_size =
       args->device_description->device_description->ToString().size();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_MemoryDescription_Kind(
+    PJRT_MemoryDescription_Kind_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_MemoryDescription_Kind_Args",
+      PJRT_MemoryDescription_Kind_Args_STRUCT_SIZE, args->struct_size));
+  absl::string_view kind =
+      args->memory_description->memory_space_description.kind();
+  args->kind = kind.data();
+  args->kind_size = kind.size();
+  args->kind_id = args->memory_description->memory_space_description.kind_id();
   return nullptr;
 }
 
@@ -2546,6 +2578,19 @@ PJRT_Layouts_Extension CreateLayoutsExtension(PJRT_Extension_Base* next) {
       pjrt::PJRT_Layouts_PJRT_Client_GetDefaultLayout,
       /*PJRT_Layouts_PJRT_Buffer_MemoryLayout=*/
       pjrt::PJRT_Layouts_PJRT_Buffer_MemoryLayout,
+  };
+}
+
+PJRT_MemoryDescriptions_Extension CreateMemoryDescriptionsExtension(
+    PJRT_Extension_Base* next) {
+  return PJRT_MemoryDescriptions_Extension{
+      /*struct_size=*/PJRT_MemoryDescriptions_Extension_STRUCT_SIZE,
+      /*type=*/PJRT_Extension_Type_MemoryDescriptions,
+      /*next=*/next,
+      /*PJRT_DeviceDescription_MemorySpaces=*/
+      pjrt::PJRT_DeviceDescription_MemoryDescriptions,
+      /*PJRT_MemoryDescription_Kind=*/
+      pjrt::PJRT_MemoryDescription_Kind,
   };
 }
 

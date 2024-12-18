@@ -20,22 +20,20 @@ limitations under the License.
 #include <cstdlib>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "absl/hash/hash.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
-#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/nb_class_ptr.h"
-#include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/py_client.h"
 #include "xla/python/py_device_list.h"
@@ -47,17 +45,6 @@ limitations under the License.
 namespace jax {
 
 namespace nb = nanobind;
-
-bool (*GetEnableMemories)() = +[] {
-  static bool fetch_memory_kind_on_executable = [] {
-    char* v = getenv("JAX_ENABLE_MEMORIES");
-    if (v == nullptr || *v == '\0') {
-      return false;
-    }
-    return true;
-  }();
-  return fetch_memory_kind_on_executable;
-};
 
 nb::object CheckAndCanonicalizeMemoryKind(
     nb::object memory_kind,
@@ -83,9 +70,10 @@ nb::object CheckAndCanonicalizeMemoryKind(
     }
     nb::object device_kind =
         addressable_device_list->GetItem(0).attr("device_kind");
-    std::string_view device_kind_str = nb::cast<std::string_view>(device_kind);
+    absl::string_view device_kind_str =
+        nb::cast<absl::string_view>(device_kind);
     auto py_str_formatter = [](std::string* out, nb::handle h) {
-      *out += nb::cast<std::string_view>(nb::str(h));
+      *out += nb::cast<absl::string_view>(nb::str(h));
     };
     throw nb::value_error(
         absl::StrCat(
@@ -93,7 +81,7 @@ nb::object CheckAndCanonicalizeMemoryKind(
             ". Device ", device_kind_str,
             " can address the following memory kinds: ",
             absl::StrJoin(*supported_memory_kinds, ", ", py_str_formatter),
-            ". Got memory kind: ", nb::cast<std::string_view>(memory_kind))
+            ". Got memory kind: ", nb::cast<absl::string_view>(memory_kind))
             .c_str());
   }
   // If memory kind is None, canonicalize to default memory.

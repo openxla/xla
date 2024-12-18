@@ -620,6 +620,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],

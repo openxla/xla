@@ -1,43 +1,11 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     licenses = ["notice"],
-)
-
-cc_library(
-    name = "emitter_loc_op_builder",
-    srcs = ["emitter_loc_op_builder.cc"],
-    hdrs = ["emitter_loc_op_builder.h"],
-    visibility = ["//xla/service/gpu/fusions:__subpackages__"],
-    deps = [
-        "@com_google_absl//absl/strings",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform",
-    ] + if_google(["@com_google_absl//absl/types:source_location"]),
-)
-
-xla_test(
-    name = "emitter_loc_op_builder_test",
-    srcs = ["emitter_loc_op_builder_test.cc"],
-    backends = ["gpu"],
-    deps = [
-        ":emitter_loc_op_builder",
-        "//xla/hlo/testlib:filecheck",
-        "//xla/service/gpu/fusions/triton:triton_fusion_emitter",
-        "//xla/service/llvm_ir:llvm_util",
-        "//xla/tests:xla_internal_test_main",
-        "@com_google_absl//absl/strings:string_view",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
-    ],
 )
 
 cc_library(
@@ -272,13 +240,13 @@ cc_library(
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/codegen/ir:xla_gpu",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:computation_partitioner",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/mlir:mlir_fusion_emitter",
@@ -300,6 +268,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/codegen/ir:xla_gpu",
         "//xla/codegen/ir:xla",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
@@ -307,7 +276,6 @@ cc_library(
         "//xla/service/gpu:gpu_fusible",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:computation_partitioner",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/mlir:mlir_fusion_emitter",
@@ -336,12 +304,12 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/codegen/ir:xla_gpu",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:computation_partitioner",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/mlir:mlir_fusion_emitter",
@@ -531,6 +499,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/codegen/ir:xla_gpu",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
@@ -538,7 +507,6 @@ cc_library(
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:reduction_utils",
-        "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:computation_partitioner",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/mlir:mlir_fusion_emitter",
@@ -609,12 +577,12 @@ cc_library(
     deps = [
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/backends/gpu/codegen/ir:xla_gpu",
         "//xla/hlo/analysis:indexing_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service/gpu:hlo_fusion_analysis",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/service/gpu/fusions/ir:xla_gpu",
         "//xla/service/gpu/fusions/mlir:computation_partitioner",
         "//xla/service/gpu/fusions/mlir:elemental_hlo_to_mlir",
         "//xla/service/gpu/fusions/mlir:mlir_fusion_emitter",
