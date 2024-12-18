@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -37,7 +36,6 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Attributes.h"
-#include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
@@ -49,7 +47,7 @@ limitations under the License.
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CodeGen.h"
-#include "xla/cpu_function_runtime.h"
+#include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -60,11 +58,13 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/dot_op_emitter.h"
+#include "xla/service/cpu/elemental_ir_emitter.h"
 #include "xla/service/cpu/elemental_math_emitter.h"
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/parallel_loop_emitter.h"
 #include "xla/service/cpu/shape_partition.h"
 #include "xla/service/elemental_ir_emitter.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/dynamic_update_slice_util.h"
 #include "xla/service/llvm_ir/fused_ir_emitter.h"
 #include "xla/service/llvm_ir/ir_array.h"
@@ -81,42 +81,14 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 
 namespace xla::cpu {
+
 namespace {
 
-// Following struct types correspond to HostKernel C API.
-// See: xla/stream_executor/host/host_kernel_c_api.h
-
-static llvm::StructType* Dim3StructTy(llvm::LLVMContext& ctx,
-                                      std::string_view name) {
-  auto* i64 = llvm::IntegerType::getInt64Ty(ctx);
-  return llvm::StructType::create(name, i64, i64, i64);
-}
-
-static llvm::StructType* KernelThreadDimTy(llvm::LLVMContext& ctx) {
-  return Dim3StructTy(ctx, "SE_HOST_KernelThreadDim");
-}
-
-static llvm::StructType* KernelThreadTy(llvm::LLVMContext& ctx) {
-  return Dim3StructTy(ctx, "SE_HOST_KernelThread");
-}
-
-static llvm::StructType* KernelArgTy(llvm::LLVMContext& ctx) {
-  auto* ptr = llvm::PointerType::getUnqual(ctx);
-  auto* i64 = llvm::IntegerType::getInt64Ty(ctx);
-  return llvm::StructType::create("SE_HOST_KernelArg", ptr, i64);
-}
-
-static llvm::StructType* KernelCallFrameTy(llvm::LLVMContext& ctx) {
-  auto* ptr = llvm::PointerType::getUnqual(ctx);
-  auto* i64 = llvm::IntegerType::getInt64Ty(ctx);
-  return llvm::StructType::create("SE_HOST_KernelCallFrame", ptr, ptr, i64,
-                                  ptr);
-}
-
-static llvm::FunctionType* KernelFunctionTy(llvm::LLVMContext& ctx) {
-  return llvm::FunctionType::get(llvm::PointerType::getUnqual(ctx),
-                                 llvm::PointerType::getUnqual(ctx),
-                                 /*isVarArg=*/false);
+KernelApiIrBuilder::Options KernelApiIrBuilderOptionsFromHloModuleConfig(
+    const HloModuleConfig& config) {
+  return KernelApiIrBuilder::Options{
+      config.debug_options().xla_llvm_enable_invariant_load_metadata(),
+      config.debug_options().xla_cpu_prefer_vector_width()};
 }
 
 }  // namespace
@@ -125,35 +97,17 @@ static llvm::FunctionType* KernelFunctionTy(llvm::LLVMContext& ctx) {
 // ElementalIrEmitter
 //===----------------------------------------------------------------------===//
 
-class IrEmitter2::ElementalIrEmitter : public xla::ElementalIrEmitter {
+class IrEmitter2::ElementalIrEmitter : public CpuElementalIrEmitter {
  public:
   ElementalIrEmitter(llvm::Module* module, llvm::IRBuilderBase* b,
                      const HloModule* hlo_module, IrEmitter* nested_ir_emitter,
                      bool fast_min_max)
-      : xla::ElementalIrEmitter(
-            module, b,
-            Options{/*xla_cpu_use_truncate_f32_to_bf16_conversion=*/true}),
+      : CpuElementalIrEmitter(module, b, true, fast_min_max),
         hlo_module_(hlo_module),
         nested_ir_emitter_(nested_ir_emitter),
         fast_min_max_(fast_min_max) {}
 
  protected:
-  absl::StatusOr<llvm::Value*> EmitAtan2(PrimitiveType prim_type,
-                                         llvm::Value* lhs, llvm::Value* rhs,
-                                         absl::string_view) override {
-    return xla::cpu::EmitAtan2(module(), *b(), prim_type, lhs, rhs);
-  }
-
-  absl::StatusOr<llvm::Value*> EmitTanh(PrimitiveType prim_type,
-                                        llvm::Value* value) override {
-    return xla::cpu::EmitTanh(module(), *b(), prim_type, value);
-  }
-
-  absl::StatusOr<llvm::Value*> EmitErf(PrimitiveType prim_type,
-                                       llvm::Value* value) override {
-    return xla::cpu::EmitErf(module(), *b(), prim_type, value);
-  }
-
   absl::StatusOr<std::vector<llvm::Value*>> EmitThreadLocalCall(
       const HloComputation& callee, absl::Span<llvm::Value* const> parameters,
       absl::string_view name, bool is_reducer) override {
@@ -217,10 +171,9 @@ IrEmitter2::IrEmitter2(const HloModule& hlo_module, llvm::Module* module,
     : hlo_module_(hlo_module),
       module_(module),
       nested_ir_emitter_(nested_ir_emitter),
-      call_frame_ty_(KernelCallFrameTy(module_->getContext())),
-      thread_dims_ty_(KernelThreadDimTy(module_->getContext())),
-      thread_ty_(KernelThreadTy(module_->getContext())),
-      arg_ty_(KernelArgTy(module_->getContext())) {}
+      kernel_api_ir_builder_(
+          module_->getContext(),
+          KernelApiIrBuilderOptionsFromHloModuleConfig(hlo_module_.config())) {}
 
 bool IrEmitter2::fast_min_max() const {
   return hlo_module_.config().debug_options().xla_cpu_enable_fast_min_max();
@@ -656,60 +609,6 @@ absl::Status IrEmitter2::VerifyKernelParameters(
   return absl::OkStatus();
 }
 
-IrEmitter2::KernelThreadDims IrEmitter2::EmitKernelThreadDims(
-    llvm::IRBuilderBase& b, llvm::Value* call_frame) {
-  auto* td_gep = b.CreateStructGEP(call_frame_ty_, call_frame, 0, "tdims_gep");
-  auto* tdims = b.CreateLoad(b.getPtrTy(), td_gep, "tdims");
-  auto* x_gep = b.CreateStructGEP(thread_dims_ty_, tdims, 0, "tdim_x_gep");
-  auto* y_gep = b.CreateStructGEP(thread_dims_ty_, tdims, 1, "tdim_y_gep");
-  auto* z_gep = b.CreateStructGEP(thread_dims_ty_, tdims, 2, "tdim_z_gep");
-
-  return {b.CreateLoad(b.getInt64Ty(), x_gep, "tdim_x"),
-          b.CreateLoad(b.getInt64Ty(), y_gep, "tdim_y"),
-          b.CreateLoad(b.getInt64Ty(), z_gep, "tdim_z")};
-}
-
-IrEmitter2::KernelThread IrEmitter2::EmitKernelThread(llvm::IRBuilderBase& b,
-                                                      llvm::Value* call_frame) {
-  auto* t_gep = b.CreateStructGEP(call_frame_ty_, call_frame, 1, "tid_gep");
-  auto* tids = b.CreateLoad(b.getPtrTy(), t_gep, "tids");
-  auto* x_gep = b.CreateStructGEP(thread_ty_, tids, 0, "tid_x_gep");
-  auto* y_gep = b.CreateStructGEP(thread_ty_, tids, 1, "tid_y_gep");
-  auto* z_gep = b.CreateStructGEP(thread_ty_, tids, 2, "tid_z_gep");
-
-  return {b.CreateLoad(b.getInt64Ty(), x_gep, "tid_x"),
-          b.CreateLoad(b.getInt64Ty(), y_gep, "tid_y"),
-          b.CreateLoad(b.getInt64Ty(), z_gep, "tid_z")};
-}
-
-llvm_ir::IrArray IrEmitter2::EmitKernelArgument(llvm::IRBuilderBase& b,
-                                                llvm::Value* call_frame,
-                                                int64_t index,
-                                                const Shape& shape) {
-  llvm::Type* ptr = llvm::PointerType::get(b.getContext(), 0);
-  std::string name = absl::StrCat("arg", index);
-
-  auto* args_gep = b.CreateStructGEP(call_frame_ty_, call_frame, 3, "args_gep");
-  auto* args = b.CreateLoad(ptr, args_gep, "args");
-  auto* data_gep = b.CreateConstGEP2_32(arg_ty_, args, index, 0, name + "_gep");
-  auto* data = b.CreateLoad(ptr, data_gep, name);
-
-  // All buffers passed to host kernels are expected to be properly aligned,
-  // emit metadata to allow LLVM to use that information for optimization.
-  llvm_ir::SetAlignmentMetadataForLoad(data, cpu_function_runtime::MinAlign());
-
-  // All buffers pointers passed to host kernels are expected to be
-  // dereferenceable.
-  IrEmitter::AttachDereferenceableMetadataForLoad(data, ByteSizeOf(shape));
-
-  // All buffers pointers passed to host kernels are expected to be invariant
-  // over the whole program. Note the metadata is attached only to loading
-  // buffer pointers, not to loading actual buffers.
-  AttachInvariantLoadMetadataForLoad(data);
-
-  return llvm_ir::IrArray(data, llvm_ir::ShapeToIrType(shape, module_), shape);
-}
-
 absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
     std::string_view name, absl::Span<const KernelParameter> arguments,
     absl::Span<const KernelParameter> results) {
@@ -775,34 +674,19 @@ absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
     result_slices.insert(result.slice);
   }
 
-  // Create a kernel function with HostKernel API. We use external linkage
-  // because we'll be resolving this function from the XLA runtime.
-  llvm::Function* function = llvm::Function::Create(
-      KernelFunctionTy(ctx), llvm::GlobalValue::ExternalLinkage, name, module_);
-  function->setCallingConv(llvm::CallingConv::C);
-
-  // Generate unwind information so that GDB can crawl through the stack frames
-  // created by the JIT compiled code.
-  function->setUWTableKind(llvm::UWTableKind::Default);
-
-  // Set prefer-vector-width attribute to allow LLVM to use wider vector
-  // registers (by default LLVM uses at most 256-bit registers).
-  const DebugOptions& debug_options = hlo_module_.config().debug_options();
-  function->addFnAttr(
-      "prefer-vector-width",
-      absl::StrCat(debug_options.xla_cpu_prefer_vector_width()));
-
-  // Always keep a frame pointer for the host kernel so we can see them in all
-  // performance profiling tools.
-  function->addFnAttr("frame-pointer", "all");
+  // Create a kernel function with HostKernel API.
+  llvm::Function* function =
+      kernel_api_ir_builder_.EmitKernelFunction(*module_, name);
 
   // Create an entry basic block and set insert point to the end of it.
   b.SetInsertPoint(llvm::BasicBlock::Create(ctx, "", function));
 
   llvm::Value* call_frame = function->getArg(0);
   // Build thread coordinates from the call frame.
-  KernelThreadDims kernel_thread_dims = EmitKernelThreadDims(b, call_frame);
-  KernelThread kernel_thread = EmitKernelThread(b, call_frame);
+  KernelApiIrBuilder::ThreadDims kernel_thread_dims =
+      kernel_api_ir_builder_.EmitKernelThreadDims(b, call_frame);
+  KernelApiIrBuilder::ThreadId kernel_thread =
+      kernel_api_ir_builder_.EmitKernelThread(b, call_frame);
 
   int64_t idx = 0;
 
@@ -814,7 +698,8 @@ absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
   std::vector<llvm_ir::IrArray> ir_arguments;
   for (int64_t i = 0; i < arguments.size(); ++i) {
     const KernelParameter& argument = arguments[i];
-    auto ir_argument = EmitKernelArgument(b, call_frame, idx++, argument.shape);
+    auto ir_argument = kernel_api_ir_builder_.EmitKernelArgument(
+        b, call_frame, idx++, argument.shape);
     if (auto* noalias = get_noalias(argument.slice)) {
       ir_argument.AddNoaliasMetadata(noalias);
     }
@@ -832,7 +717,8 @@ absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
   // IrArrays for the results.
   std::vector<llvm_ir::IrArray> ir_results;
   for (const KernelParameter& result : results) {
-    auto ir_result = EmitKernelArgument(b, call_frame, idx++, result.shape);
+    auto ir_result = kernel_api_ir_builder_.EmitKernelArgument(
+        b, call_frame, idx++, result.shape);
     if (auto* noalias = get_noalias(result.slice)) {
       ir_result.AddNoaliasMetadata(noalias);
     }

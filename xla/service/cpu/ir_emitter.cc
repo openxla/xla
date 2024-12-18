@@ -70,6 +70,7 @@ limitations under the License.
 #include "xla/service/cpu/cpu_options.h"
 #include "xla/service/cpu/cpu_runtime.h"
 #include "xla/service/cpu/dot_op_emitter.h"
+#include "xla/service/cpu/elemental_ir_emitter.h"
 #include "xla/service/cpu/elemental_math_emitter.h"
 #include "xla/service/cpu/ir_emission_utils.h"
 #include "xla/service/cpu/ir_function.h"
@@ -114,36 +115,19 @@ bool IsNativeConvertSupportedOnTargetCPU(std::string feature_string) {
           absl::StrContains(feature_string, "+amx-bf16"));
 }
 
-class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
+class IrEmitter::ElementalIrEmitter : public CpuElementalIrEmitter {
  public:
-  CpuElementalIrEmitter(const HloModuleConfig& module_config,
-                        IrEmitter* ir_emitter, llvm::Module* module)
-      : ElementalIrEmitter(
+  ElementalIrEmitter(const HloModuleConfig& module_config,
+                     IrEmitter* ir_emitter, llvm::Module* module)
+      : CpuElementalIrEmitter(
             module, ir_emitter->b(),
-            Options{/*xla_cpu_use_truncate_f32_to_bf16_conversion=*/
-                    !IsNativeConvertSupportedOnTargetCPU(
-                        ir_emitter->target_machine_features_
-                            .get_target_feature_string())}),
-        hlo_module_config_(module_config),
+            !IsNativeConvertSupportedOnTargetCPU(
+                ir_emitter->target_machine_features_
+                    .get_target_feature_string()),
+            module_config.debug_options().xla_cpu_enable_fast_min_max()),
         ir_emitter_(ir_emitter) {}
 
  protected:
-  absl::StatusOr<llvm::Value*> EmitAtan2(PrimitiveType prim_type,
-                                         llvm::Value* lhs, llvm::Value* rhs,
-                                         absl::string_view) override {
-    return xla::cpu::EmitAtan2(module(), *b(), prim_type, lhs, rhs);
-  }
-
-  absl::StatusOr<llvm::Value*> EmitTanh(PrimitiveType prim_type,
-                                        llvm::Value* value) override {
-    return xla::cpu::EmitTanh(module(), *b(), prim_type, value);
-  }
-
-  absl::StatusOr<llvm::Value*> EmitErf(PrimitiveType prim_type,
-                                       llvm::Value* value) override {
-    return xla::cpu::EmitErf(module(), *b(), prim_type, value);
-  }
-
   absl::StatusOr<std::vector<llvm::Value*>> EmitThreadLocalCall(
       const HloComputation& callee, absl::Span<llvm::Value* const> parameters,
       absl::string_view name, bool is_reducer) override {
@@ -151,11 +135,6 @@ class IrEmitter::CpuElementalIrEmitter : public ElementalIrEmitter {
                                             is_reducer);
   }
 
-  bool fast_min_max() override {
-    return hlo_module_config_.debug_options().xla_cpu_enable_fast_min_max();
-  }
-
-  const HloModuleConfig& hlo_module_config_;
   IrEmitter* ir_emitter_;
 };
 
@@ -214,7 +193,8 @@ void IrEmitter::EmitThreadLocalFunctionEpilogue(HloComputation* computation) {
   } else {
     CHECK(return_shape.IsTuple());
 
-    llvm::Type* tuple_type = llvm_ir::ShapeToIrType(return_shape, module_);
+    llvm::Type* tuple_type =
+        llvm_ir::ShapeToIrType(return_shape, module_->getContext());
 
     for (int i = 0; i < return_shape.tuple_shapes_size(); i++) {
       const Shape& element_shape = return_shape.tuple_shapes(i);
@@ -1599,7 +1579,7 @@ IrEmitter::ShardedVectorType IrEmitter::CreateShardedVectorType(
 
   ShardedVectorType sharded_vector_type;
   llvm::Type* element_ir_type =
-      llvm_ir::PrimitiveTypeToIrType(element_type, module_);
+      llvm_ir::PrimitiveTypeToIrType(element_type, module_->getContext());
 
   for (int i = 0, e = 1 + Log2Ceiling(element_count); i < e; i++) {
     // For every power of two present in element_count, we generate one or more
@@ -2211,7 +2191,7 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
   auto* root = fusion->fused_expression_root();
   if (llvm_ir::CanEmitFusedDynamicUpdateSliceInPlace(fusion, assignment_)) {
     VLOG(3) << "HandleFusion FusedDynamicUpdateSliceInPlace";
-    CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
+    ElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
     FusedIrEmitter fused_emitter(elemental_emitter);
     BindFusionArguments(fusion, &fused_emitter);
 
@@ -2221,7 +2201,7 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
         fusion, GetIrArrayFor(fusion), &fused_emitter, b());
   } else if (fusion->IsLoopFusion()) {
     VLOG(3) << "HandleFusion kLoop";
-    CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
+    ElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
     FusedIrEmitter fused_emitter(elemental_emitter);
     BindFusionArguments(fusion, &fused_emitter);
     TF_ASSIGN_OR_RETURN(auto generator, fused_emitter.GetGenerator(
@@ -3008,7 +2988,8 @@ absl::Status IrEmitter::HandleWhile(HloInstruction* xla_while) {
       Load(IrShapeType(
                xla_while->while_condition()->root_instruction()->shape()),
            GetBufferForGlobalCallReturnValue(*xla_while->while_condition())),
-      llvm::ConstantInt::get(llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0));
+      llvm::ConstantInt::get(
+          llvm_ir::PrimitiveTypeToIrType(PRED, module_->getContext()), 0));
 
   // Branches to the body or to the while exit depending on the condition.
   llvm::BasicBlock* body_bb =
@@ -3343,7 +3324,7 @@ void EmitTransferElements(llvm::Value* target, llvm::Value* source,
       primitive_type_size,
       ::xla::cpu::MinimumAlignmentForPrimitiveType(primitive_type)));
   llvm::Type* primitive_llvm_type =
-      llvm_ir::PrimitiveTypeToIrType(primitive_type, module);
+      llvm_ir::PrimitiveTypeToIrType(primitive_type, module->getContext());
 
   if (element_count == 1) {
     auto* load_instruction =
@@ -3439,11 +3420,11 @@ absl::Status IrEmitter::HandleConditional(HloInstruction* conditional) {
     llvm::LoadInst* pred_value = Load(
         GetIrArrayFor(branch_index).GetBasePointeeType(),
         GetIrArrayFor(branch_index).GetBasePointer(), "load_predicate_value");
-    llvm::Value* pred_cond =
-        ICmpNE(pred_value,
-               llvm::ConstantInt::get(
-                   llvm_ir::PrimitiveTypeToIrType(PRED, module_), 0),
-               "boolean_predicate");
+    llvm::Value* pred_cond = ICmpNE(
+        pred_value,
+        llvm::ConstantInt::get(
+            llvm_ir::PrimitiveTypeToIrType(PRED, module_->getContext()), 0),
+        "boolean_predicate");
     llvm_ir::LlvmIfData if_data =
         llvm_ir::EmitIfThenElse(pred_cond, "conditional", b());
 
@@ -3814,7 +3795,7 @@ llvm::Value* IrEmitter::GetEmittedValueFor(const HloInstruction* hlo) {
 }
 
 llvm::Type* IrEmitter::IrShapeType(const Shape& shape) {
-  return llvm_ir::ShapeToIrType(shape, module_);
+  return llvm_ir::ShapeToIrType(shape, module_->getContext());
 }
 
 llvm::Value* IrEmitter::GetProfileCountersArgument() {
@@ -4037,7 +4018,7 @@ absl::Status IrEmitter::DefaultAction(HloInstruction* hlo) {
       return GetIrArrayFor(operand).EmitReadArrayElement(index, b());
     };
   }
-  CpuElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
+  ElementalIrEmitter elemental_emitter(hlo_module_config_, this, module_);
   return EmitTargetElementLoop(
       hlo, "elemental_loop",
       elemental_emitter.MakeElementGenerator(hlo, operand_to_generator),
@@ -4076,7 +4057,7 @@ std::vector<llvm::Value*> IrEmitter::EmitThreadLocalCall(
   }
 
   llvm::Type* return_value_buffer_type =
-      llvm_ir::ShapeToIrType(return_shape, module_);
+      llvm_ir::ShapeToIrType(return_shape, module_->getContext());
   std::string retval_alloca_name = absl::StrCat(name, "_return_value_addr");
   int retval_alignment =
       is_scalar_return

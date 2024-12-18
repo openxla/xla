@@ -81,6 +81,9 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/transforms/passes.h"
+#include "xla/codegen/ir/xla_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -94,9 +97,8 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/transforms/passes.h"
+#include "xla/service/gpu/fusions/triton/compilation_pipeline.h"
 #include "xla/service/gpu/fusions/triton/emitter_helpers.h"
 #include "xla/service/gpu/fusions/triton/passes.h"
 #include "xla/service/gpu/fusions/triton/triton_fusion_emitter_legacy_matmul.h"
@@ -1008,8 +1010,8 @@ void LoadMlirDialectsForTriton(mlir::MLIRContext& mlir_context) {
   mlir_context
       .loadDialect<ttir::TritonDialect, ttir::gpu::TritonGPUDialect,
                    mlir::arith::ArithDialect, mlir::affine::AffineDialect,
-                   mlir::LLVM::LLVMDialect, xla::gpu::XlaGpuDialect,
-                   ttir::xla::XlaTritonDialect>();
+                   mlir::LLVM::LLVMDialect, xla::XlaDialect,
+                   xla::gpu::XlaGpuDialect, ttir::xla::XlaTritonDialect>();
   mlir::DialectRegistry registry;
   mlir::func::registerInlinerExtension(registry);
   mlir::LLVM::registerInlinerInterface(registry);
@@ -1039,7 +1041,7 @@ absl::StatusOr<std::unique_ptr<llvm::Module>> TranslateLLVMToLLVMIR(
   return llvmModule;
 }
 
-absl::Status CreateInternalError(std::string_view message,
+absl::Status CreateInternalError(absl::string_view message,
                                  const HloFusionInstruction* fusion,
                                  mlir::ModuleOp triton_module) {
   std::string err;
@@ -1183,18 +1185,20 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
 
   // Compile Triton kernel to LLVM.
   const HloModule* hlo_module = fusion->GetModule();
-  return CompileTritonToLLVM(hlo_module->config(), hlo_module->name(), cc,
+  return CompileTritonToLLVM(hlo_module->config(), hlo_module->name(),
                              device_info, block_level_parameters,
                              triton_module.get(), llvm_module, mlir_context);
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     const HloModuleConfig& hlo_config, absl::string_view hlo_module_name,
-    const se::GpuComputeCapability& cc,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
     mlir::MLIRContext& mlir_context, bool emit_kernel) {
+  const auto& cc = device_info.gpu_compute_capability();
+  const std::string arch_name =
+      std::visit([](auto& cc) { return cc.ToString(); }, cc);
   if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
     auto ccCuda = std::get<se::CudaComputeCapability>(cc);
     if (!ccCuda.IsAtLeastAmpere()) {
@@ -1254,7 +1258,9 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(CreateSimplifyAffinePass());
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
-  if (!CreateTritonPipeline(pm, cc, block_level_parameters, cluster_info)
+  if (!CreateTritonPipeline(&pm, arch_name, block_level_parameters.num_warps,
+                            block_level_parameters.num_ctas,
+                            block_level_parameters.num_stages, cluster_info)
            .ok()) {
     return Internal("Failed to create Triton pipeline.");
   }
@@ -1279,8 +1285,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   }
 
   const int shared_mem_bytes =
-      triton_module->getAttrOfType<mlir::IntegerAttr>("triton_gpu.shared")
-          .getInt();
+      triton_module->getAttrOfType<mlir::IntegerAttr>("ttg.shared").getInt();
   VLOG(2) << "Shared memory usage: " << shared_mem_bytes << " B";
   if (std::holds_alternative<se::CudaComputeCapability>(cc) &&
       shared_mem_bytes > device_info.shared_memory_per_block_optin()) {

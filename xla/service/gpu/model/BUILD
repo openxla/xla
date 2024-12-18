@@ -4,7 +4,7 @@ load("//xla:xla.bzl", "xla_cc_test")
 
 # Libraries for performance modeling of HLO.
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
@@ -43,6 +43,77 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "sol_latency_estimator",
+    srcs = ["sol_latency_estimator.cc"],
+    hdrs = ["sol_latency_estimator.h"],
+    deps = [
+        ":coalescing_analysis",
+        ":fusion_analysis_cache",
+        ":gpu_hlo_cost_analysis",
+        ":gpu_performance_model",
+        ":gpu_performance_model_base",
+        ":hlo_op_profiles",
+        ":sol_gpu_cost_model",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/analysis:indexing_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/hlo/utils:hlo_traversal",
+        "//xla/service:hlo_cost_analysis",
+        "//xla/service:latency_hiding_scheduler",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:gpu_fusible",
+        "//xla/service/gpu:hlo_fusion_analysis",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/service/gpu/fusions",
+        "//xla/service/gpu/fusions:fusion_emitter",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+    ],
+)
+
+cc_library(
+    name = "sol_gpu_cost_model",
+    srcs = ["sol_gpu_cost_model.cc"],
+    hdrs = ["sol_gpu_cost_model.h"],
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/numeric:bits",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+    ],
+)
+
+xla_cc_test(
+    name = "sol_gpu_cost_model_test",
+    srcs = ["sol_gpu_cost_model_test.cc"],
+    deps = [
+        ":sol_gpu_cost_model",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 xla_test(
     name = "analytical_latency_estimator_test",
     srcs = ["analytical_latency_estimator_test.cc"],
@@ -50,7 +121,8 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
-    ] + if_oss(["gpu_b100"]),
+        "gpu_b100",
+    ],
     deps = [
         ":analytical_latency_estimator",
         "//xla:shape_util",

@@ -65,6 +65,7 @@ cc_library(
         "//xla:array",
         "//xla:comparison_util",
         "//xla:literal",
+        "//xla:literal_pool",
         "//xla:literal_util",
         "//xla:printer",
         "//xla:protobuf_util",
@@ -161,6 +162,7 @@ xla_cc_test(
     deps = [
         ":hlo",
         "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/hash",

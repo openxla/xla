@@ -23,7 +23,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -42,6 +41,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
@@ -62,7 +62,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_all_gather_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_reduce_thunk.h"
 #include "xla/service/gpu/runtime/nccl_all_to_all_thunk.h"
-#include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
@@ -105,7 +104,7 @@ std::string CommandBufferCmdString(CommandBufferCmdType type) {
   }
 }
 
-static std::string_view ReductionKindString(ReductionKind kind) {
+static absl::string_view ReductionKindString(ReductionKind kind) {
   switch (kind) {
     case ReductionKind::MAX:
       return "max";
@@ -286,7 +285,7 @@ void CommandBufferCmdSequence::ClearTrackedBuffers(
   read_write_sets_[execution_stream_id] = ReadWriteSet();
 }
 
-static std::string_view RecordModeString(
+static absl::string_view RecordModeString(
     CommandBufferCmdSequence::RecordMode mode) {
   switch (mode) {
     case CommandBufferCmdSequence::RecordMode::kExclusive:
@@ -492,7 +491,7 @@ absl::Status TracedCommandBufferCmd::AddTracedCommandBuffer(
 // }
 //
 // Easiest way to get PTX from C++ is to use https://godbolt.org.
-inline constexpr std::string_view kMemset32Kernel = R"(
+inline constexpr absl::string_view kMemset32Kernel = R"(
 .version 4.0
 .target sm_50
 .address_size 64
@@ -1580,10 +1579,9 @@ BarrierCmd::BufferUsageVector BarrierCmd::buffers() { return {}; }
 CollectiveCmd::CollectiveCmd(CommandBufferCmdType cmd_type,
                              ExecutionStreamId execution_stream_id,
                              ExecutionStreamId async_from_stream_id,
-                             NcclApi* nccl_api, NcclCollectiveConfig config)
+                             NcclCollectiveConfig config)
     : CommandBufferCmd(cmd_type, execution_stream_id),
       async_from_stream_id_(async_from_stream_id),
-      nccl_api_(nccl_api),
       config_(std::move(config)) {}
 
 absl::Status CollectiveCmd::BarrierIfAsync(
@@ -1605,9 +1603,11 @@ absl::Status CollectiveCmd::BarrierIfAsync(
 absl::Status CollectiveCmd::Prepare(
     const Thunk::PrepareParams& params,
     Thunk::ResourceRequests& resource_requests) {
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(params));
   TF_ASSIGN_OR_RETURN(
       GpuCliqueKey clique_key,
-      GetGpuCliqueKey(nccl_api_, *params.collective_params,
+      GetGpuCliqueKey(collectives, *params.collective_params,
                       config().replica_groups, config().group_mode,
                       nccl_stream_id(), GetAsyncStreamKind()));
   TF_ASSIGN_OR_RETURN(
@@ -1637,11 +1637,11 @@ absl::Status CollectiveCmd::AddTracedCommandBuffer(
 
 AllReduceCmd::AllReduceCmd(
     ExecutionStreamId execution_stream_id,
-    ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
-    NcclCollectiveConfig config, ReductionKind reduction_kind,
+    ExecutionStreamId async_from_stream_id, NcclCollectiveConfig config,
+    ReductionKind reduction_kind,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(CommandBufferCmdType::kAllReduceCmd, execution_stream_id,
-                    async_from_stream_id, nccl_api, std::move(config)),
+                    async_from_stream_id, std::move(config)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1672,24 +1672,19 @@ absl::Status AllReduceCmd::Record(const Thunk::ExecuteParams& execute_params,
         "AllReduceCmd requires collective parameters and cliques");
   }
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(execute_params));
+
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
-      GetNcclComm(nccl_api(), *execute_params.collective_params,
+      GetNcclComm(collectives, *execute_params.collective_params,
                   *execute_params.collective_cliques, config().replica_groups,
                   config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
-  Communicator* comm = comm_handle.comm;
-
-  // Use custom allocator for persistent execution plans.
-  NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
-      comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
-                execute_params.buffer_allocations->device_ordinal(),
-                execute_params.buffer_allocations->memory_allocator(),
-                execute_params.stream));
 
   return AddTracedCommandBuffer(
       execute_params, record_params, command_buffer, [&](se::Stream* stream) {
-        return RunAllReduce(nccl_api(), reduction_kind_, device_buffers,
-                            *stream, comm);
+        return RunAllReduce(collectives, reduction_kind_, device_buffers,
+                            *stream, comm_handle.comm);
       });
 }
 
@@ -1708,11 +1703,11 @@ CommandBufferCmd::BufferUsageVector AllReduceCmd::buffers() {
 
 ReduceScatterCmd::ReduceScatterCmd(
     ExecutionStreamId execution_stream_id,
-    ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
-    NcclCollectiveConfig config, ReductionKind reduction_kind,
+    ExecutionStreamId async_from_stream_id, NcclCollectiveConfig config,
+    ReductionKind reduction_kind,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(CommandBufferCmdType::kReduceScatter, execution_stream_id,
-                    async_from_stream_id, nccl_api, std::move(config)),
+                    async_from_stream_id, std::move(config)),
       reduction_kind_(reduction_kind),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1744,23 +1739,19 @@ absl::Status ReduceScatterCmd::Record(
         "ReduceScatterCmd requires collective parameters and cliques");
   }
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(execute_params));
+
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
-      GetNcclComm(nccl_api(), *execute_params.collective_params,
+      GetNcclComm(collectives, *execute_params.collective_params,
                   *execute_params.collective_cliques, config().replica_groups,
                   config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
-  Communicator* comm = comm_handle.comm;
-  // Use custom allocator for persistent execution plans.
-  NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
-      comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
-                execute_params.buffer_allocations->device_ordinal(),
-                execute_params.buffer_allocations->memory_allocator(),
-                execute_params.stream));
 
   return AddTracedCommandBuffer(
       execute_params, record_params, command_buffer, [&](se::Stream* stream) {
-        return RunReduceScatter(nccl_api(), reduction_kind_, device_buffers,
-                                *stream, comm);
+        return RunReduceScatter(collectives, reduction_kind_, device_buffers,
+                                *stream, comm_handle.comm);
       });
 }
 
@@ -1779,11 +1770,10 @@ CommandBufferCmd::BufferUsageVector ReduceScatterCmd::buffers() {
 
 AllToAllCmd::AllToAllCmd(ExecutionStreamId execution_stream_id,
                          ExecutionStreamId async_from_stream_id,
-                         NcclApi* nccl_api, NcclCollectiveConfig config,
-                         bool has_split_dimension,
+                         NcclCollectiveConfig config, bool has_split_dimension,
                          absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(CommandBufferCmdType::kAllToAll, execution_stream_id,
-                    async_from_stream_id, nccl_api, std::move(config)),
+                    async_from_stream_id, std::move(config)),
       has_split_dimension_(has_split_dimension),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1814,23 +1804,18 @@ absl::Status AllToAllCmd::Record(const Thunk::ExecuteParams& execute_params,
         "ReduceScatterCmd requires collective parameters and cliques");
   }
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(execute_params));
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
-      GetNcclComm(nccl_api(), *execute_params.collective_params,
+      GetNcclComm(collectives, *execute_params.collective_params,
                   *execute_params.collective_cliques, config().replica_groups,
                   config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
-  Communicator* comm = comm_handle.comm;
-  // Use custom allocator for persistent execution plans.
-  NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
-      comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
-                execute_params.buffer_allocations->device_ordinal(),
-                execute_params.buffer_allocations->memory_allocator(),
-                execute_params.stream));
 
   return AddTracedCommandBuffer(
       execute_params, record_params, command_buffer, [&](se::Stream* stream) {
-        return RunAllToAll(nccl_api(), has_split_dimension_, device_buffers,
-                           *stream, comm);
+        return RunAllToAll(collectives, has_split_dimension_, device_buffers,
+                           *stream, comm_handle.comm);
       });
 }
 
@@ -1849,11 +1834,10 @@ CommandBufferCmd::BufferUsageVector AllToAllCmd::buffers() {
 
 AllGatherCmd::AllGatherCmd(
     ExecutionStreamId execution_stream_id,
-    ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
-    NcclCollectiveConfig config,
+    ExecutionStreamId async_from_stream_id, NcclCollectiveConfig config,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(CommandBufferCmdType::kAllGatherCmd, execution_stream_id,
-                    async_from_stream_id, nccl_api, std::move(config)),
+                    async_from_stream_id, std::move(config)),
       buffers_(buffers.begin(), buffers.end()) {}
 
 absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
@@ -1882,22 +1866,19 @@ absl::Status AllGatherCmd::Record(const Thunk::ExecuteParams& execute_params,
         "AllGatherCmd requires collective parameters and cliques");
   }
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(execute_params));
+
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
-      GetNcclComm(nccl_api(), *execute_params.collective_params,
+      GetNcclComm(collectives, *execute_params.collective_params,
                   *execute_params.collective_cliques, config().replica_groups,
                   config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
-  Communicator* comm = comm_handle.comm;
-  // Use custom allocator for persistent execution plans.
-  NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
-      comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
-                execute_params.buffer_allocations->device_ordinal(),
-                execute_params.buffer_allocations->memory_allocator(),
-                execute_params.stream));
 
   return AddTracedCommandBuffer(
       execute_params, record_params, command_buffer, [&](se::Stream* stream) {
-        return RunAllGather(nccl_api(), device_buffers, *stream, comm);
+        return RunAllGather(collectives, device_buffers, *stream,
+                            comm_handle.comm);
       });
 }
 
@@ -1916,11 +1897,10 @@ CommandBufferCmd::BufferUsageVector AllGatherCmd::buffers() {
 
 CollectiveBroadcastCmd::CollectiveBroadcastCmd(
     ExecutionStreamId execution_stream_id,
-    ExecutionStreamId async_from_stream_id, NcclApi* nccl_api,
-    NcclCollectiveConfig config,
+    ExecutionStreamId async_from_stream_id, NcclCollectiveConfig config,
     absl::Span<const NcclCollectiveThunk::Buffer> buffers)
     : CollectiveCmd(CommandBufferCmdType::kCollectiveBroadcastCmd,
-                    execution_stream_id, async_from_stream_id, nccl_api,
+                    execution_stream_id, async_from_stream_id,
                     std::move(config)),
       buffers_(buffers.begin(), buffers.end()) {}
 
@@ -1951,23 +1931,19 @@ absl::Status CollectiveBroadcastCmd::Record(
         "CollectiveBroadcastCmd requires collective parameters and cliques");
   }
 
+  TF_ASSIGN_OR_RETURN(GpuCollectives * collectives,
+                      Thunk::GetGpuCollectives(execute_params));
+
   TF_ASSIGN_OR_RETURN(
       CommunicatorHandle comm_handle,
-      GetNcclComm(nccl_api(), *execute_params.collective_params,
+      GetNcclComm(collectives, *execute_params.collective_params,
                   *execute_params.collective_cliques, config().replica_groups,
                   config().group_mode, nccl_stream_id(), GetAsyncStreamKind()));
-  Communicator* comm = comm_handle.comm;
-  // Use custom allocator for persistent execution plans.
-  NcclApi::ScopedPersistentPlanAllocator scoped_allocator(
-      comm, tsl::MakeRef<NcclApi::PersistentPlanAllocator>(
-                execute_params.buffer_allocations->device_ordinal(),
-                execute_params.buffer_allocations->memory_allocator(),
-                execute_params.stream));
 
   return AddTracedCommandBuffer(
       execute_params, record_params, command_buffer, [&](se::Stream* stream) {
-        return RunCollectiveBroadcast(device_buffers, *stream, comm,
-                                      nccl_api());
+        return RunCollectiveBroadcast(device_buffers, *stream, comm_handle.comm,
+                                      collectives);
       });
 }
 
@@ -2033,7 +2009,7 @@ bool DynamicSliceFusionCmd::force_update() {
     if (!slice.offsets.has_value()) return true;
     return absl::c_all_of(slice.offsets.value(),
                           [](DynamicSliceThunk::Offset offset) {
-                            return std::holds_alternative<uint64_t>(offset);
+                            return std::holds_alternative<int64_t>(offset);
                           });
   });
 }
@@ -2129,7 +2105,7 @@ absl::Status DynamicSliceFusionCmd::Record(
     for (auto [offset_idx, values] : llvm::enumerate(llvm::zip(
              *slice.offsets, src_shape.dimensions(), dst_shape.dimensions()))) {
       auto [offset, src_dim, dst_dim] = values;
-      if (uint64_t* const_offset = std::get_if<uint64_t>(&offset)) {
+      if (int64_t* const_offset = std::get_if<int64_t>(&offset)) {
         // Forward slice offsets that are known constant values
         VLOG(2) << "  - arg " << argument_idx << "[" << offset_idx
                 << "]: constant offset = " << *const_offset;

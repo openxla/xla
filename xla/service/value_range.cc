@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
 #include "xla/service/constant_value.h"
+#include "xla/service/hlo_value.h"
 
 namespace xla {
 
@@ -48,6 +49,9 @@ std::optional<int64_t> Range::GetSingleUnsignedValue() const {
 std::string Range::ToString() const {
   if (IsEmpty()) {
     return std::string("Empty");
+  }
+  if (IsSingleValue()) {
+    return min_.ToString();
   }
   return absl::StrCat(
       "min: ", min_.ToString(), " max: ", max_.ToString(),
@@ -92,12 +96,14 @@ Range RecursivelyIdentifyRange(
     auto value_set =
         alias_analysis->dataflow_analysis().GetFlattenedValueSet(instr);
     for (const auto& value : value_set.TakeValues()) {
-      auto it = predefined_ranges.find(value->defining_instruction());
-      if (it != predefined_ranges.end()) {
-        VLOG(5) << "Found range in defining instruction! "
-                << it->second.max().GetSignedValue() << " "
-                << it->second.min().GetSignedValue();
-        return it->second;
+      for (const HloPosition& position : value->positions()) {
+        auto it = predefined_ranges.find(position.instruction);
+        if (it != predefined_ranges.end()) {
+          VLOG(5) << "Found range in defining instruction! "
+                  << it->second.max().GetSignedValue() << " "
+                  << it->second.min().GetSignedValue();
+          return it->second;
+        }
       }
     }
   }
@@ -209,12 +215,16 @@ Range RecursivelyIdentifyRange(
         return Range{};
       }
       ConstantValue single_value = lhs.IsSingleValue() ? lhs.min() : rhs.min();
-      ConstantValue min = lhs.IsSingleValue() ? rhs.min().mul(single_value)
-                                              : lhs.min().mul(single_value);
-      ConstantValue max = lhs.IsSingleValue() ? rhs.max().mul(single_value)
-                                              : lhs.max().mul(single_value);
-      return Range{min, max, FindStepForBinaryOp(lhs, rhs),
-                   lhs.IsLinear() && rhs.IsLinear()};
+      Range operand_range = lhs.IsSingleValue() ? rhs : lhs;
+      // When multiplying with a constant, min, max, and step are all
+      // multiplied by the single value.
+      ConstantValue min = operand_range.min().mul(single_value);
+      ConstantValue max = operand_range.max().mul(single_value);
+      if (!operand_range.IsStepKnown()) {
+        return Range{min, max, operand_range.IsLinear()};
+      }
+      ConstantValue step = operand_range.step().mul(single_value);
+      return Range{min, max, step, operand_range.IsLinear()};
     }
     case HloOpcode::kSelect: {
       VLOG(5) << "Handling Select: " << instr->ToString();

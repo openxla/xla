@@ -21,7 +21,6 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -634,18 +633,14 @@ static PJRT_NamedValue StableHloVersion(absl::string_view name,
 }
 
 const std::vector<PJRT_NamedValue>& GetXlaPluginCAttributes() {
-  static const std::vector<PJRT_NamedValue>* c_values = new std::vector<
-      PJRT_NamedValue>({
-      XlaVersion("xla_version"),
-      // TODO: (b/375454646) Uncomment once frameworks have bugfix:
-      // https://github.com/openxla/xla/commit/2f99455cdf99e844ddad17de9f4714997023d243
-      // StableHloVersion<0>("stablehlo_current_version",
-      //                    mlir::vhlo::Version::getCurrentVersion()),
-      StableHloVersion<0>("stablehlo_current_version",
-                          mlir::vhlo::Version(1, 7, 0)),
-      StableHloVersion<1>("stablehlo_minimum_version",
-                          mlir::vhlo::Version::getMinimumVersion()),
-  });
+  static const std::vector<PJRT_NamedValue>* c_values =
+      new std::vector<PJRT_NamedValue>({
+          XlaVersion("xla_version"),
+          StableHloVersion<0>("stablehlo_current_version",
+                              mlir::vhlo::Version::getCurrentVersion()),
+          StableHloVersion<1>("stablehlo_minimum_version",
+                              mlir::vhlo::Version::getMinimumVersion()),
+      });
   return *c_values;
 }
 
@@ -770,7 +765,7 @@ static PJRT_KeyValueGetCFunc ToKVGetCFunc(
     xla::KeyValueStoreInterface* kv_store) {
   return [kv_store](PJRT_KeyValueGetCallback_Args* args) -> PJRT_Error* {
     absl::StatusOr<std::string> output =
-        kv_store->Get(std::string_view(args->key, args->key_size),
+        kv_store->Get(absl::string_view(args->key, args->key_size),
                       absl::Milliseconds(args->timeout_in_ms));
     if (!output.ok()) {
       absl::string_view message = output.status().message();
@@ -790,8 +785,8 @@ static PJRT_KeyValuePutCFunc ToKVPutCFunc(
     xla::KeyValueStoreInterface* kv_store) {
   return [kv_store](PJRT_KeyValuePutCallback_Args* args) -> PJRT_Error* {
     absl::Status status =
-        kv_store->Set(std::string_view(args->key, args->key_size),
-                      std::string_view(args->value, args->value_size));
+        kv_store->Set(absl::string_view(args->key, args->key_size),
+                      absl::string_view(args->value, args->value_size));
     if (!status.ok()) {
       absl::string_view message = status.message();
       return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),

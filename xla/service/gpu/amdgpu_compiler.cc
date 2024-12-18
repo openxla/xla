@@ -44,7 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/gemm_fusion_autotuner.h"
 #include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
-#include "xla/service/gpu/llvm_gpu_backend/gpu_backend_lib.h"
+#include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/service/gpu/transforms/algebraic_simplifier.h"
 #include "xla/service/gpu/transforms/conv_padding_legalization.h"
@@ -58,9 +58,11 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
+#include "xla/stream_executor/rocm/rocm_solver_context.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
@@ -113,7 +115,8 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
       std::get<se::RocmComputeCapability>(gpu_version));
   pipeline.AddPass<FloatNormalization>(&conv_bf16_support);
 
-  pipeline.AddPass<GpusolverRewriter>();
+  pipeline.AddPass<GpusolverRewriter>(
+      stream_executor::RocmSolverContext::Create);
   pipeline.AddPass<ConvRewriter>(gpu_version);
   pipeline.AddPass<ConvPaddingLegalization>();
   auto rcc = std::get<se::RocmComputeCapability>(gpu_version);

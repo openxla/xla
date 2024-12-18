@@ -210,7 +210,12 @@ cc_library(
     name = "mutex",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["mutex.h"],
-    deps = tf_platform_deps("mutex"),
+    deps = [
+        ":thread_annotations",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+    ],
 )
 
 cc_library(
@@ -224,6 +229,8 @@ cc_library(
         ":stringpiece",
         ":stringprintf",
         ":types",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings",
         "@double_conversion//:double-conversion",
     ],
 )
@@ -1630,7 +1637,6 @@ tsl_cc_test(
     deps = [
         ":env",
         ":env_impl",
-        ":env_time",
         ":mutex",
         ":platform_port",
         ":test",
@@ -1716,6 +1722,8 @@ tsl_cc_test(
         ":numbers",
         ":test",
         ":test_main",
+        ":types",
+        "@com_google_absl//absl/strings",
     ],
 )
 

@@ -26,7 +26,6 @@ limitations under the License.
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>  // NOLINT
 #include <unordered_map>
 #include <utility>
@@ -481,7 +480,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
         }
         continue;
       } else {
-        CallShardArgFallback(arg.ptr(), in_shardings[dce_index],
+        CallShardArgFallback(arg, in_shardings[dce_index],
                              in_device_local_layout, shard_arg_fallback,
                              num_args_arrays, keep_alive_objects);
         continue;
@@ -503,7 +502,7 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
       xla::Layout in_xc_layout = nb::cast<xla::Layout>(
           in_device_local_layout.attr("_to_xla_layout")(py_array.dtype()));
       if (in_xc_layout != GetXlaLayoutUnsafe(arr_layout)) {
-        CallShardArgFallback(arg.ptr(), in_shardings[dce_index],
+        CallShardArgFallback(arg, in_shardings[dce_index],
                              in_device_local_layout, shard_arg_fallback,
                              num_args_arrays, keep_alive_objects);
         continue;
@@ -511,16 +510,16 @@ PrepareIfrtInputs(const xla::PyLoadedExecutable& executable,
     }
 
     if (sharding.type().ptr() == jax::PmapSharding::type().ptr()) {
-      CallShardArgFallback(arg.ptr(), in_shardings[dce_index],
-                           in_device_local_layout, shard_arg_fallback,
-                           num_args_arrays, keep_alive_objects);
+      CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,
+                           shard_arg_fallback, num_args_arrays,
+                           keep_alive_objects);
       continue;
     }
 
     if (sharding_num_devices != num_global_devices) {
-      CallShardArgFallback(arg.ptr(), in_shardings[dce_index],
-                           in_device_local_layout, shard_arg_fallback,
-                           num_args_arrays, keep_alive_objects);
+      CallShardArgFallback(arg, in_shardings[dce_index], in_device_local_layout,
+                           shard_arg_fallback, num_args_arrays,
+                           keep_alive_objects);
       continue;
     }
 
@@ -805,12 +804,13 @@ absl::Status PjitFunction::ComputeCallSignature(
 
   signature.default_device = GetDefaultDevice();
   signature.jax_enable_x64 = jax_enable_x64;
-  signature.jax_enable_memories = GetEnableMemories();
 
   auto& dynamic_arg_signatures = signature.dynamic_arg_signatures;
   dynamic_arg_signatures.reserve(flat_dynamic_args.size());
   auto& dynamic_arg_shardings = signature.dynamic_arg_shardings;
   dynamic_arg_shardings.reserve(flat_dynamic_args.size());
+  auto& dynamic_arg_layouts = signature.dynamic_arg_layouts;
+  dynamic_arg_layouts.reserve(flat_dynamic_args.size());
 
   for (nb::handle arg : flat_dynamic_args) {
     TF_ASSIGN_OR_RETURN(auto arg_signature,
@@ -822,9 +822,16 @@ absl::Status PjitFunction::ComputeCallSignature(
     if (arg.type().ptr() == xla::PyArray::type().ptr()) {
       auto py_array = nb::borrow<xla::PyArray>(arg);
       signature.dynamic_arg_shardings.push_back(py_array.sharding());
+      auto layout = py_array.layout();
+      if (absl::IsUnimplemented(layout.status())) {
+        signature.dynamic_arg_layouts.push_back(nullptr);
+      } else {
+        signature.dynamic_arg_layouts.push_back(*std::move(layout));
+      }
       signature.committed_args.push_back(py_array.committed());
     } else {
       signature.dynamic_arg_shardings.push_back(nb::none());
+      signature.dynamic_arg_layouts.push_back(nullptr);
       signature.committed_args.push_back(false);
     }
   }
@@ -1060,8 +1067,8 @@ static PyGetSetDef PjitFunction_tp_getset[] = {
 PyObject* PjitFunction_tp_repr(PyObject* self) {
   try {
     const std::string& repr = absl::StrFormat(
-        "<PjitFunction of %s>",
-        nb::cast<std::string_view>(nb::repr(nb::getattr(self, "__wrapped__"))));
+        "<PjitFunction of %s>", nb::cast<absl::string_view>(nb::repr(
+                                    nb::getattr(self, "__wrapped__"))));
     return PyUnicode_FromString(repr.c_str());
   } catch (...) {
     // Ignore all errors when accessing a repr.

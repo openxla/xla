@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_SERVICE_GPU_FUSIONS_MLIR_ELEMENTAL_HLO_TO_MLIR_H_
 #define XLA_SERVICE_GPU_FUSIONS_MLIR_ELEMENTAL_HLO_TO_MLIR_H_
 
+#include <cstdint>
 #include <functional>
 
 #include "absl/status/status.h"
@@ -110,8 +111,8 @@ mlir::ValueRange EmitXlaLoopOp(
     mlir::ImplicitLocOpBuilder& b, mlir::ValueRange dim_values,
     mlir::ValueRange iter_args_inits, const IndexingMap& indexing_map,
     mlir::function_ref<llvm::SmallVector<mlir::Value>(
-        mlir::ValueRange ivs, mlir::ValueRange map_results,
-        mlir::ValueRange iter_args)>
+        mlir::ImplicitLocOpBuilder& nested_b, mlir::ValueRange ivs,
+        mlir::ValueRange map_results, mlir::ValueRange iter_args)>
         create_body,
     bool vectorize = false);
 

@@ -264,6 +264,7 @@ enum StatType {
   kFlops,
   kModelFlops,
   kBytesAccessed,
+  kRawBytesAccessed,
   kMemoryAccessBreakdown,
   kShapeWithLayout,
   kSourceInfo,
@@ -296,6 +297,8 @@ enum StatType {
   kDevCapPeakSramRdBwGigabytesPerSecond,
   kDevCapPeakSramWrBwGigabytesPerSecond,
   kDevVendor,
+  kDevHasMegacore,
+  kDevHasMergedVmem,
   // Batching related.
   kBatchSizeAfterPadding,
   kPaddingAmount,

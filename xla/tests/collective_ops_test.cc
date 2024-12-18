@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/strings/str_replace.h"
 #include "absl/types/span.h"
+#include "ml_dtypes/include/float8.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -219,6 +220,11 @@ XLA_TEST_F(CollectiveOpsTest, AllReduceSingleOutput_float32) {
       "add",
       /*input_value=*/LiteralUtil::CreateR1<float>({1}),
       /*expected_value=*/LiteralUtil::CreateR1<float>({2}));
+}
+
+XLA_TEST_F(CollectiveOpsTest,
+           AllReduceTwoReplicasOneOperand_float8_e4m3b11fnuz) {
+  TestAllOpsForReduce<ml_dtypes::float8_e4m3b11fnuz>();
 }
 
 XLA_TEST_F(CollectiveOpsTest, AllReduceTwoReplicasOneOperand_int8) {
@@ -1435,7 +1441,6 @@ XLA_TEST_F(CollectiveOpsTest, DISABLED_ON_CPU(ReduceScatterReassociate)) {
                         kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
 
-  const ErrorSpec es{1e-5, 1e-5};
   LiteralTestUtil::ExpectR1Equal<uint32_t>({26, 30, 34, 38}, results[0]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({42, 46, 50, 54}, results[1]);
 }
@@ -1486,7 +1491,6 @@ XLA_TEST_F(CollectiveOpsTest,
                         kNumReplicas,
                         /*use_threads=*/true, /*run_hlo_passes=*/true));
 
-  const ErrorSpec es{1e-5, 1e-5};
   LiteralTestUtil::ExpectR1Equal<uint32_t>({26, 30, 34, 38}, results[0]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({42, 46, 50, 54}, results[1]);
 }

@@ -21,7 +21,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -113,7 +112,7 @@ class JitCompiler {
   // Creates a new instance of the JitCompiler.
   static absl::StatusOr<JitCompiler> Create(llvm::TargetOptions target_options,
                                             Options options,
-                                            TaskRunner task_runner);
+                                            TaskRunner task_runner = nullptr);
 
   // Adds a LLVM module to the dynamic library at `dylib_index`.
   absl::Status AddModule(llvm::orc::ThreadSafeModule module,
@@ -157,7 +156,6 @@ class JitCompiler {
     TaskRunner task_runner_;
 
     absl::Mutex mu_;
-    absl::CondVar cv_;
     size_t num_dispatched_tasks_ ABSL_GUARDED_BY(mu_) = 0;
   };
 
@@ -177,7 +175,7 @@ class JitCompiler {
     ~CompiledFunctionLibrary() final;
 
     absl::StatusOr<void*> ResolveFunction(TypeId type_id,
-                                          std::string_view name) final;
+                                          absl::string_view name) final;
 
    private:
     std::unique_ptr<llvm::orc::ExecutionSession> execution_session_;

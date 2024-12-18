@@ -263,6 +263,7 @@ cc_library(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@nanobind",
@@ -502,12 +503,15 @@ cc_library(
         "//xla:comparison_util",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:host_callback",
+        "//xla/pjrt:transpose",
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@nanobind",
         "@tsl//tsl/platform:errors",
     ] + if_rocm(
@@ -589,6 +593,7 @@ cc_library(
         "@nanobind",
         "@local_config_python//:python_headers",  # build_cleaner: keep
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:status_casters",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
@@ -631,6 +636,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1092,6 +1100,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":dlpack",
         ":nb_absl_span",
         ":nb_helpers",
         ":nb_numpy",
@@ -1102,7 +1111,6 @@ cc_library(
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -1403,7 +1411,6 @@ cc_library(
 
 cc_library(
     name = "nb_helpers",
-    srcs = ["nb_helpers.cc"],
     hdrs = ["nb_helpers.h"],
     compatible_with = [],
     copts = ["-fexceptions"],
@@ -1423,10 +1430,12 @@ cc_library(
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
-        "//xla/tsl/python/lib/core:numpy",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@local_config_python//:python_headers",
         "@nanobind",
+        # copybara:uncomment "//third_party/py/numpy:multiarray",
+        "@local_config_python//:python_headers",
+        "//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -1519,6 +1528,21 @@ py_strict_test(
         "//third_party/py/numpy",
         "@absl_py//absl/flags",
         "@absl_py//absl/logging",
+        "@absl_py//absl/testing:absltest",
+        "@absl_py//absl/testing:parameterized",
+    ] + xla_py_test_deps(),
+)
+
+py_strict_test(
+    name = "xla_compiler_test",
+    srcs = ["xla_compiler_test.py"],
+    main = "xla_compiler_test.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
+    tags = ["no_oss"],
+    deps = [
+        ":xla_extension",
+        "//third_party/py/numpy",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ] + xla_py_test_deps(),

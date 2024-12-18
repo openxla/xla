@@ -138,6 +138,7 @@ cc_library(
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
         "@eigen_archive//:eigen3",
@@ -294,27 +295,6 @@ filegroup(
     srcs = [
         "integral_types.h",
     ] + if_not_windows(["env_time.cc"]),
-)
-
-cc_library(
-    name = "mutex",
-    srcs = [
-        "mutex.cc",
-        "mutex_data.h",
-        "@tsl//tsl/platform:mutex.h",
-    ],
-    tags = [
-        "manual",
-        "no_oss",
-        "nobuilder",
-    ],
-    textual_hdrs = ["mutex.h"],
-    deps = [
-        "@nsync//:nsync_cpp",
-        "@tsl//tsl/platform",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:thread_annotations",
-    ],
 )
 
 cc_library(
@@ -503,10 +483,10 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:notification",
         "@tsl//tsl/platform:platform_port",
     ],
 )
@@ -616,8 +596,6 @@ filegroup(
     srcs = [
         "casts.h",
         "error_logging.cc",
-        "mutex.h",
-        "mutex_data.h",
         "unbounded_work_queue.cc",
         "unbounded_work_queue.h",
     ] + if_not_fuchsia([
