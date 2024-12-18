@@ -24,17 +24,17 @@ cc_library(
     srcs = [
         "windows_file_system.cc",
         "windows_file_system.h",
-        "@tsl//tsl/platform:env.cc",
-        "@tsl//tsl/platform:file_system.cc",
-        "@tsl//tsl/platform:file_system_helper.cc",
+        "//xla/tsl/platform:env.cc",
+        "//xla/tsl/platform:file_system.cc",
+        "//xla/tsl/platform:file_system_helper.cc",
+        "//xla/tsl/platform:threadpool.cc",
         "@tsl//tsl/platform:ram_file_system.h",
-        "@tsl//tsl/platform:threadpool.cc",
     ],
     hdrs = [
-        "@tsl//tsl/platform:env.h",
-        "@tsl//tsl/platform:file_system.h",
-        "@tsl//tsl/platform:file_system_helper.h",
-        "@tsl//tsl/platform:threadpool.h",
+        "//xla/tsl/platform:env.h",
+        "//xla/tsl/platform:file_system.h",
+        "//xla/tsl/platform:file_system_helper.h",
+        "//xla/tsl/platform:threadpool.h",
     ],
     tags = [
         "manual",
@@ -96,7 +96,7 @@ cc_library(
 cc_library(
     name = "env_time",
     srcs = ["env_time.cc"],
-    hdrs = ["@tsl//tsl/platform:env_time.h"],
+    hdrs = ["//xla/tsl/platform:env_time.h"],
     tags = [
         "manual",
         "no_oss",
