@@ -12698,7 +12698,7 @@ TEST_F(AlgebraicSimplifierTest,
   })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                           ParseAndReturnVerifiedModule(hlo));
-
+  default_options_.set_enable_remove_no_op_reduce_precision(true);
   EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Parameter()));
@@ -12715,6 +12715,7 @@ TEST_F(AlgebraicSimplifierTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
                           ParseAndReturnVerifiedModule(hlo));
 
+  default_options_.set_enable_remove_no_op_reduce_precision(true);
   EXPECT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
 }
 
