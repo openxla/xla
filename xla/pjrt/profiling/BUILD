@@ -43,6 +43,7 @@ cc_library(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "//xla/pjrt:pjrt_compiler",
     ],
 )
 
@@ -54,6 +55,7 @@ cc_library(
     # compatible_with = ["//buildenv/target:non_prod"],
     # copybara:uncomment_end
     deps = [
+        "//xla/pjrt:pjrt_compiler",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
