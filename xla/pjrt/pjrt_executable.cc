@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/pjrt/execute_options.pb.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -86,6 +87,9 @@ absl::StatusOr<CompileOptionsProto> CompileOptions::ToProto() const {
   if (multi_slice_config != nullptr) {
     output.set_serialized_multi_slice_config(multi_slice_config->Serialize());
   }
+  if (device_type.has_value()) {
+    output.set_device_type(static_cast<int32_t>(*device_type));
+  }
   for (auto& env_option_override : env_option_overrides) {
     auto& tmp =
         (*output.mutable_env_option_overrides())[env_option_override.first];
@@ -122,6 +126,8 @@ absl::StatusOr<CompileOptions> CompileOptions::FromProto(
   output.executable_build_options = executable_build_options;
   output.compile_portable_executable = proto.compile_portable_executable();
   output.profile_version = proto.profile_version();
+  output.device_type =
+      static_cast<DeviceTimeMeasurement::DeviceType>(proto.device_type());
   TF_ASSIGN_OR_RETURN(output.env_option_overrides,
                       LoadEnvOptionOverrides(proto.env_option_overrides()));
 

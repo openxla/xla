@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/stream_executor_executable.h"
 #include "xla/pjrt/utils.h"
 #include "xla/service/compiler.h"
@@ -126,6 +127,9 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
   TF_ASSIGN_OR_RETURN(auto gpu_compiler,
                       GetCompilerForPlatform(requested_platform_id_));
 
+  // Set device type to GPU to for device time measurements.
+  options.device_type = DeviceTimeMeasurement::DeviceType::kGpu;
+
   CompileOptions input_options = options;
   if (!options.target_config) {
     if (client != nullptr) {
@@ -199,6 +203,7 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
                                    const PjRtTopologyDescription& topology,
                                    PjRtClient* client) {
   CompileOptions input_options = options;
+  input_options.device_type = DeviceTimeMeasurement::DeviceType::kGpu;
   XlaComputation xla_computation;
   TF_RETURN_IF_ERROR(MlirToXlaComputation(
       module, xla_computation,

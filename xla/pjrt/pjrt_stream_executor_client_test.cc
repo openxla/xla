@@ -16,28 +16,39 @@ limitations under the License.
 #include "xla/pjrt/pjrt_stream_executor_client.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "xla/client/client_library.h"
+#include "xla/client/local_client.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal.h"
 #include "xla/literal_comparison.h"
 #include "xla/literal_util.h"
+#include "xla/pjrt/local_device_state.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/service/platform_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -66,8 +77,13 @@ absl::StatusOr<std::unique_ptr<PjRtStreamExecutorClient>> GetClient() {
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> ToyExecutable(
     PjRtStreamExecutorClient& client, Shape shape,
-    absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases) {
+    absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases,
+    std::optional<xla::DeviceTimeMeasurement::DeviceType> device_type =
+        std::nullopt) {
   CompileOptions compile_options;
+  if (device_type.has_value()) {
+    compile_options.device_type = *device_type;
+  }
   XlaBuilder builder("Add");
   auto a = Parameter(&builder, 0, shape, "a");
   auto b = Parameter(&builder, 1, shape, "b");
@@ -83,15 +99,18 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> ToyExecutable(
 }
 
 absl::Status ExecuteWithSameInputBuffer(
-    absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases) {
+    absl::AnyInvocable<void(XlaBuilder&)> set_up_aliases,
+    std::optional<xla::DeviceTimeMeasurement::DeviceType> device_type =
+        std::nullopt) {
   auto shape = xla::ShapeUtil::MakeScalarShape(xla::F32);
   TF_ASSIGN_OR_RETURN(auto client, GetClient());
   TF_RET_CHECK(!client->addressable_devices().empty());
   auto* device0 = client->addressable_devices().front();
   TF_ASSIGN_OR_RETURN(auto buffer,
                       client->CreateUninitializedBuffer(shape, device0));
-  TF_ASSIGN_OR_RETURN(auto executable,
-                      ToyExecutable(*client, shape, std::move(set_up_aliases)));
+  TF_ASSIGN_OR_RETURN(
+      auto executable,
+      ToyExecutable(*client, shape, std::move(set_up_aliases), device_type));
   return executable->Execute({{buffer.get(), buffer.get()}}, /*options=*/{})
       .status();
 }
@@ -159,6 +178,31 @@ TEST(PjRtStreamExecutorClientTest, DonateWithControlDependency) {
   }
 
   TF_ASSERT_OK(literal_comparison::Equal(literal, *result_literal));
+}
+
+TEST(PjRtStreamExecutorClientTest, NonZeroGPUDeviceTimeMeasurement) {
+  auto measurement0 = CreateDeviceTimeMeasurement();
+
+  auto status = ExecuteWithSameInputBuffer(
+      [](XlaBuilder& builder) {}, xla::DeviceTimeMeasurement::DeviceType::kGpu);
+  ASSERT_TRUE(status.ok());
+
+  EXPECT_GT(
+      measurement0->GetTotalDuration(DeviceTimeMeasurement::DeviceType::kGpu),
+      absl::ZeroDuration());
+}
+
+TEST(PjRtStreamExecutorClientTest, ZeroNonGPUDeviceTimeMeasurement) {
+  auto measurement0 = CreateDeviceTimeMeasurement();
+
+  // TPU is not supported, so the measurement should be zero.
+  auto status = ExecuteWithSameInputBuffer(
+      [](XlaBuilder& builder) {}, xla::DeviceTimeMeasurement::DeviceType::kTpu);
+  ASSERT_TRUE(status.ok());
+
+  EXPECT_EQ(
+      measurement0->GetTotalDuration(DeviceTimeMeasurement::DeviceType::kGpu),
+      absl::ZeroDuration());
 }
 
 }  // namespace
