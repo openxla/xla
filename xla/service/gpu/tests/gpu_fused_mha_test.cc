@@ -1540,13 +1540,13 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
     ROOT transpose.7 = bf16[4,16,4,16]{3,2,1,0} transpose(get-tuple-element.5.0), dimensions={0,2,1,3}
     }
 )";
-
-  std::string fp8_bnth = R"(
-    custom-call.21.0 = (
+  std::string fp8_custom_call = R"(custom-call.21.0 = (
         f8e4m3fn[4,4,16,16]{3,1,2,0},
         f32[1,1,1,1]{3,2,1,0},
-        f32[1,1,1,1]{3,2,1,0}
-    ) custom-call(
+        f32[1,1,1,1]{3,2,1,0})";
+  fp8_custom_call += cc.IsAtLeastBlackwell() ? ")" : ", u8[16]{0})";
+  std::string fp8_bnth = fp8_custom_call + R"(
+     custom-call(
         convert.18,
         convert.30,
         convert.42,
@@ -1719,12 +1719,13 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
     }
 )";
 
-  std::string fp8_btnh = R"(
-    custom-call.21.0 = (
+  std::string fp8_custom_call = R"(custom-call.21.0 = (
         f8e4m3fn[4,16,4,16]{3,2,1,0},
         f32[1,1,1,1]{3,2,1,0},
-        f32[1,1,1,1]{3,2,1,0}
-    ) custom-call(
+        f32[1,1,1,1]{3,2,1,0})";
+  fp8_custom_call += cc.IsAtLeastBlackwell() ? ")" : ", u8[16]{0})";
+  std::string fp8_btnh = fp8_custom_call + R"(
+     custom-call(
         convert.18,
         convert.30,
         convert.42,
