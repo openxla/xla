@@ -88,6 +88,18 @@ inline constexpr absl::string_view kUncompilableFusion =
 
 inline constexpr absl::string_view kTopKCustomCallTarget = "__gpu$TopK";
 
+inline constexpr absl::string_view
+    kDynamicSliceFusionWithStaticAddressComputationConfigName =
+        "address_computation";
+inline constexpr absl::string_view
+    kDynamicSliceFusionWithDynamicAddressComputationConfigName =
+        "dynamic_address_computation";
+
+std::optional<std::string> GetCustomFusionConfigName(
+    const HloInstruction* instr);
+
+bool IsDynamicSliceFusion(const HloInstruction* instr);
+
 // Returns true if `hlo` will be implemented as a call to a cuSolver routine.
 //
 // This returns true if `hlo` is a CustomCall HLO with a call target equal to
