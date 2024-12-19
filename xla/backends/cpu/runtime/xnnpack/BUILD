@@ -19,6 +19,8 @@ cc_library(
     hdrs = ["object_pool.h"],
     deps = [
         "@com_google_absl//absl/functional:any_invocable",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -27,11 +29,13 @@ xla_cc_test(
     srcs = ["object_pool_test.cc"],
     deps = [
         ":object_pool",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -42,9 +46,9 @@ cc_library(
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/math:math_util",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -75,6 +79,7 @@ cc_library(
         "@XNNPACK",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
+        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -92,6 +97,8 @@ cc_library(
     # copybara:uncomment_end
     deps = [
         ":parallel_loop_runner",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
         "@pthreadpool",
         "@tsl//tsl/platform:env",
@@ -123,6 +130,7 @@ cc_library(
     srcs = ["xnn_dot_thunk.cc"],
     hdrs = ["xnn_dot_thunk.h"],
     deps = [
+        ":object_pool",
         ":parallel_loop_runner",
         ":xnn_interop",
         ":xnn_threadpool",
@@ -137,6 +145,8 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework/contraction:eigen_contraction_kernel",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
@@ -149,8 +159,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
+        "@pthreadpool",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
