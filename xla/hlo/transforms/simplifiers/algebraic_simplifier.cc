@@ -8239,7 +8239,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleReducePrecision(
       Cast<HloReducePrecisionInstruction>(hlo);
   PrimitiveType element_type =
       reduce_precision->operand(0)->shape().element_type();
-  if (reduce_precision->exponent_bits() ==
+  if (options_.enable_remove_no_op_reduce_precision() &&
+      reduce_precision->exponent_bits() ==
           primitive_util::ExponentWidth(element_type) &&
       reduce_precision->mantissa_bits() + 1 ==
           primitive_util::SignificandWidth(element_type)) {

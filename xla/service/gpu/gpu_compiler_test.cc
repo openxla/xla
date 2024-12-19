@@ -1554,6 +1554,12 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
+TEST_F(PassOrderTest,
+       ReducePrecisionIsRemovedAfterAllCallsToSimplifyFPConversions) {
+  VerifyPassOrder("simplify-fp-conversions",
+                  "remove-no-op-reduce-precision-algebraic-simplifier");
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
