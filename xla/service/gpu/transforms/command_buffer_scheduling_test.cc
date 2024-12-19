@@ -1249,5 +1249,55 @@ TEST_F(CommandBufferSchedulingTest, ReturnTrueWhenOnlyParamMoved) {
   )");
 }
 
+TEST_F(CommandBufferSchedulingTest,
+       DynamicSliceFusionWithDynamicAddressesNotACommand) {
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      destination = s32[2,2,32] parameter(0)
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      c4 = s32[] constant(4)
+      source = s32[8,32] parameter(1)
+      a = s32[1024,1024] parameter(2)
+      b = s32[1024,1024] parameter(3)
+      slice = s32[4,32] slice(source), slice={[4:8], [0:32]}
+      rs = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      reshape = s32[1,2,32] reshape(rs)
+      dus = s32[2,2,32] dynamic-update-slice(destination, reshape, c1, c0, c0)
+      dot = s32[1024,1024] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT tuple = tuple(dus,dot)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  auto m_ref = m->Clone();
+  m->mutable_config().mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_opt,
+                          GetOptimizedModule(m->Clone()));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          CreateExecutable(m_opt->Clone(), false));
+  HloInstruction* fusion_start =
+      FindInstruction(&exec->module(), HloOpcode::kAsyncStart);
+  HloInstruction* fusion_done =
+      FindInstruction(&exec->module(), HloOpcode::kAsyncDone);
+  ASSERT_NE(fusion_start, nullptr);
+  ASSERT_NE(fusion_done, nullptr);
+  EXPECT_EQ(fusion_start->parent(), exec->module().entry_computation());
+  EXPECT_EQ(fusion_done->parent(), exec->module().entry_computation());
+  ErrorSpec error{1e-6, 1e-6};
+  RunAndCompareTwoModulesReplicated(std::move(m_ref), std::move(m), true, true,
+                                    error);
+}
+
 }  // namespace
 }  // namespace xla::gpu

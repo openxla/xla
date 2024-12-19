@@ -1251,13 +1251,7 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
                         se::PlatformManager::PlatformWithId(platform_id));
     pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
     pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
-      absl::StatusOr<GpuBackendConfig> backend_config =
-          instr->backend_config<GpuBackendConfig>();
-      if (!backend_config.ok()) return false;
-      std::string name =
-          backend_config->fusion_backend_config().custom_fusion_config().name();
-      if (name != "address_computation" &&
-          name != "dynamic_address_computation") {
+      if (!IsDynamicSliceFusion(instr)) {
         return false;
       }
       std::optional<const HloInstruction*> hero_op = HloBfsFindIf(

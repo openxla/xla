@@ -902,7 +902,9 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
       fusion_instr.backend_config<xla::gpu::GpuBackendConfig>());
   const std::string fusion_name =
       backend_config.fusion_backend_config().custom_fusion_config().name();
-  TF_RET_CHECK(isDynamic == (fusion_name == "dynamic_address_computation"))
+  TF_RET_CHECK(isDynamic ==
+               (fusion_name ==
+                kDynamicSliceFusionWithDynamicAddressComputationConfigName))
       << "Dynamic index operation found in a fusion instruction that is not "
          "labelled dynamic_address_computation";
 

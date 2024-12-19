@@ -2575,17 +2575,12 @@ absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
   return absl::OkStatus();
 }
 
-// If the fusion instruction is a dynamic slice fusion instruction, with a
+// If the fusion instruction is a dynamic-slice-fusion instruction, with a
 // collective hero operation, then this function returns the collective
 // operation. Returns std::nullopt otherwise.
 std::optional<const HloInstruction*> GetCollectiveHeroForDynamicSliceFusion(
     const HloFusionInstruction* instruction) {
-  absl::StatusOr<GpuBackendConfig> backend_config =
-      instruction->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) return std::nullopt;
-  std::string name =
-      backend_config->fusion_backend_config().custom_fusion_config().name();
-  if (name != "address_computation" && name != "dynamic_address_computation") {
+  if (!IsDynamicSliceFusion(instruction)) {
     return std::nullopt;
   }
   return HloBfsFindIf(

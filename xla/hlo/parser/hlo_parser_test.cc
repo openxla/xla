@@ -5924,5 +5924,54 @@ ENTRY main {
                   "error: unexpected attribute \"result_accuracy\"");
 }
 
+TEST_F(HloParserTest,
+       AsyncInstructionWithAttributesShouldPropagateToWrappedInstruction) {
+  const char* hlo = R"(
+  HloModule test
+  ENTRY main {
+    a = s32[] parameter(0), origin={{"v1"}}
+    b = s32[] parameter(1), origin={{"v2"}}
+    add-start = ((s32[], s32[]), s32[], s32[]) add-start(a, b),
+                metadata={op_type="add" op_name="\"sample name\n" source_file="path/to/test.cc" source_line=68},
+                backend_config="foo\" bar",
+                frontend_attributes={attr_a="test_a",attr_b="b"},
+                statistics={visualizing_index=1,stat-1=33,stat-2=44}
+    ROOT add-done = s32[] add-done(add-start), origin={{"v3"}}
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  // Check the wrapped instruction.
+  HloInstruction* wrapped_instr =
+      m->entry_computation()->root_instruction()->async_wrapped_instruction();
+  EXPECT_EQ(wrapped_instr->metadata().DebugString(),
+            "op_type: \"add\"\nop_name: \"\\\"sample name\\n\"\nsource_file: "
+            "\"path/to/test.cc\"\nsource_line: 68\n");
+  EXPECT_EQ(wrapped_instr->raw_backend_config_string(), "foo\" bar");
+  EXPECT_EQ(wrapped_instr->frontend_attributes().DebugString(),
+            "map {\n  key: \"attr_a\"\n  value: \"test_a\"\n}\nmap {\n  key: "
+            "\"attr_b\"\n  value: \"b\"\n}\n");
+  EXPECT_EQ(wrapped_instr->statistics_viz().DebugString(),
+            "stat_index_to_visualize: 1\nstatistics {\n  stat_name: "
+            "\"stat-1\"\n  stat_val: 33\n}\nstatistics {\n  stat_name: "
+            "\"stat-2\"\n  stat_val: 44\n}\n");
+  EXPECT_EQ(OriginalValueToString(*wrapped_instr->original_value()),
+            "{\"v3\"}");
+  // Check the async-start and async-done instructions.
+  HloInstruction* async_done = m->entry_computation()->root_instruction();
+  HloInstruction* async_start = async_done->async_chain_start();
+  EXPECT_EQ(async_start->metadata().DebugString(),
+            "op_type: \"add\"\nop_name: \"\\\"sample name\\n\"\nsource_file: "
+            "\"path/to/test.cc\"\nsource_line: 68\n");
+  EXPECT_EQ(async_start->raw_backend_config_string(), "foo\" bar");
+  EXPECT_EQ(async_start->frontend_attributes().DebugString(),
+            "map {\n  key: \"attr_a\"\n  value: \"test_a\"\n}\nmap {\n  key: "
+            "\"attr_b\"\n  value: \"b\"\n}\n");
+  EXPECT_EQ(async_start->statistics_viz().DebugString(),
+            "stat_index_to_visualize: 1\nstatistics {\n  stat_name: "
+            "\"stat-1\"\n  stat_val: 33\n}\nstatistics {\n  stat_name: "
+            "\"stat-2\"\n  stat_val: 44\n}\n");
+  EXPECT_EQ(OriginalValueToString(*async_done->original_value()), "{\"v3\"}");
+}
+
 }  // namespace
 }  // namespace xla
