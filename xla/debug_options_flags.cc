@@ -321,7 +321,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(true);
   opts.set_xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(false);
-  opts.set_xla_gpu_experimental_enable_alltoall_windowed_einsum(false);
   return opts;
 }
 
@@ -2181,15 +2180,6 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_unsupported_enable_ragged_all_to_all_decomposer(),
       "Internal: Enable the RaggedAllToAllDecomposer, an experimental pass "
       "that rewrites ragged-all-to-all as a dense all-to-all operation."));
-  flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_enable_alltoall_windowed_einsum",
-      bool_setter_for(
-          &DebugOptions::
-              set_xla_gpu_experimental_enable_alltoall_windowed_einsum),
-      debug_options->xla_gpu_experimental_enable_alltoall_windowed_einsum(),
-      "Enable windowed einsum rewrite for all-to-all+gemm pattern, "
-      "This optimization slices the all-to-all into smaller all-to-alls."
-      "It is an experimental feature."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
