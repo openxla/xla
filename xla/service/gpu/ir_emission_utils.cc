@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/platform/statusor.h"
 
@@ -636,6 +637,26 @@ absl::StatusOr<std::string> GetProtoFingerprint(
   std::string result;
   TF_RET_CHECK(tsl::SerializeToStringDeterministic(proto, &result));
   return absl::WebSafeBase64Escape(result);
+}
+
+bool IsDynamicSliceFusion(const HloInstruction* instr) {
+  if (instr->opcode() != HloOpcode::kFusion ||
+      instr->fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+  absl::StatusOr<GpuBackendConfig> backend_config =
+      instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok() || !backend_config->has_fusion_backend_config()) {
+    return false;
+  }
+  const FusionBackendConfig& fusion_backend_config =
+      backend_config->fusion_backend_config();
+  if (!fusion_backend_config.has_custom_fusion_config()) {
+    return false;
+  }
+  std::string name = fusion_backend_config.custom_fusion_config().name();
+  return name == kDynamicSliceFusionWithStaticAddressComputationConfigName ||
+         name == kDynamicSliceFusionWithDynamicAddressComputationConfigName;
 }
 
 }  // namespace gpu
