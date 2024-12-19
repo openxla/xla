@@ -1675,6 +1675,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<SimplifyFPConversions>();
   }
 
+  simplifier_options.set_enable_remove_no_op_reduce_precision(true);
+  pipeline.AddPass<GpuAlgebraicSimplifier>(simplifier_options);
+
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
 
   pipeline.AddPass<HostMemoryTransferAsyncifier>(
