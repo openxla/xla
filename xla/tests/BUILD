@@ -2430,6 +2430,7 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:types",
         "//xla/service:computation_placer",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
@@ -2439,6 +2440,7 @@ xla_test(
         "@ml_dtypes//:float8",
         "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
