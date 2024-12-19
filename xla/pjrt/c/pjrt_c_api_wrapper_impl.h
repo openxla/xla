@@ -91,6 +91,14 @@ struct PJRT_MemoryDescription {
   xla::PjRtMemorySpaceDescription memory_space_description;
 };
 
+// PJRT_AsyncHostToDeviceTransferManager is owned by its corresponding
+// PJRT_Client.
+struct PJRT_AsyncHostToDeviceTransferManager {
+  std::unique_ptr<xla::PjRtClient::AsyncHostToDeviceTransferManager>
+      transfer_manager;
+  PJRT_Client* client;
+};
+
 // PJRT_DeviceDescriptions are owned by their corresponding PJRT_Device.
 struct PJRT_DeviceDescription {
   // The xla::PjRtDeviceDescription* is owned transitively by the
@@ -254,7 +262,12 @@ PJRT_Error* PJRT_Client_BufferFromHostBuffer(
     PJRT_Client_BufferFromHostBuffer_Args* args);
 PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     PJRT_Client_CreateViewOfDeviceBuffer_Args* args);
-
+PJRT_Error* PJRT_Client_CreateBuffersForAsyncHostToDevice(
+    PJRT_Client_CreateBuffersForAsyncHostToDevice_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Destroy(
+    PJRT_AsyncHostToDeviceTransferManager_Destroy_Args* args);
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
+    PJRT_AsyncHostToDeviceTransferManager_TransferData_Args* args);
 PJRT_Error* PJRT_DeviceDescription_Id(PJRT_DeviceDescription_Id_Args* args);
 PJRT_Error* PJRT_DeviceDescription_ProcessIndex(
     PJRT_DeviceDescription_ProcessIndex_Args* args);
@@ -451,6 +464,7 @@ PJRT_Client* CreateWrapperClient(std::unique_ptr<xla::PjRtClient> cpp_client);
 // Helper functions for converting C key-value store callbacks to C++ callbacks.
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(
     PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
+    PJRT_KeyValueTryGetCallback c_try_get_callback, void* try_get_user_arg,
     PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg);
 
 // A method that does not nothing other than returning a nullptr. Can be used as

@@ -74,6 +74,20 @@ PJRT_ClientDeleter MakeClientDeleter(const PJRT_Api* api) {
   };
 }
 
+PJRT_AsyncHostToDeviceTransferManagerDeleter
+MakeAsyncHostToDeviceTransferManagerDeleter(const PJRT_Api* api) {
+  return [api](
+             PJRT_AsyncHostToDeviceTransferManager* transfer_manager) -> void {
+    PJRT_AsyncHostToDeviceTransferManager_Destroy_Args destroy_args;
+    destroy_args.struct_size =
+        PJRT_AsyncHostToDeviceTransferManager_Destroy_Args_STRUCT_SIZE;
+    destroy_args.extension_start = nullptr;
+    destroy_args.transfer_manager = transfer_manager;
+    pjrt::LogFatalIfPjrtError(
+        api->PJRT_AsyncHostToDeviceTransferManager_Destroy(&destroy_args), api);
+  };
+}
+
 PJRT_ErrorDeleter MakeErrorDeleter(const PJRT_Api* api) {
   return [api](PJRT_Error* error) -> void {
     PJRT_Error_Destroy_Args destroy_args;
@@ -781,6 +795,25 @@ static PJRT_KeyValueGetCFunc ToKVGetCFunc(
   };
 }
 
+static PJRT_KeyValueTryGetCFunc ToKVTryGetCFunc(
+    xla::KeyValueStoreInterface* kv_store) {
+  return [kv_store](PJRT_KeyValueTryGetCallback_Args* args) -> PJRT_Error* {
+    absl::StatusOr<std::string> output =
+        kv_store->TryGet(absl::string_view(args->key, args->key_size));
+    if (!output.ok()) {
+      absl::string_view message = output.status().message();
+      return (*args->callback_error)(
+          StatusCodeToPjrtErrorCode(output.status().code()), message.data(),
+          message.size());
+    }
+    args->value = new char[output->size()];
+    std::copy(output->begin(), output->end(), args->value);
+    args->value_size = output->size();
+    args->value_deleter_callback = &PjRtValueDeleterCallback;
+    return nullptr;
+  };
+}
+
 static PJRT_KeyValuePutCFunc ToKVPutCFunc(
     xla::KeyValueStoreInterface* kv_store) {
   return [kv_store](PJRT_KeyValuePutCallback_Args* args) -> PJRT_Error* {
@@ -812,6 +845,22 @@ static PJRT_KeyValueGetCallback ToCKVGetCallback(
   };
 }
 
+static PJRT_KeyValueTryGetCallback ToCKVTryGetCallback(
+    PJRT_KeyValueTryGetCFunc* kv_try_get_c_func) {
+  return [](PJRT_KeyValueTryGetCallback_Args* args) -> PJRT_Error* {
+    PJRT_KeyValueTryGetCFunc* kv_try_get_c_func =
+        reinterpret_cast<PJRT_KeyValueTryGetCFunc*>(args->user_arg);
+    if (kv_try_get_c_func == nullptr) {
+      absl::Status status = xla::InvalidArgument(
+          "got nullptr for PJRT_KeyValueTryGet_Args.user_arg");
+      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
+                                     status.message().data(),
+                                     status.message().size());
+    }
+    return (*kv_try_get_c_func)(args);
+  };
+}
+
 static PJRT_KeyValuePutCallback ToCKVPutCallback(
     PJRT_KeyValuePutCFunc* kv_put_c_func) {
   return [](PJRT_KeyValuePutCallback_Args* args) -> PJRT_Error* {
@@ -832,9 +881,12 @@ std::unique_ptr<PJRT_KeyValueCallbackData> ConvertToCKeyValueCallbacks(
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store) {
   auto kv_callback_data = std::make_unique<PJRT_KeyValueCallbackData>();
   kv_callback_data->kv_get_c_func = ToKVGetCFunc(kv_store.get());
+  kv_callback_data->kv_try_get_c_func = ToKVTryGetCFunc(kv_store.get());
   kv_callback_data->kv_put_c_func = ToKVPutCFunc(kv_store.get());
   kv_callback_data->c_kv_get =
       ToCKVGetCallback(&kv_callback_data->kv_get_c_func);
+  kv_callback_data->c_kv_try_get =
+      ToCKVTryGetCallback(&kv_callback_data->kv_try_get_c_func);
   kv_callback_data->c_kv_put =
       ToCKVPutCallback(&kv_callback_data->kv_put_c_func);
   kv_callback_data->kv_store = std::move(kv_store);
@@ -1062,6 +1114,29 @@ PJRT_Profiler_Extension CreatePjrtProfilerExtension(
       /*traceme_context_id=*/traceme_context_id,
   };
   return profiler_extension;
+}
+
+PJRT_ShapeSpec ConvertToPjRtShapeSpec(
+    const xla::PjRtClient::ShapeSpec& shape_spec) {
+  PJRT_ShapeSpec c_shape_spec;
+  c_shape_spec.struct_size = PJRT_ShapeSpec_STRUCT_SIZE;
+  c_shape_spec.extension_start = nullptr;
+  c_shape_spec.element_type =
+      pjrt::ConvertToPjRtBufferType(shape_spec.element_type);
+  c_shape_spec.dims = shape_spec.dims.data();
+  c_shape_spec.num_dims = shape_spec.dims.size();
+  return c_shape_spec;
+}
+
+xla::PjRtClient::ShapeSpec ConvertFromPjrtShapeSpec(
+    PJRT_ShapeSpec c_shape_spec) {
+  xla::PjRtClient::ShapeSpec shape_spec;
+  shape_spec.element_type =
+      pjrt::ConvertFromPjRtBufferType(c_shape_spec.element_type);
+
+  shape_spec.dims = xla::DimensionVector(
+      c_shape_spec.dims, c_shape_spec.dims + c_shape_spec.num_dims);
+  return shape_spec;
 }
 
 }  // namespace pjrt

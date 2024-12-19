@@ -1,7 +1,15 @@
 # PJRT C API changelog
 
-## 0.60
+## 0.62
 * Added ``context`` field of type ``PJRT_ExecuteContext *`` in ``PJRT_ExecuteOptions``.
+
+## 0.61
+* Added ``PJRT_KeyValueTryGet`` to the KV store interface,
+  which is non-blocking and immediately returns an error if the
+  key is not found.
+
+## 0.60
+* Added ``PJRT_Client_CreateBuffersForAsyncHostToDevice`` and ``PJRT_AsyncHostToDeviceTransferManager_TransferRawDataToSubBuffer``.
 
 ## 0.59
 * Added ``PJRT_MemoryDescriptions_Extension``.
