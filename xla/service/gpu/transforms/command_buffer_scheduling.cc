@@ -97,19 +97,6 @@ static bool IsNoOp(const HloInstruction* hlo) {
 // done operation is not part of the same command buffer, we would change the
 // execution semantics and create additional synchronization point.
 
-// Returns true if the hlo instruction is async-start for dynamic-slice-fusion.
-static bool IsAsyncDynamicSliceFusion(const HloInstruction* hlo) {
-  HloInstruction* wrapped = hlo->async_wrapped_instruction();
-  absl::StatusOr<GpuBackendConfig> backend_config =
-      wrapped->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) {
-    return false;
-  }
-  std::string name =
-      backend_config->fusion_backend_config().custom_fusion_config().name();
-  return name == "address_computation" || name == "dynamic_address_computation";
-}
-
 static bool IsAsyncStartCommand(const HloInstruction* hlo,
                                 const CommandBufferConfig& config) {
   if (HloPredicateIsOp<HloOpcode::kAllReduceStart, HloOpcode::kAllGatherStart>(
@@ -122,9 +109,18 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      if (IsAsyncDynamicSliceFusion(hlo)) {
-        return config.enabled_commands.contains(
-            DebugOptions::DYNAMIC_SLICE_FUSION);
+      // Currently only supporting static address computation in command buffer.
+      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
+        if (std::optional<std::string> config_name =
+                GetCustomFusionConfigName(hlo->async_wrapped_instruction());
+            config_name.has_value() &&
+            config_name ==
+                kDynamicSliceFusionWithStaticAddressComputationConfigName) {
+          return config.enabled_commands.contains(
+              DebugOptions::DYNAMIC_SLICE_FUSION);
+        } else {
+          return false;
+        }
       } else {
         return config.enabled_commands.contains(DebugOptions::FUSION);
       }
@@ -154,9 +150,18 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      if (IsAsyncDynamicSliceFusion(hlo)) {
-        return config.enabled_commands.contains(
-            DebugOptions::DYNAMIC_SLICE_FUSION);
+      // Currently only supporting static address computation in command buffer.
+      if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
+        if (std::optional<std::string> config_name =
+                GetCustomFusionConfigName(hlo->async_wrapped_instruction());
+            config_name.has_value() &&
+            config_name ==
+                kDynamicSliceFusionWithStaticAddressComputationConfigName) {
+          return config.enabled_commands.contains(
+              DebugOptions::DYNAMIC_SLICE_FUSION);
+        } else {
+          return false;
+        }
       } else {
         return config.enabled_commands.contains(DebugOptions::FUSION);
       }
@@ -264,9 +269,7 @@ static bool IsCommand(const HloInstruction* hlo,
     if (backend_config.kind() == kCuDnnFusionKind) {
       return config.enabled_commands.contains(DebugOptions::CUDNN);
     }
-    const auto& custom_config = backend_config.custom_fusion_config();
-    if ((custom_config.name() == "address_computation") ||
-        (custom_config.name() == "dynamic_address_computation")) {
+    if (IsDynamicSliceFusion(fusion)) {
       auto fusion_analysis =
           HloFusionAnalysis::Create(*hlo, config.device_description);
       const HloFusionAdaptor& adaptor = fusion_analysis.fusion();
@@ -277,7 +280,10 @@ static bool IsCommand(const HloInstruction* hlo,
           });
       const HloInstruction* hero = &hero_adaptor->instruction();
 
-      if (custom_config.name() == "address_computation") {
+      const absl::string_view& config_name =
+          backend_config.custom_fusion_config().name();
+      if (config_name ==
+          kDynamicSliceFusionWithStaticAddressComputationConfigName) {
         return IsCommand(hero, config) || IsAsyncStartCommand(hero, config);
       } else {
         // DynamicSliceFusionRewriter currently only rewrites for dynamic slice
@@ -403,7 +409,9 @@ CommandBufferScheduling::CollectCommandBufferSequences(
         const FusionBackendConfig& backend_config =
             gpu_config->fusion_backend_config();
         const auto& custom_config = backend_config.custom_fusion_config();
-        if (custom_config.name() != "dynamic_address_computation") return true;
+        if (custom_config.name() !=
+            kDynamicSliceFusionWithDynamicAddressComputationConfigName)
+          return true;
 
         auto* fused_computation = fusion->called_computation();
         return !absl::c_any_of(
