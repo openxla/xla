@@ -46,9 +46,9 @@ cc_library(
     deps = [
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/lib/math:math_util",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -97,6 +97,8 @@ cc_library(
     # copybara:uncomment_end
     deps = [
         ":parallel_loop_runner",
+        "//xla/tsl/concurrency:async_value",
+        "@com_google_absl//absl/base:core_headers",
         "@eigen_archive//:eigen3",
         "@pthreadpool",
         "@tsl//tsl/platform:env",
@@ -157,6 +159,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
+        "@pthreadpool",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
