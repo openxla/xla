@@ -48,7 +48,7 @@ class DynamicSliceThunk : public Thunk {
   // Dynamic slice offset can be either: (1) a statically known constant value
   // or (2) a truly dynamic offset that is computed on device and have to be
   // transferred to host.
-  using Offset = std::variant<int64_t, BufferAllocation::Slice>;
+  using Offset = std::variant<int64_t, BufferAllocation::Slice, HloModule*>;
 
   DynamicSliceThunk(
       ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
@@ -57,8 +57,10 @@ class DynamicSliceThunk : public Thunk {
       std::vector<std::optional<std::vector<Offset>>> offsets,
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
-      std::vector<std::optional<uint64_t>> offset_byte_sizes);
-
+      std::vector<std::optional<uint64_t>> offset_byte_sizes,
+      std::vector<std::unique_ptr<HloModule>> temp_modules = {},
+      std::unique_ptr<HloModule> indvar_init = nullptr,
+      std::unique_ptr<HloModule> indvar_update = nullptr);
   DynamicSliceThunk(const DynamicSliceThunk&) = delete;
   DynamicSliceThunk& operator=(const DynamicSliceThunk&) = delete;
 
@@ -132,6 +134,9 @@ class DynamicSliceThunk : public Thunk {
 
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
+
+  std::vector<std::unique_ptr<HloModule>> temp_modules_;
+  std::unique_ptr<HloModule> indvar_init_, indvar_update_;
 };
 
 }  // namespace gpu

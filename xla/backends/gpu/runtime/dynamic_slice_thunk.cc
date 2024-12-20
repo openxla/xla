@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/STLExtras.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
@@ -47,6 +48,17 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace {
+
+std::unique_ptr<Literal>& Indvar(DynamicSliceThunk* thunk) {
+  static thread_local absl::flat_hash_map<DynamicSliceThunk*,
+                                          std::unique_ptr<Literal>>
+      indvar_map;
+  return indvar_map[thunk];
+}
+
+}  // namespace
+
 DynamicSliceThunk::DynamicSliceThunk(
     ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
     std::vector<std::optional<BufferAllocation::Slice>> arguments,
@@ -54,7 +66,10 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<std::vector<Offset>>> offsets,
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
-    std::vector<std::optional<uint64_t>> offset_byte_sizes)
+    std::vector<std::optional<uint64_t>> offset_byte_sizes,
+    std::vector<std::unique_ptr<HloModule>> temp_modules,
+    std::unique_ptr<HloModule> indvar_init,
+    std::unique_ptr<HloModule> indvar_update)
     : Thunk(Kind::kDynamicSlice, thunk_info),
       embedded_thunk_(std::make_unique<SequentialThunk>(
           ThunkInfo(), std::move(*embedded_thunk))),
@@ -63,8 +78,12 @@ DynamicSliceThunk::DynamicSliceThunk(
       offsets_(offsets),
       orig_shapes_(orig_shapes),
       sliced_shapes_(sliced_shapes),
-      offset_byte_sizes_(offset_byte_sizes) {
-  // Zip all arguments together to create a list of SliceDef.
+      offset_byte_sizes_(offset_byte_sizes),
+      temp_modules_(std::move(temp_modules)),
+      indvar_init_(std::move(indvar_init)),
+      indvar_update_(
+          std::move(indvar_update)) {  // Zip all arguments together to create a
+                                       // list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
                        offset_byte_sizes)) {
@@ -105,6 +124,13 @@ absl::Status DynamicSliceThunk::Prepare(
   }
 
   TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params, resource_requests));
+
+  if (indvar_init_ != nullptr) {
+    Indvar(this) = HloEvaluator()
+                       .Evaluate(/*module=*/*indvar_init_, /*arg_literals=*/{})
+                       ->CloneToUnique();
+    VLOG(0) << "Indvar = " << Indvar(this)->ToString();
+  }
   return absl::OkStatus();
 }
 
@@ -182,6 +208,20 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
                 << "]: constant offset = " << *const_offset;
         offset_value(argument_idx, offset_idx) = *const_offset;
 
+      } else if (HloModule** offset_module = std::get_if<HloModule*>(&offset)) {
+        TF_ASSIGN_OR_RETURN(
+            Literal offset,
+            HloEvaluator().Evaluate(**offset_module, {Indvar(this).get()}));
+        auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
+        if (offset_int.has_value()) {
+          offset_value(argument_idx, offset_idx) = *offset_int;
+        } else {
+          return absl::InternalError(
+              absl::StrFormat("Unhandled type returned from offset module: %s",
+                              offset.shape().ToString()));
+        }
+        VLOG(1) << "Offset value = " << offset_value(argument_idx, offset_idx);
+
       } else {
         // Transfer slice offset value from device to host.
         auto alloc_slice = std::get<BufferAllocation::Slice>(offset);
@@ -251,6 +291,12 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   // Execute the underlying custom call thunk with the new buffers.
   TF_RETURN_IF_ERROR(embedded_thunk_->ExecuteOnStream(new_params));
+
+  if (indvar_update_ != nullptr) {
+    Indvar(this) = HloEvaluator()
+                       .Evaluate(*indvar_update_, {Indvar(this).get()})
+                       ->CloneToUnique();
+  }
 
   return absl::OkStatus();
 }
