@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load("@tsl//tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,6 +21,10 @@ cc_library(
         "//tensorflow/python/profiler/internal:__subpackages__",
     ]),
     deps = [
+        "//xla/tsl/profiler/utils:time_utils",
+        "//xla/tsl/profiler/utils:xplane_builder",
+        "//xla/tsl/profiler/utils:xplane_schema",
+        "//xla/tsl/profiler/utils:xplane_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/memory",
@@ -31,10 +35,6 @@ cc_library(
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
-        "@tsl//tsl/profiler/utils:time_utils",
-        "@tsl//tsl/profiler/utils:xplane_builder",
-        "@tsl//tsl/profiler/utils:xplane_schema",
-        "@tsl//tsl/profiler/utils:xplane_utils",
     ],
     alwayslink = True,
 )

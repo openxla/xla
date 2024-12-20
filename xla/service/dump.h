@@ -43,6 +43,10 @@ constexpr char kAfterOptimizationsDumpName[] = "after_optimizations";
 class BufferAssignment;
 class HloSnapshot;
 
+// Creates dir if doesn't exist (analogue of `mkdir -p`), tries to get around
+// race conditions by trying again on collision.
+absl::Status CreateDirIfNeeded(const std::string& dir, tsl::Env* env);
+
 // Get a timestamp which we can use as a filename prefix specific to this
 // module.
 std::string TimestampFor(const HloModule& module);
@@ -148,6 +152,11 @@ void DumpHloSnapshotIfEnabled(const HloModule& module,
 void DumpHloSnapshotIfEnabled(const HloSnapshot& snapshot,
                               const DebugOptions& opts);
 
+// Dumps the given HloUnoptimisedSnapshot to the module's xla_dump_dir, if this
+// is enabled.
+void DumpHloUnoptimizedSnapshotIfEnabled(
+    const HloUnoptimizedSnapshot& hlo_snapshot, const DebugOptions& opts);
+
 void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules);
 
 // Returns true if we should dump data for an HloModule.  This is useful if you
@@ -172,6 +181,18 @@ inline bool DumpingEnabledForHloModule(const HloModule& module) {
 // For example, maybe you have (almost-)duplicate data that you wouldn't mind
 // writing to two files, but you don't want to print twice.
 bool DumpingToStdout(const DebugOptions& opts);
+
+// Writes the given message in binary proto to the path formed by joining
+// 'directory/file_name.pb'. The 'directory' is recursively created if it
+// doesn't already exist, and the 'file_name' is sanitized by replacing
+// illegal characters with underscore '_'.
+//
+// If 'full_name' is not null then it is set to the name of the file the
+// protobuf was written to.
+absl::Status DumpProtoToDirectory(const tsl::protobuf::Message& message,
+                                  const std::string& directory,
+                                  const std::string& file_name,
+                                  std::string* full_path = nullptr);
 
 }  // namespace xla
 

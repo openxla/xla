@@ -29,7 +29,8 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
-#include "xla/service/gpu/fusions/triton/triton_support.h"
+#include "xla/service/gpu/fusions/triton/triton_support_legacy.h"
+#include "xla/service/gpu/fusions/triton/triton_test_utils.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
@@ -52,14 +53,22 @@ struct MixTypeParams {
 class MixedTypeTest : public GpuCodegenTest,
                       public ::testing::WithParamInterface<MixTypeParams> {
  public:
-  se::CudaComputeCapability GetCudaComputeCapability() {
+  se::GpuComputeCapability GetGpuComputeCapability() {
     return backend()
         .default_stream_executor()
         ->GetDeviceDescription()
-        .cuda_compute_capability();
+        .gpu_compute_capability();
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  void SetUp() override {
+    if (std::holds_alternative<se::RocmComputeCapability>(
+            GetGpuComputeCapability())) {
+      GTEST_SKIP()
+          << "Related fusions are not performed on ROCm without Triton.";
+    }
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     // We are testing Triton, remove cuBLAS fallback for these tests.
     debug_options.set_xla_gpu_cublas_fallback(false);
@@ -131,9 +140,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
                              //  TritonRewriteTest2Params{F32, F16},
                              //  TritonRewriteTest2Params{F32, BF16},
                              MixTypeParams{S8, BF16, 24, 40, 8},
-                             // Modify the case below to use k = 32 instead of
-                             // 16 once b/337839570 is fixed.
-                             MixTypeParams{S8, F16, 80, 32, 32, 1e-3, 1e-6},
+                             MixTypeParams{S8, F16, 80, 16, 32, 1e-3, 1e-6},
                              MixTypeParams{F16, F32, 127, 3, 300, 1e-2, 1e-2},
                              MixTypeParams{F16, BF16, 544, 96, 16, 1e-3, 1e-3},
                              MixTypeParams{BF16, F32, 77, 500, 333, 3e-3, 3e-3},
@@ -142,7 +149,7 @@ INSTANTIATE_TEST_SUITE_P(RewriteTestSuite, MixedTypeTest,
 
 class TritonTest : public GpuCodegenTest {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_triton_gemm_any(true);
     debug_options.set_xla_gpu_cublas_fallback(false);
@@ -232,6 +239,50 @@ ENTRY e {
       "alpha_imag":0,"precision_config":
       {"operand_precision":["HIGHEST","HIGHEST"]},"epilogue":"DEFAULT"}}
    ROOT get-tuple-element = f32[15,68]{1,0} get-tuple-element((f32[15,68]{1,0}, s8[0]{0}) gemm), index=0
+})";
+  const std::string hlo_ref = absl::Substitute(
+      kHloRefTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
+      HloOpcodeString(opcode));
+
+  EXPECT_TRUE(RunAndCompareTwoModules(
+      hlo_ref, hlo_test, ErrorSpec{/*aabs=*/tolerance, /*arel=*/tolerance},
+      /*run_hlo_passes=*/false));
+}
+
+TEST_P(UnaryElementwiseTest, ElementwiseUnaryOpExecutesCorrectly) {
+  PrimitiveType data_type;
+  HloOpcode opcode;
+  float tolerance;
+  std::tie(data_type, opcode, tolerance) = GetParam();
+
+  const std::string kHloTestTemplate = R"(
+triton_computation {
+  parameter_0 = $0[33,68]{1,0} parameter(0)
+  output = $0[33,68]{1,0} $1(parameter_0)
+  ROOT convert = f32[33,68]{1,0} convert(output)
+}
+
+ENTRY e {
+  p0 = $0[33,68]{1,0} parameter(0)
+  ROOT triton_fusion = f32[33,68]{1,0} fusion(p0), kind=kCustom,
+    calls=triton_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+                    "block_level_fusion_config":{"output_tile_sizes":["1", "1"],"num_warps":"1"}}}
+})";
+  const std::string hlo_test = absl::Substitute(
+      kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
+      HloOpcodeString(opcode));
+
+  const std::string kHloRefTemplate = R"(
+fused_computation {
+  param_0.1 = $0[33,68]{1,0} parameter(0)
+  output = $0[33,68]{1,0} $1(param_0.1)
+  ROOT convert = f32[33,68]{1,0} convert(output)
+}
+
+ENTRY e {
+  p0 = $0[33,68]{1,0} parameter(0)
+  ROOT fusion = f32[33,68]{1,0} fusion(p0), kind=kLoop, calls=fused_computation
 })";
   const std::string hlo_ref = absl::Substitute(
       kHloRefTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -363,6 +414,54 @@ ENTRY e {
       "alpha_imag":0,"precision_config":
       {"operand_precision":["HIGHEST","HIGHEST"]},"epilogue":"DEFAULT"}}
   ROOT get-tuple-element = f32[92,63]{1,0} get-tuple-element((f32[92,63]{1,0}, s8[0]{0}) gemm), index=0
+})";
+  const std::string hlo_ref = absl::Substitute(
+      kHloRefTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
+      HloOpcodeString(opcode));
+
+  EXPECT_TRUE(RunAndCompareTwoModules(
+      hlo_ref, hlo_test, ErrorSpec{/*aabs=*/tolerance, /*arel=*/tolerance},
+      /*run_hlo_passes=*/false, /*args_max_bits_of_precision=*/6));
+}
+
+TEST_P(BinaryElementwiseTest, ElementwiseBinaryOpExecutesCorrectly) {
+  PrimitiveType data_type;
+  HloOpcode opcode;
+  float tolerance;
+  std::tie(data_type, opcode, tolerance) = GetParam();
+
+  const std::string kHloTestTemplate = R"(
+triton_computation {
+  parameter_0 = $0[11,63]{1,0} parameter(0)
+  parameter_1 = $0[11,63]{1,0} parameter(1)
+  output = $0[11,63]{1,0} $1(parameter_0, parameter_1)
+  ROOT c.1 = f32[11,63]{1,0} convert(output)
+}
+
+ENTRY e {
+  p0 = $0[11,63]{1,0} parameter(0)
+  p1 = $0[11,63]{1,0} parameter(1)
+  ROOT triton_fusion = f32[11,63]{1,0} fusion(p0, p1), kind=kCustom,
+    calls=triton_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+                    "block_level_fusion_config":{"output_tile_sizes":["1", "1"],"num_warps":"1"}}}
+})";
+  const std::string hlo_test = absl::Substitute(
+      kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
+      HloOpcodeString(opcode));
+
+  const std::string kHloRefTemplate = R"(
+fused_computation {
+  p0 = $0[11,63]{1,0} parameter(0)
+  p1 = $0[11,63]{1,0} parameter(1)
+  output = $0[11,63]{1,0} $1(p0, p1)
+  ROOT convert.1 = f32[11,63]{1,0} convert(output)
+}
+
+ENTRY e {
+  p1 = $0[11,63]{1,0} parameter(1)
+  p0 = $0[11,63]{1,0} parameter(0)
+  ROOT fusion = f32[11,63]{1,0} fusion(p0, p1), kind=kLoop, calls=fused_computation
 })";
   const std::string hlo_ref = absl::Substitute(
       kHloRefTemplate, primitive_util::LowercasePrimitiveTypeName(data_type),
@@ -738,11 +837,9 @@ ENTRY e {
       /*run_hlo_passes=*/false));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    ConstantTestSuite, ConstantTest, ::testing::ValuesIn(kSupportedDataTypes),
-    [](const ::testing::TestParamInfo<PrimitiveType> type) {
-      return primitive_util::LowercasePrimitiveTypeName(type.param);
-    });
+INSTANTIATE_TEST_SUITE_P(ConstantTestSuite, ConstantTest,
+                         ::testing::ValuesIn(kSupportedDataTypes),
+                         TritonSupportTestTypeToString);
 
 class ConvertTest : public TritonTest,
                     public ::testing::WithParamInterface<
@@ -792,27 +889,20 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::ValuesIn(kSupportedDataTypes)),
     TwoPrimitiveTypesToString);
 
-class TritonSoftmaxTest : public GpuCodegenTest,
-                          public ::testing::WithParamInterface<PrimitiveType> {
+class TritonNormalizationTest
+    : public GpuCodegenTest,
+      public ::testing::WithParamInterface<PrimitiveType> {
  public:
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = GpuCodegenTest::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_enable_triton_softmax_fusion(true);
     // TODO(b/38354253): Remove once HloTestBase does not remove constant
     // folding.
     debug_options.clear_xla_disable_hlo_passes();
     return debug_options;
   }
-
-  se::CudaComputeCapability GetCudaComputeCapability() {
-    return backend()
-        .default_stream_executor()
-        ->GetDeviceDescription()
-        .cuda_compute_capability();
-  }
 };
 
-TEST_P(TritonSoftmaxTest, CanFuseAndEmitExactSoftmax) {
+TEST_P(TritonNormalizationTest, CanFuseAndEmitExactSoftmax) {
   PrimitiveType data_type = GetParam();
 
   if (data_type == F16) {
@@ -876,7 +966,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest, CanFuseAndEmitFirstSoftmaxDiamond) {
+TEST_P(TritonNormalizationTest, CanFuseAndEmitFirstSoftmaxDiamond) {
   PrimitiveType data_type = GetParam();
   const std::string hlo_text_template = R"(
 HloModule softmax
@@ -931,7 +1021,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest, CanFuseAndEmitSoftmaxDiamondWithSmallRows) {
+TEST_P(TritonNormalizationTest, CanFuseAndEmitSoftmaxDiamondWithSmallRows) {
   PrimitiveType data_type = GetParam();
   constexpr absl::string_view kHloTextTemplate = R"(
 HloModule softmax
@@ -968,7 +1058,7 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec(/*aabs=*/0, /*arel=*/0)));
 }
 
-TEST_F(TritonSoftmaxTest, CanFuseAndEmitDiamondWithBF16Converts) {
+TEST_F(TritonNormalizationTest, CanFuseAndEmitDiamondWithBF16Converts) {
   const std::string hlo_text = R"(
 HloModule softmax
 max_computation {
@@ -1003,7 +1093,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest,
+TEST_P(TritonNormalizationTest,
        CanFuseAndEmitDiamondWithMultipleBroadcastDimensions) {
   PrimitiveType data_type = GetParam();
 
@@ -1057,13 +1147,14 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest,
+TEST_P(TritonNormalizationTest,
        CanFuseAndEmitSoftmaxWithIntermediateUnaryElementwise) {
   PrimitiveType data_type = GetParam();
 
   if (data_type == F16) {
     GTEST_SKIP() << "Exponential op does not support F16.";
   }
+
   const std::string hlo_text_template = R"(
 HloModule softmax
 max_computation {
@@ -1123,7 +1214,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitTwoDiamondsWithSecondDiamondProducerEqualToFirstDiamondRoot) {
   PrimitiveType data_type = GetParam();
 
@@ -1174,8 +1265,6 @@ ENTRY main {
       tolerance = 1e-6;
       break;
     case F16:
-      tolerance = 2e-4;
-      break;
     case BF16:
       tolerance = 2e-2;
       break;
@@ -1186,7 +1275,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest,
+TEST_P(TritonNormalizationTest,
        CanFuseAndEmitDiamondWithTrailingUnaryElementwiseAtTheRoot) {
   PrimitiveType data_type = GetParam();
 
@@ -1241,7 +1330,8 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest, CanFuseAndEmitDiamondWithUnaryElementwisePrefix) {
+TEST_P(TritonNormalizationTest,
+       CanFuseAndEmitDiamondWithUnaryElementwisePrefix) {
   PrimitiveType data_type = GetParam();
 
   const std::string hlo_text_template = R"(
@@ -1295,7 +1385,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest,
+TEST_P(TritonNormalizationTest,
        CanFuseAndEmitSoftmaxDiamondWithLastDimensionBitcastAfterReduce) {
   PrimitiveType data_type = GetParam();
 
@@ -1352,7 +1442,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest,
+TEST_P(TritonNormalizationTest,
        CanFuseAndEmitConvertInvolvingBF16InputIntoSoftmaxDiamondCorrectly) {
   PrimitiveType data_type = GetParam();
 
@@ -1405,7 +1495,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseProducerIntoDiamondWhenBothOperandsAreTheSame) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1461,7 +1551,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitIntermediateBinaryElementwiseWithinDiamondWhenBothOperandsAreTheSame) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1517,7 +1607,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseWhenBothOperandsAreTheSameBetweenDiamonds) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1579,11 +1669,12 @@ ENTRY main {
   }
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec(/*aabs=*/0, /*arel=*/0),
                             /*reference_preprocessor=*/nullptr,
+                            /*test_preprocessor=*/nullptr,
                             max_bits_of_precision));
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseConsumerWhereBothOperandsAreTheSameIntoDiamond) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1645,7 +1736,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitTwoBinaryElementwiseWhereBothOperandsAreTheSameBetweenDiamonds) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1698,8 +1789,6 @@ ENTRY main {
       tolerance = 1e-6;
       break;
     case F16:
-      tolerance = 2e-4;
-      break;
     case BF16:
       tolerance = 2e-2;
       break;
@@ -1710,7 +1799,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_P(TritonSoftmaxTest, DiamondEmitterIsNumericallyStable) {
+TEST_P(TritonNormalizationTest, DiamondEmitterIsNumericallyStable) {
   PrimitiveType data_type = GetParam();
 
   const std::string hlo_text_template = R"(
@@ -1744,12 +1833,8 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec(/*aabs=*/0, /*arel=*/0)));
 }
 
-TEST_P(TritonSoftmaxTest, CanFuseAndEmitRMSNormDiamond) {
+TEST_P(TritonNormalizationTest, CanFuseAndEmitRMSNormDiamond) {
   PrimitiveType data_type = GetParam();
-
-  if (data_type == F16) {
-    GTEST_SKIP() << "rsqrt op does not support F16.";
-  }
 
   const std::string hlo_text_template = R"(
 HloModule rms_norm
@@ -1798,7 +1883,7 @@ ENTRY main.30 {
       tolerance = 1e-6;
       break;
     case F16:
-      tolerance = 2e-4;
+      tolerance = 5e-4;
       break;
     case BF16:
       tolerance = 4e-2;
@@ -1811,7 +1896,7 @@ ENTRY main.30 {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseWhereTheFirstOperandIsASplatConstantBetweenDiamonds) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1874,7 +1959,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseWhereTheSecondOperandIsASplatConstantBetweenDiamonds) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1937,7 +2022,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseWhereTheFirstOperandIsASplatConstantWithinDiamond) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -1996,7 +2081,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseConsumerWhereTheFirstOperandIsASplatConstantIntoDiamond) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -2054,7 +2139,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseProducerWhereTheFirstOperandIsASplatConstantIntoDiamond) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -2113,7 +2198,7 @@ ENTRY main {
 }
 
 TEST_P(
-    TritonSoftmaxTest,
+    TritonNormalizationTest,
     CanFuseAndEmitBinaryElementwiseOperationWhereOneOperandIsASharedSplatProducerIntoDiamond) {  // NOLINT(whitespace/line_length)
   PrimitiveType data_type = GetParam();
 
@@ -2157,10 +2242,10 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-INSTANTIATE_TEST_SUITE_P(TritonSoftmaxTestSuite, TritonSoftmaxTest,
+INSTANTIATE_TEST_SUITE_P(TritonNormalizationTestSuite, TritonNormalizationTest,
                          ::testing::Values(F32, F16, BF16));
 
-TEST_F(TritonSoftmaxTest, CanFuseAndEmitTritonSoftmaxWithTwoParameters) {
+TEST_F(TritonNormalizationTest, CanFuseAndEmitTritonSoftmaxWithTwoParameters) {
   const std::string hlo_text = R"(
 HloModule layernorm
 
@@ -2200,7 +2285,7 @@ ENTRY main {
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
 
-TEST_F(TritonSoftmaxTest, CanFuseAndEmitTritonSoftmaxWithNonBatchReduce) {
+TEST_F(TritonNormalizationTest, CanFuseAndEmitTritonSoftmaxWithNonBatchReduce) {
   const std::string hlo_text = R"(
 HloModule layernorm
 
@@ -2229,12 +2314,9 @@ ENTRY main {
 ; CHECK:      ENTRY
 ; CHECK-DAG:    %[[P0:.*]] = f32[125,127]{1,0} parameter(0)
 ; CHECK-DAG:    %[[P1:.*]] = f32[10,125,127]{2,1,0} parameter(1)
-; CHECK:        %[[FUSION:.*]] = f32[125,127]{1,0} fusion(%[[P0]], %[[P1]])
-; CHECK:        kind=kLoop
-; CHECK:      ROOT
-; CHECK-SAME:   f32[125,127]{1,0} fusion(%[[FUSION]])
-; CHECK-SAME:   kind=kCustom
-; CHECK-SAME:   triton_softmax
+; CHECK:        ROOT %[[FUSION:.*]] = f32[125,127]{1,0} fusion(%[[P0]], %[[P1]])
+; CHECK-SAME:       kind=kCustom
+; CHECK-SAME:       __triton
 )";
   MatchOptimizedHlo(hlo_text, hlo_ref);
 
@@ -2242,6 +2324,47 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_text,
                             ErrorSpec(/*aabs=*/tolerance, /*arel=*/tolerance)));
 }
+
+class ReductionTypeTest : public TritonTest,
+                          public ::testing::WithParamInterface<PrimitiveType> {
+};
+
+TEST_P(ReductionTypeTest, DifferentReductionTypes) {
+  PrimitiveType data_type = GetParam();
+
+  const std::string kHloTestTemplate = R"(
+max {
+  p0 = $0[] parameter(0)
+  p1 = $0[] parameter(1)
+  ROOT max = $0[] maximum(p0, p1)
+}
+
+triton_computation {
+  p = $0[400,16] parameter(0)
+  zero = $0[] constant(0)
+  ROOT reduce = $0[400] reduce(p, zero), dimensions={1}, to_apply=max
+}
+
+ENTRY entry_computation {
+  p = $0[400,16] parameter(0)
+  ROOT fusion = $0[400] fusion(p), kind=kCustom, calls=triton_computation,
+    backend_config={ "operation_queue_id":"0", "wait_on_operation_queues":[],
+      "fusion_backend_config":{ "kind":"__triton", "block_level_fusion_config":{
+          "output_tile_sizes":["400"], "num_warps":"1"}},
+      "force_earliest_schedule":false}
+})";
+  const std::string hlo_test = absl::Substitute(
+      kHloTestTemplate, primitive_util::LowercasePrimitiveTypeName(data_type));
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(hlo_test, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
+}
+
+constexpr std::array<PrimitiveType, 9> kReductionSupportedDataTypes{
+    PRED, S8, S16, S32, S64, F16, F32, F64, BF16};
+
+INSTANTIATE_TEST_SUITE_P(ReductionTypeTestSuite, ReductionTypeTest,
+                         ::testing::ValuesIn(kReductionSupportedDataTypes),
+                         TritonSupportTestTypeToString);
 
 }  // namespace
 }  // namespace gpu

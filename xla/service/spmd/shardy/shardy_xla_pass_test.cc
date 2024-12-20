@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/spmd/shardy/constants.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/verified_hlo_module.h"
 #include "tsl/platform/statusor.h"
@@ -32,7 +33,20 @@ namespace op = xla::testing::opcode_matchers;
 namespace xla {
 namespace sdy {
 
+namespace {
+
 using ShardyXLATest = xla::HloTestBase;
+
+void runShardy(VerifiedHloModule* module) {
+  FrontendAttributes attrs;
+  attrs.mutable_map()->try_emplace(xla::sdy::kImportMhloShardings, "t");
+  module->add_frontend_attributes(attrs);
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module));
+  VLOG(1) << module->ToString();
+  EXPECT_TRUE(changed);
+}
+
+}  // namespace
 
 TEST_F(ShardyXLATest, AllowSpmdShardingPropagationParametersOutputRespected) {
   const char* const hloString = R"(
@@ -47,9 +61,7 @@ TEST_F(ShardyXLATest, AllowSpmdShardingPropagationParametersOutputRespected) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{replicated}"));
@@ -76,9 +88,7 @@ TEST_F(ShardyXLATest, ElementWise) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   HloInstruction* add = FindInstruction(module.get(), xla::HloOpcode::kAdd);
   EXPECT_NE(add, nullptr);
@@ -113,9 +123,7 @@ TEST_F(ShardyXLATest, CostantSplitter) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   HloInstruction* dot = FindInstruction(module.get(), xla::HloOpcode::kDot);
 
@@ -163,9 +171,7 @@ TEST_F(ShardyXLATest, Dot) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,2,1,2]<=[8] last_tile_dim_replicate}"));
@@ -200,9 +206,7 @@ TEST_F(ShardyXLATest, DotTiledBatchDim) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,2,1]<=[4]}"));
@@ -228,9 +232,7 @@ TEST_F(ShardyXLATest, DotMergeOperands1) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,2,1,2]<=[8] last_tile_dim_replicate}"));
@@ -256,9 +258,7 @@ TEST_F(ShardyXLATest, DotMergeOperands2) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,2,2]<=[8]}"));
@@ -266,7 +266,7 @@ TEST_F(ShardyXLATest, DotMergeOperands2) {
               op::Sharding("{devices=[2,2,2]<=[8]}"));
 
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              op::Sharding("{devices=[2,1,1,4]<=[8] last_tile_dim_replicate}"));
+              op::Sharding("{devices=[2,2,1,2]<=[8] last_tile_dim_replicate}"));
 }
 
 TEST_F(ShardyXLATest, DotMergeOperands3) {
@@ -281,9 +281,7 @@ TEST_F(ShardyXLATest, DotMergeOperands3) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,4]<=[8]}"));
@@ -309,9 +307,7 @@ TEST_F(ShardyXLATest, BackwardDotFromContracting) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,2,2]<=[8]}"));
@@ -336,9 +332,7 @@ TEST_F(ShardyXLATest, EntryComputationLayoutSingleResult) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(
       module->entry_computation_layout().ToString(),
@@ -357,9 +351,7 @@ TEST_F(ShardyXLATest, EntryComputationLayoutNestedTuple) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->entry_computation_layout().ToString(),
             "(f32[4,2]{0,1:T(2,128)}, f32[4,2]{0,1:T(2,128)}, "
@@ -383,9 +375,7 @@ TEST_F(ShardyXLATest, EntryComputationLayoutMissingLayout) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->entry_computation_layout().ToString(),
             "(f32[3,8,32,4]{2,1,3,0:T(8,128)}, "
@@ -404,9 +394,7 @@ TEST_F(ShardyXLATest, InputOutputAliasConfigSingleResult) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->input_output_alias_config().ToShortString(),
             "{}: (1, {}, may-alias)");
@@ -425,9 +413,7 @@ TEST_F(ShardyXLATest, InputOutputAliasConfigSingleResultNestedParams) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->input_output_alias_config().ToShortString(),
             "{}: (1, {}, may-alias)");
@@ -444,9 +430,7 @@ TEST_F(ShardyXLATest, InputOutputAliasConfigNestedResultAndParams) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->input_output_alias_config().ToShortString(),
             "{1}: (1, {}, may-alias), {3}: (3, {}, may-alias)");
@@ -464,9 +448,7 @@ TEST_F(ShardyXLATest, BufferDonorConfigSingleResult) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->buffer_donor_config().ToShortString(), "(1, {})");
 }
@@ -482,9 +464,7 @@ TEST_F(ShardyXLATest, BufferDonorConfigNestedTuple) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_EQ(module->buffer_donor_config().ToShortString(), "(0, {}), (2, {})");
 }
@@ -500,9 +480,7 @@ TEST_F(ShardyXLATest, ShardingCustomCall) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->parameter_instruction(0),
               op::Sharding("{devices=[2,1]<=[2]}"));
@@ -525,9 +503,7 @@ TEST_F(ShardyXLATest, RngBitGenerator) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               op::Sharding("{{devices=[16,2]<=[32]}, {devices=[8,4]<=[32]}}"));
@@ -535,50 +511,58 @@ TEST_F(ShardyXLATest, RngBitGenerator) {
 
 TEST_F(ShardyXLATest, WhileWithFreeVariables) {
   const char* const hloString = R"(
-    HloModule main
+    HloModule main, entry_computation_layout={(f32[32,96]{1,0}, f32[32,96]{1,0})->f32[32,96]{1,0}}
 
-    %region_0.6 (arg_tuple.7: (f32[32,96], s32[], s32[], s32[])) -> (f32[32,96], s32[], s32[], s32[]) {
-      %arg_tuple.7 = (f32[32,96]{1,0}, s32[], s32[], s32[]) parameter(0)
-      %get-tuple-element.8 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.7), index=0
-      %add.13 = f32[32,96]{1,0} add(f32[32,96]{1,0} %get-tuple-element.8, f32[32,96]{1,0} %get-tuple-element.8)
-      %get-tuple-element.9 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.7), index=1
-      %get-tuple-element.11 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.7), index=3
-      %add.12 = s32[] add(s32[] %get-tuple-element.9, s32[] %get-tuple-element.11)
-      %get-tuple-element.10 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.7), index=2
-      ROOT %tuple.14 = (f32[32,96]{1,0}, s32[], s32[], s32[]) tuple(f32[32,96]{1,0} %add.13, s32[] %add.12, s32[] %get-tuple-element.10, s32[] %get-tuple-element.11)
+    %region_0.7 (arg_tuple.8: (f32[32,96], s32[], s32[], s32[], f32[32,96])) -> (f32[32,96], s32[], s32[], s32[], f32[32,96]) {
+      %arg_tuple.8 = (f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) parameter(0)
+      %get-tuple-element.9 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.8), index=0
+      %get-tuple-element.13 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.8), index=4
+      %add.15 = f32[32,96]{1,0} add(f32[32,96]{1,0} %get-tuple-element.9, f32[32,96]{1,0} %get-tuple-element.13), metadata={source_file="-" source_line=25}
+      %get-tuple-element.10 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.8), index=1
+      %get-tuple-element.12 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.8), index=3
+      %add.14 = s32[] add(s32[] %get-tuple-element.10, s32[] %get-tuple-element.12), metadata={source_file="-" source_line=24}
+      %get-tuple-element.11 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.8), index=2
+      ROOT %tuple.16 = (f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) tuple(f32[32,96]{1,0} %add.15, s32[] %add.14, s32[] %get-tuple-element.11, s32[] %get-tuple-element.12, f32[32,96]{1,0} %get-tuple-element.13)
     }
 
-    %region_1.15 (arg_tuple.16: (f32[32,96], s32[], s32[], s32[])) -> pred[] {
-      %arg_tuple.16 = (f32[32,96]{1,0}, s32[], s32[], s32[]) parameter(0)
-      %get-tuple-element.17 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.16), index=0
-      %get-tuple-element.20 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.16), index=3
-      %get-tuple-element.18 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.16), index=1
-      %get-tuple-element.19 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %arg_tuple.16), index=2
-      ROOT %compare.21 = pred[] compare(s32[] %get-tuple-element.18, s32[] %get-tuple-element.19), direction=LT
+    %region_1.17 (arg_tuple.18: (f32[32,96], s32[], s32[], s32[], f32[32,96])) -> pred[] {
+      %arg_tuple.18 = (f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) parameter(0)
+      %get-tuple-element.19 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.18), index=0
+      %get-tuple-element.22 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.18), index=3
+      %get-tuple-element.23 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.18), index=4
+      %get-tuple-element.20 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.18), index=1
+      %get-tuple-element.21 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %arg_tuple.18), index=2
+      ROOT %compare.24 = pred[] compare(s32[] %get-tuple-element.20, s32[] %get-tuple-element.21), direction=LT, metadata={source_file="-" source_line=21}
     }
 
-    ENTRY %main.27 (Arg_0.1: f32[32,96]) -> f32[32,96] {
+    ENTRY %main.30 (Arg_0.1: f32[32,96], Arg_1.2: f32[32,96]) -> f32[32,96] {
       %Arg_0.1 = f32[32,96]{1,0} parameter(0), sharding={devices=[2,2]<=[4]}
-      %constant.2 = s32[] constant(0)
-      %constant.4 = s32[] constant(32)
-      %constant.3 = s32[] constant(1)
-      %tuple.5 = (f32[32,96]{1,0}, s32[], s32[], s32[]) tuple(f32[32,96]{1,0} %Arg_0.1, s32[] %constant.2, s32[] %constant.4, s32[] %constant.3)
-      %while.22 = (f32[32,96]{1,0}, s32[], s32[], s32[]) while((f32[32,96]{1,0}, s32[], s32[], s32[]) %tuple.5), condition=%region_1.15, body=%region_0.6
-      ROOT %get-tuple-element.23 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[]) %while.22), index=0
+      %constant.3 = s32[] constant(0)
+      %constant.5 = s32[] constant(32)
+      %constant.4 = s32[] constant(1)
+      %Arg_1.2 = f32[32,96]{1,0} parameter(1), sharding={devices=[2,1,2]<=[4] last_tile_dim_replicate}
+      %tuple.6 = (f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) tuple(f32[32,96]{1,0} %Arg_0.1, s32[] %constant.3, s32[] %constant.5, s32[] %constant.4, f32[32,96]{1,0} %Arg_1.2), metadata={source_file="-" source_line=19}
+      %while.25 = (f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) while((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %tuple.6), condition=%region_1.17, body=%region_0.7, metadata={source_file="-" source_line=19}
+      %get-tuple-element.27 = s32[] get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %while.25), index=1, metadata={source_file="-" source_line=19}
+      %get-tuple-element.26 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}, s32[], s32[], s32[], f32[32,96]{1,0}) %while.25), index=0, metadata={source_file="-" source_line=19}
+      %tuple.28 = (f32[32,96]{1,0}) tuple(f32[32,96]{1,0} %get-tuple-element.26)
+      ROOT %get-tuple-element.29 = f32[32,96]{1,0} get-tuple-element((f32[32,96]{1,0}) %tuple.28), index=0
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   HloInstruction* whileInst =
       FindInstruction(module.get(), xla::HloOpcode::kWhile);
   EXPECT_NE(whileInst, nullptr);
-  EXPECT_THAT(
-      whileInst,
-      op::Sharding(
-          "{{devices=[2,2]<=[4]}, {replicated}, {replicated}, {replicated}}"));
+  // Verify that the sharding of parameter(1) hasn't changed.
+  EXPECT_THAT(module->entry_computation()->parameter_instruction(1),
+              op::Sharding("{devices=[2,1,2]<=[4] last_tile_dim_replicate}"));
+  // Verify the sharding of the while, and specifically that the sharding of the
+  // result that corresponds to parameter(1) is further sharded.
+  EXPECT_THAT(whileInst,
+              op::Sharding("{{devices=[2,2]<=[4]}, {replicated}, {replicated}, "
+                           "{devices=[2,2]<=[4]}, {replicated}}"));
 }
 
 TEST_F(ShardyXLATest, ShardMap) {
@@ -612,9 +596,7 @@ TEST_F(ShardyXLATest, ShardMap) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
 
   // The entry computation and the region_add for the all-reduce. shmap_body is
   // inlined.
@@ -643,9 +625,8 @@ TEST_F(ShardyXLATest, EmptyModule) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
+
   EXPECT_EQ(module->entry_computation_layout().ToString(), "()->()");
   EXPECT_EQ(module->input_output_alias_config().ToShortString(), "");
 }
@@ -669,9 +650,8 @@ TEST_F(ShardyXLATest, TestUseTuplesTrue) {
     })";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(hloString));
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, ShardyXLA().Run(module.get()));
-  VLOG(1) << module->ToString();
-  EXPECT_TRUE(changed);
+  runShardy(module.get());
+
   EXPECT_EQ(module->entry_computation()->parameter_instructions().size(), 1);
   EXPECT_EQ(module->buffer_donor_config().ToShortString(), "(0, {1})");
   EXPECT_EQ(module->input_output_alias_config().ToShortString(),

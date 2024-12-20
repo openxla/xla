@@ -52,10 +52,10 @@ limitations under the License.
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/lib/core/bitmap.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/lib/core/bitmap.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"  // IWYU pragma: keep
 #include "tsl/platform/macros.h"
@@ -1404,7 +1404,7 @@ class Literal : public MutableLiteralBase {
   static absl::StatusOr<Literal> Deserialize(InputIterator begin,
                                              InputIterator end);
 
-  static absl::StatusOr<Literal> DeserializeFromString(std::string_view data) {
+  static absl::StatusOr<Literal> DeserializeFromString(absl::string_view data) {
     return Deserialize(data.data(), data.data() + data.size());
   }
 

@@ -26,7 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/client/xla_computation.h"
+#include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -114,6 +114,7 @@ absl::StatusOr<ExecuteOptions> GenerateExecuteOptions(const HloModule& module) {
 // TODO(b/245550554): Remove the use of PjRtWrappedExecutable.
 class PjRtWrappedExecutable : public Executable {
  public:
+  // Takes ownership of the provided executable.
   explicit PjRtWrappedExecutable(std::shared_ptr<HloModule> hlo_module,
                                  PjRtLoadedExecutable* pjrt_loaded_executable)
       : Executable(hlo_module),
@@ -121,21 +122,19 @@ class PjRtWrappedExecutable : public Executable {
 
   absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
       const ServiceExecutableRunOptions* run_options,
-      std::vector<ExecutionInput> arguments,
-      HloExecutionProfile* hlo_execution_profile) override;
+      std::vector<ExecutionInput> arguments) override;
 
   PjRtLoadedExecutable* GetPjRtLoadedExecutable() const {
-    return pjrt_loaded_executable_;
+    return pjrt_loaded_executable_.get();
   }
 
  private:
-  PjRtLoadedExecutable* pjrt_loaded_executable_;
+  std::unique_ptr<PjRtLoadedExecutable> pjrt_loaded_executable_;
 };
 
 absl::StatusOr<ExecutionOutput> PjRtWrappedExecutable::ExecuteAsyncOnStream(
     const ServiceExecutableRunOptions* run_options,
-    std::vector<ExecutionInput> arguments,
-    HloExecutionProfile* hlo_execution_profile) {
+    std::vector<ExecutionInput> arguments) {
   return Unimplemented(
       "PjRtWrappedExecutable: Unimplemented ExecuteAsyncOnStream");
 }
@@ -144,9 +143,13 @@ static const int kDeviceIdx = 0;
 
 HloRunnerPjRt::HloRunnerPjRt(
     std::unique_ptr<PjRtClient> pjrt_client,
-    DeviceShapeRepresentationFn device_shape_representation_fn)
+    DeviceShapeRepresentationFn device_shape_representation_fn,
+    DeviceShapeSizeFn device_shape_size_fn,
+    const bool use_parameter_layout_on_device)
     : pjrt_client_(std::move(pjrt_client)),
-      device_shape_representation_fn_(device_shape_representation_fn) {}
+      device_shape_representation_fn_(device_shape_representation_fn),
+      device_shape_size_fn_(device_shape_size_fn),
+      use_parameter_layout_on_device_(use_parameter_layout_on_device) {}
 
 HloRunnerPjRt::~HloRunnerPjRt() = default;
 
@@ -199,13 +202,17 @@ absl::StatusOr<Literal> HloRunnerPjRt::TransferLiteralFromDevice(
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 HloRunnerPjRt::TransferLiteralToDevice(const Literal& literal,
-                                       int64_t memory_space) {
+                                       const Layout& parameter_layout) {
   auto devices = pjrt_client_->addressable_devices();
   PjRtDevice* device = devices[kDeviceIdx];
 
   if (pjrt_client_->memory_spaces().empty()) {
-    TF_ASSIGN_OR_RETURN(auto assignment,
-                        pjrt_client_->BufferFromHostLiteral(literal, device));
+    TF_ASSIGN_OR_RETURN(
+        auto assignment,
+        use_parameter_layout_on_device_
+            ? pjrt_client_->BufferFromHostLiteral(literal, device,
+                                                  &parameter_layout)
+            : pjrt_client_->BufferFromHostLiteral(literal, device));
     return std::move(assignment);
   }
 
@@ -216,10 +223,15 @@ HloRunnerPjRt::TransferLiteralToDevice(const Literal& literal,
     }
     return pjrt_device->default_memory_space();
   };
-  TF_ASSIGN_OR_RETURN(PjRtMemorySpace * pjrt_memory_space,
-                      get_pjrt_memory_space(device, memory_space));
-  TF_ASSIGN_OR_RETURN(auto assignment, pjrt_client_->BufferFromHostLiteral(
-                                           literal, pjrt_memory_space));
+  TF_ASSIGN_OR_RETURN(
+      PjRtMemorySpace * pjrt_memory_space,
+      get_pjrt_memory_space(device, parameter_layout.memory_space()));
+  TF_ASSIGN_OR_RETURN(
+      auto assignment,
+      use_parameter_layout_on_device_
+          ? pjrt_client_->BufferFromHostLiteral(literal, pjrt_memory_space,
+                                                &parameter_layout)
+          : pjrt_client_->BufferFromHostLiteral(literal, pjrt_memory_space));
   return std::move(assignment);
 }
 
@@ -240,9 +252,9 @@ HloRunnerPjRt::TransferLiteralsToDevice(
     for (int i = 0; i < input_literals.size(); ++i) {
       const Literal* literal = input_literals[i];
       TF_RET_CHECK(literal != nullptr);
-      int64_t memory_space = parameter_layouts[i].memory_space();
-      TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtBuffer> buffer,
-                          TransferLiteralToDevice(*literal, memory_space));
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<PjRtBuffer> buffer,
+          TransferLiteralToDevice(*literal, parameter_layouts[i]));
       TF_RETURN_IF_ERROR(buffer->GetReadyFuture().Await());
       buffers.push_back(std::move(buffer));
     }
@@ -267,8 +279,7 @@ absl::StatusOr<Literal> HloRunnerPjRt::Execute(
     absl::Span<const Literal* const> arguments, bool run_hlo_passes,
     ExecutionProfile* profile) {
   // TODO (b/245550554) : Remove UpdateEntryComputationLayout from runner.
-  xla::UpdateEntryComputationLayout(module.get(),
-                                    device_shape_representation_fn_);
+  UpdateEntryComputationLayout(module.get());
   TF_ASSIGN_OR_RETURN(auto compile_options, GenerateDefaultCompileOptions(
                                                 module.get(), run_hlo_passes));
 
@@ -373,16 +384,13 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
           std::move(pjrt_executable->GetHloModules().value()[0])),
       pjrt_executable.release());
 
-  std::unique_ptr<Executable> exec =
-      static_cast<std::unique_ptr<Executable>>(executable.release());
-  return exec;
+  return executable;
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
     std::unique_ptr<HloModule> module,
     const HloRunnerInterface::ReplicatedExecuteOptions& options) {
-  xla::UpdateEntryComputationLayout(module.get(),
-                                    device_shape_representation_fn_);
+  UpdateEntryComputationLayout(module.get());
 
   TF_ASSIGN_OR_RETURN(
       auto device_assignment,
@@ -451,13 +459,16 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
     std::function<const Literal*(int64_t, int64_t)> argument_provider,
     const ReplicatedExecuteOptions& options,
     DeviceAssignment* device_assignment) {
+  const int64_t num_computations = device_assignment->computation_count();
   absl::Span<PjRtDevice* const> devices = pjrt_client_->devices();
 
   std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> argument_buffer_slices;
   argument_buffer_slices.reserve(pjrt_client_->addressable_device_count());
 
   for (int64_t i = 0; i < options.num_replicas; ++i) {
-    PjRtDevice* device_ptr = devices[i];
+    const int64_t device_index =
+        (*device_assignment)(i / num_computations, i % num_computations);
+    PjRtDevice* device_ptr = devices[device_index];
 
     // Transfer literals to device.
     const int64_t argument_count = argument_count_provider(i);
@@ -469,8 +480,12 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
       const Literal* const argument = argument_provider(i, arg_index);
       TF_RET_CHECK(argument != nullptr);
 
-      TF_ASSIGN_OR_RETURN(auto assignment, pjrt_client_->BufferFromHostLiteral(
-                                               *argument, device_ptr));
+      TF_ASSIGN_OR_RETURN(
+          std::unique_ptr<PjRtBuffer> assignment,
+          use_parameter_layout_on_device_
+              ? pjrt_client_->BufferFromHostLiteral(*argument, device_ptr,
+                                                    &argument->shape().layout())
+              : pjrt_client_->BufferFromHostLiteral(*argument, device_ptr));
       replica_buffers.push_back(std::move(assignment));
     }
 

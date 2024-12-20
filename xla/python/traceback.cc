@@ -20,14 +20,15 @@ limitations under the License.
 #include <cstddef>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -99,7 +100,8 @@ Traceback::~Traceback() {
   }
 }
 
-Traceback::Traceback(Traceback&& other) : frames_(std::move(other.frames_)) {
+Traceback::Traceback(Traceback&& other) noexcept
+    : frames_(std::move(other.frames_)) {
   // absl::InlinedVector does not always clear itself if moved. Since we rely on
   // its empty() method to destroy Traceback differently, we explicitly clear
   // here.
@@ -107,8 +109,8 @@ Traceback::Traceback(Traceback&& other) : frames_(std::move(other.frames_)) {
 }
 
 std::string Traceback::Frame::ToString() const {
-  return absl::StrFormat("%s:%d (%s)", nb::cast<std::string_view>(file_name),
-                         line_num, nb::cast<std::string_view>(function_name));
+  return absl::StrFormat("%s:%d (%s)", nb::cast<absl::string_view>(file_name),
+                         line_num, nb::cast<absl::string_view>(function_name));
 }
 
 std::string Traceback::ToString() const {
@@ -229,8 +231,8 @@ void BuildTracebackSubmodule(nb::module_& m) {
       .def_ro("line_num", &Traceback::Frame::line_num)
       .def("__repr__", [](const Traceback::Frame& frame) {
         return absl::StrFormat(
-            "%s;%s:%d", nb::cast<std::string_view>(frame.function_name),
-            nb::cast<std::string_view>(frame.file_name), frame.line_num);
+            "%s;%s:%d", nb::cast<absl::string_view>(frame.function_name),
+            nb::cast<absl::string_view>(frame.file_name), frame.line_num);
       });
 
   nb::class_<Traceback> traceback(m, "Traceback",

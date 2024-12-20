@@ -35,16 +35,18 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
+#include "xla/codegen/ir/xla_ops.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/fusions/mlir/computation_partitioner.h"
 #include "xla/service/gpu/fusions/mlir/elemental_hlo_to_mlir.h"
-#include "xla/service/gpu/fusions/mlir/ir/xla_gpu_ops.h"
+#include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/scatter_simplifier.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
@@ -57,12 +59,12 @@ namespace ma = ::mlir::arith;
 namespace scf = ::mlir::scf;
 
 using llvm::SmallVector;
+using mlir::ImplicitLocOpBuilder;
 using mlir::Location;
 using mlir::OpBuilder;
 using mlir::Value;
 using mlir::ValueRange;
 using mlir::func::ReturnOp;
-using mlir::tensor::InsertOp;
 using mlir_converter::CallTargetProvider;
 using mlir_converter::PartitionedComputations;
 using mlir_converter::ProvideParameter;
@@ -74,18 +76,6 @@ MlirScatterFusion::MlirScatterFusion(const HloFusionAnalysis& analysis)
   const auto& scatter = analysis_.fusion_hero(0).instruction();
   auto& scatter_update_shape = scatter.operands().back()->shape();
   config_ = ComputeLoopFusionConfig(analysis, scatter_update_shape);
-}
-
-bool MlirScatterFusion::IsSupported(const HloFusionAnalysis& analysis) {
-  const auto* scatter =
-      Cast<HloScatterInstruction>(&analysis.fusion_hero(0).instruction());
-  if (scatter->scatter_operand_count() != 1) {
-    LOG(ERROR) << "Variadic scatter is not supported like in the legacy "
-                  "emitter, although it is possible to make it work when the "
-                  "indices are unique.";
-    return false;
-  }
-  return true;
 }
 
 std::optional<IndexingMap> MlirScatterFusion::ComputeThreadIdToOutputIndexing(
@@ -174,14 +164,15 @@ mlir::Value EmitScatterComputation(
     auto reduced_val = mlir_converter::InlineBlock(
         b, reducer.getBody().front(), {operand_elem, update_elem})[0];
 
-    return b.create<InsertOp>(reduced_val, output_tensor, indices);
+    return b.create<mlir::tensor::InsertOp>(reduced_val, output_tensor,
+                                            indices);
   }
   auto atomic_rmw = b.create<AtomicRMWOp>(output_tensor, indices);
   mlir::OpBuilder body_builder = atomic_rmw.getBodyBuilder();
   auto reduced_val = mlir_converter::InlineBlock(
       body_builder, reducer.getBody().front(),
       {atomic_rmw.getCurrentValue(), update_elem})[0];
-  body_builder.create<xla::gpu::YieldOp>(reducer->getLoc(), reduced_val);
+  body_builder.create<xla::YieldOp>(reducer->getLoc(), reduced_val);
   return atomic_rmw->getResult(0);
 }
 
@@ -220,10 +211,10 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
   mlir::ImplicitLocOpBuilder b(entry_function.getLoc(), entry_function);
   b.setInsertionPointToStart(entry_function.addEntryBlock());
 
-  auto threads_and_blocks = EmitThreadAndBlockIds(b);
+  auto thread_and_block_ids = EmitThreadAndBlockIds(b);
   Value thread_id_to_index_id_value =
       mlir_converter::ApplyIndexing(thread_id_to_update_id_map,
-                                    threads_and_blocks, {}, b)
+                                    thread_and_block_ids, {}, b)
           .front();
 
   SmallVector<Value> result_tensors{entry_function.getArguments().back()};
@@ -261,30 +252,27 @@ absl::Status MlirScatterFusion::EmitEntryFunction(
            [&](OpBuilder& then_builder, Location then_loc) -> void {
              mlir::ImplicitLocOpBuilder implicit_then_builder(then_loc,
                                                               then_builder);
-             auto scatter_result = EmitThreadLoopNest(
-                 implicit_then_builder, result_tensors, thread_id_to_update_map,
-                 [&](ValueRange output_tensors, ValueRange dim_values,
-                     ValueRange symbol_values) -> SmallVector<Value> {
-                   auto update_tensor_indices = mlir_converter::ApplyIndexing(
-                       thread_id_to_update_map, dim_values, symbol_values,
-                       implicit_then_builder);
+             auto scatter_result = mlir_converter::EmitXlaLoopOp(
+                 implicit_then_builder, thread_and_block_ids, result_tensors,
+                 thread_id_to_update_map,
+                 [&](ImplicitLocOpBuilder& nested_b, ValueRange symbol_values,
+                     ValueRange map_results,
+                     ValueRange output_tensors) -> SmallVector<Value> {
                    // Extract update element.
                    auto update_elem = ProvideParameter(
                        root_computation, scatter, kScatterUpdateIndex,
-                       update_tensor_indices, call_targets, entry_function,
-                       implicit_then_builder)[0];
+                       map_results, call_targets, entry_function, nested_b)[0];
 
                    auto output_indices = std::move(update_offsets);
                    for (int i = 0; i < output_indices.size(); ++i) {
-                     output_indices[i] =
-                         implicit_then_builder.create<ma::AddIOp>(
-                             update_tensor_indices[i + 1], output_indices[i]);
+                     output_indices[i] = nested_b.create<ma::AddIOp>(
+                         map_results[i + 1], output_indices[i]);
                    }
                    Value output_tensor = output_tensors.front();
                    Value updated_output = EmitScatterComputation(
                        scatter, output_indices, update_elem, output_tensor,
                        root_computation, call_targets, entry_function,
-                       implicit_then_builder);
+                       nested_b);
                    return {updated_output};
                  });
              implicit_then_builder.create<scf::YieldOp>(scatter_result);

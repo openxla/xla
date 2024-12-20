@@ -23,6 +23,7 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -44,6 +45,8 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "shardy/dialect/sdy/ir/utils.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/sharding_op_util.h"
@@ -53,6 +56,7 @@ namespace sdy {
 
 namespace {
 
+namespace stablehlo = ::mlir::stablehlo;
 namespace mhlo = ::mlir::mhlo;
 
 using ::mlir::ConversionPatternRewriter;
@@ -66,14 +70,13 @@ using ::mlir::StringRef;
 using ::mlir::success;
 
 using ::mlir::sdy::ConstantOp;
-using ::mlir::sdy::IdentityOp;
 using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::ReshardOp;
 using ::mlir::sdy::ShardingConstraintOp;
 using ::mlir::sdy::TensorShardingAttr;
 using ::mlir::sdy::TensorShardingPerValueAttr;
 
-// Converts `sdy::ConstantOp` to `mhlo::ConstantOp`.
+// Converts `sdy::ConstantOp` to `stablehlo::ConstantOp`.
 class ConstantPattern : public OpConversionPattern<ConstantOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -82,22 +85,8 @@ class ConstantPattern : public OpConversionPattern<ConstantOp> {
       ConversionPatternRewriter& rewriter) const override {
     // We use the generic op builder so that unregistered attributes will be
     // added to the new op.
-    rewriter.replaceOpWithNewOp<mhlo::ConstantOp>(
+    rewriter.replaceOpWithNewOp<stablehlo::ConstantOp>(
         op, op->getResultTypes(), adaptor.getOperands(), op->getAttrs());
-    return success();
-  }
-};
-
-// Removes `sdy::IdentityOp`.
-class IdentityPattern : public OpConversionPattern<IdentityOp> {
- public:
-  using OpConversionPattern::OpConversionPattern;
-
- private:
-  LogicalResult matchAndRewrite(
-      IdentityOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter& rewriter) const override {
-    rewriter.replaceOp(op, adaptor.getInput());
     return success();
   }
 };
@@ -114,8 +103,7 @@ class ReshardPattern : public OpConversionPattern<ReshardOp> {
         rewriter.replaceOpWithNewOp<mhlo::CopyOp>(op, adaptor.getInput());
 
     TensorShardingAttr sdySharding = adaptor.getShardingAttr();
-    copyOp->setAttr(kShardingAttr, TensorShardingPerValueAttr::get(
-                                       op.getContext(), sdySharding));
+    mlir::sdy::setShardings(copyOp, sdySharding);
 
     SmallVector<int64_t> unspecifiedDims;
     for (auto [dim, dimSharding] :
@@ -148,15 +136,14 @@ class ExportOpsPass
     // We do not expect to see ShardingConstraintOp in the input module.
     // ShardingConstraintOp should be replaced by ReshardOp before this pass.
     // Hence, we add ShardingConstraintOp as an illegal op.
-    target.addIllegalOp<ConstantOp, IdentityOp, ReshardOp,
-                        ShardingConstraintOp>();
-    target.addLegalOp<mhlo::ConstantOp, mhlo::CopyOp>();
+    target.addIllegalOp<ConstantOp, ReshardOp, ShardingConstraintOp>();
+    target.addLegalOp<stablehlo::ConstantOp, mhlo::CopyOp>();
     mlir::RewritePatternSet patterns(&context);
     // After converting `sdy.constant` into `mhlo.constant`, the constants
     // should not be deduped via folding. Fortunately, folding only happens in
     // greedy pattern rewriters. ExportHloShardingsPass does a simple walk,
     // which keeps the constants as is.
-    patterns.add<ConstantPattern, IdentityPattern, ReshardPattern>(&context);
+    patterns.add<ConstantPattern, ReshardPattern>(&context);
     if (mlir::failed(mlir::applyPartialConversion(getOperation(), target,
                                                   std::move(patterns)))) {
       signalPassFailure();
@@ -166,8 +153,8 @@ class ExportOpsPass
   StringRef getArgument() const override { return "xla-sdy-export-ops"; }
 
   StringRef getDescription() const override {
-    return "Exports Shardy ops to MHLO ops. Processes sdy::IdentityOp, "
-           "sdy::ReshardOp, and sdy::ConstantOp.";
+    return "Exports Shardy ops to MHLO ops. Processes sdy::ReshardOp and "
+           "sdy::ConstantOp.";
   }
 
   void getDependentDialects(mlir::DialectRegistry& registry) const final {
