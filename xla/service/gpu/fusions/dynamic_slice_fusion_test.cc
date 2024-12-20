@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
@@ -2909,7 +2910,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSConstant) {
     param_1 = f16[128,128]{1,0} parameter(1)
     constant_20 = u32[] constant(20)
     constant_0 = u32[] constant(0)
-    reduce-scatter = f16[64,128]{1,0} reduce-scatter(param_0), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add.clone
+    reduce-scatter = f16[64,128]{1,0} reduce-scatter(param_0), replica_groups={{0,1}}, dimensions={0}, to_apply=add.clone
     ROOT dynamic-update-slice = f16[128,128]{1,0} dynamic-update-slice(param_1, reduce-scatter, constant_20, constant_0)
   })";
 
@@ -2925,7 +2926,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSConstant) {
   %dynamic-slice-fusion {
     %p1 = f16[128,128]{1,0} parameter(1)
     %p0 = f16[128,128]{1,0} parameter(0)
-    %reduce-scatter.1 = f16[64,128]{1,0} reduce-scatter(%p0), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=%add
+    %reduce-scatter.1 = f16[64,128]{1,0} reduce-scatter(%p0), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
     %p2 = u32[] parameter(2)
     %p3 = u32[] parameter(3)
     ROOT %loop_dynamic_update_slice_fusion.1 = f16[128,128]{1,0} dynamic-update-slice(%p1, %reduce-scatter.1, %p2, %p3)
@@ -2960,7 +2961,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSParameterOffset) {
     param_1 = f16[128,128]{1,0} parameter(1)
     param_2 = u32[] parameter(2)
     constant_0 = u32[] constant(0)
-    reduce-scatter = f16[64,128]{1,0} reduce-scatter(param_0), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add.clone
+    reduce-scatter = f16[64,128]{1,0} reduce-scatter(param_0), replica_groups={{0,1}}, dimensions={0}, to_apply=add.clone
     ROOT dynamic-update-slice = f16[128,128]{1,0} dynamic-update-slice(param_1, reduce-scatter, param_2, constant_0)
   })";
 
@@ -2976,7 +2977,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSParameterOffset) {
   %dynamic-slice-fusion {
     %p1 = f16[128,128]{1,0} parameter(1)
     %p0 = f16[128,128]{1,0} parameter(0)
-    %reduce-scatter.1 = f16[64,128]{1,0} reduce-scatter(%p0), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=%add
+    %reduce-scatter.1 = f16[64,128]{1,0} reduce-scatter(%p0), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
     %p2 = u32[] parameter(2)
     %p3 = u32[] parameter(3)
     ROOT %loop_dynamic_update_slice_fusion.1 = f16[128,128]{1,0} dynamic-update-slice(%p1, %reduce-scatter.1, %p2, %p3)
@@ -3012,7 +3013,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDUSLoopIterationOffset) {
     %add.37 = s32[] add(%get-tuple-element.16, %constant.21)
     %get-tuple-element.20 = f32[128,128]{1,0} get-tuple-element(%arg_tuple.15), index=4
     %get-tuple-element.18 = f32[128,128,128]{2,1,0} get-tuple-element(%arg_tuple.15), index=2
-    %reduce-scatter.1 = f32[64,128]{1,0} reduce-scatter(%get-tuple-element.20), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=%add
+    %reduce-scatter.1 = f32[64,128]{1,0} reduce-scatter(%get-tuple-element.20), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
     %reshape.32 = f32[1,64,128]{2,1,0} reshape(%reduce-scatter.1)
     %constant.23 = s32[] constant(0)
     %compare.33 = pred[] compare(%get-tuple-element.16, %constant.23), direction=LT
@@ -3101,7 +3102,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
     %p0 = s32[2,8,32]{2,1,0} parameter(0)
     %slice = s32[1,8,32]{2,1,0} slice(%p0), slice={[1:2], [0:8], [0:32]}
     %bc1 = s32[8,32]{1,0} reshape(%slice)
-    ROOT rs = s32[4,32] reduce-scatter(bc1), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
+    ROOT rs = s32[4,32] reduce-scatter(bc1), replica_groups={{0,1}}, dimensions={0}, to_apply=add
   }
   )";
 
@@ -3159,7 +3160,7 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterDynamicSlice) {
     c1 = s32[] constant(1)
     slice = s32[1,8,32]{2,1,0} dynamic-slice(p0, c1, c0, c0), dynamic_slice_sizes={1,8,32}
     bc1 = s32[8,32]{1,0} reshape(slice)
-    ROOT rs = s32[4,32] reduce-scatter(bc1), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
+    ROOT rs = s32[4,32] reduce-scatter(bc1), replica_groups={{0,1}}, dimensions={0}, to_apply=add
   })";
 
   HloModuleConfig config;
@@ -3236,6 +3237,10 @@ TEST_F(DynamicSliceFusionTest,
       ROOT dus = s32[32,32] dynamic-update-slice(dest, rs, add, c0)
     }
   )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetXlaPjrtGpuClient({}));
+  VLOG(0) << "Num devices: " << client->device_count();
 
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module_ref,
                           ParseAndReturnVerifiedModule(hlo_ref));

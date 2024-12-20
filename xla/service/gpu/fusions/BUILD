@@ -151,7 +151,6 @@ xla_test(
     backend_tags = {
         "gpu": [
             "multi_gpu",
-            "no_oss",
         ],
     },
     backends = ["gpu"],
@@ -167,6 +166,7 @@ xla_test(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/builder/lib:constants",
         "//xla/hlo/ir:hlo",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "//xla/service:custom_call_target_registry",
         "//xla/service:executable",
         "//xla/service:hlo_module_config",
