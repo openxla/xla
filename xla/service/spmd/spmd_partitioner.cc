@@ -2566,6 +2566,11 @@ absl::Status SpmdPartitioningVisitor::HandleElementwise(HloInstruction* hlo) {
   return absl::OkStatus();
 }
 
+absl::Status SpmdPartitioningVisitor::HandleCollectivePermute(
+    HloInstruction* hlo) {
+  return HandleElementwise(hlo);
+}
+
 absl::Status SpmdPartitioningVisitor::HandleConcatenate(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
   if (sharding.IsTileMaximal()) {
