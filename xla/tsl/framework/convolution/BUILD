@@ -97,9 +97,9 @@ tsl_cc_test(
     ],
     deps = [
         ":eigen_helpers",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )

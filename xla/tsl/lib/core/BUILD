@@ -40,8 +40,8 @@ cc_library(
     hdrs = ["status_test_util.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:test",
     ],
 )
 
@@ -94,8 +94,8 @@ cc_library(
     hdrs = ["bitmap.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/numeric:bits",
-        "@tsl//tsl/platform:logging",
     ],
     alwayslink = 1,
 )
@@ -104,8 +104,8 @@ cc_library(
     name = "bits",
     hdrs = ["bits.h"],
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/numeric:bits",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -115,7 +115,7 @@ tsl_cc_test(
     srcs = ["bits_test.cc"],
     deps = [
         ":bits",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
     ],
 )
