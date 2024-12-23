@@ -60,6 +60,8 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
   ExecutionStreamId next_compute_stream_id = ExecutionStreamId(1);
   ExecutionStreamId next_collective_stream_id =
       ExecutionStreamId(options.number_of_compute_execution_streams + 1);
+  VLOG(3) << "Using " << options.number_of_collective_execution_streams
+          << " streams for collectives.";
 
   // Each `Pending` item represents an `HloComputation` that needs to be
   // processed. We start with the entrypoint and add callees as we discover
