@@ -12688,8 +12688,9 @@ TEST_F(AlgebraicSimplifierTest, TestNew123) {
   EXPECT_FALSE(simplifier.Run(module.get()).value());
 }
 
-TEST_F(AlgebraicSimplifierTest,
-       ReducePrecisionWithSamePrecisionAsOperandShouldBeRemoved) {
+TEST_F(
+    AlgebraicSimplifierTest,
+    ReducePrecisionWithSamePrecisionAsOperandShouldBeRemovedWhenRemoveNoOpReducePrecisionIsSet) {
   const char* hlo = R"(
   HloModule test
   ENTRY main {
@@ -12704,8 +12705,9 @@ TEST_F(AlgebraicSimplifierTest,
               GmockMatch(m::Parameter()));
 }
 
-TEST_F(AlgebraicSimplifierTest,
-       ReducePrecisionWithDifferentPrecisionFromOperandShouldNotBeModified) {
+TEST_F(
+    AlgebraicSimplifierTest,
+    ReducePrecisionWithDifferentPrecisionFromOperandShouldNotBeModifiedByDefault) {
   const char* hlo = R"(
   HloModule test
   ENTRY main {
