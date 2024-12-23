@@ -60,7 +60,7 @@ tsl_gpu_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "@tsl//tsl/platform:status",
+        "//xla/tsl/platform:status",
     ],
 )
 
@@ -71,8 +71,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":tsl_status_internal",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
     ],
 )
 
@@ -82,10 +82,10 @@ tsl_cc_test(
     deps = [
         ":tsl_status",
         ":tsl_status_internal",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
     ],
 )
 
@@ -103,8 +103,8 @@ tsl_gpu_library(
     deps = [
         ":tsl_status",
         ":tsl_status_internal",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
     ],
 )
 
