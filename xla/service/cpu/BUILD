@@ -644,6 +644,7 @@ cc_library(
     hdrs = ["ir_emitter2.h"],
     deps = [
         ":backend_config_proto_cc",
+        ":cpu_options",
         ":dot_op_emitter",
         ":elemental_ir_emitter",
         ":elemental_math_emitter",
@@ -666,6 +667,7 @@ cc_library(
         "//xla/service/llvm_ir:loop_emitter",
         "//xla/stream_executor:launch_dim",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
