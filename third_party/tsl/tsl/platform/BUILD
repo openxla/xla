@@ -58,7 +58,10 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":logging",
-        ":mutex",
+        ":stacktrace",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
     ],
 )
 
