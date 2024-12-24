@@ -15342,7 +15342,8 @@ ENTRY main.12 {
   custom-call.3 = s32[2]{0} custom-call(copy.2), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}, backend_config="unspecified_dims=[0]"
   copy.1 = s32[2]{0} copy(custom-call.3), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}
   multiply.0 = s32[2]{0} multiply(copy.1, copy.1), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}
-  ROOT collective-permute.0 = s32[2]{0} collective-permute(multiply.0), channel_id=1, source_target_pairs={{0,6},{2,0},{4,2},{6,4},{1,7},{3,1},{5,3},{7,5}}, sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}
+  collective-permute.0 = s32[2]{0} collective-permute(multiply.0), channel_id=1, source_target_pairs={{0,6},{2,0},{4,2},{6,4},{1,7},{3,1},{5,3},{7,5}}, sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}
+  ROOT custom-call.11 = s32[8]{0} custom-call(collective-permute.0), custom_call_target="SPMDShardToFullShape", sharding={devices=[8]<=[8]}, backend_config="unspecified_dims=[0]"
 })";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
