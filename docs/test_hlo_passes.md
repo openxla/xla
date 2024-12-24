@@ -31,7 +31,7 @@ TEST_F(PriorityFusionTest, FuseBroadcastIntoBitcastConsumers) {
 
 Note: Currently, the codebase has some tests where input HLO module and expected module are written separately. Inlining the `CHECK` lines is the preferred method for future tests. It enables better readability and a similar signature as MLIR based tests [like in `stablehlo_aggressive_folder.mlir`](https://github.com/openxla/stablehlo/blob/main/stablehlo/tests/transforms/stablehlo_aggressive_folder.mlir#L31-L39).
 
-## `LIT` runner with
+## `LIT` runner and `hlo-opt`
 
 Where feasible, use [`LIT`](https://llvm.org/docs/CommandGuide/lit.html) runner and `hlo-opt`, and place `CHECK` lines locally next to the input IR they correspond to.
 Again, make sure to use `// CHECK` instead of `; CHECK` as the delimiter.
