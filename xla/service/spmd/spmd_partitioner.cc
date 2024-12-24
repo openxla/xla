@@ -2568,7 +2568,10 @@ absl::Status SpmdPartitioningVisitor::HandleElementwise(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleCollectivePermute(
     HloInstruction* hlo) {
-  return HandleElementwise(hlo);
+  if (hlo->channel_id()) {
+    return HandleElementwise(hlo);
+  }
+  return DefaultAction(hlo);
 }
 
 absl::Status SpmdPartitioningVisitor::HandleConcatenate(HloInstruction* hlo) {
