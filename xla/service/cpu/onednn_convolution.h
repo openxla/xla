@@ -32,6 +32,8 @@ extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void** args);
 template <>
 struct PrimitiveTrait<kOnednnConvConfig> {
   using pointer_type = xla::cpu::OneDnnConvolutionConfig*;
+  static const BackendConfig::BackendConfigOneofCase kConfigVal =
+      kOnednnConvConfig;
 };
 
 }  // namespace cpu

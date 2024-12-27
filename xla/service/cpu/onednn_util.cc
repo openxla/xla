@@ -45,7 +45,7 @@ dnnl::stream MakeOneDnnStream(
 dnnl::post_ops PopulateOneDnnPostOps(
     int& fused_operand_idx, const dnnl::engine& cpu_engine,
     const std::vector<dnnl::memory::desc>& fused_mds,
-    const OneDnnFusionConfig* fusion_config, const int output_ndims,
+    const OneDnnFusionConfig* fusion_config,
     FusedOperandsRef* fused_operands_ref, dnnl::memory::desc* bias_md) {
   dnnl::post_ops post_ops;
   for (auto& fused_op : fusion_config->ops()) {
@@ -70,14 +70,6 @@ dnnl::post_ops PopulateOneDnnPostOps(
         break;
       case OneDnnFusionConfig::BIAS: {
         *bias_md = fused_mds.at(fused_operand_idx);
-        // TODO(intel-tf): Move this check to the rewriter file
-        // Extend bias rank to match result rank.
-        auto missed_rank = output_ndims - bias_md->get_ndims();
-        if (missed_rank > 0) {
-          auto bias_dims = bias_md->get_dims();
-          bias_dims.insert(bias_dims.begin(), missed_rank, 1);
-          *bias_md = bias_md->reshape(bias_dims);
-        }
         if (fused_operands_ref) {
           fused_operands_ref->postop_args.emplace_back(
               DNNL_ARG_BIAS,
@@ -91,14 +83,6 @@ dnnl::post_ops PopulateOneDnnPostOps(
         break;
       case OneDnnFusionConfig::BINARY_ADD: {
         auto binary_md = fused_mds.at(fused_operand_idx);
-        // TODO(intel-tf): Move this check to the rewriter file
-        // Extend addend rank to match result rank.
-        auto missed_rank = output_ndims - binary_md.get_ndims();
-        if (missed_rank > 0) {
-          auto binary_dims = binary_md.get_dims();
-          binary_dims.insert(binary_dims.begin(), missed_rank, 1);
-          binary_md = binary_md.reshape(binary_dims);
-        }
         if (fused_operands_ref) {
           auto arg_idx =
               DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops.len()) | DNNL_ARG_SRC_1;
@@ -144,36 +128,17 @@ void AddQuantParamArgs(
                           inp_dt == memory::data_type::u8);
 
     auto src_scale_md = fused_mds.at(fused_operand_idx);
-    auto src_scale_buf = fused_operands_ref
-                             ? fused_operands_ref->bufs[fused_operand_idx]
-                             : nullptr;
-    fused_operand_idx++;
-    auto src_zp_md = fused_mds.at(fused_operand_idx);
-    auto src_zp_buf = fused_operands_ref
-                          ? fused_operands_ref->bufs[fused_operand_idx]
-                          : nullptr;
-    fused_operand_idx++;
-    auto wei_scale_md = fused_mds.at(fused_operand_idx);
-    auto wei_scale_buf = fused_operands_ref
-                             ? fused_operands_ref->bufs[fused_operand_idx]
-                             : nullptr;
-    fused_operand_idx++;
-    int wei_scale_size = wei_scale_md.get_dims()[0];
-    auto wei_zp_md = fused_mds.at(fused_operand_idx);
-    auto wei_zp_buf = fused_operands_ref
-                          ? fused_operands_ref->bufs[fused_operand_idx]
-                          : nullptr;
-    fused_operand_idx++;
-    // oneDNN only supports common scale/zp for src (no per-channel support).
-    XLA_LIGHTWEIGHT_CHECK(src_scale_md.get_dims()[0] == 1);
-    XLA_LIGHTWEIGHT_CHECK(src_zp_md.get_dims()[0] ==
-                          src_scale_md.get_dims()[0]);
     if (fused_operands_ref) {
       fused_operands_ref->postop_args.emplace_back(
           DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC,
-          memory(src_scale_md, cpu_engine, src_scale_buf));
-      int* src_zp_data = (int*)src_zp_buf;
+          memory(src_scale_md, cpu_engine,
+                 fused_operands_ref->bufs[fused_operand_idx]));
+    }
 
+    fused_operand_idx++;
+    auto src_zp_md = fused_mds.at(fused_operand_idx);
+    if (fused_operands_ref) {
+      int* src_zp_data = (int*)fused_operands_ref->bufs[fused_operand_idx];
       // We may need to negate the sign of the zp to get the original one
       // because the hlo optimizer flips the zp sign in uniform_dequantize
       // pattern.
@@ -182,41 +147,52 @@ void AddQuantParamArgs(
       fused_operands_ref->postop_args.emplace_back(
           DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_SRC,
           memory(src_zp_md, cpu_engine, qparams->src_zp_vec.data()));
+    }
+
+    fused_operand_idx++;
+    auto wei_scale_md = fused_mds.at(fused_operand_idx);
+    int wei_scale_size = wei_scale_md.get_dims()[0];
+    if (fused_operands_ref) {
       fused_operands_ref->postop_args.emplace_back(
           DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS,
-          memory(wei_scale_md, cpu_engine, wei_scale_buf));
+          memory(wei_scale_md, cpu_engine,
+                 fused_operands_ref->bufs[fused_operand_idx]));
+    }
+    fused_operand_idx++;
 
-      // Weights' zero point is supported by oneDNN only in weights
-      // decompression.
-      auto wei_zp_mem = memory(wei_zp_md, cpu_engine, wei_zp_buf);
-      if (qparams->quant_result) {
-        auto dst_scale_md = fused_mds.at(fused_operand_idx);
-        auto dst_scale_buf = fused_operands_ref->bufs[fused_operand_idx];
-        fused_operand_idx++;
-        auto dst_zp_md = fused_mds.at(fused_operand_idx);
-        auto dst_zp_buf = fused_operands_ref->bufs[fused_operand_idx];
-        fused_operand_idx++;
+    // We skip the wei_zp arg which is used in weights decompression that we
+    // don't support currently.
+    fused_operand_idx++;
 
-        // oneDNN only supports common scale/zp for dst (no per-channel
-        // support).
-        XLA_LIGHTWEIGHT_CHECK(dst_scale_md.get_dims()[0] == 1);
-        XLA_LIGHTWEIGHT_CHECK(dst_zp_md.get_dims()[0] ==
-                              dst_scale_md.get_dims()[0]);
+    // oneDNN only supports common scale/zp for src (no per-channel support).
+    XLA_LIGHTWEIGHT_CHECK(src_scale_md.get_dims()[0] == 1);
+    XLA_LIGHTWEIGHT_CHECK(src_zp_md.get_dims()[0] ==
+                          src_scale_md.get_dims()[0]);
 
-        float* scale_data = (float*)dst_scale_buf;
+    if (qparams->quant_result) {
+      auto dst_scale_md = fused_mds.at(fused_operand_idx);
+      if (fused_operands_ref) {
+        float* scale_data = (float*)fused_operands_ref->bufs[fused_operand_idx];
         // We may need to compute the reciprocal of scale to get the original
         // one because the hlo optimizer changes it in uniform_quantize pattern.
         qparams->dst_scale_vec[0] =
             qparams->inversed_dst_scale ? 1.0 / scale_data[0] : scale_data[0];
+        fused_operands_ref->postop_args.emplace_back(
+            DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST,
+            memory(dst_scale_md, cpu_engine, qparams->dst_scale_vec.data()));
+      }
+
+      fused_operand_idx++;
+      auto dst_zp_md = fused_mds.at(fused_operand_idx);
+      if (fused_operands_ref) {
+        auto dst_zp_buf = fused_operands_ref->bufs[fused_operand_idx];
         if (dst_zp_md.get_data_type() == memory::data_type::f32) {
           // oneDNN expects zp to be int32 not f32.
           qparams->dst_zp_vec[0] = static_cast<int>(((float*)dst_zp_buf)[0]);
         } else {
           qparams->dst_zp_vec[0] = ((int*)dst_zp_buf)[0];
         }
-        fused_operands_ref->postop_args.emplace_back(
-            DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST,
-            memory(dst_scale_md, cpu_engine, qparams->dst_scale_vec.data()));
+
         auto dst_zp_md_new =
             memory::desc(dst_zp_md.get_dims(), memory::data_type::s32,
                          memory::format_tag::x);
@@ -224,6 +200,13 @@ void AddQuantParamArgs(
             DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_DST,
             memory(dst_zp_md_new, cpu_engine, qparams->dst_zp_vec.data()));
       }
+      fused_operand_idx++;
+
+      // oneDNN only supports common scale/zp for dst (no per-channel
+      // support).
+      XLA_LIGHTWEIGHT_CHECK(dst_scale_md.get_dims()[0] == 1);
+      XLA_LIGHTWEIGHT_CHECK(dst_zp_md.get_dims()[0] ==
+                            dst_scale_md.get_dims()[0]);
     }
     // We set the mask to zero as we are using single scale and zero point
     // for the whole tensor.

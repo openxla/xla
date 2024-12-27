@@ -1443,8 +1443,8 @@ PartitionedHlo::ReshardToPartialReplicateWithAllGather(
     int64_t replicate_factor = temp_sharding.tile_assignment().dim(dim) /
                                target.tile_assignment().dim(dim);
     if (replicate_factor > 1) {
-      replicate_dims.emplace_back(dim);
-      replicate_factors.emplace_back(replicate_factor);
+      replicate_dims.push_back(dim);
+      replicate_factors.push_back(replicate_factor);
     }
   }
 
@@ -1593,113 +1593,77 @@ PartitionedHlo PartitionedHlo::Broadcast() const {
 PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
     const HloSharding& target,
     absl::Span<const std::pair<int64_t, int64_t>> source_target_dims) const {
+  if (target == sharding()) {
+    return *this;
+  }
+  VLOG(5) << "Source: " << sharding().ToString();
+  VLOG(5) << "Target: " << target.ToString();
   if (source_target_dims.empty()) {
-    if (target == sharding()) {
-      return *this;
-    }
     // If the device order is different in the target, fix the order with
     // ReshardWithCollectivePermute.
     return ReshardWithCollectivePermute(target);
   }
 
-  VLOG(5) << "Source: " << sharding().ToString();
-  VLOG(5) << "Target: " << target.ToString();
   // Swap one pair of dimensions.
-  int64_t source_dim = source_target_dims[0].first;
-  int64_t target_dim = source_target_dims[0].second;
+  const int64_t source_dim = source_target_dims[0].first;
+  const int64_t target_dim = source_target_dims[0].second;
+  VLOG(5) << "Source dim: " << source_dim;
+  VLOG(5) << "Target dim: " << target_dim;
+  CHECK_NE(source_dim, target_dim);
   const int64_t group_size = sharding().tile_assignment().dim(source_dim) /
                              sharding().tile_assignment().dim(target_dim);
-
   VLOG(5) << "Group size: " << group_size;
-  auto temp_target_tile = [&] {
-    auto& original_tile_assignment = sharding().tile_assignment();
-    std::vector<int64_t> reshape_tile_dims(
-        original_tile_assignment.num_dimensions() + 2);
-    int64_t i = 0;
-    int64_t added_source_dim = -1;
-    int64_t added_target_dim = -1;
-    for (int64_t j = 0; j < original_tile_assignment.num_dimensions(); ++j) {
-      if (source_dim == j) {
-        reshape_tile_dims[i] = original_tile_assignment.dim(j) / group_size;
-        reshape_tile_dims[++i] = group_size;
-        added_source_dim = i;
-      } else if (target_dim == j) {
-        reshape_tile_dims[i] = original_tile_assignment.dim(j);
-        reshape_tile_dims[++i] = 1;
-        added_target_dim = i;
-      } else {
-        reshape_tile_dims[i] = original_tile_assignment.dim(j);
-      }
-      ++i;
+
+  std::vector<int64_t> reshape_tile_dims;
+  reshape_tile_dims.reserve(sharding().tile_assignment().num_dimensions() + 2);
+  int64_t added_source_dim;
+  int64_t added_target_dim;
+  for (int64_t j = 0; j < sharding().tile_assignment().num_dimensions(); ++j) {
+    if (source_dim == j) {
+      reshape_tile_dims.push_back(sharding().tile_assignment().dim(j) /
+                                  group_size);
+      reshape_tile_dims.push_back(group_size);
+      added_source_dim = reshape_tile_dims.size() - 1;
+    } else if (target_dim == j) {
+      reshape_tile_dims.push_back(sharding().tile_assignment().dim(j));
+      reshape_tile_dims.push_back(1);
+      added_target_dim = reshape_tile_dims.size() - 1;
+    } else {
+      reshape_tile_dims.push_back(sharding().tile_assignment().dim(j));
     }
-    VLOG(5) << "Added target: " << added_target_dim;
-    VLOG(5) << "Added source: " << added_source_dim;
-    std::vector<int64_t> xpose_dims(reshape_tile_dims.size());
-    std::iota(xpose_dims.begin(), xpose_dims.end(), 0);
-    xpose_dims[added_source_dim] = added_target_dim;
-    xpose_dims[added_target_dim] = added_source_dim;
-    auto temp_target_tile =
-        hlo_sharding_util::TransposeSharding(
-            HloSharding::Tile(
-                original_tile_assignment.Reshape(reshape_tile_dims)),
-            xpose_dims)
-            .tile_assignment();
-    VLOG(5) << "Transposed target: " << temp_target_tile.ToString();
-    std::vector<int64_t> temp_target_tile_dims(
-        sharding().tile_assignment().dimensions().begin(),
-        sharding().tile_assignment().dimensions().end());
-    temp_target_tile_dims[source_dim] =
-        sharding().tile_assignment().dim(target_dim);
-    temp_target_tile_dims[target_dim] =
-        sharding().tile_assignment().dim(source_dim);
-    return temp_target_tile.Reshape(temp_target_tile_dims);
-  }();
+  }
+  VLOG(5) << "Added target: " << added_target_dim;
+  VLOG(5) << "Added source: " << added_source_dim;
+  std::vector<int> xpose_dims(reshape_tile_dims.size());
+  std::iota(xpose_dims.begin(), xpose_dims.end(), 0);
+  std::swap(xpose_dims[added_source_dim], xpose_dims[added_target_dim]);
+  std::vector<int64_t> temp_target_tile_dims(
+      sharding().tile_assignment().dimensions().begin(),
+      sharding().tile_assignment().dimensions().end());
+  std::swap(temp_target_tile_dims[source_dim],
+            temp_target_tile_dims[target_dim]);
+  auto temp_target_tile = sharding()
+                              .tile_assignment()
+                              .Reshape(reshape_tile_dims)
+                              .Transpose(xpose_dims)
+                              .Reshape(temp_target_tile_dims);
   auto temp_target = target.ReplicateOnLastTileDim()
                          ? HloSharding::PartialTile(temp_target_tile)
                          : HloSharding::Tile(temp_target_tile);
   VLOG(5) << "Temp target sharding: " << temp_target.ToString();
-  auto padded_shape = hlo_->shape();
-  auto padded_base_shape = base_shape_;
-  auto current_base_padded_shape = base_shape_;
-  padded_base_shape.set_dimensions(
-      target_dim, RoundUpTo(base_shape_.dimensions(target_dim),
-                            temp_target.tile_assignment().dim(target_dim)));
-  current_base_padded_shape.set_dimensions(
-      target_dim, hlo_->shape().dimensions(target_dim) *
-                      sharding().tile_assignment().dim(target_dim));
-
-  auto padded_source_base_shape = base_shape_;
-  auto current_source_base_padded_shape = base_shape_;
-  padded_source_base_shape.set_dimensions(
-      source_dim, RoundUpTo(base_shape_.dimensions(source_dim),
-                            temp_target.tile_assignment().dim(source_dim)));
-  current_source_base_padded_shape.set_dimensions(
-      source_dim, hlo_->shape().dimensions(source_dim) *
-                      sharding().tile_assignment().dim(source_dim));
-
-  VLOG(5) << "Target dim: " << target_dim;
-  VLOG(5) << "Source dim: " << source_dim;
-  VLOG(5) << "Original sharded shape: " << hlo_->shape();
-  VLOG(5) << "Base shape: " << base_shape_.ToString();
-  VLOG(5) << "Padded base shape: " << padded_base_shape.ToString();
-  VLOG(5) << "Current padded shape: " << current_base_padded_shape.ToString();
-  VLOG(5) << "Padded source base shape: "
-          << padded_source_base_shape.ToString();
-  VLOG(5) << "Current source padded shape: "
-          << current_source_base_padded_shape.ToString();
-  VLOG(5) << "Dimension padded target_dim: "
-          << hlo_->shape().dimensions(target_dim) *
-                 sharding().tile_assignment().dim(target_dim);
-  CHECK_GE(padded_base_shape.rank(), current_base_padded_shape.rank());
-  CHECK_LE(padded_source_base_shape.rank(),
-           current_source_base_padded_shape.rank());
 
   PaddingConfig pc;
   for (int64_t i = 0; i < hlo_->shape().rank(); ++i) {
     auto* pd = pc.add_dimensions();
     pd->set_edge_padding_low(0);
-    pd->set_edge_padding_high(padded_base_shape.dimensions(i) -
-                              current_base_padded_shape.dimensions(i));
+    if (i == target_dim) {
+      pd->set_edge_padding_high(
+          RoundUpTo(base_shape_.dimensions(i),
+                    temp_target.tile_assignment().dim(i)) -
+          hlo_->shape().dimensions(i) * sharding().tile_assignment().dim(i));
+    } else {
+      pd->set_edge_padding_high(0);
+    }
     pd->set_interior_padding(0);
   }
   PartitionedHlo p_hlo = *this;
@@ -1734,27 +1698,16 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
         groups[group_id].push_back(device);
       });
 
-  HloInstruction* result = nullptr;
-
-  // Split along the split dimension (target_dim) of the all-to-all
-  // output.
-  std::vector<int64_t> dimensions;
-  const int64_t rank = base_shape_.rank();
-  dimensions.reserve(rank + 1);
-  for (int64_t i = 0; i < rank; ++i) {
-    if (i == target_dim) {
-      dimensions.push_back(group_size);
-      dimensions.push_back(padded_hlo->shape().dimensions(i) / group_size);
-    } else {
-      dimensions.push_back(padded_hlo->shape().dimensions(i));
-    }
-  }
-  VLOG(5) << "Target ata shape: "
-          << ShapeUtil::MakeShape(base_shape_.element_type(), dimensions)
-                 .ToString();
+  // Split along the split dimension (target_dim) of the all-to-all output.
+  std::vector<int64_t> target_ata_dims(padded_hlo->shape().dimensions().begin(),
+                                       padded_hlo->shape().dimensions().end());
+  target_ata_dims.insert(target_ata_dims.begin() + target_dim, group_size);
+  target_ata_dims[target_dim + 1] /= group_size;
   auto reshape = state_.b->AddInstruction(HloInstruction::CreateReshape(
-      ShapeUtil::MakeShape(base_shape_.element_type(), dimensions),
+      ShapeUtil::MakeShape(base_shape_.element_type(), target_ata_dims),
       padded_hlo));
+  VLOG(5) << "Target ata shape: " << reshape->shape().ToString();
+
   // After the reshape, it is guaranteed to have at least 3 dimensions.
   auto all_to_all =
       state_.collective_ops_creator.create_cross_partition_all_to_all(
@@ -1783,27 +1736,40 @@ PartitionedHlo PartitionedHlo::ReshardWithAllToAll(
   auto new_shape = ShapeInference::InferAllToAllShape(
                        padded_hlo->shape(), target_dim, source_dim, group_size)
                        .value();
-  result = state_.b->AddInstruction(
+  HloInstruction* result = state_.b->AddInstruction(
       HloInstruction::CreateReshape(new_shape, transpose));
+  CHECK_EQ(result->shape().rank(), base_shape_.rank());
   result->set_sharding(temp_target);
+
+  auto padded_source_base_shape = base_shape_;
+  auto current_source_base_padded_shape = base_shape_;
+  padded_source_base_shape.set_dimensions(
+      source_dim, RoundUpTo(base_shape_.dimensions(source_dim),
+                            temp_target.tile_assignment().dim(source_dim)));
+  current_source_base_padded_shape.set_dimensions(
+      source_dim, hlo_->shape().dimensions(source_dim) *
+                      sharding().tile_assignment().dim(source_dim));
+
+  VLOG(5) << "Original sharded shape: " << hlo_->shape();
+  VLOG(5) << "Base shape: " << base_shape_.ToString();
+  VLOG(5) << "Padded source base shape: "
+          << padded_source_base_shape.ToString();
+  VLOG(5) << "Current source padded shape: "
+          << current_source_base_padded_shape.ToString();
+
   std::vector<int64_t> strides(result->shape().rank(), 1);
   std::vector<int64_t> starts(result->shape().rank(), 0);
-  std::vector<int64_t> limits(result->shape().rank());
-  for (int64_t i = 0; i < result->shape().rank(); ++i) {
-    limits[i] = padded_source_base_shape.dimensions(i);
-  }
   auto sliced_phlo = ReshardDataForSlicing(
-      strides, starts, limits,
+      strides, starts, padded_source_base_shape.dimensions(),
       PartitionedHlo(result, current_source_base_padded_shape, state_),
       temp_target, state_.b);
   CHECK(sliced_phlo.has_value());
   result = SliceDataFromWindowReshard(*sliced_phlo, strides, base_shape_,
                                       temp_target, state_.b);
   result->set_sharding(temp_target);
-  auto remaining_source_target_dims = source_target_dims;
-  remaining_source_target_dims.remove_prefix(1);
   return PartitionedHlo(result, base_shape_, state_)
-      .ReshardWithAllToAll(target, remaining_source_target_dims);
+      .ReshardWithAllToAll(
+          target, source_target_dims.last(source_target_dims.size() - 1));
 }
 
 namespace {
@@ -2754,8 +2720,7 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
   }
   // Special handling for sort in TopK when first operand partitioined at
   // sort dimension.
-  auto k = GetKValueInTopKWhenPartitionSortDim(hlo);
-  if (k.has_value()) {
+  if (std::optional<int64_t> k = GetKValueInTopKWhenPartitionSortDim(hlo)) {
     // When the first operand partitioned at sort dimension:
     //   1. Partition sort computation to different partitions;
     //   2. Slice TopK value and index from different partitions;
@@ -2870,56 +2835,20 @@ absl::Status SpmdPartitioningVisitor::HandleSort(HloInstruction* hlo) {
   // -- output tuple elements have the same sharding
   // -- the current sharding is tiled
   if (subshape.rank() > 1 && same_subsharding && cur_sharding.IsTiled() &&
-      !cur_sharding.IsTileMaximal() &&
       cur_sharding.tile_assignment().dim(sort_dim) != 1) {
-    std::vector<int64_t> tile_assignment_dims(
-        cur_sharding.tile_assignment().dimensions().begin(),
-        cur_sharding.tile_assignment().dimensions().end());
     // Pick the new dimension to move the sharding into
-    int64_t picked_dim = -1;
-    int64_t first_nonsort_nonsharded_dim = -1;
-    auto nshards = tile_assignment_dims[sort_dim];
-    for (int64_t dim = 0; dim < subshape.rank(); ++dim) {
-      if (dim == sort_dim || tile_assignment_dims[dim] != 1 ||
-          subshape.dimensions(dim) == 1) {
-        continue;
-      }
-      if (first_nonsort_nonsharded_dim == -1) {
-        first_nonsort_nonsharded_dim = dim;
-      }
-      if (subshape.dimensions(dim) % nshards != 0) {
-        continue;
-      }
-      picked_dim = dim;
-      break;
-    }
-    if (picked_dim == -1) {
-      picked_dim = first_nonsort_nonsharded_dim;
-    }
     std::vector<HloInstruction*> new_operands;
     std::vector<HloSharding> new_shardings;
     std::optional<HloSharding> new_output_sharding;
-    if (picked_dim != -1) {
-      VLOG(2) << "Sort partitioning - picked target dimension to move the "
-                 "sharding: "
-              << picked_dim;
-      // The sharding cannot exist in the sort dimension if there are no free
-      // dimensions to move the sharding into. In other words, we propagated the
-      // operand sharding which is on the sort dimension only because we knew we
-      // could pick a free dimension to move it into now.
-      CHECK_NE(picked_dim, -1)
-          << "Sort partitioning - sharding cannot exist in the sort dimension "
-             "if "
-             "there are no free dimensions to move it into";
-      // Move the sharding to the picked dimension
-      std::vector<int64_t> permutation(
-          cur_sharding.tile_assignment().dimensions().begin(),
-          cur_sharding.tile_assignment().dimensions().end());
-      absl::c_iota(permutation, 0);
-      std::swap(permutation[sort_dim], permutation[picked_dim]);
-      auto new_sharding =
-          hlo_sharding_util::TransposeSharding(cur_sharding, permutation);
-      VLOG(2) << "Sort partitioning - new sharding: "
+    if (std::optional<int64_t> picked_dim =
+            hlo_sharding_util::GetFirstMergeableDimForSortOperand(
+                subshape, cur_sharding, sort_dim)) {
+      // We can move the sharding tiles from the sort dimension to the picked
+      // dimension.
+      auto new_sharding = hlo_sharding_util::MoveAndMergeShardingTiles(
+          cur_sharding, sort_dim, *picked_dim);
+      VLOG(2) << "Move sharding tiles from sort dim " << sort_dim
+              << " to target dim " << *picked_dim << " to get the new sharding "
               << new_sharding.ToString();
       for (auto& operand : hlo->operands()) {
         new_operands.push_back(

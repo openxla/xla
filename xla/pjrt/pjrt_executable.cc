@@ -208,7 +208,7 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
   return options;
 }
 
-CompiledMemoryStatsProto CompiledMemoryStats::ToProto() {
+CompiledMemoryStatsProto CompiledMemoryStats::ToProto() const {
   CompiledMemoryStatsProto proto;
   proto.set_generated_code_size_in_bytes(generated_code_size_in_bytes);
   proto.set_argument_size_in_bytes(argument_size_in_bytes);
@@ -667,6 +667,10 @@ absl::Status CompileOptions::ApplyOptionFromString(
       }
       return absl::OkStatus();
     } else {
+      if (value.empty() && field->is_repeated()) {
+        reflection->ClearField(&debug_options, field);
+        return absl::OkStatus();
+      }
       auto enum_desc = field->enum_type()->FindValueByName(value);
       if (enum_desc != nullptr) {
         if (field->is_repeated()) {

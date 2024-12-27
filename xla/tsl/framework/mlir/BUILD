@@ -1,7 +1,7 @@
 # MLIR related utilities.
 
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
 
