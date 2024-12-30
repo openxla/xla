@@ -704,7 +704,7 @@ absl::Status MemcpyDeviceToDeviceCmd::Record(
 
   if (num_bytes_ == 0) {
     VLOG(5) << "Replacing MemcpyDeviceToDeviceCmd command of 0 bytes with an "
-               "empty command";
+               "barrier command to keep the original dependencies";
     return command_buffer->Barrier(index(), dependencies());
   }
   return command_buffer->MemcpyDeviceToDevice(index(), dependencies(), &dst,
@@ -732,7 +732,8 @@ absl::Status MemzeroCmd::Record(const Thunk::ExecuteParams& execute_params,
   VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
 
   if (dst_.size() == 0) {
-    VLOG(5) << "Replacing MemzeroCmd command of 0 bytes with an empty command";
+    VLOG(5) << "Replacing MemzeroCmd command of 0 bytes with a barrier command "
+               "to keep the original dependencie";
     return command_buffer->Barrier(index(), dependencies());
   }
 
@@ -763,7 +764,8 @@ absl::Status Memset32Cmd::Record(const Thunk::ExecuteParams& execute_params,
   VLOG(5) << "  Dst: " << dst_ << " (" << dst.opaque() << ")";
 
   if (dst_.size() == 0) {
-    VLOG(5) << "Replacing Memset32Cmd command of 0 bytes with an empty command";
+    VLOG(5) << "Replacing Memset32Cmd command of 0 bytes with a barrier "
+               "command to keep the original dependencies";
     return command_buffer->Barrier(index(), dependencies());
   }
 

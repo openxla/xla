@@ -102,9 +102,9 @@ absl::StatusOr<std::unique_ptr<RocmCommandBuffer>> RocmCommandBuffer::Create(
 }
 
 absl::StatusOr<GpuCommandBuffer::ConditionalNodeResult>
-RocmCommandBuffer::CreateConditionalNode(
-    const CmdIdxSetOrNodeHandles& dependencies,
-    GraphConditionalHandle conditional, ConditionType type) {
+RocmCommandBuffer::CreateConditionalNode(CmdIdxSetOrNodeHandles dependencies,
+                                         GraphConditionalHandle conditional,
+                                         ConditionType type) {
   return absl::UnimplementedError("Conditionals are not supported on ROCM.");
 }
 
@@ -142,7 +142,7 @@ absl::Status RocmCommandBuffer::LaunchSetWhileConditionKernel(
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemsetNode(
-    const CmdIdxSetOrNodeHandles& dependencies, DeviceMemoryBase destination,
+    CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
     BitPattern bit_pattern, size_t num_elements) {
   VLOG(2) << "Add memset node to a graph " << graph_
           << "; dst: " << destination.opaque()
@@ -191,7 +191,7 @@ absl::Status RocmCommandBuffer::UpdateMemsetNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemcpyD2DNode(
-    const CmdIdxSetOrNodeHandles& dependencies, DeviceMemoryBase destination,
+    CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph_
           << "; dst: " << destination.opaque() << "; src: " << source.opaque()
@@ -225,7 +225,7 @@ absl::Status RocmCommandBuffer::UpdateMemcpyD2DNode(
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
-    const CmdIdxSetOrNodeHandles& dependencies, const CommandBuffer& nested) {
+    CmdIdxSetOrNodeHandles dependencies, const CommandBuffer& nested) {
   hipGraph_t child_graph =
       tensorflow::down_cast<const RocmCommandBuffer&>(nested).graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
@@ -255,7 +255,7 @@ absl::Status RocmCommandBuffer::UpdateChildNode(GraphNodeHandle node_handle,
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
-    const CmdIdxSetOrNodeHandles& dependencies, const ThreadDim& threads,
+    CmdIdxSetOrNodeHandles dependencies, const ThreadDim& threads,
     const BlockDim& blocks, const Kernel& kernel,
     const KernelArgsPackedArrayBase& args) {
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
@@ -342,7 +342,7 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
 }
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateBarrierNode(
-    const CmdIdxSetOrNodeHandles& dependencies) {
+    CmdIdxSetOrNodeHandles dependencies) {
   VLOG(2) << "Add empty node to a graph " << graph_
           << "; deps: " << dependencies.size();
 
