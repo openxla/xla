@@ -85,6 +85,31 @@ std::vector<hipGraphNode_t> ToHipGraphHandles(
   return handles;
 }
 
+// Converts a list of platform independent GraphNodeHandles into a list of
+// Rocm specific hipGraphNode_t.
+absl::StatusOr<std::vector<hipGraphNode_t>>
+RocmCommandBuffer::ToHipGraphHandles(CmdIdxSetOrNodeHandles dependencies) {
+  std::vector<hipGraphNode_t> deps;
+  if (std::holds_alternative<GraphNodeHandles>(dependencies)) {
+    auto from_dependencies = std::get<GraphNodeHandles>(dependencies);
+    deps.reserve(from_dependencies.size());
+    std::transform(from_dependencies.begin(), from_dependencies.end(),
+                   std::back_inserter(deps), [](GraphNodeHandle handle) {
+                     return ToHipGraphHandle(handle);
+                   });
+  } else {
+    const CmdIndexSet* cmd_idx_set = std::get<const CmdIndexSet*>(dependencies);
+    deps.reserve(cmd_idx_set->size());
+    for (Index dep_cmd_idx : *cmd_idx_set) {
+      TF_ASSIGN_OR_RETURN(auto cmd_tail_nodes, GetCmdTailNodes(dep_cmd_idx));
+      for (auto node : cmd_tail_nodes) {
+        deps.push_back(ToHipGraphHandle(node));
+      }
+    }
+  }
+  return deps;
+}
+
 // Converts a HIP specific hipGraphNode_t into a platform independent
 // GraphNodeHandle. This function will be removed once all Node factory
 // functions have been migrated into the subclasses.
@@ -147,8 +172,7 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemsetNode(
   VLOG(2) << "Add memset node to a graph " << graph_
           << "; dst: " << destination.opaque()
           << "; bit_pattern: " << bit_pattern.ToString()
-          << "; num_elements: " << num_elements
-          << "; deps: " << dependencies.size();
+          << "; num_elements: " << num_elements;
 
   hipMemsetParams params{};
   params.dst = AsDevicePtr(destination);
@@ -195,7 +219,7 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemcpyD2DNode(
     DeviceMemoryBase source, uint64_t size) {
   VLOG(2) << "Add memcpy d2d node to a graph " << graph_
           << "; dst: " << destination.opaque() << "; src: " << source.opaque()
-          << "; size: " << size << "; deps: " << dependencies.size();
+          << "; size: " << size;
 
   std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
 
@@ -229,7 +253,7 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
   hipGraph_t child_graph =
       tensorflow::down_cast<const RocmCommandBuffer&>(nested).graph_;
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
-          << " and add it to " << graph_ << "; deps: " << dependencies.size();
+          << " and add it to " << graph_;
 
   std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
 
@@ -264,8 +288,7 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
           << "; kernel: " << kernel.name() << "; gdx: " << blocks.x
           << " gdy: " << blocks.y << " gdz: " << blocks.z
           << " bdx: " << threads.x << " bdy: " << threads.y
-          << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes
-          << "; deps: " << dependencies.size();
+          << " bdz: " << threads.z << "; shmem: " << shared_mem_bytes;
 
   hipKernelNodeParams params{};
 
@@ -343,8 +366,7 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
 
 absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateBarrierNode(
     CmdIdxSetOrNodeHandles dependencies) {
-  VLOG(2) << "Add empty node to a graph " << graph_
-          << "; deps: " << dependencies.size();
+  VLOG(2) << "Add empty node to a graph " << graph_;
 
   hipGraphNode_t barrier_handle = nullptr;
   std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
