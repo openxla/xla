@@ -92,11 +92,9 @@ class GpuCommandBuffer : public CommandBuffer {
   static std::string DependenciesToString(
       const CmdIdxSetOrNodeHandles& dependencies) {
     if (std::holds_alternative<GraphNodeHandles>(dependencies)) {
-      return GpuCommandBuffer::GraphNodeHandlesToString(
-          std::get<GraphNodeHandles>(dependencies));
+      return GraphNodeHandlesToString(std::get<GraphNodeHandles>(dependencies));
     } else {
-      return GpuCommandBuffer::CmdIndexSetToString(
-          *std::get<const CmdIndexSet*>(dependencies));
+      return CmdIndexSetToString(*std::get<const CmdIndexSet*>(dependencies));
     }
   }
 
