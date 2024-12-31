@@ -122,7 +122,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                 const KernelArgsPackedArrayBase& args) override;
 
   absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
-      const CmdIdxSetOrNodeHandles dependencies) override;
+      CmdIdxSetOrNodeHandles dependencies) override;
 
   absl::Status Trace(Stream* stream,
                      absl::AnyInvocable<absl::Status()> function) override;
