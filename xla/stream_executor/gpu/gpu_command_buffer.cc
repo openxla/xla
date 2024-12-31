@@ -147,10 +147,11 @@ absl::Status GpuCommandBuffer::UpdateGraphAndCmdTailNodes(
       graph_tail_nodes_.erase(handle);
     }
   }
-  VLOG(0) << "New cmd" << cmd_idx << " cmd_tail_nodes, index "
+  VLOG(3) << "Update command tail nodes, cmd index " << cmd_idx
+          << ", cmd_tail_nodes: "
           << GraphNodeHandleSetToString(cmd_tail_nodes_[cmd_idx]);
   graph_tail_nodes_.insert(new_nodes.begin(), new_nodes.end());
-  VLOG(0) << "New graph_tail_nodes: "
+  VLOG(3) << "Update graph tail nodes: "
           << GraphNodeHandleSetToString(graph_tail_nodes_);
   return absl::OkStatus();
 }
@@ -396,9 +397,9 @@ absl::Status GpuCommandBuffer::AddConditionalCommandNode(
     ConditionalCommandBuffers& cond_cmd_buffers =
         conditional_command_buffers_[update_state_.conditional_idx++];
 
-    VLOG(0) << "UpdateConditionalCommandBuffers: "
+    VLOG(3) << "UpdateConditionalCommandBuffers: "
             << cond_cmd_buffers.conditionals.size();
-    VLOG(0) << "Number of handles: " << num_handles;
+    VLOG(3) << "Number of handles: " << num_handles;
 
     // Sanity check that we got the correct conditional command buffers.
     TF_RETURN_IF_ERROR(CheckNumCommandBuffers(cond_cmd_buffers, num_handles));

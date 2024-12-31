@@ -120,6 +120,21 @@ class CommandBufferCmd {
   using Index = int64_t;
   using CmdIndexSet = absl::flat_hash_set<Index>;
 
+  static std::string CmdIndexSetToString(const CmdIndexSet& index_set) {
+    std::ostringstream oss;
+    oss << "CmdIndexSet: {";
+    bool first = true;
+    for (const auto& index : index_set) {
+      if (!first) {
+        oss << ", ";
+      }
+      oss << index;
+      first = false;
+    }
+    oss << "}";
+    return oss.str();
+  }
+
   CommandBufferCmd(CommandBufferCmdType cmd_type) : cmd_type_(cmd_type) {}
   virtual ~CommandBufferCmd() = default;
 
@@ -241,8 +256,11 @@ class CommandBufferCmd {
             cmd_type_ == CommandBufferCmdType::kCollectiveBroadcastCmd);
   }
 
-  virtual std::string ToString() const {
-    return CommandBufferCmdString(cmd_type_);
+  std::string ToString() const {
+    std::ostringstream oss;
+    oss << CommandBufferCmdString(cmd_type_) << ", index=" << index_
+        << ", dependencies: " << CmdIndexSetToString(dependencies_);
+    return oss.str();
   }
 
   Index index() const { return index_; }

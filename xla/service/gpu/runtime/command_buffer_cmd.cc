@@ -231,6 +231,7 @@ void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
     requires_barrier = true;
   }
 
+  VLOG(2) << "Append command " << cmd->ToString();
   commands_.push_back(std::move(cmd));
   if (requires_barrier) {
     Append(std::make_unique<BarrierCmd>());
