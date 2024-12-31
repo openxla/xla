@@ -89,21 +89,6 @@ class GpuCommandBuffer : public CommandBuffer {
     return oss.str();
   }
 
-  static std::string CmdIndexSetToString(const CmdIndexSet& index_set) {
-    std::ostringstream oss;
-    oss << "CmdIndexSet: {";
-    bool first = true;
-    for (const auto& index : index_set) {
-      if (!first) {
-        oss << ", ";
-      }
-      oss << index;
-      first = false;
-    }
-    oss << "}";
-    return oss.str();
-  }
-
   static std::string DependenciesToString(
       const CmdIdxSetOrNodeHandles& dependencies) {
     if (std::holds_alternative<GraphNodeHandles>(dependencies)) {

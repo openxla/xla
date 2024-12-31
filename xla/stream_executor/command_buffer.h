@@ -57,6 +57,21 @@ class CommandBuffer {
  public:
   using Index = int64_t;
   using CmdIndexSet = absl::flat_hash_set<Index>;
+  static std::string CmdIndexSetToString(const CmdIndexSet& index_set) {
+    std::ostringstream oss;
+    oss << "CmdIndexSet: {";
+    bool first = true;
+    for (const auto& index : index_set) {
+      if (!first) {
+        oss << ", ";
+      }
+      oss << index;
+      first = false;
+    }
+    oss << "}";
+    return oss.str();
+  }
+
   // Builder constructs nested command buffers owned by a parent command buffer.
   using Builder = std::function<absl::Status(CommandBuffer*)>;
 

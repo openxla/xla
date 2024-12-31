@@ -177,8 +177,7 @@ void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
   cmd->set_index(commands_.size());
 
   for (auto it = commands_.rbegin(); it != commands_.rend(); ++it) {
-    // Add dependency to the latest barrier command (barrier command with empty
-    // dependencies is global barrier command).
+    // Add dependency to the latest barrier command.
     if ((*it)->IsBarrier()) {
       cmd->add_dependency((*it)->index());
       break;

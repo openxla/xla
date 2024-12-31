@@ -73,6 +73,14 @@ hipGraphNode_t ToHipGraphHandle(GpuCommandBuffer::GraphNodeHandle handle) {
   return absl::bit_cast<hipGraphNode_t>(handle);
 }
 
+// Converts a HIP specific hipGraphNode_t into a platform independent
+// GraphNodeHandle. This function will be removed once all Node factory
+// functions have been migrated into the subclasses.
+GraphNodeHandle FromHipGraphHandle(hipGraphNode_t handle) {
+  return absl::bit_cast<GpuCommandBuffer::GraphNodeHandle>(handle);
+}
+}  // namespace
+
 // Converts a list of platform independent GraphNodeHandles into a list of
 // Rocm specific hipGraphNode_t.
 absl::StatusOr<std::vector<hipGraphNode_t>>
@@ -97,14 +105,6 @@ RocmCommandBuffer::ToHipGraphHandles(CmdIdxSetOrNodeHandles dependencies) {
   }
   return deps;
 }
-
-// Converts a HIP specific hipGraphNode_t into a platform independent
-// GraphNodeHandle. This function will be removed once all Node factory
-// functions have been migrated into the subclasses.
-GraphNodeHandle FromHipGraphHandle(hipGraphNode_t handle) {
-  return absl::bit_cast<GpuCommandBuffer::GraphNodeHandle>(handle);
-}
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<RocmCommandBuffer>> RocmCommandBuffer::Create(
     Mode mode, StreamExecutor* parent) {

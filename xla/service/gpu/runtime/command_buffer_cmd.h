@@ -117,23 +117,8 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 using xla::BufferUse;
 class CommandBufferCmd {
  public:
-  using Index = int64_t;
-  using CmdIndexSet = absl::flat_hash_set<Index>;
-
-  static std::string CmdIndexSetToString(const CmdIndexSet& index_set) {
-    std::ostringstream oss;
-    oss << "CmdIndexSet: {";
-    bool first = true;
-    for (const auto& index : index_set) {
-      if (!first) {
-        oss << ", ";
-      }
-      oss << index;
-      first = false;
-    }
-    oss << "}";
-    return oss.str();
-  }
+  using Index = se::CommandBuffer::Index;
+  using CmdIndexSet = se::CommandBuffer::CmdIndexSet;
 
   CommandBufferCmd(CommandBufferCmdType cmd_type) : cmd_type_(cmd_type) {}
   virtual ~CommandBufferCmd() = default;
@@ -259,14 +244,18 @@ class CommandBufferCmd {
   std::string ToString() const {
     std::ostringstream oss;
     oss << CommandBufferCmdString(cmd_type_) << ", index=" << index_
-        << ", dependencies: " << CmdIndexSetToString(dependencies_);
+        << ", dependencies: "
+        << se::CommandBuffer::CmdIndexSetToString(dependencies_);
     return oss.str();
   }
 
   Index index() const { return index_; }
   void set_index(Index index) { index_ = index; }
 
-  void add_dependency(Index cmd_idx) { dependencies_.insert(cmd_idx); }
+  void add_dependency(Index cmd_idx) {
+    CHECK_GE(cmd_idx, 0);
+    dependencies_.insert(cmd_idx);
+  }
   const CmdIndexSet& dependencies() const { return dependencies_; }
 
  private:
