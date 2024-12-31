@@ -170,7 +170,8 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemsetNode(
   params.value = bit_pattern.GetPatternBroadcastedToUint32();
   params.width = num_elements;
 
-  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+  TF_ASSIGN_OR_RETURN(std::vector<hipGraphNode_t> deps,
+                      ToHipGraphHandles(dependencies));
 
   hipGraphNode_t node_handle = nullptr;
   TF_RETURN_IF_ERROR(
@@ -209,7 +210,8 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateMemcpyD2DNode(
           << "; dst: " << destination.opaque() << "; src: " << source.opaque()
           << "; size: " << size;
 
-  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+  TF_ASSIGN_OR_RETURN(std::vector<hipGraphNode_t> deps,
+                      ToHipGraphHandles(dependencies));
 
   hipGraphNode_t node_handle = nullptr;
   TF_RETURN_IF_ERROR(ToStatus(
@@ -243,7 +245,8 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateChildNode(
   VLOG(2) << "Create a new node by cloning the child graph " << child_graph
           << " and add it to " << graph_;
 
-  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+  TF_ASSIGN_OR_RETURN(std::vector<hipGraphNode_t> deps,
+                      ToHipGraphHandles(dependencies));
 
   hipGraphNode_t node_handle = nullptr;
   TF_RETURN_IF_ERROR(ToStatus(
@@ -301,7 +304,8 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
         "Failed to set shared memory size"));
   }
 
-  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+  TF_ASSIGN_OR_RETURN(std::vector<hipGraphNode_t> deps,
+                      ToHipGraphHandles(dependencies));
 
   hipGraphNode_t node_handle = nullptr;
   TF_RETURN_IF_ERROR(
@@ -352,12 +356,13 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
                   "Failed to set HIP graph kernel node params");
 }
 
-absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateBarrierNode(
+absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateEmptyNode(
     CmdIdxSetOrNodeHandles dependencies) {
   VLOG(2) << "Add empty node to a graph " << graph_;
 
   hipGraphNode_t barrier_handle = nullptr;
-  std::vector<hipGraphNode_t> deps = ToHipGraphHandles(dependencies);
+  TF_ASSIGN_OR_RETURN(std::vector<hipGraphNode_t> deps,
+                      ToHipGraphHandles(dependencies));
 
   TF_RETURN_IF_ERROR(
       ToStatus(wrap::hipGraphAddEmptyNode(&barrier_handle, graph_, deps.data(),
