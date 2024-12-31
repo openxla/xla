@@ -913,7 +913,6 @@ class BarrierCmd : public CommandBufferCmd {
   BufferUseVector buffers() override;
 };
 
-
 //===----------------------------------------------------------------------===//
 // EmptyCmd insert an empty node that will act as dependency node
 //===----------------------------------------------------------------------===//
