@@ -74,6 +74,17 @@ HloInstruction* AllGatherDecomposer::TranslateAllGatherToAllReducePerOperand(
   zero = comp->AddInstruction(
       HloInstruction::CreateBroadcast(output_shape, zero, {}));
 
+  HloInstruction* operand = ag->mutable_operand(0);
+  // AllGathers do not CSE by default, as a result we want to hide the dus and
+  // zero to make decomposed all-gather memory footprint similar to a true
+  // all-gather.
+  if (ag->channel_id().has_value()) {
+    operand = operand->AddInstruction(HloInstruction::CreateUnary(
+        operand->shape(), HloOpcode::kOptimizationBarrier, operand));
+    zero = zero->AddInstruction(HloInstruction::CreateUnary(
+        zero->shape(), HloOpcode::kOptimizationBarrier, zero));
+  }
+
   auto dus = comp->AddInstruction(HloInstruction::CreateDynamicUpdateSlice(
       zero->shape(), zero, operand, start_indices));
   auto ar = comp->AddInstruction(HloInstruction::CreateAllReduce(
