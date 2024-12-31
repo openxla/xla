@@ -56,7 +56,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
 
   // Converts a list of platform independent GraphNodeHandles into a list of
   // Rocm specific hipGraphNode_t.
-  absl::StatusOr<std::vector<hipGraphNode_t>> ToCudaGraphHandles(
+  absl::StatusOr<std::vector<hipGraphNode_t>> ToHipGraphHandles(
       CmdIdxSetOrNodeHandles dependencies);
 
   absl::Status LaunchSetIfConditionKernel(

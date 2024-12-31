@@ -74,18 +74,6 @@ hipGraphNode_t ToHipGraphHandle(GpuCommandBuffer::GraphNodeHandle handle) {
 }
 
 // Converts a list of platform independent GraphNodeHandles into a list of
-// HIP specific hipGraphNode_t.
-std::vector<hipGraphNode_t> ToHipGraphHandles(
-    absl::Span<const GraphNodeHandle> opaque_handles) {
-  std::vector<hipGraphNode_t> handles;
-  handles.reserve(opaque_handles.size());
-  for (const GraphNodeHandle opaque_handle : opaque_handles) {
-    handles.push_back(ToHipGraphHandle(opaque_handle));
-  }
-  return handles;
-}
-
-// Converts a list of platform independent GraphNodeHandles into a list of
 // Rocm specific hipGraphNode_t.
 absl::StatusOr<std::vector<hipGraphNode_t>>
 RocmCommandBuffer::ToHipGraphHandles(CmdIdxSetOrNodeHandles dependencies) {
