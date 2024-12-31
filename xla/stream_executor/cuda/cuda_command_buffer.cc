@@ -550,7 +550,7 @@ absl::Status CudaCommandBuffer::UpdateKernelNode(
                         "Failed to set CUDA graph kernel node params");
 }
 
-absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateBarrierNode(
+absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateEmptyNode(
     CmdIdxSetOrNodeHandles dependencies) {
   if (parent_->GetDeviceDescription().driver_version() <
       SemanticVersion(12, 4, 0)) {

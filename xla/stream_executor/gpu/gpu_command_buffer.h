@@ -153,15 +153,16 @@ class GpuCommandBuffer : public CommandBuffer {
 
   GpuCommandBuffer(Mode mode, StreamExecutor* parent);
 
-  using CommandBuffer::Barrier;
-  absl::Status Barrier(Index cmd_idx, const CmdIndexSet& dep_idxes) {
-    return Barrier(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes});
+  using CommandBuffer::EmptyOp;
+  absl::Status EmptyOp(Index cmd_idx, const CmdIndexSet& dep_idxes) {
+    return EmptyOp(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes});
   }
 
   // Adds an execution barrier that depends on all the tail nodes (nodes that no
   // other nodes depend on them) in current graph.
+  using CommandBuffer::Barrier;
   absl::Status Barrier() {
-    return Barrier(cmd_tail_nodes_.size(), graph_tail_nodes());
+    return EmptyOp(cmd_tail_nodes_.size(), graph_tail_nodes());
   }
 
   using CommandBuffer::Launch;
@@ -336,7 +337,7 @@ class GpuCommandBuffer : public CommandBuffer {
     return nodes;
   }
 
-  absl::Status Barrier(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies);
+  absl::Status EmptyOp(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies);
 
   absl::Status Launch(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
                       const ThreadDim& threads, const BlockDim& blocks,
@@ -677,7 +678,7 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Creates a new no-op node acting as a barrier and adds
   // it to the graph.
-  virtual absl::StatusOr<GraphNodeHandle> CreateBarrierNode(
+  virtual absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
       CmdIdxSetOrNodeHandles dependencies) = 0;
 
   // Enables or disables the execution of the given node in

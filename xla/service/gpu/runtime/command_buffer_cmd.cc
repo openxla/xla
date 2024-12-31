@@ -177,7 +177,8 @@ void CommandBufferCmdSequence::Append(std::unique_ptr<CommandBufferCmd> cmd) {
   cmd->set_index(commands_.size());
 
   for (auto it = commands_.rbegin(); it != commands_.rend(); ++it) {
-    // Add dependency to the latest barrier command.
+    // Add dependency to the latest barrier command (barrier command with empty
+    // dependencies is global barrier command).
     if ((*it)->IsBarrier()) {
       cmd->add_dependency((*it)->index());
       break;
@@ -705,7 +706,7 @@ absl::Status MemcpyDeviceToDeviceCmd::Record(
   if (num_bytes_ == 0) {
     VLOG(5) << "Replacing MemcpyDeviceToDeviceCmd command of 0 bytes with an "
                "barrier command to keep the original dependencies";
-    return command_buffer->Barrier(index(), dependencies());
+    return command_buffer->EmptyOp(index(), dependencies());
   }
   return command_buffer->MemcpyDeviceToDevice(index(), dependencies(), &dst,
                                               src, num_bytes_);
@@ -734,7 +735,7 @@ absl::Status MemzeroCmd::Record(const Thunk::ExecuteParams& execute_params,
   if (dst_.size() == 0) {
     VLOG(5) << "Replacing MemzeroCmd command of 0 bytes with a barrier command "
                "to keep the original dependencie";
-    return command_buffer->Barrier(index(), dependencies());
+    return command_buffer->EmptyOp(index(), dependencies());
   }
 
   return command_buffer->Memset(index(), dependencies(), &dst, uint8_t{0},
@@ -766,7 +767,7 @@ absl::Status Memset32Cmd::Record(const Thunk::ExecuteParams& execute_params,
   if (dst_.size() == 0) {
     VLOG(5) << "Replacing Memset32Cmd command of 0 bytes with a barrier "
                "command to keep the original dependencies";
-    return command_buffer->Barrier(index(), dependencies());
+    return command_buffer->EmptyOp(index(), dependencies());
   }
 
   return command_buffer->Memset(
@@ -1455,11 +1456,32 @@ absl::Status BarrierCmd::Record(const Thunk::ExecuteParams& execute_params,
                                 const RecordParams& record_params,
                                 se::CommandBuffer* command_buffer) {
   VLOG(5) << "Record BarrierCmd";
-  TF_RETURN_IF_ERROR(command_buffer->Barrier(index(), dependencies()));
+  TF_RETURN_IF_ERROR(command_buffer->EmptyOp(index(), dependencies()));
   return absl::OkStatus();
 }
 
 BarrierCmd::BufferUseVector BarrierCmd::buffers() { return {}; }
+
+//===----------------------------------------------------------------------===//
+// EmptyCmd
+//===----------------------------------------------------------------------===//
+
+EmptyCmd::EmptyCmd(std::vector<const CommandBufferCmd*> dependencies)
+    : CommandBufferCmd(CommandBufferCmdType::kEmptyCmd) {
+  for (const CommandBufferCmd* cmd : dependencies) {
+    add_dependency(cmd->index());
+  }
+}
+
+absl::Status EmptyCmd::Record(const Thunk::ExecuteParams& execute_params,
+                              const RecordParams& record_params,
+                              se::CommandBuffer* command_buffer) {
+  VLOG(5) << "Record EmptyCmd";
+  TF_RETURN_IF_ERROR(command_buffer->EmptyOp(index(), dependencies()));
+  return absl::OkStatus();
+}
+
+EmptyCmd::BufferUseVector EmptyCmd::buffers() { return {}; }
 
 //===----------------------------------------------------------------------===//
 // CollectiveCmd
@@ -1493,7 +1515,7 @@ absl::Status CollectiveCmd::AddTracedCommandBuffer(
     absl::FunctionRef<absl::Status(se::Stream*)> trace) {
   if (execute_params.mock_collectives) {
     // Treat mock collectives as a barrier with the same dependencies.
-    return command_buffer->Barrier(index(), dependencies());
+    return command_buffer->EmptyOp(index(), dependencies());
   }
   TF_ASSIGN_OR_RETURN(std::unique_ptr<se::CommandBuffer> nested_cmd,
                       se::TraceCommandBufferFactory::Create(

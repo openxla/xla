@@ -81,6 +81,7 @@ namespace xla::gpu {
   V(kWhileCmd, "WhileCmd")                               \
   V(kCustomCallCmd, "CustomCallCmd")                     \
   V(kBarrierCmd, "BarrierCmd")                           \
+  V(kEmptyCmd, "EmptyCmd")                               \
   V(kCollectiveCmd, "CollectiveCmd")                     \
   V(kAllReduceCmd, "AllReduceCmd")                       \
   V(kReduceScatter, "ReduceScatterCmd")                  \
@@ -904,6 +905,23 @@ class BarrierCmd : public CommandBufferCmd {
   // Creates a barrier that will synchronize with commands specified
   // by dependencies.
   BarrierCmd(std::vector<const CommandBufferCmd*> dependencies);
+
+  absl::Status Record(const Thunk::ExecuteParams& execute_params,
+                      const RecordParams& record_params,
+                      se::CommandBuffer* command_buffer) override;
+
+  BufferUseVector buffers() override;
+};
+
+
+//===----------------------------------------------------------------------===//
+// EmptyCmd insert an empty node that will act as dependency node
+//===----------------------------------------------------------------------===//
+class EmptyCmd : public CommandBufferCmd {
+ public:
+  // Creates a barrier that will synchronize with commands specified
+  // by dependencies.
+  EmptyCmd(std::vector<const CommandBufferCmd*> dependencies);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,

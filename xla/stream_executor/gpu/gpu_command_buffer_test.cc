@@ -464,8 +464,8 @@ TEST(GpuCommandBufferTest, IndependentOverlaps) {
         cmd_buffer->Memset(2, CmdIndexSet{}, &buffers[2], bit_pattern + 2, 1));
     TF_RETURN_IF_ERROR(
         cmd_buffer->Memset(3, CmdIndexSet{2}, &buffers[3], bit_pattern + 3, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(4, CmdIndexSet{1}));
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(5, CmdIndexSet{3}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{1}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(5, CmdIndexSet{3}));
     return cmd_buffer->Finalize();
   };
 
@@ -527,7 +527,7 @@ TEST(GpuCommandBufferTest, OverlapBarriers) {
         cmd_buffer->Memset(2, CmdIndexSet{}, &buffers[2], bit_pattern + 2, 1));
     TF_RETURN_IF_ERROR(
         cmd_buffer->Memset(3, CmdIndexSet{2}, &buffers[3], bit_pattern + 3, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(4, CmdIndexSet{1, 3}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{1, 3}));
     TF_RETURN_IF_ERROR(
         cmd_buffer->Memset(5, CmdIndexSet{4}, &buffers[4], bit_pattern + 4, 1));
     TF_RETURN_IF_ERROR(
@@ -1328,10 +1328,10 @@ TEST(GpuCommandBufferTest, ConditionalIfWithOverlaps) {
         }));
 
     // Create a barrier for Memsets.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(3, CmdIndexSet{1}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(3, CmdIndexSet{1}));
 
     // Create a barrier for If and memsets.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(4, CmdIndexSet{2, 3}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{2, 3}));
 
     return cmd_buffer->Finalize();
   };
@@ -1417,7 +1417,7 @@ TEST(GpuCommandBufferTest, ConditionalWhileWithOverlaps) {
           return body_cmd->Launch(ThreadDim(), BlockDim(), add, a, b, b);
         }));
 
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(2, CmdIndexSet{0, 1}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(2, CmdIndexSet{0, 1}));
 
     return cmd_buffer->Finalize();
   };

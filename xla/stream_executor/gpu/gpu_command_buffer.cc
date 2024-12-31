@@ -126,7 +126,6 @@ absl::Status GpuCommandBuffer::CheckNumCommandBuffers(
 absl::Status GpuCommandBuffer::UpdateGraphAndCmdTailNodes(
     Index cmd_idx, GraphNodeHandles new_nodes,
     CmdIdxSetOrNodeHandles dependencies) {
-  VLOG(0) << "hello wsg";
   cmd_tail_nodes_[cmd_idx].insert(new_nodes.begin(), new_nodes.end());
   if (std::holds_alternative<const CmdIndexSet*>(dependencies)) {
     // Dependencies are specified through indices of CommandBufferCmd which are
@@ -156,11 +155,11 @@ absl::Status GpuCommandBuffer::UpdateGraphAndCmdTailNodes(
   return absl::OkStatus();
 }
 
-absl::Status GpuCommandBuffer::Barrier(Index cmd_idx,
+absl::Status GpuCommandBuffer::EmptyOp(Index cmd_idx,
                                        CmdIdxSetOrNodeHandles dependencies) {
   if (state_ == State::kCreate) {
     TF_ASSIGN_OR_RETURN(nodes_.emplace_back().handle,
-                        CreateBarrierNode(dependencies));
+                        CreateEmptyNode(dependencies));
     TF_RETURN_IF_ERROR(UpdateGraphAndCmdTailNodes(
         cmd_idx, GraphNodeHandles{nodes_.back().handle}, dependencies));
     return absl::OkStatus();

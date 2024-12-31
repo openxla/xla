@@ -102,7 +102,7 @@ class CommandBuffer {
   //===--------------------------------------------------------------------===//
 
   // Adds an execution barrier that depends on the commands in dep_idxes.
-  virtual absl::Status Barrier(Index cmd_idx, const CmdIndexSet& dep_idxes) = 0;
+  virtual absl::Status EmptyOp(Index cmd_idx, const CmdIndexSet& dep_idxes) = 0;
 
   // Adds an execution barrier that depends on all tail nodes (nodes that no
   // other nodes depend on them) in current graph.
