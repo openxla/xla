@@ -148,9 +148,21 @@ absl::Status RocmCommandBuffer::LaunchSetForConditionKernel(
   return absl::UnimplementedError("Conditionals are not supported on ROCM.");
 }
 
+absl::Status RocmCommandBuffer::LaunchSetForConditionKernel(
+    CmdIdxSetOrNodeHandles dependencies, GraphConditionalHandle conditional,
+    DeviceMemory<int32_t> loop_counter, int32_t iterations) {
+  return absl::UnimplementedError("Conditionals are not supported on ROCM.");
+}
+
 absl::Status RocmCommandBuffer::LaunchSetWhileConditionKernel(
     Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
     GraphConditionalHandle conditional, DeviceMemory<bool> predicate) {
+  return absl::UnimplementedError("Conditionals are not supported on ROCM.");
+}
+
+absl::Status RocmCommandBuffer::LaunchSetWhileConditionKernel(
+    CmdIdxSetOrNodeHandles dependencies, GraphConditionalHandle conditional,
+    DeviceMemory<bool> predicate) {
   return absl::UnimplementedError("Conditionals are not supported on ROCM.");
 }
 

@@ -77,9 +77,16 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                            GraphConditionalHandle conditional,
                                            DeviceMemory<int32_t> loop_counter,
                                            int32_t iterations) override;
+  absl::Status LaunchSetForConditionKernel(CmdIdxSetOrNodeHandles dependencies,
+                                           GraphConditionalHandle conditional,
+                                           DeviceMemory<int32_t> loop_counter,
+                                           int32_t iterations) override;
   absl::Status LaunchSetWhileConditionKernel(
       Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       GraphConditionalHandle conditional,
+      DeviceMemory<bool> predicate) override;
+  absl::Status LaunchSetWhileConditionKernel(
+      CmdIdxSetOrNodeHandles dependencies, GraphConditionalHandle conditional,
       DeviceMemory<bool> predicate) override;
 
   absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
