@@ -617,6 +617,7 @@ cc_library(
     deps = [
         ":bit_pattern",
         ":device_memory",
+        ":dnn",
         ":kernel",
         ":launch_dim",
         "//xla/tsl/lib/gtl:int_type",
