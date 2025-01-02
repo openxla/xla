@@ -428,6 +428,7 @@ xla_test(
 cuda_library(
     name = "nvtx_with_cuda_kernels",
     testonly = 1,
+    tags = ["requires-gpu-nvidia"],
     srcs = ["nvtx_with_cuda_kernels.cu.cc"],
     hdrs = ["nvtx_with_cuda_kernels.h"],
     copts = if_nvcc([
@@ -444,7 +445,7 @@ xla_test(
     srcs = ["nvtx_with_cuda_kernels_test.cc"],
     backends = ["gpu"],
     copts = tf_profiler_copts() + tsl_copts(),
-    tags = ["no_mac"],
+    tags = ["no_mac", "requires-gpu-nvidia"],
     deps = [
         ":nvtx_with_cuda_kernels",
         "@com_google_googletest//:gtest_main",
