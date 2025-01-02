@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -68,7 +69,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-using MemoryAccess = CommandBufferCmd::MemoryAccess;
+using MemoryAccess = BufferUse::MemoryAccess;
 using KernelArgsPacking = se::MultiKernelLoaderSpec::KernelArgsPacking;
 
 namespace {
