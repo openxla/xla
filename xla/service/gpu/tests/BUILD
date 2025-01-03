@@ -915,7 +915,7 @@ xla_cc_test(
         "//xla/tests:test_macros_header",
         "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
-        "//xla/service/gpu/runtime:nvshmem_api",
+        "//xla/backends/gpu/collectives:nvshmem_collectives",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

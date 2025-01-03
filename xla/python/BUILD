@@ -1253,6 +1253,7 @@ tsl_pybind_extension(
             "-Wl,-rpath,$$ORIGIN/../nvidia/cudnn/lib",
             "-Wl,-rpath,$$ORIGIN/../nvidia/cusolver/lib",
             "-Wl,-rpath,$$ORIGIN/../nvidia/nccl/lib",
+            "-Wl,-rpath,$$ORIGIN/../nvidia/nvshmem/lib",
         ],
         "//conditions:default": [],
     }),

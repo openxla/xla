@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/service/gpu/runtime/nvshmem_api.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 
 #include "absl/strings/str_format.h"
 #include "tsl/platform/logging.h"
@@ -22,6 +22,9 @@ limitations under the License.
 #include "tsl/platform/statusor.h"
 #include "third_party/nvshmem/nvshmem.h"
 #include "third_party/nvshmem/nvshmemx.h"
+#include "xla/core/collectives/collectives_registry.h"
+
+#include <cuda.h>
 
 namespace xla::gpu {
 
@@ -60,20 +63,24 @@ static absl::Status NvshmemToStatus(int s, const char* file, int64_t line,
 
 #define XLA_NVSHMEM_CHECK(expr) CHECK(XLA_NVSHMEM_STATUS(expr).ok())
 
-int NvshmemApi::process_id_ = -1;
-size_t NvshmemApi::num_processes_ = 0;
-size_t NvshmemApi::device_count_per_process_ = 0;
-std::function<absl::StatusOr<std::string>(std::string_view)>
-    NvshmemApi::kv_store_get_ = nullptr;
-std::function<absl::Status(std::string_view, std::string_view)>
-    NvshmemApi::kv_store_set_ = nullptr;
-
-NvshmemApi& NvshmemApi::Default() {
-  static NvshmemApi instance;
-  return instance;
+NvshmemCollectives::~NvshmemCollectives() {
+  if (initialized_) Finalize();
 }
 
-void NvshmemApi::SetEnvInfo(
+NvshmemCollectives* NvshmemCollectives::Default() {
+  absl::StatusOr<Collectives*> collectives =
+      CollectivesRegistry::Get("gpu", "nvshmem");
+  CHECK_OK(collectives) << "Failed to get NVSHMEM collectives";  // Crash OK
+
+  if (auto* nvshmem_collectives =
+          tsl::down_cast<NvshmemCollectives*>(*collectives)) {
+    return nvshmem_collectives;
+  }
+
+  LOG(FATAL) << "Unsupported collectives implementation for NVSHMEM";
+}
+
+void NvshmemCollectives::SetEnvInfo(
     int process_id, size_t num_processes, size_t device_count_per_process,
     std::function<absl::StatusOr<std::string>(std::string_view)> kv_store_get,
     std::function<absl::Status(std::string_view, std::string_view)>
@@ -85,27 +92,14 @@ void NvshmemApi::SetEnvInfo(
   kv_store_set_ = kv_store_set;
 }
 
-NvshmemApi::NvshmemApi() {
-  // Initialize NVSHMEM here since code path
-  // is already protected by singleton pattern
+absl::Status NvshmemCollectives::Initialize() {
   if (process_id_ == -1) {
-    LOG(FATAL)
-        << "NvshmemApi::SetEnvInfo was not called before using NVSHMEM API";
+    LOG(FATAL) << "NvshmemCollectives::SetEnvInfo was not called before using "
+                  "NVSHMEM API";
   }
   if (device_count_per_process_ != 1) {
     LOG(FATAL) << "NVSHMEM API is only supported with one device per process";
   }
-  CHECK(Initialize().ok());
-}
-
-NvshmemApi::~NvshmemApi() {
-  VLOG(3) << absl::StreamFormat(
-      "Finilizing NVSHMEM on process %d; num_processes=%llu", process_id_,
-      num_processes_);
-  nvshmemx_hostlib_finalize();
-}
-
-absl::Status NvshmemApi::Initialize() {
   nvshmemx_init_attr_t nvshmem_init_attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
   nvshmemx_uniqueid_t nvshmem_id = NVSHMEMX_UNIQUEID_INITIALIZER;
 
@@ -132,7 +126,25 @@ absl::Status NvshmemApi::Initialize() {
   return absl::OkStatus();
 }
 
-absl::StatusOr<void*> NvshmemApi::Allocate(uint64_t bytes) {
+absl::Status NvshmemCollectives::InitializeOnce() {
+  static absl::once_flag once_flag;
+  absl::Status status = absl::OkStatus();
+  absl::call_once(once_flag, [&]() {
+    status = Initialize();
+    initialized_ = true;
+  });
+  return status;
+}
+
+void NvshmemCollectives::Finalize() {
+  VLOG(3) << absl::StreamFormat(
+      "Finilizing NVSHMEM on process %d; num_processes=%llu", process_id_,
+      num_processes_);
+  nvshmemx_hostlib_finalize();
+}
+
+absl::StatusOr<void*> NvshmemCollectives::Allocate(uint64_t bytes) {
+  TF_RETURN_IF_ERROR(InitializeOnce());
   VLOG(3) << absl::StreamFormat(
       "Start allocation of %s (%llu bytes) for NVSHMEM",
       tsl::strings::HumanReadableNumBytes(bytes), bytes);
@@ -145,7 +157,8 @@ absl::StatusOr<void*> NvshmemApi::Allocate(uint64_t bytes) {
   return buffer;
 }
 
-absl::Status NvshmemApi::Deallocate(void* buffer) {
+absl::Status NvshmemCollectives::Deallocate(void* buffer) {
+  TF_RETURN_IF_ERROR(InitializeOnce());
   VLOG(3) << absl::StreamFormat("Start de-allocation for NVSHMEM buffer: %p",
                                 buffer);
   nvshmem_free(buffer);
@@ -153,3 +166,6 @@ absl::Status NvshmemApi::Deallocate(void* buffer) {
 }
 
 }  // namespace xla::gpu
+
+XLA_COLLECTIVES_REGISTER("gpu", "nvshmem", 2,
+                         std::make_unique<xla::gpu::NvshmemCollectives>());
