@@ -188,28 +188,6 @@ xla_test(
 )
 
 #===-------------------------------------------------------------------------------------------===//
-# NVSHMEM Integration
-#===-------------------------------------------------------------------------------------------===//
-
-cc_library(
-    name = "nvshmem_api",
-    srcs = ["nvshmem_api.cc"],
-    hdrs = ["nvshmem_api.h"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:numbers",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
-    ]+ if_cuda_is_configured([
-        "@local_config_cuda//cuda:cuda_headers",
-        "@nvshmem//:nvshmem",
-    ]),
-)
-
-#===-------------------------------------------------------------------------------------------===//
 # XLA Thunks Runtime
 #===-------------------------------------------------------------------------------------------===//
 
