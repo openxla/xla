@@ -87,6 +87,7 @@ cc_library(
         ":contiguous_section_memory_manager",
         ":cpu_features",
         ":ir_compiler",
+        ":object_loader",
         "//xla:util",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/service/cpu:orc_jit_memory_mapper",
