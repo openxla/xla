@@ -112,7 +112,6 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 //
 // Commands must be thread safe as they can be recorded into multiple command
 // buffers concurrently on different stream executors.
-using xla::BufferUse;
 class CommandBufferCmd {
  public:
   CommandBufferCmd(CommandBufferCmdType cmd_type,
