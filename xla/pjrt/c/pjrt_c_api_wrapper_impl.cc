@@ -1635,6 +1635,8 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
       "PJRT_LoadedExecutable_Execute",
       tsl::profiler::ContextType::kPjrtLibraryCall, traceme_context_id);
 
+
+  // Options are set her!!
   xla::ExecuteOptions options;
   options.launch_id = args->options->launch_id;
   options.strict_shape_checking = true;
