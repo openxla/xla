@@ -24,7 +24,7 @@ limitations under the License.
 #include "xla/tests/test_macros.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/threadpool.h"
-#include "xla/service/gpu/runtime/nvshmem_api.h"
+#include "xla/backends/gpu/collectives/nvshmem_collectives.h"
 
 namespace xla {
 namespace {
@@ -94,10 +94,7 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
     return absl::InternalError(
         "KV store is not available for nvshmem initialization");
   };
-  xla::gpu::NvshmemApi::SetEnvInfo(node_id, num_nodes, 1, store_get_fn,
-                                   store_set_fn);
-  xla::gpu::NvshmemApi::Default();
-  return absl::OkStatus();
+  return xla::gpu::NvshmemCollectives::Default()->Initialize(node_id, num_nodes, 1, store_get_fn, store_set_fn);
 }
 
 }  // namespace
