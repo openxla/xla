@@ -146,6 +146,7 @@ cc_library(
         # keep sorted
         ":nccl_id_store",
         "//xla:debug_options_flags",
+        "//xla/backends/gpu/collectives:nvshmem_collectives",
         "//xla/service/gpu:gpu_compiler",
         "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_executable",

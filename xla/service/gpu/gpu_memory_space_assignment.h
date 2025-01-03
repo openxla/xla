@@ -34,7 +34,8 @@ inline constexpr int64_t kTempBufferMemorySpaceColor = 2;
 // Set memory space to kCollectiveMemorySpaceColor for all allocations used by
 // all-reduce, all-gather, and reduce-scatter. This memory space maps to
 // collective memory using ncclMemAlloc in the runtime.
-inline BufferAssigner::Colorer CollectiveColorer() {
+inline BufferAssigner::Colorer CollectiveColorer(bool use_user_buffers,
+                                                 bool use_nvshmem) {
   return [](HloAliasAnalysis* alias_analysis, const HloOrdering&) {
     static const auto* kSupportedOpcodes = new absl::flat_hash_set<HloOpcode>{
         HloOpcode::kAllReduce,
@@ -49,12 +50,24 @@ inline BufferAssigner::Colorer CollectiveColorer() {
         HloOpcode::kCollectivePermuteDone,
         HloOpcode::kAllToAll,
     };
+    auto is_mosaic_gpu_nvshmem_instr = [](const HloInstruction* instr) {
+      return instr->opcode() == HloOpcode::kCustomCall &&
+             (instr->custom_call_target() == "mosaic_gpu" || instr->custom_call_target() == "mosaic_gpu_v2" ) &&
+             instr->raw_backend_config_string().find("nvshmem") !=
+                 std::string::npos;
+    };
     auto is_collective_memory_instr = [&](const HloInstruction* instr) {
-      return kSupportedOpcodes->contains(instr->opcode()) ||
-             // opcode or async wrapped opcode is in kSupportedOpcodes.
-             ((instr->opcode() == HloOpcode::kAsyncStart ||
-               instr->opcode() == HloOpcode::kAsyncDone) &&
-              kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
+      if (use_user_buffers) {
+        return kSupportedOpcodes->contains(instr->opcode()) ||
+              // opcode or async wrapped opcode is in kSupportedOpcodes.
+              ((instr->opcode() == HloOpcode::kAsyncStart ||
+                instr->opcode() == HloOpcode::kAsyncDone) &&
+                kSupportedOpcodes->contains(instr->async_wrapped_opcode()));
+      }
+      if (use_nvshmem) {
+        return is_mosaic_gpu_nvshmem_instr(instr);
+      }
+      return false;
     };
     auto has_collective_memory_in_uses = [&](const HloValue* input_alias) {
       // If any use is a collective instruction, we must color the value to use
