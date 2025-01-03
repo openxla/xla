@@ -431,6 +431,9 @@ message DebugOptions {
 
   bool xla_gpu_enable_pipelined_reduce_scatter = 231;
 
+  // Enable NVSHMEM.
+  bool xla_gpu_experimental_enable_nvshmem = 364;
+
   // Enable allreduce reassociation on allreduces that are converted to a wider
   // type. The resulting allreduce will be promoted to a wider-typed allreduce.
   bool xla_gpu_enable_reassociation_for_converted_ar = 209;
@@ -1130,7 +1133,7 @@ message DebugOptions {
 
   // Note: when adding a new flag, please add it to one of the hardware-specific
   // or hardware-agnostic sections at the top of this proto message.
-  // Next id: 364
+  // Next id: 365
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
