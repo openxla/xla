@@ -31,12 +31,12 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/indexing_analysis.h"
+#include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_arguments.h"
 #include "xla/service/gpu/launch_dimensions.h"
-#include "xla/service/gpu/model/indexing_analysis.h"
-#include "xla/service/gpu/model/indexing_map.h"
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/shape.h"
@@ -98,31 +98,6 @@ class KernelFusionInterface : public FusionInterface {
   static IndexingMap GetDefaultThreadIdIndexingMap(
       const LaunchDimensions& launch_dims, int unroll_factor,
       const Shape& shape, mlir::MLIRContext* ctx);
-};
-
-// Base class for fusions that are implemented using a single kernel, which is
-// generated using LLVM.
-class KernelFusionEmitterBase : public KernelFusionInterface {
- public:
-  absl::StatusOr<FusionEmissionResult> Emit(
-      IrEmitterContext& ir_emitter_context,
-      const HloFusionInstruction& fusion) const final;
-
- protected:
-  // Creates initializer thunks that need to run before the main kernel.
-  virtual absl::StatusOr<FusionEmissionResult> EmitInitializers(
-      IrEmitterContext& ir_emitter_context,
-      const HloFusionInstruction& fusion) const {
-    // No initializers by default.
-    return FusionEmissionResult{};
-  }
-
-  virtual absl::Status EmitKernel(IrEmitterContext& ir_emitter_context,
-                                  const HloFusionInstruction& fusion,
-                                  const LaunchDimensions& launch_dims,
-                                  std::vector<llvm_ir::IrArray> inputs,
-                                  std::vector<llvm_ir::IrArray> outputs,
-                                  llvm::IRBuilderBase* builder) const = 0;
 };
 
 absl::StatusOr<

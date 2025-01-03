@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/literal_pool.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -555,7 +556,8 @@ class HloSendRecvInstruction : public HloChannelInstruction {
 
  protected:
   explicit HloSendRecvInstruction(HloOpcode opcode, const Shape& shape,
-                                  int64_t channel_id, bool is_host_transfer);
+                                  std::optional<int64_t> channel_id,
+                                  bool is_host_transfer);
 
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
@@ -571,7 +573,8 @@ class HloSendRecvInstruction : public HloChannelInstruction {
 class HloSendInstruction : public HloSendRecvInstruction {
  public:
   explicit HloSendInstruction(HloInstruction* operand, HloInstruction* token,
-                              int64_t channel_id, bool is_host_transfer);
+                              std::optional<int64_t> channel_id,
+                              bool is_host_transfer);
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kSend;
@@ -588,7 +591,8 @@ class HloSendDoneInstruction : public HloSendRecvInstruction {
  public:
   explicit HloSendDoneInstruction(HloSendInstruction* operand,
                                   bool is_host_transfer);
-  explicit HloSendDoneInstruction(HloInstruction* operand, int64_t channel_id,
+  explicit HloSendDoneInstruction(HloInstruction* operand,
+                                  std::optional<int64_t> channel_id,
                                   bool is_host_transfer);
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kSendDone;
@@ -604,7 +608,8 @@ class HloSendDoneInstruction : public HloSendRecvInstruction {
 class HloRecvInstruction : public HloSendRecvInstruction {
  public:
   explicit HloRecvInstruction(const Shape& shape, HloInstruction* token,
-                              int64_t channel_id, bool is_host_transfer);
+                              std::optional<int64_t> channel_id,
+                              bool is_host_transfer);
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kRecv;
@@ -621,7 +626,8 @@ class HloRecvDoneInstruction : public HloSendRecvInstruction {
  public:
   explicit HloRecvDoneInstruction(HloRecvInstruction* operand,
                                   bool is_host_transfer);
-  explicit HloRecvDoneInstruction(HloInstruction* operand, int64_t channel_id,
+  explicit HloRecvDoneInstruction(HloInstruction* operand,
+                                  std::optional<int64_t> channel_id,
                                   bool is_host_transfer);
 
   static bool ClassOf(const HloInstruction* hlo) {
@@ -1336,6 +1342,18 @@ class HloConstantInstruction : public HloInstruction {
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kConstant;
+  }
+
+  // Canonicalize constant literal using the given literal pool.
+  bool Canonicalize(LiteralPool* literal_pool) {
+    if (literal_pool && literal_) {
+      auto canonical = literal_pool->GetCanonicalLiteral(literal_);
+      if (canonical != literal_) {
+        literal_ = std::move(canonical);
+        return true;
+      }
+    }
+    return false;
   }
 
  private:
@@ -2802,32 +2820,6 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
       HloCloneContext* context) const override;
 
   RandomAlgorithm algorithm_;
-};
-
-std::string ResultAccuracyToleranceToString(
-    const ResultAccuracy::Tolerance& tolerance);
-
-// HloInstruction subclass for unary instructions with result accuracy.
-class HloUnaryInstruction : public HloInstruction {
- public:
-  explicit HloUnaryInstruction(const Shape& shape, HloOpcode opcode,
-                               HloInstruction* operand,
-                               ResultAccuracy result_accuracy);
-  // Sets the result accuracy for this instruction. Supported for unary ops
-  // with multiple implementations.
-  void set_result_accuracy(ResultAccuracy result_accuracy) {
-    result_accuracy_ = result_accuracy;
-  }
-  const ResultAccuracy& result_accuracy() const { return result_accuracy_; }
-  static bool ClassOf(const HloInstruction* hlo) {
-    return IsUnaryOpWithResultAccuracy(hlo->opcode());
-  }
-
- private:
-  ResultAccuracy result_accuracy_;
-  void PrintExtraAttributesImpl(AttributePrinter& printer,
-                                const HloPrintOptions& options) const override;
-  // bool IsValidResultAccuracy(const ResultAccuracy& accuracy) const;
 };
 
 }  // namespace xla

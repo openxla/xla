@@ -68,22 +68,18 @@ using DeviceTopologyPair =
 
 class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
  public:
-  static StreamExecutorGpuTopologyDescription Create(
-      const PjRtPlatformId platform_id, const absl::string_view platform_name,
-      std::shared_ptr<const GpuTopology> gpu_topology) {
-    return StreamExecutorGpuTopologyDescription(platform_id, platform_name,
-                                                gpu_topology);
-  }
-
   StreamExecutorGpuTopologyDescription(
       const PjRtPlatformId platform_id, const absl::string_view platform_name,
       std::shared_ptr<const GpuTopology> gpu_topology,
       const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& attributes =
-          {})
+          {},
+      std::optional<stream_executor::GpuTargetConfigProto> target_config =
+          std::nullopt)
       : platform_id_(platform_id),
         platform_name_(platform_name),
         gpu_topology_(std::move(gpu_topology)),
-        attributes_(attributes) {}
+        attributes_(attributes),
+        target_config_(std::move(target_config)) {}
 
   bool operator==(const StreamExecutorGpuTopologyDescription& other) const {
     return this->platform_id() == other.platform_id() &&
@@ -139,6 +135,11 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
 
   absl::StatusOr<std::string> Serialize() const override;
 
+  const std::optional<stream_executor::GpuTargetConfigProto>& target_config()
+      const {
+    return target_config_;
+  }
+
   // Returns vendor specific attributes about the topology.
   const absl::flat_hash_map<std::string, PjRtDeviceAttribute>& Attributes()
       const override {
@@ -154,6 +155,7 @@ class StreamExecutorGpuTopologyDescription : public PjRtTopologyDescription {
   const std::string platform_name_;
   std::shared_ptr<const GpuTopology> gpu_topology_;
   absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute> attributes_;
+  std::optional<stream_executor::GpuTargetConfigProto> target_config_;
 };
 
 class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
@@ -240,7 +242,6 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
     return &topology_;
   }
 
-  // TODO(b/285385306): Enable loading a non-loaded PjRtExecutable.
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
       std::unique_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options) override {
@@ -248,13 +249,9 @@ class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
         tensorflow::down_cast<PjRtLoadedExecutable*>(executable.release()));
   }
 
-  // TODO(b/296466237): Unify `Load` method after (de)serialization and tests on
-  // existing use cases are done.
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Load(
       std::unique_ptr<PjRtExecutable> executable);
 
-  // TODO(b/296466237): Unify `LoadSerializedExecutable` after fixing existing
-  // tests.
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadSerialized(
       absl::string_view serialized, std::optional<CompileOptions> options,
       const LoadOptions& load_options);
@@ -274,12 +271,12 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 std::string MakeComputeCapabilityString(const se::DeviceDescription* desc);
 
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
-    std::string_view platform_name,
+    absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
     int node_id, int num_nodes,
     gpu::GpuExecutableRunOptions* gpu_executable_run_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store, bool enable_mock_nccl,
-    std::optional<std::string_view> mock_gpu_topology = std::nullopt,
+    std::optional<absl::string_view> mock_gpu_topology = std::nullopt,
     absl::Duration get_local_topology_timeout = absl::Minutes(2),
     absl::Duration get_global_topology_timeout = absl::Minutes(5));
 

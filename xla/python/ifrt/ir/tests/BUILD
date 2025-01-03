@@ -1,8 +1,19 @@
 load("//xla:lit.bzl", "lit_test_suite")
 load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+
+package_group(
+    name = "internal",
+    packages = [
+        "//xla/python/ifrt/ir/tests/...",
+    ],
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
+    default_visibility = internal_visibility([
+        ":internal",
+    ]),
     licenses = ["notice"],
 )
 
@@ -54,6 +65,7 @@ xla_cc_binary(
         "//xla/python/ifrt/ir:ifrt_ir_program_serdes",  # build_cleaner: keep
         "//xla/python/ifrt/ir:version",
         "//xla/python/ifrt/ir:vifrt",
+        "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:IR",
@@ -76,8 +88,13 @@ cc_library(
         "//xla:status_macros",
         "//xla/mlir/utils:error_util",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:test_util",
+        "//xla/python/ifrt/ir:ifrt_ir_program",
+        "//xla/python/ifrt/ir:ifrt_ir_program_serdes",
         "//xla/python/ifrt/ir:sharding_param",
+        "//xla/python/ifrt/ir:version",
+        "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/status",
@@ -87,6 +104,9 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:version",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],

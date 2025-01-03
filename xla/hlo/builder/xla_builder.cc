@@ -1059,6 +1059,16 @@ XlaOp XlaBuilder::UnaryOp(HloOpcode unop, XlaOp operand) {
   });
 }
 
+XlaOp XlaBuilder::UnaryOp(HloOpcode unop, XlaOp operand,
+                          const ResultAccuracy& result_accuracy) {
+  return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
+    TF_ASSIGN_OR_RETURN(const Shape* operand_shape, GetShapePtr(operand));
+    TF_ASSIGN_OR_RETURN(
+        Shape shape, ShapeInference::InferUnaryOpShape(unop, *operand_shape));
+    return AddOpWithResultAccuracy(unop, shape, {operand}, result_accuracy);
+  });
+}
+
 namespace {
 
 // Broadcasts an origin XLA op to the rank of target_shape.
@@ -2020,6 +2030,41 @@ XlaOp XlaBuilder::SparseDot(
       *instr.add_dot_sparsity() = descriptor;
     }
     return AddInstruction(std::move(instr), HloOpcode::kDot, operands);
+  });
+}
+
+XlaOp XlaBuilder::RaggedAllToAll(
+    XlaOp input, XlaOp input_offsets, XlaOp send_sizes, XlaOp output,
+    XlaOp output_offsets, XlaOp recv_sizes,
+    absl::Span<const ReplicaGroup> replica_groups,
+    const std::optional<ChannelHandle>& channel_id) {
+  return ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
+    TF_ASSIGN_OR_RETURN(const Shape* input_shape, GetShapePtr(input));
+    TF_ASSIGN_OR_RETURN(const Shape* input_offsets_shape,
+                        GetShapePtr(input_offsets));
+    TF_ASSIGN_OR_RETURN(const Shape* send_sizes_shape, GetShapePtr(send_sizes));
+    TF_ASSIGN_OR_RETURN(const Shape* output_shape, GetShapePtr(output));
+    TF_ASSIGN_OR_RETURN(const Shape* output_offsets_shape,
+                        GetShapePtr(output_offsets));
+    TF_ASSIGN_OR_RETURN(const Shape* recv_sizes_shape, GetShapePtr(recv_sizes));
+    TF_ASSIGN_OR_RETURN(
+        Shape shape,
+        ShapeInference::InferRaggedAllToAllShape(
+            {input_shape, input_offsets_shape, send_sizes_shape, output_shape,
+             output_offsets_shape, recv_sizes_shape}));
+
+    std::vector<XlaOp> operands{input,  input_offsets,  send_sizes,
+                                output, output_offsets, recv_sizes};
+    HloInstructionProto instr;
+    *instr.mutable_shape() = shape.ToProto();
+    for (const ReplicaGroup& group : replica_groups) {
+      *instr.add_replica_groups() = group;
+    }
+    if (channel_id.has_value()) {
+      instr.set_channel_id(channel_id->handle());
+    }
+    return AddInstruction(std::move(instr), HloOpcode::kRaggedAllToAll,
+                          operands);
   });
 }
 
@@ -3411,7 +3456,7 @@ XlaOp XlaBuilder::ConditionalImpl(
 
     std::vector<XlaOp> operands(1, branch_index);
     for (const XlaOp branch_operand : branch_operands) {
-      operands.emplace_back(branch_operand);
+      operands.push_back(branch_operand);
     }
     return AddInstruction(std::move(instr), HloOpcode::kConditional,
                           absl::MakeSpan(operands));
@@ -4791,6 +4836,15 @@ absl::StatusOr<XlaOp> XlaBuilder::AddOpWithShape(
   return AddInstruction(std::move(instr), opcode, operands);
 }
 
+absl::StatusOr<XlaOp> XlaBuilder::AddOpWithResultAccuracy(
+    HloOpcode opcode, const Shape& shape, absl::Span<const XlaOp> operands,
+    const ResultAccuracy& result_accuracy) {
+  HloInstructionProto instr;
+  *instr.mutable_shape() = shape.ToProto();
+  *instr.mutable_result_accuracy() = result_accuracy;
+  return AddInstruction(std::move(instr), opcode, operands);
+}
+
 void XlaBuilder::AddCalledComputation(const XlaComputation& computation,
                                       HloInstructionProto* instr) {
   absl::flat_hash_map<int64_t, int64_t> remapped_ids;
@@ -5123,6 +5177,16 @@ XlaOp SparseDot(const XlaOp lhs, const XlaOp rhs,
   return lhs.builder()->SparseDot(lhs, rhs, sparse_meta, sparsity,
                                   dimension_numbers, precision_config,
                                   preferred_element_type);
+}
+
+XlaOp RaggedAllToAll(const XlaOp input, const XlaOp input_offsets,
+                     const XlaOp send_sizes, const XlaOp output,
+                     const XlaOp output_offsets, const XlaOp recv_sizes,
+                     absl::Span<const ReplicaGroup> replica_groups,
+                     const std::optional<ChannelHandle>& channel_id) {
+  return input.builder()->RaggedAllToAll(input, input_offsets, send_sizes,
+                                         output, output_offsets, recv_sizes,
+                                         replica_groups, channel_id);
 }
 
 XlaOp RaggedDot(const XlaOp lhs, const XlaOp rhs, const XlaOp group_sizes,
@@ -5670,6 +5734,11 @@ XlaOp Atan2(const XlaOp y, const XlaOp x,
 XlaOp Exp(const XlaOp operand) {
   return operand.builder()->UnaryOp(HloOpcode::kExp, operand);
 }
+
+XlaOp Exp(const XlaOp operand, const ResultAccuracy& result_accuracy) {
+  return operand.builder()->UnaryOp(HloOpcode::kExp, operand, result_accuracy);
+}
+
 XlaOp Expm1(const XlaOp operand) {
   return operand.builder()->UnaryOp(HloOpcode::kExpm1, operand);
 }

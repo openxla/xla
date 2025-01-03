@@ -46,6 +46,7 @@
 #include "xla/layout.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -63,6 +64,7 @@
 #include "xla/python/ifrt/value.h"
 #include "xla/python/ifrt_proxy/common/array_util.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
+#include "xla/python/ifrt_proxy/common/prof_util.h"
 #include "xla/python/ifrt_proxy/common/proto_util.h"
 #include "xla/python/ifrt_proxy/common/types.h"
 #include "xla/python/ifrt_proxy/common/types.pb.h"
@@ -102,12 +104,38 @@ MakeStringArrayFromHostBuffer(
        string_host_buffer = std::move(string_host_buffer)]() {});
 }
 
+// Returns a string_view that is guaranteed to be valid and constant until this
+// process dies.
+absl::string_view GetRequestName(const IfrtRequest* req) {
+  if (IfrtRequest::descriptor() == nullptr) return "unknown";
+  if (req == nullptr) return "unknown";
+  auto* field =
+      IfrtRequest::descriptor()->FindFieldByNumber(req->request_case());
+  if (field == nullptr) return "unknown";
+  return field->name();
+}
+
 }  // namespace
+
+struct IfrtBackend::LoadedExecutableWithInfo {
+  explicit LoadedExecutableWithInfo(
+      std::unique_ptr<xla::ifrt::LoadedExecutable> executable_p)
+      : executable(std::move(executable_p)) {}
+
+  absl::Mutex mu;
+  // `output_spec` captures the output specification from the result of the
+  // first `Execute()`, and is used to verify that further `Execute()` calls
+  // do not result in a different specification.
+  std::optional<std::vector<xla::ifrt::ArraySpec>> output_spec
+      ABSL_GUARDED_BY(mu);
+  const std::unique_ptr<xla::ifrt::LoadedExecutable> executable;
+};
 
 class IfrtBackend::InOrderRequestsProcessor {
   struct Entry {
     std::unique_ptr<IfrtRequest> req;
     Future<Response>::Promise promise;
+    XFlowHelper xflow;
   };
 
  public:
@@ -145,6 +173,7 @@ class IfrtBackend::InOrderRequestsProcessor {
   }
 
   Future<Response> Push(std::unique_ptr<IfrtRequest> request) {
+    VLOG(3) << "Enqueuing " << request->ShortDebugString();
     auto promise = Future<Response>::CreatePromise();
     Future<Response> result(promise);
     absl::MutexLock l(&mu_);
@@ -153,9 +182,9 @@ class IfrtBackend::InOrderRequestsProcessor {
           "InOrderRequestsProcessor already stopped: ", *shutdown_msg_)));
       return result;
     }
-    Entry entry;
-    entry.req = std::move(request);
-    entry.promise = std::move(promise);
+    Entry entry{/*req=*/std::move(request), /*promise=*/std::move(promise),
+                XFlowHelper(GetRequestName(request.get()))};
+    entry.xflow.InstantActivity<XFlowHelper::kSend>();
     entries_.push_back(std::move(entry));
     return result;
   }
@@ -179,10 +208,23 @@ class IfrtBackend::InOrderRequestsProcessor {
 
   void Loop() {
     while (auto entry = Pop()) {
+      uint64_t op_id = entry->req->request_metadata().op_id();
+      VLOG(3) << "Processing " << entry->req->ShortDebugString();
+      auto span = entry->xflow.Span<XFlowHelper::kRecvSend>();
       parent_->ProcessInternal(std::move(entry->req))
-          .OnReady(
-              [p = std::move(entry->promise)](
-                  absl::StatusOr<Response> r) mutable { p.Set(std::move(r)); });
+          .OnReady([p = std::move(entry->promise),
+                    xflow = std::move(entry->xflow),
+                    op_id](absl::StatusOr<Response> r) mutable {
+            auto span = xflow.Span<XFlowHelper::kRecv>();
+            if (!r.ok()) {
+              VLOG(3) << "Responding " << op_id << ": " << r.status();
+
+            } else {
+              VLOG(3) << "Responding " << op_id << ": "
+                      << (*r)->ShortDebugString();
+            }
+            p.Set(std::move(r));
+          });
     }
   }
 
@@ -196,7 +238,8 @@ class IfrtBackend::InOrderRequestsProcessor {
 IfrtBackend::IfrtBackend(IfrtProxyVersion version, uint64_t session_id,
                          std::shared_ptr<xla::ifrt::Client> ifrt_client,
                          std::shared_ptr<HostBufferStore> host_buffer_store)
-    : version_(std::move(version)),
+    : handle_generator_(this),
+      version_(std::move(version)),
       session_id_(session_id),
       client_(std::move(ifrt_client)),
       host_buffer_store_(std::move(host_buffer_store)),
@@ -299,8 +342,6 @@ Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
       return Future<Response>(HandleCheckValueReadyRequest(std::move(request)));
     case IfrtRequest::RequestCase::kCopyArraysRequest:
       return Future<Response>(HandleCopyArraysRequest(std::move(request)));
-    case IfrtRequest::RequestCase::kReshardRequest:
-      return Future<Response>(HandleReshardRequest(std::move(request)));
     case IfrtRequest::RequestCase::kFullyReplicatedShardRequest:
       return Future<Response>(
           HandleFullyReplicatedShardRequest(std::move(request)));
@@ -342,21 +383,72 @@ Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
   }
 }
 
-IfrtBackend::HandleGenerator::HandleGenerator()
-    : current_(kServerGeneratedHandlesMinValue) {}
+IfrtBackend::HandleGenerator::HandleGenerator(IfrtBackend* parent)
+    : parent_(parent), current_(kServerGeneratedHandlesMinValue) {}
 
-uint64_t IfrtBackend::HandleGenerator::New() {
+uint64_t IfrtBackend::HandleGenerator::GenerateAtServer() {
   absl::MutexLock lock(&mu_);
   uint64_t result = current_++;
   CHECK_GE(result, kServerGeneratedHandlesMinValue);
   return result;
 }
 
-void IfrtBackend::HandleGenerator::BulkNew(absl::Span<uint64_t> handles) {
+absl::StatusOr<uint64_t> IfrtBackend::HandleGenerator::FromClientGenerated(
+    uint64_t from_client) {
+  if (from_client == 0) {
+    // Assume old version client and revert to generating handles at server.
+    return GenerateAtServer();
+  }
+  if (from_client >= kServerGeneratedHandlesMinValue) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Bad client-generated handle: ", from_client));
+  }
+  return from_client;
+}
+
+void IfrtBackend::HandleGenerator::GenerateAtServerBulk(
+    absl::Span<uint64_t> result_handles) {
   absl::MutexLock lock(&mu_);
-  std::iota(handles.begin(), handles.end(), current_);
-  current_ += handles.size();
+  std::iota(result_handles.begin(), result_handles.end(), current_);
+  current_ += result_handles.size();
   CHECK_GE(current_, kServerGeneratedHandlesMinValue);
+}
+
+absl::Status IfrtBackend::HandleGenerator::FromClientGeneratedBulk(
+    const tsl::protobuf::RepeatedField<uint64_t>& from_client,
+    absl::Span<uint64_t> result_handles) {
+  if (result_handles.empty()) {
+    // No handles are expected to be generated.
+    return absl::OkStatus();
+  }
+  if (from_client.empty()) {
+    // Assume old version client and revert to generating handles at server.
+    GenerateAtServerBulk(result_handles);
+    return absl::OkStatus();
+  }
+
+  if (result_handles.size() != from_client.size()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("IFRT proxy server expected ", result_handles.size(),
+                     " handles but got ", from_client.size()));
+  }
+
+  // Given we always deal with array handles for new arrays in this codepath,
+  // check that the client-generated handles are not already recorded.
+  absl::MutexLock l(&parent_->arrays_mutex_);
+  for (int i = 0; i < from_client.size(); ++i) {
+    if (parent_->arrays_.contains(from_client[i])) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Handle ", from_client[i],
+                       " already used at the IFRT proxy server."));
+    }
+    if (from_client[i] >= kServerGeneratedHandlesMinValue) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Bad client-generated handle: ", from_client[i]));
+    }
+    result_handles[i] = from_client[i];
+  }
+  return absl::OkStatus();
 }
 
 Future<BackendInterface::Response> IfrtBackend::AsyncExecute(
@@ -588,7 +680,7 @@ IfrtBackend::HandleMakeArrayFromHostBufferRequest(
   // arrays_.
   uint64_t handle = make_array_request->has_array_handle()
                         ? make_array_request->array_handle()
-                        : handle_generator_.New();
+                        : handle_generator_.GenerateAtServer();
   {
     absl::MutexLock lock(&arrays_mutex_);
     const bool inserted = arrays_.insert({handle, std::move(array)}).second;
@@ -649,7 +741,8 @@ IfrtBackend::HandleAssembleArrayFromSingleDeviceArraysRequest(
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
 
-  uint64_t handle = handle_generator_.New();
+  TF_ASSIGN_OR_RETURN(uint64_t handle, handle_generator_.FromClientGenerated(
+                                           assemble_request.result_handle()));
   ifrt_resp->mutable_assemble_array_from_single_device_arrays_response()
       ->set_array_handle(handle);
   {
@@ -695,7 +788,8 @@ IfrtBackend::HandleRemapArraysRequest(std::unique_ptr<IfrtRequest> request) {
       response->mutable_remap_arrays_response()->mutable_array_handles();
   handles->Reserve(num_arrays);
   uint64_t* handles_buf = handles->AddNAlreadyReserved(num_arrays);
-  handle_generator_.BulkNew(absl::MakeSpan(handles_buf, num_arrays));
+  TF_RETURN_IF_ERROR(handle_generator_.FromClientGeneratedBulk(
+      remap_request.result_handles(), absl::MakeSpan(handles_buf, num_arrays)));
 
   // Install the newly created arrays into the arrays_.
   {
@@ -861,10 +955,12 @@ IfrtBackend::HandleDisassembleIntoSingleDeviceArraysRequest(
   // new handles.
   auto* handles =
       response->mutable_disassemble_into_single_device_arrays_response()
-          ->mutable_single_device_array_handles();
+          ->mutable_array_handles();
   handles->Reserve(num_arrays);
   uint64_t* handles_buf = handles->AddNAlreadyReserved(num_arrays);
-  handle_generator_.BulkNew(absl::MakeSpan(handles_buf, num_arrays));
+  TF_RETURN_IF_ERROR(handle_generator_.FromClientGeneratedBulk(
+      disassemble_request.result_handles(),
+      absl::MakeSpan(handles_buf, num_arrays)));
 
   // Install the newly created arrays into the arrays_.
   {
@@ -918,7 +1014,8 @@ absl::StatusOr<BackendInterface::Response> IfrtBackend::HandleCopyArraysRequest(
   auto* const copy_arrays_resp = ifrt_resp->mutable_copy_arrays_response();
 
   std::vector<uint64_t> new_handles(new_arrays.size());
-  handle_generator_.BulkNew(absl::MakeSpan(new_handles));
+  TF_RETURN_IF_ERROR(handle_generator_.FromClientGeneratedBulk(
+      copy_arrays_request.result_handles(), absl::MakeSpan(new_handles)));
   {
     absl::MutexLock lock(&arrays_mutex_);
     for (int i = 0; i < new_arrays.size(); ++i) {
@@ -927,44 +1024,6 @@ absl::StatusOr<BackendInterface::Response> IfrtBackend::HandleCopyArraysRequest(
     }
   }
 
-  return ifrt_resp;
-}
-
-absl::StatusOr<BackendInterface::Response> IfrtBackend::HandleReshardRequest(
-    std::unique_ptr<IfrtRequest> request) {
-  const auto& reshard_request = request->reshard_request();
-  TF_ASSIGN_OR_RETURN(auto array, GetArray(reshard_request.array_handle()));
-  TF_ASSIGN_OR_RETURN(
-      std::shared_ptr<const Sharding> sharding,
-      Sharding::FromProto(
-          absl::bind_front(&Client::LookupDevice, client_.get()),
-          reshard_request.sharding()));
-  TF_ASSIGN_OR_RETURN(auto semantics, FromArrayCopySemanticsProto(
-                                          reshard_request.copy_semantics()));
-
-  // Emulate the old `Array::Reshard` behavior using `Client::CopyArrays`. No
-  // existing IFRT implementations before `Array::Reshard` was deleted actually
-  // supported resharding, so this should be safe.
-  if (!array->sharding().HasSamePartitioning(*sharding)) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "IFRT Proxy does not support resharding, but got ",
-        array->sharding().DebugString(), " as the original sharding and ",
-        sharding->DebugString(), " as the target sharding"));
-  }
-  TF_ASSIGN_OR_RETURN(
-      auto copied_arrays,
-      client_->CopyArrays(absl::MakeSpan(&array, 1), sharding->devices(),
-                          sharding->memory_kind(), semantics));
-
-  uint64_t resharded_array_handle = handle_generator_.New();
-  {
-    absl::MutexLock lock(&arrays_mutex_);
-    arrays_.insert({resharded_array_handle, std::move(copied_arrays[0])});
-  }
-
-  auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
-  ifrt_resp->mutable_reshard_response()->set_array_handle(
-      resharded_array_handle);
   return ifrt_resp;
 }
 
@@ -988,7 +1047,9 @@ IfrtBackend::HandleFullyReplicatedShardRequest(
   // an Array to be made out of a specific single shard.
   TF_ASSIGN_OR_RETURN(auto new_array, array->FullyReplicatedShard(semantics));
 
-  uint64_t new_array_handle = handle_generator_.New();
+  TF_ASSIGN_OR_RETURN(uint64_t new_array_handle,
+                      handle_generator_.FromClientGenerated(
+                          fully_replicated_shard_request.result_handle()));
   {
     absl::MutexLock lock(&arrays_mutex_);
     arrays_.insert({new_array_handle, std::move(new_array)});
@@ -1023,7 +1084,7 @@ IfrtBackend::HandleDeleteArrayRequest(std::unique_ptr<IfrtRequest> request) {
     delete_handle(array_handle);
   }
 
-  uint64_t future_handle = handle_generator_.New();
+  uint64_t future_handle = handle_generator_.GenerateAtServer();
   {
     absl::MutexLock lock(&futures_mutex_);
     futures_.insert({future_handle, JoinFutures(deletion_futures)});
@@ -1137,11 +1198,12 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
         NewIfrtResponse(request->request_metadata().op_id());
     auto* compile_resp = ifrt_resp->mutable_compile_response();
 
-    uint64_t handle = handle_generator_.New();
+    uint64_t handle = handle_generator_.GenerateAtServer();
     compile_resp->set_loaded_executable_handle(handle);
 
     std::vector<uint64_t> host_callback_handles(host_callback_queues.size());
-    handle_generator_.BulkNew(absl::MakeSpan(host_callback_handles));
+    handle_generator_.GenerateAtServerBulk(
+        absl::MakeSpan(host_callback_handles));
     compile_resp->mutable_loaded_host_callback_handles()->Add(
         host_callback_handles.begin(), host_callback_handles.end());
 
@@ -1167,14 +1229,16 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     // not used.
     {
       absl::MutexLock lock(&futures_mutex_);
-      compile_resp->set_ready_future_handle(handle_generator_.New());
+      compile_resp->set_ready_future_handle(
+          handle_generator_.GenerateAtServer());
       futures_.insert(
           {compile_resp->ready_future_handle(), executable->GetReadyFuture()});
     }
 
     {
       absl::MutexLock lock(&executables_mutex_);
-      executables_.insert({handle, std::move(executable)});
+      executables_.insert({handle, std::make_shared<LoadedExecutableWithInfo>(
+                                       std::move(executable))});
     }
     {
       absl::MutexLock lock(&host_callback_queues_mutex_);
@@ -1198,8 +1262,10 @@ IfrtBackend::HandleLoadedExecutableMetadataRequest(
                                  request))]() -> absl::StatusOr<Response> {
     const uint64_t handle = request->loaded_executable_metadata_request()
                                 .loaded_executable_handle();
-    TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
-                        GetLoadedExecutable(handle));
+    TF_ASSIGN_OR_RETURN(
+        std::shared_ptr<LoadedExecutableWithInfo> executable_info,
+        GetLoadedExecutable(handle));
+    LoadedExecutable* executable = executable_info->executable.get();
 
     std::unique_ptr<IfrtResponse> ifrt_resp =
         NewIfrtResponse(request->request_metadata().op_id());
@@ -1277,7 +1343,7 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
     std::unique_ptr<IfrtRequest> request) {
   const LoadedExecutableExecuteRequest& execute =
       request->loaded_executable_execute_request();
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
+  TF_ASSIGN_OR_RETURN(std::shared_ptr<LoadedExecutableWithInfo> executable_info,
                       GetLoadedExecutable(execute.loaded_executable_handle()));
 
   std::vector<tsl::RCReference<xla::ifrt::Array>> args;
@@ -1310,9 +1376,40 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
     devices = BasicDeviceList::Create(std::move(d));
   }
 
-  TF_ASSIGN_OR_RETURN(
-      xla::ifrt::LoadedExecutable::ExecuteResult result,
-      executable->Execute(absl::MakeSpan(args), execute_options, devices));
+  TF_ASSIGN_OR_RETURN(xla::ifrt::LoadedExecutable::ExecuteResult result,
+                      executable_info->executable->Execute(
+                          absl::MakeSpan(args), execute_options, devices));
+
+  // The proxy client expects (and the IFRT API implicitly guarantees) that
+  // output specs of a `LoadedExecutable` remains constant across `Execute()`
+  // calls. Verify that this expectation is satisfied.
+  {
+    absl::MutexLock l(&executable_info->mu);
+    if (executable_info->output_spec.has_value()) {
+      CHECK_EQ(result.outputs.size(), executable_info->output_spec->size())
+          << "LoadedExecutable::Execute returned different number of outputs "
+          << "across invocations";
+      for (int i = 0; i < result.outputs.size(); ++i) {
+        CHECK_EQ(result.outputs[i]->dtype(),
+                 (*executable_info->output_spec)[i].dtype)
+            << "LoadedExecutable::Execute output " << i
+            << "mismatched dtype across invocations";
+        CHECK_EQ(result.outputs[i]->shape(),
+                 (*executable_info->output_spec)[i].shape)
+            << "LoadedExecutable::Execute output " << i
+            << "mismatched shape across invocations";
+      }
+    } else {
+      // First `Execute()` call.
+      executable_info->output_spec.emplace();
+      executable_info->output_spec->reserve(result.outputs.size());
+      for (const auto& output : result.outputs) {
+        executable_info->output_spec->push_back(
+            ArraySpec{/*dtype=*/output->dtype(), /*shape=*/output->shape(),
+                      /*sharding=*/output->shared_ptr_sharding()});
+      }
+    }
+  }
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
   LoadedExecutableExecuteResponse* execute_response =
@@ -1327,27 +1424,40 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
   // future needs to be populated or not.
   if (version_.protocol_version() < 6 || execute_options.fill_status) {
     absl::MutexLock lock(&futures_mutex_);
-    execute_response->set_status_handle(handle_generator_.New());
-    futures_.insert(
-        {execute_response->status_handle(), std::move(result.status)});
+    TF_ASSIGN_OR_RETURN(
+        uint64_t status_handle,
+        handle_generator_.FromClientGenerated(execute.result_status_handle()));
+    execute_response->set_status_handle(status_handle);
+    futures_.insert({status_handle, std::move(result.status)});
+  } else {
+    if (execute.result_status_handle() != 0) {
+      return absl::InvalidArgumentError(
+          "execute_options.fill_status is false but supplied "
+          "result_status_handle");
+    }
   }
 
   // Register output arrays. At this point, we should never early return because
   // doing so will leak futures or output arrays registered so far.
   std::vector<uint64_t> output_handles(result.outputs.size());
-  handle_generator_.BulkNew(absl::MakeSpan(output_handles));
+  TF_RETURN_IF_ERROR(handle_generator_.FromClientGeneratedBulk(
+      execute.result_array_handle(), absl::MakeSpan(output_handles)));
   {
     absl::MutexLock lock(&arrays_mutex_);
     for (int i = 0; i < result.outputs.size(); ++i) {
       tsl::RCReference<xla::ifrt::Array>& array = result.outputs[i];
 
-      LoadedExecutableExecuteResponse::Output* output =
-          execute_response->add_outputs();
-      *output->mutable_dtype() = array->dtype().ToProto();
-      *output->mutable_shape() = array->shape().ToProto();
-      TF_ASSIGN_OR_RETURN(*output->mutable_sharding(),
-                          array->sharding().ToProto());
-      output->set_array_handle(output_handles[i]);
+      // Fill the output spec and handles in the response if the client did not
+      // supply handles.
+      if (execute.result_array_handle().empty()) {
+        LoadedExecutableExecuteResponse::Output* output =
+            execute_response->add_outputs();
+        *output->mutable_dtype() = array->dtype().ToProto();
+        *output->mutable_shape() = array->shape().ToProto();
+        TF_ASSIGN_OR_RETURN(*output->mutable_sharding(),
+                            array->sharding().ToProto());
+        output->set_array_handle(output_handles[i]);
+      }
 
       arrays_.insert({output_handles[i], std::move(array)});
     }
@@ -1360,17 +1470,17 @@ absl::StatusOr<BackendInterface::Response>
 IfrtBackend::HandleLoadedExecutableDeleteRequest(
     std::unique_ptr<IfrtRequest> request) {
   const auto& del = request->loaded_executable_delete_request();
-  TF_ASSIGN_OR_RETURN(std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
+  TF_ASSIGN_OR_RETURN(std::shared_ptr<LoadedExecutableWithInfo> executable_info,
                       GetLoadedExecutable(del.loaded_executable_handle()));
 
-  Future<> future = executable->Delete();
+  Future<> future = executable_info->executable->Delete();
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
   auto* del_response = ifrt_resp->mutable_loaded_executable_delete_response();
 
   {
     absl::MutexLock lock(&futures_mutex_);
-    del_response->set_future_handle(handle_generator_.New());
+    del_response->set_future_handle(handle_generator_.GenerateAtServer());
     futures_.insert({del_response->future_handle(), std::move(future)});
   }
 
@@ -1382,13 +1492,13 @@ IfrtBackend::HandleLoadedExecutableIsDeletedRequest(
     std::unique_ptr<IfrtRequest> request) {
   const auto& is_deleted = request->loaded_executable_is_deleted_request();
   TF_ASSIGN_OR_RETURN(
-      std::shared_ptr<xla::ifrt::LoadedExecutable> executable,
+      std::shared_ptr<LoadedExecutableWithInfo> executable_info,
       GetLoadedExecutable(is_deleted.loaded_executable_handle()));
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
   auto* is_deleted_response =
       ifrt_resp->mutable_loaded_executable_is_deleted_response();
-  is_deleted_response->set_is_deleted(executable->IsDeleted());
+  is_deleted_response->set_is_deleted(executable_info->executable->IsDeleted());
 
   return ifrt_resp;
 }
@@ -1398,7 +1508,7 @@ IfrtBackend::HandleLoadedExecutableDestructRequest(
     std::unique_ptr<IfrtRequest> request) {
   const auto& destruct = request->loaded_executable_destruct_request();
 
-  std::shared_ptr<xla::ifrt::LoadedExecutable> executable;
+  std::shared_ptr<LoadedExecutableWithInfo> executable;
   {
     absl::MutexLock lock(&executables_mutex_);
     const auto it = executables_.find(destruct.loaded_executable_handle());
@@ -1475,7 +1585,7 @@ IfrtBackend::HandleLoadedHostCallbackPollRequest(
           poll.operand_host_buffer_handle(), std::move(buffer)));
     }
 
-    const uint64_t execution_handle = handle_generator_.New();
+    const uint64_t execution_handle = handle_generator_.GenerateAtServer();
     {
       absl::MutexLock lock(&host_callback_executions_mutex_);
       host_callback_executions_.insert(
@@ -1584,7 +1694,7 @@ IfrtBackend::HandleGetDefaultDeviceAssignmentRequest(
   return ifrt_resp;
 }
 
-absl::StatusOr<std::shared_ptr<xla::ifrt::LoadedExecutable>>
+absl::StatusOr<std::shared_ptr<IfrtBackend::LoadedExecutableWithInfo>>
 IfrtBackend::GetLoadedExecutable(uint64_t handle) {
   absl::MutexLock lock(&executables_mutex_);
   auto it = executables_.find(handle);

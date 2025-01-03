@@ -63,6 +63,8 @@ TF_CONST_INIT extern const absl::string_view kPythonTracerPlaneName;
 TF_CONST_INIT extern const absl::string_view kHostCpusPlaneName;
 // Name of XPlane that contains kTrace system calls.
 TF_CONST_INIT extern const absl::string_view kSyscallsPlaneName;
+// Name of XPlane that contains namescope stack tree.
+TF_CONST_INIT extern const absl::string_view kScopeRangeIdTreePlaneName;
 
 // Names of XLines that contain ML-level events.
 TF_CONST_INIT extern const absl::string_view kStepLineName;
@@ -262,6 +264,7 @@ enum StatType {
   kFlops,
   kModelFlops,
   kBytesAccessed,
+  kRawBytesAccessed,
   kMemoryAccessBreakdown,
   kShapeWithLayout,
   kSourceInfo,
@@ -294,6 +297,8 @@ enum StatType {
   kDevCapPeakSramRdBwGigabytesPerSecond,
   kDevCapPeakSramWrBwGigabytesPerSecond,
   kDevVendor,
+  kDevHasMegacore,
+  kDevHasMergedVmem,
   // Batching related.
   kBatchSizeAfterPadding,
   kPaddingAmount,
@@ -340,7 +345,8 @@ enum StatType {
   kSourceStack,
   kDeviceOffsetPs,
   kDeviceDurationPs,
-  kLastStatType = kDeviceDurationPs,
+  kScopeRangeId,
+  kLastStatType = kScopeRangeId,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -358,6 +364,7 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleActionInputs,
   kMegaScaleTransferSource,
   kMegaScaleTransferDestinations,
+  kMegaScaleTransferDcnTopologyLevel,
   kMegaScaleBufferSizes,
   kMegaScaleComputeOperation,
   kMegaScaleChunk,
@@ -368,7 +375,8 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleTransmissionBudgetUs,
   kMegaScaleDelayBudgetUs,
   kMegaScaleHloModule,
-  kLastMegaScaleStatType = kMegaScaleHloModule,
+  kMegaScaleMultiSliceTopology,
+  kLastMegaScaleStatType = kMegaScaleMultiSliceTopology,
 };
 
 enum TaskEnvStatType {

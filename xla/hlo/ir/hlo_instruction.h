@@ -1073,13 +1073,44 @@ class HloInstruction {
   // Index 'data' at 'offsets'[2], 'sizes'[2]'
   // {m,n,o},{p,q,r},{s,t,u},{v,w,x}
   //
+  //
+  // ``output_offsets`` must be sharded in a way that each replica has offsets
+  // in the target replica output perspective.
+  //
+  // For i-th output offset, the current replica will send
+  // `input[input_offsets[i]:input_offsets[i]+input_sizes[i]]` update to
+  // `i`-th replica that will be written to
+  // `output_i[output_offsets[i]:output_offsets[i]+send_sizes[i]]` in `i`-th
+  // replica ``output``.
+  //
+  // For example, if we have 2 replicas:
+  //
+  // replica 0:
+  //   input: [1, 2, 2]
+  //   output: [0, 0, 0, 0]
+  //   input_offsets: [0, 1]
+  //   send_sizes: [1, 2]
+  //   output_offsets: [0, 0]
+  //   recv_sizes: [1, 1]
+  //
+  // replica 1:
+  //   input: [3, 4, 0]
+  //   output: [0, 0, 0, 0]
+  //   input_offsets: [0, 1]
+  //   send_sizes: [1, 1]
+  //   output_offsets: [1, 2]
+  //   recv_sizes: [2, 1]
+  //
+  // replica 0's result will be: [1, 3, 0, 0]
+  // replica 1's result will be: [2, 2, 4, 0]
+  //
   // The ragged all-to-all HLO has the following arguments:
-  // input: ragged input data tensor.
-  // input_offsets: ragged input offsets tensor.
-  // send_sizes: ragged send sizes tensor.
-  // output: ragged output data tensor.
-  // output_offsets: ragged output offsets tensor.
-  // recv_sizes: ragged recv sizes tensor.
+  //   input: ragged input data tensor.
+  //   output: ragged output data tensor.
+  //   input_offsets: ragged input offsets tensor.
+  //   send_sizes: ragged send sizes tensor.
+  //   output_offsets: array of ragged offsets in the target replica output.
+  //   recv_sizes: ragged recv sizes tensor.
   //
   // The '*_offsets' and '*_sizes' tensors must have the same shape.
   // The output buffer is passed in as an input (and aliased in the output),
@@ -1191,17 +1222,14 @@ class HloInstruction {
   // another computation that has the same channel id. If is_host_transfer is
   // true, then this Send operation transfers data to the host.
   static std::unique_ptr<HloInstruction> CreateSend(
-      HloInstruction* operand, HloInstruction* token, int64_t channel_id,
-      bool is_host_transfer = false);
+      HloInstruction* operand, HloInstruction* token,
+      std::optional<int64_t> channel_id, bool is_host_transfer);
 
   // Blocks until data transfer for the Send instruction (operand) is complete.
   // The operand must be kSend.
   static std::unique_ptr<HloInstruction> CreateSendDone(
-      HloInstruction* operand, bool is_host_transfer = false);
-  // Similar to the above, but the operand doesn't have to be a kSend.
-  static std::unique_ptr<HloInstruction> CreateSendDone(
-      HloInstruction* operand, int64_t channel_id,
-      bool is_host_transfer = false);
+      HloInstruction* operand, std::optional<int64_t> channel_id,
+      bool is_host_transfer);
 
   // Creates an asynchronous receive instruction with the given channel id,
   // which allocates resources to receive data of the given shape from a unique
@@ -1209,17 +1237,14 @@ class HloInstruction {
   // is_host_transfer is true, then this Recv operation transfers data from the
   // host.
   static std::unique_ptr<HloInstruction> CreateRecv(
-      const Shape& shape, HloInstruction* token, int64_t channel_id,
-      bool is_host_transfer = false);
+      const Shape& shape, HloInstruction* token,
+      std::optional<int64_t> channel_id, bool is_host_transfer);
 
   // Blocks until data transfer for the Recv instruction (operand) is complete
   // and returns the receive buffer. The operand must be kRecv.
   static std::unique_ptr<HloInstruction> CreateRecvDone(
-      HloInstruction* operand, bool is_host_transfer = false);
-  // Similar to the above, but the operand doesn't have to be a kRecv.
-  static std::unique_ptr<HloInstruction> CreateRecvDone(
-      HloInstruction* operand, int64_t channel_id,
-      bool is_host_transfer = false);
+      HloInstruction* operand, std::optional<int64_t> channel_id,
+      bool is_host_transfer);
 
   // Creates a slice instruction, where the operand is sliced by the given
   // start/limit indices.
@@ -1536,8 +1561,6 @@ class HloInstruction {
       absl::string_view execution_thread,
       const absl::flat_hash_set<absl::string_view>& execution_threads_set);
 
-  // Returns true if the opcode is a unary op supports tunable accuracy.
-  static bool IsUnaryOpWithResultAccuracy(HloOpcode opcode);
 
   // Returns the opcode for this instruction.
   HloOpcode opcode() const { return opcode_; }
@@ -2248,6 +2271,15 @@ class HloInstruction {
   // kCall instructions used as a Composite op.
   bool is_composite() const { return has_rare() && rare()->is_composite; }
 
+  const ResultAccuracy& result_accuracy() const {
+    return rare()->result_accuracy;
+  }
+
+  bool has_result_accuracy() const {
+    return has_rare() && (result_accuracy().has_tolerance() ||
+                          result_accuracy().mode() != ResultAccuracy::DEFAULT);
+  }
+
   void add_single_statistic(Statistic statistic) {
     *mutable_rare()->statistics_viz.add_statistics() = std::move(statistic);
   }
@@ -2321,6 +2353,12 @@ class HloInstruction {
   // Precondition: opcode must be kConvolution or kDot.
   const PrecisionConfig& precision_config() const;
   PrecisionConfig* mutable_precision_config();
+
+  // Sets the result accuracy for this instruction. Supported for unary ops
+  // with multiple implementations.
+  void set_result_accuracy(ResultAccuracy result_accuracy) {
+    mutable_rare()->result_accuracy = std::move(result_accuracy);
+  }
 
   // Sets the debug metadata for this instruction, excluding creation_pass_id,
   // which should never be copied anywhere.
@@ -2841,6 +2879,9 @@ class HloInstruction {
     // Used to render an HLO graph when tracking the propagation desired values
     // through it.
     StatisticsViz statistics_viz;
+
+    // Used to select different implementations for unary functions.
+    ResultAccuracy result_accuracy;
   };
 
   static const Rare* const kEmptyRare;
@@ -3016,6 +3057,8 @@ absl::StatusOr<CustomCallApiVersion> StringToCustomCallApiVersion(
 
 std::ostream& operator<<(std::ostream& os, HloInstruction::FusionKind kind);
 
+bool IsUnaryOpWithResultAccuracy(HloOpcode opcode);
+bool IsValidResultAccuracy(const ResultAccuracy& result_accuracy);
 // Map classes that guarantee a deterministic iteration order when the key is
 // an HloInstruction* or a const HloInstruction*.
 // To make the iteration order over the map deterministic, the comparator

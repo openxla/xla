@@ -216,6 +216,12 @@ class PrecisionConfig:
   Precision = _xla.PrecisionConfig_Precision
   operand_precision: list[_xla.PrecisionConfig_Precision]
 
+class ResultAccuracy:
+  mode: _xla.ResultAccuracy_Mode
+  atol: float
+  rtol: float
+  ulps: int
+
 class GatherDimensionNumbers:
   offset_dims: list[int]
   collapsed_slice_dims: list[int]
@@ -290,6 +296,14 @@ def register_custom_call_handler(
 ) -> None: ...
 
 def custom_call_targets(platform: str) -> dict[str, Any]: ...
+
+def register_custom_type_id(
+    type_name: str,
+    type_id: Any,
+    platform: str = ...,
+) -> None: ...
+
+def register_custom_type_id_handler(platform: str, handler: Any) -> None: ...
 
 def encode_inspect_sharding_callback(handler: Any) -> bytes: ...
 

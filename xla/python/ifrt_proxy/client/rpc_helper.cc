@@ -19,7 +19,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -177,6 +176,7 @@ class RpcHelper::Batcher {
     if (reqs.delete_req != nullptr) {
       XFlowHelper x_flow_helper("batch_delete");
       auto traceme = x_flow_helper.Span<XFlowHelper::kSend>();
+      VLOG(3) << "Sending req: " << reqs.delete_req->ShortDebugString();
       session_->Enqueue(std::move(reqs.delete_req))
           .OnReady(
               absl::bind_front(HandleBatchResponse, session_, x_flow_helper));
@@ -184,6 +184,7 @@ class RpcHelper::Batcher {
     if (reqs.destruct_req != nullptr) {
       XFlowHelper x_flow_helper("batch_destruct");
       auto traceme = x_flow_helper.Span<XFlowHelper::kSend>();
+      VLOG(3) << "Sending req: " << reqs.destruct_req->ShortDebugString();
       session_->Enqueue(std::move(reqs.destruct_req))
           .OnReady(
               absl::bind_front(HandleBatchResponse, session_, x_flow_helper));
@@ -201,11 +202,13 @@ class RpcHelper::Batcher {
       LOG(WARNING) << "Batched response from ifrt proxy server: " << r.status();
       return;
     }
+    VLOG(3) << "Got response: " << r.value()->ShortDebugString();
     if (r.value()->has_delete_array_response()) {
       auto traceme = x_flow_helper.Span<XFlowHelper::kRecvSend>();
       auto ifrt_req = std::make_unique<IfrtRequest>();
       ifrt_req->mutable_check_future_request()->set_future_handle(
           r.value()->delete_array_response().deletion_future_handle());
+      VLOG(3) << "Sending req: " << ifrt_req->ShortDebugString();
       session->Enqueue(std::move(ifrt_req))
           .OnReady(
               absl::bind_front(HandleBatchResponse, session, x_flow_helper));
@@ -229,6 +232,8 @@ class RpcHelper::Batcher {
 
 // DoRpc is a templated function that implements the logic of all RPC-wrapping
 // functions of `RpcHelper`, such as `RpcHelper::MakeArrayFromHostBuffer()`.
+//
+// `profiling_name` needs to be a string literal.
 template <typename Req, typename Resp>
 Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
                                     void (IfrtRequest::*set_req)(Req*),
@@ -243,10 +248,10 @@ Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
   auto traceme = x_flow_helper.Span<XFlowHelper::kSend>();
 
   auto promise = Future<std::shared_ptr<Resp>>::CreatePromise();
-  auto on_ready = [promise, has_resp, get_resp, x_flow_helper](
+  auto on_ready = [promise, has_resp, get_resp, profiling_name, x_flow_helper](
                       absl::StatusOr<std::shared_ptr<IfrtResponse>> r) mutable {
-    auto traceme = x_flow_helper.Span<XFlowHelper::kRecv>();
     if (!r.ok()) {
+      VLOG(3) << profiling_name << " response: " << r.status();
       LOG_EVERY_N_SEC(ERROR, 10)
           << "Connection to IFRT proxy server was terminated: " << r.status();
       promise.Set(absl::UnavailableError(
@@ -254,46 +259,50 @@ Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
                        r.status().ToString())));
       return;
     }
+    VLOG(3) << "Got response: " << r.value()->ShortDebugString();
+    auto result = [&](std::shared_ptr<IfrtResponse> r)
+        -> absl::StatusOr<std::shared_ptr<Resp>> {
+      auto traceme = x_flow_helper.Span<XFlowHelper::kRecv>();
 
-    std::shared_ptr<IfrtResponse> response = *std::move(r);
-    if (!response->has_response_metadata()) {
-      promise.Set(absl::InternalError(
-          absl::StrCat("IFRT server sent a message without metadata: ",
-                       response->DebugString())));
-      return;
+      if (!r->has_response_metadata()) {
+        return absl::InternalError(absl::StrCat(
+            "IFRT server sent a message without metadata: ", r->DebugString()));
+      }
+
+      const absl::Status metadata_status =
+          tsl::StatusFromProto(r->response_metadata().status());
+      const bool has_expected_response = (r.get()->*has_resp)();
+      const auto has_some_response =
+          r->response_case() != IfrtResponse::RESPONSE_NOT_SET;
+
+      if (metadata_status.ok() && !has_some_response) {
+        return absl::InternalError(absl::StrCat(
+            "OK response with no actual response set: ", r->DebugString()));
+      }
+
+      if (!has_expected_response && has_some_response) {
+        return absl::InternalError(absl::StrCat(
+            "Response with wrong type (expected ",
+            Resp::GetDescriptor()->name(), "): ", r->DebugString()));
+      }
+
+      // If the metadata_status is not-OK, according to ifrt_service.proto,
+      // there may be an error _instead_ of an actual response value. So, check
+      // if an actual response value exists, and if so return it irrespective of
+      // what the metadata_status says.
+      if (!has_some_response) {
+        return metadata_status;
+      } else {
+        return std::make_shared<Resp>(*std::move((r.get()->*get_resp)()));
+      }
+    }(*std::move(r));
+
+    if (!result.ok()) {
+      LOG(WARNING) << profiling_name << ": " << result.status();
     }
-
-    const absl::Status metadata_status =
-        tsl::StatusFromProto(response->response_metadata().status());
-    const bool has_expected_response = (response.get()->*has_resp)();
-    const auto has_some_response =
-        response->response_case() != IfrtResponse::RESPONSE_NOT_SET;
-
-    if (metadata_status.ok() && !has_some_response) {
-      promise.Set(absl::InternalError(
-          absl::StrCat("OK response with no actual response set: ",
-                       response->DebugString())));
-      return;
-    }
-
-    if (!has_expected_response && has_some_response) {
-      promise.Set(absl::InternalError(absl::StrCat(
-          "Response with wrong type (expected ", Resp::GetDescriptor()->name(),
-          "): ", response->DebugString())));
-      return;
-    }
-
-    // If the metadata_status is not-OK, according to ifrt_service.proto,
-    // there may be an error _instead_ of an actual response value. So, check if
-    // an actual response value exists, and if so return it irrespective of what
-    // the metadata_status says.
-    if (!has_some_response) {
-      promise.Set(metadata_status);
-    } else {
-      promise.Set(
-          std::make_shared<Resp>(*std::move((response.get()->*get_resp)())));
-    }
+    promise.Set(std::move(result));
   };
+  VLOG(3) << ifrt_req->ShortDebugString();
   batcher->Immediate(std::move(ifrt_req)).OnReady(on_ready);
 
   return Future<std::shared_ptr<Resp>>(promise);
@@ -321,7 +330,6 @@ RPC(CopyToHostBuffer, copy_to_host_buffer);
 RPC(IsArrayDeleted, is_array_deleted);
 RPC(DestructArray, destruct_array)
 RPC(CopyArrays, copy_arrays);
-RPC(Reshard, reshard);
 RPC(FullyReplicatedShard, fully_replicated_shard);
 RPC(DeleteArray, delete_array);
 RPC(Compile, compile);

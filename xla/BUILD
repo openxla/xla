@@ -1,10 +1,4 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tf_proto_library",
-    # copybara:uncomment "tf_pyclif_proto_library",
-)
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 
 # copybara:uncomment load("@rules_python//python:proto.bzl", "py_proto_library")
 load("//third_party/compute_library:build_defs.bzl", "if_enable_acl")
@@ -12,6 +6,12 @@ load("//xla:package_groups.bzl", "xla_package_groups")
 load("//xla:xla.bzl", "xla_bzl_library", "xla_cc_test", "xla_py_proto_library")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tf_proto_library",
+    # copybara:uncomment "tf_pyclif_proto_library",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -202,6 +202,7 @@ cc_library(
     hdrs = ["test.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:test",
     ],
@@ -227,6 +228,7 @@ xla_cc_test(
     deps = [
         ":test",
         ":types",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -237,15 +239,16 @@ cc_library(
     hdrs = ["status_macros.h"],
     visibility = ["//visibility:public"],
     deps = [
-        ":statusor",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:stacktrace",
         "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -262,32 +265,6 @@ xla_cc_test(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_main",
-    ],
-)
-
-cc_library(
-    name = "status",
-    hdrs = ["status.h"],
-    deprecation = "Use @com_google_absl//absl/status instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/status",
-    ],
-)
-
-cc_library(
-    name = "statusor",
-    hdrs = [
-        "statusor.h",
-    ],
-    linkopts = select({
-        "//xla/tsl:freebsd": ["-lexecinfo"],
-        "//conditions:default": [],
-    }),
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -371,8 +348,12 @@ xla_cc_test(
         ":test",
         ":types",
         ":util",
+        "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest",
         "@ml_dtypes//:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
@@ -549,6 +530,7 @@ xla_cc_test(
         ":test",
         ":test_helpers",
         ":xla_data_proto_cc",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -649,6 +631,33 @@ xla_cc_test(
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test_benchmark",
+        "@tsl//tsl/platform:test_main",
+    ],
+)
+
+cc_library(
+    name = "literal_pool",
+    srcs = ["literal_pool.cc"],
+    hdrs = ["literal_pool.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":literal",
+        ":shape_util",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+xla_cc_test(
+    name = "literal_pool_test",
+    srcs = ["literal_pool_test.cc"],
+    deps = [
+        ":literal",
+        ":literal_pool",
+        ":literal_util",
+        "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1035,6 +1044,7 @@ cc_library(
         ":xla_data_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
@@ -1048,6 +1058,7 @@ xla_cc_test(
         ":test",
         ":window_util",
         ":xla_data_proto_cc",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1097,6 +1108,7 @@ xla_cc_test(
         ":xla_data_proto_cc",
         "//xla/hlo/builder:padding",
         "//xla/tests:literal_test_util",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1125,12 +1137,12 @@ xla_cc_test(
     deps =
         [
             ":parse_flags_from_env",
+            "//xla/tsl/platform:subprocess",
             "//xla/tsl/util:command_line_flags",
             "@com_google_absl//absl/strings:str_format",
             "@tsl//tsl/platform:env",
             "@tsl//tsl/platform:logging",
             "@tsl//tsl/platform:macros",
-            "@tsl//tsl/platform:subprocess",
             "@tsl//tsl/platform:test",
         ],
 )
@@ -1172,8 +1184,8 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla/backends/cpu:alignment",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@eigen_archive//:eigen3",
     ],
 )
 
@@ -1215,6 +1227,7 @@ xla_cc_test(
     deps = [
         ":refcounting_hash_map",
         ":test",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test_main",
     ],
 )
@@ -1363,8 +1376,8 @@ bzl_library(
     srcs = ["lit.bzl"],
     deps = [
         "//xla/tsl:tsl_bzl",
+        "//xla/tsl/platform/default:cuda_build_defs_bzl",
         "@bazel_skylib//lib:paths",
-        "@tsl//tsl/platform/default:cuda_build_defs_bzl",
     ],
 )
 

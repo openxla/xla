@@ -29,7 +29,6 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -47,7 +46,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "re2/re2.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -58,6 +56,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/heap_simulator/allocation_block.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo_buffer.h"
@@ -245,9 +244,6 @@ bool IsCrossProgramPrefetchCandidate(const HloValue& value,
   return value.defining_instruction()->parent() ==
              value.defining_instruction()->GetModule()->entry_computation() &&
          value.defining_instruction()->opcode() == HloOpcode::kParameter &&
-         (!value.shape().has_layout() ||
-          value.shape().layout().memory_space() !=
-              options.alternate_memory_space) &&
          value.index().size() <= 1 && value.shape().IsArray() &&
          !uses.empty() && options.size_fn(value) <= options.max_size_in_bytes &&
          absl::c_all_of(uses, [&](const HloUse& use) {
@@ -271,170 +267,97 @@ bool IsCrossProgramPrefetchCandidate(const HloValue& value,
          });
 }
 
-struct CrossProgramPrefetchBufferSortValues {
-  int64_t latest_use = 0;
-  int64_t use_size = 0;
+bool IsUserAnnotatedCrossProgramPrefetch(const HloValue& value,
+                                         const Options& options) {
+  const HloInstruction* defining_instruction = value.defining_instruction();
+  if (defining_instruction->parent() !=
+          defining_instruction->GetModule()->entry_computation() ||
+      defining_instruction->opcode() != HloOpcode::kParameter) {
+    return false;
+  }
+  const ComputationLayout& entry_computation_layout =
+      defining_instruction->GetModule()->entry_computation_layout();
+  if (defining_instruction->parameter_number() >=
+      entry_computation_layout.parameter_count()) {
+    return false;
+  }
+  const Shape& shape =
+      entry_computation_layout
+          .parameter_layout(defining_instruction->parameter_number())
+          .shape();
+  return shape.has_layout() &&
+         shape.layout().memory_space() == options.alternate_memory_space;
+}
+
+MsaBufferInterval CreateMsaBufferInterval(const HloBuffer& buffer,
+                                          const HloValue* value,
+                                          const HloLiveRange& hlo_live_range,
+                                          const Options& options) {
+  MsaBufferInterval interval;
+  interval.buffer = value;
+  interval.size = options.size_fn(*value);
+  interval.start = 0;
+  interval.end = hlo_live_range.schedule_end_time();
+  interval.colocations = {++buffer.values().begin(), buffer.values().end()};
+  interval.need_allocation = true;
+  return interval;
+}
+
+struct CrossProgramPrefetches {
+  std::vector<MsaBufferInterval> prefetches;
+  std::vector<MsaBufferInterval> candidates;
 };
 
-std::vector<MsaBufferInterval> FindCrossProgramPrefetchCandidates(
+CrossProgramPrefetches FindCrossProgramPrefetches(
     const HloAliasAnalysis& alias_analysis, const HloLiveRange& hlo_live_range,
     const Options& options) {
-  std::vector<MsaBufferInterval> candidates;
+  CrossProgramPrefetches cross_program_prefetches;
   for (const HloBuffer& buffer : alias_analysis.buffers()) {
     CHECK_GE(buffer.values().size(), 1);
     const HloValue* value = buffer.values().at(0);
-    if (IsCrossProgramPrefetchCandidate(*value, alias_analysis, options)) {
-      MsaBufferInterval interval;
-      interval.buffer = value;
-      interval.size = options.size_fn(*value);
-      interval.start = 0;
-      interval.end = hlo_live_range.schedule_end_time();
-      interval.need_allocation = true;
-      interval.colocations = {++buffer.values().begin(), buffer.values().end()};
-      candidates.emplace_back(interval);
+    MsaBufferInterval buffer_interval =
+        CreateMsaBufferInterval(buffer, value, hlo_live_range, options);
+    if (IsUserAnnotatedCrossProgramPrefetch(*value, options)) {
+      cross_program_prefetches.prefetches.push_back(buffer_interval);
+    } else if (IsCrossProgramPrefetchCandidate(*value, alias_analysis,
+                                               options)) {
+      cross_program_prefetches.candidates.push_back(buffer_interval);
+    } else if (MemorySpaceAssignmentUtils::
+                   DoesCrossProgramPrefetchBufferMatchAnyFilter(
+                       options.msa_sort_order_overrides, buffer_interval)) {
+      cross_program_prefetches.candidates.push_back(buffer_interval);
     }
   }
 
+  for (auto& prefetch : cross_program_prefetches.prefetches) {
+    VLOG(3) << "User annotated cross-program prefetch: "
+            << prefetch.buffer->ToString();
+  }
+
+  for (auto& prefetch : cross_program_prefetches.prefetches) {
+    VLOG(3) << "User annotated cross-program prefetch: "
+            << prefetch.buffer->ToString();
+  }
+
   DefaultCrossProgramPrefetchBufferIntervalComparator default_comparator(
-      hlo_live_range);
+      hlo_live_range, options.msa_sort_order_overrides);
   BufferIntervalComparator* comparator =
       (options.default_cross_program_prefetch_heuristic &&
                options.buffer_interval_comparator
            ? options.buffer_interval_comparator
            : &default_comparator);
-  absl::c_sort(candidates, comparator->GetComparisonFunctor());
+  absl::c_sort(cross_program_prefetches.candidates,
+               comparator->GetComparisonFunctor());
 
-  VLOG(3) << "Cross-program prefetch candidates: " << candidates.size()
+  VLOG(3) << "Cross-program prefetch candidates: "
+          << cross_program_prefetches.candidates.size()
           << ". Sorting criteria: " << comparator->DescribeComparisonCriteria();
-  for (auto& candidate : candidates) {
+  for (auto& candidate : cross_program_prefetches.candidates) {
     VLOG(3) << "Cross-program prefetch candidate. Sorting criteria: "
             << comparator->CriteriaToString(candidate)
             << ". Candidate: " << candidate.buffer->ToString();
   }
-  return candidates;
-}
-
-absl::StatusOr<xla::HloLiveRange::LogicalTime>
-GetScheduleTimeFromInstructionName(
-    absl::string_view name,
-    const absl::flat_hash_map<const xla::HloInstruction*,
-                              xla::HloLiveRange::LogicalTime>& schedule) {
-  for (auto schedule_entry : schedule) {
-    if (schedule_entry.first->name() == name) {
-      return schedule_entry.second;
-    }
-  }
-  return NotFound("Reference instruction %s was not found in the schedule.",
-                  name);
-}
-
-bool DoesOperandMatchFilter(const HloOperandFilter& filter,
-                            int64_t operand_size, const HloUse& hlo_use) {
-  if (filter.has_size_gte() && operand_size < filter.size_gte()) {
-    return false;
-  }
-  if (filter.has_size_lte() && operand_size > filter.size_lte()) {
-    return false;
-  }
-  if (filter.has_operand_number() &&
-      hlo_use.operand_number != filter.operand_number()) {
-    return false;
-  }
-  if (filter.has_instruction_name_regex() &&
-      !RE2::FullMatch(hlo_use.instruction->name(),
-                      filter.instruction_name_regex())) {
-    return false;
-  }
-  if (filter.has_tuple_index() &&
-      hlo_use.operand_index != ShapeIndex(filter.tuple_index().index().begin(),
-                                          filter.tuple_index().index().end())) {
-    return false;
-  }
-  return true;
-}
-
-absl::StatusOr<std::optional<int64_t>> GetPrefetchTimeByEagerness(
-    float prefetch_eagerness, int64_t earliest_prefetch_time,
-    int64_t latest_prefetch_time) {
-  CHECK_GE(prefetch_eagerness, 0.0);
-  CHECK_LE(prefetch_eagerness, 1.0);
-  if (earliest_prefetch_time > latest_prefetch_time) {
-    return static_cast<std::optional<int64_t>>(std::nullopt);
-  }
-  return static_cast<std::optional<int64_t>>(
-      earliest_prefetch_time +
-      (latest_prefetch_time - earliest_prefetch_time) * prefetch_eagerness);
-}
-
-absl::StatusOr<std::optional<int64_t>> GetPrefetchTimeAfterInstruction(
-    const std::string& after_instruction_name,
-    const absl::flat_hash_map<const xla::HloInstruction*,
-                              xla::HloLiveRange::LogicalTime>& schedule) {
-  TF_ASSIGN_OR_RETURN(
-      auto reference_instruction_time,
-      GetScheduleTimeFromInstructionName(after_instruction_name, schedule));
-  return static_cast<std::optional<int64_t>>(reference_instruction_time);
-}
-
-absl::StatusOr<std::optional<int64_t>> GetPrefetchTimeBeforeInstruction(
-    const std::string& before_instruction_name,
-    const absl::flat_hash_map<const xla::HloInstruction*,
-                              xla::HloLiveRange::LogicalTime>& schedule) {
-  TF_ASSIGN_OR_RETURN(
-      auto reference_instruction_time,
-      GetScheduleTimeFromInstructionName(before_instruction_name, schedule));
-  return static_cast<std::optional<int64_t>>(reference_instruction_time - 1);
-}
-
-absl::StatusOr<std::optional<int64_t>> GetPrefetchTime(
-    const PreferredPrefetchOverrideOptions& override_options,
-    int64_t earliest_prefetch_time, int64_t latest_prefetch_time,
-    const absl::flat_hash_map<const HloInstruction*, HloLiveRange::LogicalTime>&
-        instruction_schedule) {
-  switch (override_options.options_case()) {
-    case PreferredPrefetchOverrideOptions::kPrefetchEagerness:
-      return GetPrefetchTimeByEagerness(override_options.prefetch_eagerness(),
-                                        earliest_prefetch_time,
-                                        latest_prefetch_time);
-    case PreferredPrefetchOverrideOptions::kAfterInstructionName:
-      return GetPrefetchTimeAfterInstruction(
-          override_options.after_instruction_name(), instruction_schedule);
-    case PreferredPrefetchOverrideOptions::kBeforeInstructionName:
-      return GetPrefetchTimeBeforeInstruction(
-          override_options.before_instruction_name(), instruction_schedule);
-    case PreferredPrefetchOverrideOptions::OPTIONS_NOT_SET:
-      break;
-  }
-  return static_cast<absl::StatusOr<std::optional<int64_t>>>(std::nullopt);
-}
-
-absl::StatusOr<std::optional<int64_t>> GetOverriddenPreferredPrefetchTime(
-    const PreferredPrefetchOverrides& preferred_prefetch_overrides,
-    int64_t operand_size, const HloUse& hlo_use,
-    const absl::flat_hash_map<const HloInstruction*, HloLiveRange::LogicalTime>&
-        instruction_schedule,
-    int64_t earliest_prefetch_time, int64_t latest_prefetch_time) {
-  for (const auto& override : preferred_prefetch_overrides.overrides()) {
-    if (!DoesOperandMatchFilter(override.hlo_operand_filter(), operand_size,
-                                hlo_use)) {
-      continue;
-    }
-    LOG(INFO) << "Config match for instruction " << hlo_use.instruction->name()
-              << " operand number " << hlo_use.operand_number
-              << " operand index " << hlo_use.operand_index.ToString()
-              << " size " << operand_size << " live range ("
-              << earliest_prefetch_time << ", " << latest_prefetch_time << ")";
-    TF_ASSIGN_OR_RETURN(
-        auto prefetch_time,
-        GetPrefetchTime(override.override_options(), earliest_prefetch_time,
-                        latest_prefetch_time, instruction_schedule));
-    if (prefetch_time.has_value() &&
-        prefetch_time.value() >= earliest_prefetch_time &&
-        prefetch_time.value() <= latest_prefetch_time) {
-      return prefetch_time;
-    }
-  }
-  return static_cast<absl::StatusOr<std::optional<int64_t>>>(std::nullopt);
+  return cross_program_prefetches;
 }
 
 }  // namespace
@@ -1762,11 +1685,27 @@ absl::StatusOr<HeapSimulator::Result<HloValue>> MsaAlgorithm::Finish() {
   }
   VLOG(1) << "Memory pressure = " << memory_pressure_;
 
+  CrossProgramPrefetches cross_program_prefetches =
+      FindCrossProgramPrefetches(alias_analysis_, hlo_live_range_, options_);
+  // Crash if cross program prefetch is disabled and user has requested
+  // cross program prefetch.
+  CHECK(options_.enable_cross_program_prefetch ||
+        cross_program_prefetches.prefetches.empty())
+      << "Cross program prefetch is disabled but user has requested cross "
+         "program prefetch.";
+  // Crash if number of user requested cross program prefetches is greater than
+  // the maximum number of cross program prefetches allowed.
+  CHECK(cross_program_prefetches.prefetches.size() <=
+        options().max_cross_program_prefetches)
+      << "Number of user requested cross program prefetches is greater than "
+         "the maximum number of cross program prefetches allowed.";
+  // Allocate user requested cross program prefetches first.
+  for (auto& prefetch : cross_program_prefetches.prefetches) {
+    HloModule* module = prefetch.buffer->instruction()->GetModule();
+    AllocateCrossProgramPrefetchBuffer(module, prefetch);
+  }
   if (options_.enable_cross_program_prefetch) {
-    std::vector<MsaBufferInterval> prefetch_candidates =
-        FindCrossProgramPrefetchCandidates(alias_analysis_, hlo_live_range_,
-                                           options_);
-    for (auto& prefetch_candidate : prefetch_candidates) {
+    for (auto& prefetch_candidate : cross_program_prefetches.candidates) {
       HloModule* module = prefetch_candidate.buffer->instruction()->GetModule();
       if (0 <= options().max_cross_program_prefetches &&
           options().max_cross_program_prefetches <=
@@ -2130,7 +2069,10 @@ MsaAlgorithm::GetInefficientAllocationSites(
     return {};
   }
 
-  int64_t size = allocation_values.at(0).size();
+  int64_t size = 0;
+  if (!allocation_values.empty()) {
+    size = allocation_values.at(0).size();
+  }
 
   if (VLOG_IS_ON(3)) {
     for (const AllocationValue& allocation_value : allocation_values) {
@@ -2805,7 +2747,7 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
 
     // TODO(mehrdadk): Remove this code once we have a better way to find
     // repeated instructions.
-    if (false) {
+    if (/* DISABLES CODE */ (false)) {
       const std::vector<const HloInstruction*>* repeated_insts =
           GetRepeatedInstructionList(hlo_use.instruction);
       if (repeated_insts) {
@@ -2832,7 +2774,7 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
                                          ? earliest_prefetch_time.value()
                                          : std::min(definition_time, use_time));
     auto overridden_preferred_prefetch_time =
-        GetOverriddenPreferredPrefetchTime(
+        MemorySpaceAssignmentUtils::GetOverriddenPreferredPrefetchTime(
             options_.preferred_prefetch_overrides, allocation_value.size(),
             hlo_use, instruction_schedule, live_range_start_time,
             latest_prefetch_time);
@@ -3099,8 +3041,8 @@ bool AsynchronousCopyResource::ConsumeResource(
         // that was freed when removing the copy.
         float old_resource =
             std::max(0.0f, initial_resources_[time] - delay_[time]);
-        if (delay_change_map && !delay_change_map->contains(time)) {
-          (*delay_change_map)[time] = delay_[time];
+        if (delay_change_map) {
+          delay_change_map->emplace(time, delay_[time]);
         }
         delay_[time] = std::max(0.0f, resource - resource_to_free);
         float new_resource =
@@ -3295,7 +3237,7 @@ std::string AsynchronousCopyResource::Dump(
   std::vector<size_t> col_sizes;
   std::vector<std::vector<std::string>> rows;
   rows.push_back({"time", "initial", "delay", "avail", "overlapping copies"});
-  for (std::string_view col : rows.front()) {
+  for (absl::string_view col : rows.front()) {
     col_sizes.push_back(col.size());
   }
   for (int i = 0; i < time_dump_data.size(); ++i) {
@@ -3356,6 +3298,25 @@ void MsaAlgorithm::CreateOrAddToAliasedOffset(const Allocation& allocation,
   return nullptr;
 }
 
+namespace {
+
+void SetDefaultMemorySpace(const HloValue* value, const Options& options) {
+  for (auto& position : value->positions()) {
+    Shape* shape = ShapeUtil::GetMutableSubshape(
+        position.instruction->mutable_shape(), position.index);
+    if (!shape->has_layout() ||
+        shape->layout().memory_space() != options.alternate_memory_space) {
+      continue;
+    }
+    shape->mutable_layout()->set_memory_space(options.default_memory_space);
+  }
+  HloModule* module = value->defining_instruction()->GetModule();
+  module->mutable_config().SetComputationLayoutIfExists(
+      module->entry_computation()->ComputeProgramShape());
+}
+
+}  // namespace
+
 void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
     HloModule* module, const MsaBufferInterval& prefetch_candidate) {
   Chunk chunk_candidate = FindChunkCandidate(prefetch_candidate);
@@ -3367,6 +3328,7 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
   const HloValue* buffer = prefetch_candidate.buffer;
   int64_t parameter = buffer->instruction()->parameter_number();
   int cross_program_prefetch_index = module->CrossProgramPrefetches().size();
+  SetDefaultMemorySpace(buffer, options_);
   module->AddCrossProgramPrefetch(parameter, buffer->index());
 
   AllocationSequence allocations;
@@ -3402,15 +3364,10 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
   }
 
   int64_t end_of_program_prefetch_end_time = instruction_schedule.size();
-  int64_t end_of_program_prefetch_latest_start_time =
-      options_.prefetch_interval_picker->LatestPrefetchStartTime(
-          buffer->defining_position().shape(), last_use_time,
-          end_of_program_prefetch_end_time, nullptr);
   int64_t end_of_program_inclusive_prefetch_start_time =
       options_.prefetch_interval_picker->PreferredPrefetchStartTime(
           buffer->defining_position().shape(), last_use_time,
-          end_of_program_prefetch_latest_start_time,
-          end_of_program_prefetch_end_time);
+          end_of_program_prefetch_end_time, end_of_program_prefetch_end_time);
   VLOG(2) << "last use time = " << last_use_time
           << ", end-of-program inclusive prefetch start time = "
           << end_of_program_inclusive_prefetch_start_time;
@@ -4384,10 +4341,6 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
                    *use.instruction, use.operand_number, use.operand_index);
   }
 
-  if (request.only_extend_existing_allocation &&
-      !allocation_sequence->empty()) {
-    allocation_sequence->back()->Extend(request.inclusive_start_time);
-  }
   // There could be a requirement to pin this buffer to default memory either
   // because it is a parameter or an output.  If the buffer is a parameter, then
   // we're allowed to prefetch. If the use expects the output to be in default
@@ -4790,19 +4743,15 @@ bool MsaAlgorithm::ViolatesMaximumOutstandingAsyncCopies(
 
   // Count the prefetches/evictions in the interval tree for the given interval.
   if (is_prefetch) {
-    int64_t num_prefetches =
-        prefetch_interval_tree_
-            .ChunksOverlappingInTime(inclusive_start_time, end_time)
-            .size() +
-        num_additional_copies;
+    int64_t num_prefetches = prefetch_interval_tree_.NumChunksOverlappingInTime(
+                                 inclusive_start_time, end_time) +
+                             num_additional_copies;
     return num_prefetches >=
            options_.max_outstanding_prefetches + extra_async_copy_limit;
   } else {
-    int64_t num_evictions =
-        eviction_interval_tree_
-            .ChunksOverlappingInTime(inclusive_start_time, end_time)
-            .size() +
-        num_additional_copies;
+    int64_t num_evictions = eviction_interval_tree_.NumChunksOverlappingInTime(
+                                inclusive_start_time, end_time) +
+                            num_additional_copies;
     return num_evictions >=
            options_.max_outstanding_evictions + extra_async_copy_limit;
   }

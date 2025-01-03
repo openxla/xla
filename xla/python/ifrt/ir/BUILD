@@ -1,8 +1,8 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
-load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "internal",
@@ -154,7 +154,9 @@ cc_library(
         ":ifrt_interfaces_inc_gen",
         ":ifrt_ops_inc_gen",
         ":sharding_param",
+        "//xla/pjrt:layout_mode",
         "//xla/python/ifrt",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -205,6 +207,7 @@ cc_library(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
@@ -253,6 +256,7 @@ cc_library(
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -308,6 +312,7 @@ cc_library(
     srcs = ["version.cc"],
     hdrs = ["version.h"],
     compatible_with = get_compatible_with_portable(),
+    visibility = ["//xla/python/ifrt:friends"],
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -439,8 +444,14 @@ gentbl_cc_library(
 
 cc_library(
     name = "vifrt",
-    srcs = ["vifrt_dialect.cc"],
-    hdrs = ["vifrt_dialect.h"],
+    srcs = [
+        "vifrt_bytecode.cc",
+        "vifrt_dialect.cc",
+    ],
+    hdrs = [
+        "vifrt_bytecode.h",
+        "vifrt_dialect.h",
+    ],
     compatible_with = get_compatible_with_portable(),
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
@@ -450,8 +461,36 @@ cc_library(
         ":vifrt_interfaces_inc_gen",
         ":vifrt_ops_inc_gen",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:BytecodeOpInterface",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
+    ],
+)
+
+tsl_pybind_extension(
+    name = "ir_py",
+    srcs = ["ir_py.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//xla/python/ifrt:friends"],
+    deps = [
+        ":ifrt_ir_program",
+        ":ifrt_ir_program_serdes",
+        ":version",
+        "//xla/pjrt:status_casters",
+        "//xla/python/ifrt/ir/transforms:utils",
+        "//xla/python/ifrt/support:module_parsing",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@pybind11",
+        "@pybind11_abseil//pybind11_abseil:absl_casters",
+        "@tsl//tsl/platform:statusor",
     ],
 )

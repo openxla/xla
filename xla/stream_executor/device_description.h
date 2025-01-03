@@ -59,7 +59,7 @@ struct CudaComputeCapability {
     this->minor = minor;
   }
   // cuda arch format "major.minor", example: "8.6".
-  explicit CudaComputeCapability(const std::string &cuda_arch_name) {
+  explicit CudaComputeCapability(std::string cuda_arch_name) {
     std::vector<std::string> split = absl::StrSplit(cuda_arch_name, '.');
     assert(split.size() == 2);
     this->major = std::stoi(split[0]);
@@ -236,6 +236,8 @@ class RocmComputeCapability {
 
   bool has_fp8_support() const { return gfx9_mi300(); }
 
+  std::string ToString() const { return gcn_arch_name(); }
+
   RocmComputeCapabilityProto ToProto() const {
     RocmComputeCapabilityProto proto;
     proto.set_gcn_arch_name(gcn_arch_name_);
@@ -342,7 +344,7 @@ class DeviceDescription {
   }
 
   // Returns the number of threads per warp/wavefront.
-  const int64_t &threads_per_warp() const { return threads_per_warp_; }
+  constexpr int64_t threads_per_warp() const { return threads_per_warp_; }
 
   // Returns the limit on the total number of registers per core.
   const int64_t &registers_per_core_limit() const {

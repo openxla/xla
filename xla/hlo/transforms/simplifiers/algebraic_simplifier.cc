@@ -1221,6 +1221,18 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyTautologicalCompare(
   return false;
 }
 
+absl::Status AlgebraicSimplifierVisitor::HandleAllGather(
+    HloInstruction* all_gather) {
+  if (all_gather->shape().IsArray() &&
+      Match(all_gather->mutable_operand(0),
+            m::Broadcast(m::ConstantScalar()))) {
+    return ReplaceWithNewInstruction(
+        all_gather,
+        all_gather->mutable_operand(0)->CloneWithNewShape(all_gather->shape()));
+  }
+  return absl::OkStatus();
+}
+
 absl::Status AlgebraicSimplifierVisitor::HandleAllToAll(
     HloInstruction* all_to_all) {
   if (all_to_all->shape().IsArray() &&
@@ -3928,7 +3940,8 @@ absl::Status AlgebraicSimplifierVisitor::RewriteBatchPlusContractingAsReduce(
   }
 
   TF_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                      MakeBinaryHlo(HloOpcode::kMultiply, new_lhs, new_rhs));
+                      MakeMultiplyForPrecisionAlgorithm(dot, new_lhs, new_rhs));
+
   std::vector<int64_t> reduce_dims(dnums.lhs_contracting_dimensions_size());
   PrimitiveType dot_type =
       ShapeUtil::ElementIsFloating(dot->shape())
@@ -3940,6 +3953,19 @@ absl::Status AlgebraicSimplifierVisitor::RewriteBatchPlusContractingAsReduce(
   new_dot = AddReduce(new_dot, reduce_dims, dot_type);
   new_dot = AsType(new_dot, dot->shape().element_type());
   return ReplaceInstruction(dot, new_dot);
+}
+
+bool AlgebraicSimplifierVisitor::SupportedDotPrecisionConfig(
+    const PrecisionConfig& config) {
+  return config.algorithm() == PrecisionConfig::ALG_UNSET ||
+         // TODO(loislo): Fixes a failure on a test with CPU backend.
+         config.algorithm() == PrecisionConfig::ALG_DOT_F32_F32_F32;
+}
+
+absl::StatusOr<HloInstruction*>
+AlgebraicSimplifierVisitor::MakeMultiplyForPrecisionAlgorithm(
+    HloInstruction*, HloInstruction* lhs, HloInstruction* rhs) {
+  return MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs);
 }
 
 absl::Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
@@ -3968,13 +3994,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
       absl::c_linear_search(dot->precision_config().operand_precision(),
                             PrecisionConfig::PACKED_NIBBLE);
   const bool can_rewrite_dot_with_precision_config_algorithm =
-      dot->precision_config().algorithm() == PrecisionConfig::ALG_UNSET ||
-      dot->precision_config().algorithm() ==
-          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X3 ||
-      dot->precision_config().algorithm() ==
-          PrecisionConfig::ALG_DOT_BF16_BF16_F32_X6 ||
-      dot->precision_config().algorithm() ==
-          PrecisionConfig::ALG_DOT_F32_F32_F32;
+      SupportedDotPrecisionConfig(dot->precision_config());
   // If there are no contracting dimensions, a dot can be rewritten as
   // mul(broadcast(transpose(x)),broadcast(transpose(y)))
   if (!is_packed_nibble && can_rewrite_dot_with_precision_config_algorithm &&
@@ -4240,27 +4260,21 @@ absl::Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
     return ReplaceInstruction(gather, result);
   }
 
-  const auto gather_operand_passthrough_operand_dims =
-      hlo_sharding_util::GetGatherOperandPassthroughOperandDims(
-          gather->operand(0)->shape(), *gather, gather->gather_slice_sizes());
-  const auto gather_operand_passthrough_output_dims =
-      hlo_sharding_util::GetGatherOperandPassthroughOutputDims(
-          gather->shape(), gather->operand(0)->shape(), *gather,
-          gather->gather_slice_sizes());
+  const hlo_sharding_util::GatherScatterDims operand_passthrough_dims =
+      hlo_sharding_util::GetGatherOperandPassthroughDims(
+          *gather, gather->gather_slice_sizes());
+
   absl::flat_hash_map<int64_t, int64_t>
       gather_operand_passthrough_operand_to_output_dims;
   absl::flat_hash_map<int64_t, int64_t>
       gather_operand_passthrough_output_to_operand_dims;
-  CHECK_EQ(gather_operand_passthrough_operand_dims.size(),
-           gather_operand_passthrough_output_dims.size());
-  for (int64_t i = 0; i != gather_operand_passthrough_operand_dims.size();
-       ++i) {
-    gather_operand_passthrough_operand_to_output_dims
-        [gather_operand_passthrough_operand_dims[i]] =
-            gather_operand_passthrough_output_dims[i];
-    gather_operand_passthrough_output_to_operand_dims
-        [gather_operand_passthrough_output_dims[i]] =
-            gather_operand_passthrough_operand_dims[i];
+  CHECK_EQ(operand_passthrough_dims.operand_dims.size(),
+           operand_passthrough_dims.output_dims.size());
+  for (int64_t i = 0; i != operand_passthrough_dims.operand_dims.size(); ++i) {
+    int64_t operand_dim = operand_passthrough_dims.operand_dims[i];
+    int64_t output_dim = operand_passthrough_dims.output_dims[i];
+    gather_operand_passthrough_operand_to_output_dims[operand_dim] = output_dim;
+    gather_operand_passthrough_output_to_operand_dims[output_dim] = operand_dim;
   }
   // If the gather operand is a pad on the pass-through dimensions, then we can
   // gather the unpadded operand and then pad.
@@ -7384,16 +7398,30 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
       }
     }
 
-    const auto custom_call_pattern = m::CustomCall(
-        {host_memory_offload_annotations::kMoveToHostCustomCallTarget});
-    if (Match(dus_update,
-              m::AnyOf<HloInstruction>(m::Reshape(custom_call_pattern),
-                                       m::Bitcast(custom_call_pattern),
-                                       custom_call_pattern))) {
-      // If this dynamic-update-slice is used for host memory offloading, it
-      // should not be converted into a pad. Also allow for a reshape or a
-      // bitcast between the host-offloading custom-call and the
-      // dynamic-update-slice.
+    // For broadcast that's used for host offloading's DUS, we don't want this
+    // to be rewritten to a pad. Unfortunately, the host memory space is only
+    // set after HostOffloader is run, so we pattern match here. After
+    // HostOffloader is run the broadcast should be rewritten to an
+    // AllocateBuffer so this dus->pad rewrite won't apply anymore.
+    auto is_host_offloading = [&](HloInstruction* hlo) {
+      const auto custom_call_pattern = m::CustomCall(
+          {host_memory_offload_annotations::kMoveToHostCustomCallTarget});
+      if (Match(hlo, custom_call_pattern)) {
+        return true;
+      }
+
+      const auto formatting_op =
+          m::AnyOf<HloInstruction>(m::Reshape(), m::Bitcast(), m::Copy());
+      while (Match(hlo, formatting_op)) {
+        hlo = hlo->mutable_operand(0);
+        if (Match(hlo, custom_call_pattern)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (compatible && is_host_offloading(dus_update)) {
       compatible = false;
     }
 
@@ -7407,23 +7435,23 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
           break;
         }
         VLOG(2) << "slice: " << slice_dim_start->ToString();
-        std::optional<int64_t> beg =
+        std::optional<int64_t> start =
             slice_dim_start->literal().GetFirstInteger();
-        if (!beg) {
+        if (!start) {
           compatible = false;
           break;
         }
-        VLOG(2) << "beg value: " << *beg;
+        VLOG(2) << "start value: " << *start;
         auto update_width = ShapeUtil::GetDimension(update_shape, dim);
         auto bcast_width = ShapeUtil::GetDimension(updated_shape, dim);
-        // Clamp beg so that it is non-negative.
-        *beg = std::max<int64_t>(0, *beg);
-        // Clamp beg so that it is in-bounds.
-        *beg = std::min<int64_t>(bcast_width - update_width, *beg);
-        VLOG(2) << "adjusted beg value: " << *beg;
-        padding_config_dim->set_edge_padding_low(*beg);
+        // Clamp start so that it is non-negative.
+        *start = std::max<int64_t>(0, *start);
+        // Clamp start so that it is in-bounds.
+        *start = std::min<int64_t>(bcast_width - update_width, *start);
+        VLOG(2) << "adjusted start value: " << *start;
+        padding_config_dim->set_edge_padding_low(*start);
         padding_config_dim->set_edge_padding_high(bcast_width -
-                                                  (*beg + update_width));
+                                                  (*start + update_width));
         // dynamic_update_slice does not specify a stride
         padding_config_dim->set_interior_padding(0);
       }

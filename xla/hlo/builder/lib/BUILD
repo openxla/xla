@@ -1,9 +1,9 @@
 # Common computation builders for XLA.
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -680,6 +680,7 @@ cc_library(
         "//xla/hlo/builder:xla_builder",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",

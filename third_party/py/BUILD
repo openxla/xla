@@ -53,22 +53,8 @@ config_setting(
     },
 )
 
-# Flag indicating if the target requires wheel compliance verification.
-bool_flag(
-    name = "wheel_compliance",
-    # TODO(ybaturina): Enable the flag by default when hermetic C++ toolchain is ready.
-    build_setting_default = False,
+filegroup(
+    name = "manylinux_compliance_test",
+    srcs = ["manylinux_compliance_test.py"],
     visibility = ["//visibility:public"],
-)
-
-py_binary(
-    name = "verify_wheel_compliance_py",
-    srcs = [
-        "verify_wheel_compliance.py",
-    ],
-    main = "verify_wheel_compliance.py",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@pypi_auditwheel//:pkg",
-    ],
 )

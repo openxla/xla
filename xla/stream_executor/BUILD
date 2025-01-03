@@ -1,10 +1,10 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_build_defs_bzl_deps", "stream_executor_friends", "stream_executor_internal")
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,10 +29,10 @@ bzl_library(
     name = "build_defs_bzl",
     srcs = ["build_defs.bzl"],
     deps = [
+        "//xla/tsl/platform:rules_cc_bzl",
+        "//xla/tsl/platform/default:cuda_build_defs_bzl",
         "@local_config_cuda//cuda:build_defs_bzl",
         "@tsl//third_party/py/rules_pywrap:pywrap_bzl",
-        "@tsl//tsl/platform:rules_cc_bzl",
-        "@tsl//tsl/platform/default:cuda_build_defs_bzl",
     ] + stream_executor_build_defs_bzl_deps(),
 )
 
@@ -177,6 +177,19 @@ cc_library(
         ":module_spec",
         ":stream_executor_h",
         "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
+    name = "gpu_solver_context",
+    hdrs = ["gpu_solver_context.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -643,10 +656,10 @@ cc_library(
         ":device_memory",
         ":kernel",
         ":launch_dim",
-        ":platform",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],

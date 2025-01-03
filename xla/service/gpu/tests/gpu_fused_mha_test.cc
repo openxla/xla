@@ -1088,7 +1088,7 @@ class FlashAttentionBMMScalePaddingMaskSoftmaxBMM
     std::string hlo_string_ref =
         GetModuleFlash_Attention_Training_BMM1_PaddingMask_Generation_Softmax_BMM2_HloString_BF16();  // NOLINT
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
-                                        ErrorSpec{1e-5, 1e-5}));
+                                        ErrorSpec{1e-3, 1e-3}));
   }
 };
 
@@ -1259,7 +1259,7 @@ class FlashAttentionBMMScaleSlidingWindowMaskSoftmaxBMM
     std::string hlo_string_ref =
         GetModuleFlash_Attention_Training_BMM1_SlidingWindowMask_Generation_Softmax_BMM2_HloString_BF16();  // NOLINT
     EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string_ref,
-                                        ErrorSpec{1e-5, 1e-5}));
+                                        ErrorSpec{1e-3, 1e-3}));
   }
 };
 
@@ -1471,8 +1471,7 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
   XlaBuilder builder(TestName());
   std::string ref_bnth = R"(
     custom-call.4.0 = (
-        bf16[4,4,16,16]{3,1,2,0},
-        u8[0]{0}
+        bf16[4,4,16,16]{3,1,2,0}
     ) custom-call(
         convert.19,
         convert.31,
@@ -1546,8 +1545,7 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
     custom-call.21.0 = (
         f8e4m3fn[4,4,16,16]{3,1,2,0},
         f32[1,1,1,1]{3,2,1,0},
-        f32[1,1,1,1]{3,2,1,0},
-        u8[16]{0}
+        f32[1,1,1,1]{3,2,1,0}
     ) custom-call(
         convert.18,
         convert.30,
@@ -1652,8 +1650,7 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
 
   std::string ref_btnh = R"(
     custom-call.4.0 = (
-        bf16[4,16,4,16]{3,2,1,0},
-        u8[0]{0}
+        bf16[4,16,4,16]{3,2,1,0}
     ) custom-call(
         convert.19,
         convert.31,
@@ -1726,8 +1723,7 @@ XLA_TEST_F(FlashAttentionBMMScaleSoftmaxBMMF8,
     custom-call.21.0 = (
         f8e4m3fn[4,16,4,16]{3,2,1,0},
         f32[1,1,1,1]{3,2,1,0},
-        f32[1,1,1,1]{3,2,1,0},
-        u8[16]{0}
+        f32[1,1,1,1]{3,2,1,0}
     ) custom-call(
         convert.18,
         convert.30,

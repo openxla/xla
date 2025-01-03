@@ -700,8 +700,7 @@ absl::StatusOr<bool> InstructionFusion::Run(
       VLOG(1) << "There are " << fused_count << " fused bits that cause "
               << fuse_count << " fusion actions.";
     }
-    *module->mutable_config().mutable_fusion_config() =
-        std::move(fusion_config);
+    module->mutable_config().set_fusion_config(std::move(fusion_config));
   }
 
   VLOG(1) << "Fusion count: " << fuse_count;
@@ -913,7 +912,8 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
 }  // namespace
 
 /*static*/ FusionDecision InstructionFusion::ShouldFuseInPlaceOp(
-    const HloInstruction* producer, const HloInstruction* consumer) {
+    const HloInstruction* producer, const HloInstruction* consumer,
+    std::optional<const InPlaceFusionOptions> in_place_fusion_options) {
   // Don't fuse if the producer is a non-elementwise op that has the same
   // operand as an in-place operand of the consumer. The consumer will modify
   // the buffer in-place, which will cause producer's operand to change if we
@@ -970,7 +970,9 @@ bool IsSafeToFuseSliceIntoDusFusion(const HloInstruction* producer,
           ExtractInstructions(producer, [&](const HloInstruction* inst) {
             return is_nonelementwise_op(inst);
           });
-      if (producer_nonelementwise_ops.size() > 1) {
+      if ((producer_nonelementwise_ops.size() > 1) &&
+          !(in_place_fusion_options.has_value() &&
+            in_place_fusion_options->relax_multiple_non_elementwise_ops)) {
         return FusionDecision::Forbid(
             "Producer fusion has multiple non-elementwise ops, bailing.");
       }
@@ -1088,7 +1090,8 @@ FusionDecision InstructionFusion::ShouldFuse(HloInstruction* consumer,
 
 FusionDecision InstructionFusion::ShouldFuse(
     HloInstruction* consumer, int64_t operand_index,
-    std::function<FusionDecision(const HloInstruction*, const HloInstruction*)>
+    std::function<FusionDecision(const HloInstruction*, const HloInstruction*,
+                                 std::optional<const InPlaceFusionOptions>)>
         inplace_op_fusion_decider) {
   HloInstruction* producer = consumer->mutable_operand(operand_index);
 
@@ -1106,7 +1109,7 @@ FusionDecision InstructionFusion::ShouldFuse(
                                       ? "expensive producer would be duplicated"
                                       : "fusion pass cannot duplicate");
   }
-  return inplace_op_fusion_decider(producer, consumer);
+  return inplace_op_fusion_decider(producer, consumer, std::nullopt);
 }
 
 HloInstruction::FusionKind InstructionFusion::ChooseKind(

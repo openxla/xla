@@ -23,7 +23,6 @@ limitations under the License.
 #include <optional>
 #include <random>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -54,7 +53,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
-#include "xla/xla.pb.h"
 #include "tsl/platform/logging.h"
 
 namespace xla {
@@ -649,9 +647,7 @@ class HloModule {
   }
 
   bool has_module_autofdo_profiles() const {
-    return !autofdo_profile_keys_.empty() &&
-           // TODO(b/368119768): Remove this check once we rollout Flagnet.
-           !autofdo_profile_keys_.contains(HloModuleProto::INVALID);
+    return !profile_info_list_.empty();
   }
 
   void set_relative_speedup(double relative_speedup) {
@@ -675,8 +671,8 @@ class HloModule {
 
   // Describes a stack frame.
   struct StackFrame {
-    std::string_view file_name;
-    std::string_view function_name;
+    absl::string_view file_name;
+    absl::string_view function_name;
     int line = 0;
     int column = 0;
 

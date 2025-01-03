@@ -1046,6 +1046,35 @@ TEST_F(ClientServerTest,
   }
 }
 
+TEST_F(ClientServerTest, GetAliveTasks_Succeed) {
+  const int num_nodes = 2;
+  StartService(num_nodes);
+
+  auto thread_fn = [&](int node_id) -> absl::Status {
+    auto client = GetClient(node_id);
+    TF_RETURN_IF_ERROR(client->Connect());
+    absl::StatusOr<std::vector<tensorflow::CoordinatedTask>> alive_tasks =
+        client->GetAliveTasks({GetTask(0), GetTask(1)});
+    if (!alive_tasks.ok()) {
+      return alive_tasks.status();
+    }
+    TF_RETURN_IF_ERROR(client->Shutdown());
+    return absl::OkStatus();
+  };
+
+  std::vector<absl::Status> statuses(num_nodes);
+  {
+    tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test_threads",
+                                        num_nodes);
+    for (int i = 0; i < num_nodes; ++i) {
+      thread_pool.Schedule([&, i]() { statuses[i] = thread_fn(i); });
+    }
+  }
+  for (int i = 0; i < num_nodes; ++i) {
+    TF_EXPECT_OK(statuses[i]);
+  }
+}
+
 TEST_F(ClientServerTest, GetKeyValueDir) {
   StartService(/*num_nodes=*/1);
   auto client = GetClient(/*node_id=*/0);
@@ -1123,6 +1152,22 @@ TEST_F(ClientServerTest, DeleteKeyValue_Directory) {
   auto kvs = client->GetKeyValueDir("test_dir/");
   TF_ASSERT_OK(kvs.status());
   EXPECT_THAT(kvs.value(), IsEmpty());
+}
+
+// This prevents a regression found in b/380359918 where original error messages
+// are hidden because the RPC layer cannot send long error messages.
+TEST_F(ClientServerTest, BarrierTimeout_ManyLateTasks_ReturnsCorrectError) {
+  StartService(/*num_nodes=*/100,
+               /*init_and_shutdown_timeout=*/absl::Seconds(1),
+               /*cluster_register_with_barrier=*/false);
+  auto client = GetClient(/*node_id=*/0);
+  TF_ASSERT_OK(client->Connect());
+
+  // Blocks until the barrier times out.
+  auto status =
+      client->WaitAtBarrier("test_barrier", absl::Milliseconds(100), {});
+
+  EXPECT_THAT(status, StatusIs(absl::StatusCode::kDeadlineExceeded));
 }
 
 TEST_F(ClientServerTest, Dtor_CancelsOngoingGetKeyValueAndBarrier) {

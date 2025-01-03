@@ -1,9 +1,9 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla:xla.bzl",
     "xla_cc_test",
 )
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
@@ -133,9 +133,9 @@ xla_cc_test(
         "//xla/tsl/profiler/utils:timespan",
         "//xla/tsl/profiler/utils:xplane_schema",
         "//xla/tsl/profiler/utils:xplane_visitor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:types",

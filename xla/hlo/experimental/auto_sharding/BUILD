@@ -1,10 +1,10 @@
 # Automatic sharding annotation
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_binary", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "if_google")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -125,6 +125,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_ortools//ortools/linear_solver:linear_solver_cc_proto",
         "@tsl//tsl/platform:fingerprint",
@@ -197,6 +198,7 @@ cc_library(
         ":auto_sharding_device_mesh",
         ":auto_sharding_util",
         "//xla:array",
+        "//xla/service:hlo_module_config",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -362,16 +364,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
-    name = "auto_sharding_config",
-    hdrs = ["auto_sharding_config.h"],
-    compatible_with = get_compatible_with_libtpu_portable(),
-    deps = [
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
     ],
 )
 

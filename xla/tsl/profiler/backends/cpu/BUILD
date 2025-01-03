@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("@tsl//tsl/platform:build_config_root.bzl", "if_static")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl/platform:build_config_root.bzl", "if_static")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
 
 # copybara:uncomment package(default_applicable_licenses = ["//tensorflow:license"])
@@ -35,7 +35,8 @@ cc_library(
     copts = tf_profiler_copts(),
     visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
-        "@tsl//tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
         "//xla/tsl/profiler:__pkg__",
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_internal",
@@ -83,6 +84,7 @@ cc_library(
     ]),
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
     ] + if_static([
@@ -103,6 +105,7 @@ cc_library(
     ]),
     deps = [
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:types",
     ],
@@ -136,7 +139,8 @@ cc_library(
     hdrs = ["threadpool_listener.h"],
     visibility = internal_visibility([
         "//tensorflow/python:__pkg__",
-        "@tsl//tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
+        "//xla/tsl/platform/cloud:__pkg__",
         "//xla/tsl/profiler:__pkg__",
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_internal",
@@ -164,5 +168,6 @@ cc_library(
     hdrs = ["threadpool_listener_state.h"],
     visibility = internal_visibility([
         "@tsl//tsl/platform:__subpackages__",
+        "//xla/tsl/platform:__subpackages__",
     ]),
 )

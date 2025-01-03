@@ -24,6 +24,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -314,7 +315,8 @@ namespace {
 // TODO(b/370452608): Add more functions that have a fast approximation for f32
 // that we can use for f16 types.
 bool HasFastF32Approximation(TargetDeviceFunctionID func_id) {
-  return func_id == TargetDeviceFunctionID::kExp;
+  return func_id == TargetDeviceFunctionID::kExp ||
+         func_id == TargetDeviceFunctionID::kLog;
 }
 }  // namespace
 
@@ -392,11 +394,12 @@ llvm::CallInst* EmitDeviceFunctionCall(
   llvm::Triple target_triple = llvm::Triple(module->getTargetTriple());
   for (PrimitiveType input_type : input_types) {
     ir_input_types.push_back(
-        llvm_ir::PrimitiveTypeToIrType(input_type, module));
+        llvm_ir::PrimitiveTypeToIrType(input_type, b->getContext()));
   }
   llvm::FunctionType* callee_type = llvm::FunctionType::get(
-      llvm_ir::PrimitiveTypeToIrType(output_type, module),  // Return type.
-      ir_input_types,                                       // Parameter types.
+      llvm_ir::PrimitiveTypeToIrType(output_type,
+                                     b->getContext()),  // Return type.
+      ir_input_types,                                   // Parameter types.
       false);  // No variadic arguments.
 
   // Declares the callee if it is not declared already.

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -26,6 +27,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -42,17 +44,16 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/include/driver_types.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_collectives.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
-#include "xla/stream_executor/cuda/cuda_driver_version.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
-#include "xla/stream_executor/cuda/cuda_runtime.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_timer.h"
@@ -96,7 +97,7 @@ bool ShouldLaunchDelayKernel() {
   // Only launch the delay kernel if CUDA_LAUNCH_BLOCKING is not set to 1.
   static bool value = [] {
     const char* blocking = std::getenv("CUDA_LAUNCH_BLOCKING");
-    return !blocking || std::string_view{blocking} != "1";
+    return !blocking || absl::string_view{blocking} != "1";
   }();
   return value;
 }
@@ -443,18 +444,21 @@ bool IsEccEnabled(CUdevice device, bool* result) {
 }
 
 std::string GetPCIBusID(CUdevice device) {
-  std::string pci_bus_id;
-  static const int kBufferSize = 64;
-  absl::InlinedVector<char, 4> chars(kBufferSize);
-  chars[kBufferSize - 1] = '\0';
-  auto status = cuda::ToStatus(
-      cuDeviceGetPCIBusId(chars.begin(), kBufferSize - 1, device));
+  // PCI bus id is of the format [domain]:[bus]:[device].[function], and is 13
+  // characters long in practice.
+  constexpr int kBufferSize = 64;
+  std::array<char, kBufferSize> raw_pci_bus_id{};
+  absl::Status status = cuda::ToStatus(
+      cuDeviceGetPCIBusId(raw_pci_bus_id.data(), kBufferSize, device));
   if (!status.ok()) {
     LOG(ERROR) << "failed to query PCI bus id for device: " << status;
-    return pci_bus_id;
+    return "";
   }
-  pci_bus_id = std::string(chars.begin(), kBufferSize - 1);
-  return pci_bus_id;
+  if (!absl::c_linear_search(raw_pci_bus_id, '\0')) {
+    LOG(ERROR) << "PCI bus id is not null terminated.";
+    return "";
+  }
+  return std::string(raw_pci_bus_id.data());
 }
 
 // Allocates memory on the GPU device.
@@ -695,10 +699,10 @@ absl::StatusOr<std::unique_ptr<Kernel>> CudaExecutor::LoadKernel(
 
     VLOG(2) << "Resolve CUDA kernel " << *kernel_name
             << " from symbol pointer: " << symbol;
-    TF_ASSIGN_OR_RETURN(
-        CUfunction function,
-        CudaRuntime::GetFuncBySymbol(spec.in_process_symbol().symbol()));
-    cuda_kernel->set_gpu_function(function);
+    cudaFunction_t func;
+    TF_RETURN_IF_ERROR(cuda::ToStatus(cudaGetFuncBySymbol(&func, symbol),
+                                      "Failed call to cudaGetFuncBySymbol"));
+    cuda_kernel->set_gpu_function(func);
 
   } else {
     return absl::InternalError("No method of loading CUDA kernel provided");
@@ -1161,13 +1165,32 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major, &cc_minor, device));
 
   DeviceDescription desc;
-  TF_ASSIGN_OR_RETURN(int32_t version, CudaDriverVersion());
-
+  int32_t driver_version{};
+  {
+    // TODO(b/381052076): Return an error instead of silent failure once TF can
+    // accommodate that.
+    absl::Status result = cuda::ToStatus(cuDriverGetVersion(&driver_version),
+                                         "Could not get driver version");
+    if (!result.ok()) {
+      LOG(ERROR) << result;
+    }
+  }
   desc.set_driver_version(
-      ParseCudaVersion(version).value_or(SemanticVersion{0, 0, 0}));
+      ParseCudaVersion(driver_version).value_or(SemanticVersion{0, 0, 0}));
+
+  int32_t runtime_version{};
+  {
+    // TODO(b/381052076): Return an error instead of silent failure once TF can
+    // accommodate that.
+    absl::Status result =
+        cuda::ToStatus(cudaRuntimeGetVersion(&runtime_version),
+                       "Failed call to cudaGetRuntimeVersion");
+    if (!result.ok()) {
+      LOG(ERROR) << result;
+    }
+  }
   desc.set_runtime_version(
-      ParseCudaVersion(CudaRuntime::GetRuntimeVersion().value_or(0))
-          .value_or(SemanticVersion{0, 0, 0}));
+      ParseCudaVersion(runtime_version).value_or(SemanticVersion{0, 0, 0}));
   desc.set_compile_time_toolkit_version(
       ParseCudaVersion(CUDA_VERSION).value_or(SemanticVersion{0, 0, 0}));
 

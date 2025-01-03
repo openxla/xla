@@ -16,12 +16,14 @@ limitations under the License.
 #ifndef XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 #define XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla.pb.h"
 
@@ -68,18 +71,18 @@ class ModulePressureState;
 
 enum class ResourceType {
   kNoResource = 0,
-  kAllToAll = 1,
-  kAllGather = 2,
-  kAllReduce = 3,
-  kCollectivePermute = 4,
-  kCopy = 5,
-  kReduceScatter = 6,
-  kSendRecv = 7,
-  kSendHost = 8,
-  kRecvHost = 9,
-  kCollectiveBroadcast = 10,
-  kNumResources = 11,
-  kTargetDefinedResourcesBound = 10000,
+  kAllToAll,
+  kAllGather,
+  kAllReduce,
+  kCollectivePermute,
+  kCopy,
+  kReduceScatter,
+  kSendRecv,
+  kSendHost,
+  kRecvHost,
+  kCollectiveBroadcast,
+  kNumResources,
+  kTargetDefinedResourceTypeBegin,
 };
 
 enum class ResourceUsageType {
@@ -102,7 +105,8 @@ enum class ResourceHazardType {
   kUnshareable = 4,
 };
 
-constexpr int64_t ResourceTypeToIndex(ResourceType resource_type) {
+template <typename T, typename = typename std::enable_if_t<std::is_enum_v<T>>>
+constexpr int64_t ResourceTypeToIndex(T resource_type) {
   return static_cast<int64_t>(resource_type);
 }
 
@@ -248,8 +252,8 @@ class AsyncTracker {
       ResourceUsageType resource_usage_type) const;
 
   // Returns the first target defined resource's id, regardless of if it exits
-  static int64_t GetFirstTargetDefinedResource() {
-    return static_cast<int64_t>(ResourceType::kTargetDefinedResourcesBound) + 1;
+  static int64_t GetTargetDefinedResourceTypeBegin() {
+    return ResourceTypeToIndex(ResourceType::kTargetDefinedResourceTypeBegin);
   }
 
   // Returns the number of target defined resources
@@ -334,7 +338,7 @@ class SchedulerCore {
 class AnnotationTracker {
  public:
   explicit AnnotationTracker(const HloModule* module) : module_(module) {
-    for (const HloComputation* comp : module_->computations()) {
+    for (const HloComputation* comp : module_->MakeNonfusionComputations()) {
       absl::flat_hash_set<int64_t> annotations;
       for (const HloInstruction* instr : comp->instructions()) {
         if (auto annotation = GetAnnotation(instr)) {
@@ -356,8 +360,8 @@ class AnnotationTracker {
   }
   std::optional<int64_t> GetAnnotation(const HloInstruction* instr) const {
     const auto& attrs = instr->frontend_attributes().map();
-    if (attrs.contains("_scheduling_group_id")) {
-      return std::stoi(attrs.at("_scheduling_group_id"));
+    if (attrs.contains(kXlaSchedulingGroupIdAttr)) {
+      return std::stoi(attrs.at(kXlaSchedulingGroupIdAttr));
     }
     return std::nullopt;
   }
@@ -957,8 +961,9 @@ class DefaultSchedulerCore : public SchedulerCore {
     std::vector<HloInstruction*> new_sequence_reversed;
     // Units of time passed in the schedule. To keep track of latency hiding.
     HloGraphNode::TimeCost current_time = 0;
-    // Number of resources in flight.
-    ResourceMap resources_in_flight;
+    // Resources and corresponding occupiers in flight.
+    absl::flat_hash_map<int64_t, absl::flat_hash_set<const HloInstruction*>>
+        resource_occupiers_in_flight;
     // Number of instructions using the key resource type in the set waiting to
     // be scheduled.
     ResourceMap resource_users_in_queue;
@@ -1008,6 +1013,8 @@ class DefaultSchedulerCore : public SchedulerCore {
           config(config) {}
   };
 
+  using OverlapLimitRule =
+      std::function<bool(const SchedulingState&, const HloGraphNode*)>;
   using PostProcessingFn = std::function<void(SchedulingState&)>;
 
   DefaultSchedulerCore(
@@ -1016,14 +1023,17 @@ class DefaultSchedulerCore : public SchedulerCore {
       const LatencyEstimator* latency_estimator, const SchedulerConfig& config,
       TargetSchedulingRule target_scheduling_rule = nullptr,
       TargetSchedulingRule early_target_scheduling_rule = nullptr,
-      PostProcessingFn post_processing_fn = nullptr)
+      PostProcessingFn post_processing_fn = nullptr,
+      OverlapLimitRule scheduling_instruction_crosses_overlap_limit = nullptr)
       : shape_size_bytes_(shape_size_bytes),
         async_tracker_(async_tracker),
         latency_estimator_(latency_estimator),
         config_(config),
         target_scheduling_rule_(target_scheduling_rule),
         early_target_scheduling_rule_(early_target_scheduling_rule),
-        post_processing_fn_(post_processing_fn) {}
+        post_processing_fn_(post_processing_fn),
+        scheduling_instruction_crosses_overlap_limit_(
+            scheduling_instruction_crosses_overlap_limit) {}
   absl::Status InitializeScheduler(const HloModule* module) override;
   absl::StatusOr<std::vector<HloInstruction*>> ScheduleComputation(
       const HloComputation* computation) override;
@@ -1041,6 +1051,8 @@ class DefaultSchedulerCore : public SchedulerCore {
     this->config_.memory_limit = new_limit;
   }
   int64_t GetRerunTimes() override { return config_.rerun; }
+  bool SchedulingAnnotationCrossesOverlapLimit(
+      const SchedulingState& sched_state, int64_t annotation);
 
  protected:
   virtual void LogInstruction(const HloInstruction* instr) const;
@@ -1076,6 +1088,7 @@ class DefaultSchedulerCore : public SchedulerCore {
   TargetSchedulingRule target_scheduling_rule_ = nullptr;
   TargetSchedulingRule early_target_scheduling_rule_ = nullptr;
   PostProcessingFn post_processing_fn_ = nullptr;
+  OverlapLimitRule scheduling_instruction_crosses_overlap_limit_ = nullptr;
   std::unique_ptr<AnnotationTracker> annotation_tracker_;
 };
 
@@ -1106,7 +1119,8 @@ class LatencyHidingScheduler : public HloModulePass {
         async_tracker_(std::move(async_tracker)),
         scheduler_core_(std::move(scheduler_core)),
         shape_size_bytes_(shape_size_bytes) {}
-  absl::string_view name() const override { return "latency-hiding-scheduler"; }
+  constexpr static absl::string_view kName = "latency-hiding-scheduler";
+  absl::string_view name() const override { return kName; }
 
   // Returns some printable statistics about the latency hiding for
   // operations that can run in parallel to help evaluating the performance of

@@ -16,37 +16,23 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_tpu/xla_tpu_pjrt_client.h"
 
 #include <memory>
+#include <string>
 
-#include "absl/log/check.h"
-#include "absl/status/status.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
-#include "xla/pjrt/c/pjrt_c_api.h"
-#include "xla/pjrt/c/pjrt_c_api_tpu.h"
+#include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "tsl/platform/statusor.h"
-
-namespace xla {
+#include "xla/pjrt/pjrt_common.h"
 
 const char kTpuPjrtName[] = "tpu";
 
-absl::StatusOr<std::unique_ptr<PjRtClient>> GetXlaPjrtTpuClient() {
-  const PJRT_Api* tpu_c_api = GetPjrtApi();
-  if (!tpu_c_api) {
-    return absl::InternalError("Failed to get PjrtApi");
-  }
+namespace xla {
 
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> tpu_client,
-                      xla::WrapClientAroundCApi(tpu_c_api));
-
-  if (tpu_client->platform_name() != kTpuPjrtName) {
-    return absl::InternalError(
-        absl::StrCat("Expected TPU client, got ", tpu_client->platform_name()));
-  }
-
-  return tpu_client;
+absl::StatusOr<std::unique_ptr<PjRtClient>> GetXlaPjrtTpuClient(
+    const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
+    std::shared_ptr<KeyValueStoreInterface> kv_store) {
+  return GetCApiClient(kTpuPjrtName, create_options, kv_store);
 }
 
 }  // namespace xla

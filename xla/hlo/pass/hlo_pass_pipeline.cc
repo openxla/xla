@@ -30,11 +30,11 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/status.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 
@@ -178,6 +178,7 @@ absl::StatusOr<bool> HloPassPipeline::RunPassesInternal(
     }};
     VLOG(1) << "  HLO pass " << pass_name;
     VLOG(2) << "  Module hash " << absl::HashOf(*hlo);
+    tsl::profiler::TraceMe traceme(pass->name());
     if (!pass->IsPassPipeline()) {
       compilation_stats_->StartPass(pass_name);
     }
@@ -298,6 +299,7 @@ absl::StatusOr<bool> HloPassPipeline::Run(
   VLOG(1) << "Running HLO pass pipeline on module " << module->name() << ": "
           << name();
 
+  tsl::profiler::TraceMe traceme(name());
   return RunPassesInternal(module, module->config().debug_options(),
                            execution_threads);
 }

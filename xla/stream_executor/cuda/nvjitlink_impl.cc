@@ -18,7 +18,6 @@ limitations under the License.
 #include <iterator>
 #include <sstream>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -28,9 +27,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/nvJitLink.h"
@@ -44,7 +41,7 @@ limitations under the License.
 
 namespace stream_executor {
 
-static std::string_view ToString(nvJitLinkResult status) {
+static absl::string_view ToString(nvJitLinkResult status) {
   switch (status) {
     case NVJITLINK_SUCCESS:
       return "SUCCESS";
@@ -67,6 +64,11 @@ static std::string_view ToString(nvJitLinkResult status) {
   }
 }
 
+static absl::Status ToStatus(nvJitLinkResult status,
+                             absl::string_view message) {
+  return absl::UnknownError(absl::StrCat(ToString(status), ": ", message));
+}
+
 #define RETURN_IF_NVJITLINK_ERROR(expr)                                  \
   do {                                                                   \
     nvJitLinkResult _status = expr;                                      \
@@ -78,31 +80,6 @@ static std::string_view ToString(nvJitLinkResult status) {
     }                                                                    \
   } while (false)
 
-static absl::Status CreateErrorFromPTXASLog(std::string_view log,
-                                            std::string_view architecture,
-                                            bool cancel_if_reg_spill) {
-  //  It happens when the loaded version of nvjitlink is too old for
-  //  the current GPU. Example error message associated with this error
-  //  code:
-  //      ptxas fatal   : Value 'sm_80' is not defined for option 'gpu-name'
-  if (absl::StrContains(log, "ptxas fatal   : Value '") &&
-      absl::StrContains(log, "is not defined for option 'gpu-name'")) {
-    return absl::UnimplementedError(absl::StrFormat(
-        "Loaded PTX assembler is too old for %s.", architecture));
-  }
-  if (IsPtxRegisterAllocationError(log)) {
-    return absl::ResourceExhaustedError(log);
-  }
-  if (absl::StrContains(log, "warning")) {
-    LOG(INFO) << log;
-    if (cancel_if_reg_spill &&
-        absl::StrContains(log, "Registers are spilled")) {
-      return absl::CancelledError(
-          "Compilation result discarded due to register spilling");
-    }
-  }
-  return absl::OkStatus();
-}
 
 static absl::StatusOr<std::string> nvJitLinkGetErrorLog(
     nvJitLinkHandle link_handle) {
@@ -154,11 +131,15 @@ absl::StatusOr<std::vector<uint8_t>> CompileAndLinkUsingLibNvJitLink(
     return std::vector<uint8_t>();
   }
 
+  TF_ASSIGN_OR_RETURN(NvJitLinkVersion version, GetNvJitLinkVersion());
+  auto [version_major, version_minor] = version;
+  WarnIfBadPtxasVersion("nvJitLink", cc, {version_major, version_minor, 0});
+
   std::vector<std::string> cli_args;
   // On Hopper, default to sm_90a so that all instructions can be used. But
   // only sm_90 is forward compatible, so don't use sm_90a with newer hardware:
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#ptx-compatibility
-  std::string_view extension = (cc.major == 9 && cc.minor == 0) ? "a" : "";
+  absl::string_view extension = (cc.major == 9 && cc.minor == 0) ? "a" : "";
   std::string architecture = absl::StrCat("sm_", cc.major, cc.minor, extension);
   cli_args.emplace_back(absl::StrCat("-arch=", architecture));
 
@@ -214,7 +195,7 @@ absl::StatusOr<std::vector<uint8_t>> CompileAndLinkUsingLibNvJitLink(
 
       TF_RETURN_IF_ERROR(CreateErrorFromPTXASLog(error_log, architecture,
                                                  cancel_if_reg_spill));
-      RETURN_IF_NVJITLINK_ERROR(result);
+      return ToStatus(result, error_log);
     }
   }
 
@@ -229,7 +210,7 @@ absl::StatusOr<std::vector<uint8_t>> CompileAndLinkUsingLibNvJitLink(
 
     TF_RETURN_IF_ERROR(
         CreateErrorFromPTXASLog(error_log, architecture, cancel_if_reg_spill));
-    RETURN_IF_NVJITLINK_ERROR(linking_result);
+    return ToStatus(linking_result, error_log);
   }
 
   TF_ASSIGN_OR_RETURN(std::string info_log, nvJitLinkGetInfoLog(link_handle));

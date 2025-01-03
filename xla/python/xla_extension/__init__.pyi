@@ -164,7 +164,12 @@ class ShapeIndex:
   def __repr__(self) -> str: ...
 
 class Literal:
+  def __init__(self, shape: Shape) -> Literal: ...
   def __repr__(self) -> str: ...
+  def __array__(
+      self, dtype: Optional[np.dtype] = None, copy: Optional[bool] = None
+  ) -> np.ndarray: ...
+  def shape(self) -> Shape: ...
 
 class XlaComputation:
   def __init__(self, serialized_hlo_module_proto: bytes) -> None: ...
@@ -370,6 +375,18 @@ class PrecisionConfig_Precision(enum.IntEnum):
   HIGH: int
   HIGHEST: int
 
+
+class ResultAccuracy_Mode(enum.IntEnum):
+  DEFAULT: int
+  HIGHEST: int
+  TOLERANCE: int
+
+class ResultAccuracy:
+  mode: ResultAccuracy_Mode
+  atol: float
+  rtol: float
+  ulps: int
+
 class OpSharding_Type(enum.IntEnum):
   REPLICATED: int
   MAXIMAL: int
@@ -509,6 +526,7 @@ class HostBufferSemantics(enum.IntEnum):
 
 class Client:
   platform: str
+  _raw_platform: str
   platform_version: str
   runtime_type: str
   def device_count(self) -> int: ...
@@ -980,7 +998,6 @@ class FlattenCallGraph(HloPassInterface):
 class TupleSimplifer(HloPassInterface):
   def __init__(self) -> None: ...
 
-
 class WeakrefLRUCacheInfo:
   @property
   def hits(self) -> int: ...
@@ -991,13 +1008,11 @@ class WeakrefLRUCacheInfo:
   @property
   def currsize(self) -> int: ...
 
-
 class WeakrefLRUCache:
   def __call__(self, weakref_key: Any, *args, **kwargs) -> Any: ...
   def cache_keys(self) -> list[Any]: ...
   def cache_info(self) -> WeakrefLRUCacheInfo: ...
   def cache_clear(self): ...
-
 
 def is_asan() -> bool: ...
 def is_msan() -> bool: ...

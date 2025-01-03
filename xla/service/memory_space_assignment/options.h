@@ -66,6 +66,9 @@ using IsAsyncSliceImplementedFunction =
 
 // The different options to be passed to the Run() API.
 struct Options {
+  // The backend-specific integer value that describes the default memory.
+  int64_t default_memory_space = 0;
+
   // Backend-specific integer value that describes the alternate memory.
   int64_t alternate_memory_space = 0;
 
@@ -283,6 +286,8 @@ struct Options {
   // and gives MSA more flexibility in choosing the prefetch time and how much
   // data to prefetch.
   bool enable_window_prefetch = false;
+
+  MsaSortOrderOverrides msa_sort_order_overrides;
 };
 }  // namespace memory_space_assignment
 }  // namespace xla
