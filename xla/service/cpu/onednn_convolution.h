@@ -22,7 +22,8 @@ limitations under the License.
 namespace xla {
 namespace cpu {
 
-constexpr auto kOnednnConvConfig = BackendConfigOneofCase::kOnednnConvConfig;
+constexpr auto kOnednnConvConfig =
+    BackendConfig::BackendConfigOneofCase::kOnednnConvConfig;
 
 extern "C" {
 extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void** args);
@@ -31,7 +32,8 @@ extern void __xla_cpu_runtime_OneDnnConvolution(void* result, void** args);
 template <>
 struct PrimitiveTrait<kOnednnConvConfig> {
   using pointer_type = xla::cpu::OneDnnConvolutionConfig*;
-  static const BackendConfigOneofCase kConfigVal = kOnednnConvConfig;
+  static const BackendConfig::BackendConfigOneofCase kConfigVal =
+      kOnednnConvConfig;
 };
 
 }  // namespace cpu

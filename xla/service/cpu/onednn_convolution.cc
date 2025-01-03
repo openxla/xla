@@ -27,15 +27,15 @@ limitations under the License.
 #define EIGEN_USE_THREADS
 
 #include "absl/base/dynamic_annotations.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "dnnl.hpp"
+#include "tsl/platform/logging.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/executable_run_options.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/runtime_lightweight_check.h"
 #include "xla/tsl/util/onednn_threadpool.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace cpu {
@@ -198,9 +198,10 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
 
   auto bias_md = memory::desc();
 
-  dnnl::post_ops post_ops =
-      PopulateOneDnnPostOps(cpu_engine, fused_mds, &conv_config.fusions(),
-                            &fused_operands_ref, &bias_md);
+  int fused_operand_idx = 0;
+  dnnl::post_ops post_ops = PopulateOneDnnPostOps(
+      fused_operand_idx, cpu_engine, fused_mds, &conv_config.fusions(),
+      &fused_operands_ref, &bias_md);
 
   auto any_ker_md =
       memory::desc(new_ker_md.get_dims(), new_ker_md.get_data_type(),
@@ -218,6 +219,14 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnConvolution(
   if (post_ops.len() > 0) {
     attrs.set_post_ops(post_ops);
   }
+
+  QuantizationParams qparams;
+  qparams.negated_src_zp = conv_config.quant_config().negated_src_zp();
+  qparams.inversed_dst_scale = conv_config.quant_config().inversed_dst_scale();
+  const bool conv_groups = conv_config.feature_groups() > 1;
+  AddQuantParamArgs(/*is_conv=*/true, conv_groups, attrs, fused_operand_idx,
+                    cpu_engine, fused_mds, any_inp_md, any_ker_md, any_res_md,
+                    &fused_operands_ref, &qparams);
 
   auto conv_pd = std::make_unique<convolution_forward::primitive_desc>(
       cpu_engine, prop_kind::forward_inference, algorithm::convolution_direct,

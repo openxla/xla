@@ -82,6 +82,7 @@ message OneDnnMatMulConfig {
   reserved 7;  // was user_scratchpad
 
   OneDnnOptimizationConfig optimization_config = 8;
+  OneDnnQuantizationConfig quant_config = 9;
 }
 
 message OneDnnWindowProto {
@@ -115,4 +116,10 @@ message OneDnnConvolutionConfig {
   uint64 feature_groups = 7;
 
   OneDnnOptimizationConfig optimization_config = 8;
+  OneDnnQuantizationConfig quant_config = 9;
+}
+
+message OneDnnQuantizationConfig {
+  bool inversed_dst_scale = 1;
+  bool negated_src_zp = 2;
 }
