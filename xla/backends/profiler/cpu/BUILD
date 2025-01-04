@@ -76,6 +76,7 @@ cc_library(
     ]),
     deps = [
         "//xla/python/profiler/internal:python_hooks",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
