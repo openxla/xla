@@ -258,7 +258,20 @@ PjRtArray::PjRtArray(PjRtCompatibleClient* client, DType dtype, Shape shape,
       dtype_(dtype),
       shape_(std::move(shape)),
       sharding_(std::move(sharding)),
-      pjrt_buffers_(std::move(pjrt_buffers)) {}
+      pjrt_buffers_(std::move(pjrt_buffers)) {
+  if (pjrt_buffers_[0]->on_device_shape().has_layout()) {
+    layout_ = pjrt_buffers_[0]->layout();
+#ifndef NDEBUG
+    for (int i = 1; i < pjrt_buffers_.size(); ++i) {
+      std::shared_ptr<const PjRtLayout> layout_i = pjrt_buffers_[i]->layout();
+      DCHECK(*layout_ == *layout_i)
+          << "PjRtArray has mismatched layouts across shards! "
+          << "shard 0: " << layout_->ToString() << ", shard " << i << ": "
+          << layout_i->ToString();
+    }
+#endif
+  }
+}
 
 PjRtArray::PjRtArray(PjRtCompatibleClient* client, DType dtype,
                      DynamicShape dynamic_shape,
@@ -553,7 +566,7 @@ bool PjRtArray::IsDeleted() const {
 
 std::string PjRtArray::DebugString() const {
   DCHECK(this);
-  absl::StatusOr<std::unique_ptr<PjRtLayout>> layout_ptr = layout();
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout_ptr = layout();
   std::string layout_str =
       layout_ptr.ok() ? (*layout_ptr)->ToString() : "<unknown>";
 
@@ -564,21 +577,12 @@ std::string PjRtArray::DebugString() const {
       sharding_->DebugString(), layout_str);
 }
 
-// TODO(b/330198879): populate layout at construction instead of accessing PJRT
-// buffer directly for consistency with Pathways.
-absl::StatusOr<std::unique_ptr<PjRtLayout>> PjRtArray::layout() const {
-  CHECK(!pjrt_buffers_.empty());
-  std::unique_ptr<PjRtLayout> layout = pjrt_buffers_[0]->layout();
-#ifndef NDEBUG
-  for (int i = 1; i < pjrt_buffers_.size(); ++i) {
-    std::unique_ptr<PjRtLayout> layout_i = pjrt_buffers_[i]->layout();
-    DCHECK(*layout == *layout_i)
-        << "PjRtArray has mismatched layouts across shards! "
-        << "shard 0: " << layout->ToString() << ", shard " << i << ": "
-        << layout_i->ToString();
+absl::StatusOr<std::shared_ptr<const PjRtLayout>> PjRtArray::layout() const {
+  if (layout_ != nullptr) {
+    return layout_;
+  } else {
+    return absl::FailedPreconditionError("PjRtBuffer is missing layout");
   }
-#endif
-  return layout;
 }
 
 }  // namespace ifrt
