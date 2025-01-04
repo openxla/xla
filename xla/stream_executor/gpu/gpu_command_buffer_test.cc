@@ -52,9 +52,10 @@ limitations under the License.
 namespace stream_executor::gpu {
 using testing::ElementsAre;
 using testing::IsEmpty;
+using testing::UnorderedElementsAre;
 using tsl::testing::IsOkAndHolds;
 
-using ExecutionScopeId = CommandBuffer::ExecutionScopeId;
+using CmdIndexSet = CommandBuffer::CmdIndexSet;
 
 static GpuCommandBuffer* CastToGpuCommandBuffer(CommandBuffer* command_buffer) {
   return static_cast<GpuCommandBuffer*>(command_buffer);
@@ -118,7 +119,7 @@ TEST(GpuCommandBufferTest, LaunchSingleKernel) {
 
   // Create a command buffer with a single kernel launch.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->Launch(add, ThreadDim(), BlockDim(4), a, b, c));
+  TF_ASSERT_OK(cmd_buffer->Launch(ThreadDim(), BlockDim(4), add, a, b, c));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
@@ -136,7 +137,7 @@ TEST(GpuCommandBufferTest, LaunchSingleKernel) {
 
   // Update command buffer to write into `d` buffer.
   TF_ASSERT_OK(cmd_buffer->Update());
-  TF_ASSERT_OK(cmd_buffer->Launch(add, ThreadDim(), BlockDim(4), a, b, d));
+  TF_ASSERT_OK(cmd_buffer->Launch(ThreadDim(), BlockDim(4), add, a, b, d));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
@@ -238,7 +239,7 @@ TEST(GpuCommandBufferTest, LaunchNestedCommandBuffer) {
   // Create a command buffer with a single kernel launch.
   auto primary_cmd = executor->CreateCommandBuffer(primary).value();
   auto nested_cmd = executor->CreateCommandBuffer(nested).value();
-  TF_ASSERT_OK(nested_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, c));
+  TF_ASSERT_OK(nested_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, c));
   TF_ASSERT_OK(primary_cmd->AddNestedCommandBuffer(*nested_cmd));
   TF_ASSERT_OK(primary_cmd->Finalize());
 
@@ -258,7 +259,7 @@ TEST(GpuCommandBufferTest, LaunchNestedCommandBuffer) {
   // Update command buffer to write into `d` buffer by creating a new nested
   // command buffer.
   nested_cmd = executor->CreateCommandBuffer(nested).value();
-  TF_ASSERT_OK(nested_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, d));
+  TF_ASSERT_OK(nested_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, d));
   TF_ASSERT_OK(primary_cmd->Update());
   TF_ASSERT_OK(primary_cmd->AddNestedCommandBuffer(*nested_cmd));
   TF_ASSERT_OK(primary_cmd->Finalize());
@@ -408,36 +409,22 @@ TEST(GpuCommandBufferTest, Barriers) {
 
   // Check the command buffer structure.
   GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
-  ASSERT_EQ(gpu_cmd_buffer->nodes().size(), 6);
-  ASSERT_EQ(gpu_cmd_buffer->barriers().size(), 6);
+  ASSERT_EQ(gpu_cmd_buffer->nodes().size(), 12);
 
   auto nodes = gpu_cmd_buffer->nodes();
-  auto barriers = gpu_cmd_buffer->barriers();
 
   // First barrier does not have any dependencies.
-  EXPECT_TRUE(barriers[0].is_barrier_node);
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers[0].handle),
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[0].handle),
               IsOkAndHolds(IsEmpty()));
 
-  // Second barrier reuses first memset node.
-  EXPECT_FALSE(barriers[1].is_barrier_node);
-  EXPECT_EQ(barriers[1].handle, nodes[0].handle);
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[1].handle),
+              IsOkAndHolds(ElementsAre(nodes[0].handle)));
 
-  // Third and fourth barriers reuse second memset node.
-  EXPECT_FALSE(barriers[2].is_barrier_node);
-  EXPECT_FALSE(barriers[3].is_barrier_node);
-  EXPECT_EQ(barriers[2].handle, nodes[1].handle);
-  EXPECT_EQ(barriers[3].handle, nodes[1].handle);
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[2].handle),
+              IsOkAndHolds(ElementsAre(nodes[1].handle)));
 
-  // Fifth and sixth barriers are barrier nodes.
-  EXPECT_TRUE(barriers[4].is_barrier_node);
-  EXPECT_TRUE(barriers[5].is_barrier_node);
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers[4].handle),
-              IsOkAndHolds(ElementsAre(nodes[2].handle, nodes[3].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers[5].handle),
-              IsOkAndHolds(ElementsAre(nodes[4].handle, nodes[5].handle)));
-
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[11].handle),
+              IsOkAndHolds(ElementsAre(nodes[10].handle)));
   // Update command buffer to use a new bit pattern.
   TF_ASSERT_OK(cmd_buffer->Update());
   TF_ASSERT_OK(record(cmd_buffer.get(), 43));
@@ -447,14 +434,11 @@ TEST(GpuCommandBufferTest, Barriers) {
   ASSERT_EQ(transfer_buffers(), expected);
 }
 
-TEST(GpuCommandBufferTest, IndependentExecutionScopes) {
+TEST(GpuCommandBufferTest, IndependentOverlaps) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  CommandBuffer::ExecutionScopeId s0 = CommandBuffer::ExecutionScopeId(0);
-  CommandBuffer::ExecutionScopeId s1 = CommandBuffer::ExecutionScopeId(1);
 
   // Allocate device buffers for memset operations.
   std::vector<DeviceMemory<int32_t>> buffers;
@@ -472,12 +456,16 @@ TEST(GpuCommandBufferTest, IndependentExecutionScopes) {
   };
 
   auto record = [&](CommandBuffer* cmd_buffer, uint32_t bit_pattern) {
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[0], bit_pattern + 0, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[1], bit_pattern + 1, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[2], bit_pattern + 2, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[3], bit_pattern + 3, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(s0));
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(s1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(0, CmdIndexSet{}, &buffers[0], bit_pattern + 0, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(1, CmdIndexSet{0}, &buffers[1], bit_pattern + 1, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(2, CmdIndexSet{}, &buffers[2], bit_pattern + 2, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(3, CmdIndexSet{2}, &buffers[3], bit_pattern + 3, 1));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{1}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(5, CmdIndexSet{3}));
     return cmd_buffer->Finalize();
   };
 
@@ -492,23 +480,13 @@ TEST(GpuCommandBufferTest, IndependentExecutionScopes) {
   // Check the command buffer structure.
   GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
-  auto nodes0 = gpu_cmd_buffer->nodes(s0);
-  auto nodes1 = gpu_cmd_buffer->nodes(s1);
-  auto barriers0 = gpu_cmd_buffer->barriers(s0);
-  auto barriers1 = gpu_cmd_buffer->barriers(s1);
+  auto nodes = gpu_cmd_buffer->nodes();
 
-  ASSERT_EQ(nodes0.size(), 2);
-  ASSERT_EQ(nodes1.size(), 2);
-  ASSERT_EQ(barriers0.size(), 1);
-  ASSERT_EQ(barriers1.size(), 1);
-
-  EXPECT_TRUE(barriers0[0].is_barrier_node);
-  EXPECT_TRUE(barriers1[0].is_barrier_node);
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[0].handle),
-              IsOkAndHolds(ElementsAre(nodes0[0].handle, nodes0[1].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers1[0].handle),
-              IsOkAndHolds(ElementsAre(nodes1[0].handle, nodes1[1].handle)));
+  ASSERT_EQ(nodes.size(), 6);
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[4].handle),
+              IsOkAndHolds(ElementsAre(nodes[1].handle)));
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[5].handle),
+              IsOkAndHolds(ElementsAre(nodes[3].handle)));
 
   // Update command buffer to use a new bit pattern.
   TF_ASSERT_OK(cmd_buffer->Update());
@@ -519,15 +497,11 @@ TEST(GpuCommandBufferTest, IndependentExecutionScopes) {
   ASSERT_EQ(transfer_buffers(), expected);
 }
 
-TEST(GpuCommandBufferTest, ExecutionScopeBarriers) {
+TEST(GpuCommandBufferTest, OverlapBarriers) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  CommandBuffer::ExecutionScopeId s0 = CommandBuffer::ExecutionScopeId(0);
-  CommandBuffer::ExecutionScopeId s1 = CommandBuffer::ExecutionScopeId(1);
-  CommandBuffer::ExecutionScopeId s2 = CommandBuffer::ExecutionScopeId(2);
 
   // Allocate device buffers for memset operations.
   std::vector<DeviceMemory<int32_t>> buffers;
@@ -545,15 +519,21 @@ TEST(GpuCommandBufferTest, ExecutionScopeBarriers) {
   };
 
   auto record = [&](CommandBuffer* cmd_buffer, uint32_t bit_pattern) {
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[0], bit_pattern + 0, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[1], bit_pattern + 1, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[2], bit_pattern + 2, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[3], bit_pattern + 3, 1));
-    // This will synchronize scopes 0 and 1 and also create an empty scope 2.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier({s0, s1, s2}));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[4], bit_pattern + 4, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[5], bit_pattern + 5, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s2, &buffers[6], bit_pattern + 6, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(0, CmdIndexSet{}, &buffers[0], bit_pattern + 0, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(1, CmdIndexSet{0}, &buffers[1], bit_pattern + 1, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(2, CmdIndexSet{}, &buffers[2], bit_pattern + 2, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(3, CmdIndexSet{2}, &buffers[3], bit_pattern + 3, 1));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{1, 3}));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(5, CmdIndexSet{4}, &buffers[4], bit_pattern + 4, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(6, CmdIndexSet{4}, &buffers[5], bit_pattern + 5, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(7, CmdIndexSet{4}, &buffers[6], bit_pattern + 6, 1));
     return cmd_buffer->Finalize();
   };
 
@@ -568,46 +548,18 @@ TEST(GpuCommandBufferTest, ExecutionScopeBarriers) {
   // Check the command buffer structure.
   GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
-  auto nodes0 = gpu_cmd_buffer->nodes(s0);
-  auto nodes1 = gpu_cmd_buffer->nodes(s1);
-  auto nodes2 = gpu_cmd_buffer->nodes(s2);
-  auto barriers0 = gpu_cmd_buffer->barriers(s0);
-  auto barriers1 = gpu_cmd_buffer->barriers(s1);
-  auto barriers2 = gpu_cmd_buffer->barriers(s2);
+  auto nodes = gpu_cmd_buffer->nodes();
+  ASSERT_EQ(nodes.size(), 8);
 
-  ASSERT_EQ(nodes0.size(), 3);
-  ASSERT_EQ(nodes1.size(), 3);
-  ASSERT_EQ(nodes2.size(), 1);
-  ASSERT_EQ(barriers0.size(), 2);
-  ASSERT_EQ(barriers1.size(), 2);
-  ASSERT_EQ(barriers2.size(), 2);
-
-  // All barriers are real barrier nodes.
-  EXPECT_TRUE(barriers0[0].is_barrier_node && barriers0[1].is_barrier_node);
-  EXPECT_TRUE(barriers1[0].is_barrier_node && barriers1[1].is_barrier_node);
-  EXPECT_TRUE(barriers2[0].is_barrier_node && barriers2[1].is_barrier_node);
-
-  // All scopes share a broadcasted barrier.
-  EXPECT_TRUE(barriers0[1].handle == barriers1[1].handle);
-  EXPECT_TRUE(barriers1[1].handle == barriers2[1].handle);
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[0].handle),
-              IsOkAndHolds(ElementsAre(nodes0[0].handle, nodes0[1].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers1[0].handle),
-              IsOkAndHolds(ElementsAre(nodes1[0].handle, nodes1[1].handle)));
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers2[0].handle),
-              IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers2[1].handle),
-              IsOkAndHolds(ElementsAre(barriers0[0].handle, barriers1[0].handle,
-                                       barriers2[0].handle)));
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes0[2].handle),
-              IsOkAndHolds(ElementsAre(barriers0[1].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes1[2].handle),
-              IsOkAndHolds(ElementsAre(barriers1[1].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes2[0].handle),
-              IsOkAndHolds(ElementsAre(barriers2[1].handle)));
+  EXPECT_THAT(
+      gpu_cmd_buffer->GetNodeDependencies(nodes[4].handle),
+      IsOkAndHolds(UnorderedElementsAre(nodes[1].handle, nodes[3].handle)));
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[5].handle),
+              IsOkAndHolds(ElementsAre(nodes[4].handle)));
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[6].handle),
+              IsOkAndHolds(ElementsAre(nodes[4].handle)));
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[7].handle),
+              IsOkAndHolds(ElementsAre(nodes[4].handle)));
 
   // Update command buffer to use a new bit pattern.
   TF_ASSERT_OK(cmd_buffer->Update());
@@ -615,88 +567,6 @@ TEST(GpuCommandBufferTest, ExecutionScopeBarriers) {
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
 
   expected = {43, 44, 45, 46, 47, 48, 49};
-  ASSERT_EQ(transfer_buffers(), expected);
-}
-
-TEST(GpuCommandBufferTest, ExecutionScopeOneDirectionalBarriers) {
-  Platform* platform = GpuPlatform();
-  StreamExecutor* executor = platform->ExecutorForDevice(0).value();
-
-  TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  CommandBuffer::ExecutionScopeId s0 = CommandBuffer::ExecutionScopeId(0);
-  CommandBuffer::ExecutionScopeId s1 = CommandBuffer::ExecutionScopeId(1);
-
-  // Allocate device buffers for memset operations.
-  std::vector<DeviceMemory<int32_t>> buffers;
-  for (size_t i = 0; i < 6; ++i) {
-    buffers.push_back(executor->AllocateArray<int32_t>(1, 0));
-  }
-
-  // Transfer buffers data back to host.
-  auto transfer_buffers = [&]() -> std::vector<int32_t> {
-    std::vector<int32_t> dst(buffers.size(), 0);
-    for (size_t i = 0; i < buffers.size(); ++i) {
-      TF_CHECK_OK(stream->Memcpy(dst.data() + i, buffers[i], sizeof(int32_t)));
-    }
-    return dst;
-  };
-
-  auto record = [&](CommandBuffer* cmd_buffer, uint32_t bit_pattern) {
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[0], bit_pattern + 0, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[1], bit_pattern + 1, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[2], bit_pattern + 2, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[3], bit_pattern + 3, 1));
-    // This will synchronize scopes 0 and 1.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(s0, s1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[4], bit_pattern + 4, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s1, &buffers[5], bit_pattern + 5, 1));
-    return cmd_buffer->Finalize();
-  };
-
-  // Create a command buffer with a DAG of memset commands.
-  auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(record(cmd_buffer.get(), 42));
-  TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
-
-  std::vector<int32_t> expected = {42, 43, 44, 45, 46, 47};
-  ASSERT_EQ(transfer_buffers(), expected);
-
-  // Check the command buffer structure.
-  GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
-
-  auto nodes0 = gpu_cmd_buffer->nodes(s0);
-  auto nodes1 = gpu_cmd_buffer->nodes(s1);
-  auto barriers0 = gpu_cmd_buffer->barriers(s0);
-  auto barriers1 = gpu_cmd_buffer->barriers(s1);
-
-  ASSERT_EQ(nodes0.size(), 3);
-  ASSERT_EQ(nodes1.size(), 3);
-  ASSERT_EQ(barriers0.size(), 1);
-  ASSERT_EQ(barriers1.size(), 2);
-
-  // All barriers are real barrier nodes.
-  EXPECT_TRUE(barriers0[0].is_barrier_node);
-  EXPECT_TRUE(barriers1[0].is_barrier_node && barriers1[1].is_barrier_node);
-
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[0].handle),
-              IsOkAndHolds(ElementsAre(nodes0[0].handle, nodes0[1].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers1[0].handle),
-              IsOkAndHolds(ElementsAre(nodes1[0].handle, nodes1[1].handle)));
-  EXPECT_THAT(
-      gpu_cmd_buffer->GetNodeDependencies(barriers1[1].handle),
-      IsOkAndHolds(ElementsAre(barriers0[0].handle, barriers1[0].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes0[2].handle),
-              IsOkAndHolds(ElementsAre(barriers0[0].handle)));
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes1[2].handle),
-              IsOkAndHolds(ElementsAre(barriers1[1].handle)));
-
-  // Update command buffer to use a new bit pattern.
-  TF_ASSERT_OK(cmd_buffer->Update());
-  TF_ASSERT_OK(record(cmd_buffer.get(), 43));
-  TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
-
-  expected = {43, 44, 45, 46, 47, 48};
   ASSERT_EQ(transfer_buffers(), expected);
 }
 
@@ -731,7 +601,7 @@ TEST(GpuCommandBufferTest, ConditionalIf) {
 
   // if (pred == true) c = a + b
   CommandBuffer::Builder then_builder = [&](CommandBuffer* then_cmd) {
-    return then_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, c);
+    return then_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, c);
   };
 
   // Create a command buffer with a single conditional operation.
@@ -770,7 +640,7 @@ TEST(GpuCommandBufferTest, ConditionalIf) {
 
   // if (pred == true) d = a + b (write to a new location).
   then_builder = [&](CommandBuffer* then_cmd) {
-    return then_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, d);
+    return then_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, d);
   };
 
   // Update command buffer with a conditional to use new builder.
@@ -892,12 +762,12 @@ TEST(GpuCommandBufferTest, ConditionalIfElse) {
 
   // if (pred == true) c = a + b
   CommandBuffer::Builder then_builder = [&](CommandBuffer* then_cmd) {
-    return then_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, c);
+    return then_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, c);
   };
 
   // if (pred == false) c = a * b
   CommandBuffer::Builder else_builder = [&](CommandBuffer* else_cmd) {
-    return else_cmd->Launch(mul, ThreadDim(), BlockDim(4), a, b, c);
+    return else_cmd->Launch(ThreadDim(), BlockDim(4), mul, a, b, c);
   };
 
   // Create a command buffer with a single conditional operation.
@@ -934,7 +804,7 @@ TEST(GpuCommandBufferTest, ConditionalIfElse) {
 
   // if (pred == false) d = a * b (write to a new location).
   else_builder = [&](CommandBuffer* else_cmd) {
-    return else_cmd->Launch(mul, ThreadDim(), BlockDim(4), a, b, d);
+    return else_cmd->Launch(ThreadDim(), BlockDim(4), mul, a, b, d);
   };
 
   // Update command buffer with a conditional to use new `else` builder.
@@ -983,7 +853,7 @@ TEST(GpuCommandBufferTest, ConditionalCaseEmptyGraph) {
 
   // if (index == 0) c = a + b
   CommandBuffer::Builder branch0 = [&](CommandBuffer* branch0_cmd) {
-    return branch0_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, c);
+    return branch0_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, c);
   };
 
   // if (index == 1) c = a * b
@@ -1081,7 +951,7 @@ TEST_P(GpuCommandBufferCaseTest, ConditionalMultiCase) {
     TF_ASSERT_OK(stream->Memset32(&results[i], 0, byte_length));
     branches[i] = [&, i](CommandBuffer* branch_cmd) {
       // result = i * i;
-      return branch_cmd->Launch(mul, ThreadDim(), BlockDim(kLength), values[i],
+      return branch_cmd->Launch(ThreadDim(), BlockDim(kLength), mul, values[i],
                                 values[i], results[i]);
     };
   }
@@ -1165,12 +1035,12 @@ TEST(GpuCommandBufferTest, ConditionalCase) {
 
   // if (index == 0) c = a + b
   CommandBuffer::Builder branch0 = [&](CommandBuffer* branch0_cmd) {
-    return branch0_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, c);
+    return branch0_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, c);
   };
 
   // if (index == 1) c = a * b
   CommandBuffer::Builder branch1 = [&](CommandBuffer* branch1_cmd) {
-    return branch1_cmd->Launch(mul, ThreadDim(), BlockDim(4), a, b, c);
+    return branch1_cmd->Launch(ThreadDim(), BlockDim(4), mul, a, b, c);
   };
 
   // Create a command buffer with a single conditional operation.
@@ -1247,7 +1117,7 @@ TEST(GpuCommandBufferTest, ConditionalFor) {
 
   // Loop body: b = a + b
   CommandBuffer::Builder body_builder = [&](CommandBuffer* body_cmd) {
-    return body_cmd->Launch(add, ThreadDim(), BlockDim(4), a, b, b);
+    return body_cmd->Launch(ThreadDim(), BlockDim(4), add, a, b, b);
   };
 
   int32_t num_iters = 10;
@@ -1308,15 +1178,14 @@ TEST(GpuCommandBufferTest, ConditionalWhile) {
   int32_t num_iters = 10;
 
   // Loop cond: loop_counter++ < num_iters;
-  CommandBuffer::ExecutionScopeBuilder cond_builder =
-      [&](ExecutionScopeId id, CommandBuffer* cond_cmd) {
-        return cond_cmd->Launch(inc_and_cmp, id, ThreadDim(), BlockDim(),
-                                loop_counter, pred, num_iters);
-      };
+  CommandBuffer::Builder cond_builder = [&](CommandBuffer* cond_cmd) {
+    return cond_cmd->Launch(ThreadDim(), BlockDim(), inc_and_cmp, loop_counter,
+                            pred, num_iters);
+  };
 
   // Loop body: b = a + b
   CommandBuffer::Builder body_builder = [&](CommandBuffer* body_cmd) {
-    return body_cmd->Launch(add, ThreadDim(), BlockDim(length), a, b, b);
+    return body_cmd->Launch(ThreadDim(), BlockDim(length), add, a, b, b);
   };
 
   // Create a command buffer with a single conditional operation.
@@ -1381,7 +1250,7 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   CommandBuffer::Builder then_builder =
       // Then body: b = a + b
       [&](CommandBuffer* then_cmd) {
-        return then_cmd->Launch(add, ThreadDim(), BlockDim(length), a, b, b);
+        return then_cmd->Launch(ThreadDim(), BlockDim(length), add, a, b, b);
       };
 
   auto nested_cmd = executor->CreateCommandBuffer(nested).value();
@@ -1390,11 +1259,10 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   TF_ASSERT_OK(nested_cmd->If(pred_then, then_builder));
 
   // Loop cond: loop_counter++ < num_iters;
-  CommandBuffer::ExecutionScopeBuilder cond_builder =
-      [&](ExecutionScopeId id, CommandBuffer* cond_cmd) {
-        return cond_cmd->Launch(inc_and_cmp, id, ThreadDim(), BlockDim(length),
-                                loop_counter, pred, num_iters);
-      };
+  CommandBuffer::Builder cond_builder = [&](CommandBuffer* cond_cmd) {
+    return cond_cmd->Launch(ThreadDim(), BlockDim(length), inc_and_cmp,
+                            loop_counter, pred, num_iters);
+  };
 
   CommandBuffer::Builder body_builder =
       [&](CommandBuffer* body_cmd) -> absl::Status {
@@ -1417,7 +1285,7 @@ TEST(GpuCommandBufferTest, DISABLED_WhileNestedConditional) {
   ASSERT_EQ(dst, expected);
 }
 
-TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
+TEST(GpuCommandBufferTest, ConditionalIfWithOverlaps) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
@@ -1426,9 +1294,6 @@ TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
   }
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  CommandBuffer::ExecutionScopeId s0 = CommandBuffer::ExecutionScopeId(0);
-  CommandBuffer::ExecutionScopeId s1 = CommandBuffer::ExecutionScopeId(1);
 
   DeviceMemory<bool> pred = executor->AllocateArray<bool>(1, 0);
 
@@ -1451,20 +1316,22 @@ TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
   };
 
   auto record = [&](CommandBuffer* cmd_buffer, uint32_t bit_pattern) {
-    // Record memsets in execution scope #0
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[0], bit_pattern + 0, 1));
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &buffers[1], bit_pattern + 1, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(0, CmdIndexSet{}, &buffers[0], bit_pattern + 0, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(1, CmdIndexSet{0}, &buffers[1], bit_pattern + 1, 1));
 
-    // Record If in execution scope #1
-    TF_RETURN_IF_ERROR(cmd_buffer->If(s1, pred, [&](CommandBuffer* then_cmd) {
-      return then_cmd->Memset(&buffers[2], bit_pattern + 2, 1);
-    }));
+    // Record If that overlaps with previous memset.
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->If(2, CmdIndexSet{}, pred, [&](CommandBuffer* then_cmd) {
+          return then_cmd->Memset(&buffers[2], bit_pattern + 2, 1);
+        }));
 
-    // Create a barrier in execution scope #0.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier(s0));
+    // Create a barrier for Memsets.
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(3, CmdIndexSet{1}));
 
-    // Create a barrier between two execution scopes.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier({s0, s1}));
+    // Create a barrier for If and memsets.
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(4, CmdIndexSet{2, 3}));
 
     return cmd_buffer->Finalize();
   };
@@ -1480,27 +1347,15 @@ TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
   // Check the command buffer structure.
   GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
-  auto nodes0 = gpu_cmd_buffer->nodes(s0);
-  auto nodes1 = gpu_cmd_buffer->nodes(s1);
-  auto barriers0 = gpu_cmd_buffer->barriers(s0);
-  auto barriers1 = gpu_cmd_buffer->barriers(s1);
+  auto nodes = gpu_cmd_buffer->nodes();
 
-  ASSERT_EQ(nodes0.size(), 2);
-  ASSERT_EQ(nodes1.size(), 2);
-  ASSERT_EQ(barriers0.size(), 3);
-  ASSERT_EQ(barriers1.size(), 3);
+  ASSERT_EQ(nodes.size(), 6);
+  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(nodes[4].handle),
+              IsOkAndHolds(ElementsAre(nodes[1].handle)));
 
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[0].handle),
-              IsOkAndHolds(ElementsAre(nodes0[0].handle, nodes0[1].handle)));
-  EXPECT_EQ(barriers0[0].handle, barriers0[1].handle);
-
-  EXPECT_EQ(barriers1[0].handle, nodes1[0].handle);
-  EXPECT_EQ(barriers1[1].handle, nodes1[1].handle);
-
-  // s0 and s1 share broadcasted barrier.
-  EXPECT_EQ(barriers0[2].handle, barriers1[2].handle);
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[2].handle),
-              IsOkAndHolds(ElementsAre(barriers0[1].handle, nodes1[1].handle)));
+  EXPECT_THAT(
+      gpu_cmd_buffer->GetNodeDependencies(nodes[5].handle),
+      IsOkAndHolds(UnorderedElementsAre(nodes[3].handle, nodes[4].handle)));
 
   // TODO(b/326284532): Add a test for bit pattern update.
 
@@ -1514,7 +1369,7 @@ TEST(GpuCommandBufferTest, ConditionalIfInExecutionScope) {
   ASSERT_EQ(transfer_buffers(), expected);
 }
 
-TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
+TEST(GpuCommandBufferTest, ConditionalWhileWithOverlaps) {
   Platform* platform = GpuPlatform();
   StreamExecutor* executor = platform->ExecutorForDevice(0).value();
 
@@ -1523,9 +1378,6 @@ TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
   }
 
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
-
-  CommandBuffer::ExecutionScopeId s0 = CommandBuffer::ExecutionScopeId(0);
-  CommandBuffer::ExecutionScopeId s1 = CommandBuffer::ExecutionScopeId(1);
 
   // Load addition kernel.
   MultiKernelLoaderSpec add_spec(/*arity=*/3);
@@ -1550,24 +1402,22 @@ TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
 
   auto record = [&](CommandBuffer* cmd_buffer, uint32_t bit_pattern,
                     int32_t num_iters) {
-    // Record memset in execution scope #0
-    TF_RETURN_IF_ERROR(cmd_buffer->Memset(s0, &c, bit_pattern, 1));
+    TF_RETURN_IF_ERROR(
+        cmd_buffer->Memset(0, CmdIndexSet{}, &c, bit_pattern, 1));
 
-    // Record While in execution scope #1
     TF_RETURN_IF_ERROR(cmd_buffer->While(
-        s1, pred,
+        1, CmdIndexSet{}, pred,
         // Loop cond: loop_counter++ < num_iters;
-        [&](ExecutionScopeId id, CommandBuffer* cond_cmd) {
-          return cond_cmd->Launch(inc_and_cmp, id, ThreadDim(), BlockDim(),
+        [&](CommandBuffer* cond_cmd) {
+          return cond_cmd->Launch(ThreadDim(), BlockDim(), inc_and_cmp,
                                   loop_counter, pred, num_iters);
         },
         // Loop body: b = a + b
         [&](CommandBuffer* body_cmd) {
-          return body_cmd->Launch(add, ThreadDim(), BlockDim(), a, b, b);
+          return body_cmd->Launch(ThreadDim(), BlockDim(), add, a, b, b);
         }));
 
-    // Create a barrier between two execution scopes.
-    TF_RETURN_IF_ERROR(cmd_buffer->Barrier({s0, s1}));
+    TF_RETURN_IF_ERROR(cmd_buffer->EmptyOp(2, CmdIndexSet{0, 1}));
 
     return cmd_buffer->Finalize();
   };
@@ -1588,20 +1438,13 @@ TEST(GpuCommandBufferTest, ConditionalWhileInExecutionScope) {
   // Check the command buffer structure.
   GpuCommandBuffer* gpu_cmd_buffer = CastToGpuCommandBuffer(cmd_buffer.get());
 
-  auto nodes0 = gpu_cmd_buffer->nodes(s0);
-  auto nodes1 = gpu_cmd_buffer->nodes(s1);
-  auto barriers0 = gpu_cmd_buffer->barriers(s0);
-  auto barriers1 = gpu_cmd_buffer->barriers(s1);
-
-  // s0 should have only one real barrier joining while op and memset.
-  ASSERT_EQ(nodes0.size(), 1);
-  ASSERT_EQ(nodes1.size(), 3);
-  ASSERT_EQ(barriers0.size(), 2);
-  ASSERT_EQ(barriers1.size(), 4);
+  auto nodes = gpu_cmd_buffer->nodes();
+  ASSERT_EQ(nodes.size(), 5);
 
   // The final barrier that joins while and memset.
-  EXPECT_THAT(gpu_cmd_buffer->GetNodeDependencies(barriers0[1].handle),
-              IsOkAndHolds(ElementsAre(nodes0[0].handle, nodes1[2].handle)));
+  EXPECT_THAT(
+      gpu_cmd_buffer->GetNodeDependencies(nodes[4].handle),
+      IsOkAndHolds(UnorderedElementsAre(nodes[0].handle, nodes[3].handle)));
 
   // Update bit pattern and number of iterations.
   TF_ASSERT_OK(cmd_buffer->Update());
@@ -1640,7 +1483,7 @@ static void BM_CreateCommandBuffer(benchmark::State& state) {
   for (auto s : state) {
     auto cmd_buffer = executor->CreateCommandBuffer(nested).value();
     for (int i = 1; i < state.range(0); ++i) {
-      CHECK_OK(cmd_buffer->Launch(add, ThreadDim(), BlockDim(4), b, b, b));
+      CHECK_OK(cmd_buffer->Launch(ThreadDim(), BlockDim(4), add, b, b, b));
     }
     CHECK_OK(cmd_buffer->Finalize());
   }
@@ -1687,14 +1530,14 @@ static void BM_UpdateCommandBuffer(benchmark::State& state) {
 
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
   for (int i = 1; i < state.range(0); ++i) {
-    CHECK_OK(cmd_buffer->Launch(add, ThreadDim(), BlockDim(4), b, b, b));
+    CHECK_OK(cmd_buffer->Launch(ThreadDim(), BlockDim(4), add, b, b, b));
   }
   CHECK_OK(cmd_buffer->Finalize());
 
   for (auto s : state) {
     CHECK_OK(cmd_buffer->Update());
     for (int i = 1; i < state.range(0); ++i) {
-      CHECK_OK(cmd_buffer->Launch(add, ThreadDim(), BlockDim(4), b, b, b));
+      CHECK_OK(cmd_buffer->Launch(ThreadDim(), BlockDim(4), add, b, b, b));
     }
     CHECK_OK(cmd_buffer->Finalize());
   }

@@ -54,33 +54,46 @@ class RocmCommandBuffer : public GpuCommandBuffer {
         graph_(graph),
         is_owned_graph_(is_owned_graph) {}
 
+  // Converts a list of platform independent GraphNodeHandles into a list of
+  // Rocm specific hipGraphNode_t.
+  absl::StatusOr<std::vector<hipGraphNode_t>> ToHipGraphHandles(
+      CmdIdxSetOrNodeHandles dependencies);
+
   absl::Status LaunchSetIfConditionKernel(
-      ExecutionScopeId execution_scope_id,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       GraphConditionalHandle if_conditional,
       DeviceMemory<bool> predicate) override;
   absl::Status LaunchSetIfElseConditionKernel(
-      ExecutionScopeId execution_scope_id,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       GraphConditionalHandle if_conditional,
       GraphConditionalHandle else_conditional,
       DeviceMemory<bool> predicate) override;
   absl::Status LaunchSetCaseConditionKernel(
-      ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-      DeviceMemory<int32_t> index, int32_t batch_offset,
-      bool enable_conditional_default) override;
-  absl::Status LaunchSetForConditionKernel(ExecutionScopeId execution_scope_id,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      GraphConditionalHandles conditionals, DeviceMemory<int32_t> index,
+      int32_t batch_offset, bool enable_conditional_default) override;
+  absl::Status LaunchSetForConditionKernel(Index cmd_idx,
+                                           CmdIdxSetOrNodeHandles dependencies,
                                            GraphConditionalHandle conditional,
                                            DeviceMemory<int32_t> loop_counter,
                                            int32_t iterations) override;
+  absl::Status LaunchSetForConditionKernel(GraphConditionalHandle conditional,
+                                           DeviceMemory<int32_t> loop_counter,
+                                           int32_t iterations) override;
   absl::Status LaunchSetWhileConditionKernel(
-      ExecutionScopeId execution_scope_id, GraphConditionalHandle conditional,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      GraphConditionalHandle conditional,
+      DeviceMemory<bool> predicate) override;
+  absl::Status LaunchSetWhileConditionKernel(
+      GraphConditionalHandle conditional,
       DeviceMemory<bool> predicate) override;
 
   absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
-      const Dependencies& dependencies, GraphConditionalHandle conditional,
+      CmdIdxSetOrNodeHandles dependencies, GraphConditionalHandle conditional,
       ConditionType type) override;
 
   absl::StatusOr<GraphNodeHandle> CreateMemsetNode(
-      const Dependencies& dependencies, DeviceMemoryBase destination,
+      CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
       BitPattern bit_pattern, size_t num_elements) override;
 
   absl::Status UpdateMemsetNode(GraphNodeHandle node_handle,
@@ -89,7 +102,7 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                 size_t num_elements) override;
 
   absl::StatusOr<GraphNodeHandle> CreateMemcpyD2DNode(
-      const Dependencies& dependencies, DeviceMemoryBase destination,
+      CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
       DeviceMemoryBase source, uint64_t size) override;
 
   absl::Status UpdateMemcpyD2DNode(GraphNodeHandle node_handle,
@@ -98,13 +111,14 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                    uint64_t size) override;
 
   absl::StatusOr<GraphNodeHandle> CreateChildNode(
-      const Dependencies& dependencies, const CommandBuffer& nested) override;
+      CmdIdxSetOrNodeHandles dependencies,
+      const CommandBuffer& nested) override;
 
   absl::Status UpdateChildNode(GraphNodeHandle node_handle,
                                const CommandBuffer& nested) override;
 
   absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      const Dependencies& dependencies, const ThreadDim& threads,
+      CmdIdxSetOrNodeHandles dependencies, const ThreadDim& threads,
       const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) override;
 
@@ -113,8 +127,8 @@ class RocmCommandBuffer : public GpuCommandBuffer {
                                 const BlockDim& blocks, const Kernel& kernel,
                                 const KernelArgsPackedArrayBase& args) override;
 
-  absl::StatusOr<GraphNodeHandle> CreateBarrierNode(
-      const Dependencies& dependencies) override;
+  absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
+      CmdIdxSetOrNodeHandles dependencies) override;
 
   absl::Status Trace(Stream* stream,
                      absl::AnyInvocable<absl::Status()> function) override;
