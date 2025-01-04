@@ -3460,7 +3460,20 @@ HloCustomCallInstruction::CloneWithNewOperandsImpl(
       opaque(), api_version_);
   if (layout_constrained()) {
     cloned->layout_constrained_ = true;
-    cloned->operand_shapes_with_layout_ = operand_shapes_with_layout();
+    std::vector<Shape> new_operand_shapes_with_layout;
+    int32_t operand_index = 0;
+    for (auto& operand_shape_layout : operand_shapes_with_layout()) {
+      auto new_operand_shape = new_operands[operand_index]->shape();
+      *new_operand_shape.mutable_layout() = operand_shape_layout.layout();
+      // Assumes that the layout constraints in the old instruction
+      // are still valid with the shapes of the new operands. Otherwise,
+      // the HLO becomes invalid.
+      TF_CHECK_OK(LayoutUtil::ValidateLayoutInShape(new_operand_shape));
+      new_operand_shapes_with_layout.push_back(std::move(new_operand_shape));
+      operand_index++;
+    }
+    cloned->operand_shapes_with_layout_ =
+        std::move(new_operand_shapes_with_layout);
   }
   if (window_ != nullptr) {
     cloned->set_window(*window_);

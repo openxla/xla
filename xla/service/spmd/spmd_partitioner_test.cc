@@ -15332,6 +15332,33 @@ ENTRY entry {
                           op::Shape("f32[1]")));
 }
 
+TEST_P(SpmdPartitioningTest, UpdateOperandLayoutConstraintsForCustomCalls) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  Arg_0.1 = s32[8]{0} parameter(0)
+  copy.2 = s32[8]{0} copy(Arg_0.1), sharding={devices=[4,2]<=[8] last_tile_dim_replicate}
+  custom-call.3 = s32[2]{0} custom-call(copy.2), custom_call_target="SPMDFullToShardShape", sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}, backend_config="unspecified_dims=[0]"
+  copy.1 = s32[2]{0} copy(custom-call.3), sharding={devices=[2,4]<=[4,2]T(1,0) last_tile_dims={manual}}
+  copy = s32[2]{0} copy(copy.1), sharding={devices=[1,4,2]<=[8] last_tile_dims={manual, replicated}}
+  ROOT custom-call.11 = s32[8]{0} custom-call(copy), custom_call_target="SPMDShardToFullShape", sharding={devices=[4,2]<=[8] last_tile_dim_replicate}, backend_config="unspecified_dims=[0]"
+  constant.0 = s64[] constant(94247866599072), sharding={manual}
+  custom-call.1 = () custom-call(constant.0, copy.1), custom_call_target="xla_python_gpu_callback", operand_layout_constraints={s64[], s32[2]{0}}, custom_call_has_side_effect=true, api_version=API_VERSION_STATUS_RETURNING, sharding={{manual}}, backend_config="94247866599072"
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/8));
+  VLOG(1) << module->ToString();
+
+  auto* custom_call = Cast<HloCustomCallInstruction>(
+      FindInstruction(module.get(), HloOpcode::kCustomCall));
+  auto operand_shapes_with_layout = custom_call->operand_shapes_with_layout();
+  ASSERT_EQ(operand_shapes_with_layout.size(), 2);
+  EXPECT_EQ(operand_shapes_with_layout[1].ToString(/*print_layout=*/true),
+            "s32[1]{0}");
+}
+
 }  // namespace
 }  // namespace spmd
 }  // namespace xla
