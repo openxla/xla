@@ -42,15 +42,6 @@ cc_library(
 )
 
 cc_library(
-    name = "padding",
-    hdrs = ["padding.h"],
-    deprecation = "This library is deprecated. Use //third_party/tensorflow/compiler/xla/hlo/builder:padding instead.",
-    deps = [
-        "//xla/hlo/builder:padding",
-    ],
-)
-
-cc_library(
     name = "client",
     srcs = ["client.cc"],
     hdrs = ["client.h"],
@@ -213,44 +204,5 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
-    name = "sharding_builder",
-    hdrs = ["sharding_builder.h"],
-    deprecation = "This library is deprecated. Use //third_party/tensorflow/compiler/xla/hlo/builder:sharding_builder instead.",
-    deps = [
-        "//xla/hlo/builder:sharding_builder",
-    ],
-)
-
-cc_library(
-    name = "xla_computation",
-    hdrs = ["xla_computation.h"],
-    deprecation = "This library is deprecated. Use //third_party/tensorflow/compiler/xla/hlo/builder:xla_computation instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:xla_computation",
-    ],
-)
-
-cc_library(
-    name = "value_inference",
-    hdrs = ["value_inference.h"],
-    deprecation = "This library is deprecated. Use //third_party/tensorflow/compiler/xla/hlo/builder:value_inference instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:value_inference",
-    ],
-)
-
-cc_library(
-    name = "xla_builder",
-    hdrs = ["xla_builder.h"],
-    deprecation = "This library is deprecated. Use //third_party/tensorflow/compiler/xla/hlo/builder:xla_builder instead.",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/hlo/builder:xla_builder",
     ],
 )
