@@ -94,7 +94,7 @@ cc_library(
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_reachability",
+        "//xla/hlo/analysis:hlo_reachability",
         "//xla/service:call_graph",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
