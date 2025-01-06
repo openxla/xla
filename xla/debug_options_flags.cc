@@ -1586,7 +1586,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "     more aggressive optimizations that may temporarily increase memory usage "
       "     but improve overall performance. "
       "By adjusting this factor, users can fine-tune the trade-off between memory "
-      "efficiency and performance optimizations."));
+      "efficiency and performance optimizations. The default value is 95."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_highest_priority_async_stream",
       bool_setter_for(
