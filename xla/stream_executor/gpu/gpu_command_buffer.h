@@ -40,6 +40,19 @@ namespace stream_executor::gpu {
 
 // GpuCommandBuffer provides platform-specific CommandBuffer implementation
 // (it's backed by CUDA or HIP graphs on NVIDIA and AMD devices).
+// This class is used to record and execute a sequence of GPU commands
+// efficiently by leveraging GPU graphs (CUDA or HIP).
+
+// GpuCommandBuffer lowers CommandBufferCmdSequence to a GPU graph, a
+// CommandBufferCmd may lower into one or more graph nodes (command nodes), the
+// HEAD nodes for a CommandBufferCmd is the nodes that have no dependencies
+// within the command nodes, and the TAIL nodes are the nodes that no other
+// nodes within the command nodes depend on them.
+
+// In CommandBufferCmdSequence, dependency is calculated by the data flow across
+// CommandBufferCmds, if CmdA depends on CmdB, then when lowering to GPU graph,
+// GpuCommandBuffer will create a dependency from the TAIL nodes of CmdB to HEAD
+// nodes of CmdA.
 class GpuCommandBuffer : public CommandBuffer {
   // GraphNodeHandleOpaque is an opaque type that won't be ODR used, hence
   // doesn't need to fully defined. It's an implementation detail of the
@@ -59,13 +72,38 @@ class GpuCommandBuffer : public CommandBuffer {
   // nullptr, trivial copyable, POD, etc.), that's why we use a pointer to
   // define it.
   using GraphNodeHandle = GraphNodeHandleOpaque*;
+  using GraphNodeHandles = absl::InlinedVector<GraphNodeHandle, 1>;
+  using CmdIdxSetOrNodeHandles =
+      std::variant<GraphNodeHandles, const CmdIndexSet*>;
+
+  static std::string GraphNodeHandlesToString(const GraphNodeHandles& handles) {
+    std::ostringstream oss;
+    oss << "GraphNodeHandles: [";
+    for (size_t i = 0; i < handles.size(); ++i) {
+      oss << handles[i];
+      if (i != handles.size() - 1) {
+        oss << ", ";
+      }
+    }
+    oss << "]";
+    return oss.str();
+  }
+
+  static std::string DependenciesToString(
+      const CmdIdxSetOrNodeHandles& dependencies) {
+    if (std::holds_alternative<GraphNodeHandles>(dependencies)) {
+      return GraphNodeHandlesToString(std::get<GraphNodeHandles>(dependencies));
+    } else {
+      return CmdIndexSetToString(*std::get<const CmdIndexSet*>(dependencies));
+    }
+  }
 
   // A graph conditional handle is an opaque handle that is tied to a nested
-  // command buffer. Its value determines whether the nested command buffer is
-  // executed or not. Set condition functions will update the conditional
+  // command buffer. Its value determines whether the nested command buffer
+  // is executed or not. Set condition functions will update the conditional
   // handles values. The handle has the same properties as a pointer (can be
-  // constructed from a nullptr, trivially copyable, POD, etc.), that's why we
-  // use a pointer to define it.
+  // constructed from a nullptr, trivially copyable, POD, etc.), that's why
+  // we use a pointer to define it.
   using GraphConditionalHandle = GraphConditionalOpaque*;
   using GraphConditionalHandles = absl::Span<const GraphConditionalHandle>;
 
@@ -98,51 +136,149 @@ class GpuCommandBuffer : public CommandBuffer {
 
   GpuCommandBuffer(Mode mode, StreamExecutor* parent);
 
+  using CommandBuffer::EmptyOp;
+  absl::Status EmptyOp(Index cmd_idx, const CmdIndexSet& dep_idxes) {
+    return EmptyOp(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes});
+  }
+
+  // Adds an execution barrier that depends on all the tail nodes (nodes that no
+  // other nodes depend on them) in current graph.
   using CommandBuffer::Barrier;
-  absl::Status Barrier(ExecutionScopeId execution_scope_id) override;
-
-  absl::Status Barrier(
-      absl::Span<const ExecutionScopeId> execution_scope_ids) override;
-
-  absl::Status Barrier(ExecutionScopeId from_execution_scope_id,
-                       ExecutionScopeId to_execution_scope_id) override;
+  absl::Status Barrier() {
+    return EmptyOp(cmd_tail_nodes_.size(), graph_tail_nodes());
+  }
 
   using CommandBuffer::Launch;
-  absl::Status Launch(ExecutionScopeId execution_scope_id,
+  absl::Status Launch(Index cmd_idx, const CmdIndexSet& dep_idxes,
                       const ThreadDim& threads, const BlockDim& blocks,
-                      const Kernel& kernel, const KernelArgs& args) override;
+                      const Kernel& kernel, const KernelArgs& args) {
+    return Launch(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, threads, blocks,
+                  kernel, args);
+  }
 
-  absl::Status AddNestedCommandBuffer(ExecutionScopeId execution_scope_id,
-                                      const CommandBuffer& nested) override;
+  // Adds a kernel launch command that depends on all the tail nodes (nodes that
+  // no other nodes depend on them) in current graph.
+  absl::Status Launch(const ThreadDim& threads, const BlockDim& blocks,
+                      const Kernel& kernel, const KernelArgs& args) {
+    return Launch(cmd_tail_nodes_.size(), graph_tail_nodes(), threads, blocks,
+                  kernel, args);
+  }
 
-  absl::Status MemcpyDeviceToDevice(ExecutionScopeId execution_scope_id,
+  absl::Status AddNestedCommandBuffer(Index cmd_idx,
+                                      const CmdIndexSet& dep_idxes,
+                                      const CommandBuffer& nested) {
+    return AddNestedCommandBuffer(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes},
+                                  nested);
+  }
+
+  // Adds a nested command buffer that depends on all the tail nodes (nodes that
+  // no other nodes depend on them) in current graph.
+  absl::Status AddNestedCommandBuffer(const CommandBuffer& nested) {
+    return AddNestedCommandBuffer(cmd_tail_nodes_.size(), graph_tail_nodes(),
+                                  nested);
+  }
+
+  absl::Status MemcpyDeviceToDevice(Index cmd_idx, const CmdIndexSet& dep_idxes,
                                     DeviceMemoryBase* dst,
                                     const DeviceMemoryBase& src,
-                                    uint64_t size) override;
+                                    uint64_t size) {
+    return MemcpyDeviceToDevice(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes},
+                                dst, src, size);
+  }
 
-  absl::Status Memset(ExecutionScopeId execution_scope_id,
+  // Adds a device-to-device memory copy that depends on all the tail nodes
+  // (nodes that no other nodes depend on them) in current graph.
+  absl::Status MemcpyDeviceToDevice(DeviceMemoryBase* dst,
+                                    const DeviceMemoryBase& src,
+                                    uint64_t size) {
+    return MemcpyDeviceToDevice(cmd_tail_nodes_.size(), graph_tail_nodes(), dst,
+                                src, size);
+  }
+
+  absl::Status Memset(Index cmd_idx, const CmdIndexSet& dep_idxes,
                       DeviceMemoryBase* dst, BitPattern bit_pattern,
-                      size_t num_elements) override;
+                      size_t num_elements) {
+    return Memset(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, dst, bit_pattern,
+                  num_elements);
+  }
 
-  absl::Status If(ExecutionScopeId execution_scope_id,
-                  DeviceMemory<bool> predicate, Builder then_builder) override;
+  // Adds a memset command into command buffer that depends on all the tail
+  // nodes (nodes that no other nodes depend on them) in current graph.
+  absl::Status Memset(DeviceMemoryBase* dst, BitPattern bit_pattern,
+                      size_t num_elements) {
+    return Memset(cmd_tail_nodes_.size(), graph_tail_nodes(), dst, bit_pattern,
+                  num_elements);
+  }
 
-  absl::Status IfElse(ExecutionScopeId execution_scope_id,
+  absl::Status If(Index cmd_idx, const CmdIndexSet& dep_idxes,
+                  DeviceMemory<bool> predicate, Builder then_builder) {
+    return If(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, predicate,
+              then_builder);
+  }
+
+  // Adds a conditional If operation that depends on all the tail nodes (nodes
+  // that no other nodes depend on them) in current graph.
+  absl::Status If(DeviceMemory<bool> pred, Builder then_builder) {
+    return If(cmd_tail_nodes_.size(), graph_tail_nodes(), pred, then_builder);
+  }
+
+  absl::Status IfElse(Index cmd_idx, const CmdIndexSet& dep_idxes,
                       DeviceMemory<bool> predicate, Builder then_builder,
-                      Builder else_builder) override;
+                      Builder else_builder) {
+    return IfElse(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, predicate,
+                  then_builder, else_builder);
+  }
 
-  absl::Status Case(ExecutionScopeId execution_scope_id,
+  // Adds a conditional IfElse operation that depends on all the tail nodes
+  // (nodes that no other nodes depend on them) in current graph.
+  absl::Status IfElse(DeviceMemory<bool> pred, Builder then_builder,
+                      Builder else_builder) {
+    return IfElse(cmd_tail_nodes_.size(), graph_tail_nodes(), pred,
+                  then_builder, else_builder);
+  }
+
+  absl::Status Case(Index cmd_idx, const CmdIndexSet& dep_idxes,
                     DeviceMemory<int32_t> index,
-                    std::vector<Builder> branches) override;
+                    std::vector<Builder> branches) {
+    return Case(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, index, branches);
+  }
 
-  absl::Status For(ExecutionScopeId execution_scope_id, int32_t num_iteration,
-                   DeviceMemory<int32_t> loop_counter,
-                   Builder body_builder) override;
+  // Adds a conditional Case operation that depends on all tail nodes (nodes
+  // that no other nodes depend on them) in current graph.
+  absl::Status Case(DeviceMemory<int32_t> index,
+                    std::vector<Builder> branches) {
+    return Case(cmd_tail_nodes_.size(), graph_tail_nodes(), index, branches);
+  }
 
-  absl::Status While(ExecutionScopeId execution_scope_id,
-                     DeviceMemory<bool> pred,
-                     ExecutionScopeBuilder cond_builder,
-                     Builder body_builder) override;
+  absl::Status For(Index cmd_idx, const CmdIndexSet& dep_idxes,
+                   int32_t num_iteration, DeviceMemory<int32_t> loop_counter,
+                   Builder body_builder) {
+    return For(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, num_iteration,
+               loop_counter, body_builder);
+  }
+
+  // Adds a conditional For operation that depends on all tail nodes (nodes that
+  // no other nodes depend on them) in current graph.
+  absl::Status For(int32_t num_iteration, DeviceMemory<int32_t> loop_counter,
+                   Builder body_builder) {
+    return For(cmd_tail_nodes_.size(), graph_tail_nodes(), num_iteration,
+               loop_counter, body_builder);
+  }
+
+  absl::Status While(Index cmd_idx, const CmdIndexSet& dep_idxes,
+                     DeviceMemory<bool> pred, Builder cond_builder,
+                     Builder body_builder) {
+    return While(cmd_idx, CmdIdxSetOrNodeHandles{&dep_idxes}, pred,
+                 cond_builder, body_builder);
+  }
+
+  // Adds a conditional While operation that depends on all tail nodes (nodes
+  // that no other nodes depend on them) in current graph.
+  absl::Status While(DeviceMemory<bool> pred, Builder cond_builder,
+                     Builder body_builder) {
+    return While(cmd_tail_nodes_.size(), graph_tail_nodes(), pred, cond_builder,
+                 body_builder);
+  }
 
   absl::Status Finalize() override;
   absl::Status Update() override;
@@ -151,63 +287,112 @@ class GpuCommandBuffer : public CommandBuffer {
   Mode mode() const override { return mode_; }
   State state() const override { return state_; }
 
-  absl::Span<const GpuGraphNodeInfo> nodes(ExecutionScopeId id) const;
-  absl::Span<const GpuGraphBarrierInfo> barriers(ExecutionScopeId id) const;
+  int64_t command_size() { return cmd_tail_nodes_.size(); }
 
-  absl::Span<const GpuGraphNodeInfo> nodes() const {
-    return nodes(kDefaulExecutionScope);
-  }
+  absl::Span<const GpuGraphNodeInfo> nodes() const { return nodes_; }
 
-  absl::Span<const GpuGraphBarrierInfo> barriers() const {
-    return barriers(kDefaulExecutionScope);
-  }
-
-  // Returns the list of dependencies for a given node. `node` must be a node
-  // added to the current command buffer. The returned node pointer's lifetimes
-  // are bound to the current command buffer.
+  // Returns the list of dependencies for a given node.
+  // `node` must be a node added to the current command
+  // buffer. The returned node pointer's lifetimes are bound
+  // to the current command buffer.
   virtual absl::StatusOr<std::vector<GraphNodeHandle>> GetNodeDependencies(
       GraphNodeHandle node) = 0;
 
  protected:
-  // We track the total number of allocated and alive executable graphs in the
-  // process to track the command buffers resource usage. Executable graph
-  // allocates resources on a GPU devices (rule of thumb is ~8kb per node), so
-  // we have to be careful not to keep too many of them alive for too long, or
-  // we have a higher risk of OOM errors.
+  // We track the total number of allocated and alive
+  // executable graphs in the process to track the command
+  // buffers resource usage. Executable graph allocates
+  // resources on a GPU devices (rule of thumb is ~8kb per
+  // node), so we have to be careful not to keep too many of
+  // them alive for too long, or we have a higher risk of
+  // OOM errors.
   static int64_t AliveExecs();
   static int64_t NotifyExecCreated();
   static int64_t NotifyExecDestroyed();
-
-  using Dependencies = absl::InlinedVector<GraphNodeHandle, 1>;
-
   using NoOpKernel = TypedKernel<>;
 
- private:
-  // A callback to launch a kernel that updates conditional handles state.
-  using SetConditionFn = std::function<absl::Status(
-      ExecutionScopeId, absl::Span<const GraphConditionalHandle>)>;
+  GraphNodeHandles graph_tail_nodes() {
+    GraphNodeHandles nodes;
+    nodes.reserve(graph_tail_nodes_.size());
+    for (auto& node : graph_tail_nodes_) {
+      nodes.push_back(node);
+    }
+    return nodes;
+  }
 
-  // An extension of `Builder` for building conditional command buffers tied to
-  // conditional handles.
+  absl::Status EmptyOp(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies);
+
+  absl::Status Launch(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                      const ThreadDim& threads, const BlockDim& blocks,
+                      const Kernel& kernel, const KernelArgs& args);
+
+  template <typename... Params, typename... Args>
+  absl::Status Launch(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                      const ThreadDim& threads, const BlockDim& blocks,
+                      const TypedKernel<Params...>& kernel, Args... args);
+
+  absl::Status AddNestedCommandBuffer(Index cmd_idx,
+                                      CmdIdxSetOrNodeHandles dependencies,
+                                      const CommandBuffer& nested);
+
+  absl::Status MemcpyDeviceToDevice(Index cmd_idx,
+                                    CmdIdxSetOrNodeHandles dependencies,
+                                    DeviceMemoryBase* dst,
+                                    const DeviceMemoryBase& src, uint64_t size);
+
+  absl::Status Memset(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                      DeviceMemoryBase* dst, BitPattern bit_pattern,
+                      size_t num_elements);
+
+  absl::Status If(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                  DeviceMemory<bool> predicate, Builder then_builder);
+
+  absl::Status IfElse(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                      DeviceMemory<bool> predicate, Builder then_builder,
+                      Builder else_builder);
+
+  absl::Status Case(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                    DeviceMemory<int32_t> index, std::vector<Builder> branches);
+
+  absl::Status For(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                   int32_t num_iteration, DeviceMemory<int32_t> loop_counter,
+                   Builder body_builder);
+
+  absl::Status While(Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+                     DeviceMemory<bool> pred, Builder cond_builder,
+                     Builder body_builder);
+
+ private:
+  // A callback to launch a kernel that updates conditional
+  // handles state.
+  using SetConditionFn = std::function<absl::Status(
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      absl::Span<const GraphConditionalHandle>)>;
+
+  // An extension of `Builder` for building conditional
+  // command buffers tied to conditional handles.
   using ConditionBuilder =
       std::function<absl::Status(GpuCommandBuffer*, GraphConditionalHandle)>;
 
-  // Wraps a regular command buffer builder into condition builder.
+  // Wraps a regular command buffer builder into condition
+  // builder.
   static ConditionBuilder ToConditionBuilder(Builder builder);
 
  public:
   enum class ConditionType { kIf, kWhile };
 
  private:
-  // Prepares a nested command buffer for an update of the graph.
-  // It's a prerequisite to a call to `Update` on a nested command buffer.
-  // The return value needs to be kept alive until the update is finished. An
-  // update finishes by a call to `Finalize`.
+  // Prepares a nested command buffer for an update of the
+  // graph. It's a prerequisite to a call to `Update` on a
+  // nested command buffer. The return value needs to be
+  // kept alive until the update is finished. An update
+  // finishes by a call to `Finalize`.
   virtual std::unique_ptr<ScopedUpdateMode> ActivateUpdateMode(
       GpuCommandBuffer* nested_cmd_buffer) = 0;
 
-  // For each conditional node in the Gpu graph we keep a record of conditional
-  // command buffers attached to a node, so we can apply updates to them.
+  // For each conditional node in the Gpu graph we keep a
+  // record of conditional command buffers attached to a
+  // node, so we can apply updates to them.
   struct ConditionalCommandBuffers {
     std::vector<GraphConditionalHandle> conditionals;
     std::vector<std::unique_ptr<GpuCommandBuffer>> command_buffers;
@@ -218,7 +403,7 @@ class GpuCommandBuffer : public CommandBuffer {
 
   absl::StatusOr<std::vector<std::unique_ptr<GpuCommandBuffer>>>
   CreateConditionalCommandBuffers(
-      ExecutionScopeId execution_scope_id, ConditionType type,
+      GraphNodeHandles dependencies, ConditionType type,
       absl::Span<const GraphConditionalHandle> conditionals,
       absl::Span<const ConditionBuilder> builders);
 
@@ -228,86 +413,121 @@ class GpuCommandBuffer : public CommandBuffer {
       absl::Span<const ConditionBuilder> builders);
 
   absl::StatusOr<std::unique_ptr<GpuCommandBuffer>>
-  CreateConditionalCommandBuffer(ExecutionScopeId execution_scope_id,
+  CreateConditionalCommandBuffer(GraphNodeHandles dependencies,
                                  ConditionType type,
                                  GraphConditionalHandle conditional);
 
-  // Adds a new conditional command (If, IfElse, Case, While, For) to the
-  // command buffer.
+  // Adds a new conditional command (If, IfElse, Case,
+  // While, For) to the command buffer.
   absl::Status AddConditionalCommandNode(
-      ExecutionScopeId execution_scope_id, ConditionType type,
+      ConditionType type, Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       SetConditionFn set_condition,
       absl::Span<const ConditionBuilder> builders);
 
-  Dependencies GetBarrier(ExecutionScopeId execution_scope_id);
-
-  // Launches a kernels that updates the state of the given graph conditional
-  // based on the predicate. If the predicate is true, `if_conditional` is set
-  // to 1, otherwise to 0.
+  // Launches a kernels that updates the state of the given
+  // graph conditional based on the predicate. If the
+  // predicate is true, `if_conditional` is set to 1,
+  // otherwise to 0.
   virtual absl::Status LaunchSetIfConditionKernel(
-      ExecutionScopeId execution_scope_id,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       GraphConditionalHandle if_conditional, DeviceMemory<bool> predicate) = 0;
-  // Launches a kernels that updates the state of the given graph conditionals
-  // based on the predicate. If the predicate is true, `if_conditional` is set
-  // to 1 and `else_conditional` to 0. If the predicate is false,
-  // `if_conditional` is set to 0 and `else_conditional` to 1.
+
+  // Launches a kernels that updates the state of the given
+  // graph conditionals based on the predicate. If the
+  // predicate is true, `if_conditional` is set to 1 and
+  // `else_conditional` to 0. If the predicate is false,
+  // `if_conditional` is set to 0 and `else_conditional`
+  // to 1.
   virtual absl::Status LaunchSetIfElseConditionKernel(
-      ExecutionScopeId execution_scope_id,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
       GraphConditionalHandle if_conditional,
       GraphConditionalHandle else_conditional,
       DeviceMemory<bool> predicate) = 0;
-  // Launches a kernel that updates the state of the given graph conditionals
-  // based on the index and batch_offset. conditional[x] is set to 1 if index
-  // == x + batch_offset and 0 otherwise. `conditionals` may contain up to 8
-  // conditionals
-  virtual absl::Status LaunchSetCaseConditionKernel(
-      ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-      DeviceMemory<int32_t> index, int32_t batch_offset,
-      bool enable_conditional_default) = 0;
-  // Launches a kernel that updates the state of the given graph conditional
-  // based on the loop counter and the total number of iterations. If the loop
-  // counter is less than the number of iterations, `conditional` is set to 1,
-  // otherwise to 0. The loop counter is also incremented by 1.
-  virtual absl::Status LaunchSetForConditionKernel(
-      ExecutionScopeId execution_scope_id, GraphConditionalHandle conditional,
-      DeviceMemory<int32_t> loop_counter, int32_t iterations) = 0;
-  // Launches a kernel that updates the state of the given graph conditional
-  // based on the predicate. If the predicate is true, `conditional` is set to
-  // 1, otherwise to 0.
-  virtual absl::Status LaunchSetWhileConditionKernel(
-      ExecutionScopeId execution_scope_id, GraphConditionalHandle conditional,
-      DeviceMemory<bool> predicate) = 0;
 
-  // Recursively disable all nodes corresponding to barriers (including nested
-  // conditional command buffers). This is work around the fact that we can't
-  // use empty nodes inside conditional CUDA graphs and instead we add no-op
-  // kernel nodes, however large number of no-op kernels impacts performance.
-  // The function needs access to the root command buffer which holds the
-  // executable graph.
-  absl::Status DisableBarriersExecution(GpuCommandBuffer& root_command_buffer);
+  // Launches a kernel that updates the state of the given
+  // graph conditionals based on the index and batch_offset.
+  // conditional[x] is set to 1 if index
+  // == x + batch_offset and 0 otherwise. `conditionals` may
+  // contain up to 8 conditionals
+  virtual absl::Status LaunchSetCaseConditionKernel(
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      GraphConditionalHandles conditionals, DeviceMemory<int32_t> index,
+      int32_t batch_offset, bool enable_conditional_default) = 0;
+
+  // Launches a kernel that updates the state of the given
+  // graph conditional based on the loop counter and the
+  // total number of iterations. If the loop counter is less
+  // than the number of iterations, `conditional` is set to
+  // 1, otherwise to 0. The loop counter is also incremented
+  // by 1.
+  virtual absl::Status LaunchSetForConditionKernel(
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      GraphConditionalHandle conditional, DeviceMemory<int32_t> loop_counter,
+      int32_t iterations) = 0;
+
+  virtual absl::Status LaunchSetForConditionKernel(
+      GraphConditionalHandle conditional, DeviceMemory<int32_t> loop_counter,
+      int32_t iterations) = 0;
+
+  // Launches a kernel that updates the state of the given
+  // graph conditional based on the predicate. If the
+  // predicate is true, `conditional` is set to 1, otherwise
+  // to 0.
+  virtual absl::Status LaunchSetWhileConditionKernel(
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      GraphConditionalHandle conditional, DeviceMemory<bool> predicate) = 0;
+
+  virtual absl::Status LaunchSetWhileConditionKernel(
+      GraphConditionalHandle conditional, DeviceMemory<bool> predicate) = 0;
 
   // Launches CUDA kernels with packed arguments.
   absl::Status LaunchWithPackedArgs(
-      ExecutionScopeId execution_scope_id, const ThreadDim& threads,
-      const BlockDim& blocks, const Kernel& kernel,
+      Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+      const ThreadDim& threads, const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& packed_args);
 
  protected:
-  // Returns OK status if command buffer is not finalized and it is still
-  // possible to add new commands to it, otherwise returns internal error.
+  using GraphNodeHandleSet = absl::flat_hash_set<GraphNodeHandle>;
+  static std::string GraphNodeHandleSetToString(
+      const GraphNodeHandleSet& handle_set) {
+    std::ostringstream oss;
+    oss << "GraphNodeHandleSet: {";
+    bool first = true;
+    for (const auto& index : handle_set) {
+      if (!first) {
+        oss << ", ";
+      }
+      oss << index;
+      first = false;
+    }
+    oss << "}";
+    return oss.str();
+  }
+
+  // Returns OK status if command buffer is not finalized
+  // and it is still possible to add new commands to it,
+  // otherwise returns internal error.
   absl::Status CheckNotFinalized();
 
   // Returns OK status if the command buffer can be updated.
   virtual absl::Status CheckCanBeUpdated() = 0;
 
+  absl::StatusOr<GraphNodeHandleSet> GetCmdTailNodes(Index cmd_idx) {
+    auto it = cmd_tail_nodes_.find(cmd_idx);
+    if (it == cmd_tail_nodes_.end()) {
+      return absl::InternalError(absl::StrCat("Command index ", cmd_idx,
+                                              " not found in the tail "
+                                              "nodes map."));
+    }
+    return it->second;
+  }
+
  private:
-  // Returns OK status if the number of command buffers is equal to the expected
-  // one, otherwise returns internal error.
+  // Returns OK status if the number of command buffers is
+  // equal to the expected one, otherwise returns internal
+  // error.
   absl::Status CheckNumCommandBuffers(
       const ConditionalCommandBuffers& cmd_buffers, size_t num_cmd_buffers);
-
-  // Collects a set of dependencies for a new barrier.
-  Dependencies GetBarrierDependencies(ExecutionScopeId execution_scope_id);
 
   Mode mode_;
   State state_ = State::kCreate;
@@ -315,47 +535,70 @@ class GpuCommandBuffer : public CommandBuffer {
   StreamExecutor* parent_;  // not owned, must outlive *this
 
  private:
-  // ExecutionScope holds the state of an underlying CUDA graph (nodes an
-  // barriers added to a graph) for a single execution scope.
-  struct ExecutionScope {
-    // Tracks indices into data structures during command buffer updates.
-    struct UpdateState {
-      // Index points to the graph node inside `nodes` that will be updated
-      // next.
-      int64_t node_idx = 0;
+  // ExecutionScope holds the state of an underlying CUDA
+  // graph (nodes an barriers added to a graph) for a single
+  // execution scope. Tracks indices into data structures
+  // during command buffer updates.
+  struct UpdateState {
+    // Index points to the graph node inside `nodes` that
+    // will be updated next.
+    int64_t node_idx = 0;
 
-      // Index points to the barrier node inside `barriers` that will be updated
-      // on a next call to `Barrier(...)`.
-      int64_t barrier_idx = 0;
+    // Index points to the barrier node inside `barriers`
+    // that will be updated on a next call to
+    // `Barrier(...)`.
+    int64_t barrier_idx = 0;
 
-      // Index points to the conditional command buffers that will be updated
-      // next when we'll be updating next conditional command (If, Case, While).
-      int64_t conditional_idx = 0;
-    };
-
-    // Gpu graph nodes corresponding to recorded commands (launch, memcpy,
-    // etc.).
-    std::vector<GpuGraphNodeInfo> nodes;
-
-    // Gpu graph barriers that define recorded commands execution order.
-    std::vector<GpuGraphBarrierInfo> barriers;
-
-    // Command buffers for conditional nodes in the Gpu graph. Underlying Gpu
-    // graphs owned by the `graph_` instance.
-    std::vector<ConditionalCommandBuffers> conditional_command_buffers;
-
-    // Tracks execution scope update state.
-    UpdateState update_state;
+    // Index points to the conditional command buffers that
+    // will be updated next when we'll be updating next
+    // conditional command (If, Case, While).
+    int64_t conditional_idx = 0;
   };
 
-  // Execution scopes recorded into the command buffer.
-  absl::flat_hash_map<ExecutionScopeId, ExecutionScope> execution_scopes_;
+  // Gpu graph nodes corresponding to recorded commands
+  // (launch, memcpy, etc.).
+  std::vector<GpuGraphNodeInfo> nodes_;
 
-  // Track the number of command buffer updates for debugging.
+  // Gpu graph barriers that define recorded commands
+  // execution order.
+  std::vector<GpuGraphBarrierInfo> barriers_;
+
+  // Command buffers for conditional nodes in the Gpu graph.
+  // Underlying Gpu graphs owned by the `graph_` instance.
+  std::vector<ConditionalCommandBuffers> conditional_command_buffers_;
+
+  // Tracks execution scope update state.
+  UpdateState update_state_;
+
+  // GpuCommandBuffer lowers CommandBufferCmdSequence to a GPU graph, a
+  // CommandBufferCmd may lower into one or more graph nodes (command nodes),
+  // the HEAD nodes for a CommandBufferCmd is the nodes that have no
+  // dependencies within the command nodes, and the TAIL nodes are the nodes
+  // that no other nodes within the command nodes depend on them.
+
+  // This map tracks each command's TAIL node sets.
+  absl::flat_hash_map<int64_t, GraphNodeHandleSet> cmd_tail_nodes_;
+
+  // Graph tail nodes is a set of node handles in the whole graph that does not
+  // have other nodes dependent on them.
+
+  // When lowering a new CommandBufferCmd without specifying the dependency
+  // commands, will assume it depends on all the tail nodes in current graph.
+  GraphNodeHandleSet graph_tail_nodes_;
+
+  // When lowering new command, update the graph tail node set and current
+  // command tail nodes.
+  absl::Status UpdateGraphAndCmdTailNodes(Index cmd_idx,
+                                          GraphNodeHandles new_nodes,
+                                          CmdIdxSetOrNodeHandles dependencies);
+
+  // Track the number of command buffer updates for
+  // debugging.
   int64_t num_updates_ = 0;
 
-  // Creates a nested command buffer, associated with the same executor.
-  // The given graph will not be owned by the created command buffer.
+  // Creates a nested command buffer, associated with the
+  // same executor. The given graph will not be owned by the
+  // created command buffer.
  protected:
   struct ConditionalNodeResult {
     GraphNodeHandle node_handle;
@@ -363,19 +606,20 @@ class GpuCommandBuffer : public CommandBuffer {
   };
 
  private:
-  // Adds a new conditional node to the graph and creates a corresponding nested
-  // command buffer.
+  // Adds a new conditional node to the graph and creates a
+  // corresponding nested command buffer.
   virtual absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(
-      const Dependencies& dependencies, GraphConditionalHandle conditional,
+      CmdIdxSetOrNodeHandles dependencies, GraphConditionalHandle conditional,
       ConditionType type) = 0;
 
   // Adds a new memset node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateMemsetNode(
-      const Dependencies& dependencies, DeviceMemoryBase destination,
+      CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
       BitPattern bit_pattern, size_t num_elements) = 0;
 
-  // Updates an existing memset node. Note that `node_handle` needs to be refer
-  // to a node created by `CreateMemsetNode`.
+  // Updates an existing memset node. Note that
+  // `node_handle` needs to be refer to a node created by
+  // `CreateMemsetNode`.
   virtual absl::Status UpdateMemsetNode(GraphNodeHandle node_handle,
                                         DeviceMemoryBase destination,
                                         BitPattern bit_pattern,
@@ -383,7 +627,7 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Adds a new memcpy node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateMemcpyD2DNode(
-      const Dependencies& dependencies, DeviceMemoryBase destination,
+      CmdIdxSetOrNodeHandles dependencies, DeviceMemoryBase destination,
       DeviceMemoryBase source, uint64_t size) = 0;
 
   virtual absl::Status UpdateMemcpyD2DNode(GraphNodeHandle node_handle,
@@ -393,54 +637,74 @@ class GpuCommandBuffer : public CommandBuffer {
 
   // Adds a new nested command buffer node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateChildNode(
-      const Dependencies& dependencies, const CommandBuffer& nested) = 0;
+      CmdIdxSetOrNodeHandles dependencies, const CommandBuffer& nested) = 0;
 
-  // Associate another command buffer with this child node. Will return an
-  // error if the given node has not been created as a child node.
+  // Associate another command buffer with this child node.
+  // Will return an error if the given node has not been
+  // created as a child node.
   virtual absl::Status UpdateChildNode(GraphNodeHandle node_handle,
                                        const CommandBuffer& nested) = 0;
 
   // Adds a new kernel launch node to the graph.
   virtual absl::StatusOr<GraphNodeHandle> CreateKernelNode(
-      const Dependencies& dependencies, const ThreadDim& threads,
+      CmdIdxSetOrNodeHandles dependencies, const ThreadDim& threads,
       const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) = 0;
 
-  // Updates the kernel launch node with the given parameters. Will return an
-  // error if the given node has not been created as a kernel launch node.
+  // Updates the kernel launch node with the given
+  // parameters. Will return an error if the given node has
+  // not been created as a kernel launch node.
   virtual absl::Status UpdateKernelNode(
       GraphNodeHandle node_handle, const ThreadDim& threads,
       const BlockDim& blocks, const Kernel& kernel,
       const KernelArgsPackedArrayBase& args) = 0;
 
-  // Creates a new no-op node acting as a barrier and adds it to the graph.
-  virtual absl::StatusOr<GraphNodeHandle> CreateBarrierNode(
-      const Dependencies& dependencies) = 0;
+  // Creates a new no-op node acting as a barrier and adds
+  // it to the graph.
+  virtual absl::StatusOr<GraphNodeHandle> CreateEmptyNode(
+      CmdIdxSetOrNodeHandles dependencies) = 0;
 
-  // Enables or disables the execution of the given node in the graph.
+  // Enables or disables the execution of the given node in
+  // the graph.
   virtual absl::Status SetNodeExecutionEnabled(GraphNodeHandle node_handle,
                                                bool enabled) = 0;
 
-  // Launches an instantiated graph. Only supported on primary command buffers.
+  // Launches an instantiated graph. Only supported on
+  // primary command buffers.
   virtual absl::Status LaunchGraph(Stream* stream) = 0;
 
-  // Returns the number of nodes in the graph associated with this command
-  // buffer.
+  // Returns the number of nodes in the graph associated
+  // with this command buffer.
   virtual absl::StatusOr<size_t> GetNodeCount() const = 0;
 
-  // This gets called at the beginning of `Finalize` and allows subclasses to
-  // perform any necessary preparation before the graph is finalized.
+  // This gets called at the beginning of `Finalize` and
+  // allows subclasses to perform any necessary preparation
+  // before the graph is finalized.
   virtual absl::Status PrepareFinalization() = 0;
 
-  // Create a new conditional handle in the underlying graph.
+  // Create a new conditional handle in the underlying
+  // graph.
   virtual absl::StatusOr<GraphConditionalHandle> CreateConditionalHandle() = 0;
 
-  // Writes the underlying graph to a file in graphviz DOT format.
+  // Writes the underlying graph to a file in graphviz DOT
+  // format.
   virtual absl::Status WriteGraphToDotFile(absl::string_view path) = 0;
 
-  // Instantiates the executable graph from the underlying graph.
+  // Instantiates the executable graph from the underlying
+  // graph.
   virtual absl::Status InstantiateGraph() = 0;
 };
+
+template <typename... Params, typename... Args>
+inline absl::Status GpuCommandBuffer::Launch(
+    Index cmd_idx, CmdIdxSetOrNodeHandles dependencies,
+    const ThreadDim& threads, const BlockDim& blocks,
+    const TypedKernel<Params...>& kernel, Args... args) {
+  auto kernel_args = PackKernelArgs(kernel, args...);
+  TF_RETURN_IF_ERROR(
+      Launch(cmd_idx, dependencies, threads, blocks, *kernel, *kernel_args));
+  return absl::OkStatus();
+}
 
 }  // namespace stream_executor::gpu
 

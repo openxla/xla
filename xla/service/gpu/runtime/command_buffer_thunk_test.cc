@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/runtime/thunk.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/runtime/buffer_use.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
@@ -68,7 +69,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
-using MemoryAccess = CommandBufferCmd::MemoryAccess;
+using MemoryAccess = xla::BufferUse::MemoryAccess;
 using KernelArgsPacking = se::MultiKernelLoaderSpec::KernelArgsPacking;
 
 namespace {
@@ -148,7 +149,7 @@ TEST(CommandBufferThunkTest, MemcpyCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_b, slice_a, byte_length);
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_b, slice_a, byte_length);
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -202,7 +203,7 @@ TEST(CommandBufferThunkTest, MemzeroCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<MemzeroCmd>(s0, slice_a);
+  commands.Emplace<MemzeroCmd>(slice_a);
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -244,7 +245,7 @@ TEST(CommandBufferThunkTest, Memset32Cmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<Memset32Cmd>(s0, slice_a, int32_t{84});
+  commands.Emplace<Memset32Cmd>(slice_a, int32_t{84});
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -293,7 +294,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
   // Prepare commands sequence for constructing command buffer that should not
   // be used.
   CommandBufferCmdSequence commands;
-  commands.Emplace<Memset32Cmd>(s0, slice_a, int32_t{12});
+  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
 
   constexpr bool kProfileCommandBuffersEnabled = false;
   // Construct a thunk with command sequence.
@@ -347,7 +348,7 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
   // Prepare commands sequence for constructing command buffer that should not
   // be used.
   CommandBufferCmdSequence commands;
-  commands.Emplace<Memset32Cmd>(s0, slice_a, int32_t{12});
+  commands.Emplace<Memset32Cmd>(slice_a, int32_t{12});
 
   constexpr bool kProfileCommandBuffersEnabled = true;
   // Construct a thunk with command sequence.
@@ -390,8 +391,8 @@ TEST(CommandBufferThunkTest, Memset32CmdOnDifferentStreams) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<Memset32Cmd>(s0, slice0, int32_t{12});
-  commands.Emplace<Memset32Cmd>(s1, slice1, int32_t{34});
+  commands.Emplace<Memset32Cmd>(slice0, int32_t{12});
+  commands.Emplace<Memset32Cmd>(slice1, int32_t{34});
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -437,12 +438,11 @@ TEST(CommandBufferThunkTest, LaunchCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   auto args = {slice_a, slice_a, slice_b};  // b = a + a
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
 
@@ -534,12 +534,11 @@ TEST(CommandBufferThunkTest, CustomAddKernelLaunchCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   auto args = {slice_a, slice_a, slice_b};  // b = a + a
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
 
@@ -656,7 +655,7 @@ TEST(CommandBufferThunkTest, GemmCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<GemmCmd>(s0, config.value(), slice_lhs, slice_rhs, slice_out,
+  commands.Emplace<GemmCmd>(config.value(), slice_lhs, slice_rhs, slice_out,
                             slice_workspace,
                             /*deterministic=*/true);
 
@@ -783,8 +782,8 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
   // Prepare commands sequence for constructing command buffer.
   std::unique_ptr<CommandBufferCmdSequence> embed_commands =
       std::make_unique<CommandBufferCmdSequence>();
-  embed_commands->Emplace<GemmCmd>(s0, config.value(), fake_slice_lhs,
-                                   slice_rhs, slice_out, slice_workspace,
+  embed_commands->Emplace<GemmCmd>(config.value(), fake_slice_lhs, slice_rhs,
+                                   slice_out, slice_workspace,
                                    /*deterministic=*/true);
 
   BufferAllocation alloc_lhs(/*index=*/0, lhs_length, /*color=*/0);
@@ -813,7 +812,7 @@ TEST(CommandBufferThunkTest, DynamicSliceFusionCmd) {
 
   CommandBufferCmdSequence commands;
   commands.Emplace<DynamicSliceFusionCmd>(
-      s0, std::move(embed_commands), arguments, std::move(fake_allocations),
+      std::move(embed_commands), arguments, std::move(fake_allocations),
       offsets, orig_shapes, sliced_shapes, offset_byte_sizes);
 
   // Construct a thunk with command sequence.
@@ -922,11 +921,11 @@ TEST(CommandBufferThunkTest, CublasLtCmd) {
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
   commands.Emplace<CublasLtCmd>(
-      s0, config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a,
-      slice_b, slice_c, slice_d, BufferAllocation::Slice(),
+      config.value(), se::gpu::BlasLt::Epilogue::kDefault, 0, slice_a, slice_b,
+      slice_c, slice_d, BufferAllocation::Slice(), BufferAllocation::Slice(),
       BufferAllocation::Slice(), BufferAllocation::Slice(),
       BufferAllocation::Slice(), BufferAllocation::Slice(),
-      BufferAllocation::Slice(), BufferAllocation::Slice(), slice_workspace);
+      BufferAllocation::Slice(), slice_workspace);
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -1049,15 +1048,14 @@ TEST(CommandBufferThunkTest, MultipleLaunchCmd) {
 
   auto args = {slice_a, slice_a, slice_b};    // b = a + a
   auto args_1 = {slice_c, slice_c, slice_d};  // d = c + c
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args_1, args_access,
+  commands.Emplace<LaunchCmd>("AddI32", args_1, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
 
@@ -1164,18 +1162,17 @@ TEST(CommandBufferThunkTest, IfCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   auto args = {slice_a, slice_a, slice_b};  // b = a + a
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for `then` branch.
   CommandBufferCmdSequence then_commands;
-  then_commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  then_commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                                    LaunchDimensions(1, 4),
                                    /*shmem_bytes=*/0);
 
   // Prepare commands sequence for thunk.
   CommandBufferCmdSequence commands;
-  commands.Emplace<IfCmd>(s0, slice_p, std::move(then_commands));
+  commands.Emplace<IfCmd>(slice_p, std::move(then_commands));
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -1255,26 +1252,25 @@ TEST(CommandBufferThunkTest, IfElseCmd) {
   CommandBufferCmdSequence then_commands;
   CommandBufferCmdSequence else_commands;
 
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   {  // Then: b = a + a
     auto args = {slice_a, slice_a, slice_b};
-    then_commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+    then_commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                                      LaunchDimensions(1, 4),
                                      /*shmem_bytes=*/0);
   }
 
   {  // Else: b = b + b
     auto args = {slice_b, slice_b, slice_b};
-    else_commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+    else_commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                                      LaunchDimensions(1, 4),
                                      /*shmem_bytes=*/0);
   }
 
   // Prepare commands sequence for thunk.
   CommandBufferCmdSequence commands;
-  commands.Emplace<IfElseCmd>(s0, slice_p, std::move(then_commands),
+  commands.Emplace<IfElseCmd>(slice_p, std::move(then_commands),
                               std::move(else_commands));
 
   // Construct a thunk with command sequence.
@@ -1346,26 +1342,25 @@ TEST(CommandBufferThunkTest, CaseCmd) {
   // Prepare commands sequence for branches.
   std::vector<CommandBufferCmdSequence> branches(2);
 
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   {  // Case 0: b = a + a
     auto args = {slice_a, slice_a, slice_b};
-    branches[0].Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+    branches[0].Emplace<LaunchCmd>("AddI32", args, args_access,
                                    LaunchDimensions(1, 4),
                                    /*shmem_bytes=*/0);
   }
 
   {  // Case 1: b = b + b
     auto args = {slice_b, slice_b, slice_b};
-    branches[1].Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+    branches[1].Emplace<LaunchCmd>("AddI32", args, args_access,
                                    LaunchDimensions(1, 4),
                                    /*shmem_bytes=*/0);
   }
 
   // Prepare commands sequence for thunk.
   CommandBufferCmdSequence commands;
-  commands.Emplace<CaseCmd>(s0, slice_i, std::move(branches));
+  commands.Emplace<CaseCmd>(slice_i, std::move(branches));
 
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(commands), Thunk::ThunkInfo());
@@ -1433,18 +1428,17 @@ TEST(CommandBufferThunkTest, ForCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   auto args = {slice_a, slice_b, slice_b};  // b = a + b
-  auto args_access = {MemoryAccess::kRead, MemoryAccess::kRead,
-                      MemoryAccess::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for loop `body`.
   CommandBufferCmdSequence body_commands;
-  body_commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  body_commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                                    LaunchDimensions(1, 4),
                                    /*shmem_bytes=*/0);
 
   // Prepare commands sequence for thunk.
   CommandBufferCmdSequence commands;
-  commands.Emplace<ForCmd>(s0, /*num_iterations=*/10, slice_cnt,
+  commands.Emplace<ForCmd>(/*num_iterations=*/10, slice_cnt,
                            std::move(body_commands));
 
   // Construct a thunk with command sequence.
