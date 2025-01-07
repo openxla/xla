@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -32,6 +31,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/status.h"
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
@@ -44,7 +44,7 @@ TEST(HloModuleTest, AbslHashValue) {
   HloModule module2("temp_module3", HloModuleConfig());
   EXPECT_EQ(absl::HashOf(module1), absl::HashOf(module2));
 
-  std::string_view hlo = R"(
+  absl::string_view hlo = R"(
       HloModule m1
         ENTRY main {
           a = f32[] parameter(0)
@@ -109,7 +109,7 @@ TEST(HloModuleTest, GetModifySetConfig) {
   EXPECT_EQ(&m1.config(), &m1.mutable_config());
 }
 
-void CreateComputation(HloModule& module, std::string_view name, bool is_entry,
+void CreateComputation(HloModule& module, absl::string_view name, bool is_entry,
                        HloSchedule& schedule) {
   HloComputation::Builder builder(name);
   Shape shape = ShapeUtil::MakeShape(F32, {2, 3});
@@ -131,7 +131,7 @@ void CreateComputation(HloModule& module, std::string_view name, bool is_entry,
 
 const char* kCloneSuffix = "clone";
 
-std::string GetCloneName(std::string_view name) {
+std::string GetCloneName(absl::string_view name) {
   return absl::StrCat(name, ".", kCloneSuffix);
 }
 

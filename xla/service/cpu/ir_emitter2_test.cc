@@ -17,46 +17,49 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <string_view>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
+#include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/ir_emitter.h"
-#include "xla/service/cpu/target_machine_features_fake.h"
+#include "xla/service/cpu/target_machine_features_stub.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/shape_util.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla::cpu {
 
 class IrEmitter2Test : public HloTestBase {
  public:
-  // This is a proxy function that allows us call private method
-  // IrEmitter2::EmitKernelPrototype.
+  // This is a proxy function that allows us access to private member
+  // IrEmitter2::kernel_api_ir_builder_.
   static auto EmitKernelPrototype(
       IrEmitter2& ir_emitter,
-      const std::vector<IrEmitter2::KernelParameter>& arguments,
-      const std::vector<IrEmitter2::KernelParameter>& results) {
-    return ir_emitter.EmitKernelPrototype("test", arguments, results);
+      const std::vector<KernelApiIrBuilder::KernelParameter>& arguments,
+      const std::vector<KernelApiIrBuilder::KernelParameter>& results) {
+    return ir_emitter.kernel_api_ir_builder_.EmitKernelPrototype(
+        *ir_emitter.module_, "test", arguments, results);
   }
 
   absl::StatusOr<IrEmitter2> MakeIrEmitter2(llvm::Module& module,
@@ -68,9 +71,8 @@ class IrEmitter2Test : public HloTestBase {
             backend().compiler()->BufferSizeBytesFunction(),
             [](LogicalBuffer::Color) { return /*alignment=*/1; }));
 
-    target_machine_ =
-        std::make_unique<TargetMachineFeaturesWithFakeAlignmentLogic>(
-            [](int64_t size) { return 1; });
+    target_machine_ = std::make_unique<TargetMachineFeaturesStub>(
+        [](int64_t size) { return 1; });
 
     nested_ir_emitter_ = absl::WrapUnique(
         new IrEmitter(nullptr, hlo, *buffer_assignment_, &module, {}, {}, {},
@@ -83,7 +85,7 @@ class IrEmitter2Test : public HloTestBase {
   // underlying FindInstruction function static first.
   absl::StatusOr<IrEmitter2::KernelInfo> EmitElementalHostKernel(
       IrEmitter2& ir_emitter, HloModule& hlo,
-      std::string_view instruction_name) {
+      absl::string_view instruction_name) {
     HloInstruction* instruction = FindInstruction(&hlo, instruction_name);
 
     if (instruction == nullptr) {
@@ -99,7 +101,7 @@ class IrEmitter2Test : public HloTestBase {
   // alive for the duration of the test, because IrEmitter2 does not take
   // ownership of them.
   std::unique_ptr<BufferAssignment> buffer_assignment_;
-  std::unique_ptr<TargetMachineFeaturesWithFakeAlignmentLogic> target_machine_;
+  std::unique_ptr<TargetMachineFeaturesStub> target_machine_;
   std::unique_ptr<IrEmitter> nested_ir_emitter_;
 };
 
@@ -119,10 +121,10 @@ TEST_F(IrEmitter2Test, BuildKernelPrototype) {
   BufferAllocation::Slice res0(&alloc, /*offset=*/512, /*size=*/256);
   BufferAllocation::Slice res1(&alloc, /*offset=*/768, /*size=*/256);
 
-  std::vector<IrEmitter2::KernelParameter> arguments = {{shape, arg0},
-                                                        {shape, arg1}};
-  std::vector<IrEmitter2::KernelParameter> results = {{shape, res0},
-                                                      {shape, res1}};
+  std::vector<KernelApiIrBuilder::KernelParameter> arguments = {{shape, arg0},
+                                                                {shape, arg1}};
+  std::vector<KernelApiIrBuilder::KernelParameter> results = {{shape, res0},
+                                                              {shape, res1}};
 
   IrEmitter2 ir_emitter(*hlo, module.get(), /*nested_ir_emitter=*/nullptr);
   TF_ASSERT_OK_AND_ASSIGN(auto prototype,
@@ -145,40 +147,40 @@ TEST_F(IrEmitter2Test, BuildKernelPrototype) {
                             absl::StrCat(R"(
     CHECK: define ptr @test(ptr %0) #0 {
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThreadDim, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThreadDim, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThreadDim, {{.*}} i32 2
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThreadDim, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThread, {{.*}} i32 0
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThread, {{.*}} i32 1
-    CHECK:      getelementptr inbounds nuw %SE_HOST_KernelThread, {{.*}} i32 2
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 0
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 1
+    CHECK:      getelementptr inbounds nuw %XLA_CPU_KernelThread, {{.*}} i32 2
     CHECK:      load i64
     CHECK:      load i64
     CHECK:      load i64
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 3
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 3
     CHECK:      load ptr
-    CHECK:      getelementptr %SE_HOST_KernelArg, {{.*}} i32 0, i32 0
+    CHECK:      getelementptr %XLA_CPU_KernelArg, {{.*}} i32 0, i32 0
     CHECK:      %[[ARG0:.+]] = load ptr, {{.*}}, !invariant.load ![[SCOPE0:.+]], !dereferenceable ![[DEREF_BYTES:.+]], !align ![[ALIGNMENT:.+]]
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 3
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 3
     CHECK:      load ptr
-    CHECK:      getelementptr %SE_HOST_KernelArg, {{.*}} i32 1, i32 0
+    CHECK:      getelementptr %XLA_CPU_KernelArg, {{.*}} i32 1, i32 0
     CHECK:      %[[ARG1:.+]] = load ptr, {{.*}}, !invariant.load ![[SCOPE0]], !dereferenceable ![[DEREF_BYTES]], !align ![[ALIGNMENT]]
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 3
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 3
     CHECK:      load ptr
-    CHECK:      getelementptr %SE_HOST_KernelArg, {{.*}} i32 2, i32 0
+    CHECK:      getelementptr %XLA_CPU_KernelArg, {{.*}} i32 2, i32 0
     CHECK:      %[[ARG2:.+]] = load ptr, {{.*}}, !invariant.load ![[SCOPE0]], !dereferenceable ![[DEREF_BYTES]], !align ![[ALIGNMENT]]
 
-    CHECK-NEXT: getelementptr inbounds nuw %SE_HOST_KernelCallFrame, {{.*}} i32 3
+    CHECK-NEXT: getelementptr inbounds nuw %XLA_CPU_KernelCallFrame, {{.*}} i32 3
     CHECK:      load ptr
-    CHECK:      getelementptr %SE_HOST_KernelArg, {{.*}} i32 3, i32 0
+    CHECK:      getelementptr %XLA_CPU_KernelArg, {{.*}} i32 3, i32 0
     CHECK:      %[[ARG3:.+]] = load ptr, {{.*}}, !invariant.load ![[SCOPE0]], !dereferenceable ![[DEREF_BYTES]], !align ![[ALIGNMENT]]
 
     CHECK-NEXT: %[[PTR0:.+]] = getelementptr inbounds float, ptr %[[ARG0]]

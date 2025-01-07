@@ -48,16 +48,6 @@ se::DeviceMemoryAllocator* ExecutableBuildOptions::device_allocator() const {
   return device_allocator_;
 }
 
-ExecutableBuildOptions& ExecutableBuildOptions::set_compute_stream(
-    se::Stream* stream) {
-  compute_stream_ = stream;
-  return *this;
-}
-
-se::Stream* ExecutableBuildOptions::compute_stream() const {
-  return compute_stream_;
-}
-
 ExecutableBuildOptions& ExecutableBuildOptions::set_device_ordinal(
     int device_ordinal) {
   CHECK_GE(device_ordinal, 0);
@@ -208,6 +198,8 @@ absl::StatusOr<ExecutableBuildOptionsProto> ExecutableBuildOptions::ToProto()
     output.mutable_auto_spmd_partitioning_mesh_ids()->Add(s);
   }
   output.set_use_shardy_partitioner(use_shardy_partitioner());
+  output.set_process_index(process_index());
+  output.set_process_count(process_count());
   return output;
 }
 
@@ -258,6 +250,8 @@ absl::StatusOr<ExecutableBuildOptions> ExecutableBuildOptionsFromProto(
       std::vector<int64_t>(input.auto_spmd_partitioning_mesh_ids().begin(),
                            input.auto_spmd_partitioning_mesh_ids().end()));
   output.set_use_shardy_partitioner(input.use_shardy_partitioner());
+  output.set_process_index(input.process_index());
+  output.set_process_count(input.process_count());
   return output;
 }
 

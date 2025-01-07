@@ -2,19 +2,15 @@ load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
 )
-load(
-    "@local_config_sycl//sycl:build_defs.bzl",
-    "if_sycl_is_configured",
-)
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
     "internal_visibility",
+)
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
 )
 
 package(
@@ -54,6 +50,7 @@ cc_library(
         "//xla/service/llvm_ir:llvm_type_conversion_util",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/cuda:subprocess_compilation",
         "//xla/tsl/util:env_var",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -79,6 +76,7 @@ cc_library(
         "@llvm-project//llvm:Scalar",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:NVVMDialect",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:cuda_root_path",
@@ -94,13 +92,73 @@ cc_library(
         "@tsl//tsl/profiler/lib:traceme",
     ] + if_cuda_is_configured([
         "//xla/stream_executor/cuda:cuda_asm_compiler",
-    ]) + if_rocm_is_configured([
-        "@local_config_rocm//rocm:rocm_headers",
-        "@llvm-project//llvm:AMDGPUCodeGen",
-        "@llvm-project//llvm:AMDGPUAsmParser",
-    ]) + if_sycl_is_configured([
-        "@spirv_llvm_translator//:spirv_llvm_translator",
     ]),
+)
+
+cc_library(
+    name = "amdgpu_backend",
+    srcs = [
+        "amdgpu_backend.cc",
+    ],
+    hdrs = [
+        "amdgpu_backend.h",
+    ],
+    deps = [
+        ":llvm_gpu_backend",
+        ":load_ir_module",
+        ":nvptx_libdevice_path",
+        ":utils",
+        "//xla:status_macros",
+        "//xla:types",
+        "//xla:util",
+        "//xla:xla_proto_cc",
+        "//xla/service/gpu:metrics",
+        "//xla/service/llvm_ir:llvm_command_line_options",
+        "//xla/service/llvm_ir:llvm_type_conversion_util",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "//xla/stream_executor/cuda:subprocess_compilation",
+        "//xla/tsl/util:env_var",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
+        "@llvm-project//llvm:AMDGPUAsmParser",
+        "@llvm-project//llvm:AMDGPUCodeGen",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:BitReader",
+        "@llvm-project//llvm:BitWriter",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:Linker",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:ObjCARC",  # buildcleaner: keep
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//mlir:NVVMDialect",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@tsl//tsl/platform:cuda_root_path",
+        "@tsl//tsl/platform:env",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:random",
+        "@tsl//tsl/platform:rocm_rocdl_path",
+        "@tsl//tsl/platform:status",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
 )
 
 cc_library(

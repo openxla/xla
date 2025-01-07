@@ -16,14 +16,12 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_RUNTIME_THUNK_H_
 #define XLA_BACKENDS_CPU_RUNTIME_THUNK_H_
 
-#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -31,6 +29,8 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
+#include "xla/backends/cpu/runtime/function_library.h"
+#include "xla/backends/cpu/runtime/kernel_c_api.h"
 #include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/cpu/xfeed_manager.h"
 #include "xla/service/global_device_id.h"
-#include "xla/stream_executor/host/host_kernel_c_api.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/util.h"
@@ -89,6 +88,7 @@ class Thunk {
     kSort,
     kTopK,
     kWhile,
+    kXnnFusion,
   };
 
   struct Info {
@@ -133,7 +133,7 @@ class Thunk {
   Kind kind() const { return kind_; }
   const Info& info() const { return info_; }
 
-  static std::string_view KindToString(Kind kind);
+  static absl::string_view KindToString(Kind kind);
 
   // Returns the list of buffers used by a thunk. Thunk executor relies on this
   // information to execute thunks concurrently and to avoid data races.
@@ -147,43 +147,6 @@ class Thunk {
   // that returns an empty vector.
   using ResourceUses = absl::InlinedVector<ResourceUse, 4>;
   virtual ResourceUses resource_uses() const { return {}; }
-
-  //===--------------------------------------------------------------------===//
-  // FunctionRegistry
-  //===--------------------------------------------------------------------===//
-
-  // An API to resolve function pointers required for running ThunkSequence:
-  //
-  // 1. Host kernels that are executed by a KernelThunk via StreamExecutor APIs.
-  // 2. Comparator functions required by a SortThunk.
-  //
-  // At run time this is typically backed by an LLVM JIT compiler that compiles
-  // LLVM IR to function pointers on demand. At compile time, together with
-  // thunks themselves, we emit LLVM module(s) and metadata describing all the
-  // functions required for running emitted thunks (number of threads, etc.).
-  class FunctionRegistry {
-   public:
-    using Kernel = SE_HOST_Kernel*;
-
-    // TODO(ezhulenev): We rely on legacy IrEmitter to emit comparator
-    // functions, and we use legacy compute function ABI. We should emit a
-    // much simpler comparator function that only takes compared values.
-    using Comparator = void (*)(bool*, /*run_options=*/const void*,
-                                /*params=*/const void**,
-                                /*buffer_table=*/const void*,
-                                /*status=*/const void*,
-                                /*prof_counters=*/const void*);
-
-    virtual ~FunctionRegistry() = default;
-
-    virtual absl::StatusOr<Kernel> FindKernel(std::string_view name) {
-      return Unimplemented("Host kernels are not supported");
-    }
-
-    virtual absl::StatusOr<Comparator> FindComparator(std::string_view name) {
-      return Unimplemented("Comparator functions are not supported");
-    }
-  };
 
   //===--------------------------------------------------------------------===//
   // CollectiveExecuteParams
@@ -286,7 +249,7 @@ class Thunk {
   // Parameters passed to Execute. Execute is responsible for launching "work"
   // on device, i.e., it launches host kernels, calls into libraries, etc.
   struct ExecuteParams {
-    FunctionRegistry* function_registry = nullptr;
+    FunctionLibrary* function_library = nullptr;
     const BufferAllocations* buffer_allocations = nullptr;
     runtime::XfeedManager* xfeed = nullptr;
     const Eigen::ThreadPoolDevice* intra_op_threadpool = nullptr;
@@ -325,20 +288,6 @@ class Thunk {
       const ExecuteParams& params) = 0;
 
  protected:
-  // Helper struct to keep track of pending tasks and an event that signals
-  // completion of the operation to the caller. Useful for thunks that launch
-  // multiple tasks and need to signal completion when all tasks are done (see
-  // ConvolutionThunk and DotThunk for examples).
-  struct ExecuteState {
-    explicit ExecuteState(int64_t num_tasks);
-    ~ExecuteState();
-
-    void Notify();
-
-    std::atomic<int64_t> pending_tasks;
-    tsl::AsyncValueRef<Thunk::ExecuteEvent> event;
-  };
-
   // Encodes thunk info into the TraceMe compatible format.
   std::string TraceMeEncode() const;
 

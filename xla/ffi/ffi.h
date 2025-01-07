@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/c_api.h"
@@ -117,6 +118,16 @@ class AnyBuffer {
   T* typed_data() const {
     DCHECK(primitive_util::NativeToPrimitiveType<T>() == element_type())
         << "Template type must match the underlying buffer dtype";
+    return reinterpret_cast<T*>(buf_->data);
+  }
+
+  template <typename T>
+  T* reinterpret_data() const {
+    DCHECK(primitive_util::IsArrayType(element_type()) &&
+           sizeof(T) == primitive_util::ByteWidth(element_type()) &&
+           !(reinterpret_cast<std::uintptr_t>(buf_->data) % alignof(T)))
+        << "Requested type must have the same byte width and alignment as the "
+           "underlying buffer type";
     return reinterpret_cast<T*>(buf_->data);
   }
 
@@ -392,6 +403,22 @@ XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(float, XLA_FFI_DataType_F32);
 XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING(double, XLA_FFI_DataType_F64);
 
 #undef XLA_FFI_REGISTER_ARRRAY_ATTR_DECODING
+
+template <>
+struct AttrDecoding<absl::string_view> {
+  using Type = absl::string_view;
+  static std::optional<std::string_view> Decode(XLA_FFI_AttrType type,
+                                                void* attr,
+                                                DiagnosticEngine& diagnostic) {
+    if (XLA_FFI_PREDICT_FALSE(type != XLA_FFI_AttrType_STRING)) {
+      return diagnostic.Emit("Wrong attribute type: expected ")
+             << XLA_FFI_AttrType_STRING << " but got " << type;
+    }
+
+    auto* span = reinterpret_cast<XLA_FFI_ByteSpan*>(attr);
+    return std::string_view(span->ptr, span->len);
+  }
+};
 
 // A type tag to mark i64 attributes as pointers to `T`.
 template <typename T>

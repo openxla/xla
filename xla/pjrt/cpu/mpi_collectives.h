@@ -41,10 +41,10 @@ class MpiCollectivesCommunicator : public CollectivesCommunicator {
   explicit MpiCollectivesCommunicator(int color, int key);
   ~MpiCollectivesCommunicator() override;
 
-  absl::Status AllReduce(const RendezvousKey& key, ReductionKind reduction_kind,
-                         PrimitiveType element_type, size_t num_elements,
-                         const void* input_buffer, void* output_buffer,
-                         absl::Duration timeout) override;
+  absl::Status AllReduce(se::DeviceMemoryBase send_buffer,
+                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+                         size_t count, ReductionKind reduction_kind,
+                         const Executor& executor) override;
   absl::Status CollectivePermute(const RendezvousKey& key, size_t num_bytes,
                                  std::optional<int> source_rank,
                                  absl::Span<int const> target_ranks,
@@ -54,14 +54,14 @@ class MpiCollectivesCommunicator : public CollectivesCommunicator {
                         absl::Span<const void* const> input_buffers,
                         absl::Span<void* const> output_buffers,
                         absl::Duration timeout) override;
-  absl::Status AllGather(const RendezvousKey& key, size_t chunk_bytes,
-                         const void* input_buffer, void* output_buffer,
-                         absl::Duration timeout) override;
-  absl::Status ReduceScatter(const RendezvousKey& key,
+  absl::Status AllGather(se::DeviceMemoryBase send_buffer,
+                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+                         size_t count, const Executor& executor) override;
+  absl::Status ReduceScatter(se::DeviceMemoryBase send_buffer,
+                             se::DeviceMemoryBase recv_buffer,
+                             PrimitiveType dtype, size_t count,
                              ReductionKind reduction_kind,
-                             PrimitiveType element_type, size_t chunk_elems,
-                             const void* input_buffer, void* output_buffer,
-                             absl::Duration timeout) override;
+                             const Executor& executor) override;
 
  private:
   MPI_Comm comm_;
