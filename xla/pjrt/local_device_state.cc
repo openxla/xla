@@ -85,7 +85,7 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       stream = executor->CreateStream().value();
     }
     if (stream) {
-      stream->set_name(name);
+      stream->SetName(name);
     }
     return stream;
   };
@@ -128,6 +128,16 @@ LocalDeviceState::~LocalDeviceState() {
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
   }
+
+  // Explicitly delete all the streams to ensure that their callbacks are
+  // executed before the destruction of the LocalDeviceState and its callback
+  // threads.
+  external_ready_event_streams_.clear();
+  fixed_size_pool_usage_streams_.clear();
+  device_to_device_streams_.clear();
+  device_to_host_streams_.clear();
+  host_to_device_stream_.reset();
+  compute_stream_.reset();
 }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {
@@ -172,7 +182,8 @@ absl::Status LocalDeviceState::ThenExecuteCallback(
     auto callback_stream = callback_stream_map_->find(stream);
     if (callback_stream == callback_stream_map_->end()) {
       TF_ASSIGN_OR_RETURN(auto new_stream, executor_->CreateStream());
-      new_stream->set_name(absl::StrFormat("Callback for %s", stream->name()));
+      new_stream->SetName(
+          absl::StrFormat("Callback for %s", stream->GetName()));
       callback_stream =
           callback_stream_map_->insert({stream, std::move(new_stream)}).first;
     }
@@ -261,7 +272,7 @@ std::unique_ptr<se::Stream> LocalDeviceState::BorrowStreamFromPool() {
 
   // The stream pool is empty, create a new stream.
   auto stream = compute_stream_->parent()->CreateStream().value();
-  stream->set_name("Pool stream");
+  stream->SetName("Pool stream");
   return stream;
 }
 

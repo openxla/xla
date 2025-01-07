@@ -814,6 +814,26 @@ func.func @main(%arg0: tensor<2x3xf32>) -> tensor<2x3xf32> {
 // CHECK-SAME:  f32[2,3] custom-call(f32[2,3] [[VAL_1]])
 // CHECK-SAME:  custom_call_target="SetBound"
 // CHECK-SAME:  literal=s32[] 1
+
+// -----
+
+// CHECK:  HloModule
+func.func @main(%arg0: tensor<6xf32>, %arg1: tensor<6xf32>, %arg2: tensor<3xi32>, %arg3: tensor<3xi32>, %arg4: tensor<3xi32>, %arg5: tensor<3xi32>) -> (tensor<6xf32>) {
+  %0 = mhlo.custom_call @ragged_all_to_all(%arg0, %arg1, %arg2, %arg3, %arg4, %arg5) {api_version = 4 : i32, backend_config = {replica_groups = dense<[[0, 1, 2]]> : tensor<1x3xi64>}} : (tensor<6xf32>, tensor<6xf32>, tensor<3xi32>, tensor<3xi32>, tensor<3xi32>, tensor<3xi32>) -> tensor<6xf32>
+  return %0 : tensor<6xf32>
+}
+
+// CHECK: ENTRY
+// CHECK: [[ARG_0:%.*]] = f32[6] parameter(0)
+// CHECK: [[ARG_1:%.*]] = f32[6] parameter(1)
+// CHECK: [[ARG_2:%.*]] = s32[3] parameter(2)
+// CHECK: [[ARG_3:%.*]] = s32[3] parameter(3)
+// CHECK: [[ARG_4:%.*]] = s32[3] parameter(4)
+// CHECK: [[ARG_5:%.*]] = s32[3] parameter(5)
+// CHECK: ROOT
+// CHECK-SAME: f32[6] ragged-all-to-all(f32[6] [[ARG_0]], f32[6] [[ARG_1]], s32[3] [[ARG_2]], s32[3] [[ARG_3]], s32[3] [[ARG_4]], /*index=5*/s32[3] [[ARG_5]])
+// CHECK-SAME{LITERAL}: replica_groups={{0,1,2}}
+
 // -----
 
 // CHECK:  HloModule
@@ -2456,7 +2476,7 @@ func.func @main(%input0: tensor<16x16xf32>, %input1: tensor<16x16xi32>) {
 }
 
 // CHECK: %[[SORT_CMP:.*]] ([[ARG0:.*]]: f32[], [[ARG1:.*]]: f32[], {{.*}}: s32[], {{.*}}: s32[]) -> pred[] {
-// CHECK:   ROOT %compare.8 = pred[] compare(f32[] %[[ARG0]], f32[] %[[ARG1]]), direction=GT
+// CHECK:   ROOT %compare.{{[0-9+]}} = pred[] compare(f32[] %[[ARG0]], f32[] %[[ARG1]]), direction=GT
 
 // CHECK: [[SORT:%.+]] = (f32[16,16], s32[16,16]) sort(f32[16,16] %Arg_0.1, s32[16,16] %Arg_1.2), dimensions={1}, is_stable=true, to_apply=%[[SORT_CMP]]
 // CHECK: [[GET0:%.+]] = f32[16,16] get-tuple-element((f32[16,16], s32[16,16]) [[SORT]]), index=0

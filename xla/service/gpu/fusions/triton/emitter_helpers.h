@@ -27,15 +27,17 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal.h"
+#include "xla/service/gpu/fusions/emitter_loc_op_builder.h"
 #include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
 #include "tsl/platform/status.h"
@@ -99,14 +101,15 @@ llvm::SmallVector<int64_t> GetPaddedTileSizes(
     llvm::ArrayRef<int64_t> tile_sizes);
 
 // XLA -> Triton type conversions.
-absl::StatusOr<mlir::Type> TritonType(mlir::OpBuilder b, PrimitiveType t);
+absl::StatusOr<mlir::Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t);
 
-mlir::Type StorageType(mlir::OpBuilder b, mlir::Type t);
+mlir::Type StorageType(EmitterLocOpBuilder& b, mlir::Type t);
 
 // Get the value of the scalar constant's literal in a C++ type.
 template <typename T>
 T ScalarConstantValue(const HloInstruction& instr, PrimitiveType dst_type) {
-  CHECK(hlo_query::IsScalarConstant(&instr));
+  CHECK_EQ(instr.opcode(), HloOpcode::kConstant);
+  CHECK(ShapeUtil::IsEffectiveScalar(instr.shape()));
   absl::StatusOr<Literal> converted = instr.literal().Convert(dst_type);
   TF_CHECK_OK(converted.status());
   return converted.value().GetFirstElement<T>();
@@ -114,8 +117,7 @@ T ScalarConstantValue(const HloInstruction& instr, PrimitiveType dst_type) {
 
 // Create a scalar constant.
 template <typename T>
-ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder b, mlir::Type type,
-                           T value) {
+ScalarOrTensor CreateConst(EmitterLocOpBuilder& b, mlir::Type type, T value) {
   if (mlir::isa<mlir::IntegerType>(type)) {
     auto result =
         b.create<mlir::arith::ConstantOp>(b.getIntegerAttr(type, value));
@@ -131,8 +133,8 @@ ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder b, mlir::Type type,
 
 // Create a tensor constant.
 template <typename T>
-ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder& b, mlir::Type type,
-                           T value, llvm::ArrayRef<int64_t> shape) {
+ScalarOrTensor CreateConst(EmitterLocOpBuilder& b, mlir::Type type, T value,
+                           llvm::ArrayRef<int64_t> shape) {
   if (shape.empty()) {
     return CreateConst<T>(b, type, value);
   }
@@ -140,7 +142,9 @@ ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder& b, mlir::Type type,
   if (auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
     auto result =
         b.create<mlir::arith::ConstantOp>(mlir::DenseElementsAttr::get(
-            tensor_type, mlir::APInt(int_type.getIntOrFloatBitWidth(), value)));
+            tensor_type,
+            mlir::APInt(int_type.getIntOrFloatBitWidth(), value,
+                        /*isSigned=*/false, /*implicitTrunc=*/true)));
     return ScalarOrTensor(result);
   }
   if (auto float_type = mlir::dyn_cast<mlir::FloatType>(type)) {
@@ -154,8 +158,7 @@ ScalarOrTensor CreateConst(mlir::ImplicitLocOpBuilder& b, mlir::Type type,
 
 // Create a constant of the same shape as `like` but with a new type and value.
 template <typename T>
-mlir::Value ConstLike(mlir::ImplicitLocOpBuilder& b, mlir::Value like,
-                      T new_value) {
+mlir::Value ConstLike(EmitterLocOpBuilder& b, mlir::Value like, T new_value) {
   if (auto src_shaped_ty = mlir::dyn_cast<mlir::ShapedType>(like.getType())) {
     mlir::Type src_ty = src_shaped_ty.getElementType();
     return CreateConst(b, src_ty, new_value, src_shaped_ty.getShape())
@@ -164,37 +167,41 @@ mlir::Value ConstLike(mlir::ImplicitLocOpBuilder& b, mlir::Value like,
   return CreateConst(b, like.getType(), new_value).UnwrapUnsafe();
 }
 
-inline mlir::Value ZerosLike(mlir::ImplicitLocOpBuilder& b, mlir::Value x) {
+inline mlir::Value ZerosLike(EmitterLocOpBuilder& b, mlir::Value x) {
   return ConstLike(b, x, 0);
 }
 
-inline mlir::Value OnesLike(mlir::ImplicitLocOpBuilder& b, mlir::Value x) {
+inline mlir::Value OnesLike(EmitterLocOpBuilder& b, mlir::Value x) {
   return ConstLike(b, x, 1);
 }
 
 bool IsFp8Type(mlir::Type t);
 
-ScalarOrTensor Splat(mlir::ImplicitLocOpBuilder& b, ScalarOrTensor value,
+ScalarOrTensor Splat(EmitterLocOpBuilder& b, ScalarOrTensor value,
                      llvm::ArrayRef<int64_t> shape);
 
 // Triton type conversions.
-mlir::Value Cast(mlir::ImplicitLocOpBuilder& b, mlir::Value value,
+mlir::Value Cast(EmitterLocOpBuilder& b, mlir::Value value,
                  mlir::Type dst_element_ty);
 
 // Emits a scalar constant.
-absl::StatusOr<ScalarOrTensor> EmitConstant(mlir::ImplicitLocOpBuilder& b,
+absl::StatusOr<ScalarOrTensor> EmitConstant(EmitterLocOpBuilder& b,
                                             const HloInstruction& constant);
 
-absl::StatusOr<mlir::Value> EmitElementwise(
-    mlir::ImplicitLocOpBuilder& b, absl::string_view libdevice_path,
+bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo);
+
+// Should only be called if IsSupportedElementwiseLibdeviceFunction() returns
+// true for `hlo`, otherwise an error is returned.
+absl::StatusOr<mlir::Value> EmitElementwiseLibdeviceFunction(
+    EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info, const HloInstruction& hlo,
     mlir::ValueRange inputs);
 
-// Emit sequence of operations for unpacking 2xi4 -> i8.
-absl::StatusOr<mlir::Value> EmitUnpackInt4(mlir::ImplicitLocOpBuilder& b,
-                                           const HloInstruction* hlo,
-                                           int64_t unpack_dim_idx,
-                                           mlir::Value value);
+absl::StatusOr<mlir::Value> EmitElementwise(
+    EmitterLocOpBuilder& b, absl::string_view libdevice_path,
+    const se::DeviceDescription& device_info, const HloInstruction& hlo,
+    mlir::ValueRange inputs);
+
 }  // namespace xla::gpu::triton
 
 #endif  // XLA_SERVICE_GPU_FUSIONS_TRITON_EMITTER_HELPERS_H_

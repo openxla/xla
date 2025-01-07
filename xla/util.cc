@@ -19,26 +19,38 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <numeric>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/base/const_init.h"
 #include "absl/base/log_severity.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "xla/types.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
+#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/stacktrace.h"
 
@@ -465,6 +477,20 @@ ConvertedDimensionNumbers ConvertDimensionNumbers(
   absl::c_sort(dimensions.to_dimensions);
   return dimensions;
 }
+
+DimensionVector GetNonContractingDims(
+    int64_t rank, absl::Span<const int64_t> contracting_dim_numbers,
+    absl::Span<const int64_t> batch_dim_numbers) {
+  DimensionVector non_contracting_dim_numbers;
+  for (int64_t i = 0; i < rank; ++i) {
+    if (!absl::c_linear_search(contracting_dim_numbers, i) &&
+        !absl::c_linear_search(batch_dim_numbers, i)) {
+      non_contracting_dim_numbers.push_back(i);
+    }
+  }
+  return non_contracting_dim_numbers;
+}
+
 std::string SanitizeFileName(std::string file_name) {
   for (char& c : file_name) {
     if (c == '/' || c == '\\' || c == '[' || c == ']' || c == ' ') {

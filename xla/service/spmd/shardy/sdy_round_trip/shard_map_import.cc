@@ -44,7 +44,7 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -60,7 +60,7 @@ using ::mlir::StringRef;
 using ::mlir::SymbolTable;
 using ::mlir::func::CallOp;
 using ::mlir::func::FuncOp;
-using ::mlir::mhlo::CustomCallOp;
+using ::mlir::stablehlo::CustomCallOp;
 
 namespace sdy = ::mlir::sdy;
 
@@ -77,7 +77,8 @@ class ManualComputationPattern : public OpConversionPattern<CallOp> {
   mlir::LogicalResult matchAndRewrite(
       CallOp callOp, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter& rewriter) const override {
-    if (!absl::StartsWith(callOp.getCallee(), kManualComputationBodyFuncName)) {
+    if (!absl::StrContains(callOp.getCallee(),
+                           kManualComputationBodyFuncName)) {
       return mlir::failure();
     }
 
@@ -158,7 +159,7 @@ class SdyRoundTripShardMapImportPass
     MLIRContext& context = getContext();
     mlir::ConversionTarget target(context);
     target.addDynamicallyLegalOp<CallOp>([](CallOp op) {
-      return !absl::StartsWith(op.getCallee(), kManualComputationBodyFuncName);
+      return !absl::StrContains(op.getCallee(), kManualComputationBodyFuncName);
     });
     target.addLegalOp<sdy::ManualComputationOp, sdy::ReturnOp, CustomCallOp>();
     mlir::RewritePatternSet patterns(&context);

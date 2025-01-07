@@ -31,7 +31,6 @@ limitations under the License.
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -43,6 +42,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/mlir_hlo/mhlo/transforms/transformation_helpers.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/fusions/emitter_loc_op_builder.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -54,13 +54,13 @@ namespace xla::gpu::triton {
 
 using ::llvm::SmallVector;
 using ::mlir::ArrayRef;
-using ::mlir::ImplicitLocOpBuilder;
 using ::mlir::ShapedType;
 using ::mlir::Type;
 using ::mlir::Value;
 using ::mlir::ValueRange;
 
 namespace ma = ::mlir::arith;
+namespace mh = ::mlir::mhlo;
 namespace mm = ::mlir::math;
 namespace mt = ::mlir::triton;
 
@@ -82,7 +82,7 @@ SmallVector<int64_t> GetPaddedTileSizes(ArrayRef<int64_t> tile_sizes) {
   return result;
 }
 
-absl::StatusOr<Type> TritonType(mlir::OpBuilder b, PrimitiveType t) {
+absl::StatusOr<Type> TritonType(EmitterLocOpBuilder& b, PrimitiveType t) {
   switch (t) {
     case F64:
       return b.getF64Type();
@@ -102,10 +102,6 @@ absl::StatusOr<Type> TritonType(mlir::OpBuilder b, PrimitiveType t) {
       return b.getI1Type();
     case S8:
       return b.getI8Type();
-    case S4:  // The unpacking to i8 is supported by the emitter.
-      // We pass the s4 tensor as i8 tensor with the minor dimension having 2x
-      // less elements and unpack in the inner loop of the triton kernel.
-      return b.getI8Type();
     case F8E5M2:
       return b.getFloat8E5M2Type();
     case F8E4M3FN:
@@ -117,7 +113,7 @@ absl::StatusOr<Type> TritonType(mlir::OpBuilder b, PrimitiveType t) {
   }
 }
 
-Type StorageType(mlir::OpBuilder b, Type t) {
+Type StorageType(EmitterLocOpBuilder& b, Type t) {
   if (t.isInteger(1)) {
     return b.getI8Type();
   }
@@ -129,7 +125,7 @@ bool IsFp8Type(Type t) {
          t.isFloat8E4M3FNUZ() || t.isFloat8E4M3B11FNUZ();
 }
 
-Value Cast(ImplicitLocOpBuilder& b, Value value, Type dst_element_ty) {
+Value Cast(EmitterLocOpBuilder& b, Value value, Type dst_element_ty) {
   Type src_ty = value.getType();
   Type src_element_ty = src_ty;
   Type fp32_ty = b.getF32Type();
@@ -228,20 +224,17 @@ Value Cast(ImplicitLocOpBuilder& b, Value value, Type dst_element_ty) {
     int64_t max = llvm::maxIntN(dst_element_ty.getIntOrFloatBitWidth());
 
     // value <= static_cast<float>(INT_MIN) ? INT_MIN : ...
-    auto clamped = b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OLE, value,
-                                      cst_float(min)),
+    auto clamped = b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::OLE, value, cst_float(min)),
         cst_int(min), fptosi);
     // value >= static_cast<float>(INT_MAX) ? INT_MAX : ...
-    clamped = b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::OGE, value,
-                                      cst_float(max)),
+    clamped = b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::OGE, value, cst_float(max)),
         cst_int(max), clamped);
     // isnan(value) ? 0 : ...
-    return b.create<mlir::arith::SelectOp>(
-        b.create<mlir::arith::CmpFOp>(mlir::arith::CmpFPredicate::UNO, value,
-                                      value),
-        cst_int(0), clamped);
+    return b.create<ma::SelectOp>(
+        b.create<ma::CmpFOp>(ma::CmpFPredicate::UNO, value, value), cst_int(0),
+        clamped);
   }
 
   LOG(FATAL) << "Type conversion not supported: "
@@ -249,7 +242,7 @@ Value Cast(ImplicitLocOpBuilder& b, Value value, Type dst_element_ty) {
              << llvm_ir::DumpToString(dst_element_ty);
 }
 
-Value Subtract(ImplicitLocOpBuilder& b, ValueRange values) {
+Value Subtract(EmitterLocOpBuilder& b, ValueRange values) {
   if (mlir::isa<mlir::IntegerType>(mlir::getElementTypeOrSelf(values[0]))) {
     return b.create<ma::SubIOp>(values[0], values[1]);
   } else {
@@ -257,25 +250,24 @@ Value Subtract(ImplicitLocOpBuilder& b, ValueRange values) {
   }
 }
 
-Value Compare(ImplicitLocOpBuilder& b, ValueRange values,
-              mlir::mhlo::ComparisonDirection direction) {
+Value Compare(EmitterLocOpBuilder& b, ValueRange values,
+              mh::ComparisonDirection direction) {
   const Type type = mlir::getElementTypeOrSelf(values[0]);
   if (mlir::isa<mlir::IntegerType>(type)) {
-    return b.create<ma::CmpIOp>(
-        mlir::mhlo::impl::getCmpPredicate<ma::CmpIPredicate>(
-            direction,
-            /*isSigned=*/!type.isInteger(1))
-            .value(),
-        values[0], values[1]);
+    return b.create<ma::CmpIOp>(mh::impl::getCmpPredicate<ma::CmpIPredicate>(
+                                    direction,
+                                    /*isSigned=*/!type.isInteger(1))
+                                    .value(),
+                                values[0], values[1]);
   }
   return b.create<ma::CmpFOp>(
-      mlir::mhlo::impl::getCmpPredicate<ma::CmpFPredicate>(direction,
-                                                           /*isSigned=*/true)
+      mh::impl::getCmpPredicate<ma::CmpFPredicate>(direction,
+                                                   /*isSigned=*/true)
           .value(),
       values[0], values[1]);
 }
 
-Value Maximum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
+Value Maximum(EmitterLocOpBuilder& b, const se::DeviceDescription& device_info,
               ValueRange values) {
   if (mlir::isa<mlir::FloatType>(mlir::getElementTypeOrSelf(values[0]))) {
     return b.create<ma::MaximumFOp>(values);
@@ -286,17 +278,17 @@ Value Maximum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
   // This also works, but we wanted to make it similar to minimum.
   // logic: isNaN(lhs) || lhs >= rhs ? lhs : rhs
   Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mlir::mhlo::ComparisonDirection::NE);
+      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
   Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mlir::mhlo::ComparisonDirection::EQ);
-  Value lhs_is_ge = Compare(b, values, mlir::mhlo::ComparisonDirection::GE);
+      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
+  Value lhs_is_ge = Compare(b, values, mh::ComparisonDirection::GE);
   return b.create<ma::SelectOp>(
       b.create<ma::OrIOp>(lhs_is_nan,
                           b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_ge)),
       values[0], values[1]);
 }
 
-Value Minimum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
+Value Minimum(EmitterLocOpBuilder& b, const se::DeviceDescription& device_info,
               ValueRange values) {
   if (mlir::isa<mlir::FloatType>(mlir::getElementTypeOrSelf(values[0]))) {
     return b.create<ma::MinimumFOp>(values);
@@ -308,46 +300,86 @@ Value Minimum(ImplicitLocOpBuilder& b, const se::DeviceDescription& device_info,
   // minimum(x, NaN):
   // logic: isNaN(lhs) || lhs <= rhs ? lhs : rhs
   Value lhs_is_nan =
-      Compare(b, {values[0], values[0]}, mlir::mhlo::ComparisonDirection::NE);
+      Compare(b, {values[0], values[0]}, mh::ComparisonDirection::NE);
   Value rhs_is_not_nan =
-      Compare(b, {values[1], values[1]}, mlir::mhlo::ComparisonDirection::EQ);
-  Value lhs_is_le = Compare(b, values, mlir::mhlo::ComparisonDirection::LE);
+      Compare(b, {values[1], values[1]}, mh::ComparisonDirection::EQ);
+  Value lhs_is_le = Compare(b, values, mh::ComparisonDirection::LE);
   return b.create<ma::SelectOp>(
       b.create<ma::OrIOp>(lhs_is_nan,
                           b.create<ma::AndIOp>(rhs_is_not_nan, lhs_is_le)),
       values[0], values[1]);
 }
 
-ScalarOrTensor Splat(ImplicitLocOpBuilder& b, ScalarOrTensor value,
+ScalarOrTensor Splat(EmitterLocOpBuilder& b, ScalarOrTensor value,
                      ArrayRef<int64_t> shape) {
   CHECK(!shape.empty());
   auto type = mlir::RankedTensorType::get(shape, value.Type());
   return ScalarOrTensor(b.create<mt::SplatOp>(type, value.UnwrapUnsafe()));
 }
 
-absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
+bool IsSupportedElementwiseLibdeviceFunction(const HloInstruction& hlo) {
+  auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
+  if (!dev_fn_id.has_value()) {
+    return false;
+  }
+  PrimitiveType output_type = hlo.shape().element_type();
+  return output_type == PrimitiveType::BF16 ||
+         output_type == PrimitiveType::F16 ||
+         output_type == PrimitiveType::F32 || output_type == PrimitiveType::F64;
+}
+
+absl::StatusOr<Value> EmitElementwiseLibdeviceFunction(
+    EmitterLocOpBuilder& b, absl::string_view libdevice_path,
+    const se::DeviceDescription& device_info, const HloInstruction& hlo,
+    ValueRange inputs) {
+  auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
+  if (!dev_fn_id.has_value()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("No libdevice function for operation ", hlo.ToString()));
+  }
+  PrimitiveType output_type = hlo.shape().element_type();
+  if (output_type != PrimitiveType::BF16 && output_type != PrimitiveType::F16 &&
+      output_type != PrimitiveType::F32 && output_type != PrimitiveType::F64) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unsupported elementwise operation ", hlo.ToString()));
+  }
+  llvm::Triple triple("nvptx64-unknown-unknown");
+  if (std::holds_alternative<se::RocmComputeCapability>(
+          device_info.gpu_compute_capability())) {
+    triple.setTriple("amdgcn-unknown-unknown");
+  }
+  llvm::SmallVector<Value, 2> casted_inputs;
+  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+    // Upcast the inputs to F32.
+    for (int64_t i = 0; i < inputs.size(); ++i) {
+      casted_inputs.push_back(Cast(b, inputs[i], b.getF32Type()));
+    }
+  } else {
+    casted_inputs.assign(inputs.begin(), inputs.end());
+  }
+  Value res = b.create<mt::ExternElementwiseOp>(
+      casted_inputs[0].getType(), casted_inputs, "libdevice", libdevice_path,
+      ObtainDeviceFunctionName(dev_fn_id.value(), output_type, triple),
+      /*pure=*/true);
+  if (output_type == PrimitiveType::BF16 || output_type == PrimitiveType::F16) {
+    // Downcast back to the original output type.
+    TF_ASSIGN_OR_RETURN(auto dst_ty, TritonType(b, output_type));
+    res = Cast(b, res, dst_ty);
+  }
+  return res;
+}
+
+absl::StatusOr<Value> EmitElementwise(EmitterLocOpBuilder& b,
                                       absl::string_view libdevice_path,
                                       const se::DeviceDescription& device_info,
                                       const HloInstruction& hlo,
                                       ValueRange inputs) {
-  if (mlir::getElementTypeOrSelf(inputs[0]).isF32() ||
-      mlir::getElementTypeOrSelf(inputs[0]).isF64()) {
-    auto dev_fn_id = GetTargetDeviceFunctionID(hlo.opcode());
-    if (dev_fn_id.ok()) {
-      llvm::Triple triple("nvptx64-unknown-unknown");
-      if (std::holds_alternative<se::RocmComputeCapability>(
-              device_info.gpu_compute_capability())) {
-        triple.setTriple("amdgcn-unknown-unknown");
-      }
-      return b.create<mt::ExternElementwiseOp>(
-          inputs[0].getType(), inputs, "libdevice", libdevice_path,
-          ObtainDeviceFunctionName(dev_fn_id.value(),
-                                   hlo.shape().element_type(), triple),
-          /*pure=*/true);
-    }
+  if (IsSupportedElementwiseLibdeviceFunction(hlo)) {
+    return EmitElementwiseLibdeviceFunction(b, libdevice_path, device_info, hlo,
+                                            inputs);
   }
   const bool is_integer =
-      mlir::isa<mlir::IntegerType>(mlir::getElementTypeOrSelf(inputs[0]));
+      mlir::isa<mlir::IntegerType>(getElementTypeOrSelf(inputs[0].getType()));
 
   switch (hlo.opcode()) {
     case HloOpcode::kCopy:
@@ -407,16 +439,16 @@ absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
     case HloOpcode::kCompare:
       return Compare(
           b, inputs,
-          mlir::mhlo::symbolizeComparisonDirection(
+          mh::symbolizeComparisonDirection(
               ComparisonDirectionToString(hlo.comparison_direction()))
               .value());
     case HloOpcode::kSelect:
       return b.create<ma::SelectOp>(
           Compare(b, {inputs[0], ZerosLike(b, inputs[0])},
-                  mlir::mhlo::ComparisonDirection::NE),
+                  mh::ComparisonDirection::NE),
           inputs[1], inputs[2]);
     case HloOpcode::kReducePrecision:
-      return mlir::mhlo::reducePrecision<mt::BitcastOp>(
+      return mh::reducePrecision<mt::BitcastOp>(
           b.getLoc(), inputs[0], hlo.exponent_bits(), hlo.mantissa_bits(), &b);
     default:
       return absl::InvalidArgumentError(
@@ -424,43 +456,22 @@ absl::StatusOr<Value> EmitElementwise(ImplicitLocOpBuilder& b,
   }
 }
 
-absl::StatusOr<ScalarOrTensor> EmitConstant(ImplicitLocOpBuilder& b,
+absl::StatusOr<ScalarOrTensor> EmitConstant(EmitterLocOpBuilder& b,
                                             const HloInstruction& constant) {
   TF_ASSIGN_OR_RETURN(Type ty, TritonType(b, constant.shape().element_type()));
+  llvm::SmallVector<int64_t> shape{constant.shape().dimensions().begin(),
+                                   constant.shape().dimensions().end()};
+
   if (constant.shape().IsInteger()) {
     if (constant.shape().element_type() == U64) {
-      return CreateConst(b, ty, ScalarConstantValue<uint64_t>(constant, U64));
+      return CreateConst(b, ty, ScalarConstantValue<uint64_t>(constant, U64),
+                         shape);
     } else {
-      return CreateConst(b, ty, ScalarConstantValue<int64_t>(constant, S64));
+      return CreateConst(b, ty, ScalarConstantValue<int64_t>(constant, S64),
+                         shape);
     }
   }
-  return CreateConst(b, ty, ScalarConstantValue<double>(constant, F64));
-}
-
-// Emit sequence of operations for unpacking 2xi4 -> i8.
-absl::StatusOr<Value> EmitUnpackInt4(ImplicitLocOpBuilder& b,
-                                     const HloInstruction* hlo,
-                                     int64_t unpack_dim_idx, Value value) {
-  VLOG(6) << "EmitUnpackInt4: " << hlo->ToString();
-  auto input_type = mlir::cast<mlir::RankedTensorType>(value.getType());
-  if (input_type.getShape().size() != 2) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("UnpackInt4 works only for 2d inputs: ", hlo->ToString()));
-  }
-  // We use shifts instead the mask because we need to keep the sign bit.
-  Value shift4 =
-      Splat(b, CreateConst(b, b.getI8Type(), 4), input_type.getShape())
-          .UnwrapUnsafe();
-  Value lo = b.create<ma::ShRSIOp>(b.create<ma::ShLIOp>(value, shift4), shift4);
-  Value hi = b.create<ma::ShRSIOp>(value, shift4);
-  Value result = b.create<mt::JoinOp>(hi, lo);
-  if (unpack_dim_idx == 0) {
-    result = b.create<mt::TransOp>(result, b.getDenseI32ArrayAttr({0, 2, 1}));
-  }
-  SmallVector<int64_t> result_shape(input_type.getShape());
-  result_shape[unpack_dim_idx] *= 2;
-  auto type = mlir::RankedTensorType::get(result_shape, b.getI8Type());
-  return b.create<mt::ReshapeOp>(type, result, /*allow_reorder=*/false);
+  return CreateConst(b, ty, ScalarConstantValue<double>(constant, F64), shape);
 }
 
 }  // namespace xla::gpu::triton

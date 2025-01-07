@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -109,15 +110,24 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual absl::StatusOr<tsl::RCReference<Array>> MakeArrayFromHostBuffer(
       const void* data, DType dtype, Shape shape,
       std::optional<absl::Span<const int64_t>> byte_strides,
-      std::shared_ptr<const Sharding> sharding, HostBufferSemantics semantics,
+      absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      HostBufferSemantics semantics,
       std::function<void()> on_done_with_host_buffer) = 0;
 
   // Builds a larger array out of individual per-device shards.
+  // TODO(hyeontaek): Replace this API with the version that takes
+  // `SingleDeviceShardSemantics`.
   virtual absl::StatusOr<tsl::RCReference<Array>>
   AssembleArrayFromSingleDeviceArrays(
-      Shape shape, std::shared_ptr<const Sharding> sharding,
+      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics semantics) = 0;
+  virtual absl::StatusOr<tsl::RCReference<Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      Shape shape, absl::Nonnull<std::shared_ptr<const Sharding>> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) = 0;
 
   // Copies the arrays to a new set of devices.
   //
@@ -177,13 +187,14 @@ class Client : public llvm::RTTIExtends<Client, llvm::RTTIRoot> {
   virtual absl::StatusOr<tsl::RCReference<Tuple>> MakeTuple(
       absl::Span<tsl::RCReference<Value>> values) = 0;
 
+  // Identifies the IFRT implementation. Most C++ users should use LLVM RTTI to
+  // determine the runtime type. This is a string exposed to users mostly for
+  // informational reasons.
+  virtual absl::string_view runtime_type() const = 0;
+
   // The following APIs are taken from `xla::PjRtClient` for fast prototyping.
   // Most of the APIs will be factored out as a `Platform`/`Topology` in the
   // future to facilitate topology discovery and ahead-of-time compilation.
-
-  // TODO(hyeontaek): Remove runtime_type() in favor of LLVM RTTI.
-  virtual absl::string_view runtime_type() const = 0;
-
   // TODO(hyeontaek): Factor them out to a `Platform`/`Topology` class.
   virtual absl::string_view platform_name() const = 0;
   virtual absl::string_view platform_version() const = 0;

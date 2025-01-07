@@ -167,6 +167,19 @@ bool IsOpLineName(absl::string_view line_name) {
   return line_name == kXlaOpLineName || line_name == kTensorFlowOpLineName;
 }
 
+Timespan GetEventTimespan(const XEventVisitor& event) {
+  const std::optional<XStatVisitor> device_offset_ps =
+      event.GetStat(StatType::kDeviceOffsetPs);
+  const std::optional<XStatVisitor> device_duration_ps =
+      event.GetStat(StatType::kDeviceDurationPs);
+  if (device_offset_ps.has_value() && device_duration_ps.has_value()) {
+    return Timespan(device_offset_ps->IntOrUintValue(),
+                    device_duration_ps->IntOrUintValue());
+  }
+
+  return event.GetTimespan();
+}
+
 }  // namespace
 
 const XPlane* FindPlaneWithName(const XSpace& space, absl::string_view name) {
@@ -543,6 +556,7 @@ void AggregateXPlane(const XPlane& full_trace, XPlane& aggregated_trace) {
   const XPlaneVisitor& plane = CreateTfXPlaneVisitor(&full_trace);
   XPlaneBuilder aggregated_plane(&aggregated_trace);
   aggregated_plane.SetName(plane.Name());
+  aggregated_plane.SetId(plane.Id());
 
   uint64_t first_op_start_ps = kint64max;
   uint64_t last_op_end_ps = 0;
@@ -563,26 +577,27 @@ void AggregateXPlane(const XPlane& full_trace, XPlane& aggregated_trace) {
     aggregated_line.SetName(line.Name());
     std::vector<XEventVisitor> event_stack;
     line.ForEachEvent([&](XEventVisitor event) {
+      Timespan timespan = GetEventTimespan(event);
       first_op_start_ps = first_op_start_ps <= event.TimestampPs()
                               ? first_op_start_ps
-                              : event.TimestampPs();
+                              : timespan.begin_ps();
       last_op_end_ps = last_op_end_ps >= event.EndTimestampPs()
                            ? last_op_end_ps
-                           : event.EndTimestampPs();
+                           : timespan.end_ps();
       const auto& group_stat = event.GetStat(StatType::kGroupId);
       int64_t group_id =
           group_stat.has_value() ? group_stat->IntOrUintValue() : kint64max;
 
       StatByEvent& line_stats = stats[line.Id()][group_id];
-      line_stats[event.Id()].stat.UpdateStat(event.DurationPs());
+      line_stats[event.Id()].stat.UpdateStat(timespan.duration_ps());
       DCHECK(event_stack.empty() || !(event < event_stack.back()));
       while (!event_stack.empty() &&
-             !event_stack.back().GetTimespan().Includes(event.GetTimespan())) {
+             !GetEventTimespan(event_stack.back()).Includes(timespan)) {
         event_stack.pop_back();
       }
       if (!event_stack.empty()) {
         line_stats[event_stack.back().Id()].children_duration +=
-            event.DurationPs();
+            timespan.duration_ps();
       }
       event_stack.push_back(std::move(event));
     });
@@ -605,14 +620,17 @@ void AggregateXPlane(const XPlane& full_trace, XPlane& aggregated_trace) {
   XStatMetadata* kGroupId = aggregated_plane.GetOrCreateStatMetadata(
       GetStatTypeStr(StatType::kGroupId));
 
+  // TODO(b/384550563): Remove this offset once we have a better way to
+  // aggregate XPlanes.
+  int64_t metadata_id_offset = aggregated_plane.CreateEventMetadata()->id() - 1;
   for (const auto& [line_id, stats_by_group] : stats) {
     XLineBuilder aggregated_line = aggregated_plane.GetOrCreateLine(line_id);
     for (const auto& [group_id, stat_by_event] : stats_by_group) {
       for (const auto& [event_id, event_stat] : stat_by_event) {
         const auto& src_event_metadata = *plane.GetEventMetadata(event_id);
         XEventMetadata& event_metadata =
-            *aggregated_plane.GetOrCreateEventMetadata(
-                src_event_metadata.name());
+            *aggregated_plane.GetOrCreateEventMetadata(src_event_metadata.id() +
+                                                       metadata_id_offset);
         CopyEventMetadata(src_event_metadata, plane, event_metadata,
                           aggregated_plane);
         XEventBuilder aggregated_event =
@@ -649,7 +667,8 @@ bool IsHostPlane(const XPlane& plane) {
          plane.name() == kMetadataPlaneName ||
          plane.name() == kSyscallsPlaneName ||
          plane.name() == kPythonTracerPlaneName ||
-         plane.name() == kCuptiDriverApiPlaneName;
+         plane.name() == kCuptiDriverApiPlaneName ||
+         plane.name() == kScopeRangeIdTreePlaneName;
 }
 
 bool IsDevicePlane(const XPlane& plane) {

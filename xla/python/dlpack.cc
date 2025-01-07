@@ -22,7 +22,6 @@ limitations under the License.
 #include <memory>
 #include <numeric>
 #include <optional>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -34,6 +33,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/ndarray.h"
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -327,7 +327,8 @@ absl::StatusOr<std::vector<int64_t>> GetByteStrides(const DLTensor& dl_tensor) {
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakePjrtBuffer(
     PjRtDevice& device, ::DLManagedTensor* dlmt, const Shape& shape,
-    PrimitiveType element_type, absl::Span<int64_t const> dimensions) {
+    PrimitiveType element_type, absl::Span<int64_t const> dimensions,
+    std::optional<std::intptr_t> stream = std::nullopt) {
   std::function<void()> on_delete_callback;
   if (dlmt->deleter) {
     on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
@@ -336,8 +337,8 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakePjrtBuffer(
   // First try to create a view.
   void* data =
       static_cast<char*>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
-  auto result = device.client()->CreateViewOfDeviceBuffer(data, shape, &device,
-                                                          on_delete_callback);
+  auto result = device.client()->CreateViewOfDeviceBuffer(
+      data, shape, &device, on_delete_callback, stream);
 
   // If that fails with invalid argument, it's possibly because of the incorrect
   // alignment. If we're on CPU, we can create a copy of buffer.
@@ -456,11 +457,11 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   auto* cpu_pjrt_client = cpu_client ? (*cpu_client)->pjrt_client() : nullptr;
   auto* gpu_pjrt_client = gpu_client ? (*gpu_client)->pjrt_client() : nullptr;
 
-  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        std::string_view(tensor.name()));
+        absl::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
   if (dlmt->dl_tensor.ndim < 0) {
@@ -550,11 +551,11 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
         "DLPack is only supported for devices addressable by the current "
         "process.");
   }
-  if (std::string_view(tensor.name()) != kDlTensorCapsuleName) {
+  if (absl::string_view(tensor.name()) != kDlTensorCapsuleName) {
     return InvalidArgument(
         "DLPack tensor must be a capsule with name \"dltensor\", got \"%s\". "
         "Note that a DLPack tensor may be consumed at most once.",
-        std::string_view(tensor.name()));
+        absl::string_view(tensor.name()));
   }
   DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(tensor.data());
   if (dlmt->dl_tensor.ndim < 0) {
@@ -583,7 +584,7 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
 
   TF_ASSIGN_OR_RETURN(auto pjrt_buffer,
                       MakePjrtBuffer(*device->pjrt_device(), dlmt, shape,
-                                     element_type, dimensions));
+                                     element_type, dimensions, stream));
 
   // We have taken ownership of the array inside the capsule; make sure the
   // capsule it cannot be used again.
@@ -600,6 +601,18 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
                       ifrt_client->CreatePjRtArray(std::move(pjrt_buffer)));
   return PyArray::MakeFromSingleDeviceArray(std::move(client), Traceback::Get(),
                                             std::move(ifrt_array), false, true);
+}
+
+absl::StatusOr<nanobind::dlpack::dtype> PrimitiveTypeToNbDLDataType(
+    PrimitiveType type) {
+  TF_ASSIGN_OR_RETURN(DLDataType dl_type, PrimitiveTypeToDLDataType(type));
+
+  nanobind::dlpack::dtype nb_type;
+  nb_type.lanes = dl_type.lanes;
+  nb_type.bits = dl_type.bits;
+  nb_type.code = dl_type.code;
+
+  return nb_type;
 }
 
 }  // namespace xla

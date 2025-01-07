@@ -1,10 +1,10 @@
-load("@tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
-load("//xla/tsl:tsl.bzl", "internal_visibility")
-load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_copts")
+load("//xla/tsl/profiler/builds:build_config.bzl", "tf_profiler_alias", "tf_profiler_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -21,6 +21,7 @@ cc_library(
         "//xla/tsl/profiler:internal",
     ],
     deps = [
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
     ],
@@ -28,13 +29,17 @@ cc_library(
 
 cc_library(
     name = "xla_op_utils",
+    srcs = [tf_profiler_alias("//xla/tsl/profiler/convert/", "xla_op_utils.cc")],
     hdrs = ["xla_op_utils.h"],
     visibility = internal_visibility([
         "//xla/tsl/profiler:internal",
         "//xla/tsl/profiler:xla_profiler_backends",
         "//xla/python:__pkg__",
     ]),
-    deps = ["@com_google_absl//absl/strings"],
+    deps = [
+        "@com_google_absl//absl/strings",
+        "@tsl//tsl/platform:macros",
+    ],
 )
 
 tsl_cc_test(
@@ -92,7 +97,6 @@ tsl_cc_test(
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/profiler/protobuf:trace_events_proto_cc",
     ],
 )
 

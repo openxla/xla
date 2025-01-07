@@ -34,7 +34,8 @@ namespace hlo_query {
 
 bool IsCollectiveCommunicationOp(HloOpcode op) {
   return op == HloOpcode::kAllReduce || op == HloOpcode::kAllGather ||
-         op == HloOpcode::kAllToAll || op == HloOpcode::kCollectivePermute ||
+         op == HloOpcode::kAllToAll || op == HloOpcode::kRaggedAllToAll ||
+         op == HloOpcode::kCollectivePermute ||
          op == HloOpcode::kCollectiveBroadcast ||
          op == HloOpcode::kReduceScatter || op == HloOpcode::kAllReduceStart ||
          op == HloOpcode::kAllGatherStart ||
@@ -175,6 +176,13 @@ bool IsBroadcastOfScalarConstant(const HloInstruction& instr) {
 bool IsBroadcastOfParameter(const HloInstruction& instr) {
   return instr.opcode() == HloOpcode::kBroadcast &&
          instr.operand(0)->opcode() == HloOpcode::kParameter;
+}
+
+bool IsEffectiveParameter(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kParameter ||
+         ((instr.opcode() == HloOpcode::kBitcast ||
+           instr.opcode() == HloOpcode::kGetTupleElement) &&
+          IsEffectiveParameter(*instr.operand(0)));
 }
 
 HloInstruction* GetFirstInstructionWithOpcode(const HloComputation& computation,

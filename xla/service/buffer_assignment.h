@@ -33,6 +33,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -42,10 +45,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
-#include "xla/service/hlo_dataflow_analysis.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
@@ -518,6 +518,11 @@ class BufferAssignment {
       BufferValue::SizeFunction buffer_size,
       HloDataflowAnalysis::CanShareBuffer can_share_buffer);
 
+  // Returns string representation of buffer assignment statistics. Also
+  // calculates and returns the total fragmentation if
+  // report_total_fragmentation is true.
+  std::string StatsString(bool report_total_fragmentation = false) const;
+
   // Statistics for the assignment.  Values initialized to -1 are not always
   // collected; fragmentation is only collected for instructions that have a
   // sequential total ordering.
@@ -533,9 +538,6 @@ class BufferAssignment {
     int64_t preallocated_temp_fragmentation_bytes = -1;
     int64_t total_allocation_count = 0;
     int64_t total_allocation_bytes = 0;
-    int64_t total_fragmentation_bytes = -1;
-
-    std::string ToString() const;
   };
   const Stats& GetStats() const { return stats_; }
 
@@ -603,7 +605,10 @@ class BufferAssignment {
       std::optional<BufferValue::Color> temp_buffer_color);
 
   // Computes stats for the assignment, to be retrieved by GetStats.
-  absl::Status ComputeSummaryStats();
+  void ComputeSummaryStats();
+
+  // Calculates and returns the total fragmentation in bytes.
+  absl::StatusOr<int64_t> ComputeTotalFragmentationBytes() const;
 
   // The vector of buffer allocations. Indexed by BufferAllocation::Index.
   std::vector<BufferAllocation> allocations_;

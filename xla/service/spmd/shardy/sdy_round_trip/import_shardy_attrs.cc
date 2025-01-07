@@ -18,6 +18,7 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -44,8 +45,7 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -65,7 +65,7 @@ using ::mlir::StringRef;
 using ::mlir::SymbolTable;
 using ::mlir::func::FuncOp;
 
-using ::mlir::mhlo::CustomCallOp;
+using ::mlir::stablehlo::CustomCallOp;
 
 using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::kShardingRuleAttr;
@@ -165,17 +165,17 @@ class SdyRoundTripImportShardyAttrsPass
 
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
+
     // We can use the saved string attributes to restore the original mesh and
     // value shardings with the original mesh axis names and priorities on the
-    // sharding.
-    DictionaryAttr moduleDictAttr = getFrontendAttrs(moduleOp);
-    // If there is no `kMeshesRoundTripAttr, there were no meshes in the
-    // original Shardy model.
+    // sharding. If there is no `kMeshesRoundTripAttr, there were no meshes in
+    // the original Shardy model.
+    std::optional<DictionaryAttr> meshesAttr =
+        tryGetFrontendAttr<DictionaryAttr>(moduleOp, kMeshesRoundTripAttr);
     mlir::ArrayRef<NamedAttribute> sdyMeshes =
-        moduleDictAttr ? parseStringAttr<DictionaryAttr>(moduleDictAttr,
-                                                         kMeshesRoundTripAttr)
-                             .getValue()
-                       : mlir::ArrayRef<NamedAttribute>();
+        meshesAttr.has_value() ? meshesAttr.value().getValue()
+                               : mlir::ArrayRef<NamedAttribute>();
+
     IRRewriter rewriter(moduleOp);
     // Insert the meshes before any functions.
     rewriter.setInsertionPointToStart(moduleOp.getBody());

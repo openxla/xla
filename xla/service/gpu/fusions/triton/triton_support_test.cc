@@ -86,6 +86,7 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
     case HloOpcode::kXor:
     case HloOpcode::kNot:
       return type == PRED || pu::IsIntegralType(type);
+    case HloOpcode::kAtan2:
     case HloOpcode::kCos:
     case HloOpcode::kExp:
     case HloOpcode::kExpm1:
@@ -94,13 +95,13 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
     case HloOpcode::kRsqrt:
     case HloOpcode::kSin:
     case HloOpcode::kSqrt:
-    case HloOpcode::kCbrt:
     case HloOpcode::kTan:
     case HloOpcode::kTanh:
     case HloOpcode::kReal:
     case HloOpcode::kImag:
     case HloOpcode::kLogistic:
       return pu::IsFloatingPointType(type) || pu::IsComplexType(type);
+    case HloOpcode::kCbrt:
     case HloOpcode::kErf:
     case HloOpcode::kFloor:
     case HloOpcode::kCeil:
@@ -120,7 +121,6 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
       return pu::IsSignedIntegralType(type) || pu::IsFloatingPointType(type) ||
              pu::IsComplexType(type);
     case HloOpcode::kPower:
-    case HloOpcode::kAtan2:
     case HloOpcode::kDivide:
     case HloOpcode::kRemainder:
     case HloOpcode::kSubtract:
@@ -217,7 +217,10 @@ class TritonSupportTest : public TritonSupportTestBase {
             try { run_triton_codegen().IgnoreError(); } catch (...) {
               abort();
             },
-            "");
+            // It's not possible to find stable matching patterns for all
+            // aborting code paths that occur here, so we at least make sure
+            // that we don't interpret sanitizer errors as success.
+            ::testing::Not(::testing::HasSubstr("Sanitizer:")));
 
       } else {
         EXPECT_THAT(run_triton_codegen(), Not(IsOk()));
@@ -1108,6 +1111,24 @@ INSTANTIATE_TEST_SUITE_P(
 
 using ConstantTest = TritonSupportTestWithTypeAndDeviceParam;
 
+TEST_P(ConstantTest, ConstantEffectiveScalar) {
+  // The IsTritonSupportedReduction effectively tests the scalar constant
+  // support.
+  auto [data_type, cc] = GetParam();
+  bool dtype_is_complex = data_type == C64 || data_type == C128;
+  const std::string kHloTestTemplate =
+      absl::Substitute(R"(
+ENTRY triton_computation {
+  ROOT const = $0[1,1] constant({{$1}})
+})",
+                       "$0", dtype_is_complex ? "(0, 0)" : "0");
+
+  TF_ASSERT_OK_AND_ASSIGN(TestedInstruction ti, ParseTemplateAndGetInstruction(
+                                                    kHloTestTemplate, data_type,
+                                                    HloOpcode::kConstant));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 1}, cc);
+}
+
 TEST_P(ConstantTest, Constant2D) {
   // The IsTritonSupportedReduction effectively tests the scalar constant
   // support.
@@ -1211,6 +1232,8 @@ constexpr std::array kUnsupportedOps = {HloOpcode::kAddDependency,
                                         HloOpcode::kOutfeed,
                                         HloOpcode::kPad,
                                         HloOpcode::kPartitionId,
+                                        HloOpcode::kRaggedAllToAll,
+                                        HloOpcode::kRaggedDot,
                                         HloOpcode::kRecv,
                                         HloOpcode::kRecvDone,
                                         HloOpcode::kReduceWindow,

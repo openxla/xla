@@ -39,6 +39,8 @@ const char kSparseCorePlaneRegex[] = {
 // migrated.
 const absl::string_view kCustomPlanePrefix = "/device:CUSTOM:";
 
+const absl::string_view kScopeRangeIdTreePlaneName =
+    "/host:__ScopeRangeCallStack__";
 const absl::string_view kTpuRuntimePlaneName = "/host:TPU-runtime";
 const absl::string_view kCuptiDriverApiPlaneName = "/host:CUPTI";
 const absl::string_view kRoctracerApiPlaneName = "/host:ROCTRACER";
@@ -274,7 +276,9 @@ const StatTypeMap& GetStatTypeMap() {
        {"flops", kFlops},
        {"model_flops", kModelFlops},
        {"bytes_accessed", kBytesAccessed},
+       {"raw_bytes_accessed", kRawBytesAccessed},
        {"memory_access_breakdown", kMemoryAccessBreakdown},
+       {"shape_with_layout", kShapeWithLayout},
        {"source", kSourceInfo},
        {"model_name", kModelName},
        {"model_version", kModelVersion},
@@ -300,11 +304,21 @@ const StatTypeMap& GetStatTypeMap() {
        {"compute_cap_minor", kDevCapComputeCapMinor},
        {"peak_teraflops_per_second", kDevCapPeakTeraflopsPerSecond},
        {"peak_hbm_bw_gigabytes_per_second", kDevCapPeakHbmBwGigabytesPerSecond},
+       {"peak_cmem_rd_bw_gigabytes_per_second",
+        kDevCapPeakCmemRdBwGigabytesPerSecond},
+       {"peak_cmem_wr_bw_gigabytes_per_second",
+        kDevCapPeakCmemWrBwGigabytesPerSecond},
+       {"peak_vmem_rd_bw_gigabytes_per_second",
+        kDevCapPeakVmemRdBwGigabytesPerSecond},
+       {"peak_vmem_wr_bw_gigabytes_per_second",
+        kDevCapPeakVmemWrBwGigabytesPerSecond},
        {"peak_sram_rd_bw_gigabytes_per_second",
         kDevCapPeakSramRdBwGigabytesPerSecond},
        {"peak_sram_wr_bw_gigabytes_per_second",
         kDevCapPeakSramWrBwGigabytesPerSecond},
        {"device_vendor", kDevVendor},
+       {"has_megacore", kDevHasMegacore},
+       {"has_merged_vmem", kDevHasMergedVmem},
        // Batching related.
        {"batch_size_after_padding", kBatchSizeAfterPadding},
        {"padding_amount", kPaddingAmount},
@@ -343,36 +357,42 @@ const StatTypeMap& GetStatTypeMap() {
        {"cuda_graph_orig_id", kCudaGraphOrigId},
        {"step_idle_time_ps", kStepIdleTimePs},
        {"gpu_device_name", kGpuDeviceName},
-       {"source_stack", kSourceStack}});
+       {"source_stack", kSourceStack},
+       {"device_offset_ps", kDeviceOffsetPs},
+       {"device_duration_ps", kDeviceDurationPs},
+       {"scope_range_id", kScopeRangeId},
+       {"core_details", kCoreDetails}});
   DCHECK_EQ(stat_type_map->size(), kNumStatTypes);
   return *stat_type_map;
 }
 
 const MegaScaleStatTypeMap& GetMegaScaleStatTypeMap() {
-  static auto* stat_type_map = new MegaScaleStatTypeMap({
-      {"graph_key", kMegaScaleGraphKey},
-      {"local_device_id", kMegaScaleLocalDeviceId},
-      {"num_actions", kMegaScaleNumActions},
-      {"collective_type", kMegaScaleCollectiveType},
-      {"input_size", kMegaScaleInputSize},
-      {"slack_us", kMegaScaleSlackUs},
-      {"action_type", kMegaScaleActionType},
-      {"start_end_type", kMegaScaleStartEndType},
-      {"action_index", kMegaScaleActionIndex},
-      {"action_duration_ns", kMegaScaleActionDurationNs},
-      {"action_inputs", kMegaScaleActionInputs},
-      {"transfer_source", kMegaScaleTransferSource},
-      {"transfer_destinations", kMegaScaleTransferDestinations},
-      {"buffer_sizes", kMegaScaleBufferSizes},
-      {"compute_operation", kMegaScaleComputeOperation},
-      {"chunk", kMegaScaleChunk},
-      {"launch_id", kMegaScaleLaunchId},
-      {"loop_iteration", kMegaScaleLoopIteration},
-      {"transmission_budget_us", kMegaScaleTransmissionBudgetUs},
-      {"delay_budget_us", kMegaScaleDelayBudgetUs},
-      {"graph_protos", kMegaScaleGraphProtos},
-      {"network_transport_latency_us", kMegaScaleNetworkTransportLatency},
-  });
+  static auto* stat_type_map = new MegaScaleStatTypeMap(
+      {{"graph_key", kMegaScaleGraphKey},
+       {"local_device_id", kMegaScaleLocalDeviceId},
+       {"num_actions", kMegaScaleNumActions},
+       {"collective_type", kMegaScaleCollectiveType},
+       {"input_size", kMegaScaleInputSize},
+       {"slack_us", kMegaScaleSlackUs},
+       {"action_type", kMegaScaleActionType},
+       {"start_end_type", kMegaScaleStartEndType},
+       {"action_index", kMegaScaleActionIndex},
+       {"action_duration_ns", kMegaScaleActionDurationNs},
+       {"action_inputs", kMegaScaleActionInputs},
+       {"transfer_source", kMegaScaleTransferSource},
+       {"transfer_destinations", kMegaScaleTransferDestinations},
+       {"dcn_topology_level", kMegaScaleTransferDcnTopologyLevel},
+       {"buffer_sizes", kMegaScaleBufferSizes},
+       {"compute_operation", kMegaScaleComputeOperation},
+       {"chunk", kMegaScaleChunk},
+       {"launch_id", kMegaScaleLaunchId},
+       {"loop_iteration", kMegaScaleLoopIteration},
+       {"transmission_budget_us", kMegaScaleTransmissionBudgetUs},
+       {"delay_budget_us", kMegaScaleDelayBudgetUs},
+       {"graph_protos", kMegaScaleGraphProtos},
+       {"network_transport_latency_us", kMegaScaleNetworkTransportLatency},
+       {"hlo_module", kMegaScaleHloModule},
+       {"multi_slice_topology", kMegaScaleMultiSliceTopology}});
   DCHECK_EQ(stat_type_map->size(), kNumMegaScaleStatTypes);
   return *stat_type_map;
 }
@@ -521,7 +541,6 @@ bool IsInternalEvent(std::optional<int64_t> event_type) {
 }
 
 bool IsInternalStat(std::optional<int64_t> stat_type) {
-  // TODO(b/162102421): Introduce a prefix for internal stat names.
   if (!stat_type.has_value()) return false;
   switch (*stat_type) {
     case StatType::kKernelDetails:
@@ -531,7 +550,6 @@ bool IsInternalStat(std::optional<int64_t> stat_type) {
     case StatType::kConsumerId:
     case StatType::kIsRoot:
     case StatType::kFlops:
-    case StatType::kBytesAccessed:
     case StatType::kProgramId:
     case StatType::kSymbolId:
       return true;

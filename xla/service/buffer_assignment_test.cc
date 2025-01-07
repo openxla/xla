@@ -30,6 +30,8 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -37,17 +39,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/flatten_call_graph.h"
 #include "xla/service/hlo.pb.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
-#include "xla/service/hlo_memory_scheduler.h"
-#include "xla/service/hlo_ordering.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
@@ -2836,7 +2836,7 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
 
   LOG(INFO) << buffers->ToString();
 
-  auto get_slice = [&](std::string_view hlo_name, const ShapeIndex& index) {
+  auto get_slice = [&](absl::string_view hlo_name, const ShapeIndex& index) {
     return buffers->GetUniqueSlice(FindInstruction(m.get(), hlo_name), index)
         .value();
   };
@@ -2929,7 +2929,7 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
 
   LOG(INFO) << buffers->ToString();
 
-  auto get_slice = [&](std::string_view hlo_name, const ShapeIndex& index) {
+  auto get_slice = [&](absl::string_view hlo_name, const ShapeIndex& index) {
     return buffers->GetUniqueSlice(FindInstruction(m.get(), hlo_name), index)
         .value();
   };
@@ -3040,7 +3040,7 @@ ENTRY %main (a: f32[4096], b: f32[4096]) -> f32[4096] {
 
   LOG(INFO) << buffers->ToString();
 
-  auto get_slice = [&](std::string_view hlo_name, const ShapeIndex& index) {
+  auto get_slice = [&](absl::string_view hlo_name, const ShapeIndex& index) {
     return buffers->GetUniqueSlice(FindInstruction(m.get(), hlo_name), index)
         .value();
   };
@@ -3104,7 +3104,7 @@ TEST_F(BufferAssignmentTest, AsyncCallImplicitSharding) {
 
   LOG(INFO) << buffers->ToString();
 
-  auto get_slice = [&](std::string_view hlo_name, const ShapeIndex& index) {
+  auto get_slice = [&](absl::string_view hlo_name, const ShapeIndex& index) {
     return buffers
         ->GetUniqueSlice(FindInstruction(module.get(), hlo_name), index)
         .value();

@@ -22,6 +22,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 #include "xla/tsl/profiler/utils/math_utils.h"
@@ -396,6 +397,7 @@ TEST(XplaneUtilsTest, FindMutablePlanesWithPredicate) {
 TEST(XplaneUtilsTest, TestAggregateXPlanes) {
   XPlane xplane;
   XPlaneBuilder builder(&xplane);
+  builder.SetId(123);
   auto& event_metadata1 = *builder.GetOrCreateEventMetadata("EventMetadata1");
   auto& event_metadata2 = *builder.GetOrCreateEventMetadata("EventMetadata2");
   auto& event_metadata3 = *builder.GetOrCreateEventMetadata("EventMetadata3");
@@ -441,6 +443,7 @@ TEST(XplaneUtilsTest, TestAggregateXPlanes) {
   XPlane aggregated_xplane;
   AggregateXPlane(xplane, aggregated_xplane);
 
+  EXPECT_EQ(aggregated_xplane.id(), 123);
 // Protobuf matchers are unavailable in OSS (b/169705709)
 #if defined(PLATFORM_GOOGLE)
   // TODO(b/238349654): Proto matcher are ineffective for XPlanes.
@@ -448,7 +451,8 @@ TEST(XplaneUtilsTest, TestAggregateXPlanes) {
       aggregated_xplane,
       IgnoringFields(
           {"tensorflow.profiler.XEvent.metadata_id",
-           "tensorflow.profiler.XPlane.event_metadata"},
+           "tensorflow.profiler.XPlane.event_metadata",
+           "tensorflow.profiler.XPlane.id"},
           IgnoringRepeatedFieldOrdering(EqualsProto(
               R"pb(lines {
                      id: 1
@@ -516,6 +520,137 @@ TEST(XplaneUtilsTest, TestAggregateXPlanes) {
                                    "EventMetadata3", "EventMetadata4",
                                    "StepEventMetadata1", "StepEventMetadata2"));
 #endif
+}
+
+TEST(XplaneUtilsTest, TestAggregateXPlanesWithNonUniqueMetadataNames) {
+  XPlane xplane;
+  XPlaneBuilder builder(&xplane);
+  const XStatMetadata& program_id_stat =
+      *builder.GetOrCreateStatMetadata(GetStatTypeStr(StatType::kProgramId));
+  XEventMetadata& event_metadata1 =
+      *builder.GetOrCreateEventMetadata("EventMetadata1");
+  XStatsBuilder<XEventMetadata> event_metadata1_stats(&event_metadata1,
+                                                      &builder);
+  event_metadata1_stats.AddStatValue(program_id_stat, 1);
+  XEventMetadata& event_metadata1p2 = *builder.CreateEventMetadata();
+  event_metadata1p2.set_name("EventMetadata1");
+  XStatsBuilder<XEventMetadata> event_metadata1p2_stats(&event_metadata1p2,
+                                                        &builder);
+  event_metadata1p2_stats.AddStatValue(program_id_stat, 2);
+  XEventMetadata& step_event_metadata1 =
+      *builder.GetOrCreateEventMetadata("StepEventMetadata1");
+  XEventMetadata& step_event_metadata1p2 =
+      *builder.GetOrCreateEventMetadata("StepEventMetadata2");
+
+  XLineBuilder step_line = builder.GetOrCreateLine(1);
+  step_line.SetName(kStepLineName);
+  XEventBuilder step1 = step_line.AddEvent(step_event_metadata1);
+  step1.SetOffsetNs(0);
+  step1.SetDurationNs(10);
+  XEventBuilder step2 = step_line.AddEvent(step_event_metadata1p2);
+  step2.SetOffsetNs(10);
+  step2.SetDurationNs(10);
+
+  XLineBuilder xla_line = builder.GetOrCreateLine(2);
+  xla_line.SetName(kXlaOpLineName);
+  XEventBuilder event1 = xla_line.AddEvent(event_metadata1);
+  event1.SetOffsetNs(0);
+  event1.SetDurationNs(5);
+  XEventBuilder event2 = xla_line.AddEvent(event_metadata1p2);
+  event2.SetOffsetNs(0);
+  event2.SetDurationNs(5);
+  XEventBuilder event3 = xla_line.AddEvent(event_metadata1);
+  event3.SetOffsetNs(5);
+  event3.SetDurationNs(5);
+  XEventBuilder event4 = xla_line.AddEvent(event_metadata1p2);
+  event4.SetOffsetNs(5);
+  event4.SetDurationNs(5);
+
+  XPlane aggregated_xplane;
+  AggregateXPlane(xplane, aggregated_xplane);
+
+  absl::flat_hash_set<int64_t> program_ids;
+  for (const auto& [id, event_metadata] : aggregated_xplane.event_metadata()) {
+    if (event_metadata.name() == "EventMetadata1") {
+      program_ids.insert(event_metadata.stats(0).int64_value());
+    }
+  }
+  EXPECT_TRUE(program_ids.contains(1));
+  EXPECT_TRUE(program_ids.contains(2));
+}
+
+TEST(XPlaneUtilsTest, TestAggregateXPlaneWithCycleStats) {
+  XPlane xplane;
+  XPlaneBuilder builder(&xplane);
+  const XStatMetadata& device_offset_stat = *builder.GetOrCreateStatMetadata(
+      GetStatTypeStr(StatType::kDeviceOffsetPs));
+  const XStatMetadata& device_duration_stat = *builder.GetOrCreateStatMetadata(
+      GetStatTypeStr(StatType::kDeviceDurationPs));
+
+  const XEventMetadata& event_metadata1 =
+      *builder.GetOrCreateEventMetadata("EventMetadata1");
+  const XEventMetadata& event_metadata2 =
+      *builder.GetOrCreateEventMetadata("EventMetadata2");
+  const XEventMetadata& event_metadata3 =
+      *builder.GetOrCreateEventMetadata("EventMetadata3");
+
+  XLineBuilder line = builder.GetOrCreateLine(1);
+  line.SetName(kXlaOpLineName);
+  XEventBuilder event1 = line.AddEvent(event_metadata1);
+  event1.SetOffsetNs(0);
+  event1.SetDurationNs(5);
+  event1.AddStatValue(device_offset_stat, 50);
+  event1.AddStatValue(device_duration_stat, 4950);
+  XEventBuilder event2 = line.AddEvent(event_metadata2);
+  event2.SetOffsetNs(2);
+  event2.SetDurationNs(1);
+  event2.AddStatValue(device_offset_stat, 1950);
+  event2.AddStatValue(device_duration_stat, 890);
+  XEventBuilder event3 = line.AddEvent(event_metadata3);
+  event3.SetOffsetNs(3);
+  event3.SetDurationNs(2);
+  event3.AddStatValue(device_offset_stat, 2950);
+  event3.AddStatValue(device_duration_stat, 2050);
+  XEventBuilder event4 = line.AddEvent(event_metadata1);
+  event4.SetOffsetNs(5);
+  event4.SetDurationNs(5);
+  event4.AddStatValue(device_offset_stat, 5000);
+  event4.AddStatValue(device_duration_stat, 4950);
+  XEventBuilder event5 = line.AddEvent(event_metadata2);
+  event5.SetOffsetNs(7);
+  event5.SetDurationNs(1);
+  event5.AddStatValue(device_offset_stat, 7050);
+  event5.AddStatValue(device_duration_stat, 900);
+  XEventBuilder event6 = line.AddEvent(event_metadata3);
+  event6.SetOffsetNs(8);
+  event6.SetDurationNs(2);
+  event6.AddStatValue(device_offset_stat, 8050);
+  event6.AddStatValue(device_duration_stat, 1900);
+
+  XPlane aggregated_xplane;
+  AggregateXPlane(xplane, aggregated_xplane);
+
+  XPlaneVisitor visitor = CreateTfXPlaneVisitor(&aggregated_xplane);
+  visitor.ForEachLine([&](const XLineVisitor& line) {
+    EXPECT_EQ(line.Name(), kXlaOpLineName);
+    line.ForEachEvent([&](const XEventVisitor& event) {
+      EXPECT_EQ(event.OffsetPs(), 0);
+      if (event.Metadata().Name() == "EventMetadata1") {
+        EXPECT_EQ(event.NumOccurrences(), 2);
+        EXPECT_EQ(event.DurationPs(), 9900);
+        EXPECT_EQ((*event.GetStat(StatType::kSelfDurationPs)).IntOrUintValue(),
+                  4160);
+      }
+      if (event.Metadata().Name() == "EventMetadata2") {
+        EXPECT_EQ(event.NumOccurrences(), 2);
+        EXPECT_EQ(event.DurationPs(), 1790);
+      }
+      if (event.Metadata().Name() == "EventMetadata3") {
+        EXPECT_EQ(event.NumOccurrences(), 2);
+        EXPECT_EQ(event.DurationPs(), 3950);
+      }
+    });
+  });
 }
 
 TEST(XPlanuUtilsTest, TestInstantEventDoesNotFail) {

@@ -23,7 +23,6 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/runtime/command_buffer_cmd.h"
 #include "xla/service/gpu/runtime/conditional_thunk.h"
 #include "xla/service/gpu/runtime/copy_thunk.h"
@@ -162,34 +161,51 @@ static absl::StatusOr<Command> Convert(
 static absl::StatusOr<Command> Convert(const NcclAllReduceStartThunk& thunk) {
   return std::make_unique<AllReduceCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
-      thunk.buffers());
+      thunk.config(), thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(
     const NcclReduceScatterStartThunk& thunk) {
   return std::make_unique<ReduceScatterCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.reduction_kind(),
-      thunk.buffers());
+      thunk.config(), thunk.reduction_kind(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclAllToAllStartThunk& thunk) {
   return std::make_unique<AllToAllCmd>(
       thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.has_split_dimension(),
-      thunk.buffers());
+      thunk.config(), thunk.has_split_dimension(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclAllGatherStartThunk& thunk) {
-  return std::make_unique<AllGatherCmd>(
-      thunk.nccl_execution_stream_id(), thunk.execution_stream_id(),
-      thunk.nccl_api(), thunk.config(), thunk.buffers());
+  return std::make_unique<AllGatherCmd>(thunk.nccl_execution_stream_id(),
+                                        thunk.execution_stream_id(),
+                                        thunk.config(), thunk.buffers());
 }
 
 static absl::StatusOr<Command> Convert(const NcclCollectiveDoneThunk& thunk) {
   return std::make_unique<BarrierCmd>(thunk.execution_stream_id(),
                                       thunk.nccl_execution_stream_id());
+}
+
+static absl::StatusOr<Command> Convert(const DynamicSliceThunk& thunk) {
+  auto cmd_sequence = std::make_unique<CommandBufferCmdSequence>();
+  auto embed_thunk = thunk.get_embeded_thunk();
+  TF_RETURN_IF_ERROR(AppendCommands(
+      *cmd_sequence, embed_thunk->thunks(),
+      CommandBufferCmdSequence::SynchronizationMode::kAutomatic));
+
+  auto& thunk_fake_allocations = thunk.get_fake_allocations();
+  std::vector<std::unique_ptr<BufferAllocation>> fake_allocations;
+  for (auto it = thunk_fake_allocations.begin();
+       it != thunk_fake_allocations.end(); ++it) {
+    fake_allocations.push_back(std::make_unique<BufferAllocation>(**it));
+  }
+  return std::make_unique<DynamicSliceFusionCmd>(
+      thunk.execution_stream_id(), std::move(cmd_sequence),
+      thunk.get_arguments(), std::move(fake_allocations), thunk.get_offsets(),
+      thunk.get_orig_shapes(), thunk.get_sliced_shapes(),
+      thunk.get_offset_byte_sizes());
 }
 
 static absl::StatusOr<Command> Convert(const PartitionIdThunk& thunk) {
@@ -205,9 +221,16 @@ static absl::StatusOr<Command> Convert(const ReplicaIdThunk& thunk) {
 }
 
 static absl::StatusOr<Command> Convert(const CustomCallThunk& thunk) {
-  return std::make_unique<CustomCallCmd>(thunk.execution_stream_id(),
-                                         thunk.call_target(), thunk.operands(),
-                                         thunk.results(), thunk.opaque());
+  if (auto bundle = thunk.bundle(); bundle.has_value()) {
+    return std::make_unique<CustomCallCmd>(
+        thunk.execution_stream_id(), thunk.target_name(), bundle->execute,
+        thunk.operands(), thunk.results(), thunk.attributes(),
+        /*called_computation=*/nullptr);  // TODO(b/342285364)
+  } else {
+    return std::make_unique<CustomCallCmd>(
+        thunk.execution_stream_id(), thunk.target_name(), thunk.call_target(),
+        thunk.operands(), thunk.results(), thunk.opaque());
+  }
 }
 
 static absl::StatusOr<Command> Convert(const CuDnnThunk& thunk) {
@@ -301,6 +324,9 @@ static absl::Status AppendCommands(
     case Thunk::Kind::kNcclReduceScatterDone:
     case Thunk::Kind::kNcclAllToAllDone:
       return append(Convert<NcclCollectiveDoneThunk>(thunk));
+
+    case Thunk::Kind::kDynamicSlice:
+      return append(Convert<DynamicSliceThunk>(thunk));
 
     case Thunk::Kind::kWaitForStreams:
       return append(Convert<WaitForStreamsThunk>(thunk));

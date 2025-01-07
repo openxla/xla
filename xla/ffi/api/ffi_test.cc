@@ -364,6 +364,10 @@ TEST(FfiTest, AnyBufferArgument) {
 
   auto handler = Ffi::Bind().Arg<AnyBuffer>().To([&](auto buffer) {
     EXPECT_EQ(buffer.untyped_data(), storage.data());
+    EXPECT_EQ(buffer.template typed_data<float>(),
+              reinterpret_cast<float*>(storage.data()));
+    EXPECT_EQ(buffer.template reinterpret_data<int32_t>(),
+              reinterpret_cast<int32_t*>(storage.data()));
     EXPECT_EQ(buffer.dimensions().size(), 2);
     return Error::Success();
   });
@@ -400,6 +404,8 @@ TEST(FfiTest, AnyBufferResult) {
 
   auto handler = Ffi::Bind().Ret<AnyBuffer>().To([&](Result<AnyBuffer> buffer) {
     EXPECT_EQ(buffer->untyped_data(), storage.data());
+    EXPECT_EQ(buffer->template typed_data<float>(),
+              reinterpret_cast<float*>(storage.data()));
     EXPECT_EQ(buffer->dimensions().size(), 2);
     return Error::Success();
   });
@@ -1179,6 +1185,11 @@ TEST(FfiTest, ThreadPool) {
   Eigen::ThreadPoolDevice device(pool.AsEigenThreadPool(), pool.NumThreads());
 
   auto fn = [&](ThreadPool thread_pool) {
+    // Check that we can get the size of the underlying thread pool.
+    if (thread_pool.num_threads() != 2) {
+      return Error::Internal("Wrong number of threads");
+    }
+
     // Use a pair of blocking counters to check that scheduled task was executed
     // on a thread pool (it would deadlock if executed inline).
     absl::BlockingCounter prepare(1);

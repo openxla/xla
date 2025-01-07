@@ -1,7 +1,7 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "friends",
@@ -110,6 +110,8 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_set",
@@ -137,6 +139,7 @@ xla_cc_test(
     deps = [
         ":ifrt",
         ":mock",
+        "//xla/tsl/concurrency:ref_count",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
     ],
@@ -170,6 +173,20 @@ xla_cc_test(
 tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
+    protodeps = [":attribute_map_proto"],
+)
+
+xla_cc_test(
+    name = "executable_test",
+    size = "small",
+    srcs = ["executable_test.cc"],
+    deps = [
+        ":attribute_map",
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
 )
 
 xla_cc_test(
@@ -399,6 +416,7 @@ cc_library(
         "//xla/pjrt:pjrt_layout",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -470,6 +488,7 @@ cc_library(
         ":ifrt",
         ":serdes",
         ":sharding_serdes_proto_cc",
+        "//xla/python/ifrt/ir:sharding_param",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -488,6 +507,7 @@ xla_cc_test(
         ":serdes",
         ":serdes_proto_cc",
         ":sharding_serdes",
+        "//xla/python/ifrt/ir:sharding_param",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
@@ -575,6 +595,7 @@ xla_cc_test(
         ":ifrt",
         ":sharding_serdes",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
@@ -599,6 +620,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -622,6 +644,7 @@ tf_proto_library(
     protodeps = [
         ":device_proto",
         ":shape_proto",
+        "//xla/python/ifrt/ir:sharding_param_proto",
     ],
 )
 
@@ -722,6 +745,7 @@ xla_cc_test(
         ":ifrt",
         ":program_serdes",
         ":serdes",
+        ":serdes_proto_cc",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/functional:bind_front",

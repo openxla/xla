@@ -43,10 +43,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "tsl/platform/errors.h"
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#endif
-
 namespace xla {
 namespace gpu {
 
@@ -55,17 +51,17 @@ using xla::ffi::CallFrameBuilder;
 using xla::ffi::CallOptions;
 
 absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
-    ThunkInfo thunk_info, CustomCallTarget call_target,
+    ThunkInfo thunk_info, std::string target_name, CustomCallTarget call_target,
     std::vector<std::optional<Slice>> operands,
     std::vector<std::optional<Slice>> results, const std::string& opaque) {
-  return absl::WrapUnique(
-      new CustomCallThunk(thunk_info, std::move(call_target),
-                          std::move(operands), std::move(results), opaque));
+  return absl::WrapUnique(new CustomCallThunk(
+      thunk_info, std::move(target_name), std::move(call_target),
+      std::move(operands), std::move(results), opaque));
 }
 
 absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
-    ThunkInfo thunk_info, XLA_FFI_Handler_Bundle bundle,
-    std::vector<std::optional<Slice>> operands,
+    ThunkInfo thunk_info, std::string target_name,
+    XLA_FFI_Handler_Bundle bundle, std::vector<std::optional<Slice>> operands,
     std::vector<std::optional<Slice>> results, AttributesMap attributes,
     const HloComputation* called_computation) {
   auto execution_state = std::make_unique<ffi::ExecutionState>();
@@ -89,28 +85,31 @@ absl::StatusOr<std::unique_ptr<CustomCallThunk>> CustomCallThunk::Create(
   }
 
   return absl::WrapUnique(new CustomCallThunk(
-      thunk_info, bundle, std::move(operands), std::move(results),
-      std::move(attributes), std::move(execution_state), called_computation));
+      thunk_info, std::move(target_name), bundle, std::move(operands),
+      std::move(results), std::move(attributes), std::move(execution_state),
+      called_computation));
 }
 
-CustomCallThunk::CustomCallThunk(ThunkInfo thunk_info,
+CustomCallThunk::CustomCallThunk(ThunkInfo thunk_info, std::string target_name,
                                  CustomCallTarget call_target,
                                  std::vector<std::optional<Slice>> operands,
                                  std::vector<std::optional<Slice>> results,
                                  const std::string& opaque)
     : Thunk(Thunk::kCustomCall, thunk_info),
+      target_name_(std::move(target_name)),
       operands_(std::move(operands)),
       results_(std::move(results)),
       call_target_(std::move(call_target)),
       opaque_(opaque) {}
 
 CustomCallThunk::CustomCallThunk(
-    ThunkInfo thunk_info, XLA_FFI_Handler_Bundle bundle,
-    std::vector<std::optional<Slice>> operands,
+    ThunkInfo thunk_info, std::string target_name,
+    XLA_FFI_Handler_Bundle bundle, std::vector<std::optional<Slice>> operands,
     std::vector<std::optional<Slice>> results, AttributesMap attributes,
     std::unique_ptr<ffi::ExecutionState> execution_state,
     const HloComputation* called_computation)
     : Thunk(Thunk::kCustomCall, thunk_info),
+      target_name_(std::move(target_name)),
       operands_(std::move(operands)),
       results_(std::move(results)),
       bundle_(bundle),
@@ -137,10 +136,8 @@ absl::Status CustomCallThunk::ExecuteCustomCall(const ExecuteParams& params) {
     }
   }
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-  auto gpu_stream = se::gpu::AsGpuStreamValue(params.stream);
   XlaCustomCallStatus custom_call_status;
-  call_target_(gpu_stream, buffers.data(), opaque_.data(), opaque_.size(),
+  call_target_(params.stream, buffers.data(), opaque_.data(), opaque_.size(),
                &custom_call_status);
   auto message = CustomCallStatusGetMessage(&custom_call_status);
   if (message) {
@@ -148,11 +145,6 @@ absl::Status CustomCallThunk::ExecuteCustomCall(const ExecuteParams& params) {
   } else {
     return absl::OkStatus();
   }
-#else   //  GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-  return Unavailable(
-      "Custom calls on GPU are not supported in this configuration. Please "
-      "build with --config=cuda or --config=rocm");
-#endif  //   GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(

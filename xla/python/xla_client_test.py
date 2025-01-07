@@ -52,7 +52,6 @@ except ImportError:
 xla_client._xla.jax_jit.set_thread_local_state_initialization_callback(
     lambda: None
 )
-xla_client._xla.jax_jit.global_state().enable_memories = False
 
 bfloat16 = xla_client.bfloat16
 # TODO(reedwm): Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
@@ -204,8 +203,10 @@ def TestFactory(xla_backend,
       if self.backend.platform == "cpu" and not _CUSTOM_CALLS_REGISTERED:
         for name, fn in custom_calls_testlib.registrations().items():
           xla_client.register_custom_call_target(
-              name, {"execute": fn}, platform="cpu", api_version=1
+              name, fn, platform="cpu", api_version=1
           )
+        for name, val in custom_calls_testlib.type_ids().items():
+          xla_client.register_custom_type_id(name, val, platform="cpu")
         _CUSTOM_CALLS_REGISTERED = True
 
     def _NewComputation(self, name=None):
@@ -323,7 +324,9 @@ def TestFactory(xla_backend,
           xla_computation_to_mlir_module(computation))
       fingerprint = executable.fingerprint
       if (
-          self.backend.platform == "tpu" or self.backend.platform == "gpu"
+          self.backend.platform == "tpu"
+          or self.backend.platform == "gpu"
+          or self.backend.platform == "cpu"
       ) and not (cloud_tpu or pathways or pathways_ifrt):
         logging.info("fingerprint: %s", fingerprint)
         self.assertNotEmpty(fingerprint)
@@ -616,6 +619,21 @@ def TestFactory(xla_backend,
           api_version=xla_client.ops.CustomCallApiVersion.API_VERSION_TYPED_FFI,
       )
       self._ExecuteAndCompareClose(c, expected=[-1.75])
+
+    def testStatefulCustomCall(self):
+      if self.backend.platform != "cpu":
+        self.skipTest("Test requires cpu platform")
+      c = self._NewComputation()
+      ops.CustomCallWithLayout(
+          c,
+          b"stateful",
+          operands=[],
+          shape_with_layout=xla_client.Shape.array_shape(
+              np.dtype(np.int32), (), ()),
+          operand_shapes_with_layout=[],
+          api_version=xla_client.ops.CustomCallApiVersion
+          .API_VERSION_TYPED_FFI)
+      self._ExecuteAndCompareClose(c, expected=[42])
 
     def testCustomCallLookup(self):
       if self.backend.platform != "cpu":
@@ -1600,6 +1618,14 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       c = self._NewComputation()
       arr = NumpyArrayF32([3.3, 12.1])
       ops.Exp(ops.Constant(c, arr))
+      self._ExecuteAndCompareClose(c, expected=[np.exp(arr)])
+
+    def testExpWithResultAccuracy(self):
+      c = self._NewComputation()
+      arr = NumpyArrayF32([3.3, 12.1])
+      accuracy = xla_client.ResultAccuracy()
+      accuracy.mode = xla_client.ResultAccuracyMode.DEFAULT
+      ops.Exp(ops.Constant(c, arr), accuracy)
       self._ExecuteAndCompareClose(c, expected=[np.exp(arr)])
 
     def testExpm1(self):
@@ -2726,6 +2752,17 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
   class DeviceTest(ComputationTest):
 
+    def testDevices(self):
+      self.assertNotEmpty(self.backend.devices())
+
+    def testLocalDevices(self):
+      self.assertNotEmpty(self.backend.local_devices())
+
+    def testGetAllDevices(self):
+      # TODO(hyeontaek): Remove this method once we have a unified API for
+      # enumerating devices with different criteria.
+      self.assertNotEmpty(self.backend._get_all_devices())  # pylint: disable=protected-access
+
     def testPlatform(self):
       for device in self.backend.local_devices():
         self.assertEqual(device.platform, self.backend.platform)
@@ -2904,29 +2941,53 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       del self.cpu_backend
       del self.gpu_backend
 
-    def _DLPackManagedTensorToBuffer(self, tensor, use_legacy_api):
+    @classmethod
+    def _GetStreamFromDevice(cls, device):
+      try:
+        return device.get_stream_for_external_ready_events()
+      except xla_client.XlaRuntimeError as err:  # type: ignore
+        if "UNIMPLEMENTED" in str(err):
+          return None
+        else:
+          raise
+
+    def _DLPackManagedTensorToBuffer(
+        self, tensor, use_legacy_api, backend=None
+    ):
       if use_legacy_api:
         return xla_client._xla.dlpack_managed_tensor_to_buffer(
             tensor, self.cpu_backend, self.gpu_backend
         )
       else:
-        device = self.backend.local_devices()[0]
+        if not backend:
+          backend = self.backend
+        device = backend.local_devices()[0]
+        stream = DLPackTest._GetStreamFromDevice(device)
         return xla_client._xla.dlpack_managed_tensor_to_buffer(
-            tensor, device, None
+            tensor, device, stream
         )
 
     # pylint: disable=g-complex-comprehension
     # pyformat: disable
-    @parameterized.named_parameters({
-        "testcase_name": "{}_gpu={}".format(
-            FormatShapeAndDtype(shape, dtype), gpu),
-        "dtype": dtype,
-        "shape": shape,
-        "gpu": gpu
-    } for dtype in dlpack_dtypes for shape in testcase_shapes
-                                    for gpu in [False, True])
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "{}_gpu={}{}".format(
+                FormatShapeAndDtype(shape, dtype),
+                gpu,
+                "_legacy" if use_legacy_api else "",
+            ),
+            "dtype": dtype,
+            "shape": shape,
+            "gpu": gpu,
+            "use_legacy_api": use_legacy_api,
+        }
+        for dtype in dlpack_dtypes
+        for shape in testcase_shapes
+        for gpu in [False, True]
+        for use_legacy_api in [False, True]
+    )
     # pyformat: enable
-    def testRoundTrip(self, dtype, shape, gpu):
+    def testRoundTrip(self, dtype, shape, gpu, use_legacy_api):
       if gpu and self.gpu_backend is None:
         raise unittest.SkipTest("Test not running with GPU support")
       backend = self.gpu_backend if gpu else self.cpu_backend
@@ -2938,36 +2999,45 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       dlt = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
       del buffer  # Free "buffer" to make sure dlt retains ownership.
       self.assertEqual(type(dlt).__name__, "PyCapsule")
-      y = xla_client._xla.dlpack_managed_tensor_to_buffer(
-          dlt, self.cpu_backend, self.gpu_backend)
+      y = self._DLPackManagedTensorToBuffer(dlt, use_legacy_api, backend)
       np.testing.assert_array_equal(
           x.astype(np.uint8) if dtype == np.bool_ else x, np.asarray(y))
 
-    def testTensorsCanBeConsumedOnceOnly(self):
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "{}".format("_legacy" if use_legacy_api else ""),
+            "use_legacy_api": use_legacy_api,
+        }
+        for use_legacy_api in [False, True]
+    )
+    def testTensorsCanBeConsumedOnceOnly(self, use_legacy_api):
       x = np.array(np.random.rand(3, 4, 5, 6), dtype=np.float32)
       buffer = self.backend.buffer_from_pyval(x)
       dlt = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
 
       def ConsumeDLPackTensor():
-        _ = xla_client._xla.dlpack_managed_tensor_to_buffer(
-            dlt, self.cpu_backend, self.gpu_backend
-        )
+        _ = self._DLPackManagedTensorToBuffer(dlt, use_legacy_api)
 
       ConsumeDLPackTensor()
       self.assertRaisesRegex(
           RuntimeError, ".*a DLPack tensor may be consumed at most once.*",
           ConsumeDLPackTensor)
 
-    def testNonOwnedDlpackCanBeViewedTwice(self):
+    @parameterized.named_parameters(
+        {
+            "testcase_name": "{}".format("_legacy" if use_legacy_api else ""),
+            "use_legacy_api": use_legacy_api,
+        }
+        for use_legacy_api in [False, True]
+    )
+    def testNonOwnedDlpackCanBeViewedTwice(self, use_legacy_api):
       x = np.array(np.random.rand(3, 4, 5, 6), dtype=np.float32)
       buffer = self.backend.buffer_from_pyval(x)
       d1 = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
       d2 = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
 
-      y = xla_client._xla.dlpack_managed_tensor_to_buffer(
-          d1, self.cpu_backend, self.gpu_backend)
-      z = xla_client._xla.dlpack_managed_tensor_to_buffer(
-          d2, self.cpu_backend, self.gpu_backend)
+      y = self._DLPackManagedTensorToBuffer(d1, use_legacy_api)
+      z = self._DLPackManagedTensorToBuffer(d2, use_legacy_api)
       del d1, d2
       np.testing.assert_array_equal(x, np.asarray(buffer))
       np.testing.assert_array_equal(x, np.asarray(y))
@@ -3240,7 +3310,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       version = self.backend.platform_version
       logging.info("platform_version:\n%s", version)
       if self.backend.platform == "cpu":
-        self.assertEqual(version, "<unknown>")
+        self.assertEqual(version, "cpu")
       elif self.backend.platform in ("gpu", "cuda", "rocm"):
         # Following is false if not built with --config=cuda
         if version != "<unknown>":
@@ -3334,6 +3404,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       deb_opt.xla_gpu_kernel_cache_file = "/foo/bar"
       deb_opt.xla_gpu_enable_llvm_module_compilation_parallelism = True
       deb_opt.xla_gpu_per_fusion_autotune_cache_dir = "/bar/foo/"
+      deb_opt.xla_gpu_experimental_autotune_cache_mode = (
+          xla_client.AutotuneCacheMode.READ
+      )
 
       b = options.SerializeAsString()
       restored = xla_client.CompileOptions.ParseFromString(b)
@@ -3354,6 +3427,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           "xla_gpu_kernel_cache_file",
           "xla_gpu_enable_llvm_module_compilation_parallelism",
           "xla_gpu_per_fusion_autotune_cache_dir",
+          "xla_gpu_experimental_autotune_cache_mode",
       ):
         self.assertEqual(
             getattr(options.executable_build_options.debug_options, name),

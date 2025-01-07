@@ -16,9 +16,10 @@ limitations under the License.
 #include "xla/hlo/translate/hlo_to_mhlo/custom_call_importer.h"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
-#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/AsmParser/AsmParser.h"

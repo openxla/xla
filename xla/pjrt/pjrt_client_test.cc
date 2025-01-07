@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_client_test.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -28,9 +29,9 @@ limitations under the License.
 #include "xla/cpu_function_runtime.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/test.h"
@@ -453,7 +454,8 @@ TEST(PjRtClientTest, CopyToDeviceAsyncExternalCpuOnly) {
     GTEST_SKIP() << "This test is for CPU only.";
   }
 
-  std::vector<int32_t> data(4, 0);
+  alignas(cpu_function_runtime::MinAlign()) std::array<int32_t, 4> data;
+  data.fill(0);
   auto* data_ptr = data.data();
   Shape shape = ShapeUtil::MakeShape(S32, {4});
   TF_ASSERT_OK_AND_ASSIGN(
@@ -461,8 +463,7 @@ TEST(PjRtClientTest, CopyToDeviceAsyncExternalCpuOnly) {
       client->CreateViewOfDeviceBuffer(
           data_ptr, shape, client->addressable_devices()[0],
           /*on_delete_callback=*/[data = std::move(data)]() mutable {
-            data.clear();
-            data.shrink_to_fit();
+            (void)data;
           }));
 
   auto* device_1 = client->addressable_devices()[1];
@@ -499,11 +500,12 @@ TEST(PjRtClientTest, CreateViewOfUnalignedBufferReturnsErrorCpuOnly) {
     GTEST_SKIP() << "This test is for CPU only.";
   }
 
-  alignas(cpu_function_runtime::MinAlign()) int32_t data[5];
+  alignas(cpu_function_runtime::MinAlign()) std::array<int32_t, 5> data;
+  auto* data_ptr = data.data();
 
   // Pointer to the second element is always unaligned, because it's shifted by
   // 4 bytes (size of int32_t) from the original pointer.
-  auto* unaligned_ptr = data + 1;
+  auto* unaligned_ptr = data_ptr + 1;
 
   // Shape with a size smaller than the original data vector, because the
   // 'unaligned_ptr' points to the second element.

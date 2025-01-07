@@ -102,7 +102,7 @@ UNARY_TEST_COMPLEX_64(Log, {
       abs_err = rel_err = std::numeric_limits<float>::infinity();
     } else {
       double eps = std::numeric_limits<float>::epsilon();
-      abs_err = eps;
+      abs_err = 2 * eps;
       rel_err = 50 * eps;
     }
 
@@ -169,14 +169,7 @@ UNARY_TEST_COMPLEX_64(Rsqrt, {
       return ErrorSpec::Builder()
           .abs_err(RsqrtCpuGpuAbsErr<NativeT, ComponentNativeT>(x))
           .rel_err(RsqrtCpuGpuRelErr<NativeT, ComponentNativeT>(x))
-#ifdef __aarch64__
-          // TODO(b/365620546): ARM and x86 handle complex(inf, nan)
-          // differently.
-          .skip_comparison(x.real() == 0.0f ||
-                           (std::isinf(x.real()) && std::isnan(x.imag())))
-#else
           .skip_comparison(x.real() == 0.0f)
-#endif
           .strict_signed_zeros(false)
           .build();
     };

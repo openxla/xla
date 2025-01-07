@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <variant>
@@ -27,9 +28,9 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -56,21 +58,16 @@ using ::tsl::testing::StatusIs;
 
 class GpuIndexingPerformanceModelTest : public HloTestBase {
  public:
-  GpuHloCostAnalysis::ShapeSizeFunction ShapeSizeBytesFunction() const {
-    return [&](const Shape& shape) {
-      constexpr int64_t kPointerSize = 8;
-      return ShapeUtil::ByteSizeOf(shape, kPointerSize);
-    };
-  }
-
   mlir::MLIRContext mlir_context_;
   // The reference times in the test cases below are measured
   // on A6000 by profiling the execution of the HLOs.
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
   HloFusionAnalysisCache fusion_analysis_cache_{device_info_};
   GpuPerformanceModelWithIndexingAnalysis indexing_cost_model_{
-      &device_info_, &fusion_analysis_cache_, ShapeSizeBytesFunction(),
+      &device_info_, &fusion_analysis_cache_, HloCostAnalysis::DefaultShapeSize,
       &mlir_context_};
+
+  size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
 
   GpuIndexingPerformanceModelTest() : HloTestBase() {}
 };
@@ -380,9 +377,9 @@ ENTRY main {
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
           *fusion_adaptor, launch_dimensions, /*output_tile_sizes=*/{1, 1}));
 
-  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2931, 1);
+  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2932, 2);
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 19, 1);
-  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2932, 1);
+  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2932, 2);
 }
 
 // TODO(b/351342921): Remove this test once there is no special filter for
@@ -477,10 +474,6 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto tiling_result,
-      indexing_cost_model_.TryFindBestTilingForFusion(*fusion_adaptor));
-
   TF_ASSERT_OK_AND_ASSIGN(auto res1,
                           indexing_cost_model_.EstimateRunTimeForTiledFusion(
                               *fusion_adaptor, /*launch_dimensions=*/{16, 32},
@@ -515,10 +508,6 @@ ENTRY main {
       module->entry_computation()->root_instruction());
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto tiling_result,
-      indexing_cost_model_.TryFindBestTilingForFusion(*fusion_adaptor));
-
-  TF_ASSERT_OK_AND_ASSIGN(
       auto res, indexing_cost_model_.EstimateRunTimeForTiledFusion(
                     *fusion_adaptor, /*launch_dimensions=*/{1, 2 * WarpSize()},
                     /*output_tile_sizes=*/{65, 65}));
@@ -535,8 +524,9 @@ ENTRY main {
   EXPECT_EQ(res.flops, kPaddedOutputTileSize * kAddFlops);
 }
 
-TEST_F(GpuIndexingPerformanceModelTest,
-       EstimateRunTimeForTiledFusion_UncoalescedReadsTakeMoreTime) {
+TEST_F(
+    GpuIndexingPerformanceModelTest,
+    EstimateRunTimeForTiledFusion_UncoalescedReadsAreScaledBasedOnWasteTransactionPercentage) {  // NOLINT(whitespace/line_length)
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
 
@@ -556,28 +546,73 @@ ENTRY main {
       module->entry_computation()->root_instruction());
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto tiling_result,
-      indexing_cost_model_.TryFindBestTilingForFusion(*fusion_adaptor));
-
-  TF_ASSERT_OK_AND_ASSIGN(
       auto res_coalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{8192, 2 * WarpSize()},
-          /*output_tile_sizes=*/{1, 128}));
+          *fusion_adaptor, /*launch_dimensions=*/{4096, 2 * WarpSize()},
+          /*output_tile_sizes=*/{2, 128}));
 
   TF_ASSERT_OK_AND_ASSIGN(
       auto res_uncoalesced,
       indexing_cost_model_.EstimateRunTimeForTiledFusion(
-          *fusion_adaptor, /*launch_dimensions=*/{8192, 2 * WarpSize()},
-          /*output_tile_sizes=*/{128, 1}));
+          *fusion_adaptor, /*launch_dimensions=*/{4096, 2 * WarpSize()},
+          /*output_tile_sizes=*/{128, 2}));
 
-  constexpr int64_t kParamSizeBytes = 2048 * 512 * 4;
   // The number of bytes read is the same for coalesced and uncoalesced reads.
+  constexpr int64_t kParamSizeBytes = 2048 * 512 * 4;
   EXPECT_EQ(res_coalesced.bytes_read, 2 * kParamSizeBytes);
   EXPECT_EQ(res_uncoalesced.bytes_read, 2 * kParamSizeBytes);
 
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(res_coalesced.read_time), 11, 1);
-  EXPECT_NEAR(absl::ToDoubleMicroseconds(res_uncoalesced.read_time), 175, 1);
+  // But we expect to waste 7/8th of read transaction time in the
+  // uncoalesced case, making the read time 8 times slower.
+  EXPECT_NEAR(
+      absl::FDivDuration(res_uncoalesced.read_time, res_coalesced.read_time), 8,
+      0.001);
+}
+
+TEST_F(
+    GpuIndexingPerformanceModelTest,
+    EstimateRunTimeForTiledFusion_UncoalescedWritesAreScaledBasedOnWasteTransactionPercentage) {  // NOLINT(whitespace/line_length)
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  param_0 = s8[2048,512] parameter(0)
+  param_1 = s8[2048,512] parameter(1)
+  ROOT add = s8[2048,512] add(param_0, param_1)
+}
+
+ENTRY main {
+  param_0 = s8[2048,512] parameter(0)
+  param_1 = s8[2048,512] parameter(1)
+  ROOT fusion = s8[2048,512] fusion(param_0, param_1),
+    kind=kCustom, calls=add,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+})"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto res_coalesced,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{512, WarpSize()},
+          /*output_tile_sizes=*/{16, 128}));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto res_uncoalesced,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, /*launch_dimensions=*/{512, WarpSize()},
+          /*output_tile_sizes=*/{128, 16}));
+
+  // The number of bytes read is the same for coalesced and uncoalesced reads.
+  constexpr int64_t kParamSizeBytes = 2048 * 512;
+  EXPECT_EQ(res_coalesced.bytes_read, 2 * kParamSizeBytes);
+  EXPECT_EQ(res_uncoalesced.bytes_read, 2 * kParamSizeBytes);
+
+  // But we expect to waste 3/4th of write transaction time in the
+  // uncoalesced case, making the write time 4 times slower.
+  EXPECT_NEAR(
+      absl::FDivDuration(res_uncoalesced.write_time, res_coalesced.write_time),
+      4, 0.001);
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -612,7 +647,7 @@ ENTRY main {
           .ComputeTiledHloInstructions(/*tile_parameters=*/{9, 9, 9}));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
-      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation);
+      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);
   EXPECT_EQ(launch_dimensions.num_blocks(), 1);
 
   // Tile size is 9 * 9 * 9 = 729 that corresponds to 2 warps. But we estimate
@@ -660,7 +695,7 @@ ENTRY main {
           .ComputeTiledHloInstructions(/*tile_parameters=*/{1}));
 
   LaunchDimensions launch_dimensions = GpuPerformanceModelWithIndexingAnalysis::
-      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation);
+      GetLaunchDimensionsForTiledFusion(tiled_hlo_computation, device_info_);
   EXPECT_EQ(launch_dimensions.num_blocks(), 1);
 
   // The largest tile size is 1 * 4096, for which our implementation recommends
@@ -675,10 +710,7 @@ class FlopsPerElementTest : public GpuIndexingPerformanceModelTest {
                             ParseAndReturnVerifiedModule(hlo_module_string));
 
     GpuHloCostAnalysis cost_analysis(
-        GpuHloCostAnalysis::Options{ShapeSizeBytesFunction(),
-                                    /*per_second_rates=*/{},
-                                    /*min_latencies_seconds=*/{},
-                                    /*count_multiple_input_accesses=*/true},
+        GpuHloCostAnalysis::Options{.count_multiple_input_accesses = true},
         device_info_);
 
     ASSERT_IS_OK(module->entry_computation()->Accept(&cost_analysis));

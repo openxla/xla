@@ -16,13 +16,19 @@ limitations under the License.
 #ifndef XLA_HLO_PASS_HLO_PASS_INTERFACE_H_
 #define XLA_HLO_PASS_HLO_PASS_INTERFACE_H_
 
+#include <cstdint>
+#include <string>
+
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -116,7 +122,20 @@ class HloPassInterface {
       HloModuleGroup* module_group,
       const absl::flat_hash_set<absl::string_view>& execution_threads) = 0;
 
-  virtual bool IsPassPipeline() { return false; }
+  virtual bool IsPassPipeline() const { return false; }
+
+  // If an HloPassMetadata has previously been created, it adds a (key, value)
+  // pair metric if none was already set or updates the existing value.
+  // If an HloPassMetadata doesn't exist, it simply returns.
+  static void SetKVMetric(HloModule* module, const std::string& key,
+                          int64_t value) {
+    auto status = module->metadata()->set_key_value_metric(key, value);
+    if (!status.ok()) {
+      // Only logging since this should not crash the application.
+      // It usually means the pass was invoked on its own.
+      LOG(WARNING) << "Failed to set stat: " << status;
+    }
+  }
 };
 
 // Base class for passes which are module-scoped.
@@ -142,7 +161,10 @@ class HloModulePass : public HloPassInterface {
   //
   // TODO(b/129084868): Make this Backend dependent instead of requiring
   // deriving from the pass and overriding this function.
-  virtual void UpdateLayout(Shape* shape) {}
+  virtual void UpdateLayout(Shape* shape) {
+    // CPU/GPU backends require shapes of subbyte types to be packed.
+    ShapeUtil::UpdateElementSizeInBits(shape, /*pack_subbyte_types=*/true);
+  }
 };
 
 // Base class for passes which are module-group scoped. These passes cannot run

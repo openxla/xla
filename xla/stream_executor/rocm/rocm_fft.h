@@ -21,8 +21,8 @@ limitations under the License.
 #define XLA_STREAM_EXECUTOR_ROCM_ROCM_FFT_H_
 
 #include <cstdint>
-#if TENSORFLOW_USE_ROCM
-#include "rocm/rocm_config.h"
+
+#include "rocm/rocm_config.h"  // IWYU pragma: keep - needed for TF_ROCM_VERSION
 
 #if (TF_ROCM_VERSION >= 50200)
 #include "rocm/include/hipfft/hipfft.h"
@@ -30,10 +30,7 @@ limitations under the License.
 #include "rocm/include/hipfft.h"
 #endif
 
-#endif
-
 #include "xla/stream_executor/fft.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
@@ -69,7 +66,7 @@ class ROCMFftPlan : public fft::Plan {
   }
 
   // Initialize function for batched plan
-  absl::Status Initialize(GpuExecutor *parent, Stream *stream, int rank,
+  absl::Status Initialize(StreamExecutor *parent, Stream *stream, int rank,
                           uint64_t *elem_count, uint64_t *input_embed,
                           uint64_t input_stride, uint64_t input_distance,
                           uint64_t *output_embed, uint64_t output_stride,
@@ -77,7 +74,7 @@ class ROCMFftPlan : public fft::Plan {
                           int batch_count, ScratchAllocator *scratch_allocator);
 
   // Initialize function for 1d,2d, and 3d plan
-  absl::Status Initialize(GpuExecutor *parent, Stream *stream, int rank,
+  absl::Status Initialize(StreamExecutor *parent, Stream *stream, int rank,
                           uint64_t *elem_count, fft::Type type,
                           ScratchAllocator *scratch_allocator);
 
@@ -91,7 +88,7 @@ class ROCMFftPlan : public fft::Plan {
   ScratchAllocator *scratch_allocator_;
 
  private:
-  GpuExecutor *parent_;
+  StreamExecutor *parent_;
   hipfftHandle plan_;
   fft::Type fft_type_;
   DeviceMemory<uint8_t> scratch_;
@@ -104,7 +101,7 @@ class ROCMFftPlan : public fft::Plan {
 // This satisfies the platform-agnostic FftSupport interface.
 //
 // Note that the hipFFT handle that this encapsulates is implicitly tied to the
-// context (and, as a result, the device) that the parent GpuExecutor is tied
+// context (and, as a result, the device) that the parent StreamExecutor is tied
 // to. This simply happens as an artifact of creating the hipFFT handle when a
 // ROCM context is active.
 //
@@ -112,13 +109,13 @@ class ROCMFftPlan : public fft::Plan {
 // context of parent_, so all context is explicit.
 class ROCMFft : public fft::FftSupport {
  public:
-  explicit ROCMFft(GpuExecutor *parent) : parent_(parent) {}
+  explicit ROCMFft(StreamExecutor *parent) : parent_(parent) {}
   ~ROCMFft() override {}
 
   TENSORFLOW_STREAM_EXECUTOR_GPU_FFT_SUPPORT_OVERRIDES
 
  private:
-  GpuExecutor *parent_;
+  StreamExecutor *parent_;
 
   // Two helper functions that execute dynload::hipfftExec?2?.
 

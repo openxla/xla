@@ -29,11 +29,12 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/fusions/triton/triton_support.h"
-#include "xla/service/gpu/hlo_traversal.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
@@ -113,6 +114,7 @@ absl::StatusOr<bool> ProcessFusionInstruction(
   backend_config.mutable_fusion_backend_config()->set_kind(
       std::string(kTritonFusionKind));
   TF_RETURN_IF_ERROR(fusion_instruction->set_backend_config(backend_config));
+  fusion_instruction->set_fusion_kind(HloInstruction::FusionKind::kCustom);
   return true;
 }
 
@@ -133,11 +135,18 @@ absl::StatusOr<bool> FusionBlockLevelRewriter::Run(
       continue;
     }
 
+    HloFusionInstruction* fusion_instruction =
+        ::xla::Cast<HloFusionInstruction>(computation->FusionInstruction());
+
+    TF_ASSIGN_OR_RETURN(bool should_try_rewrite,
+                        should_try_rewrite_if_(fusion_instruction));
+    if (!should_try_rewrite) {
+      continue;
+    }
+
     TF_ASSIGN_OR_RETURN(
-        bool changed,
-        ProcessFusionInstruction(
-            ::xla::Cast<HloFusionInstruction>(computation->FusionInstruction()),
-            device_info_, shape_size_, &ctx));
+        bool changed, ProcessFusionInstruction(fusion_instruction, device_info_,
+                                               shape_size_, &ctx));
 
     has_changed |= changed;
   }

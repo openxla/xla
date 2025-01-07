@@ -1129,20 +1129,12 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     CHECK_EQ(dnums.lhs_batch_dimensions_size(),
              dnums.rhs_batch_dimensions_size());
 
-    DimensionVector lhs_non_contracting_dims;
-    DimensionVector rhs_non_contracting_dims;
-    for (int64_t i = 0; i < lhs_rank; i++) {
-      if (!absl::c_linear_search(dnums.lhs_contracting_dimensions(), i) &&
-          !absl::c_linear_search(dnums.lhs_batch_dimensions(), i)) {
-        lhs_non_contracting_dims.push_back(i);
-      }
-    }
-    for (int64_t i = 0; i < rhs_rank; i++) {
-      if (!absl::c_linear_search(dnums.rhs_contracting_dimensions(), i) &&
-          !absl::c_linear_search(dnums.rhs_batch_dimensions(), i)) {
-        rhs_non_contracting_dims.push_back(i);
-      }
-    }
+    DimensionVector lhs_non_contracting_dims =
+        GetNonContractingDims(lhs_rank, dnums.lhs_contracting_dimensions(),
+                              dnums.lhs_batch_dimensions());
+    DimensionVector rhs_non_contracting_dims =
+        GetNonContractingDims(rhs_rank, dnums.rhs_contracting_dimensions(),
+                              dnums.rhs_batch_dimensions());
 
     DimensionVector contracting_dim_sizes;
     contracting_dim_sizes.reserve(dnums.lhs_contracting_dimensions_size());
@@ -1724,12 +1716,14 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
 // instantiating it.  We explicitly instantiate this class in the various
 // hlo_evaluator_typed_visitor*.cc files.
 extern template class HloEvaluatorTypedVisitor<bool>;
+extern template class HloEvaluatorTypedVisitor<u1, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<u2, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<u4, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<uint8_t, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<uint16_t, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<uint32_t, uint64_t>;
 extern template class HloEvaluatorTypedVisitor<uint64_t>;
+extern template class HloEvaluatorTypedVisitor<s1, int64_t>;
 extern template class HloEvaluatorTypedVisitor<s2, int64_t>;
 extern template class HloEvaluatorTypedVisitor<s4, int64_t>;
 extern template class HloEvaluatorTypedVisitor<int8_t, int64_t>;

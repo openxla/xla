@@ -23,9 +23,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_executable.h"
-#include "xla/service/hlo_parser.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
@@ -43,16 +43,24 @@ class CommandBufferSchedulingTest : public HloTestBase {
     return TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     auto debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONALS);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::WHILE);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
     debug_options.set_xla_gpu_graph_min_graph_size(2);
     return debug_options;
+  }
+
+  const se::GpuComputeCapability& GetGpuComputeCapability() {
+    return backend()
+        .default_stream_executor()
+        ->GetDeviceDescription()
+        .gpu_compute_capability();
   }
 };
 
@@ -592,8 +600,8 @@ TEST_F(CommandBufferSchedulingTest, PrepareCommandBuffer) {
   std::vector<HloInstruction*> instructions;
   HloInstructionSequence seq;
   for (HloInstruction* inst : module->entry_computation()->instructions()) {
-    if (inst->opcode() == HloOpcode::kFusion ||
-        inst->opcode() == HloOpcode::kGetTupleElement) {
+    if (HloPredicateIsOp<HloOpcode::kFusion, HloOpcode::kGetTupleElement>(
+            inst)) {
       seq.push_back(inst);
     }
     instructions.push_back(inst);
@@ -809,6 +817,10 @@ TEST_F(CommandBufferSchedulingTest, WhileNotCommand) {
 }
 
 TEST_F(CommandBufferSchedulingTest, While) {
+  const auto& gpu_desc = GetGpuComputeCapability();
+  if (std::holds_alternative<se::RocmComputeCapability>(gpu_desc)) {
+    GTEST_SKIP() << "Not supported for ROCm!";
+  }
   const char* hlo = R"(
     HloModule TestModule, is_scheduled=true
 
@@ -870,6 +882,10 @@ TEST_F(CommandBufferSchedulingTest, While) {
 }
 
 TEST_F(CommandBufferSchedulingTest, Conditional) {
+  const auto& gpu_desc = GetGpuComputeCapability();
+  if (std::holds_alternative<se::RocmComputeCapability>(gpu_desc)) {
+    GTEST_SKIP() << "Not supported for ROCm!";
+  }
   const char* hlo = R"(
     HloModule TestModule, is_scheduled=true
 
@@ -1075,7 +1091,7 @@ TEST_F(CommandBufferSchedulingTest, AsyncFusion) {
 TEST_F(CommandBufferSchedulingTest, AsyncAlltoAll) {
   const char* hlo = R"(
     HloModule m, is_scheduled=true
-    
+
     async_computation.1 {
     param.1 = f32[4,8,128]{2,1,0} parameter(0)
     ROOT all-to-all.1 = f32[4,8,128]{2,1,0} all-to-all(param.1), channel_id=1, dimensions={1}
@@ -1083,7 +1099,7 @@ TEST_F(CommandBufferSchedulingTest, AsyncAlltoAll) {
 
     ENTRY main {
     param.0 = f32[4,8,128]{2,1,0} parameter(0)
-    all-to-all-start = ((f32[4,8,128]{2,1,0}), f32[4,8,128]{2,1,0}) async-start(param.0), calls=async_computation.1 
+    all-to-all-start = ((f32[4,8,128]{2,1,0}), f32[4,8,128]{2,1,0}) async-start(param.0), calls=async_computation.1
     ROOT all-to-all-done = f32[4,8,128]{2,1,0} async-done(all-to-all-start)
     })";
 
@@ -1124,8 +1140,14 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionDynamicSlicing) {
     rs = s32[4,32] reduce-scatter(input), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
     ROOT dus = s32[8,32] dynamic-update-slice(p1, rs, c0, c0)
   })";
+  TF_ASSERT_OK_AND_ASSIGN(auto original_module,
+                          ParseAndReturnVerifiedModule(hlo));
+  DebugOptions& original_options =
+      original_module->mutable_config().mutable_debug_options();
+  original_options.set_xla_gpu_enable_dynamic_slice_fusion(true);
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(auto m,
+                          GetOptimizedModule(std::move(original_module)));
 
   HloModuleConfig config(m->config());
   DebugOptions options(config.debug_options());

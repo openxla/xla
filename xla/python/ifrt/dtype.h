@@ -78,6 +78,9 @@ class DType {
     // dtype will have empty dimensions.
     kToken = 17,
 
+    // Opaque objects.
+    kOpaque = 14,
+
     kF8E3M4 = 29,
     kF8E4M3 = 28,
     kF8E4M3FN = 20,
@@ -127,7 +130,13 @@ class DType {
   // Returns a `DTypeProto` representation.
   DTypeProto ToProto() const;
 
+  // TODO(hyeontaek): Remove this method in favor of AbslStringify.
   std::string DebugString() const;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const DType& dtype) {
+    sink.Append(dtype.DebugString());
+  }
 
  private:
   Kind kind_;
