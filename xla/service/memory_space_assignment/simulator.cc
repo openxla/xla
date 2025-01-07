@@ -181,8 +181,8 @@ float RuntimeSimulator::SimulateAsyncCopyLikeDone(
       copy_like_start_instruction, alternate_memory_space_);
   if (direction == MemoryTransferDirection::kUnsupported) {
     // The memory access is not a default <-> alternate memory copy.
-    LOG(WARNING) << "Unsupported memory transfer direction for copy-done: "
-                 << copy_like_done_instruction->ToString();
+    VLOG(1) << "Unsupported memory transfer direction for copy-done: "
+            << copy_like_done_instruction->ToString();
     return 0.0;
   }
   std::list<OutstandingAsyncCopyLike>& same_direction_queue =
@@ -215,7 +215,8 @@ float RuntimeSimulator::SimulateAsyncCopyLikeDone(
   do {
     float bytes_to_process =
         same_direction_queue.front().remaining_bytes_to_transfer;
-    float available_bandwidth = cost_analysis_->base_costs().BytesPerSecond();
+    float available_bandwidth =
+        cost_analysis_->DefaultMemBandwidthBytesPerSecond();
 
     if (!opposite_direction_queue.empty()) {
       // Need to share the bandwidth with the opposite direction queue.
@@ -262,7 +263,8 @@ float RuntimeSimulator::ProcessAsyncCopyLikesInIdleTime(float time) {
     return 0.0;
   }
 
-  float available_bandwidth = cost_analysis_->base_costs().BytesPerSecond();
+  double available_bandwidth =
+      cost_analysis_->DefaultMemBandwidthBytesPerSecond();
 
   float remaining_simulation_time = time;
   // This loop simulates the execution of the front memory requests in the
@@ -327,7 +329,7 @@ float RuntimeSimulator::SimulateElapsedTime(
           .value();
 
   // Cannot provide a valid result if the bandwidth is invalid.
-  CHECK_GT(cost_analysis_->base_costs().BytesPerSecond(), 0.0);
+  CHECK_GT(cost_analysis_->DefaultMemBandwidthBytesPerSecond(), 0.0);
 
   float total_elapsed = 0.0;
   // The number of additional bytes that could be transferred between default
@@ -364,8 +366,8 @@ float RuntimeSimulator::SimulateElapsedTime(
               ? instruction->operand(0)->shape()
               : ShapeUtil::GetSubshape(instruction->shape(),
                                        /*index=*/{1});
-      float transfer_bytes = static_cast<float>(
-          cost_analysis_->base_costs().GetShapeSize(transfer_shape));
+      float transfer_bytes =
+          static_cast<float>(cost_analysis_->GetShapeSizeBytes(transfer_shape));
       if (direction == MemoryTransferDirection::kDefaultToAlternate) {
         outstanding_read_default_queue_.push_back(
             OutstandingAsyncCopyLike{instruction, transfer_bytes});
@@ -414,7 +416,7 @@ float RuntimeSimulator::SimulateElapsedTime(
 
     cumulative_available_transfer_bytes +=
         (GetUnusedDefaultMemBandwidthBytes(
-             cost_analysis_->base_costs().BytesPerSecond(),
+             cost_analysis_->DefaultMemBandwidthBytesPerSecond(),
              idle_default_memory_bandwidth_time) *
          total_trip_count);
     VLOG(2) << [&]() {
