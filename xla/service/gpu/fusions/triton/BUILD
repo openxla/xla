@@ -92,6 +92,7 @@ cc_library(
         "@triton//:TritonToTritonGPU",
         "@triton//:TritonTransforms",
     ]) + if_cuda_is_configured([
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
         "//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
@@ -197,6 +198,7 @@ cc_library(
     ]) + if_cuda_is_configured([
         "@triton//third_party/nvidia:NVGPUToLLVM",
         "//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
+        "//xla/service/gpu/llvm_gpu_backend:nvptx_backend",
         "@triton//third_party/nvidia:TritonNVIDIAGPUToLLVM",
     ]) + if_rocm_is_configured([
         "@tsl//tsl/platform:rocm_rocdl_path",
@@ -762,6 +764,8 @@ cc_library(
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/transforms:float_normalization",
         "//xla/hlo/utils:hlo_query",
         "//xla/service/gpu:backend_configs_cc",
@@ -771,9 +775,7 @@ cc_library(
         "//xla/service/gpu:matmul_utils",
         "//xla/service/gpu/model:tiled_hlo_instruction_or_computation",
         "//xla/stream_executor:device_description",
-        "//xla/tests:filecheck",
         "//xla/tests:hlo_test_base",
-        "//xla/tests:verified_hlo_module",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

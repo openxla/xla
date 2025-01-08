@@ -435,6 +435,7 @@ cuda_library(
         "ptxas-options=-v",
     ]),
     local_defines = if_oss(["NVTX_VERSION_3_1=1"]),
+    tags = ["requires-gpu-nvidia"],
     visibility = ["//visibility:public"],
 )
 

@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <cstddef>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
@@ -27,7 +29,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/logging.h"
 
 namespace xla::gpu {
 

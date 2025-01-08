@@ -17,13 +17,15 @@ limitations under the License.
 #define XLA_CORE_COLLECTIVES_COMMUNICATOR_H_
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/types/span.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/xla_data.pb.h"
@@ -81,7 +83,7 @@ class Communicator {
   // all other devices.
   virtual absl::Status Broadcast(se::DeviceMemoryBase send_buffer,
                                  se::DeviceMemoryBase recv_buffer,
-                                 PrimitiveType dtype, size_t count, size_t root,
+                                 PrimitiveType dtype, size_t count, RankId root,
                                  const Executor& executor) = 0;
 
   // Reduce data in `send_buff` from all devices using the `reduction_kind`
@@ -91,7 +93,6 @@ class Communicator {
                                      se::DeviceMemoryBase recv_buffer,
                                      PrimitiveType dtype, size_t count,
                                      ReductionKind reduction_kind,
-
                                      const Executor& executor) = 0;
 
   // Gather `count` values from all devices into `recv_buffer`, receiving data
@@ -101,23 +102,32 @@ class Communicator {
                                  PrimitiveType dtype, size_t count,
                                  const Executor& executor) = 0;
 
+  // Sends data from `send_buffer` to `target_ranks` and receives data from
+  // `source_rank` into `recv_buffer`. If `source_rank` is not specified, the
+  // output is filled with zeros.
+  virtual absl::Status CollectivePermute(se::DeviceMemoryBase send_buffer,
+                                         se::DeviceMemoryBase recv_buffer,
+                                         PrimitiveType dtype, size_t count,
+                                         std::optional<RankId> source_rank,
+                                         absl::Span<const RankId> target_ranks,
+                                         const Executor& executor) = 0;
+
+  // Sends `count` values from `send_buffers` to other ranks and receives data
+  // from other ranks into `recv_buffers`.
+  virtual absl::Status AllToAll(
+      absl::Span<const se::DeviceMemoryBase> send_buffers,
+      absl::Span<const se::DeviceMemoryBase> recv_buffers, PrimitiveType dtype,
+      size_t count, const Executor& executor) = 0;
+
   // Send data from `send_buff` to rank `peer`.
   virtual absl::Status Send(se::DeviceMemoryBase send_buffer,
-                            PrimitiveType dtype, size_t count, int32_t peer,
+                            PrimitiveType dtype, size_t count, RankId peer,
                             const Executor& executor) = 0;
-
-  // Send a pointer `ptr` to rank `peer`.
-  virtual absl::Status SendPtrToPeer(void* ptr, int32_t peer,
-                                     const Executor& executor) = 0;
 
   // Receive data from rank `peer` into `recv_buff`.
   virtual absl::Status Recv(se::DeviceMemoryBase recv_buffer,
-                            PrimitiveType dtype, size_t count, int32_t peer,
+                            PrimitiveType dtype, size_t count, RankId peer,
                             const Executor& executor) = 0;
-
-  // Receive a pointer from rank `peer` into `ptr`.
-  virtual absl::Status RecvPtrFromPeer(void* ptr, int32_t peer,
-                                       const Executor& executor) = 0;
 
   virtual std::string ToString() const = 0;
 };

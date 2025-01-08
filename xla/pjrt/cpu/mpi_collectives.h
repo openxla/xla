@@ -41,27 +41,28 @@ class MpiCollectivesCommunicator : public CollectivesCommunicator {
   explicit MpiCollectivesCommunicator(int color, int key);
   ~MpiCollectivesCommunicator() override;
 
-  absl::Status AllReduce(const RendezvousKey& key, ReductionKind reduction_kind,
-                         PrimitiveType element_type, size_t num_elements,
-                         const void* input_buffer, void* output_buffer,
-                         absl::Duration timeout) override;
-  absl::Status CollectivePermute(const RendezvousKey& key, size_t num_bytes,
-                                 std::optional<int> source_rank,
-                                 absl::Span<int const> target_ranks,
-                                 const void* input_buffer, void* output_buffer,
-                                 absl::Duration timeout) override;
-  absl::Status AllToAll(const RendezvousKey& key, size_t chunk_bytes,
-                        absl::Span<const void* const> input_buffers,
-                        absl::Span<void* const> output_buffers,
-                        absl::Duration timeout) override;
-  absl::Status AllGather(const RendezvousKey& key, size_t chunk_bytes,
-                         const void* input_buffer, void* output_buffer,
-                         absl::Duration timeout) override;
-  absl::Status ReduceScatter(const RendezvousKey& key,
+  absl::Status AllReduce(se::DeviceMemoryBase send_buffer,
+                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+                         size_t count, ReductionKind reduction_kind,
+                         const Executor& executor) override;
+  absl::Status CollectivePermute(se::DeviceMemoryBase send_buffer,
+                                 se::DeviceMemoryBase recv_buffer,
+                                 PrimitiveType dtype, size_t count,
+                                 std::optional<RankId> source_rank,
+                                 absl::Span<const RankId> target_ranks,
+                                 const Executor& executor) override;
+  absl::Status AllToAll(absl::Span<const se::DeviceMemoryBase> send_buffers,
+                        absl::Span<const se::DeviceMemoryBase> recv_buffers,
+                        PrimitiveType dtype, size_t count,
+                        const Executor& executor) override;
+  absl::Status AllGather(se::DeviceMemoryBase send_buffer,
+                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
+                         size_t count, const Executor& executor) override;
+  absl::Status ReduceScatter(se::DeviceMemoryBase send_buffer,
+                             se::DeviceMemoryBase recv_buffer,
+                             PrimitiveType dtype, size_t count,
                              ReductionKind reduction_kind,
-                             PrimitiveType element_type, size_t chunk_elems,
-                             const void* input_buffer, void* output_buffer,
-                             absl::Duration timeout) override;
+                             const Executor& executor) override;
 
  private:
   MPI_Comm comm_;

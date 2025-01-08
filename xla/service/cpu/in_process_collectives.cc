@@ -33,15 +33,18 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/backends/cpu/collectives/cpu_collectives.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/primitive_util.h"
 #include "xla/refcounting_hash_map.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/global_device_id.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace cpu {
@@ -437,15 +440,17 @@ InProcessCollectivesCommunicator::InProcessCollectivesCommunicator(
 InProcessCollectivesCommunicator::~InProcessCollectivesCommunicator() = default;
 
 absl::Status InProcessCollectivesCommunicator::AllReduce(
-    const RendezvousKey& key, ReductionKind reduction_kind,
-    PrimitiveType element_type, size_t num_elements,
-    const void* const input_buffer, void* const output_buffer,
-    absl::Duration timeout) {
+    se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
+    PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
+    const Executor& executor) {
+  TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
   AllReduceParticipantData participant(key, rank_);
-  participant.element_count = num_elements;
-  participant.primitive_type = element_type;
-  participant.source_data = input_buffer;
-  participant.destination_data = output_buffer;
+  participant.element_count = count;
+  participant.primitive_type = dtype;
+  participant.source_data = send_buffer.opaque();
+  participant.destination_data = recv_buffer.opaque();
   participant.reduction_kind = reduction_kind;
 
   auto make_cpu_rendezvous = [](const RendezvousKey& k) {
@@ -462,14 +467,20 @@ absl::Status InProcessCollectivesCommunicator::AllReduce(
 }
 
 absl::Status InProcessCollectivesCommunicator::CollectivePermute(
-    const RendezvousKey& key, size_t num_bytes, std::optional<int> source_rank,
-    absl::Span<int const> target_ranks, const void* input_buffer,
-    void* output_buffer, absl::Duration timeout) {
+    se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
+    PrimitiveType dtype, size_t count, std::optional<RankId> source_rank,
+    absl::Span<const RankId> target_ranks, const Executor& executor) {
+  TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
   CollectivePermuteParticipantData participant(key, rank_);
-  participant.source_buffer = input_buffer;
-  participant.destination_buffer = output_buffer;
-  participant.num_bytes = num_bytes;
-  participant.source_rank = source_rank;
+  participant.source_buffer = send_buffer.opaque();
+  participant.destination_buffer = recv_buffer.opaque();
+  participant.num_bytes = count * primitive_util::ByteWidth(dtype);
+  participant.source_rank = std::nullopt;
+  if (source_rank) {
+    participant.source_rank = source_rank->value();
+  }
   auto make_cpu_rendezvous = [](const RendezvousKey& k) {
     return std::make_unique<CpuCollectivePermuteRendezvous>(k);
   };
@@ -483,19 +494,25 @@ absl::Status InProcessCollectivesCommunicator::CollectivePermute(
 }
 
 absl::Status InProcessCollectivesCommunicator::AllToAll(
-    const RendezvousKey& key, size_t chunk_bytes,
-    absl::Span<const void* const> input_buffers,
-    absl::Span<void* const> output_buffers, absl::Duration timeout) {
+    absl::Span<const se::DeviceMemoryBase> send_buffers,
+    absl::Span<const se::DeviceMemoryBase> recv_buffers, PrimitiveType dtype,
+    size_t count, const Executor& executor) {
+  TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
   AllToAllParticipantData participant(key, rank_);
-  TF_RET_CHECK(input_buffers.size() == output_buffers.size());
+  TF_RET_CHECK(send_buffers.size() == recv_buffers.size());
+
+  size_t chunk_bytes = count * primitive_util::ByteWidth(dtype);
+
   participant.chunk_size = chunk_bytes;
-  participant.source_buffers.reserve(input_buffers.size());
-  participant.destination_buffers.reserve(output_buffers.size());
-  for (const void* input_buffer : input_buffers) {
-    participant.source_buffers.push_back(input_buffer);
+  participant.source_buffers.reserve(send_buffers.size());
+  participant.destination_buffers.reserve(recv_buffers.size());
+  for (se::DeviceMemoryBase send_buffer : send_buffers) {
+    participant.source_buffers.push_back(send_buffer.opaque());
   }
-  for (void* output_buffer : output_buffers) {
-    participant.destination_buffers.push_back(output_buffer);
+  for (se::DeviceMemoryBase recv_buffer : recv_buffers) {
+    participant.destination_buffers.push_back(recv_buffer.opaque());
   }
   auto make_cpu_rendezvous = [](const RendezvousKey& k) {
     return std::make_unique<CpuAllToAllRendezvous>(k);
@@ -510,12 +527,15 @@ absl::Status InProcessCollectivesCommunicator::AllToAll(
 }
 
 absl::Status InProcessCollectivesCommunicator::AllGather(
-    const RendezvousKey& key, size_t chunk_bytes, const void* input_buffer,
-    void* output_buffer, absl::Duration timeout) {
+    se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
+    PrimitiveType dtype, size_t count, const Executor& executor) {
+  TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
   AllGatherParticipantData participant(key, rank_);
-  participant.chunk_size = chunk_bytes;
-  participant.source_buffer = input_buffer;
-  participant.destination_buffer = output_buffer;
+  participant.chunk_size = count * primitive_util::ByteWidth(dtype);
+  participant.source_buffer = send_buffer.opaque();
+  participant.destination_buffer = recv_buffer.opaque();
   auto make_cpu_rendezvous = [](const RendezvousKey& k) {
     return std::make_unique<CpuAllGatherRendezvous>(k);
   };
@@ -529,15 +549,18 @@ absl::Status InProcessCollectivesCommunicator::AllGather(
 }
 
 absl::Status InProcessCollectivesCommunicator::ReduceScatter(
-    const RendezvousKey& key, ReductionKind reduction_kind,
-    PrimitiveType element_type, size_t chunk_elems, const void* input_buffer,
-    void* output_buffer, absl::Duration timeout) {
+    se::DeviceMemoryBase send_buffer, se::DeviceMemoryBase recv_buffer,
+    PrimitiveType dtype, size_t count, ReductionKind reduction_kind,
+    const Executor& executor) {
+  TF_ASSIGN_OR_RETURN(auto cpu_executor, CpuCollectives::TryCast(&executor));
+  const RendezvousKey& key = cpu_executor->rendezvous_key();
+
   ReduceScatterParticipantData participant(key, rank_);
-  participant.element_type = element_type;
+  participant.element_type = dtype;
   participant.reduction_kind = reduction_kind;
-  participant.chunk_elems = chunk_elems;
-  participant.source_buffer = input_buffer;
-  participant.destination_buffer = output_buffer;
+  participant.chunk_elems = count;
+  participant.source_buffer = send_buffer.opaque();
+  participant.destination_buffer = recv_buffer.opaque();
   auto make_cpu_rendezvous = [](const RendezvousKey& k) {
     return std::make_unique<CpuReduceScatterRendezvous>(k);
   };
