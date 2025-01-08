@@ -17,20 +17,23 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_executor.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla::cpu {
 
@@ -94,6 +97,21 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> ConditionalThunk::Execute(
 
   return Internal("Unsupported branch index buffer size %d",
                   branch_index_buffer_.size());
+}
+
+absl::StatusOr<std::string> ConditionalThunk::SerializeAsStringImpl() const {
+  ConditionalThunkProto proto;
+  proto.mutable_branch_sequences()->Reserve(branch_executors_.size());
+  for (const auto& branch_executor : branch_executors_) {
+    TF_ASSIGN_OR_RETURN(std::string branch_sequence_str,
+                        branch_executor.thunk_sequence().SerializeAsString());
+    proto.add_branch_sequences()->ParseFromString(branch_sequence_str);
+  }
+
+  TF_ASSIGN_OR_RETURN(std::string branch_index_buffer_str,
+                      branch_index_buffer_.SerializeAsString());
+  proto.mutable_branch_index_buffer()->ParseFromString(branch_index_buffer_str);
+  return proto.SerializeAsString();
 }
 
 ConditionalThunk::BufferUses ConditionalThunk::buffer_uses() const {

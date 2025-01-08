@@ -24,27 +24,31 @@ limitations under the License.
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -210,6 +214,15 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CopyThunk::Execute(
   execute(0);
 
   return event;
+}
+
+absl::StatusOr<std::string> CopyThunk::SerializeAsStringImpl() const {
+  CopyThunkProto proto;
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      src_buffer_, src_shape_, proto.mutable_src_buffer_shape()));
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      dst_buffer_, dst_shape_, proto.mutable_dst_buffer_shape()));
+  return proto.SerializeAsString();
 }
 
 }  // namespace xla::cpu

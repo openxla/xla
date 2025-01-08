@@ -677,6 +677,17 @@ message BufferAllocationProto {
   repeated Assigned assigned = 9;
 }
 
+message BufferAllocationSliceProto {
+  int64 offset = 1;
+  int64 size = 2;
+  int64 buffer_allocation_index = 3;
+}
+
+message ShapeBufferAllocationSliceProto {
+  xla.ShapeProto shape = 1;
+  BufferAllocationSliceProto slice = 2;
+}
+
 // A trace of a HeapSimulator run.
 message HeapSimulatorTrace {
   // The trace includes a list of events, where each event describes one action

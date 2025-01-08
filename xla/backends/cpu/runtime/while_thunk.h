@@ -47,6 +47,9 @@ class WhileThunk final : public Thunk {
   BufferUses buffer_uses() const final;
   ResourceUses resource_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   WhileThunk(Info info, BufferAllocation::Slice cond_buffer,
              ThunkExecutor cond_executor, ThunkExecutor body_executor,

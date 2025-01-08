@@ -142,6 +142,9 @@ class SmallKernelThunk final
 
   tsl::AsyncValueRef<Thunk::ExecuteEvent> Execute(
       const Thunk::ExecuteParams& params) final;
+
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
 };
 
 // Kernel thunk specialization for dynamic number of arguments and results.
@@ -165,6 +168,9 @@ class KernelThunk final : public internal::KernelThunk<> {
 
   tsl::AsyncValueRef<Thunk::ExecuteEvent> Execute(
       const Thunk::ExecuteParams& params) final;
+
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
 };
 
 }  // namespace xla::cpu

@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "xla/backends/cpu/runtime/convolution_thunk.h"
-
 #define EIGEN_USE_THREADS
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
@@ -32,6 +32,7 @@ limitations under the License.
 #include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/backends/cpu/runtime/convolution_thunk_internal.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/executable_run_options.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/runtime_conv2d_acl.h"
@@ -39,9 +40,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -213,7 +214,32 @@ absl::StatusOr<std::unique_ptr<ConvolutionThunk>> ConvolutionThunk::Create(
       output_shape, input_batch, input_dims, input_channels, kernel_dims,
       kernel_channels, kernel_filters, output_dims, strides, padding_before,
       padding_after, base_dilation, window_dilation, feature_group_count,
-      options));
+      options, dnums, window));
+}
+
+absl::StatusOr<std::string> ConvolutionThunk::SerializeAsStringImpl() const {
+  ConvolutionThunkProto proto;
+
+  const std::string dnums_as_str = dnums_.SerializeAsString();
+  proto.mutable_dimension_numbers()->ParseFromString(dnums_as_str);
+
+  const std::string window_as_str = window_.SerializeAsString();
+  proto.mutable_window()->ParseFromString(window_as_str);
+
+  proto.set_feature_group_count(feature_group_count_);
+
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      input_buffer_, input_shape_, proto.mutable_input_buffer_shape()));
+
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      output_buffer_, output_shape_, proto.mutable_output_buffer_shape()));
+
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      kernel_buffer_, kernel_shape_, proto.mutable_kernel_buffer_shape()));
+
+  proto.mutable_options()->set_multi_threaded(options_.multi_threaded);
+  proto.mutable_options()->set_use_acl(options_.use_acl);
+  return proto.SerializeAsString();
 }
 
 ConvolutionThunk::ConvolutionThunk(
@@ -229,7 +255,8 @@ ConvolutionThunk::ConvolutionThunk(
     const absl::InlinedVector<int64_t, 2>& padding_after,
     const absl::InlinedVector<int64_t, 2>& base_dilation,
     const absl::InlinedVector<int64_t, 2>& window_dilation,
-    int64_t feature_group_count, Options options)
+    int64_t feature_group_count, Options options,
+    const ConvolutionDimensionNumbers& dnums, const Window& window)
     : Thunk(Kind::kConvolution, std::move(info)),
       input_buffer_(input_buffer),
       input_shape_(input_shape),
@@ -251,7 +278,9 @@ ConvolutionThunk::ConvolutionThunk(
       window_dilation_(window_dilation),
       feature_group_count_(feature_group_count),
       convolution_rank_(input_dims.size()),
-      options_(options) {}
+      options_(options),
+      dnums_(dnums),
+      window_(window) {}
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> ConvolutionThunk::Execute(
     const ExecuteParams& params) {

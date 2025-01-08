@@ -18,21 +18,25 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/resource_use.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/xfeed_manager.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -95,6 +99,22 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> OutfeedThunk::Execute(
   }
 
   return OkExecuteEvent();
+}
+
+absl::StatusOr<std::string> OutfeedThunk::SerializeAsStringImpl() const {
+  OutfeedThunkProto proto;
+
+  *proto.mutable_outfeed_resources()->mutable_consume_token() =
+      outfeed_resources_.consume_token->ToProto();
+  *proto.mutable_outfeed_resources()->mutable_produce_token() =
+      outfeed_resources_.produce_token->ToProto();
+
+  for (const OutfeedBuffer& outfeed_buffer : outfeed_buffers_) {
+    TF_RETURN_IF_ERROR(
+        SerializeSliceShapeIntoProto(outfeed_buffer.slice, outfeed_buffer.shape,
+                                     proto.add_outfeed_buffers_shapes()));
+  }
+  return proto.SerializeAsString();
 }
 
 OutfeedThunk::BufferUses OutfeedThunk::buffer_uses() const {

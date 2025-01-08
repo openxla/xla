@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_CPU_RUNTIME_ALL_GATHER_THUNK_H_
 
 #include <memory>
+#include <string>
 
 #include "absl/status/statusor.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
@@ -32,6 +33,9 @@ class AllGatherThunk final : public CollectiveThunk {
       OpResources op_resources);
 
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
+
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringCollectiveImpl() const final;
 
  private:
   AllGatherThunk(Info info, OpParams op_params, OpBuffers op_buffers,

@@ -47,6 +47,8 @@ class XnnDotThunk final : public XnnFusionThunk {
       BufferAllocation::Slice out_buffer, Shape out_shape);
 
  protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
   std::string fusion_kind() const final;
   std::string fusion_description() const final;
 

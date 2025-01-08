@@ -18,21 +18,23 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/base/config.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/numeric/int128.h"
-#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -48,6 +50,16 @@ RngGetAndUpdateStateThunk::Create(Info info,
                                   int64_t delta) {
   return absl::WrapUnique(
       new RngGetAndUpdateStateThunk(std::move(info), state_buffer, delta));
+}
+
+absl::StatusOr<std::string> RngGetAndUpdateStateThunk::SerializeAsStringImpl()
+    const {
+  RngGetAndUpdateStateThunkProto proto;
+  proto.set_delta(delta_);
+  TF_ASSIGN_OR_RETURN(const std::string slice_as_str,
+                      state_buffer_.SerializeAsString());
+  proto.mutable_state_buffer()->ParseFromString(slice_as_str);
+  return proto.SerializeAsString();
 }
 
 RngGetAndUpdateStateThunk::RngGetAndUpdateStateThunk(

@@ -40,6 +40,9 @@ class CollectivePermuteThunk final : public CollectiveThunk {
 
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringCollectiveImpl() const final;
+
  private:
   CollectivePermuteThunk(
       Info info, OpParams op_params, OpBuffers op_buffers,

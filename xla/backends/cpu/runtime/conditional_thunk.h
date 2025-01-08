@@ -38,6 +38,9 @@ class ConditionalThunk final : public Thunk {
   BufferUses buffer_uses() const final;
   ResourceUses resource_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   ConditionalThunk(Info info, BufferAllocation::Slice branch_index_buffer,
                    std::vector<ThunkExecutor> branch_executors);

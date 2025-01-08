@@ -43,6 +43,9 @@ class RngGetAndUpdateStateThunk final : public Thunk {
     return {{state_buffer_, BufferUse::kWrite}};
   }
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   RngGetAndUpdateStateThunk(Info info, BufferAllocation::Slice state_buffer,
                             int64_t delta);

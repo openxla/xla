@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/buffer_use.h"
@@ -107,6 +108,30 @@ absl::StatusOr<std::unique_ptr<SortThunk>> SortThunk::Create(
   return absl::WrapUnique(new SortThunk(std::move(info), inputs, dimension,
                                         is_stable, std::move(comparator_name),
                                         direction));
+}
+
+absl::StatusOr<std::string> SortThunk::SerializeAsStringImpl() const {
+  SortThunkProto proto;
+  proto.set_dimension(dimension_);
+  proto.set_is_stable(is_stable_);
+  proto.set_comparator_name(comparator_name_);
+  // TODO(basioli): what about LessThan?
+  if (direction_.has_value()) {
+    switch (direction_.value()) {
+      case SortDirection::kAscending:
+        proto.set_direction(SortThunkProto::ASCENDING);
+        break;
+      case SortDirection::kDescending:
+        proto.set_direction(SortThunkProto::DESCENDING);
+        break;
+    }
+  }
+
+  for (const Input& input : inputs_) {
+    TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(input.slice, input.shape,
+                                                    proto.add_inputs_shapes()));
+  }
+  return proto.SerializeAsString();
 }
 
 SortThunk::SortThunk(Info info, absl::Span<const Input> inputs,
