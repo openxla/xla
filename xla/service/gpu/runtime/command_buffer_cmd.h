@@ -210,7 +210,7 @@ class CommandBufferCmd {
     // This argument allows conditional commands to record a command sequence
     // into non-default execution scope.
     se::CommandBuffer::ExecutionScopeId execution_scope_id =
-        se::CommandBuffer::kDefaulExecutionScope;
+        se::CommandBuffer::kDefaultExecutionScope;
   };
 
   // See Thunk documentation for XLA execution stages (prepare, initialize,
@@ -1166,7 +1166,7 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
       std::vector<std::optional<uint64_t>> offset_byte_sizes);
 
   absl::Status Initialize(const Thunk::InitializeParams& params,
-                          StateManager& state);
+                          StateManager& state) override;
 
   absl::Status Prepare(const Thunk::PrepareParams& params,
                        Thunk::ResourceRequests& resource_requests) final;

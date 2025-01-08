@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/primitive_util.h"
@@ -58,10 +59,8 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/literal_test_util.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
@@ -1553,6 +1552,19 @@ TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
       /*first_pass_regex=*/"dot_normalizer",
       /*last_pass_regex=*/"cublas-gemm-rewriter");
   VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
+}
+
+TEST_F(PassOrderTest,
+       ReducePrecisionIsRemovedAfterAllCallsToSimplifyFPConversions) {
+  // Because of an issue with JAX remat and `SimplifyFPConversions` (see PR:
+  // https://github.com/jax-ml/jax/pull/22244), we can only eliminate the
+  // no-op reduce-precision operations after the last call to
+  // `SimplifyFPConversions`. No-op reduce-precisions are removed within
+  // algebraic simplifier, if the option to remove them is set. In the compiler
+  // pipeline, this is done as a subpipeline, which should be after the last
+  // invocation of SimplifyFPConversions.
+  VerifyPassOrder("simplify-fp-conversions",
+                  "remove-no-op-reduce-precision-algebraic-simplifier");
 }
 
 }  // namespace

@@ -174,6 +174,7 @@ limitations under the License.
 #include "xla/service/gpu/metrics.h"
 #include "xla/service/gpu/model/gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/prepare_hlo_for_ir_emitting_pipeline.h"
 #include "xla/service/gpu/reduce_scatter_combiner.h"
 #include "xla/service/gpu/reduction_utils.h"
@@ -1675,6 +1676,22 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     pipeline.AddPass<SimplifyFPConversions>();
   }
 
+  {
+    // Because of an issue with JAX remat and `SimplifyFPConversions` (see PR:
+    // https://github.com/jax-ml/jax/pull/22244), we can only eliminate the
+    // no-op reduce-precision operations after the last call to
+    // `SimplifyFPConversions`. We are creating a sub-pipeline here because that
+    // allows us to test this order in a unit test.
+    HloPassPipeline& remove_no_op_reduce_precision_pipeline =
+        pipeline.AddPass<HloPassPipeline>(
+            "remove-no-op-reduce-precision-algebraic-simplifier");
+    AlgebraicSimplifierOptions simplifier_options_{simplifier_options};
+    simplifier_options_.set_enable_remove_no_op_reduce_precision(true);
+    remove_no_op_reduce_precision_pipeline
+        .AddPass<HloPassFix<GpuAlgebraicSimplifier>>(simplifier_options_,
+                                                     gpu_version);
+  }
+
   pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
 
   pipeline.AddPass<HostMemoryTransferAsyncifier>(
@@ -2557,8 +2574,12 @@ absl::Status GpuCompiler::RunPreSchedulingPasses(
         /*per_second_rates=*/{},
         /*min_latencies_seconds=*/{},
         /*count_multiple_input_accesses=*/true};
+    // Cost model analysis for compute.
     pipeline.AddPass<GpuCostModelStatsCollection>(gpu_device_info,
                                                   cost_analysis_options);
+    // Cost model analysis for collectives.
+    pipeline.AddPass<SolGpuCostModelStatsCollection>(gpu_device_info,
+                                                     ShapeSizeBytesFunction());
   }
   return pipeline.Run(module).status();
 }

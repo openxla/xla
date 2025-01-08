@@ -401,27 +401,11 @@ class PjRtCApiClient : public PjRtClient {
         "this feature.");
   }
 
-  absl::StatusOr<ChannelHandle> CreateChannelHandle() override {
-    return Unimplemented(
-        "PJRT C API does not support CreateChannelHandle. Please report an "
-        "issue at https://github.com/google/jax/issues if you need this "
-        "feature.");
-  }
-
-  absl::StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override {
-    return Unimplemented(
-        "PJRT C API does not support CreateDeviceToHostChannelHandle. Please "
-        "report an issue at https://github.com/google/jax/issues if you need "
-        "this feature.");
-  }
-
   absl::Status Defragment() override {
     return Unimplemented(
         "PJRT C API does not support Defragment. Please report an issue at "
         "https://github.com/google/jax/issues if you need this feature.");
   }
-
-  bool SupportsSendRecvCallbacks() const override { return true; }
 
   const PJRT_Api* pjrt_c_api() const;
 
@@ -485,7 +469,7 @@ class PjRtCApiBuffer : public PjRtBuffer {
 
   absl::Span<const int64_t> dimensions() const override;
 
-  std::unique_ptr<PjRtLayout> layout() const override;
+  std::shared_ptr<const PjRtLayout> layout() const override;
 
   // PJRT C API doesn't support tuple buffers.
   bool IsTuple() const override { return false; }
@@ -583,7 +567,7 @@ class PjRtCApiBuffer : public PjRtBuffer {
   // we set on `readiness_event` modifies `readiness_promise_`.
   std::shared_ptr<PjRtFuture<>::Promise> readiness_promise_;
   // Set and cached the first time layout() is called.
-  mutable std::optional<PjRtXlaLayout> layout_;
+  mutable std::shared_ptr<const PjRtXlaLayout> layout_;
   // Set and cached the first time is_dynamic_dimension() is called.
   mutable std::optional<absl::InlinedVector<bool, InlineRank()>>
       is_dynamic_dimension_;

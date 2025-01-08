@@ -92,10 +92,12 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/gpu/redzone_allocator.h"
+#include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/lib/core/bits.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -317,8 +319,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> CublasGemmAutotuneExtractor(
     const AutotuneConfig& config, const se::DeviceDescription& gpu_device_info,
     const se::SemanticVersion& toolkit_version,
     const HloFusionInstruction* fusion, const DebugOptions& debug_opts) {
-  const HloComputation* fusion_computation =
-      fusion->called_computations().at(0);
+  const HloComputation* fusion_computation = fusion->called_computation();
   std::unique_ptr<HloModule> new_module =
       ExtractComputationIntoNewModule(*fusion_computation);
   new_module->mutable_config().set_debug_options(debug_opts);
@@ -765,7 +766,7 @@ absl::StatusOr<std::vector<BackendConfig>>
 GemmFusionAutotunerImpl::GenerateConfigs(const HloFusionInstruction& fusion) {
   const HloDotInstruction* dot =
       Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
-          *fusion.called_computations().at(0), HloOpcode::kDot));
+          *fusion.called_computation(), HloOpcode::kDot));
   std::vector<BackendConfig> configs;
 
   if (!debug_options_.xla_gpu_experimental_disable_binary_libraries()) {
@@ -1015,11 +1016,11 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
               << " with config '" << ConfigToString(config)
               << "'\nFused HLO computation:\n"
               << fusion->fused_instructions_computation()->ToString();
+          log(*executable != nullptr);
           if (*executable != nullptr) {
             absl::MutexLock lock(&results_mu);
             results[fusion].push_back({config, std::move(*executable)});
           }
-          log(*executable != nullptr);
           counter.DecrementCount();
         });
       }
@@ -1046,10 +1047,10 @@ GemmFusionAutotunerImpl::CompileAll(AutotunerCompileUtil& compile_util,
         TF_ASSIGN_OR_RETURN(
             std::unique_ptr<Executable> executable,
             compile(fusion, config, gemm_config_set.size() > 1));
+        log(executable != nullptr);
         if (executable != nullptr) {
           results[fusion].push_back({config, std::move(executable)});
         }
-        log(executable != nullptr);
       }
     }
   }
@@ -1062,8 +1063,7 @@ absl::Status GemmFusionAutotunerImpl::CompareBuffers(
     const HloFusionInstruction& fusion,
     const ScopedShapedBuffer& reference_buffer,
     const ScopedShapedBuffer& buffer, AutotuneResult& res) {
-  const HloComputation* fusion_computation = fusion.called_computations().at(0);
-  const HloInstruction& root = *fusion_computation->root_instruction();
+  const HloInstruction& root = *fusion.called_computation_root();
   BufferComparator comparator(root.shape(),
                               debug_options_.xla_gpu_autotune_gemm_rtol());
   TF_ASSIGN_OR_RETURN(se::Stream* const stream, config_.GetStream());
@@ -1112,7 +1112,7 @@ absl::StatusOr<AutotuneResult> GemmFusionAutotunerImpl::MeasurePerformance(
   VLOG(5) << "Trying : " << ConfigToString(candidate.config);
   AutotuneResult res = FromConfig(candidate.config);
 
-  const HloComputation* fusion_computation = fusion.called_computations().at(0);
+  const HloComputation* fusion_computation = fusion.called_computation();
   TF_ASSIGN_OR_RETURN(auto rz_buffers,
                       RedzoneBuffers::FromInstruction(
                           *fusion_computation->FusionInstruction(), config_,
@@ -1126,7 +1126,7 @@ absl::StatusOr<AutotuneResult> GemmFusionAutotunerImpl::MeasurePerformance(
 
   VLOG(5) << "Running the kernel took: " << profiling_output.duration;
   LOG_IF(WARNING, profiling_output.duration >= absl::Seconds(1))
-      << "Slow kernel for " << fusion.called_computations()[0]->ToString()
+      << "Slow kernel for " << fusion.called_computation()->ToString()
       << " took: " << profiling_output.duration << ". "
       << ConfigToString(candidate.config);
 
@@ -1161,6 +1161,7 @@ absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
     return absl::StrFormat("XlaAutotunerMeasurement:#hlo_op=%s#",
                            fusion.name());
   });
+  VLOG(2) << "Profiling " << fusion.name() << ".";
   std::vector<AutotuneResult> results;
   std::optional<ScopedShapedBuffer> reference_buffer;
   for (int i = 0; i < candidates.size(); ++i) {
@@ -1175,12 +1176,20 @@ absl::StatusOr<std::vector<AutotuneResult>> GemmFusionAutotunerImpl::Profile(
       continue;
     }
 
+    if (stream_executor::IsMemoryAllocationError(result.status()) &&
+        reference_buffer.has_value()) {
+      LOG(WARNING)
+          << "Autotuning candidate failed with out of memory error. Consider "
+             "disabling correctness checking (i.e. --xla_gpu_autotune_level=3) "
+             "to reduce autotuning memory usage.";
+    }
+
     VLOG(2) << "Ran " << i + 1 << " configs out of " << candidates.size()
             << ".";
     TF_RETURN_IF_ERROR(result.status());
     results.push_back(std::move(*result));
   }
-  VLOG(2) << "Done running.";
+  VLOG(2) << "Done profiling " << fusion.name() << ".";
   return results;
 }
 
@@ -1281,8 +1290,7 @@ absl::StatusOr<AutotuneCacheKeySet> GemmFusionAutotunerImpl::Autotune(
       results.erase(results.begin());
     }
 
-    const HloInstruction* root =
-        fusion->called_computations().at(0)->root_instruction();
+    const HloInstruction* root = fusion->called_computation_root();
     TF_ASSIGN_OR_RETURN(
         AutotuneResult best,
         PickBestResult(results, root->ToString(), root->GetModule()->config()));

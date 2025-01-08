@@ -1070,24 +1070,11 @@ class PjRtClient {
         "MakeCrossHostReceiveBuffersForGather is not implemented.");
   }
 
-  // Create ChannelHandles for XLA send/recv.
-  virtual absl::StatusOr<ChannelHandle> CreateChannelHandle() {
-    return Unimplemented("CreateChannelHandle is not implemented.");
-  }
-  virtual absl::StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() {
-    return Unimplemented("CreateDeviceToHostChannelHandle is not implemented.");
-  }
-
   // TODO(zhangqiaorjc): Experimental API to be removed.
   // Defragment device memory.
   virtual absl::Status Defragment() {
     return Unimplemented("Defragment is not implemented.");
   }
-
-  // If false, this client does not support send/recv host callbacks, and
-  // callers should not set the `send_callbacks` and `recv_callbacks` arguments
-  // in ExecuteOptions.
-  virtual bool SupportsSendRecvCallbacks() const { return false; }
 
   // Return the PjRtHostMemoryForDeviceManager for this client. It can be
   // nullptr if the implementation does not provide one.
@@ -1121,12 +1108,12 @@ class PjRtBuffer {
     return on_device_shape().dimensions();
   }
 
-  // The on-device memory layout of this buffer. Returned via unique_ptr to make
+  // The on-device memory layout of this buffer. Returned via shared_ptr to make
   // memory management easier -- PjRtLayout is an abstract base class, so cannot
   // be easily copied.
-  virtual std::unique_ptr<PjRtLayout> layout() const {
+  virtual std::shared_ptr<const PjRtLayout> layout() const {
     CHECK(on_device_shape().has_layout());
-    return std::make_unique<PjRtXlaLayout>(on_device_shape().layout());
+    return std::make_shared<PjRtXlaLayout>(on_device_shape().layout());
   }
 
   // PjRtBuffers can either represent a single array buffer or a tuple of array

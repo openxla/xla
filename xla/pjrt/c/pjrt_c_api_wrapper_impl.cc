@@ -235,9 +235,13 @@ static absl::Status PopulateExecutableOutputMemoryKinds(
 class CApiKeyValueStore : public xla::KeyValueStoreInterface {
  public:
   CApiKeyValueStore(PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
+                    PJRT_KeyValueTryGetCallback c_try_get_callback,
+                    void* try_get_user_arg,
                     PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg)
       : c_get_callback_(c_get_callback),
         get_user_arg_(get_user_arg),
+        c_try_get_callback_(c_try_get_callback),
+        try_get_user_arg_(try_get_user_arg),
         c_put_callback_(c_put_callback),
         put_user_arg_(put_user_arg) {}
 
@@ -256,6 +260,27 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
     args.callback_error = &callback_error;
     args.user_arg = get_user_arg_;
     std::unique_ptr<PJRT_Error> error(c_get_callback_(&args));
+    if (error != nullptr) {
+      return error->status;
+    }
+    auto result = std::string(args.value, args.value_size);
+    args.value_deleter_callback(args.value);
+    return result;
+  }
+
+  absl::StatusOr<std::string> TryGet(absl::string_view key) override {
+    PJRT_CallbackError callback_error = [](PJRT_Error_Code code,
+                                           const char* message,
+                                           size_t message_size) {
+      return new PJRT_Error{absl::Status(static_cast<absl::StatusCode>(code),
+                                         std::string(message, message_size))};
+    };
+    PJRT_KeyValueTryGetCallback_Args args;
+    args.key = key.data();
+    args.key_size = key.size();
+    args.callback_error = &callback_error;
+    args.user_arg = try_get_user_arg_;
+    std::unique_ptr<PJRT_Error> error(c_try_get_callback_(&args));
     if (error != nullptr) {
       return error->status;
     }
@@ -288,18 +313,23 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
  private:
   PJRT_KeyValueGetCallback c_get_callback_;
   void* get_user_arg_;
+  PJRT_KeyValueTryGetCallback c_try_get_callback_;
+  void* try_get_user_arg_;
   PJRT_KeyValuePutCallback c_put_callback_;
   void* put_user_arg_;
 };
 
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(
     PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
+    PJRT_KeyValueTryGetCallback c_try_get_callback, void* try_get_user_arg,
     PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg) {
-  if (c_get_callback == nullptr || c_put_callback == nullptr) {
+  if (c_get_callback == nullptr || c_try_get_callback == nullptr ||
+      c_put_callback == nullptr) {
     return nullptr;
   }
-  return std::make_shared<CApiKeyValueStore>(c_get_callback, get_user_arg,
-                                             c_put_callback, put_user_arg);
+  return std::make_shared<CApiKeyValueStore>(
+      c_get_callback, get_user_arg, c_try_get_callback, try_get_user_arg,
+      c_put_callback, put_user_arg);
 }
 
 // ---------------------------------- Errors -----------------------------------
@@ -1797,10 +1827,10 @@ PJRT_Error* PJRT_Buffer_GetMemoryLayout(
     absl::MutexLock lock(&args->buffer->mu);
     if (!layout_data.has_value()) {
       // TODO(skyewm): change PJRT C API to also use opaque layout type
-      std::unique_ptr<xla::PjRtLayout> pjrt_layout =
+      std::shared_ptr<const xla::PjRtLayout> pjrt_layout =
           args->buffer->buffer->layout();
-      xla::PjRtXlaLayout* pjrt_xla_layout =
-          tensorflow::down_cast<xla::PjRtXlaLayout*>(pjrt_layout.get());
+      const xla::PjRtXlaLayout* pjrt_xla_layout =
+          tensorflow::down_cast<const xla::PjRtXlaLayout*>(pjrt_layout.get());
       CHECK(pjrt_xla_layout != nullptr) << "Got unexpected layout type";
       const xla::Layout& xla_layout = pjrt_xla_layout->xla_layout();
 
@@ -2283,7 +2313,7 @@ PJRT_Error* PJRT_Layouts_PJRT_Client_GetDefaultLayout(
                         args->client->client->GetDefaultLayout(
                             pjrt::ConvertFromPjRtBufferType(args->type),
                             {args->dims, args->num_dims}));
-  auto pjrt_xla_layout = std::make_unique<xla::PjRtXlaLayout>(xla_layout);
+  auto pjrt_xla_layout = std::make_shared<xla::PjRtXlaLayout>(xla_layout);
   args->layout = new PJRT_Layouts_MemoryLayout{std::move(pjrt_xla_layout)};
   return nullptr;
 }

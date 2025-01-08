@@ -82,6 +82,7 @@ cc_library(
     srcs = ["jit_compiler.cc"],
     hdrs = ["jit_compiler.h"],
     deps = [
+        ":compiled_function_library",
         ":contiguous_section_memory_manager",
         ":cpu_features",
         ":ir_compiler",
@@ -233,6 +234,33 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "kernel_api_ir_builder_test",
+    srcs = ["kernel_api_ir_builder_test.cc"],
+    deps = [
+        ":kernel_api_ir_builder",
+        "//xla:cpu_function_runtime",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:hlo_ordering",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
+        "//xla/service:logical_buffer",
+        "//xla/service/llvm_ir:ir_array",
+        "//xla/service/llvm_ir:llvm_util",
+        "//xla/tests:hlo_test_base",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:ir_headers",
+    ],
+)
+
 cc_library(
     name = "llvm_ir_kernel_spec",
     srcs = ["llvm_ir_kernel_spec.cc"],
@@ -261,6 +289,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/service:buffer_assignment",
         "//xla/service:elemental_ir_emitter",
+        "//xla/service:hlo_module_config",
         "//xla/service/cpu:backend_config_proto_cc",
         "//xla/service/cpu:elemental_ir_emitter",
         "//xla/service/cpu:ir_emitter",
@@ -279,5 +308,48 @@ cc_library(
         "@llvm-project//llvm:JITLink",
         "@llvm-project//llvm:ir_headers",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "elemental_kernel_emitter_test",
+    srcs = ["elemental_kernel_emitter_test.cc"],
+    deps = [
+        ":elemental_kernel_emitter",
+        ":llvm_ir_kernel_spec",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/analysis:hlo_ordering",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service:buffer_assignment",
+        "//xla/service:logical_buffer",
+        "//xla/service/cpu:target_machine_features_stub",
+        "//xla/tests:hlo_test_base",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:ir_headers",
+        "@tsl//tsl/platform:casts",
+        "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "compiled_function_library",
+    srcs = ["compiled_function_library.cc"],
+    hdrs = ["compiled_function_library.h"],
+    deps = [
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:OrcJIT",
     ],
 )
