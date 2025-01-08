@@ -100,7 +100,7 @@ StackAlloca GetAllocaAndEmitMemrefInfo(llvm::IRBuilderBase& builder,
   const Shape& shape = ir_array.GetShape();
   // oneDNN handles scalar as a vector of size 1.
   int64_t rank = shape.rank() == 0 ? 1 : shape.rank();
-  auto dims_strides = GetDimsStrides(shape);
+  auto [dims, strides] = GetDimsStrides(shape);
 
   // Type of struct
   llvm::Type* i64_type = builder.getInt64Ty();
@@ -115,8 +115,8 @@ StackAlloca GetAllocaAndEmitMemrefInfo(llvm::IRBuilderBase& builder,
   llvm::Value* dims_val = llvm::UndefValue::get(i64_array_type);
   llvm::Value* strides_val = llvm::UndefValue::get(i64_array_type);
   for (unsigned i = 0; i < rank; ++i) {
-    llvm::Value* dim_val = builder.getInt64(dims_strides.first[i]);
-    llvm::Value* stride_val = builder.getInt64(dims_strides.second[i]);
+    llvm::Value* dim_val = builder.getInt64(dims[i]);
+    llvm::Value* stride_val = builder.getInt64(strides[i]);
     dims_val = builder.CreateInsertValue(dims_val, dim_val, i);
     strides_val = builder.CreateInsertValue(strides_val, stride_val, i);
   }
@@ -200,12 +200,12 @@ absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
 }
 
 dnnl::memory::desc ShapeToMemDesc(const Shape& shape) {
-  auto dims_strides = GetDimsStrides(shape);
-  if (dims_strides.first.empty()) {
+  auto [dims, strides] = GetDimsStrides(shape);
+  if (dims.empty()) {
     return dnnl::memory::desc{};
   }
   auto dt = ToOneDnnDataType(static_cast<PrimitiveType>(shape.element_type()));
-  return dnnl::memory::desc(dims_strides.first, dt, dims_strides.second);
+  return dnnl::memory::desc(dims, dt, strides);
 }
 
 Shape MemDescToXlaShapeFlattened(const dnnl::memory::desc& md) {
