@@ -241,12 +241,13 @@ tsl_cc_test(
     srcs = ["xplane_utils_test.cc"],
     deps = [
         ":math_utils",
+        ":tf_xplane_visitor",
         ":xplane_builder",
         ":xplane_schema",
         ":xplane_utils",
         ":xplane_visitor",
-        "//xla/tsl/profiler/utils:tf_xplane_visitor",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
         "@tsl//tsl/platform:test",
@@ -298,6 +299,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         ":tf_xplane_visitor",
+        ":timespan",
         ":xplane_builder",
         ":xplane_schema",
         ":xplane_utils",
@@ -360,6 +362,7 @@ cc_library(
     name = "tpu_xplane_utils",
     srcs = ["tpu_xplane_utils.cc"],
     hdrs = ["tpu_xplane_utils.h"],
+    visibility = internal_visibility([":friends"]),
     deps = [
         ":xplane_schema",
         ":xplane_utils",

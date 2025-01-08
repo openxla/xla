@@ -22,7 +22,6 @@ limitations under the License.
 #include <optional>
 #include <ostream>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -55,8 +54,8 @@ enum class VariableKind : char {
   kWarpThread
 };
 
-std::string_view ToVariableName(VariableKind var_kind);
-VariableKind ToVariableType(std::string_view var_name);
+absl::string_view ToVariableName(VariableKind var_kind);
+VariableKind ToVariableType(absl::string_view var_name);
 std::ostream& operator<<(std::ostream& out, VariableKind var_type);
 
 // Interval represents a closed interval [lower_bound, upper_bound].
@@ -252,7 +251,7 @@ class IndexingMap {
               const llvm::DenseMap<mlir::AffineExpr, Interval>& constraints);
 
   IndexingMap(const IndexingMap&) = default;
-  IndexingMap(IndexingMap&&) = default;
+  IndexingMap(IndexingMap&&) noexcept = default;
   IndexingMap& operator=(const IndexingMap&) = default;
   IndexingMap& operator=(IndexingMap&&) = default;
 

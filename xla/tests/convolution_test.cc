@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <string>
 #include <tuple>
+#include <variant>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -32,9 +33,11 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tests/test_macros.h"
+#include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/test.h"
 
@@ -42,6 +45,17 @@ namespace xla {
 namespace {
 
 class ConvolutionTest : public ClientLibraryTestBase {
+ public:
+  // Returns true if the test is running on ROCm.
+  bool IsRocm() {
+    return std::holds_alternative<se::RocmComputeCapability>(
+        client_->platform()
+            ->ExecutorForDevice(0)
+            .value()
+            ->GetDeviceDescription()
+            .gpu_compute_capability());
+  }
+
  protected:
 #if XLA_TEST_BACKEND_GPU
   // XLA:GPU sometimes uses FFT convolution which isn't as precise as spatial
@@ -1677,7 +1691,10 @@ XLA_TEST_F(ConvolutionTest, Convolve_bf16_1x1x1x2_1x1x1x2_Valid) {
 
 // Check that GPU convs still work if the CudnnAlgorithmPicker pass is disabled.
 // (We run this test on all platforms, because, what the heck.)
-XLA_TEST_F(ConvolutionTest, DISABLED_ON_GPU_ROCM(NoCudnnAlgorithmPicker)) {
+XLA_TEST_F(ConvolutionTest, NoCudnnAlgorithmPicker) {
+  if (IsRocm()) {
+    GTEST_SKIP();
+  }
   execution_options_.mutable_debug_options()->add_xla_disable_hlo_passes(
       "gpu-conv-algorithm-picker");
 
@@ -1733,11 +1750,22 @@ XLA_TEST_F(ConvolutionTest, ConvolveF32BackwardInputGroupedConvolution) {
                     error_spec_);
 }
 
-class ConvolutionHloTest : public HloTestBase {};
+class ConvolutionHloTest : public HloTestBase {
+ public:
+  // Returns true if the test is running on ROCm.
+  bool IsRocm() {
+    return std::holds_alternative<se::RocmComputeCapability>(
+        backend()
+            .default_stream_executor()
+            ->GetDeviceDescription()
+            .gpu_compute_capability());
+  }
+};
 
-// double datatype is not yet supported in ROCm
-XLA_TEST_F(ConvolutionHloTest,
-           DISABLED_ON_TPU(DISABLED_ON_GPU_ROCM(ConvolveF64Forward))) {
+XLA_TEST_F(ConvolutionHloTest, DISABLED_ON_TPU(ConvolveF64Forward)) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "double datatype is not yet supported in ROCm";
+  }
   constexpr char kHlo[] = R"(
 HloModule TestModule
 
@@ -1761,8 +1789,11 @@ ENTRY Test {
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0.01, 0.01}));
 }
 
-XLA_TEST_F(ConvolutionHloTest,
-           DISABLED_ON_GPU_ROCM(ConvolveF32ForwardReversed)) {
+XLA_TEST_F(ConvolutionHloTest, ConvolveF32ForwardReversed) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm";
+  }
+
   constexpr char kHlo[] = R"(
 HloModule TestModule
 
@@ -1774,9 +1805,10 @@ ENTRY Test {
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0.001}));
 }
 
-// double datatype is not yet supported in ROCm
-XLA_TEST_F(ConvolutionHloTest,
-           DISABLED_ON_TPU(DISABLED_ON_GPU_ROCM(ConvolveF64BackwardFilter))) {
+XLA_TEST_F(ConvolutionHloTest, DISABLED_ON_TPU(ConvolveF64BackwardFilter)) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "double datatype is not yet supported in ROCm";
+  }
   constexpr char kHlo[] = R"(
 HloModule TestModule
 
@@ -1788,9 +1820,10 @@ ENTRY Test {
   EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{0.001}));
 }
 
-// double datatype is not yet supported in ROCm
-XLA_TEST_F(ConvolutionHloTest,
-           DISABLED_ON_TPU(DISABLED_ON_GPU_ROCM(ConvolveF64BackwardInput))) {
+XLA_TEST_F(ConvolutionHloTest, DISABLED_ON_TPU(ConvolveF64BackwardInput)) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "double datatype is not yet supported in ROCm";
+  }
   constexpr char kHlo[] = R"(
 HloModule TestModule
 
@@ -1993,8 +2026,8 @@ enum class PaddingMode {
   kNo,    // also called 'valid' padding
 };
 
-// Convolution with LHS dilation, i.e. strided transposed convolution. We use a
-// custom convolution algorithm for this case, so we need to test all cases
+// Convolution with LHS dilation, i.e. strided transposed convolution. We use
+// a custom convolution algorithm for this case, so we need to test all cases
 // (batch, input channels, output channels, etc.)
 // Parameters are: batch size, input channels, output channels, padding mode,
 // and whether to use asymmetric shapes (i.e. x != y)
@@ -2037,27 +2070,23 @@ class Transposed2DConvHloTest
     }
   }
 
-  std::string GetPaddingString(int kernel_x, int kernel_y) {
-    return absl::StrCat(GetPaddingValue(kernel_x, /*low=*/true), "_",
-                        GetPaddingValue(kernel_x, /*low=*/false), "x",
-                        GetPaddingValue(kernel_y, /*low=*/true), "_",
-                        GetPaddingValue(kernel_y, /*low=*/false));
-  }
+  auto GetWindow() {
+    Window window;
 
-  std::string GetWindowString() {
-    const auto padding_string = GetPaddingString(kernel_x_, kernel_y_);
-    const auto window_size_string = absl::StrCat(kernel_x_, "x", kernel_y_);
-    const auto lhs_dilation_string =
-        absl::StrCat(lhs_dilation_x_, "x", lhs_dilation_y_);
+    auto add_dim = [&](int size, int lhs_dilation) {
+      auto dim = window.add_dimensions();
+      dim->set_size(size);
+      dim->set_stride(1);
+      dim->set_padding_low(GetPaddingValue(size, /*low=*/true));
+      dim->set_padding_high(GetPaddingValue(size, /*low=*/false));
+      dim->set_window_dilation(1);
+      dim->set_base_dilation(lhs_dilation);
+    };
 
-    return absl::StrCat("{size=", window_size_string, " pad=", padding_string,
-                        " lhs_dilate=", lhs_dilation_string, "}");
-  }
+    add_dim(kernel_x_, lhs_dilation_x_);
+    add_dim(kernel_y_, lhs_dilation_y_);
 
-  int GetOutputShape(int input_size, int kernel_size, int lhs_dilation) {
-    return lhs_dilation * (input_size - 1) + kernel_size -
-           (kernel_size - GetPaddingValue(kernel_size, /*low=*/true) - 1) -
-           (kernel_size - GetPaddingValue(kernel_size, /*low=*/false) - 1);
+    return window;
   }
 
  public:
@@ -2075,27 +2104,23 @@ class Transposed2DConvHloTest
 };
 
 XLA_TEST_P(Transposed2DConvHloTest, Simple) {
-  const auto window = GetWindowString();
-
   const auto input_shape =
-      absl::StrCat(batch_, ",", input_channels_, ",", input_x_, ",", input_y_);
-  const auto kernel_shape = absl::StrCat(output_channels_, ",", input_channels_,
-                                         ",", kernel_x_, ",", kernel_y_);
-  const auto output_shape =
-      absl::StrCat(batch_, ",", output_channels_, ",",
-                   GetOutputShape(input_x_, kernel_x_, lhs_dilation_x_), ",",
-                   GetOutputShape(input_y_, kernel_y_, lhs_dilation_y_));
+      ShapeUtil::MakeShape(F32, {batch_, input_channels_, input_x_, input_y_});
+  const auto kernel_shape = ShapeUtil::MakeShape(
+      F32, {output_channels_, input_channels_, kernel_x_, kernel_y_});
+
+  const auto window = GetWindow();
 
   // clang-format off
   const std::string hlo = absl::StrCat(R"(
     HloModule TestModule
 
     ENTRY TestComputation {
-      input.1 = f32[)", input_shape, R"(]{3,2,1,0} parameter(0)
-      filter.2 = f32[)", kernel_shape, R"(]{3,2,1,0} parameter(1)
-      ROOT conv.3 = f32[)", output_shape, R"(]{3,2,1,0} convolution(
-        input.1, filter.2),
-        window=)", window, R"(, dim_labels=bf01_oi01->bf01
+      input.1 = )", input_shape.ToString(), R"( parameter(0)
+      filter.2 = )", kernel_shape.ToString(), R"( parameter(1)
+      ROOT conv.3 = convolution(input.1, filter.2),
+        window={)", window_util::ToString(window), R"(},
+        dim_labels=bf01_oi01->bf01
     }
   )");
   // clang-format on

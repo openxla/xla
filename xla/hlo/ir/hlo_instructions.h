@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 #define XLA_HLO_IR_HLO_INSTRUCTIONS_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -40,6 +42,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/literal_pool.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -1347,6 +1350,26 @@ class HloConstantInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kConstant;
   }
 
+  // Canonicalize constant literal using the given literal pool.
+  bool Canonicalize(LiteralPool* literal_pool) {
+    if (literal_pool && literal_) {
+      auto canonical = literal_pool->GetCanonicalLiteral(literal_);
+      if (canonical != literal_) {
+        literal_ = std::move(canonical);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Add literal to the hash state.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    if (HasLiteral()) {
+      absl::HashState::combine(std::move(h),
+                               Literal::AbslHashable<true>(literal()));
+    }
+  }
+
  private:
   bool IsElementwiseImpl(
       const std::optional<int64_t>& operand_idx) const override;
@@ -1586,6 +1609,13 @@ class HloFusionInstruction : public HloCallableInstruction {
     return hlo->opcode() == HloOpcode::kFusion;
   }
 
+  // Add various fusion parameters to the hash.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), *fused_expression_root(),
+                             fusion_kind(), fused_instruction_count(),
+                             fused_parameters().size());
+  }
+
  protected:
   std::string default_called_computation_name() const override {
     return "fused_computation";
@@ -1703,6 +1733,11 @@ class HloParameterInstruction : public HloInstruction {
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kParameter;
+  }
+
+  // Add parameter number to the hash.
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), parameter_number());
   }
 
  private:
@@ -2811,32 +2846,6 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
       HloCloneContext* context) const override;
 
   RandomAlgorithm algorithm_;
-};
-
-std::string ResultAccuracyToleranceToString(
-    const ResultAccuracy::Tolerance& tolerance);
-
-// HloInstruction subclass for unary instructions with result accuracy.
-class HloUnaryInstruction : public HloInstruction {
- public:
-  explicit HloUnaryInstruction(const Shape& shape, HloOpcode opcode,
-                               HloInstruction* operand,
-                               ResultAccuracy result_accuracy);
-  // Sets the result accuracy for this instruction. Supported for unary ops
-  // with multiple implementations.
-  void set_result_accuracy(ResultAccuracy result_accuracy) {
-    result_accuracy_ = result_accuracy;
-  }
-  const ResultAccuracy& result_accuracy() const { return result_accuracy_; }
-  static bool ClassOf(const HloInstruction* hlo) {
-    return IsUnaryOpWithResultAccuracy(hlo->opcode());
-  }
-
- private:
-  ResultAccuracy result_accuracy_;
-  void PrintExtraAttributesImpl(AttributePrinter& printer,
-                                const HloPrintOptions& options) const override;
-  // bool IsValidResultAccuracy(const ResultAccuracy& accuracy) const;
 };
 
 }  // namespace xla

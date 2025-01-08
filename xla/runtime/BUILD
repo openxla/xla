@@ -32,6 +32,7 @@ xla_cc_test(
     deps = [
         ":buffer_use",
         "//xla/service:buffer_assignment",
+        "@com_google_googletest//:gtest",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
     ],

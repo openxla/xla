@@ -395,6 +395,32 @@ cc_library(
 )
 
 cc_library(
+    name = "cuda_solver_context",
+    srcs = ["cuda_solver_context.cc"],
+    hdrs = ["cuda_solver_context.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:gpu_solver_context",
+        "//xla/stream_executor:stream",
+        "//xla/tsl/cuda:cusolver",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@tsl//tsl/platform:errors",
+        "@tsl//tsl/platform:logging",
+    ],
+)
+
+cc_library(
     name = "cuda_blas_utils",
     srcs = ["cuda_blas_utils.cc"],
     hdrs = ["cuda_blas_utils.h"],
@@ -582,6 +608,7 @@ cc_library(
     deps = [
         "//xla/stream_executor:kernel_spec",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -680,6 +707,7 @@ xla_cc_test(
     deps = [
         ":ptx_compiler_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
@@ -949,9 +977,12 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
     ],
@@ -1490,6 +1521,7 @@ cc_library(
         ":compilation_provider",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
     ],
@@ -1760,6 +1792,7 @@ xla_cc_test(
         ":mock_compilation_provider",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",

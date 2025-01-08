@@ -264,6 +264,7 @@ enum StatType {
   kFlops,
   kModelFlops,
   kBytesAccessed,
+  kRawBytesAccessed,
   kMemoryAccessBreakdown,
   kShapeWithLayout,
   kSourceInfo,
@@ -296,6 +297,8 @@ enum StatType {
   kDevCapPeakSramRdBwGigabytesPerSecond,
   kDevCapPeakSramWrBwGigabytesPerSecond,
   kDevVendor,
+  kDevHasMegacore,
+  kDevHasMergedVmem,
   // Batching related.
   kBatchSizeAfterPadding,
   kPaddingAmount,
@@ -343,7 +346,8 @@ enum StatType {
   kDeviceOffsetPs,
   kDeviceDurationPs,
   kScopeRangeId,
-  kLastStatType = kScopeRangeId,
+  kCoreDetails,
+  kLastStatType = kCoreDetails,
 };
 
 enum MegaScaleStatType : uint8_t {
@@ -361,6 +365,7 @@ enum MegaScaleStatType : uint8_t {
   kMegaScaleActionInputs,
   kMegaScaleTransferSource,
   kMegaScaleTransferDestinations,
+  kMegaScaleTransferDcnTopologyLevel,
   kMegaScaleBufferSizes,
   kMegaScaleComputeOperation,
   kMegaScaleChunk,

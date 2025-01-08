@@ -76,6 +76,7 @@ cc_library(
     ]),
     deps = [
         "//xla/python/profiler/internal:python_hooks",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:logging",
@@ -133,9 +134,9 @@ xla_cc_test(
         "//xla/tsl/profiler/utils:timespan",
         "//xla/tsl/profiler/utils:xplane_schema",
         "//xla/tsl/profiler/utils:xplane_visitor",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:optional",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:blocking_counter",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:types",

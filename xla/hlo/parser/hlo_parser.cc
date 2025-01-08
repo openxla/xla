@@ -2000,7 +2000,7 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
         } else {
           // Since async-{update,done} will inherit the computation from
           // async-start, we'll only need to make sure it matches what was
-          // specified explicitily.
+          // specified explicitly.
           if (operands[0]->async_wrapped_opcode() != *async_wrapped_opcode) {
             TokenError(
                 StrFormat("Expect async wrapped opcode to be %s, but got %s",
@@ -5131,7 +5131,7 @@ bool HloParserImpl::ParseAttributeHelper(
         return true;
       }
       case AttrTy::kOriginalValue: {
-        // By the time this attribute is added, the instruciton shape should
+        // By the time this attribute is added, the instruction shape should
         // have been inferred.
         if (!shape) {
           return TokenError("expects instruction shape");
@@ -6483,18 +6483,25 @@ bool HloParserImpl::ParseOriginalValue(
       ++leaf_shape_index.back();
     } else if (lexer_.GetKind() == TokKind::kLbrace) {
       lexer_.Lex();
-      std::string instruction_name;
-      ShapeIndex shape_index;
-      if (!ParseString(&instruction_name)) {
-        return false;
-      }
       if (lexer_.GetKind() != TokKind::kRbrace) {
-        if (!ParseShapeIndex(&shape_index)) {
+        std::string instruction_name;
+        ShapeIndex shape_index;
+        if (!ParseString(&instruction_name)) {
           return false;
         }
+        if (lexer_.GetKind() != TokKind::kRbrace) {
+          if (!ParseShapeIndex(&shape_index)) {
+            return false;
+          }
+        }
+        *(**original_value)->mutable_element(leaf_shape_index) = {
+            instruction_name, shape_index};
+      } else {
+        // The original_value is not expected to have any leaf without values.
+        // However we should not fail the execution here. This should
+        // be done in HloVerifier instead.
+        LOG(WARNING) << "Found an empty leaf node in an original value";
       }
-      *(**original_value)->mutable_element(leaf_shape_index) = {
-          instruction_name, shape_index};
       if (!ParseToken(TokKind::kRbrace,
                       "Expects '} at end of each OriginalArray'")) {
         return false;
@@ -6624,7 +6631,7 @@ bool HloParserImpl::ParseListShardingType(
       if (!ParseOpShardingType(&type)) {
         return false;
       }
-      types->emplace_back(type);
+      types->push_back(type);
     } while (EatIfPresent(TokKind::kComma));
   }
 

@@ -101,8 +101,9 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
       instr->convolution_dimension_numbers();
   Shape input_shape = instr->operand(0)->shape();
   PrimitiveType input_ty = instr->operand(0)->shape().element_type();
+  int num_spatial_dimensions = dnums.input_spatial_dimensions_size();
   if (primitive_util::IsIntegralType(input_ty)) {
-    if (input_ty == S8 && dnums.input_spatial_dimensions_size() == 2 &&
+    if (input_ty == S8 && num_spatial_dimensions == 2 &&
         input_shape.dimensions_size() == 5) {
       VLOG(2) << "Using NCHW_VECT_C for int8_t conv " << instr->ToString();
       return kAllNCHW_VECT_C;
@@ -127,6 +128,31 @@ HeuristicLayoutAssignment(const HloInstruction* instr,
   if (debug_options.xla_gpu_force_conv_nhwc()) {
     VLOG(2) << "Overriding layout to NHWC for " << instr->ToString();
     return kAllNHWC;
+  }
+
+  // Despite the specialized logic below for Volta, we expect GPUs with Tensor
+  // Cores work best using NHWC layouts for cuDNN convolutions---as per
+  // https://docs.nvidia.com/deeplearning/performance/dl-performance-convolutional/index.html#tensor-layout.
+  if (auto* cc = std::get_if<se::CudaComputeCapability>(&gpu_version)) {
+    // TODO(b/383560056): investigate chips below Hopper as well.
+    if (cc->IsAtLeast(se::CudaComputeCapability::HOPPER)) {
+      // With that said, cuDNN's documentation states that NHWC is not supported
+      // for float64, so we use NCHW instead.
+      if (input_ty == F64) {
+        VLOG(2) << "Using NCHW for F64 conv " << instr->ToString() << " on "
+                << cc->ToString();
+        return kAllNCHW;
+        // TODO(b/383560056): find the right filter for 3D convolutions. 3D
+        // convolutions also have a much smaller surface of support. We filter
+        // them out completely as well for now.
+      } else if (num_spatial_dimensions > 2) {
+        VLOG(2) << "Using NHWC for " << num_spatial_dimensions << "D conv "
+                << instr->ToString() << " on " << cc->ToString();
+        return kAllNCHW;
+      } else {
+        return kAllNHWC;
+      }
+    }
   }
 
   const auto* rocm_compute_capability =
@@ -403,12 +429,12 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     CHECK(!IsCublasGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
-    if (instruction->opcode() == HloOpcode::kDot) {
+    if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
       TF_RETURN_IF_ERROR(AddDotBackendConstraints(
           constraints, Cast<HloDotInstruction>(instruction)));
-    } else if (instruction->opcode() == HloOpcode::kTranspose) {
+    } else if (HloPredicateIsOp<HloOpcode::kTranspose>(instruction)) {
       const HloInstruction* operand = instruction->operand(0);
-      if ((operand->opcode() != HloOpcode::kDot) ||
+      if ((HloPredicateIsNotOp<HloOpcode::kDot>(operand)) ||
           (operand->user_count() > 1)) {
         continue;
       }
@@ -423,7 +449,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
         TF_RETURN_IF_ERROR(
             SetOperandLayout(shape, instruction, /*operand_no=*/0));
       }
-    } else if (instruction->opcode() == HloOpcode::kFft) {
+    } else if (HloPredicateIsOp<HloOpcode::kFft>(instruction)) {
       // cuFFT requires a dim0 major layout.
       Shape op0_shape = instruction->operand(0)->shape();
       LayoutUtil::SetToDefaultLayout(&op0_shape);
@@ -431,7 +457,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       LayoutUtil::SetToDefaultLayout(&output_shape);
       TF_RETURN_IF_ERROR(SetOperandLayout(op0_shape, instruction, 0));
       TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
-    } else if (instruction->opcode() == HloOpcode::kSort &&
+    } else if (HloPredicateIsOp<HloOpcode::kSort>(instruction) &&
                instruction->operand(0)->shape().rank() > 1) {
       // Make sure that all the operands and the output(s) have the same layout.
       Shape keys_shape = instruction->operand(0)->shape();
@@ -465,7 +491,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           auto indices_buffer,
           points_to_analysis_->GetBufferDefinedAt(instruction, {1}));
       TF_RETURN_IF_ERROR(SetBufferLayout(default_layout, *indices_buffer));
-    } else if (instruction->opcode() == HloOpcode::kTriangularSolve) {
+    } else if (HloPredicateIsOp<HloOpcode::kTriangularSolve>(instruction)) {
       // TODO(phawkins): Ideally we would relax this constraint. What we
       // actually want is that:
       // a) the batch dimensions are major, in no particular order.
@@ -481,21 +507,21 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
       TF_RETURN_IF_ERROR(SetOperandLayout(op0_shape, instruction, 0));
       TF_RETURN_IF_ERROR(SetOperandLayout(op1_shape, instruction, 1));
       TF_RETURN_IF_ERROR(SetInstructionLayout(output_shape, instruction));
-    } else if (instruction->opcode() == HloOpcode::kReduceScatter) {
+    } else if (HloPredicateIsOp<HloOpcode::kReduceScatter>(instruction)) {
       // XLA:GPU can only support reduce-scatter where the scatter dimension
       // is the most major dimension in the layout.
       auto ars = Cast<HloReduceScatterInstruction>(instruction);
       TF_RETURN_IF_ERROR(SetInstructionLayout(
           ShapeUtil::MoveDimToMajor(ars->shape(), ars->scatter_dimension()),
           ars));
-    } else if (instruction->opcode() == HloOpcode::kAllGather) {
+    } else if (HloPredicateIsOp<HloOpcode::kAllGather>(instruction)) {
       // XLA:GPU can only support all-gathers where the gather dimension is the
       // most major dimension in the layout.
       auto ag = Cast<HloAllGatherInstruction>(instruction);
       TF_RETURN_IF_ERROR(SetInstructionLayout(
           ShapeUtil::MoveDimToMajor(ag->shape(), ag->all_gather_dimension()),
           ag));
-    } else if (instruction->opcode() == HloOpcode::kAllToAll &&
+    } else if (HloPredicateIsOp<HloOpcode::kAllToAll>(instruction) &&
                instruction->shape().IsArray()) {
       // XLA:GPU can only support all-to-all with split dimensions where the
       // split dimension is the most major dimension in the layout.
@@ -504,13 +530,13 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           ShapeUtil::MoveDimToMajor(all_to_all->shape(),
                                     *all_to_all->split_dimension()),
           all_to_all));
-    } else if (instruction->opcode() == HloOpcode::kSend) {
+    } else if (HloPredicateIsOp<HloOpcode::kSend>(instruction)) {
       Shape s = instruction->operand(0)->shape();
       LayoutUtil::SetToDefaultLayout(&s);
       TF_RETURN_IF_ERROR(SetInstructionLayout(s, instruction->operand(0)));
       TF_RETURN_IF_ERROR(
           SetArrayOperandLayout(s.layout(), instruction->operand(0), 0));
-    } else if (instruction->opcode() == HloOpcode::kRecv) {
+    } else if (HloPredicateIsOp<HloOpcode::kRecv>(instruction)) {
       Shape s = instruction->shape();
       ShapeUtil::ForEachMutableSubshape(
           &s, [&](Shape* subshape, const ShapeIndex& index) {

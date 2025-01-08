@@ -30,19 +30,13 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module_group.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/executable.h"
@@ -51,15 +45,14 @@ limitations under the License.
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
-#include "xla/tests/filecheck.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tests/verified_hlo_module.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -311,6 +304,10 @@ HloRunnerAgnosticTestBase::ExecuteReplicated(
   if (const absl::StatusOr<bool> change = verifier().Run(module.get());
       !change.ok()) {
     return ::testing::AssertionFailure() << change.status();
+  }
+  if (absl::Status status = PreprocessModuleForTestRunner(module.get());
+      !status.ok()) {
+    return ::testing::AssertionFailure() << status;
   }
   if (test_preprocessor != nullptr) {
     test_preprocessor(module.get());
@@ -570,6 +567,10 @@ HloRunnerAgnosticTestBase::RunAndCompareTwoModulesReplicated(
            << "Error while parsing HLO text format: "
            << module.status().ToString();
   }
+  if (absl::Status status = PreprocessModuleForTestRunner(module->get());
+      !status.ok()) {
+    return ::testing::AssertionFailure() << status;
+  }
   const std::vector<Literal> fake_arguments =
       MakeFakeArguments(module->get(), use_random_data).value();
   std::vector<Literal*> fake_argument_ptrs;
@@ -764,6 +765,7 @@ HloRunnerAgnosticTestBase::RunAndCompareInternal(
   TF_RETURN_IF_ERROR(verifier().Run(module.get()).status());
   TF_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> reference_module,
                       MakeReferenceModule(*module, reference_preprocessor));
+  TF_RETURN_IF_ERROR(PreprocessModuleForTestRunner(module.get()));
   if (test_preprocessor != nullptr) {
     test_preprocessor(module.get());
   }

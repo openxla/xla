@@ -145,8 +145,8 @@ cc_library(
     name = "device_memory",
     hdrs = ["device_memory.h"],
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -177,6 +177,19 @@ cc_library(
         ":module_spec",
         ":stream_executor_h",
         "@com_google_absl//absl/log:check",
+    ],
+)
+
+cc_library(
+    name = "gpu_solver_context",
+    hdrs = ["gpu_solver_context.h"],
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/stream_executor:blas",
+        "//xla/stream_executor:device_memory",
+        "//xla/stream_executor:stream",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
@@ -643,10 +656,10 @@ cc_library(
         ":device_memory",
         ":kernel",
         ":launch_dim",
-        ":platform",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],

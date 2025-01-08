@@ -126,6 +126,19 @@ absl::Status CheckNestedComputationThreadNameEqual(
   }
   return absl::OkStatus();
 }
+
+absl::Status CheckUnaryOpWithResultAccuracy(HloInstruction* unary) {
+  HloOpcode opcode = unary->opcode();
+  if (unary->has_result_accuracy()) {
+    if (IsUnaryOpWithResultAccuracy(unary->opcode())) {
+      return absl::OkStatus();
+    } else {
+      return Internal("Unary op with result accuracy is not supported for %s",
+                      HloOpcodeString(opcode));
+    }
+  }
+  return absl::OkStatus();
+}
 }  // namespace
 
 /*static*/ absl::Status ShapeVerifier::CheckParameterCount(
@@ -2475,6 +2488,27 @@ absl::Status VerifyLayoutConstrainedAllReduce(const HloModule& module) {
   return absl::OkStatus();
 }
 
+// Verifies that leaf nodes in an original value contain values.
+absl::Status VerifyOriginalValue(const HloModule& module) {
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (auto original_value = instruction->original_value()) {
+        // An original value is expected to have intermediate nodes that are
+        // always nullopt and leaves with actual values.
+        for (const auto& leaf : original_value->leaves()) {
+          if (!leaf.second.has_value()) {
+            return Internal(
+                "Leaf nodes in an original value is expected to contain values."
+                " Instruction: %s.",
+                instruction->ToString());
+          }
+        }
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
 // Checks various invariants of channel instructions (send/recv and
 // collectives).
 absl::Status VerifyChannels(const HloModule& module,
@@ -2700,6 +2734,7 @@ absl::Status CheckElementwiseInstruction(HloInstruction* instruction) {
           ShapeUtil::HumanString(operand_shape));
     }
   }
+
   if (auto* comparison = DynCast<HloCompareInstruction>(instruction)) {
     const Shape& operand_shape = comparison->operand(1)->shape();
     PrimitiveType operand_element_type = operand_shape.element_type();
@@ -2845,6 +2880,7 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   absl::Status HandleElementwiseUnary(HloInstruction* instruction) override {
+    TF_RETURN_IF_ERROR(CheckUnaryOpWithResultAccuracy(instruction));
     return CheckElementwiseInstruction(instruction);
   }
 
@@ -3107,6 +3143,7 @@ absl::StatusOr<bool> HloVerifier::Run(
 
     TF_RETURN_IF_ERROR(module->buffer_donor_config().Verify(*module));
     TF_RETURN_IF_ERROR(VerifyLayoutConstrainedAllReduce(*module));
+    TF_RETURN_IF_ERROR(VerifyOriginalValue(*module));
     return false;
   }();
   if (status_or_changed.ok()) {
