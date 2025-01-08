@@ -16,60 +16,25 @@ limitations under the License.
 #ifndef XLA_PJRT_CPU_GLOO_COLLECTIVES_H_
 #define XLA_PJRT_CPU_GLOO_COLLECTIVES_H_
 
-#include <cstddef>
 #include <memory>
-#include <optional>
 #include <tuple>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "gloo/context.h"
 #include "gloo/rendezvous/store.h"
 #include "gloo/transport/device.h"
-#include "xla/service/collective_ops_utils.h"
+#include "xla/backends/cpu/collectives/gloo_communicator.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/global_device_id.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
-
-class GlooCollectivesCommunicator : public CollectivesCommunicator {
- public:
-  explicit GlooCollectivesCommunicator(std::shared_ptr<gloo::Context> context);
-  ~GlooCollectivesCommunicator() override;
-
-  absl::Status AllReduce(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-                         size_t count, ReductionKind reduction_kind,
-                         const Executor& executor) override;
-  absl::Status CollectivePermute(se::DeviceMemoryBase send_buffer,
-                                 se::DeviceMemoryBase recv_buffer,
-                                 PrimitiveType dtype, size_t count,
-                                 std::optional<RankId> source_rank,
-                                 absl::Span<const RankId> target_ranks,
-                                 const Executor& executor) override;
-  absl::Status AllToAll(absl::Span<const se::DeviceMemoryBase> send_buffers,
-                        absl::Span<const se::DeviceMemoryBase> recv_buffers,
-                        PrimitiveType dtype, size_t count,
-                        const Executor& executor) override;
-  absl::Status AllGather(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-                         size_t count, const Executor& executor) override;
-  absl::Status ReduceScatter(se::DeviceMemoryBase send_buffer,
-                             se::DeviceMemoryBase recv_buffer,
-                             PrimitiveType dtype, size_t count,
-                             ReductionKind reduction_kind,
-                             const Executor& executor) override;
-
- private:
-  std::shared_ptr<gloo::Context> context_;
-};
 
 class GlooCollectives : public CollectivesInterface {
  public:
@@ -78,17 +43,19 @@ class GlooCollectives : public CollectivesInterface {
   ~GlooCollectives() override;
 
   // Thread-safe.
-  absl::StatusOr<std::shared_ptr<CollectivesCommunicator>> GetCommunicator(
+  absl::StatusOr<std::shared_ptr<Communicator>> GetCommunicator(
       absl::Span<GlobalDeviceId const> devices, int rank) override;
 
  private:
-  std::unique_ptr<gloo::rendezvous::Store> store_;
-  std::shared_ptr<gloo::transport::Device> device_;
-  absl::Mutex mu_;
   struct Context {
     absl::Mutex mu;
-    std::shared_ptr<GlooCollectivesCommunicator> communicator;
+    std::shared_ptr<GlooCommunicator> communicator;
   };
+
+  std::unique_ptr<gloo::rendezvous::Store> store_;
+  std::shared_ptr<gloo::transport::Device> device_;
+
+  absl::Mutex mu_;
   absl::flat_hash_map<std::tuple<std::vector<GlobalDeviceId>, int>,
                       std::unique_ptr<Context>>
       contexts_ ABSL_GUARDED_BY(mu_);

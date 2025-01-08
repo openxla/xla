@@ -19,10 +19,12 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
+#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
-#include "xla/hlo/analysis/indexing_map.h"
+#include "xla/codegen/ir/xla_ops.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla {
@@ -30,6 +32,10 @@ namespace gpu {
 
 #define GEN_PASS_DECL
 #include "xla/backends/gpu/codegen/transforms/passes.h.inc"
+
+// Returns atomic op modifier and the atomic bin op kind.
+std::optional<std::pair<mlir::Value, mlir::LLVM::AtomicBinOp>>
+GetAtomicModifierParameters(AtomicRMWOp op);
 
 std::unique_ptr<mlir::Pass> CreateConvertFloatNvidiaPass();
 std::optional<std::unique_ptr<mlir::Pass>> MaybeCreateConvertFloatNvidiaPass(
@@ -56,7 +62,10 @@ std::unique_ptr<mlir::Pass> CreatePropagateSliceIndicesPass();
 std::unique_ptr<mlir::Pass> CreateSimplifyAffinePass();
 std::unique_ptr<mlir::Pass> CreateSimplifyArithPass();
 std::unique_ptr<mlir::Pass> CreateUnswitchLoopsPass();
-std::unique_ptr<mlir::Pass> CreateVectorizeLoadsAndStoresPass();
+std::unique_ptr<mlir::Pass> CreateVectorizeLoadsAndStoresPass(
+    const std::string& gpu_device_info = "");
+std::unique_ptr<mlir::Pass> CreateVectorizeLoadsAndStoresPass(
+    const se::DeviceDescription& device_description);
 
 #define GEN_PASS_REGISTRATION
 #include "xla/backends/gpu/codegen/transforms/passes.h.inc"

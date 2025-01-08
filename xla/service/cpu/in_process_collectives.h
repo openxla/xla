@@ -16,73 +16,31 @@ limitations under the License.
 #ifndef XLA_SERVICE_CPU_IN_PROCESS_COLLECTIVES_H_
 #define XLA_SERVICE_CPU_IN_PROCESS_COLLECTIVES_H_
 
-#include <cstddef>
 #include <memory>
-#include <optional>
 
-#include "absl/status/status.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "xla/core/collectives/rank_id.h"
-#include "xla/service/collective_ops_utils.h"
+#include "xla/backends/cpu/collectives/in_process_communicator.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/global_device_id.h"
-#include "xla/stream_executor/device_memory.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::cpu::runtime {
 
-struct InProcessCollectivesState;
-
-class InProcessCollectivesCommunicator : public CollectivesCommunicator {
- public:
-  InProcessCollectivesCommunicator(InProcessCollectivesState* state, int rank,
-                                   int size);
-  ~InProcessCollectivesCommunicator() override;
-
-  absl::Status AllReduce(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-                         size_t count, ReductionKind reduction_kind,
-                         const Executor& executor) override;
-
-  absl::Status CollectivePermute(se::DeviceMemoryBase send_buffer,
-                                 se::DeviceMemoryBase recv_buffer,
-                                 PrimitiveType dtype, size_t count,
-                                 std::optional<RankId> source_rank,
-                                 absl::Span<const RankId> target_ranks,
-                                 const Executor& executor) override;
-
-  absl::Status AllToAll(absl::Span<const se::DeviceMemoryBase> send_buffers,
-                        absl::Span<const se::DeviceMemoryBase> recv_buffers,
-                        PrimitiveType dtype, size_t count,
-                        const Executor& executor) override;
-
-  absl::Status AllGather(se::DeviceMemoryBase send_buffer,
-                         se::DeviceMemoryBase recv_buffer, PrimitiveType dtype,
-                         size_t count, const Executor& executor) override;
-
-  absl::Status ReduceScatter(se::DeviceMemoryBase send_buffer,
-                             se::DeviceMemoryBase recv_buffer,
-                             PrimitiveType dtype, size_t count,
-                             ReductionKind reduction_kind,
-                             const Executor& executor) override;
-
- private:
-  InProcessCollectivesState* state_;
-  int rank_;
-};
-
 class InProcessCollectives : public CollectivesInterface {
  public:
-  InProcessCollectives();
-  ~InProcessCollectives() override;
-
   // Thread-safe.
-  absl::StatusOr<std::shared_ptr<CollectivesCommunicator>> GetCommunicator(
+  absl::StatusOr<std::shared_ptr<Communicator>> GetCommunicator(
       absl::Span<GlobalDeviceId const> devices, int rank) override;
 
  private:
-  std::unique_ptr<InProcessCollectivesState> state_;
+  absl::Mutex mu_;
+
+  // State shared by all constructed communicators.
+  std::weak_ptr<InProcessCommunicator::State> state_ ABSL_GUARDED_BY(mu_);
 };
 
 }  // namespace xla::cpu::runtime

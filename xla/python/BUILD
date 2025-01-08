@@ -12,6 +12,7 @@ load(
     "//xla/tsl:tsl.bzl",
     "if_cuda_or_rocm",
     "if_google",
+    "if_oss",
     "internal_visibility",
 )
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
@@ -735,7 +736,6 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/status",
@@ -1358,9 +1358,8 @@ tsl_pybind_extension(
     }) + select({
         # mpitrampoline does not build on windows
         "//xla/tsl:windows": [],
-        "//conditions:default": [
-            "//xla/pjrt/cpu:mpi_collectives",
-        ],
+        # we support MPI collectives only in OSS builds
+        "//conditions:default": if_oss(["//xla/pjrt/cpu:mpi_collectives"]),
     }),
 )
 
