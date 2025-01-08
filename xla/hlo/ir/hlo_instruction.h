@@ -1570,7 +1570,6 @@ class HloInstruction {
       absl::string_view execution_thread,
       const absl::flat_hash_set<absl::string_view>& execution_threads_set);
 
-
   // Returns the opcode for this instruction.
   HloOpcode opcode() const { return opcode_; }
   HloOpcode* mutable_opcode() { return &opcode_; }
