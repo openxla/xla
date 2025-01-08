@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/compile_options.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -1697,7 +1698,8 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
     std::vector<PJRT_Buffer**>& c_output_lists,
     std::optional<std::vector<PJRT_Event*>>& device_complete_events,
     SendRecvCallbackData& callback_data,
-    std::vector<int64_t>& non_donatable_input_indices_storage) {
+    std::vector<int64_t>& non_donatable_input_indices_storage,
+    std::unique_ptr<PJRT_ExecuteContext>& c_execute_context) {
   bool using_host_callbacks =
       !options.send_callbacks.empty() || !options.recv_callbacks.empty();
   if (using_host_callbacks &&
@@ -1713,6 +1715,10 @@ PjRtCApiLoadedExecutable::GetCommonExecuteArgs(
   args.options = &c_options;
   args.options->struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
   args.options->launch_id = options.launch_id;
+  if (options.context) {
+    c_execute_context = std::make_unique<PJRT_ExecuteContext>(PJRT_ExecuteContext{options.context});
+    args.options->context = c_execute_context.get();
+  }
   for (auto i : options.non_donatable_input_indices) {
     non_donatable_input_indices_storage.push_back(i);
   }
@@ -1794,6 +1800,7 @@ PjRtCApiLoadedExecutable::Execute(
   std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
   std::vector<PJRT_Buffer**> c_output_lists;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::unique_ptr<PJRT_ExecuteContext> c_execute_context;
   PJRT_ExecuteOptions c_options;
   c_options.num_send_ops = 0;
   c_options.num_recv_ops = 0;
@@ -1810,7 +1817,8 @@ PjRtCApiLoadedExecutable::Execute(
                            c_argument_lists_storage, c_arguments,
                            c_output_lists_storage, c_output_lists,
                            device_complete_events, *callback_data,
-                           non_donatable_input_indices_storage));
+                           non_donatable_input_indices_storage,
+                           c_execute_context));
 
   args.execute_device = nullptr;
   PJRT_Profiler_Extension profiler_extension =
@@ -1866,6 +1874,7 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
   std::vector<std::vector<PJRT_Buffer*>> c_output_lists_storage;
   std::vector<PJRT_Buffer**> c_output_lists;
   std::vector<int64_t> non_donatable_input_indices_storage;
+  std::unique_ptr<PJRT_ExecuteContext> c_execute_context;
   PJRT_ExecuteOptions c_options;
   c_options.num_send_ops = 0;
   c_options.num_recv_ops = 0;
@@ -1882,7 +1891,8 @@ PjRtCApiLoadedExecutable::ExecuteWithSingleDevice(
                            c_argument_lists_storage, c_arguments,
                            c_output_lists_storage, c_output_lists,
                            device_complete_events, *callback_data,
-                           non_donatable_input_indices_storage));
+                           non_donatable_input_indices_storage,
+                           c_execute_context));
 
   args.execute_device =
       tensorflow::down_cast<PjRtCApiDevice*>(device)->c_device();
