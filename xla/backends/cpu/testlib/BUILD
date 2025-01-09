@@ -58,9 +58,9 @@ xla_cc_test(
         "//xla/runtime:buffer_use",
         "//xla/stream_executor:launch_dim",
         "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -137,10 +137,10 @@ xla_cc_test(
         "//xla/codegen:llvm_ir_kernel_source",
         "//xla/runtime:buffer_use",
         "//xla/stream_executor:launch_dim",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 

@@ -219,6 +219,7 @@ xla_cc_test(
         ":mlir_hlo_to_hlo",
         "//xla/mlir/utils:error_util",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
@@ -226,7 +227,6 @@ xla_cc_test(
         "@stablehlo//:register",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -310,9 +310,9 @@ xla_cc_test(
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:test_main",
     ],
 )
