@@ -45,6 +45,15 @@ cc_library(
     deps = [
         ":error_windows",
         ":wide_char",
+        "//xla/tsl/platform:env_time",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:file_statistics",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:threadpool_interface",
+        "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/time",
@@ -55,27 +64,18 @@ cc_library(
         "@tsl//tsl/platform:context",
         "@tsl//tsl/platform:cord",
         "@tsl//tsl/platform:denormal",
-        "@tsl//tsl/platform:env_time",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:file_statistics",
         "@tsl//tsl/platform:load_library",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:regexp",
         "@tsl//tsl/platform:setround",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:stringprintf",
-        "@tsl//tsl/platform:threadpool_interface",
         "@tsl//tsl/platform:tracing",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -104,7 +104,7 @@ cc_library(
         "nobuilder",
     ],
     deps = [
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -131,7 +131,7 @@ cc_library(
         "no_oss",
         "nobuilder",
     ],
-    deps = ["@tsl//tsl/platform:types"],
+    deps = ["//xla/tsl/platform:types"],
 )
 
 cc_library(
@@ -145,8 +145,8 @@ cc_library(
     ],
     deps = [
         ":wide_char",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -164,8 +164,8 @@ cc_library(
     ],
     deps = [
         ":error_windows",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
     ],
 )
 
@@ -192,12 +192,12 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:types",
         "@snappy",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:byte_order",
         "@tsl//tsl/platform:dynamic_annotations",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -223,9 +223,9 @@ cc_library(
         "nobuilder",
     ],
     deps = [
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:stacktrace",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -240,12 +240,12 @@ cc_library(
     ],
     textual_hdrs = ["subprocess.h"],
     deps = [
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:types",
     ],
 )
 
