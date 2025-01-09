@@ -1251,6 +1251,9 @@ TEST_F(CommandBufferSchedulingTest, ReturnTrueWhenOnlyParamMoved) {
 
 TEST_F(CommandBufferSchedulingTest,
        DynamicSliceFusionWithDynamicAddressesNotACommand) {
+  if (backend().platform()->Name() == "Host") {
+    GTEST_SKIP() << "This test requires GPU.";
+  }
   const char* hlo = R"(
     HloModule test, replica_count=2
     add {

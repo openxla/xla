@@ -697,6 +697,7 @@ xla_test(
         "//xla/service:hlo_runner_interface",
         "//xla/service/gpu:gpu_device_info_for_tests",
         "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu/runtime:command_buffer_thunk",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_test_base",
         "//xla/tsl/lib/core:status_test_util",
