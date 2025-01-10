@@ -445,7 +445,10 @@ xla_test(
     srcs = ["nvtx_with_cuda_kernels_test.cc"],
     backends = ["gpu"],
     copts = tf_profiler_copts() + tsl_copts(),
-    tags = ["no_mac"],
+    tags = [
+        "no_mac",
+        "requires-gpu-nvidia",
+    ],
     deps = [
         ":nvtx_with_cuda_kernels",
         "@com_google_googletest//:gtest_main",
