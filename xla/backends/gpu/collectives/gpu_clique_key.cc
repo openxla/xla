@@ -49,7 +49,8 @@ GpuCliqueKey::GpuCliqueKey(
     : CliqueKey(std::move(devices)),
       stream_id_(stream_id),
       stream_kind_(stream_kind),
-      participant_groups_(std::move(participant_groups)) {
+      participant_groups_(std::move(participant_groups)),
+      root_device_(-1) {
   for (std::vector<GlobalDeviceId>& group : participant_groups_) {
     absl::c_sort(group);
   }
@@ -65,6 +66,8 @@ GpuCliqueKey::GpuCliqueKey(
 
 CollectiveStreamId GpuCliqueKey::stream_id() const { return stream_id_; }
 
+GlobalDeviceId GpuCliqueKey::root_device() const { return root_device_; }
+
 bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
   auto* other_nccl = tsl::down_cast<const GpuCliqueKey*>(&other);
   if (other_nccl == nullptr) return false;
@@ -73,6 +76,22 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
          absl::c_all_of(devices(), [&](GlobalDeviceId id) {
            return absl::c_linear_search(other_nccl->devices(), id);
          });
+}
+
+GpuCliqueKey GpuCliqueKey::GetSubKey(int64_t nroots, int64_t root_seq_id) const {
+  CHECK(root_seq_id < nroots);
+  GpuCliqueKey subkey(*this);
+  const auto& devs = devices();
+  int64_t nranks = devs.size();
+  CHECK(nroots <= nranks);
+  int64_t rank_per_root = nranks / nroots;
+  int64_t rank_remainder = nranks % nroots;
+  if (root_seq_id < rank_remainder) {
+    subkey.root_device_ = devs[root_seq_id * (rank_per_root + 1)];
+  } else {
+    subkey.root_device_ = devs[rank_remainder * (rank_per_root + 1) + (root_seq_id - rank_remainder) * rank_per_root];
+  }
+  return subkey;
 }
 
 std::string GpuCliqueKey::ToString() const {
@@ -85,19 +104,20 @@ std::string GpuCliqueKey::ToString() const {
     }
     group_string = absl::StrFormat("; groups=[%s]", absl::StrJoin(values, ","));
   }
-  return absl::StrFormat("devices=[%s]; stream=%d%s",
+  return absl::StrFormat("devices=[%s]; stream=%d%s; root_device=%lld",
                          GlobalDeviceIdsToString(devices()), stream_id_.value(),
-                         group_string);
+                         group_string, root_device_.value());
 }
 
 void GpuCliqueKey::HashValue(absl::HashState state) const {
   absl::HashState::combine(std::move(state), devices(), stream_id_,
-                           participant_groups_);
+                           participant_groups_, root_device_);
 }
 
 bool operator==(const GpuCliqueKey& a, const GpuCliqueKey& b) {
   return a.devices() == b.devices() && a.stream_id_ == b.stream_id_ &&
-         a.participant_groups_ == b.participant_groups_;
+         a.participant_groups_ == b.participant_groups_ &&
+         a.root_device_ == b.root_device_;
 }
 
 bool operator<(const GpuCliqueKey& a, const GpuCliqueKey& b) {
@@ -106,6 +126,9 @@ bool operator<(const GpuCliqueKey& a, const GpuCliqueKey& b) {
 
   if (a.devices() < b.devices()) return true;
   if (b.devices() < a.devices()) return false;
+
+  if (a.root_device_ < b.root_device_) return true;
+  if (b.root_device_ < a.root_device_) return false;
 
   return a.stream_id_.value() < b.stream_id_.value();
 }
@@ -116,6 +139,9 @@ bool operator>(const GpuCliqueKey& a, const GpuCliqueKey& b) {
 
   if (a.devices() > b.devices()) return true;
   if (b.devices() > a.devices()) return false;
+
+  if (a.root_device_ > b.root_device_) return true;
+  if (b.root_device_ > a.root_device_) return false;
 
   // We still use `<` to order by stream id as we want to acquire sync cliques
   // before async ones.

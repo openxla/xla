@@ -68,9 +68,16 @@ class GpuCliqueKey : public CliqueKey {
 
   CollectiveStreamId stream_id() const;
 
+  // Device generating the unique id for this key
+  GlobalDeviceId root_device() const;
+
   // Returns true if this clique is a subset of `other`: both cliques have the
   // same `stream_id` and all clique devices are part of `other` clique.
   bool IsSubsetOf(const CliqueKey& other) const final;
+
+  // Returns a copy of the key (subkey) with the root device properly set given
+  // nroots and root_seq_id. The subkey is used to generate a NcclCliqueId.
+  GpuCliqueKey GetSubKey(int64_t nroots, int64_t root_seq_id) const;
 
   // Returns the stream kind for this clique key, stream kind will be used to
   // specify what configuration to pass for each type of operation.
@@ -105,6 +112,8 @@ class GpuCliqueKey : public CliqueKey {
   // Having the participating groups as part of the cache key will prevent such
   // situations
   std::vector<std::vector<GlobalDeviceId>> participant_groups_;
+
+  GlobalDeviceId root_device_;
 };
 
 bool operator==(const GpuCliqueKey& a, const GpuCliqueKey& b);

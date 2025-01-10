@@ -59,6 +59,31 @@ H AbslHashValue(H h, const CliqueId& id) {
   return H::combine(std::move(h), id.data());
 }
 
+// Collection of CliqueIds
+class CliqueIds {
+ public:
+  CliqueIds() = default;
+
+  CliqueIds(const CliqueId& id);
+
+  void Add(const CliqueId& id);
+
+  std::vector<CliqueId> data() const;
+
+  uint32_t fingerprint() const;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const CliqueIds& ids);
+
+ private:
+  std::vector<CliqueId> ids_;
+};
+
+template <typename H>
+H AbslHashValue(H h, const CliqueIds& ids) {
+  return H::combine(std::move(h), ids.data());
+}
+
 }  // namespace xla
 
 #endif  // XLA_CORE_COLLECTIVES_CLIQUE_ID_H_
