@@ -75,9 +75,12 @@ class GpuCliqueKey : public CliqueKey {
   // same `stream_id` and all clique devices are part of `other` clique.
   bool IsSubsetOf(const CliqueKey& other) const final;
 
-  // Returns a copy of the key (subkey) with the root device properly set given
-  // nroots and root_seq_id. The subkey is used to generate a NcclCliqueId.
-  GpuCliqueKey GetSubKey(int64_t nroots, int64_t root_seq_id) const;
+
+  // For multi-root initialization, generate `nroots` copies (subkeys) of the
+  // key each with a different root device. Root devices are distributed evenly
+  // accross the ranks. The subkeys are used to exchange the CliqueIds during
+  // clique initialization.
+  std::vector<GpuCliqueKey> GetSubKeys(int64_t nroots) const;
 
   // Returns the stream kind for this clique key, stream kind will be used to
   // specify what configuration to pass for each type of operation.

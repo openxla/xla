@@ -59,7 +59,8 @@ H AbslHashValue(H h, const CliqueId& id) {
   return H::combine(std::move(h), id.data());
 }
 
-// Collection of CliqueIds
+// An evenly distributed list of root ranks (cliqueIds) to spread communication
+// during clique setup.
 class CliqueIds {
  public:
   CliqueIds() = default;
@@ -68,7 +69,7 @@ class CliqueIds {
 
   void Add(const CliqueId& id);
 
-  std::vector<CliqueId> data() const;
+  absl::Span<const CliqueId> data() const;
 
   uint32_t fingerprint() const;
 

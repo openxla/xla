@@ -44,7 +44,7 @@ CliqueIds::CliqueIds(const CliqueId& id) { Add(id); }
 
 void CliqueIds::Add(const CliqueId& id) { ids_.push_back(id); }
 
-std::vector<CliqueId> CliqueIds::data() const { return ids_; }
+absl::Span<const CliqueId> CliqueIds::data() const { return ids_; }
 
 uint32_t CliqueIds::fingerprint() const {
   absl::crc32c_t crc(0);

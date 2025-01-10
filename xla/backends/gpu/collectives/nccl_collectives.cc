@@ -133,8 +133,8 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
                                      const std::optional<CliqueIds>& clique_ids,
                                      absl::Span<const DeviceRank> ranks,
                                      const Collectives::Config& config) {
-  // With NCCL backend we rely on host to exchange unique clique id.
-  if (!clique_ids.has_value()) {
+  // With NCCL backend we rely on host to exchange unique clique ids.
+  if (!clique_ids.has_value() || clique_ids->data().empty()) {
     return InvalidArgument("CliqueId is required to create NCCL communicators");
   }
 
@@ -154,7 +154,8 @@ NcclCollectives::CreateCommunicators(const CliqueKey& clique_key,
   for (size_t i = 0; i < ranks.size(); ++i) {
     VLOG(1) << "Initialize NCCL communicator for rank #" << ranks[i].rank
             << " of " << clique_key.num_devices()
-            << "; fingerprint(id)=" << clique_ids->fingerprint();
+            << "; fingerprint(id)=" << clique_ids->fingerprint()
+            << "; size(id)=" << clique_ids->data().size();
     TF_ASSIGN_OR_RETURN(auto* device, TryCast(ranks[i].device));
     auto activate_context = device->stream_executor()->Activate();
 

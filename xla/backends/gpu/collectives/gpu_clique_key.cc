@@ -78,20 +78,24 @@ bool GpuCliqueKey::IsSubsetOf(const CliqueKey& other) const {
          });
 }
 
-GpuCliqueKey GpuCliqueKey::GetSubKey(int64_t nroots, int64_t root_seq_id) const {
-  CHECK(root_seq_id < nroots);
-  GpuCliqueKey subkey(*this);
+std::vector<GpuCliqueKey> GpuCliqueKey::GetSubKeys(int64_t nroots) const {
   const auto& devs = devices();
   int64_t nranks = devs.size();
   CHECK(nroots <= nranks);
   int64_t rank_per_root = nranks / nroots;
-  int64_t rank_remainder = nranks % nroots;
-  if (root_seq_id < rank_remainder) {
-    subkey.root_device_ = devs[root_seq_id * (rank_per_root + 1)];
-  } else {
-    subkey.root_device_ = devs[rank_remainder * (rank_per_root + 1) + (root_seq_id - rank_remainder) * rank_per_root];
+  int64_t rank_rem = nranks % nroots;
+  std::vector<GpuCliqueKey> subkeys;
+  for (int64_t i = 0; i < nroots; ++i) {
+    GpuCliqueKey subkey(*this);
+    if (i < rank_rem) {
+      subkey.root_device_ = devs[i * (rank_per_root + 1)];
+    } else {
+      subkey.root_device_ = devs[rank_rem * (rank_per_root + 1)
+                                 + (i - rank_rem) * rank_per_root];
+    }
+    subkeys.push_back(subkey);
   }
-  return subkey;
+  return subkeys;
 }
 
 std::string GpuCliqueKey::ToString() const {
