@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
@@ -43,9 +44,11 @@ class Resource {
   static constexpr Kind kToken = Kind::kToken;
   static constexpr Kind kCollectiveCommunicator = Kind::kCollectiveCommunicator;
 
+  explicit Resource(const ResourceProto& proto);
   static std::shared_ptr<Resource> Create(Kind kind);
 
   Kind kind() const { return kind_; }
+  ResourceProto ToProto() const;
 
  private:
   explicit Resource(Kind kind);

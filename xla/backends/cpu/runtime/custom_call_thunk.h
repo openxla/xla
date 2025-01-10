@@ -56,6 +56,9 @@ class CustomCallThunk final : public Thunk {
 
   BufferUses buffer_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   CustomCallThunk(Info info, absl::string_view target_name,
                   OpBuffers op_buffers, CustomCallApiVersion api_version,

@@ -16,12 +16,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/layout_util.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
@@ -31,7 +33,8 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -105,6 +108,20 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> FftThunk::Execute(
         fft_length_.data());
   }
   return OkExecuteEvent();
+}
+
+absl::StatusOr<std::string> FftThunk::SerializeAsStringImpl() const {
+  FftThunkProto proto;
+
+  proto.set_is_multi_thread_eigen(is_multi_thread_eigen_);
+  proto.set_fft_type(fft_type_);
+  proto.mutable_fft_length()->Add(fft_length_.begin(), fft_length_.end());
+
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      input_buffer_, input_shape_, proto.mutable_input_buffer_shape()));
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      output_buffer_, output_shape_, proto.mutable_output_buffer_shape()));
+  return proto.SerializeAsString();
 }
 
 Thunk::BufferUses FftThunk::buffer_uses() const {

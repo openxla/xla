@@ -63,6 +63,9 @@ class SortThunk final : public Thunk {
 
   BufferUses buffer_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   SortThunk(Info info, absl::Span<const Input> inputs, int64_t dimension,
             bool is_stable, LessThan less_than,

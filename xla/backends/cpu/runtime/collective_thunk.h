@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
@@ -50,6 +51,8 @@ class CollectiveThunk : public Thunk {
     bool has_channel_id;
     std::optional<bool> use_global_device_ids;
     std::vector<ReplicaGroup> group;
+
+    absl::StatusOr<std::string> SerializeAsString() const;
   };
 
   // Source and destination buffers for the collective operation.
@@ -64,6 +67,7 @@ class CollectiveThunk : public Thunk {
   // Resources used by the collective operation.
   struct OpResources {
     std::shared_ptr<Resource> communicator_resource;
+    absl::StatusOr<std::string> SerializeAsString() const;
   };
 
   // Device memory resolved for the collective operation buffers.
@@ -84,6 +88,12 @@ class CollectiveThunk : public Thunk {
   ResourceUses resource_uses() const final;
 
  protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
+  virtual absl::StatusOr<std::string> SerializeAsStringCollectiveImpl() const {
+    return absl::UnimplementedError("SerializeAsStringImpl not implemented");
+  }
+
   // Callback for collective thunk implementations.
   using Callback = absl::AnyInvocable<absl::Status(const RendezvousKey& key,
                                                    Communicator& comm)>;

@@ -31,6 +31,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
@@ -61,11 +62,11 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 #include "tsl/platform/numbers.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -234,6 +235,14 @@ absl::Status GatherComputationsByAllocationType(
 std::string BufferAllocation::Slice::ToString() const {
   return absl::StrCat("{index:", allocation_ == nullptr ? -1 : index(),
                       ", offset:", offset_, ", size:", size_, "}");
+}
+
+absl::StatusOr<std::string> BufferAllocation::Slice::SerializeAsString() const {
+  BufferAllocationSliceProto proto;
+  proto.set_offset(offset_);
+  proto.set_size(size_);
+  proto.set_buffer_allocation_index(allocation_ == nullptr ? -1 : index());
+  return proto.SerializeAsString();
 }
 
 BufferAllocation::Slice BufferAllocation::GetSlice(
@@ -2295,6 +2304,19 @@ BufferAssigner::CreateAssignment(
                  assignment->StatsString(/*report_total_fragmentation=*/true));
   VLOG(1) << "Buffer assignment done.";
   return std::move(assignment);
+}
+
+absl::Status SerializeSliceShapeIntoProto(
+    const BufferAllocation::Slice& slice, const Shape& shape,
+    ShapeBufferAllocationSliceProto* proto) {
+  TF_ASSIGN_OR_RETURN(const std::string slice_buffer_str,
+                      slice.SerializeAsString());
+
+  const std::string shape_str = shape.SerializeAsString();
+
+  proto->mutable_shape()->ParseFromString(shape_str);
+  proto->mutable_slice()->ParseFromString(slice_buffer_str);
+  return absl::OkStatus();
 }
 
 }  // namespace xla

@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -38,6 +39,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/call_frame.h"
@@ -51,10 +53,9 @@ limitations under the License.
 #include "xla/service/custom_call_target_registry.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -222,6 +223,26 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::Execute(
     return CallTypedFFI(params);
   }
   return CallUntypedAPI(params);
+}
+
+absl::StatusOr<std::string> CustomCallThunk::SerializeAsStringImpl() const {
+  CustomCallThunkProto proto;
+  proto.set_target_name(target_name_);
+  proto.set_backend_config(backend_config_);
+  proto.set_api_version(api_version_);
+
+  for (size_t i = 0; i < op_buffers_.arguments_buffers.size(); ++i) {
+    TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+        op_buffers_.arguments_buffers[i], op_buffers_.arguments_shapes[i],
+        proto.mutable_op_buffers()->add_arguments_shapes()));
+  }
+
+  for (size_t i = 0; i < op_buffers_.results_buffers.size(); ++i) {
+    TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+        op_buffers_.results_buffers[i], op_buffers_.results_shapes[i],
+        proto.mutable_op_buffers()->add_results_shapes()));
+  }
+  return proto.SerializeAsString();
 }
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(

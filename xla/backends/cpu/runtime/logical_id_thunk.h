@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
 #include "absl/status/statusor.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -43,6 +44,9 @@ class LogicalIdThunk : public Thunk {
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;
+
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
 
  private:
   LogicalIdThunk(Info info, BufferAllocation::Slice logical_id_buffer);

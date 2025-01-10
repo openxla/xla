@@ -37,6 +37,9 @@ class CallThunk final : public Thunk {
   BufferUses buffer_uses() const final;
   ResourceUses resource_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   CallThunk(Info info, ThunkExecutor called_executor);
 

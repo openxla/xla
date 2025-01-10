@@ -21,8 +21,35 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/memory/memory.h"
 #include "absl/types/span.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
+
+Resource::Resource(const ResourceProto& proto) {
+  if (proto.kind() == ResourceProto::TOKEN) {
+    kind_ = Kind::kToken;
+  } else if (proto.kind() == ResourceProto::COLLECTIVE_COMMUNICATOR) {
+    kind_ = Kind::kCollectiveCommunicator;
+  } else {
+    // TODO(basioli) what to do here?
+  }
+}
+
+ResourceProto Resource::ToProto() const {
+  ResourceProto proto;
+  switch (kind_) {
+    case Kind::kToken:
+      proto.set_kind(ResourceProto::TOKEN);
+      break;
+    case Kind::kCollectiveCommunicator:
+      proto.set_kind(ResourceProto::COLLECTIVE_COMMUNICATOR);
+      break;
+    default:
+      // TODO(basioli) what to do here?
+      break;
+  }
+  return proto;
+}
 
 std::shared_ptr<Resource> Resource::Create(Kind kind) {
   return absl::WrapUnique(new Resource(kind));

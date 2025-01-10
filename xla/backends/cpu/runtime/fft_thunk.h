@@ -47,6 +47,9 @@ class FftThunk final : public Thunk {
 
   BufferUses buffer_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   // Constructs a thunk for launching an FFT on a host.
   FftThunk(Info thunk_info, bool is_multi_thread_eigen, int32_t fft_type,

@@ -50,6 +50,9 @@ class CopyThunk final : public Thunk {
     return {{src_buffer_, BufferUse::kRead}, {dst_buffer_, BufferUse::kWrite}};
   }
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   CopyThunk(Info info, BufferAllocation::Slice src_buffer,
             const Shape& src_shape, BufferAllocation::Slice dst_buffer,

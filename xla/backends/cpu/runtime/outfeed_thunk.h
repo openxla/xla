@@ -50,6 +50,9 @@ class OutfeedThunk final : public Thunk {
   BufferUses buffer_uses() const final;
   ResourceUses resource_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   OutfeedThunk(Info info, absl::Span<const OutfeedBuffer> outfeed_buffers,
                OutfeedResources outfeed_resources);

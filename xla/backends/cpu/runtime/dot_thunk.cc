@@ -18,26 +18,27 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/dot_lib.h"
 #include "xla/backends/cpu/runtime/thunk.h"
-#include "xla/layout_util.h"
+#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -201,6 +202,21 @@ tsl::AsyncValueRef<DotThunk::ExecuteEvent> DotThunk::Execute(
   }
 
   return state.AsRef();
+}
+
+absl::StatusOr<std::string> DotThunk::SerializeAsStringImpl() const {
+  DotThunkProto proto;
+  *proto.mutable_dot_dimensions() = dot_dimensions_;
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      dot_slices_.lhs_buffer, dot_slices_.lhs_shape,
+      proto.mutable_lhs_buffer_shape()));
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      dot_slices_.rhs_buffer, dot_slices_.rhs_shape,
+      proto.mutable_rhs_buffer_shape()));
+  TF_RETURN_IF_ERROR(SerializeSliceShapeIntoProto(
+      dot_slices_.out_buffer, dot_slices_.out_shape,
+      proto.mutable_out_buffer_shape()));
+  return proto.SerializeAsString();
 }
 
 }  // namespace xla::cpu

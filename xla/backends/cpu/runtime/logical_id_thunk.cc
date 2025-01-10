@@ -17,9 +17,12 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -30,8 +33,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu::internal {
@@ -51,6 +53,18 @@ LogicalIdThunk<logical_id_kind>::Create(
     Info info, BufferAllocation::Slice logical_id_buffer) {
   return absl::WrapUnique(
       new LogicalIdThunk(std::move(info), logical_id_buffer));
+}
+
+template <LogicalIdKind logical_id_kind>
+absl::StatusOr<std::string>
+LogicalIdThunk<logical_id_kind>::SerializeAsStringImpl() const {
+  return absl::UnimplementedError("Not implemented");
+  // Maybe another layer of abstraction to take care of the classes that inherit
+  // this? LogicalIdThunkProto proto;
+  // // TODO(basioli): do we need these?
+  // // LogicalIdKind
+  // // BufferAllocation::Slice logical_id_buffer_
+  // return proto.SerializeAsString();
 }
 
 template <LogicalIdKind logical_id_kind>

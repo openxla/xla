@@ -1156,3 +1156,12 @@ message OriginalArrayProto {
 message OriginalValueProto {
   repeated OriginalArrayProto leaves = 1;
 }
+
+message ResourceProto {
+  enum Kind {
+    UNKNOWN = 0;
+    TOKEN = 1;
+    COLLECTIVE_COMMUNICATOR = 2;
+  }
+  Kind kind = 1;
+}

@@ -126,6 +126,9 @@ class AddI32Thunk final : public Thunk {
   BufferUses buffer_uses() const final;
   ResourceUses resource_uses() const final;
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   std::vector<BufferAllocation::Slice> srcs_;
   std::vector<BufferAllocation::Slice> dsts_;
@@ -141,6 +144,11 @@ std::unique_ptr<Thunk> AddI32Thunk::Create(
   return std::make_unique<AddI32Thunk>(std::move(name), std::move(srcs),
                                        std::move(dsts), trace,
                                        use_shared_resource, inject_error);
+}
+
+absl::StatusOr<std::string> AddI32Thunk::SerializeAsStringImpl() const {
+  // NOTE(basioli) no need for this as it is just a test thunk.
+  return absl::UnimplementedError("Not implemented");
 }
 
 AddI32Thunk::AddI32Thunk(std::string name,

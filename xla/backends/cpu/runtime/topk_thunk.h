@@ -41,6 +41,9 @@ class TopKThunk final : public Thunk {
             BufferUse::Write(indices_buffer_)};
   }
 
+ protected:
+  absl::StatusOr<std::string> SerializeAsStringImpl() const final;
+
  private:
   TopKThunk(Info info, BufferAllocation::Slice values,
             BufferAllocation::Slice output, BufferAllocation::Slice indices,
