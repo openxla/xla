@@ -74,7 +74,7 @@ WhileThunk::WhileThunk(
       trip_count_(trip_count) {}
 
 absl::Status WhileThunk::Prepare(const PrepareParams& params,
-                                 ResourceRequests& resource_requests) {
+                                 ResourceRequestsInterface& resource_requests) {
   TF_RETURN_IF_ERROR(
       condition_thunk_sequence_->Prepare(params, resource_requests));
   TF_RETURN_IF_ERROR(body_thunk_sequence_->Prepare(params, resource_requests));
@@ -121,8 +121,9 @@ absl::Status WhileThunk::ExecuteOnStream(const ExecuteParams& params) {
   }();
 
   while (true) {
-    TraceMe trace(
-        [&] { return TraceMeEncode("While", {{"iteration:", iter}}); });
+    TraceMe trace([&] {
+      return TraceMeEncode("While", {{"iteration:", iter}});
+    });
     VLOG(3) << "Executing WhileThunk condition computation; iter=" << iter;
     TF_RETURN_IF_ERROR(condition_thunk_sequence_->ExecuteOnStream(params));
 

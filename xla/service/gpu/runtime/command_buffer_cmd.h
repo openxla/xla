@@ -219,8 +219,9 @@ class CommandBufferCmd {
 
   // Prepare command for execution by allowing command to request shared state
   // required for recording (i.e. collective commands request cliques).
-  virtual absl::Status Prepare(const Thunk::PrepareParams& params,
-                               Thunk::ResourceRequests& resource_requests) {
+  virtual absl::Status Prepare(
+      const Thunk::PrepareParams& params,
+      Thunk::ResourceRequestsInterface& resource_requests) {
     return absl::OkStatus();
   }
 
@@ -342,7 +343,7 @@ class CommandBufferCmdSequence {
 
   // Prepares all commands added to a sequence.
   absl::Status Prepare(const Thunk::PrepareParams& params,
-                       Thunk::ResourceRequests& resource_requests);
+                       Thunk::ResourceRequestsInterface& resource_requests);
 
   // Initializes all commands added to a sequence.
   absl::Status Initialize(const Thunk::InitializeParams& params,
@@ -986,8 +987,9 @@ class CollectiveCmd : public CommandBufferCmd {
                 ExecutionStreamId async_from_stream_id,
                 NcclCollectiveConfig config);
 
-  absl::Status Prepare(const Thunk::PrepareParams& params,
-                       Thunk::ResourceRequests& resource_requests) final;
+  absl::Status Prepare(
+      const Thunk::PrepareParams& params,
+      Thunk::ResourceRequestsInterface& resource_requests) final;
 
   bool force_update() override { return true; }
 
@@ -1168,8 +1170,9 @@ class DynamicSliceFusionCmd : public CommandBufferCmd {
   absl::Status Initialize(const Thunk::InitializeParams& params,
                           StateManager& state) override;
 
-  absl::Status Prepare(const Thunk::PrepareParams& params,
-                       Thunk::ResourceRequests& resource_requests) final;
+  absl::Status Prepare(
+      const Thunk::PrepareParams& params,
+      Thunk::ResourceRequestsInterface& resource_requests) final;
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
