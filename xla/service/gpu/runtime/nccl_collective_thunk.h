@@ -210,7 +210,7 @@ class NcclCollectiveThunk : public Thunk {
   //
   // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
   // sure that all NCCL resources are allocated just once.
-  RendezvousFlag first_call_rendezvous_flag_;
+  RendezvousSingleFlag first_call_rendezvous_flag_;
 };
 
 //===----------------------------------------------------------------------===//

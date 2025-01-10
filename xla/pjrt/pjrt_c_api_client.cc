@@ -1014,36 +1014,22 @@ absl::string_view PjRtCApiDeviceDescription::ToString() const {
   return to_string;
 }
 
-void PjRtCApiDeviceDescription::InitMemoryDescriptions() const {
+absl::Span<const PjRtMemorySpaceDescription* const>
+PjRtCApiDeviceDescription::memory_spaces() const {
   const PJRT_MemoryDescriptions_Extension* extension =
       pjrt::FindExtension<PJRT_MemoryDescriptions_Extension>(
           c_api_, PJRT_Extension_Type::PJRT_Extension_Type_MemoryDescriptions);
-  if (!extension) return;
+  if (!extension) return {};
 
   if (memory_space_description_pointers_.empty()) {
-    memory_space_descriptions_ = pjrt::GetMemorySpaceDescriptions(
-        device_description_, c_api_, &default_memory_space_description_);
+    memory_space_descriptions_ =
+        pjrt::GetMemorySpaceDescriptions(device_description_, c_api_);
     for (int i = 0; i < memory_space_descriptions_.size(); i++) {
       memory_space_description_pointers_.push_back(
           &memory_space_descriptions_[i]);
     }
   }
-}
-
-absl::Span<const PjRtMemorySpaceDescription* const>
-PjRtCApiDeviceDescription::memory_spaces() const {
-  if (memory_space_description_pointers_.empty()) {
-    InitMemoryDescriptions();
-  }
   return memory_space_description_pointers_;
-}
-
-absl::StatusOr<const PjRtMemorySpaceDescription*>
-PjRtCApiDeviceDescription::default_memory_space() const {
-  if (memory_space_description_pointers_.empty()) {
-    InitMemoryDescriptions();
-  }
-  return default_memory_space_description_;
 }
 
 // ------------------------------- Devices -------------------------------------

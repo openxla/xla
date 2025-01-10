@@ -20,7 +20,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/synchronization/blocking_counter.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/test.h"

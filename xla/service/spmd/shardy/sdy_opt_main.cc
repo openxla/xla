@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
-#include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/transforms/passes.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/spmd/shardy/mhlo_round_trip/export_callback_custom_calls.h"
@@ -50,8 +51,8 @@ int main(int argc, char** argv) {
   mlir::mhlo::registerAllMhloPasses();
 
   mlir::DialectRegistry dialects;
-  mlir::sdy::registerAllDialects(dialects);
-  dialects.insert<mlir::mhlo::MhloDialect>();
+  dialects.insert<mlir::func::FuncDialect, mlir::mhlo::MhloDialect,
+                  mlir::sdy::SdyDialect, mlir::stablehlo::StablehloDialect>();
   mlir::func::registerAllExtensions(dialects);
 
   // Register all SDY passes and pipelines.

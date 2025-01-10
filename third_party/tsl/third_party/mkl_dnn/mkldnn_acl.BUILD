@@ -167,7 +167,6 @@ cc_library(
             "include/**/*",
             "include/*",
             "src/common/*.hpp",
-            "src/common/**/*.h",
             "src/cpu/**/*.hpp",
             "src/cpu/*.hpp",
             "src/cpu/aarch64/xbyak_aarch64/**/*.h",
