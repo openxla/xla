@@ -33,7 +33,7 @@ xla_cc_test(
         ":buffer_use",
         "//xla/service:buffer_assignment",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
