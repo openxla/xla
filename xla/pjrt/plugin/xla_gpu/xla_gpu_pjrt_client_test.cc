@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "tsl/platform/test.h"
 

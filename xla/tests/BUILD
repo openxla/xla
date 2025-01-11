@@ -249,42 +249,6 @@ cc_library(
 )
 
 cc_library(
-    name = "hlo_runner_agnostic_reference_mixin",
-    testonly = True,
-    srcs = ["hlo_runner_agnostic_reference_mixin.cc"],
-    hdrs = ["hlo_runner_agnostic_reference_mixin.h"],
-    deps = [
-        ":hlo_runner_agnostic_test_base",
-        ":literal_test_util",
-        ":test_utils",
-        "//xla:error_spec",
-        "//xla:literal",
-        "//xla:shape_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/testlib:verified_hlo_module",
-        "//xla/service:hlo_runner_interface",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
-        "//xla/tsl/platform:test",
-        "@com_google_absl//absl/base:nullability",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings:string_view",
-        "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
-    name = "hlo_pjrt_interpreter_reference_mixin",
-    testonly = True,
-    hdrs = ["hlo_pjrt_interpreter_reference_mixin.h"],
-    deps = [
-        ":hlo_runner_agnostic_reference_mixin",
-        "//xla/pjrt/interpreter:interpreter_client",
-        "//xla/service:hlo_runner_pjrt",
-    ],
-)
-
-cc_library(
     name = "hlo_pjrt_test_base",
     testonly = True,
     srcs = ["hlo_pjrt_test_base.cc"],
@@ -2481,7 +2445,6 @@ xla_test(
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
-        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:computation_placer",
         "//xla/service:hlo_module_config",
         "@com_google_absl//absl/log",

@@ -59,7 +59,8 @@ class HloCostAnalysis;
 // pass.
 class HostOffloader : public HloModulePass {
  public:
-  HostOffloader() = default;
+  explicit HostOffloader(int64_t host_memory_space_color)
+      : kHostMemorySpaceColor(host_memory_space_color) {}
   ~HostOffloader() override = default;
 
   absl::string_view name() const override { return "host-offloader"; }
@@ -76,6 +77,7 @@ class HostOffloader : public HloModulePass {
   // instruction chain) are ignored.
   absl::StatusOr<bool> ProcessNextMoveToHostInstr(HloComputation* computation);
 
+  const int64_t kHostMemorySpaceColor;
   absl::flat_hash_set<HloInstruction*>
       already_visited_move_to_host_custom_calls_;
   absl::flat_hash_set<HloInstruction*> dynamic_update_slices_already_allocated_;
