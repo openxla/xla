@@ -110,8 +110,10 @@ class DynamicSliceThunk : public Thunk {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
-      std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
-          offset_as_function_of_indvar_metadata = std::nullopt);
+      std::vector<std::unique_ptr<HloModule>> temp_modules,
+      std::unique_ptr<HloModule> indvar_init,
+      std::unique_ptr<HloModule> indvar_update);
+
   DynamicSliceThunk(const DynamicSliceThunk&) = delete;
   DynamicSliceThunk& operator=(const DynamicSliceThunk&) = delete;
 
@@ -186,11 +188,8 @@ class DynamicSliceThunk : public Thunk {
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
-  // This structure holds the metadata for offset computations on host. It
-  // stores a single induction variable initialization module, its update module
-  // and the offsets that are a function of the induction variable.
-  std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
-      offset_as_function_of_indvar_metadata_;
+  std::vector<std::unique_ptr<HloModule>> temp_modules_;
+  std::unique_ptr<HloModule> indvar_init_, indvar_update_;
 };
 
 }  // namespace gpu
