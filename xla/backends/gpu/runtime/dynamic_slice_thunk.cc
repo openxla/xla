@@ -50,9 +50,11 @@ namespace gpu {
 
 namespace {
 
-std::unique_ptr<Literal>& Indvar(DynamicSliceThunk* thunk) {
-  static thread_local absl::flat_hash_map<DynamicSliceThunk*,
-                                          std::unique_ptr<Literal>>
+// Indvar is a thread-local map that stores the induction variable for each
+// dynamic slice thunk. The usage of threadlocal in this context is similar to
+// `LoopCounters` in while_thunk.cc (b/343294327).
+Literal& Indvar(DynamicSliceThunk* thunk) {
+  static thread_local absl::flat_hash_map<DynamicSliceThunk*, Literal>
       indvar_map;
   return indvar_map[thunk];
 }
@@ -67,7 +69,7 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
     std::vector<std::optional<uint64_t>> offset_byte_sizes,
-    std::vector<std::unique_ptr<HloModule>> temp_modules,
+    std::vector<std::unique_ptr<HloModule>> extracted_offset_modules,
     std::unique_ptr<HloModule> indvar_init,
     std::unique_ptr<HloModule> indvar_update)
     : Thunk(Kind::kDynamicSlice, thunk_info),
@@ -79,7 +81,7 @@ DynamicSliceThunk::DynamicSliceThunk(
       orig_shapes_(orig_shapes),
       sliced_shapes_(sliced_shapes),
       offset_byte_sizes_(offset_byte_sizes),
-      temp_modules_(std::move(temp_modules)),
+      extracted_offset_modules_(std::move(extracted_offset_modules)),
       indvar_init_(std::move(indvar_init)),
       indvar_update_(
           std::move(indvar_update)) {  // Zip all arguments together to create a
@@ -128,8 +130,8 @@ absl::Status DynamicSliceThunk::Prepare(
   if (indvar_init_ != nullptr) {
     Indvar(this) = HloEvaluator()
                        .Evaluate(/*module=*/*indvar_init_, /*arg_literals=*/{})
-                       ->CloneToUnique();
-    VLOG(0) << "Indvar = " << Indvar(this)->ToString();
+                       .value();
+    VLOG(2) << "Indvar = " << Indvar(this).ToString();
   }
   return absl::OkStatus();
 }
@@ -211,7 +213,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
       } else if (HloModule** offset_module = std::get_if<HloModule*>(&offset)) {
         TF_ASSIGN_OR_RETURN(
             Literal offset,
-            HloEvaluator().Evaluate(**offset_module, {Indvar(this).get()}));
+            HloEvaluator().Evaluate(**offset_module, {&Indvar(this)}));
         auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
         if (offset_int.has_value()) {
           offset_value(argument_idx, offset_idx) = *offset_int;
@@ -220,7 +222,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
               absl::StrFormat("Unhandled type returned from offset module: %s",
                               offset.shape().ToString()));
         }
-        VLOG(1) << "Offset value = " << offset_value(argument_idx, offset_idx);
+        VLOG(2) << "Offset value = " << offset_value(argument_idx, offset_idx);
 
       } else {
         // Transfer slice offset value from device to host.
@@ -293,9 +295,9 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   TF_RETURN_IF_ERROR(embedded_thunk_->ExecuteOnStream(new_params));
 
   if (indvar_update_ != nullptr) {
-    Indvar(this) = HloEvaluator()
-                       .Evaluate(*indvar_update_, {Indvar(this).get()})
-                       ->CloneToUnique();
+    Indvar(this) =
+        HloEvaluator().Evaluate(*indvar_update_, {&Indvar(this)}).value();
+    VLOG(2) << "Indvar = " << Indvar(this).ToString();
   }
 
   return absl::OkStatus();
