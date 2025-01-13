@@ -30,8 +30,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/runtime/dynamic_slice_thunk.h"
 #include "xla/service/gpu/runtime/sequential_thunk.h"
 #include "xla/service/gpu/runtime/thunk.h"
@@ -104,17 +104,8 @@ class DynamicSliceFusionTest : public HloTestBase {
       if (!computation->IsFusionComputation()) {
         continue;
       }
-      auto backend_config = computation->FusionInstruction()
-                                ->backend_config<xla::gpu::GpuBackendConfig>();
-      if (backend_config.ok()) {
-        const FusionBackendConfig& fusion_backend_config =
-            backend_config.value().fusion_backend_config();
-        const std::string name =
-            fusion_backend_config.custom_fusion_config().name();
-        if (name == "dynamic_address_computation" ||
-            name == "address_computation") {
-          computations.push_back(computation);
-        }
+      if (IsDynamicSliceFusion(computation->FusionInstruction())) {
+        computations.push_back(computation);
       }
     }
     return computations;
@@ -3131,9 +3122,9 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto exec, CreateExecutable(std::move(module_new_opt_clone), false));
   GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
-  ASSERT_EQ(gpu_exec->GetThunk().thunks().size(), 2ul);
-  auto& rs_start_thunk = gpu_exec->GetThunk().thunks()[0];
-  auto& rs_done_thunk = gpu_exec->GetThunk().thunks()[1];
+  ASSERT_EQ(gpu_exec->GetThunk().thunks().size(), 4ul);
+  auto& rs_start_thunk = gpu_exec->GetThunk().thunks()[1];
+  auto& rs_done_thunk = gpu_exec->GetThunk().thunks()[2];
   ASSERT_EQ(rs_start_thunk->kind(), Thunk::kNcclReduceScatterStart);
   ASSERT_EQ(rs_done_thunk->kind(), Thunk::kNcclReduceScatterDone);
 
@@ -3267,6 +3258,89 @@ TEST_F(DynamicSliceFusionTest,
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(
       /*module_0=*/std::move(module_ref), /*module_1=*/std::move(module_opt),
       /*run_hlo_passes=*/false, /*use_threads=*/true, error));
+}
+
+TEST_F(DynamicSliceFusionTest,
+       AsyncDynamicSliceFusionWithCollectiveOverlapsWithComputeThunk) {
+  const char* hlo = R"(
+    HloModule test-clone, replica_count=2
+
+    %add.clone (x: s32[], y: s32[]) -> s32[] {
+      %x = s32[] parameter(0)
+      %y = s32[] parameter(1)
+      ROOT %add.3 = s32[] add(%x, %y)
+    }
+
+    %dynamic-slice-fusion.clone (p0.1: s32[8,32], p1.1: s32[2,2,32], p2.1: s32[], p3.1: s32[]) -> s32[2,2,32] {
+      %p1.1 = s32[2,2,32]{2,1,0} parameter(1)
+      %p0.1 = s32[8,32]{1,0} parameter(0)
+      %slice.5 = s32[4,32]{1,0} slice(%p0.1), slice={[4:8], [0:32]}
+      %rs.2 = s32[2,32]{1,0} reduce-scatter(%slice.5), replica_groups={{0,1}}, dimensions={0}, to_apply=%add.clone
+      %bitcast.74 = s32[1,2,32]{2,1,0} bitcast(%rs.2)
+      %p2.1 = s32[] parameter(2)
+      %p3.1 = s32[] parameter(3)
+      ROOT %dynamic-update-slice.4 = s32[2,2,32]{2,1,0} dynamic-update-slice(%p1.1, %bitcast.74, %p2.1, %p3.1, %p3.1)
+    }
+
+    ENTRY %main.clone (destination.1: s32[2,2,32], source.1: s32[8,32], a.1: s32[1024,1024], b.1: s32[1024,1024]) -> (s32[2,2,32], s32[1024,1024]) {
+      %source.1 = s32[8,32]{1,0} parameter(1)
+      %destination.1 = s32[2,2,32]{2,1,0} parameter(0)
+      %copy.1 = s32[2,2,32]{2,1,0} copy(%destination.1)
+      %c1_1 = s32[] constant(1)
+      %c0_1 = s32[] constant(0)
+      %fusion-start.1 = ((s32[8,32]{1,0}, s32[2,2,32]{2,1,0}, s32[], s32[]), s32[2,2,32]{2,1,0}, u32[]) fusion-start(%source.1, %copy.1, %c1_1, %c0_1), kind=kCustom, calls=%dynamic-slice-fusion.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation","kernel_index":0}},"force_earliest_schedule":false}
+      %fusion-done.1 = s32[2,2,32]{2,1,0} fusion-done(%fusion-start.1), backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation","kernel_index":0}},"force_earliest_schedule":false}
+      %a.1 = s32[1024,1024]{1,0} parameter(2)
+      %b.1 = s32[1024,1024]{1,0} parameter(3)
+      %dot.1 = s32[1024,1024]{1,0} dot(%a.1, %b.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT %tuple.1 = (s32[2,2,32]{2,1,0}, s32[1024,1024]{1,0}) tuple(%fusion-done.1, %dot.1)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> exec,
+      CreateExecutable(hlo_module->Clone(), /*run_hlo_passes=*/false));
+  GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
+  const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
+
+  // This is only needed to ensure that the next checks don't fail.
+  ASSERT_GE(thunks.size(), 6);
+
+  // In the following checks, only the order of the thunks matter.
+  EXPECT_EQ(thunks[1]->kind(), Thunk::kWaitForStreams);
+  EXPECT_EQ(thunks[2]->kind(), Thunk::kDynamicSlice);
+  EXPECT_EQ(thunks[3]->kind(), Thunk::kKernel);
+  EXPECT_EQ(thunks[4]->kind(), Thunk::kNcclReduceScatterDone);
+  EXPECT_EQ(thunks[5]->kind(), Thunk::kWaitForStreams);
+
+  // Check that the dynamic slice thunk only produces a start thunk, and not a
+  // done thunk.
+  DynamicSliceThunk* dynamic_slice_thunk =
+      dynamic_cast<DynamicSliceThunk*>(thunks[2].get());
+  ASSERT_NE(dynamic_slice_thunk, nullptr);
+  const SequentialThunk* embedded_thunk = dynamic_cast<const SequentialThunk*>(
+      dynamic_slice_thunk->embedded_thunk());
+  ASSERT_NE(embedded_thunk, nullptr);
+  ASSERT_EQ(embedded_thunk->thunks().size(), 1);
+  EXPECT_EQ(embedded_thunk->thunks()[0]->kind(),
+            Thunk::kNcclReduceScatterStart);
+
+  // Check that the offsets were propagated as constants, and not as device
+  // allocated buffers.
+  auto offsets = dynamic_slice_thunk->get_offsets();
+  auto arg_offset = offsets[0];
+  EXPECT_FALSE(arg_offset.has_value());
+  auto result_offset = offsets[1];
+  ASSERT_TRUE(result_offset.has_value());
+  ASSERT_EQ(result_offset->size(), 3);
+  int64_t* result_offset_0 = std::get_if<int64_t>(&result_offset->at(0));
+  int64_t* result_offset_1 = std::get_if<int64_t>(&result_offset->at(1));
+  int64_t* result_offset_2 = std::get_if<int64_t>(&result_offset->at(2));
+  ASSERT_NE(result_offset_0 && result_offset_1 && result_offset_2, false);
+  EXPECT_EQ(*result_offset_0, 1l);
+  EXPECT_EQ(*result_offset_1, 0l);
+  EXPECT_EQ(*result_offset_2, 0l);
 }
 
 }  // namespace

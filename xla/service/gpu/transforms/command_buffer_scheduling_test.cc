@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/runtime/command_buffer_thunk.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -1117,79 +1118,6 @@ TEST_F(CommandBufferSchedulingTest, AsyncAlltoAll) {
                             });
 }
 
-TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionDynamicSlicing) {
-  if (backend().platform()->Name() == "Host") {
-    GTEST_SKIP() << "GPU support required for this test";
-  }
-  const char* hlo = R"(
-  HloModule jit_slice, replica_count=2
-
-  add {
-    a = s32[] parameter(0)
-    b = s32[] parameter(1)
-    ROOT add = add(a,b)
-  }
-
-  ENTRY main.9 {
-    p0 = s32[2,8,32]{2,1,0} parameter(0)
-    p1 = s32[8,32]{1,0} parameter(1)
-    c0 = s32[] constant(0)
-    c1 = s32[] constant(1)
-    slice = s32[1,8,32]{2,1,0} dynamic-slice(p0, c1, c0, c0), dynamic_slice_sizes={1,8,32}
-    input = s32[8,32]{1,0} reshape(slice)
-    rs = s32[4,32] reduce-scatter(input), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
-    ROOT dus = s32[8,32] dynamic-update-slice(p1, rs, c0, c0)
-  })";
-  TF_ASSERT_OK_AND_ASSIGN(auto original_module,
-                          ParseAndReturnVerifiedModule(hlo));
-  DebugOptions& original_options =
-      original_module->mutable_config().mutable_debug_options();
-  original_options.set_xla_gpu_enable_dynamic_slice_fusion(true);
-
-  TF_ASSERT_OK_AND_ASSIGN(auto m,
-                          GetOptimizedModule(std::move(original_module)));
-
-  HloModuleConfig config(m->config());
-  DebugOptions options(config.debug_options());
-  options.set_xla_gpu_graph_min_graph_size(0);
-
-  auto check = [&m, this](DebugOptions options) -> absl::Status {
-    auto m_clone = m->Clone();
-    HloModuleConfig config(m_clone->config());
-    config.set_debug_options(options);
-    m_clone->set_config(config);
-    TF_ASSIGN_OR_RETURN(auto exec, CreateExecutable(std::move(m_clone), false));
-    auto gpu_exec = std::unique_ptr<GpuExecutable>(
-        static_cast<GpuExecutable*>(exec.release()));
-    TF_RET_CHECK(llvm::any_of(gpu_exec->GetThunk().thunks(),
-                              [](const std::unique_ptr<Thunk>& thunk) {
-                                return thunk->kind() == Thunk::kDynamicSlice;
-                              }));
-    return absl::OkStatus();
-  };
-
-  // With dynamic slicing, no matter what, there should be no command buffer.
-  // Case 1: FUSION on, COLLECTIVES on
-  options.clear_xla_gpu_enable_command_buffer();
-  options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-  options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
-  TF_ASSERT_OK(check(options));
-
-  // Case 2: FUSION off, COLLECTIVES off
-  options.clear_xla_gpu_enable_command_buffer();
-  TF_ASSERT_OK(check(options));
-
-  // Case 3: FUSION off, COLLECTIVES on
-  options.clear_xla_gpu_enable_command_buffer();
-  options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
-  TF_ASSERT_OK(check(options));
-
-  // Case 4: FUSION on, COLLECTIVES off
-  options.clear_xla_gpu_enable_command_buffer();
-  options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-  TF_ASSERT_OK(check(options));
-}
-
 TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
   if (backend().platform()->Name() == "Host" || backend().device_count() < 2) {
     GTEST_SKIP() << "Atleast two GPUs required for this test";
@@ -1206,26 +1134,33 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
   ENTRY main.9 {
     p0 = s32[2,8,32]{2,1,0} parameter(0)
     p1 = s32[8,32]{1,0} parameter(1)
+    a = s32[128,128] parameter(2)
+    b = s32[128,128] parameter(3)
     c0 = s32[] constant(0)
     c1 = s32[] constant(1)
     slice = s32[1,8,32]{2,1,0} slice(p0), slice={[1:2], [0:8], [0:32]}
     input = s32[8,32]{1,0} reshape(slice)
-    ROOT rs = s32[4,32] reduce-scatter(input), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
+    rs = s32[4,32] reduce-scatter(input), channel_id=64, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=add
+    dot = s32[128,128] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    ROOT tuple = tuple(rs, dot)
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto m, GetOptimizedModule(hlo));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  m->mutable_config().mutable_debug_options().set_xla_gpu_graph_min_graph_size(
+      0);
 
   HloModuleConfig config(m->config());
   DebugOptions options(config.debug_options());
 
-  options.set_xla_gpu_graph_min_graph_size(0);
-
+  TF_ASSERT_OK_AND_ASSIGN(m, GetOptimizedModule(std::move(m)));
   auto get_exec = [&m, this](DebugOptions options)
       -> absl::StatusOr<std::unique_ptr<GpuExecutable>> {
-    auto m_clone = m->Clone();
-    HloModuleConfig config(m_clone->config());
-    config.set_debug_options(options);
-    m_clone->set_config(config);
+    std::unique_ptr<HloModule> m_clone = m->Clone();
+    m_clone->mutable_config().set_debug_options(options);
     TF_ASSIGN_OR_RETURN(auto exec, CreateExecutable(std::move(m_clone), false));
     return std::unique_ptr<GpuExecutable>(
         static_cast<GpuExecutable*>(exec.release()));
@@ -1234,8 +1169,9 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
   // FUSION on, COLLECTIVES on -> command buffer
   {
     options.clear_xla_gpu_enable_command_buffer();
+    options.add_xla_gpu_enable_command_buffer(
+        DebugOptions::DYNAMIC_SLICE_FUSION);
     options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-    options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     TF_ASSERT_OK_AND_ASSIGN(auto gpu_exec, get_exec(options));
     Thunk* child = gpu_exec->GetThunk().thunks()[0].get();
     ASSERT_EQ(child->kind(), Thunk::kCommandBuffer);
@@ -1249,32 +1185,14 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
     ASSERT_NE(child->kind(), Thunk::kCommandBuffer);
   }
 
-  // FUSION off, COLLECTIVES on -> command buffer because static slices.
-  {
-    options.clear_xla_gpu_enable_command_buffer();
-    options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
-    TF_ASSERT_OK_AND_ASSIGN(auto gpu_exec, get_exec(options));
-    Thunk* child = gpu_exec->GetThunk().thunks()[0].get();
-    ASSERT_EQ(child->kind(), Thunk::kCommandBuffer);
-  }
-
-  // FUSION on, COLLECTIVES off -> no command buffer because collective hero.
-  {
-    options.clear_xla_gpu_enable_command_buffer();
-    options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
-    TF_ASSERT_OK_AND_ASSIGN(auto gpu_exec, get_exec(options));
-    Thunk* child = gpu_exec->GetThunk().thunks()[0].get();
-    ASSERT_NE(child->kind(), Thunk::kCommandBuffer);
-  }
-
   // Finally compare with/without command buffer.
   options.clear_xla_gpu_enable_command_buffer();
-  auto m_ref = m->Clone();
-  config.set_debug_options(options);
-  m_ref->set_config(config);
-
-  config.set_debug_options(GetDebugOptionsForTest());
-  m->set_config(config);
+  m->mutable_config().set_debug_options(options);
+  std::unique_ptr<HloModule> m_ref = m->Clone();
+  m->mutable_config().mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  m->mutable_config().mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::FUSION);
   ASSERT_TRUE(RunAndCompareTwoModulesReplicated(std::move(m_ref), std::move(m),
                                                 false, true, std::nullopt));
 }
@@ -1324,6 +1242,59 @@ TEST_F(CommandBufferSchedulingTest, ReturnTrueWhenOnlyParamMoved) {
     // CHECK: %{{.+}} = {{.+}} custom-call
     // CHECK: %{{.+}} = {{.+}} custom-call
   )");
+}
+
+TEST_F(CommandBufferSchedulingTest,
+       DynamicSliceFusionWithDynamicAddressesNotACommand) {
+  if (backend().platform()->Name() == "Host") {
+    GTEST_SKIP() << "This test requires GPU.";
+  }
+  const char* hlo = R"(
+    HloModule test, replica_count=2
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+    ENTRY main {
+      destination = s32[2,2,32] parameter(0)
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      c4 = s32[] constant(4)
+      source = s32[8,32] parameter(1)
+      a = s32[1024,1024] parameter(2)
+      b = s32[1024,1024] parameter(3)
+      slice = s32[4,32] slice(source), slice={[4:8], [0:32]}
+      rs = s32[2,32] reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      reshape = s32[1,2,32] reshape(rs)
+      dus = s32[2,2,32] dynamic-update-slice(destination, reshape, c1, c0, c0)
+      dot = s32[1024,1024] dot(a,b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT tuple = tuple(dus,dot)
+    }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  auto m_ref = m->Clone();
+  m->mutable_config().mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::DYNAMIC_SLICE_FUSION);
+  m->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_enable_dynamic_slice_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_opt,
+                          GetOptimizedModule(m->Clone()));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          CreateExecutable(m_opt->Clone(), false));
+  HloInstruction* fusion_start =
+      FindInstruction(&exec->module(), HloOpcode::kAsyncStart);
+  HloInstruction* fusion_done =
+      FindInstruction(&exec->module(), HloOpcode::kAsyncDone);
+  ASSERT_NE(fusion_start, nullptr);
+  ASSERT_NE(fusion_done, nullptr);
+  EXPECT_EQ(fusion_start->parent(), exec->module().entry_computation());
+  EXPECT_EQ(fusion_done->parent(), exec->module().entry_computation());
+  ErrorSpec error{1e-6, 1e-6};
+  RunAndCompareTwoModulesReplicated(std::move(m_ref), std::move(m), true, true,
+                                    error);
 }
 
 }  // namespace
