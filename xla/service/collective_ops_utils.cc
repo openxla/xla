@@ -270,6 +270,7 @@ GetParticipatingDevicesGroups(const DeviceAssignment& device_assignment,
   std::vector<std::vector<GlobalDeviceId>> groups;
   switch (group_mode) {
     case CollectiveOpGroupMode::kCrossReplica: {
+      LOG(INFO) << "my_zz0";
       for (const auto& replica_group : participating_replica_groups) {
         // replica_group contains replica id, participants contains all
         // replica_group's replica_ids for the current partition.
@@ -279,6 +280,7 @@ GetParticipatingDevicesGroups(const DeviceAssignment& device_assignment,
           participants.reserve(replica_group.replica_ids().size());
 
           for (int replica_id : replica_group.replica_ids()) {
+            LOG(INFO) << "my_zz1: " << replica_id << " " << partition_id;
             participants.emplace_back(
                 device_assignment(replica_id, partition_id));
           }
