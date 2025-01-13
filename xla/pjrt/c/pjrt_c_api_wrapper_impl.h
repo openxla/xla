@@ -22,6 +22,7 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <vector>
+#include <variant>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -125,7 +126,7 @@ struct PJRT_Memory {
 };
 
 struct PJRT_ExecuteContext {
-  std::shared_ptr<xla::ExecuteContext> execute_context;
+  std::variant<const xla::ExecuteContext*, std::shared_ptr<xla::ExecuteContext>> execute_context;
 };
 
 struct PJRT_Executable {

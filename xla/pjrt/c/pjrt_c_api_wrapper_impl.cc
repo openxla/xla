@@ -1557,7 +1557,13 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   options.strict_shape_checking = true;
   options.arguments_are_tupled = false;
   options.untuple_result = true;
-  options.context = nullptr;
+  if (auto context = args->options->context) {
+    if (std::holds_alternative<std::shared_ptr<xla::ExecuteContext>>(context->execute_context)) {
+        options.context = std::get<std::shared_ptr<xla::ExecuteContext>>(context->execute_context).get();
+    } else if (std::holds_alternative<const xla::ExecuteContext*>(context->execute_context)) {
+        options.context = std::get<const xla::ExecuteContext*>(context->execute_context);
+    }
+  }
   options.multi_slice_config = nullptr;
   options.use_major_to_minor_data_layout_for_callbacks = true;
   if (args->options->num_non_donatable_input_indices > 0) {
