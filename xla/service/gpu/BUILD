@@ -589,6 +589,7 @@ cc_library(
         "//xla/service:shaped_buffer",
         "//xla/service:stream_pool",
         "//xla/service:xla_debug_info_manager",
+        "//xla/service/gpu:resource_requests",
         "//xla/service/gpu/runtime:annotation",
         "//xla/service/gpu/runtime:sequential_thunk",
         "//xla/service/gpu/runtime:thunk",
@@ -3272,4 +3273,13 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:test",
     ],
+)
+
+cc_library(
+    name = "resource_requests",
+    srcs = ["resource_requests.cc"],
+    hdrs = ["resource_requests.h"],
+    deps = [
+        "//xla/service/gpu/runtime:thunk",
+    ]
 )
