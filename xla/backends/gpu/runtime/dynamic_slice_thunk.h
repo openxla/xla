@@ -58,7 +58,7 @@ class DynamicSliceThunk : public Thunk {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
-      std::vector<std::unique_ptr<HloModule>> temp_modules,
+      std::vector<std::unique_ptr<HloModule>> extracted_offset_modules,
       std::unique_ptr<HloModule> indvar_init,
       std::unique_ptr<HloModule> indvar_update);
 
@@ -136,7 +136,7 @@ class DynamicSliceThunk : public Thunk {
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
-  std::vector<std::unique_ptr<HloModule>> temp_modules_;
+  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules_;
   std::unique_ptr<HloModule> indvar_init_, indvar_update_;
 };
 

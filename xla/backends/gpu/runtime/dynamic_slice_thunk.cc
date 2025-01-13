@@ -66,7 +66,7 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
     std::vector<std::optional<uint64_t>> offset_byte_sizes,
-    std::vector<std::unique_ptr<HloModule>> temp_modules,
+    std::vector<std::unique_ptr<HloModule>> extracted_offset_modules,
     std::unique_ptr<HloModule> indvar_init,
     std::unique_ptr<HloModule> indvar_update)
     : Thunk(Kind::kDynamicSlice, thunk_info),
@@ -78,7 +78,7 @@ DynamicSliceThunk::DynamicSliceThunk(
       orig_shapes_(orig_shapes),
       sliced_shapes_(sliced_shapes),
       offset_byte_sizes_(offset_byte_sizes),
-      temp_modules_(std::move(temp_modules)),
+      extracted_offset_modules_(std::move(extracted_offset_modules)),
       indvar_init_(std::move(indvar_init)),
       indvar_update_(std::move(indvar_update)) {
   // Zip all arguments together to create a list of SliceDef.
@@ -212,7 +212,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
             HloEvaluator().Evaluate(**offset_module, {Indvar(this).get()}));
         auto offset_int = LiteralUtil::LiteralAsScalarInt64(offset);
         if (offset_int.has_value()) {
-          offset_value(argument_idx, offset_idx) = offset.data<uint32_t>()[0];
+          offset_value(argument_idx, offset_idx) = offset_int.value();
         } else {
           return absl::InternalError(
               absl::StrFormat("Unhandled type returned from offset module: %s",
