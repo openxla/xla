@@ -47,7 +47,8 @@ class DynamicSliceThunk : public Thunk {
  public:
   // Dynamic slice offset can be either: (1) a statically known constant value
   // or (2) a truly dynamic offset that is computed on device and have to be
-  // transferred to host.
+  // transferred to host or (3) a temporary HloModule that computes the offset
+  // with induction variable as the input.
   using Offset = std::variant<int64_t, BufferAllocation::Slice, HloModule*>;
 
   DynamicSliceThunk(
@@ -58,7 +59,7 @@ class DynamicSliceThunk : public Thunk {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
-      std::vector<std::unique_ptr<HloModule>> temp_modules = {},
+      std::vector<std::unique_ptr<HloModule>> extracted_offset_modules = {},
       std::unique_ptr<HloModule> indvar_init = nullptr,
       std::unique_ptr<HloModule> indvar_update = nullptr);
   DynamicSliceThunk(const DynamicSliceThunk&) = delete;
@@ -135,7 +136,20 @@ class DynamicSliceThunk : public Thunk {
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
-  std::vector<std::unique_ptr<HloModule>> temp_modules_;
+  // Extracted HloModules for computing dynamic offsets. The modules here are
+  // not used, this is solely for keeping the modules alive and maintain their
+  // ownership with the thunk. The pointers to these offsets are stored in the
+  // `offsets_` vector. These modules are of the signature `(integer[]) ->
+  // integer[]`, where the input is the current value of the loop induction
+  // variable, and the output is the offset value for that iteration.
+  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules_;
+
+  // These two modules help keep track of the induction variable. The module
+  // `indvar_init_` is a module of the prototype `() -> integer[]`. It takes no
+  // input, and returns the initial value of the induction variable. The module
+  // `indvar_update_` is a module of the prototype `(integer[]) -> integer[]`.
+  // It takes the current value of the induction variable, and returns the next
+  // value of the induction variable.
   std::unique_ptr<HloModule> indvar_init_, indvar_update_;
 };
 
