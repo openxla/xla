@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 
@@ -63,6 +64,14 @@ class ProfilerInterface {
   virtual void CreateSession() = 0;
   // Uploads profiling session data after finishing running HLO module.
   virtual void UploadSession() = 0;
+};
+
+// Interface that may optionally return a XSpace proto after UploadSession() is
+// called. This can be used by caller to get a programmatic handler of the
+// profiling data.
+class XSpaceProfilerInterface : public ProfilerInterface {
+ public:
+  virtual const tensorflow::profiler::XSpace* GetXSpace() = 0;
 };
 
 bool AbslParseFlag(absl::string_view text, InputFormat* input_format,
