@@ -101,8 +101,8 @@ xla_cc_test(
     deps = [
         ":cpu_topology",
         ":cpu_topology_proto_cc",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )

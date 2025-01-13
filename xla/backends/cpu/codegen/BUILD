@@ -138,6 +138,7 @@ xla_cc_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:OrcJIT",
@@ -148,7 +149,6 @@ xla_cc_test(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 

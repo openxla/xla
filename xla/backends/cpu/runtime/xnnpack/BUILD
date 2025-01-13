@@ -118,12 +118,12 @@ xla_cc_test(
         "@XNNPACK",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/synchronization",
+        "@com_google_googletest//:gtest_main",
         "@eigen_archive//:eigen3",
         "@pthreadpool",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
