@@ -34,8 +34,9 @@ limitations under the License.
 #include "xla/ffi/ffi_api.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/gpu/resource_requests.h"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/service/hlo_runner.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/shape_util.h"
@@ -68,11 +69,8 @@ namespace {
 class DynamicSliceThunkTest : public HloRunnerAgnosticTestBase {
  public:
   DynamicSliceThunkTest()
-      : HloRunnerAgnosticTestBase(
-            std::make_unique<HloRunner>(
-                PlatformUtil::GetDefaultPlatform().value()),
-            std::make_unique<HloRunner>(
-                PlatformUtil::GetDefaultPlatform().value())) {}
+      : HloRunnerAgnosticTestBase(std::make_unique<HloRunner>(
+            PlatformUtil::GetDefaultPlatform().value())) {}
 };
 
 static se::StreamExecutor* GpuExecutor() {

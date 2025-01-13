@@ -53,42 +53,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-// Shared resources required for thunk initialization and execution.
-class ResourceRequests : public Thunk::ResourceRequests {
- public:
-  absl::Status AddClique(const GpuCliqueKey& clique_key,
-                         int32_t num_local_participants) final;
-
-  absl::StatusOr<Thunk::CollectiveCliques> AcquireCollectiveCliques(
-      const Thunk::CollectiveExecuteParams& params,
-      bool use_persistent_cliques);
-
- private:
-  struct CliqueRequest {
-    GpuCliqueKey key;
-    int64_t num_local_participants;
-    int64_t id;
-  };
-
-  // Return clique requests deterministically ordered using a comparison
-  // function that produces identical ordering for all participating ranks.
-  //
-  // Example: 8 ranks splitted in different groups of communicators
-  //
-  // Group #0: [0,1], [2,3], [4,5], [6,7]
-  // Group #1: [0,4], [1,5], [2,6], [3,7]
-  //
-  // Both groups #0 and #1 can be acqured by splitting [0...7] clique. To avoid
-  // deadlocks all participants should acquire all cliques in a group #0 before
-  // acquiring any cliques in a group #1.
-  //
-  // We rely on clique request id to guarantee that the order is identical
-  // on all participating ranks (including ranks running on different hosts).
-  std::vector<CliqueRequest> GetOrderedCliqueRequests();
-
-  absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;
-};
-
 // GPU-targeting implementation of the XLA Executable interface.
 //
 // Launches the given GPU kernel via the StreamExecutor.
