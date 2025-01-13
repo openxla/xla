@@ -55,7 +55,7 @@ class HloFusionInfo : public FusionInfo {
   HloFusionInfo(const HloFusionAnalysis& analysis,
                 const HloFusionInstruction* instr,
                 const BufferAssignment* buffer_assignment,
-                CallGraph& call_graph)
+                const CallGraph& call_graph)
       : FusionInfo(analysis),
         instr_(instr),
         buffer_assignment_(buffer_assignment),
