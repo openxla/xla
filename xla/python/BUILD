@@ -1231,9 +1231,11 @@ tsl_pybind_extension(
         ":gpu_support",
         ":logging",
         ":py_client",
-        # placeholder for index annotation deps
-        "@nanobind",
+        "//xla/pjrt:status_casters",
+        "//xla/pjrt:triton",
+        "@com_google_absl//absl/strings:string_view",
         "@local_config_python//:python_headers",  # buildcleaner: keep
+        "@nanobind",
     ],
 )
 
