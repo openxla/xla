@@ -45,12 +45,13 @@ CollectiveStreamId GetCollectiveStreamId(bool is_async,
 GpuCliqueKey::GpuCliqueKey(
     std::vector<GlobalDeviceId> devices, CollectiveStreamId stream_id,
     AsyncStreamKind stream_kind,
-    std::vector<std::vector<GlobalDeviceId>> participant_groups)
+    std::vector<std::vector<GlobalDeviceId>> participant_groups,
+    GlobalDeviceId root_device)
     : CliqueKey(std::move(devices)),
       stream_id_(stream_id),
       stream_kind_(stream_kind),
       participant_groups_(std::move(participant_groups)),
-      root_device_(-1) {
+      root_device_(root_device) {
   for (std::vector<GlobalDeviceId>& group : participant_groups_) {
     absl::c_sort(group);
   }
