@@ -21,22 +21,21 @@ limitations under the License.
 #include <variant>
 
 #include "absl/memory/memory.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/gpu/model/hlo_op_profiles_data.h"
 #include "xla/stream_executor/device_description.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
 
 /*static*/ const HloOpProfiles& HloOpProfiles::Singleton() {
   static const auto* hlo_op_profiles =
-      HloOpProfiles::Load(kDeviceHloOpProfiles,
-                          /*default_profile_name=*/"sm_86")
-          .release();
+      HloOpProfiles::Load(kDeviceHloOpProfiles).release();
   return *hlo_op_profiles;
 }
 
@@ -50,8 +49,7 @@ namespace gpu {
 }
 
 /*static*/ std::unique_ptr<HloOpProfiles> HloOpProfiles::Load(
-    absl::string_view profiles_text_proto,
-    absl::string_view default_profile_name) {
+    absl::string_view profiles_text_proto) {
   ProfilesNestedMap profiles_map;
   DeviceHloInstructionProfiles all_device_profiles;
   CHECK(tsl::protobuf::TextFormat::ParseFromString(
@@ -65,15 +63,34 @@ namespace gpu {
           op_code, element_type)] = entry.clock_cycles();
     }
   }
-  return absl::WrapUnique(
-      new HloOpProfiles(std::move(profiles_map), default_profile_name));
+  return absl::WrapUnique(new HloOpProfiles(std::move(profiles_map)));
+}
+
+const HloOpProfiles::HloOpProfile& HloOpProfiles::GetLatestProfile() const {
+  auto name_to_version = [](std::string profile_name) {
+    int32_t version;
+    CHECK(absl::SimpleAtoi(profile_name.substr(/*sm_*/ 3), &version))
+        << "Could not get version number from " << profile_name;
+    return version;
+  };
+  int32_t recent_version = name_to_version(profiles_.begin()->first);
+  for (const auto& [name, profile] : profiles_) {
+    int32_t version = name_to_version(name);
+    if (version > recent_version) {
+      recent_version = version;
+    }
+  }
+  std::string recent_version_key = "sm_" + std::to_string(recent_version);
+  return profiles_.find(recent_version_key)->second;
 }
 
 const HloOpProfiles::HloOpProfile& HloOpProfiles::GetProfile(
     const se::DeviceDescription& device_info) const {
   auto it = profiles_.find(GetProfileName(device_info));
   if (it != profiles_.end()) return it->second;
-  return default_profile_;
+  VLOG(3) << "Didn't find profile for " << GetProfileName(device_info)
+          << ". Returning the latest profile.";
+  return GetLatestProfile();
 }
 
 }  // namespace gpu
