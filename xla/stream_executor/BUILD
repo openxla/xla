@@ -145,8 +145,8 @@ cc_library(
     name = "device_memory",
     hdrs = ["device_memory.h"],
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -656,10 +656,10 @@ cc_library(
         ":device_memory",
         ":kernel",
         ":launch_dim",
-        ":platform",
         "//xla/tsl/lib/gtl:int_type",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
     ],

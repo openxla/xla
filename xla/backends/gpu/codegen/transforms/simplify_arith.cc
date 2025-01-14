@@ -23,6 +23,7 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -31,7 +32,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/codegen/transforms/passes.h"
 #include "xla/hlo/analysis/indexing_map.h"
 
@@ -364,6 +365,14 @@ class SimplifyArithPass
     // clang-format on
     if (mlir::failed(
             mlir::applyPatternsAndFoldGreedily(func, std::move(patterns)))) {
+      signalPassFailure();
+    }
+
+    mlir::RewritePatternSet scf_patterns(ctx);
+    mlir::scf::ForOp::getCanonicalizationPatterns(scf_patterns, ctx);
+    mlir::scf::IfOp::getCanonicalizationPatterns(scf_patterns, ctx);
+    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(
+            func, std::move(scf_patterns)))) {
       signalPassFailure();
     }
   }

@@ -17,8 +17,8 @@ limitations under the License.
 
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -34,7 +34,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
-#include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/maybe_owning_device_memory.h"
@@ -157,11 +156,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> AutotunerCompileUtil::ExtractModule(
   return extractor(opts_);
 }
 
-/*static*/ absl::StatusOr<std::optional<AutotunerCompileUtil>>
-AutotunerCompileUtil::Create(const AutotuneConfig& config,
-                             const DebugOptions& opts) {
+/*static*/ absl::StatusOr<AutotunerCompileUtil> AutotunerCompileUtil::Create(
+    const AutotuneConfig& config, const DebugOptions& opts) {
   if (config.IsDeviceless()) {
-    return std::nullopt;
+    return absl::InvalidArgumentError(
+        "Deviceless autotuning is not supported.");
   }
   se::StreamExecutor* stream_exec = config.GetExecutor();
   se::DeviceMemoryAllocator* allocator = config.GetAllocator();
@@ -197,11 +196,13 @@ absl::StatusOr<RedzoneBuffers> RedzoneBuffers::FromInstruction(
     const HloInstruction& instruction, const AutotuneConfig& config,
     const DebugOptions& debug_options, BuffersToCreate buffers_to_create) {
   RedzoneBuffers buffers;
-
-  TF_ASSIGN_OR_RETURN(auto rz_allocator, AutotunerUtil::CreateRedzoneAllocator(
-                                             config, debug_options));
-  buffers.redzone_allocator_ =
-      std::make_unique<se::RedzoneAllocator>(std::move(rz_allocator));
+  TF_ASSIGN_OR_RETURN(se::Stream * stream, config.GetStream());
+  buffers.redzone_allocator_ = std::make_unique<se::RedzoneAllocator>(
+      stream, config.GetAllocator(),
+      /*memory_limit=*/std::numeric_limits<int64_t>::max(),
+      /*redzone_size=*/config.should_check_correctness()
+          ? debug_options.xla_gpu_redzone_padding_bytes()
+          : 0);
 
   int64_t rng_state = 0;
 
@@ -224,8 +225,8 @@ absl::Status RedzoneBuffers::CreateInputs(const HloInstruction& instruction,
   for (const auto* operand : instruction.operands()) {
     TF_ASSIGN_OR_RETURN(
         se::DeviceMemoryBase buf,
-        AutotunerUtil::CreateBuffer(*redzone_allocator_, operand->shape(),
-                                    config, rng_state));
+        redzone_allocator_->CreateBuffer(
+            operand->shape(), config.should_init_buffers(), rng_state));
     input_buffers_.push_back(buf);
     input_shapes_.push_back(operand->shape());
   }
@@ -240,8 +241,8 @@ absl::Status RedzoneBuffers::CreateOutputs(const HloInstruction& instruction,
   if (!instruction.shape().IsTuple()) {
     TF_ASSIGN_OR_RETURN(
         se::DeviceMemoryBase buf,
-        AutotunerUtil::CreateBuffer(*redzone_allocator_, instruction.shape(),
-                                    config, rng_state));
+        redzone_allocator_->CreateBuffer(
+            instruction.shape(), config.should_init_buffers(), rng_state));
     output_buffers_.push_back(buf);
     output_shape_ = instruction.shape();
     return absl::OkStatus();
@@ -264,8 +265,8 @@ absl::Status RedzoneBuffers::CreateOutputs(const HloInstruction& instruction,
     }
     TF_ASSIGN_OR_RETURN(
         se::DeviceMemoryBase buf,
-        AutotunerUtil::CreateBuffer(*redzone_allocator_, *current_shape_it,
-                                    config, rng_state));
+        redzone_allocator_->CreateBuffer(
+            *current_shape_it, config.should_init_buffers(), rng_state));
     output_buffers_.push_back(buf);
   }
   return absl::OkStatus();

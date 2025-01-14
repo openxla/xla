@@ -83,9 +83,9 @@ _TAGS_TO_DOCUMENTATION_MAP = {
     "xla_gpu_h100": "Runs on an h100.",
     "xla_gpu_b100": "Runs on an b100.",
     # Below tags are consumed by `xla_test`.
-    "test_xla_cpu_thunks": (
-        "Internally, `xla_test` sets `--xla_cpu_use_thunk_runtime`. Unused on"
-        " OpenXLA CI."
+    "test_xla_cpu_no_thunks": (
+        "Internally, `xla_test` sets `--xla_cpu_use_thunk_runtime` to false."
+        " Unused on OpenXLA CI."
     ),
     "test_migrated_to_hlo_runner_pjrt": (
         "Adds the appropriate `xla/tests:pjrt_$BACKEND_client_registry` to the"

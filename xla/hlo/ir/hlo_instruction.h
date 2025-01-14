@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -1073,13 +1074,44 @@ class HloInstruction {
   // Index 'data' at 'offsets'[2], 'sizes'[2]'
   // {m,n,o},{p,q,r},{s,t,u},{v,w,x}
   //
+  //
+  // ``output_offsets`` must be sharded in a way that each replica has offsets
+  // in the target replica output perspective.
+  //
+  // For i-th output offset, the current replica will send
+  // `input[input_offsets[i]:input_offsets[i]+input_sizes[i]]` update to
+  // `i`-th replica that will be written to
+  // `output_i[output_offsets[i]:output_offsets[i]+send_sizes[i]]` in `i`-th
+  // replica ``output``.
+  //
+  // For example, if we have 2 replicas:
+  //
+  // replica 0:
+  //   input: [1, 2, 2]
+  //   output: [0, 0, 0, 0]
+  //   input_offsets: [0, 1]
+  //   send_sizes: [1, 2]
+  //   output_offsets: [0, 0]
+  //   recv_sizes: [1, 1]
+  //
+  // replica 1:
+  //   input: [3, 4, 0]
+  //   output: [0, 0, 0, 0]
+  //   input_offsets: [0, 1]
+  //   send_sizes: [1, 1]
+  //   output_offsets: [1, 2]
+  //   recv_sizes: [2, 1]
+  //
+  // replica 0's result will be: [1, 3, 0, 0]
+  // replica 1's result will be: [2, 2, 4, 0]
+  //
   // The ragged all-to-all HLO has the following arguments:
-  // input: ragged input data tensor.
-  // output: ragged output data tensor.
-  // input_offsets: ragged input offsets tensor.
-  // send_sizes: ragged send sizes tensor.
-  // output_offsets: ragged output offsets tensor.
-  // recv_sizes: ragged recv sizes tensor.
+  //   input: ragged input data tensor.
+  //   output: ragged output data tensor.
+  //   input_offsets: ragged input offsets tensor.
+  //   send_sizes: ragged send sizes tensor.
+  //   output_offsets: array of ragged offsets in the target replica output.
+  //   recv_sizes: ragged recv sizes tensor.
   //
   // The '*_offsets' and '*_sizes' tensors must have the same shape.
   // The output buffer is passed in as an input (and aliased in the output),
@@ -1705,27 +1737,20 @@ class HloInstruction {
                              /*ignore_commutative_operand_order=*/true);
   }
 
+  // Allow subclasses to contribute additional attributes to the hash.
+  virtual void HashAdditionalAttributes(absl::HashState h) const {};
+
   // Generates a hash value of an HLO instruction. Hash considers
-  // information on opcode, shape, operands, and typically a root instruction.
-  // This function returns the same hash value for equivalent HLO instructions,
-  // with respect to HloInstruction::Identical() method.
-  // TODO(majnemer): Make the comment here more crisp & accurate.
+  // information on opcode, shape, number of operands, and other relevant
+  // additional attributes (e.g. literal values, parameters, etc.).
   template <typename H>
   friend H AbslHashValue(H h, const HloInstruction& hlo) {
     h = H::combine(std::move(h), hlo.opcode(), hlo.shape());
-
     if (!hlo.IsCrossModuleAllReduce()) {
-      for (size_t i = 0; i < hlo.operands().size(); ++i) {
-        h = H::combine(std::move(h), hlo.operand(i)->shape());
-      }
       h = H::combine(std::move(h), hlo.operand_count());
     }
-
-    if (hlo.opcode() == HloOpcode::kFusion) {
-      h = H::combine(std::move(h), *hlo.fused_expression_root(),
-                     hlo.fusion_kind(), hlo.fused_instruction_count(),
-                     hlo.fused_parameters().size());
-    }
+    // Allow subclasses to mix additional data into h before returning
+    hlo.HashAdditionalAttributes(absl::HashState::Create(&h));
     return h;
   }
 

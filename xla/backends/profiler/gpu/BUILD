@@ -5,6 +5,7 @@ load(
     "//xla/tsl:tsl.bzl",
     "if_google",
     "if_nvcc",
+    "if_oss",
     "internal_visibility",
     "tsl_copts",
     "tsl_gpu_library",
@@ -177,7 +178,9 @@ tsl_gpu_library(
         "//xla/tsl/profiler/utils:per_thread",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:optional",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
@@ -354,6 +357,7 @@ tsl_gpu_library(
         "@com_google_absl//absl/container:node_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
@@ -418,5 +422,33 @@ xla_test(
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_main",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
+cuda_library(
+    name = "nvtx_with_cuda_kernels",
+    testonly = 1,
+    srcs = ["nvtx_with_cuda_kernels.cu.cc"],
+    hdrs = ["nvtx_with_cuda_kernels.h"],
+    copts = if_nvcc([
+        "-nvcc_options",
+        "ptxas-options=-v",
+    ]),
+    local_defines = if_oss(["NVTX_VERSION_3_1=1"]),
+    tags = ["requires-gpu-nvidia"],
+    visibility = ["//visibility:public"],
+)
+
+xla_test(
+    name = "nvtx_with_cuda_kernels_test",
+    size = "small",
+    srcs = ["nvtx_with_cuda_kernels_test.cc"],
+    backends = ["gpu"],
+    copts = tf_profiler_copts() + tsl_copts(),
+    tags = ["no_mac"],
+    deps = [
+        ":nvtx_with_cuda_kernels",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test_main",
     ],
 )

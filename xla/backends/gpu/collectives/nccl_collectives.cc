@@ -20,7 +20,6 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -40,11 +39,11 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -69,7 +68,7 @@ absl::StatusOr<CliqueId> NcclCollectives::CreateUniqueCliqueId() const {
   VLOG(3) << "Create NCCL unique clique id";
   ncclUniqueId id;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetUniqueId(&id));
-  return CliqueId(std::string_view(id.internal, NCCL_UNIQUE_ID_BYTES));
+  return CliqueId(absl::string_view(id.internal, NCCL_UNIQUE_ID_BYTES));
 }
 
 bool NcclCollectives::IsGlobalConfig() const {

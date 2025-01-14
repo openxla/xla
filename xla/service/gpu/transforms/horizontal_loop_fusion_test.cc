@@ -60,7 +60,7 @@ auto MakeDeviceDescription() {
 class HorizontalLoopFusionTest : public HloTestBase {
  public:
   static bool IsFusion(const HloInstruction* instr) {
-    return instr->opcode() == HloOpcode::kFusion;
+    return HloPredicateIsOp<HloOpcode::kFusion>(instr);
   }
   const se::DeviceDescription device_description_{MakeDeviceDescription()};
 };
@@ -296,7 +296,7 @@ TEST_F(HorizontalLoopFusionTest, FusingIntoKLoopAndKInputTogether) {
   int input_fusion_count = 0;
   int loop_fusion_count = 0;
   for (auto inst : module->entry_computation()->MakeInstructionPostOrder()) {
-    if (inst->opcode() == HloOpcode::kFusion) {
+    if (HloPredicateIsOp<HloOpcode::kFusion>(inst)) {
       input_fusion_count +=
           (inst->fusion_kind() == HloInstruction::FusionKind::kInput) ? 1 : 0;
       loop_fusion_count +=
@@ -665,7 +665,7 @@ TEST_F(HorizontalLoopFusionTest,
               GmockMatch(m::Tuple(m::Multiply(), m::Add())));
 }
 
-TEST_F(HorizontalLoopFusionTest, ForbidSharedParametersWhenUsingConcatenation) {
+TEST_F(HorizontalLoopFusionTest, AllowSharedOperandsWhenUsingConcatenation) {
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 f {
   p = f16[] parameter(0)
@@ -685,9 +685,7 @@ e {
 
   // As fusions f and g have different output shapes, the horizontal fusion
   // algorithm would only consider merging them using concatenation/slicing.
-  // The horizontal fusion is not supposed to happen in this
-  // example though because f and g share an input parameter.
-  EXPECT_FALSE(
+  EXPECT_TRUE(
       HorizontalLoopFusion{device_description_}.Run(module.get()).value());
 }
 

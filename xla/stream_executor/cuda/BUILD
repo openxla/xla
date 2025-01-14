@@ -608,6 +608,7 @@ cc_library(
     deps = [
         "//xla/stream_executor:kernel_spec",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -692,6 +693,7 @@ cc_library(
     deps = [
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -705,6 +707,7 @@ xla_cc_test(
     deps = [
         ":ptx_compiler_helpers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
@@ -974,9 +977,12 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:path",
     ],
@@ -1515,6 +1521,7 @@ cc_library(
         ":compilation_provider",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
     ],
@@ -1785,6 +1792,7 @@ xla_cc_test(
         ":mock_compilation_provider",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
