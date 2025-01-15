@@ -352,16 +352,16 @@ class DfsHloRewriteVisitor : public DfsHloVisitorWithDefault {
   // Replaces the existing HLO instruction old_instruction, with
   // new_instruction, and marks the optimizer status as changed.
   // Returns the absl::Status representing the result of the replace operation.
-  absl::StatusOr<bool> ReplaceInstruction(
-      HloInstruction* old_instruction, HloInstruction* new_instruction,
-      bool preserve_sharding, bool relay_control_dependency = false) {
+  absl::StatusOr<bool> ReplaceInstruction(HloInstruction* old_instruction,
+                                          HloInstruction* new_instruction,
+                                          bool preserve_sharding) {
     VLOG(3) << "Replacing instruction:" << "\n  old: "
             << old_instruction->ToString()
             << "\n  new: " << new_instruction->ToString();
     absl::StatusOr<bool> changed_or =
         old_instruction->parent()->ReplaceInstruction(
             old_instruction, new_instruction, preserve_sharding,
-            relay_control_dependency);
+            /*relay_control_dependency=*/true);
     if (ABSL_PREDICT_TRUE(changed_or.ok())) {
       changed_ |= changed_or.value();
     }
