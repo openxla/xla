@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,20 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/tsl/platform/resource.h"
+#ifndef XLA_TSL_PLATFORM_CRASH_ANALYSIS_H_
+#define XLA_TSL_PLATFORM_CRASH_ANALYSIS_H_
 
-#include "tsl/platform/stringpiece.h"
+#include "tsl/platform/platform.h"
 
-namespace tsl {
+// Include appropriate platform-dependent implementations
+#if defined(PLATFORM_GOOGLE)
+#include "xla/tsl/platform/google/crash_analysis.h"  // IWYU pragma: export
+#else
+#include "xla/tsl/platform/default/crash_analysis.h"  // IWYU pragma: export
+#endif
 
-class ResourceTagger::ResourceTaggerImpl {
- public:
-  ResourceTaggerImpl(absl::string_view key, absl::string_view value) {}
-};
-
-ResourceTagger::ResourceTagger(absl::string_view key, absl::string_view value) {
-}
-
-ResourceTagger::~ResourceTagger() {}
-
-}  // namespace tsl
+#endif  // XLA_TSL_PLATFORM_CRASH_ANALYSIS_H_
