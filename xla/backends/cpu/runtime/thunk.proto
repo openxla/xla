@@ -45,7 +45,7 @@ message ShapeBufferAllocationSliceProto {
 message OpParamsProto {
   int64 op_id = 1;
   bool has_channel_id = 2;
-  bool use_global_device_ids = 3;  // TODO(basioli) optional
+  optional bool use_global_device_ids = 3;
   repeated ReplicaGroup replica_group = 4;
 }
 
@@ -55,7 +55,7 @@ message OpBuffersProto {
 }
 
 message OpResourcesProto {
-  ResourceProto communicator_resource = 1;  // TODO(basioli) optional
+  optional ResourceProto communicator_resource = 1;
 }
 
 message AllGatherThunkProto {}  // NOTE(basioli) empty for now
@@ -123,7 +123,7 @@ message SortThunkProto {
   }
   int64 dimension = 1;
   bool is_stable = 2;
-  SortDirection direction = 3;  // TODO(basioli) optional
+  optional SortDirection direction = 3;
   string comparator_name = 4;
   repeated ShapeBufferAllocationSliceProto inputs_shapes = 5;
 }
@@ -165,7 +165,7 @@ message TopKThunkProto {
 message WhileThunkProto {
   ThunkSequenceProto cond_sequence = 1;
   ThunkSequenceProto body_sequence = 2;
-  int64 trip_count = 3;  // TODO(basioli) optional
+  optional int64 trip_count = 3;
   BufferAllocationSliceProto cond_buffer = 4;
 }
 
@@ -177,10 +177,8 @@ message KernelThunkProto {
   }
   string kernel_name = 1;
   ThreadDim thread_dim = 2;
-  // TODO(basioli) maybe optional? NOTE this is a set in C++
   repeated int64 invariant_arguments = 3;
-  // TODO(basioli) maybe optional?
-  int64 min_alignment = 4;
+  optional int64 min_alignment = 4;
   repeated BufferAllocationSliceProto arguments_buffers = 5;
   repeated BufferAllocationSliceProto results_buffers = 6;
 }
@@ -200,9 +198,8 @@ message FftThunkProto {
 
 message InfeedThunkProto {
   message InfeedResource {
-    // TODO(basioli) these are pointers in C++, maybe optional?
-    ResourceProto consume_token = 1;
-    ResourceProto produce_token = 2;
+    optional ResourceProto consume_token = 1;
+    optional ResourceProto produce_token = 2;
   }
 
   InfeedResource infeed_resources = 1;
@@ -211,9 +208,8 @@ message InfeedThunkProto {
 
 message OutfeedThunkProto {
   message OutfeedResource {
-    // TODO(basioli) these are pointers in C++, maybe optional?
-    ResourceProto consume_token = 1;
-    ResourceProto produce_token = 2;
+    optional ResourceProto consume_token = 1;
+    optional ResourceProto produce_token = 2;
   }
 
   OutfeedResource outfeed_resources = 1;
