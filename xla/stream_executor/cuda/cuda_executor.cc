@@ -463,7 +463,8 @@ std::string GetPCIBusID(CUdevice device) {
     LOG(ERROR) << "PCI bus id is not null terminated.";
     return "";
   }
-  return std::string(raw_pci_bus_id.data());
+  // Lower the hex characters to match sysfs.
+  return absl::AsciiStrToLower(std::string(raw_pci_bus_id.data()));
 }
 
 // Allocates memory on the GPU device.
@@ -503,26 +504,50 @@ void DeviceDeallocate(Context* context, void* location) {
   }
 }
 
-// Allocates memory on the host.
-void* HostAllocate(Context* context, uint64_t bytes) {
+bool HostRegister(Context* context, void* location, uint64_t size) {
   ScopedActivateContext activation(context);
-  void* host_mem = nullptr;
   // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
   auto status = cuda::ToStatus(
-      cuMemHostAlloc(&host_mem, bytes, CU_MEMHOSTALLOC_PORTABLE));
+      cuMemHostRegister(location, size, CU_MEMHOSTREGISTER_PORTABLE));
   if (!status.ok()) {
-    LOG(ERROR) << "failed to alloc " << bytes << " bytes on host: " << status;
+    LOG(ERROR) << "error registering host memory at " << location << ": "
+               << status;
+    return false;
   }
-  return host_mem;
+  return true;
 }
 
-// Deallocates memory allocated via HostAllocate.
-void HostDeallocate(Context* context, void* location) {
-  ScopedActivateContext activation(context);
-  auto status = cuda::ToStatus(cuMemFreeHost(location));
-  if (!status.ok()) {
-    LOG(ERROR) << "error deallocating host memory at " << location << ": "
-               << status;
+absl::StatusOr<void*> HostAllocate(Context* context, int numa_node,
+                                   uint64_t size) {
+  if (numa_node != tsl::port::kNUMANoAffinity) {
+    auto* buffer =
+        tsl::port::NUMAMalloc(numa_node, size, /* minimum_alignment=*/16);
+    if (buffer == nullptr && size > 0) {
+      return absl::InternalError(
+          absl::StrFormat("Failed to allocate pinned host memory of size %d "
+                          "pinned to NUMA node %d",
+                          size, numa_node));
+    }
+    if (size > 0 && !HostRegister(context, buffer, size)) {
+      tsl::port::NUMAFree(buffer, size);
+      return absl::InternalError(
+          absl::StrFormat("Failed to register host memory of size %d pinned to "
+                          "NUMA node %d with the GPU driver",
+                          size, numa_node));
+    }
+    return buffer;
+  } else {
+    ScopedActivateContext activation(context);
+    void* buffer = nullptr;
+    // "Portable" memory is visible to all CUDA contexts. Safe for our use
+    // model.
+    TF_RETURN_IF_ERROR(cuda::ToStatus(
+        cuMemHostAlloc(&buffer, size, CU_MEMHOSTALLOC_PORTABLE)));
+    if (!buffer && size > 0) {
+      return absl::InternalError(absl::StrFormat(
+          "Failed to allocate pinned host memory of size %d", size));
+    }
+    return buffer;
   }
 }
 
@@ -602,6 +627,12 @@ absl::Status CudaExecutor::Init() {
   cuda_context_ = context;
   TF_RETURN_IF_ERROR(GetComputeCapability(&cc_major_, &cc_minor_, device_));
   TF_ASSIGN_OR_RETURN(delay_kernels_supported_, DelayKernelIsSupported());
+  numa_node_ = ReadNumaNode(GetPCIBusID(device_), device_ordinal())
+                   .value_or(tsl::port::kNUMANoAffinity);
+  if (numa_node_ == tsl::port::kNUMANoAffinity) {
+    VLOG(2) << "Could not determine NUMA node of device ordinal "
+            << device_ordinal();
+  }
   return absl::OkStatus();
 }
 
@@ -901,7 +932,13 @@ DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
     return DeviceMemoryBase(nullptr, 0);
   } else if (memory_space ==
              static_cast<int64_t>(stream_executor::MemoryType::kHost)) {
-    return DeviceMemoryBase(HostAllocate(cuda_context_, size), size);
+    auto result = HostAllocate(cuda_context_, numa_node_, size);
+    if (result.ok()) {
+      return DeviceMemoryBase(result.value(), size);
+    } else {
+      LOG(ERROR) << result.status();
+      return DeviceMemoryBase(nullptr, 0);
+    }
   }
   CHECK_EQ(memory_space, 0);
   return DeviceMemoryBase(DeviceAllocate(cuda_context_, size), size);
@@ -909,11 +946,8 @@ DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
 
 absl::StatusOr<std::unique_ptr<MemoryAllocation>>
 CudaExecutor::HostMemoryAllocate(uint64_t size) {
-  auto* buffer = HostAllocate(cuda_context_, size);
-  if (buffer == nullptr && size > 0) {
-    return absl::InternalError(
-        absl::StrFormat("Failed to allocate HostMemory of size %d", size));
-  }
+  TF_ASSIGN_OR_RETURN(void* buffer,
+                      HostAllocate(cuda_context_, numa_node_, size));
   return std::make_unique<HostMemoryAllocation>(buffer, size, this);
 }
 
@@ -925,14 +959,26 @@ void CudaExecutor::Deallocate(DeviceMemoryBase* mem) {
   }
   auto memory_space = status_or_memory_space.value();
   if (memory_space == MemoryType::kHost) {
-    HostDeallocate(cuda_context_, mem->opaque());
+    HostMemoryDeallocate(mem->opaque(), mem->size());
   } else {
     DeviceDeallocate(cuda_context_, mem->opaque());
   }
 }
 
-void CudaExecutor::HostMemoryDeallocate(void* location) {
-  return HostDeallocate(cuda_context_, location);
+void CudaExecutor::HostMemoryDeallocate(void* location, uint64_t size) {
+  if (numa_node_ != tsl::port::kNUMANoAffinity) {
+    if (size > 0) {
+      HostMemoryUnregister(location);
+    }
+    tsl::port::NUMAFree(location, size);
+  } else {
+    std::unique_ptr<ActivateContext> activation = Activate();
+    auto status = cuda::ToStatus(cuMemFreeHost(location));
+    if (!status.ok()) {
+      LOG(ERROR) << "error deallocating host memory at " << location << ": "
+                 << status;
+    }
+  }
 }
 
 bool CudaExecutor::SynchronizeAllActivity() {
@@ -942,17 +988,7 @@ bool CudaExecutor::SynchronizeAllActivity() {
 bool CudaExecutor::HostMemoryRegister(void* location, uint64_t size) {
   VLOG(1) << "Called StreamExecutor::HostMemoryRegister(data=" << location
           << ")";
-
-  std::unique_ptr<ActivateContext> activation = Activate();
-  // "Portable" memory is visible to all CUDA contexts. Safe for our use model.
-  auto status = cuda::ToStatus(
-      cuMemHostRegister(location, size, CU_MEMHOSTREGISTER_PORTABLE));
-  if (!status.ok()) {
-    LOG(ERROR) << "error registering host memory at " << location << ": "
-               << status;
-    return false;
-  }
-  return true;
+  return HostRegister(cuda_context_, location, size);
 }
 
 bool CudaExecutor::HostMemoryUnregister(void* location) {
@@ -1205,14 +1241,14 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
 
   {
     std::string pci_bus_id = GetPCIBusID(device);
-
-    // Lower the hex characters to match sysfs.
-    pci_bus_id = absl::AsciiStrToLower(pci_bus_id);
     desc.set_pci_bus_id(pci_bus_id);
 
     // Read the NUMA node corresponding to the PCI bus ID out of sysfs.
-    int numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
-    desc.set_numa_node(numa_node);
+    std::optional<int> numa_node = ReadNumaNode(pci_bus_id, device_ordinal);
+    // If the kernel reports -1, adjust to 0; leave as -1 if no value could be
+    // obtained.
+    desc.set_numa_node(numa_node.has_value() ? std::max(0, *numa_node)
+                                             : tsl::port::kNUMANoAffinity);
   }
 
   {
