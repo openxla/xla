@@ -83,7 +83,7 @@ class MockStreamExecutor : public StreamExecutor {
               (override));
   MOCK_METHOD(bool, CanEnablePeerAccessTo, (StreamExecutor * other),
               (override));
-  MOCK_METHOD(bool, DeviceMemoryUsage, (int64_t* free, int64_t* total),
+  MOCK_METHOD(bool, DeviceMemoryUsage, (int64_t * free, int64_t* total),
               (const, override));
   MOCK_METHOD(absl::StatusOr<DeviceMemoryBase>, GetSymbol,
               (const std::string& symbol_name, ModuleHandle module_handle),
