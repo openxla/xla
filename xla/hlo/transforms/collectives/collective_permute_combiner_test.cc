@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -57,8 +57,6 @@ int64_t CollectivePermuteCount(const HloModule& module) {
   }
   return count;
 }
-// VLOG(0) << "-----------------------------------------------------------";
-// VLOG(0) << "module->ToString(): " << module->ToString();
 
 // inputs[i] will be some op producing a shape of size sizes_in_kib[i] which
 // feeds into collective permute op in collective_permutes[i]. Returns a tuple

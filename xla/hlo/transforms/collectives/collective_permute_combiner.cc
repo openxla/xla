@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -68,13 +68,11 @@ absl::Status CombineCollectivePermutes(
   for (HloInstruction* hlo : to_combine) {
     VLOG(1) << "Set element: " << hlo->ToString();
     TF_RET_CHECK(hlo->opcode() == HloOpcode::kCollectivePermute);
-    TF_RET_CHECK(hlo->operands().size() == 1);
+    TF_RET_CHECK(hlo->operand_count() == 1);
     TF_RET_CHECK(hlo->shape().IsArray());
     TF_RET_CHECK(hlo->source_target_pairs() == source_target_pairs);
-    for (HloInstruction* operand : hlo->operands()) {
-      operands.push_back(operand);
-      operand_shapes.push_back(&operand->shape());
-    }
+    operands.push_back(hlo->operands().front());
+    operand_shapes.push_back(&hlo->operands().front()->shape());
   }
 
   HloInstruction* combined;
