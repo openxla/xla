@@ -320,7 +320,9 @@ absl::StatusOr<Literal> HloRunnerPjRt::Execute(
     absl::Span<const Literal* const> arguments, bool run_hlo_passes,
     ExecutionProfile* profile) {
   // TODO (b/245550554) : Remove UpdateEntryComputationLayout from runner.
-  UpdateEntryComputationLayout(module.get());
+  if (run_hlo_passes) {
+    UpdateEntryComputationLayout(module.get());
+  }
   TF_ASSIGN_OR_RETURN(auto executable,
                       CreateExecutable(std::move(module), run_hlo_passes));
 
@@ -407,7 +409,9 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
     std::unique_ptr<HloModule> module,
     const HloRunnerInterface::ReplicatedExecuteOptions& options) {
-  UpdateEntryComputationLayout(module.get());
+  if (options.run_hlo_passes) {
+    UpdateEntryComputationLayout(module.get());
+  }
 
   TF_ASSIGN_OR_RETURN(
       auto device_assignment,

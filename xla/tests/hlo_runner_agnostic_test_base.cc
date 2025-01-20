@@ -91,7 +91,6 @@ HloRunnerAgnosticTestBase::ParseAndReturnVerifiedModule(
       test_runner_->device_shape_size_fn(),
       instruction_can_change_layout_func());
   TF_RETURN_IF_ERROR(module->ParseHloStringAndVerifyModule(hlo_text));
-  UpdateEntryComputationLayout(module.get());
   return std::move(module);
 }
 
