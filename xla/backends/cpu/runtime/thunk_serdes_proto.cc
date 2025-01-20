@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -664,7 +665,7 @@ static absl::Status ToProto(const RngGetAndUpdateStateThunk& thunk,
   return absl::OkStatus();
 }
 
-static absl::Status ToProto(const KernelThunk& thunk, ThunkProto& proto) {
+static absl::Status ToProto(const KernelThunkBase& thunk, ThunkProto& proto) {
   KernelThunkProto* kernel_thunk_proto = proto.mutable_kernel_thunk();
 
   kernel_thunk_proto->set_kernel_name(thunk.kernel_name());
@@ -734,8 +735,8 @@ absl::StatusOr<ThunkProto> ThunkSerDesProtobuf::ToProto(
           static_cast<const RngGetAndUpdateStateThunk&>(thunk), proto));
       break;
     case Thunk::Kind::kKernel:
-      TF_RETURN_IF_ERROR(
-          ::xla::cpu::ToProto(static_cast<const KernelThunk&>(thunk), proto));
+      TF_RETURN_IF_ERROR(::xla::cpu::ToProto(
+          static_cast<const KernelThunkBase&>(thunk), proto));
       break;
     case Thunk::Kind::kCall:
       TF_RETURN_IF_ERROR(
@@ -1121,7 +1122,9 @@ static absl::StatusOr<std::unique_ptr<Thunk>> KernelThunkFromProto(
 
   return KernelThunk::Create(
       std::move(info), std::move(arguments_buffers), std::move(results_buffers),
-      proto.kernel_thunk().kernel_name(), thread_dim, invariant_arguments,
+      proto.kernel_thunk().kernel_name(), thread_dim,
+      invariant_arguments.empty() ? std::nullopt
+                                  : std::make_optional(invariant_arguments),
       proto.kernel_thunk().min_alignment());
 }
 

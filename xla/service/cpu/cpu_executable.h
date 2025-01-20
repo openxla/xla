@@ -102,8 +102,17 @@ class CpuExecutable : public Executable {
 
   absl::Span<const std::string> obj_files() const { return obj_files_; }
 
+  absl::Span<const FunctionLibrary::Symbol> compiled_symbols() const {
+    return compiled_symbols_;
+  }
+
   void set_obj_files(std::vector<std::string> obj_files) {
     obj_files_ = std::move(obj_files);
+  }
+
+  void set_compiled_symbols(
+      std::vector<FunctionLibrary::Symbol> compiled_symbols) {
+    compiled_symbols_ = std::move(compiled_symbols);
   }
 
   // This should be called after set_ir_module_string.
@@ -182,6 +191,10 @@ class CpuExecutable : public Executable {
   // compiler. We capture all object files created by JitCompiler so we can
   // export them to AOT compilation result.
   std::vector<std::string> obj_files_;
+
+  // Generate compiled symbols. We capture all compiled symbols so we can export
+  // them to AOT compilation result.
+  std::vector<FunctionLibrary::Symbol> compiled_symbols_;
 
   // Buffer assignment for the buffers we need to allocate.
   const std::unique_ptr<const BufferAssignment> assignment_;
