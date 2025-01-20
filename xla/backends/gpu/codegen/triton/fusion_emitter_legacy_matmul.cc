@@ -84,6 +84,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
@@ -2053,7 +2054,8 @@ absl::Status EmitMatMul(EmitterLocOpBuilder& b,
                         absl::string_view libdevice_path,
                         const se::DeviceDescription& device_info,
                         const HloFusionInstruction* fusion,
-                        mlir::triton::FuncOp fn, const BlockLevelParameters&) {
+                        mlir::triton::FuncOp fn, const BlockLevelParameters&,
+                        stream_executor::gpu::TmaMetadata& tma_metadata) {
   auto backend_config =
       fusion->backend_config<GpuBackendConfig>()->fusion_backend_config();
 

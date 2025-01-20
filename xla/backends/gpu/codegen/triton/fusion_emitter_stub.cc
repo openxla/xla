@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace xla {
@@ -65,7 +66,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
-    mlir::MLIRContext& mlir_context) {
+    mlir::MLIRContext& mlir_context,
+    stream_executor::gpu::TmaMetadata& tma_metadata) {
   return absl::UnimplementedError("not supported for this build configuration");
 }
 

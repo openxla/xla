@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/tests/hlo_test_base.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -95,10 +96,12 @@ absl::Status CreateTritonIrAndFileCheck(
   auto* fusion = Cast<HloFusionInstruction>(computation.FusionInstruction());
 
   mlir::MLIRContext context;
+  stream_executor::gpu::TmaMetadata tma_metadata;
   TF_ASSIGN_OR_RETURN(
-      auto module, CreateTritonModule("triton_fn", fusion,
-                                      TestGpuDeviceInfo::RTXA6000DeviceInfo(),
-                                      block_level_parameters, context));
+      auto module,
+      CreateTritonModule("triton_fn", fusion,
+                         TestGpuDeviceInfo::RTXA6000DeviceInfo(),
+                         block_level_parameters, context, tma_metadata));
 
   std::string out;
   llvm::raw_string_ostream os(out);
