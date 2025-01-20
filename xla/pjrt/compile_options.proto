@@ -147,6 +147,10 @@ message CompileOptionsProto {
   bool compile_portable_executable = 4;
   int64 profile_version = 5;
   bytes serialized_multi_slice_config = 6;
+
+  // `tsl::DeviceTimeMeasurement::DeviceType`.
+  int32 device_type = 9;
+
   map<string, OptionOverrideProto> env_option_overrides = 7;
 
   stream_executor.GpuTargetConfigProto target_config = 8;

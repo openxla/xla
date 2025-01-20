@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/pjrt/execute_options.pb.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/service/compiler.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -110,6 +111,9 @@ struct CompileOptions {
   // Used to indicate the precision configuration.
   PrecisionConfig::Precision matrix_unit_operand_precision =
       PrecisionConfig::DEFAULT;
+
+  // Used to record device time measurements.
+  std::optional<DeviceTimeMeasurement::DeviceType> device_type;
 
   // Applies env_option_overrides to executable_build_options.debug_options().
   absl::Status ApplyAllOptionOverrides();

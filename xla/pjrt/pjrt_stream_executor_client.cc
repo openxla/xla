@@ -92,6 +92,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -113,6 +114,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -2872,6 +2874,7 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
         device_state->compute_semaphore().ScopedAcquire(1));
   }
 
+  const uint64_t start_time_ns = tsl::Env::Default()->NowNanos();
   absl::StatusOr<ExecutionOutput> result_buffer_or_status =
       executables_[executable_idx]->RunAsync(std::move(execution_inputs),
                                              run_options);
@@ -2881,6 +2884,16 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
 
   if (!result_buffer_or_status.ok()) {
     return result_buffer_or_status.status();
+  }
+
+  // Measure device time after execution completes.
+  std::optional<uint64_t> key = xla::GetDeviceTimeMeasurementKey();
+  if (key.has_value() && compile_options_.device_type.has_value()) {
+    compute_callbacks.push_back(
+        [key, start_time_ns, device_type = *compile_options_.device_type]() {
+          auto elapsed = absl::Now() - absl::FromUnixNanos(start_time_ns);
+          xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
+        });
   }
 
   if (device_state->allocation_model() == LocalDeviceState::kSynchronous) {

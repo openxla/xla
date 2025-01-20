@@ -289,6 +289,7 @@ cc_library(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:stream_executor_executable",
         "//xla/pjrt:utils",
+        "//xla/pjrt/profiling:device_time_measurement",
         "//xla/service:compiler",
         "//xla/service:dump",
         "//xla/service:hlo_module_config",
