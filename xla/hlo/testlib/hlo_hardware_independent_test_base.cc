@@ -35,12 +35,14 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_module_group.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/computation_placer.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/shape.h"
@@ -81,12 +83,23 @@ HloHardwareIndependentTestBase::CreateNewVerifiedModule(
       instruction_can_change_layout_func_);
 }
 
+DeviceAssignment HloHardwareIndependentTestBase::GetDefaultDeviceAssignment(
+    int64_t replica_count, int64_t num_partitions) const {
+  DeviceAssignment device_assignment(replica_count, num_partitions);
+  device_assignment.FillIota(0);
+  return device_assignment;
+}
+
 absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
 HloHardwareIndependentTestBase::ParseAndReturnVerifiedModule(
-    absl::string_view hlo_text, int64_t replica_count,
-    int64_t num_partitions) const {
-  return ParseAndReturnVerifiedModule(
-      hlo_text, GetModuleConfigForTest(replica_count, num_partitions));
+    absl::string_view hlo_text, int64_t replica_count, int64_t num_partitions,
+    std::optional<DeviceAssignment> device_assignment) const {
+  HloModuleConfig config =
+      GetModuleConfigForTest(replica_count, num_partitions);
+  if (device_assignment.has_value()) {
+    config.set_static_device_assignment(device_assignment.value());
+  }
+  return ParseAndReturnVerifiedModule(hlo_text, config);
 }
 
 absl::Status HloHardwareIndependentTestBase::
@@ -115,9 +128,25 @@ absl::Status HloHardwareIndependentTestBase::
 absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
 HloHardwareIndependentTestBase::ParseAndReturnVerifiedModule(
     absl::string_view hlo_text, const HloModuleConfig& config) const {
+  return ParseAndReturnVerifiedModule(hlo_text, config,
+                                      ShapeUtil::ByteSizeOfElements);
+}
+
+absl::StatusOr<std::unique_ptr<VerifiedHloModule>>
+HloHardwareIndependentTestBase::ParseAndReturnVerifiedModule(
+    absl::string_view hlo_text, const HloModuleConfig& config,
+    std::function<int64_t(const xla::Shape&)> shape_size_fn) const {
+  HloModuleConfig config_with_device_assignment = config;
+  if (!config.has_static_device_assignment()) {
+    default_device_assignment_ =
+        std::make_unique<DeviceAssignment>(GetDefaultDeviceAssignment(
+            config.replica_count(), config.num_partitions()));
+    config_with_device_assignment.set_static_device_assignment(
+        *default_device_assignment_);
+  }
   auto module = std::make_unique<VerifiedHloModule>(
-      TestName(), config, verifier_layout_sensitive_,
-      allow_mixed_precision_in_hlo_verifier_, ShapeUtil::ByteSizeOfElements,
+      TestName(), config_with_device_assignment, verifier_layout_sensitive_,
+      allow_mixed_precision_in_hlo_verifier_, shape_size_fn,
       instruction_can_change_layout_func_);
   TF_RETURN_IF_ERROR(module->ParseHloStringAndVerifyModule(hlo_text));
   return module;
