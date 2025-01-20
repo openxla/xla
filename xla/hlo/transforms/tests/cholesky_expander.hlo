@@ -1,0 +1,660 @@
+// RUN: hlo-opt %s --passes=cholesky_expander | FileCheck %s
+
+// CHECK-LABEL: HloModule cholesky_expander_test, entry_computation_layout={(c64[32,1024,1024]{2,1,0})->c64[32,1024,1024]{2,1,0}}
+HloModule cholesky_expander_test
+
+// CHECK: %[[unblocked_body_15_0:[^ ]+]] (parameter.16: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_16_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_17_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_16_0]]), index=0
+// CHECK-NEXT: %[[constant_21_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_22_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_17_1]], s32[] %[[constant_21_2]])
+// CHECK-NEXT: %[[get_tuple_element_18_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_16_0]]), index=1
+// CHECK-NEXT: %[[iota_24_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_23_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_25_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_24_5]], s32[32,128,128]{2,1,0} %[[iota_23_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_26_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_17_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_27_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_23_6]], s32[32,128,128]{2,1,0} %[[broadcast_26_8]]), direction=EQ
+// CHECK-NEXT: %[[and_28_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_25_7]], pred[32,128,128]{2,1,0} %[[compare_27_9]])
+// CHECK-NEXT: %[[get_tuple_element_19_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_16_0]]), index=2
+// CHECK-NEXT: %[[real_31_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_19_11]])
+// CHECK-NEXT: %[[imag_32_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_19_11]])
+// CHECK-NEXT: %[[negate_33_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_32_13]])
+// CHECK-NEXT: %[[complex_34_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_31_12]], f32[32,128,128]{2,1,0} %[[negate_33_14]])
+// CHECK-NEXT: %[[dot_35_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_19_11]], c64[32,128,128]{2,1,0} %[[complex_34_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_36_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_35_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_37_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_18_4]], c64[32,128,128]{2,1,0} %[[transpose_36_17]])
+// CHECK-NEXT: %[[constant_38_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_39_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_37_18]], s32[] %[[constant_38_19]], s32[] %[[get_tuple_element_17_1]], s32[] %[[get_tuple_element_17_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_40_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_39_20]])
+// CHECK-NEXT: %[[sqrt_41_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_40_21]])
+// CHECK-NEXT: %[[constant_42_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_43_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_42_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_44_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_41_22]], f32[32,1,1]{2,1,0} %[[broadcast_43_24]])
+// CHECK-NEXT: %[[reshape_47_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_44_25]])
+// CHECK-NEXT: %[[broadcast_48_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_47_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_49_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_37_18]], c64[32,128,128]{2,1,0} %[[broadcast_48_27]])
+// CHECK-NEXT: %[[constant_29_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_30_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_29_29]]), dimensions={}
+// CHECK-NEXT: %[[select_50_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_28_10]], c64[32,128,128]{2,1,0} %[[divide_49_28]], c64[32,128,128]{2,1,0} %[[broadcast_30_30]])
+// CHECK-NEXT: %[[add_51_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_50_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_19_11]])
+// CHECK-NEXT: %[[get_tuple_element_20_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_16_0]]), index=3
+// CHECK-NEXT: %[[compare_45_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_41_22]], f32[32,1,1]{2,1,0} %[[sqrt_41_22]]), direction=NE
+// CHECK-NEXT: %[[or_46_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_20_33]], pred[32,1,1]{2,1,0} %[[compare_45_34]])
+// CHECK-NEXT: ROOT %[[tuple_52_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_22_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_18_4]], c64[32,128,128]{2,1,0} %[[add_51_32]], pred[32,1,1]{2,1,0} %[[or_46_35]])
+
+// CHECK: %[[unblocked_condition_53_1:[^ ]+]] (parameter.54: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_54_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_56_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_54_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_57_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_54_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_58_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_54_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_55_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_54_0]]), index=0
+// CHECK-NEXT: %[[constant_59_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_60_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_55_4]], s32[] %[[constant_59_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_94_2:[^ ]+]] (parameter.95: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_95_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_96_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_95_0]]), index=0
+// CHECK-NEXT: %[[constant_100_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_101_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_96_1]], s32[] %[[constant_100_2]])
+// CHECK-NEXT: %[[get_tuple_element_97_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_95_0]]), index=1
+// CHECK-NEXT: %[[iota_103_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_102_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_104_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_103_5]], s32[32,128,128]{2,1,0} %[[iota_102_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_105_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_96_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_106_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_102_6]], s32[32,128,128]{2,1,0} %[[broadcast_105_8]]), direction=EQ
+// CHECK-NEXT: %[[and_107_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_104_7]], pred[32,128,128]{2,1,0} %[[compare_106_9]])
+// CHECK-NEXT: %[[get_tuple_element_98_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_95_0]]), index=2
+// CHECK-NEXT: %[[real_110_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_98_11]])
+// CHECK-NEXT: %[[imag_111_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_98_11]])
+// CHECK-NEXT: %[[negate_112_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_111_13]])
+// CHECK-NEXT: %[[complex_113_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_110_12]], f32[32,128,128]{2,1,0} %[[negate_112_14]])
+// CHECK-NEXT: %[[dot_114_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_98_11]], c64[32,128,128]{2,1,0} %[[complex_113_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_115_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_114_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_116_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_97_4]], c64[32,128,128]{2,1,0} %[[transpose_115_17]])
+// CHECK-NEXT: %[[constant_117_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_118_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_116_18]], s32[] %[[constant_117_19]], s32[] %[[get_tuple_element_96_1]], s32[] %[[get_tuple_element_96_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_119_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_118_20]])
+// CHECK-NEXT: %[[sqrt_120_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_119_21]])
+// CHECK-NEXT: %[[constant_121_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_122_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_121_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_123_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_120_22]], f32[32,1,1]{2,1,0} %[[broadcast_122_24]])
+// CHECK-NEXT: %[[reshape_126_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_123_25]])
+// CHECK-NEXT: %[[broadcast_127_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_126_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_128_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_116_18]], c64[32,128,128]{2,1,0} %[[broadcast_127_27]])
+// CHECK-NEXT: %[[constant_108_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_109_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_108_29]]), dimensions={}
+// CHECK-NEXT: %[[select_129_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_107_10]], c64[32,128,128]{2,1,0} %[[divide_128_28]], c64[32,128,128]{2,1,0} %[[broadcast_109_30]])
+// CHECK-NEXT: %[[add_130_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_129_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_98_11]])
+// CHECK-NEXT: %[[get_tuple_element_99_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_95_0]]), index=3
+// CHECK-NEXT: %[[compare_124_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_120_22]], f32[32,1,1]{2,1,0} %[[sqrt_120_22]]), direction=NE
+// CHECK-NEXT: %[[or_125_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_99_33]], pred[32,1,1]{2,1,0} %[[compare_124_34]])
+// CHECK-NEXT: ROOT %[[tuple_131_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_101_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_97_4]], c64[32,128,128]{2,1,0} %[[add_130_32]], pred[32,1,1]{2,1,0} %[[or_125_35]])
+
+// CHECK: %[[unblocked_condition_132_3:[^ ]+]] (parameter.133: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_133_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_135_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_133_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_136_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_133_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_137_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_133_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_134_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_133_0]]), index=0
+// CHECK-NEXT: %[[constant_138_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_139_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_134_4]], s32[] %[[constant_138_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_173_4:[^ ]+]] (parameter.174: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_174_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_175_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_174_0]]), index=0
+// CHECK-NEXT: %[[constant_179_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_180_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_175_1]], s32[] %[[constant_179_2]])
+// CHECK-NEXT: %[[get_tuple_element_176_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_174_0]]), index=1
+// CHECK-NEXT: %[[iota_182_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_181_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_183_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_182_5]], s32[32,128,128]{2,1,0} %[[iota_181_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_184_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_175_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_185_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_181_6]], s32[32,128,128]{2,1,0} %[[broadcast_184_8]]), direction=EQ
+// CHECK-NEXT: %[[and_186_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_183_7]], pred[32,128,128]{2,1,0} %[[compare_185_9]])
+// CHECK-NEXT: %[[get_tuple_element_177_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_174_0]]), index=2
+// CHECK-NEXT: %[[real_189_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_177_11]])
+// CHECK-NEXT: %[[imag_190_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_177_11]])
+// CHECK-NEXT: %[[negate_191_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_190_13]])
+// CHECK-NEXT: %[[complex_192_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_189_12]], f32[32,128,128]{2,1,0} %[[negate_191_14]])
+// CHECK-NEXT: %[[dot_193_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_177_11]], c64[32,128,128]{2,1,0} %[[complex_192_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_194_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_193_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_195_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_176_4]], c64[32,128,128]{2,1,0} %[[transpose_194_17]])
+// CHECK-NEXT: %[[constant_196_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_197_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_195_18]], s32[] %[[constant_196_19]], s32[] %[[get_tuple_element_175_1]], s32[] %[[get_tuple_element_175_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_198_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_197_20]])
+// CHECK-NEXT: %[[sqrt_199_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_198_21]])
+// CHECK-NEXT: %[[constant_200_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_201_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_200_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_202_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_199_22]], f32[32,1,1]{2,1,0} %[[broadcast_201_24]])
+// CHECK-NEXT: %[[reshape_205_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_202_25]])
+// CHECK-NEXT: %[[broadcast_206_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_205_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_207_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_195_18]], c64[32,128,128]{2,1,0} %[[broadcast_206_27]])
+// CHECK-NEXT: %[[constant_187_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_188_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_187_29]]), dimensions={}
+// CHECK-NEXT: %[[select_208_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_186_10]], c64[32,128,128]{2,1,0} %[[divide_207_28]], c64[32,128,128]{2,1,0} %[[broadcast_188_30]])
+// CHECK-NEXT: %[[add_209_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_208_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_177_11]])
+// CHECK-NEXT: %[[get_tuple_element_178_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_174_0]]), index=3
+// CHECK-NEXT: %[[compare_203_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_199_22]], f32[32,1,1]{2,1,0} %[[sqrt_199_22]]), direction=NE
+// CHECK-NEXT: %[[or_204_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_178_33]], pred[32,1,1]{2,1,0} %[[compare_203_34]])
+// CHECK-NEXT: ROOT %[[tuple_210_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_180_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_176_4]], c64[32,128,128]{2,1,0} %[[add_209_32]], pred[32,1,1]{2,1,0} %[[or_204_35]])
+
+// CHECK: %[[unblocked_condition_211_5:[^ ]+]] (parameter.212: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_212_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_214_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_212_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_215_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_212_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_216_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_212_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_213_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_212_0]]), index=0
+// CHECK-NEXT: %[[constant_217_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_218_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_213_4]], s32[] %[[constant_217_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_252_6:[^ ]+]] (parameter.253: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_253_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_254_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_253_0]]), index=0
+// CHECK-NEXT: %[[constant_258_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_259_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_254_1]], s32[] %[[constant_258_2]])
+// CHECK-NEXT: %[[get_tuple_element_255_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_253_0]]), index=1
+// CHECK-NEXT: %[[iota_261_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_260_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_262_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_261_5]], s32[32,128,128]{2,1,0} %[[iota_260_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_263_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_254_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_264_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_260_6]], s32[32,128,128]{2,1,0} %[[broadcast_263_8]]), direction=EQ
+// CHECK-NEXT: %[[and_265_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_262_7]], pred[32,128,128]{2,1,0} %[[compare_264_9]])
+// CHECK-NEXT: %[[get_tuple_element_256_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_253_0]]), index=2
+// CHECK-NEXT: %[[real_268_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_256_11]])
+// CHECK-NEXT: %[[imag_269_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_256_11]])
+// CHECK-NEXT: %[[negate_270_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_269_13]])
+// CHECK-NEXT: %[[complex_271_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_268_12]], f32[32,128,128]{2,1,0} %[[negate_270_14]])
+// CHECK-NEXT: %[[dot_272_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_256_11]], c64[32,128,128]{2,1,0} %[[complex_271_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_273_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_272_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_274_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_255_4]], c64[32,128,128]{2,1,0} %[[transpose_273_17]])
+// CHECK-NEXT: %[[constant_275_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_276_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_274_18]], s32[] %[[constant_275_19]], s32[] %[[get_tuple_element_254_1]], s32[] %[[get_tuple_element_254_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_277_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_276_20]])
+// CHECK-NEXT: %[[sqrt_278_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_277_21]])
+// CHECK-NEXT: %[[constant_279_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_280_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_279_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_281_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_278_22]], f32[32,1,1]{2,1,0} %[[broadcast_280_24]])
+// CHECK-NEXT: %[[reshape_284_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_281_25]])
+// CHECK-NEXT: %[[broadcast_285_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_284_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_286_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_274_18]], c64[32,128,128]{2,1,0} %[[broadcast_285_27]])
+// CHECK-NEXT: %[[constant_266_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_267_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_266_29]]), dimensions={}
+// CHECK-NEXT: %[[select_287_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_265_10]], c64[32,128,128]{2,1,0} %[[divide_286_28]], c64[32,128,128]{2,1,0} %[[broadcast_267_30]])
+// CHECK-NEXT: %[[add_288_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_287_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_256_11]])
+// CHECK-NEXT: %[[get_tuple_element_257_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_253_0]]), index=3
+// CHECK-NEXT: %[[compare_282_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_278_22]], f32[32,1,1]{2,1,0} %[[sqrt_278_22]]), direction=NE
+// CHECK-NEXT: %[[or_283_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_257_33]], pred[32,1,1]{2,1,0} %[[compare_282_34]])
+// CHECK-NEXT: ROOT %[[tuple_289_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_259_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_255_4]], c64[32,128,128]{2,1,0} %[[add_288_32]], pred[32,1,1]{2,1,0} %[[or_283_35]])
+
+// CHECK: %[[unblocked_condition_290_7:[^ ]+]] (parameter.291: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_291_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_293_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_291_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_294_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_291_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_295_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_291_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_292_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_291_0]]), index=0
+// CHECK-NEXT: %[[constant_296_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_297_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_292_4]], s32[] %[[constant_296_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_331_8:[^ ]+]] (parameter.332: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_332_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_333_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_332_0]]), index=0
+// CHECK-NEXT: %[[constant_337_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_338_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_333_1]], s32[] %[[constant_337_2]])
+// CHECK-NEXT: %[[get_tuple_element_334_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_332_0]]), index=1
+// CHECK-NEXT: %[[iota_340_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_339_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_341_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_340_5]], s32[32,128,128]{2,1,0} %[[iota_339_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_342_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_333_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_343_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_339_6]], s32[32,128,128]{2,1,0} %[[broadcast_342_8]]), direction=EQ
+// CHECK-NEXT: %[[and_344_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_341_7]], pred[32,128,128]{2,1,0} %[[compare_343_9]])
+// CHECK-NEXT: %[[get_tuple_element_335_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_332_0]]), index=2
+// CHECK-NEXT: %[[real_347_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_335_11]])
+// CHECK-NEXT: %[[imag_348_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_335_11]])
+// CHECK-NEXT: %[[negate_349_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_348_13]])
+// CHECK-NEXT: %[[complex_350_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_347_12]], f32[32,128,128]{2,1,0} %[[negate_349_14]])
+// CHECK-NEXT: %[[dot_351_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_335_11]], c64[32,128,128]{2,1,0} %[[complex_350_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_352_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_351_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_353_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_334_4]], c64[32,128,128]{2,1,0} %[[transpose_352_17]])
+// CHECK-NEXT: %[[constant_354_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_355_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_353_18]], s32[] %[[constant_354_19]], s32[] %[[get_tuple_element_333_1]], s32[] %[[get_tuple_element_333_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_356_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_355_20]])
+// CHECK-NEXT: %[[sqrt_357_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_356_21]])
+// CHECK-NEXT: %[[constant_358_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_359_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_358_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_360_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_357_22]], f32[32,1,1]{2,1,0} %[[broadcast_359_24]])
+// CHECK-NEXT: %[[reshape_363_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_360_25]])
+// CHECK-NEXT: %[[broadcast_364_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_363_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_365_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_353_18]], c64[32,128,128]{2,1,0} %[[broadcast_364_27]])
+// CHECK-NEXT: %[[constant_345_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_346_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_345_29]]), dimensions={}
+// CHECK-NEXT: %[[select_366_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_344_10]], c64[32,128,128]{2,1,0} %[[divide_365_28]], c64[32,128,128]{2,1,0} %[[broadcast_346_30]])
+// CHECK-NEXT: %[[add_367_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_366_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_335_11]])
+// CHECK-NEXT: %[[get_tuple_element_336_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_332_0]]), index=3
+// CHECK-NEXT: %[[compare_361_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_357_22]], f32[32,1,1]{2,1,0} %[[sqrt_357_22]]), direction=NE
+// CHECK-NEXT: %[[or_362_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_336_33]], pred[32,1,1]{2,1,0} %[[compare_361_34]])
+// CHECK-NEXT: ROOT %[[tuple_368_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_338_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_334_4]], c64[32,128,128]{2,1,0} %[[add_367_32]], pred[32,1,1]{2,1,0} %[[or_362_35]])
+
+// CHECK: %[[unblocked_condition_369_9:[^ ]+]] (parameter.370: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_370_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_372_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_370_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_373_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_370_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_374_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_370_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_371_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_370_0]]), index=0
+// CHECK-NEXT: %[[constant_375_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_376_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_371_4]], s32[] %[[constant_375_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_410_10:[^ ]+]] (parameter.411: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_411_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_412_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_411_0]]), index=0
+// CHECK-NEXT: %[[constant_416_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_417_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_412_1]], s32[] %[[constant_416_2]])
+// CHECK-NEXT: %[[get_tuple_element_413_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_411_0]]), index=1
+// CHECK-NEXT: %[[iota_419_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_418_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_420_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_419_5]], s32[32,128,128]{2,1,0} %[[iota_418_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_421_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_412_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_422_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_418_6]], s32[32,128,128]{2,1,0} %[[broadcast_421_8]]), direction=EQ
+// CHECK-NEXT: %[[and_423_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_420_7]], pred[32,128,128]{2,1,0} %[[compare_422_9]])
+// CHECK-NEXT: %[[get_tuple_element_414_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_411_0]]), index=2
+// CHECK-NEXT: %[[real_426_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_414_11]])
+// CHECK-NEXT: %[[imag_427_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_414_11]])
+// CHECK-NEXT: %[[negate_428_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_427_13]])
+// CHECK-NEXT: %[[complex_429_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_426_12]], f32[32,128,128]{2,1,0} %[[negate_428_14]])
+// CHECK-NEXT: %[[dot_430_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_414_11]], c64[32,128,128]{2,1,0} %[[complex_429_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_431_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_430_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_432_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_413_4]], c64[32,128,128]{2,1,0} %[[transpose_431_17]])
+// CHECK-NEXT: %[[constant_433_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_434_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_432_18]], s32[] %[[constant_433_19]], s32[] %[[get_tuple_element_412_1]], s32[] %[[get_tuple_element_412_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_435_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_434_20]])
+// CHECK-NEXT: %[[sqrt_436_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_435_21]])
+// CHECK-NEXT: %[[constant_437_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_438_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_437_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_439_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_436_22]], f32[32,1,1]{2,1,0} %[[broadcast_438_24]])
+// CHECK-NEXT: %[[reshape_442_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_439_25]])
+// CHECK-NEXT: %[[broadcast_443_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_442_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_444_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_432_18]], c64[32,128,128]{2,1,0} %[[broadcast_443_27]])
+// CHECK-NEXT: %[[constant_424_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_425_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_424_29]]), dimensions={}
+// CHECK-NEXT: %[[select_445_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_423_10]], c64[32,128,128]{2,1,0} %[[divide_444_28]], c64[32,128,128]{2,1,0} %[[broadcast_425_30]])
+// CHECK-NEXT: %[[add_446_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_445_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_414_11]])
+// CHECK-NEXT: %[[get_tuple_element_415_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_411_0]]), index=3
+// CHECK-NEXT: %[[compare_440_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_436_22]], f32[32,1,1]{2,1,0} %[[sqrt_436_22]]), direction=NE
+// CHECK-NEXT: %[[or_441_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_415_33]], pred[32,1,1]{2,1,0} %[[compare_440_34]])
+// CHECK-NEXT: ROOT %[[tuple_447_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_417_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_413_4]], c64[32,128,128]{2,1,0} %[[add_446_32]], pred[32,1,1]{2,1,0} %[[or_441_35]])
+
+// CHECK: %[[unblocked_condition_448_11:[^ ]+]] (parameter.449: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_449_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_451_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_449_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_452_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_449_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_453_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_449_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_450_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_449_0]]), index=0
+// CHECK-NEXT: %[[constant_454_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_455_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_450_4]], s32[] %[[constant_454_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_489_12:[^ ]+]] (parameter.490: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_490_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_491_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_490_0]]), index=0
+// CHECK-NEXT: %[[constant_495_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_496_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_491_1]], s32[] %[[constant_495_2]])
+// CHECK-NEXT: %[[get_tuple_element_492_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_490_0]]), index=1
+// CHECK-NEXT: %[[iota_498_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_497_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_499_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_498_5]], s32[32,128,128]{2,1,0} %[[iota_497_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_500_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_491_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_501_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_497_6]], s32[32,128,128]{2,1,0} %[[broadcast_500_8]]), direction=EQ
+// CHECK-NEXT: %[[and_502_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_499_7]], pred[32,128,128]{2,1,0} %[[compare_501_9]])
+// CHECK-NEXT: %[[get_tuple_element_493_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_490_0]]), index=2
+// CHECK-NEXT: %[[real_505_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_493_11]])
+// CHECK-NEXT: %[[imag_506_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_493_11]])
+// CHECK-NEXT: %[[negate_507_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_506_13]])
+// CHECK-NEXT: %[[complex_508_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_505_12]], f32[32,128,128]{2,1,0} %[[negate_507_14]])
+// CHECK-NEXT: %[[dot_509_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_493_11]], c64[32,128,128]{2,1,0} %[[complex_508_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_510_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_509_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_511_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_492_4]], c64[32,128,128]{2,1,0} %[[transpose_510_17]])
+// CHECK-NEXT: %[[constant_512_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_513_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_511_18]], s32[] %[[constant_512_19]], s32[] %[[get_tuple_element_491_1]], s32[] %[[get_tuple_element_491_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_514_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_513_20]])
+// CHECK-NEXT: %[[sqrt_515_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_514_21]])
+// CHECK-NEXT: %[[constant_516_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_517_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_516_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_518_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_515_22]], f32[32,1,1]{2,1,0} %[[broadcast_517_24]])
+// CHECK-NEXT: %[[reshape_521_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_518_25]])
+// CHECK-NEXT: %[[broadcast_522_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_521_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_523_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_511_18]], c64[32,128,128]{2,1,0} %[[broadcast_522_27]])
+// CHECK-NEXT: %[[constant_503_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_504_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_503_29]]), dimensions={}
+// CHECK-NEXT: %[[select_524_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_502_10]], c64[32,128,128]{2,1,0} %[[divide_523_28]], c64[32,128,128]{2,1,0} %[[broadcast_504_30]])
+// CHECK-NEXT: %[[add_525_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_524_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_493_11]])
+// CHECK-NEXT: %[[get_tuple_element_494_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_490_0]]), index=3
+// CHECK-NEXT: %[[compare_519_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_515_22]], f32[32,1,1]{2,1,0} %[[sqrt_515_22]]), direction=NE
+// CHECK-NEXT: %[[or_520_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_494_33]], pred[32,1,1]{2,1,0} %[[compare_519_34]])
+// CHECK-NEXT: ROOT %[[tuple_526_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_496_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_492_4]], c64[32,128,128]{2,1,0} %[[add_525_32]], pred[32,1,1]{2,1,0} %[[or_520_35]])
+
+// CHECK: %[[unblocked_condition_527_13:[^ ]+]] (parameter.528: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_528_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_530_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_528_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_531_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_528_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_532_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_528_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_529_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_528_0]]), index=0
+// CHECK-NEXT: %[[constant_533_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_534_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_529_4]], s32[] %[[constant_533_5]]), direction=LT
+
+// CHECK: %[[unblocked_body_568_14:[^ ]+]] (parameter.569: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1]) {
+// CHECK-NEXT: %[[parameter_569_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_570_1:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_569_0]]), index=0
+// CHECK-NEXT: %[[constant_574_2:[^ ]+]] = s32[] constant(1)
+// CHECK-NEXT: %[[add_575_3:[^ ]+]] = s32[] add(s32[] %[[get_tuple_element_570_1]], s32[] %[[constant_574_2]])
+// CHECK-NEXT: %[[get_tuple_element_571_4:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_569_0]]), index=1
+// CHECK-NEXT: %[[iota_577_5:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=1
+// CHECK-NEXT: %[[iota_576_6:[^ ]+]] = s32[32,128,128]{2,1,0} iota(), iota_dimension=2
+// CHECK-NEXT: %[[compare_578_7:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_577_5]], s32[32,128,128]{2,1,0} %[[iota_576_6]]), direction=GE
+// CHECK-NEXT: %[[broadcast_579_8:[^ ]+]] = s32[32,128,128]{2,1,0} broadcast(s32[] %[[get_tuple_element_570_1]]), dimensions={}
+// CHECK-NEXT: %[[compare_580_9:[^ ]+]] = pred[32,128,128]{2,1,0} compare(s32[32,128,128]{2,1,0} %[[iota_576_6]], s32[32,128,128]{2,1,0} %[[broadcast_579_8]]), direction=EQ
+// CHECK-NEXT: %[[and_581_10:[^ ]+]] = pred[32,128,128]{2,1,0} and(pred[32,128,128]{2,1,0} %[[compare_578_7]], pred[32,128,128]{2,1,0} %[[compare_580_9]])
+// CHECK-NEXT: %[[get_tuple_element_572_11:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_569_0]]), index=2
+// CHECK-NEXT: %[[real_584_12:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[get_tuple_element_572_11]])
+// CHECK-NEXT: %[[imag_585_13:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[get_tuple_element_572_11]])
+// CHECK-NEXT: %[[negate_586_14:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_585_13]])
+// CHECK-NEXT: %[[complex_587_15:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_584_12]], f32[32,128,128]{2,1,0} %[[negate_586_14]])
+// CHECK-NEXT: %[[dot_588_16:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,128]{2,1,0} %[[get_tuple_element_572_11]], c64[32,128,128]{2,1,0} %[[complex_587_15]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_589_17:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_588_16]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_590_18:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[get_tuple_element_571_4]], c64[32,128,128]{2,1,0} %[[transpose_589_17]])
+// CHECK-NEXT: %[[constant_591_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_slice_592_20:[^ ]+]] = c64[32,1,1]{2,1,0} dynamic-slice(c64[32,128,128]{2,1,0} %[[subtract_590_18]], s32[] %[[constant_591_19]], s32[] %[[get_tuple_element_570_1]], s32[] %[[get_tuple_element_570_1]]), dynamic_slice_sizes={32,1,1}
+// CHECK-NEXT: %[[real_593_21:[^ ]+]] = f32[32,1,1]{2,1,0} real(c64[32,1,1]{2,1,0} %[[dynamic_slice_592_20]])
+// CHECK-NEXT: %[[sqrt_594_22:[^ ]+]] = f32[32,1,1]{2,1,0} sqrt(f32[32,1,1]{2,1,0} %[[real_593_21]])
+// CHECK-NEXT: %[[constant_595_23:[^ ]+]] = f32[] constant(0)
+// CHECK-NEXT: %[[broadcast_596_24:[^ ]+]] = f32[32,1,1]{2,1,0} broadcast(f32[] %[[constant_595_23]]), dimensions={}
+// CHECK-NEXT: %[[complex_597_25:[^ ]+]] = c64[32,1,1]{2,1,0} complex(f32[32,1,1]{2,1,0} %[[sqrt_594_22]], f32[32,1,1]{2,1,0} %[[broadcast_596_24]])
+// CHECK-NEXT: %[[reshape_600_26:[^ ]+]] = c64[32]{0} reshape(c64[32,1,1]{2,1,0} %[[complex_597_25]])
+// CHECK-NEXT: %[[broadcast_601_27:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[32]{0} %[[reshape_600_26]]), dimensions={0}
+// CHECK-NEXT: %[[divide_602_28:[^ ]+]] = c64[32,128,128]{2,1,0} divide(c64[32,128,128]{2,1,0} %[[subtract_590_18]], c64[32,128,128]{2,1,0} %[[broadcast_601_27]])
+// CHECK-NEXT: %[[constant_582_29:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_583_30:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_582_29]]), dimensions={}
+// CHECK-NEXT: %[[select_603_31:[^ ]+]] = c64[32,128,128]{2,1,0} select(pred[32,128,128]{2,1,0} %[[and_581_10]], c64[32,128,128]{2,1,0} %[[divide_602_28]], c64[32,128,128]{2,1,0} %[[broadcast_583_30]])
+// CHECK-NEXT: %[[add_604_32:[^ ]+]] = c64[32,128,128]{2,1,0} add(c64[32,128,128]{2,1,0} %[[select_603_31]], c64[32,128,128]{2,1,0} %[[get_tuple_element_572_11]])
+// CHECK-NEXT: %[[get_tuple_element_573_33:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_569_0]]), index=3
+// CHECK-NEXT: %[[compare_598_34:[^ ]+]] = pred[32,1,1]{2,1,0} compare(f32[32,1,1]{2,1,0} %[[sqrt_594_22]], f32[32,1,1]{2,1,0} %[[sqrt_594_22]]), direction=NE
+// CHECK-NEXT: %[[or_599_35:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[get_tuple_element_573_33]], pred[32,1,1]{2,1,0} %[[compare_598_34]])
+// CHECK-NEXT: ROOT %[[tuple_605_36:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[add_575_3]], c64[32,128,128]{2,1,0} %[[get_tuple_element_571_4]], c64[32,128,128]{2,1,0} %[[add_604_32]], pred[32,1,1]{2,1,0} %[[or_599_35]])
+
+// CHECK: %[[unblocked_condition_606_15:[^ ]+]] (parameter.607: (s32[], c64[32,128,128], c64[32,128,128], pred[32,1,1])) -> pred[] {
+// CHECK-NEXT: %[[parameter_607_0:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) parameter(0)
+// CHECK-NEXT: %[[get_tuple_element_609_1:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_607_0]]), index=1
+// CHECK-NEXT: %[[get_tuple_element_610_2:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_607_0]]), index=2
+// CHECK-NEXT: %[[get_tuple_element_611_3:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_607_0]]), index=3
+// CHECK-NEXT: %[[get_tuple_element_608_4:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[parameter_607_0]]), index=0
+// CHECK-NEXT: %[[constant_612_5:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: ROOT %[[compare_613_6:[^ ]+]] = pred[] compare(s32[] %[[get_tuple_element_608_4]], s32[] %[[constant_612_5]]), direction=LT
+
+// CHECK: %[[xla_cholesky_c64_32_1024_1024__upper_631_16:[^ ]+]] (a.1: c64[32,1024,1024]) -> c64[32,1024,1024] {
+// CHECK-NEXT: %[[constant_13_0:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[a_1_1:[^ ]+]] = c64[32,1024,1024]{2,1,0} parameter(0)
+// CHECK-NEXT: %[[transpose_2_2:[^ ]+]] = c64[32,1024,1024]{1,2,0} transpose(c64[32,1024,1024]{2,1,0} %[[a_1_1]]), dimensions={0,2,1}
+// CHECK-NEXT: %[[slice_7_3:[^ ]+]] = c64[32,1024,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [0:1024], [0:128]}
+// CHECK-NEXT: %[[slice_8_4:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,1024,128]{2,1,0} %[[slice_7_3]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_9_5:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_10_6:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_9_5]]), dimensions={}
+// CHECK-NEXT: %[[constant_11_7:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_12_8:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_11_7]]), dimensions={}
+// CHECK-NEXT: %[[tuple_14_9:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_13_0]], c64[32,128,128]{2,1,0} %[[slice_8_4]], c64[32,128,128]{2,1,0} %[[broadcast_10_6]], pred[32,1,1]{2,1,0} %[[broadcast_12_8]])
+// CHECK-NEXT: %[[while_61_10:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_14_9]]), condition=%[[unblocked_condition_53_1]], body=%[[unblocked_body_15_0]]
+// CHECK-NEXT: %[[get_tuple_element_62_11:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_61_10]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_63_12:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_61_10]]), index=1
+// CHECK-NEXT: %[[constant_92_13:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_77_14:[^ ]+]] = c64[32,896,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [128:1024], [128:256]}
+// CHECK-NEXT: %[[constant_3_15:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_4_16:[^ ]+]] = c64[32,1024,1024]{2,1,0} broadcast(c64[] %[[constant_3_15]]), dimensions={}
+// CHECK-NEXT: %[[get_tuple_element_64_17:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_61_10]]), index=2
+// CHECK-NEXT: %[[constant_67_18:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_68_19:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_69_20:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_update_slice_70_21:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[broadcast_4_16]], c64[32,128,128]{2,1,0} %[[get_tuple_element_64_17]], s32[] %[[constant_67_18]], s32[] %[[constant_68_19]], s32[] %[[constant_69_20]])
+// CHECK-NEXT: %[[slice_71_22:[^ ]+]] = c64[32,896,128]{2,1,0} slice(c64[32,1024,128]{2,1,0} %[[slice_7_3]]), slice={[0:32], [128:1024], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_72_23:[^ ]+]] = c64[32,896,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_64_17]], c64[32,896,128]{2,1,0} %[[slice_71_22]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_73_24:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_74_25:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: %[[constant_75_26:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[dynamic_update_slice_76_27:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_70_21]], c64[32,896,128]{2,1,0} %[[triangular_solve_72_23]], s32[] %[[constant_73_24]], s32[] %[[constant_74_25]], s32[] %[[constant_75_26]])
+// CHECK-NEXT: %[[slice_78_28:[^ ]+]] = c64[32,896,128]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_76_27]]), slice={[0:32], [128:1024], [0:128]}
+// CHECK-NEXT: %[[slice_79_29:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_76_27]]), slice={[0:32], [128:256], [0:128]}
+// CHECK-NEXT: %[[real_80_30:[^ ]+]] = f32[32,128,128]{2,1,0} real(c64[32,128,128]{2,1,0} %[[slice_79_29]])
+// CHECK-NEXT: %[[imag_81_31:[^ ]+]] = f32[32,128,128]{2,1,0} imag(c64[32,128,128]{2,1,0} %[[slice_79_29]])
+// CHECK-NEXT: %[[negate_82_32:[^ ]+]] = f32[32,128,128]{2,1,0} negate(f32[32,128,128]{2,1,0} %[[imag_81_31]])
+// CHECK-NEXT: %[[complex_83_33:[^ ]+]] = c64[32,128,128]{2,1,0} complex(f32[32,128,128]{2,1,0} %[[real_80_30]], f32[32,128,128]{2,1,0} %[[negate_82_32]])
+// CHECK-NEXT: %[[dot_84_34:[^ ]+]] = c64[32,896,128]{2,1,0} dot(c64[32,896,128]{2,1,0} %[[slice_78_28]], c64[32,128,128]{2,1,0} %[[complex_83_33]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_85_35:[^ ]+]] = c64[32,896,128]{2,1,0} transpose(c64[32,896,128]{2,1,0} %[[dot_84_34]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_86_36:[^ ]+]] = c64[32,896,128]{2,1,0} subtract(c64[32,896,128]{2,1,0} %[[slice_77_14]], c64[32,896,128]{2,1,0} %[[transpose_85_35]])
+// CHECK-NEXT: %[[slice_87_37:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,896,128]{2,1,0} %[[subtract_86_36]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_88_38:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_89_39:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_88_38]]), dimensions={}
+// CHECK-NEXT: %[[constant_90_40:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_91_41:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_90_40]]), dimensions={}
+// CHECK-NEXT: %[[tuple_93_42:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_92_13]], c64[32,128,128]{2,1,0} %[[slice_87_37]], c64[32,128,128]{2,1,0} %[[broadcast_89_39]], pred[32,1,1]{2,1,0} %[[broadcast_91_41]])
+// CHECK-NEXT: %[[while_140_43:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_93_42]]), condition=%[[unblocked_condition_132_3]], body=%[[unblocked_body_94_2]]
+// CHECK-NEXT: %[[get_tuple_element_141_44:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_140_43]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_142_45:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_140_43]]), index=1
+// CHECK-NEXT: %[[constant_171_46:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_156_47:[^ ]+]] = c64[32,768,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [256:1024], [256:384]}
+// CHECK-NEXT: %[[get_tuple_element_143_48:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_140_43]]), index=2
+// CHECK-NEXT: %[[constant_146_49:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_147_50:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: %[[constant_148_51:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: %[[dynamic_update_slice_149_52:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_76_27]], c64[32,128,128]{2,1,0} %[[get_tuple_element_143_48]], s32[] %[[constant_146_49]], s32[] %[[constant_147_50]], s32[] %[[constant_148_51]])
+// CHECK-NEXT: %[[slice_150_53:[^ ]+]] = c64[32,768,128]{2,1,0} slice(c64[32,896,128]{2,1,0} %[[subtract_86_36]]), slice={[0:32], [128:896], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_151_54:[^ ]+]] = c64[32,768,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_143_48]], c64[32,768,128]{2,1,0} %[[slice_150_53]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_152_55:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_153_56:[^ ]+]] = s32[] constant(256)
+// CHECK-NEXT: %[[constant_154_57:[^ ]+]] = s32[] constant(128)
+// CHECK-NEXT: %[[dynamic_update_slice_155_58:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_149_52]], c64[32,768,128]{2,1,0} %[[triangular_solve_151_54]], s32[] %[[constant_152_55]], s32[] %[[constant_153_56]], s32[] %[[constant_154_57]])
+// CHECK-NEXT: %[[slice_157_59:[^ ]+]] = c64[32,768,256]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_155_58]]), slice={[0:32], [256:1024], [0:256]}
+// CHECK-NEXT: %[[slice_158_60:[^ ]+]] = c64[32,128,256]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_155_58]]), slice={[0:32], [256:384], [0:256]}
+// CHECK-NEXT: %[[real_159_61:[^ ]+]] = f32[32,128,256]{2,1,0} real(c64[32,128,256]{2,1,0} %[[slice_158_60]])
+// CHECK-NEXT: %[[imag_160_62:[^ ]+]] = f32[32,128,256]{2,1,0} imag(c64[32,128,256]{2,1,0} %[[slice_158_60]])
+// CHECK-NEXT: %[[negate_161_63:[^ ]+]] = f32[32,128,256]{2,1,0} negate(f32[32,128,256]{2,1,0} %[[imag_160_62]])
+// CHECK-NEXT: %[[complex_162_64:[^ ]+]] = c64[32,128,256]{2,1,0} complex(f32[32,128,256]{2,1,0} %[[real_159_61]], f32[32,128,256]{2,1,0} %[[negate_161_63]])
+// CHECK-NEXT: %[[dot_163_65:[^ ]+]] = c64[32,768,128]{2,1,0} dot(c64[32,768,256]{2,1,0} %[[slice_157_59]], c64[32,128,256]{2,1,0} %[[complex_162_64]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_164_66:[^ ]+]] = c64[32,768,128]{2,1,0} transpose(c64[32,768,128]{2,1,0} %[[dot_163_65]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_165_67:[^ ]+]] = c64[32,768,128]{2,1,0} subtract(c64[32,768,128]{2,1,0} %[[slice_156_47]], c64[32,768,128]{2,1,0} %[[transpose_164_66]])
+// CHECK-NEXT: %[[slice_166_68:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,768,128]{2,1,0} %[[subtract_165_67]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_167_69:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_168_70:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_167_69]]), dimensions={}
+// CHECK-NEXT: %[[constant_169_71:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_170_72:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_169_71]]), dimensions={}
+// CHECK-NEXT: %[[tuple_172_73:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_171_46]], c64[32,128,128]{2,1,0} %[[slice_166_68]], c64[32,128,128]{2,1,0} %[[broadcast_168_70]], pred[32,1,1]{2,1,0} %[[broadcast_170_72]])
+// CHECK-NEXT: %[[while_219_74:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_172_73]]), condition=%[[unblocked_condition_211_5]], body=%[[unblocked_body_173_4]]
+// CHECK-NEXT: %[[get_tuple_element_220_75:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_219_74]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_221_76:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_219_74]]), index=1
+// CHECK-NEXT: %[[constant_250_77:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_235_78:[^ ]+]] = c64[32,640,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [384:1024], [384:512]}
+// CHECK-NEXT: %[[get_tuple_element_222_79:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_219_74]]), index=2
+// CHECK-NEXT: %[[constant_225_80:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_226_81:[^ ]+]] = s32[] constant(256)
+// CHECK-NEXT: %[[constant_227_82:[^ ]+]] = s32[] constant(256)
+// CHECK-NEXT: %[[dynamic_update_slice_228_83:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_155_58]], c64[32,128,128]{2,1,0} %[[get_tuple_element_222_79]], s32[] %[[constant_225_80]], s32[] %[[constant_226_81]], s32[] %[[constant_227_82]])
+// CHECK-NEXT: %[[slice_229_84:[^ ]+]] = c64[32,640,128]{2,1,0} slice(c64[32,768,128]{2,1,0} %[[subtract_165_67]]), slice={[0:32], [128:768], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_230_85:[^ ]+]] = c64[32,640,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_222_79]], c64[32,640,128]{2,1,0} %[[slice_229_84]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_231_86:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_232_87:[^ ]+]] = s32[] constant(384)
+// CHECK-NEXT: %[[constant_233_88:[^ ]+]] = s32[] constant(256)
+// CHECK-NEXT: %[[dynamic_update_slice_234_89:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_228_83]], c64[32,640,128]{2,1,0} %[[triangular_solve_230_85]], s32[] %[[constant_231_86]], s32[] %[[constant_232_87]], s32[] %[[constant_233_88]])
+// CHECK-NEXT: %[[slice_236_90:[^ ]+]] = c64[32,640,384]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_234_89]]), slice={[0:32], [384:1024], [0:384]}
+// CHECK-NEXT: %[[slice_237_91:[^ ]+]] = c64[32,128,384]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_234_89]]), slice={[0:32], [384:512], [0:384]}
+// CHECK-NEXT: %[[real_238_92:[^ ]+]] = f32[32,128,384]{2,1,0} real(c64[32,128,384]{2,1,0} %[[slice_237_91]])
+// CHECK-NEXT: %[[imag_239_93:[^ ]+]] = f32[32,128,384]{2,1,0} imag(c64[32,128,384]{2,1,0} %[[slice_237_91]])
+// CHECK-NEXT: %[[negate_240_94:[^ ]+]] = f32[32,128,384]{2,1,0} negate(f32[32,128,384]{2,1,0} %[[imag_239_93]])
+// CHECK-NEXT: %[[complex_241_95:[^ ]+]] = c64[32,128,384]{2,1,0} complex(f32[32,128,384]{2,1,0} %[[real_238_92]], f32[32,128,384]{2,1,0} %[[negate_240_94]])
+// CHECK-NEXT: %[[dot_242_96:[^ ]+]] = c64[32,640,128]{2,1,0} dot(c64[32,640,384]{2,1,0} %[[slice_236_90]], c64[32,128,384]{2,1,0} %[[complex_241_95]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_243_97:[^ ]+]] = c64[32,640,128]{2,1,0} transpose(c64[32,640,128]{2,1,0} %[[dot_242_96]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_244_98:[^ ]+]] = c64[32,640,128]{2,1,0} subtract(c64[32,640,128]{2,1,0} %[[slice_235_78]], c64[32,640,128]{2,1,0} %[[transpose_243_97]])
+// CHECK-NEXT: %[[slice_245_99:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,640,128]{2,1,0} %[[subtract_244_98]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_246_100:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_247_101:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_246_100]]), dimensions={}
+// CHECK-NEXT: %[[constant_248_102:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_249_103:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_248_102]]), dimensions={}
+// CHECK-NEXT: %[[tuple_251_104:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_250_77]], c64[32,128,128]{2,1,0} %[[slice_245_99]], c64[32,128,128]{2,1,0} %[[broadcast_247_101]], pred[32,1,1]{2,1,0} %[[broadcast_249_103]])
+// CHECK-NEXT: %[[while_298_105:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_251_104]]), condition=%[[unblocked_condition_290_7]], body=%[[unblocked_body_252_6]]
+// CHECK-NEXT: %[[get_tuple_element_299_106:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_298_105]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_300_107:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_298_105]]), index=1
+// CHECK-NEXT: %[[constant_329_108:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_314_109:[^ ]+]] = c64[32,512,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [512:1024], [512:640]}
+// CHECK-NEXT: %[[get_tuple_element_301_110:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_298_105]]), index=2
+// CHECK-NEXT: %[[constant_304_111:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_305_112:[^ ]+]] = s32[] constant(384)
+// CHECK-NEXT: %[[constant_306_113:[^ ]+]] = s32[] constant(384)
+// CHECK-NEXT: %[[dynamic_update_slice_307_114:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_234_89]], c64[32,128,128]{2,1,0} %[[get_tuple_element_301_110]], s32[] %[[constant_304_111]], s32[] %[[constant_305_112]], s32[] %[[constant_306_113]])
+// CHECK-NEXT: %[[slice_308_115:[^ ]+]] = c64[32,512,128]{2,1,0} slice(c64[32,640,128]{2,1,0} %[[subtract_244_98]]), slice={[0:32], [128:640], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_309_116:[^ ]+]] = c64[32,512,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_301_110]], c64[32,512,128]{2,1,0} %[[slice_308_115]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_310_117:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_311_118:[^ ]+]] = s32[] constant(512)
+// CHECK-NEXT: %[[constant_312_119:[^ ]+]] = s32[] constant(384)
+// CHECK-NEXT: %[[dynamic_update_slice_313_120:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_307_114]], c64[32,512,128]{2,1,0} %[[triangular_solve_309_116]], s32[] %[[constant_310_117]], s32[] %[[constant_311_118]], s32[] %[[constant_312_119]])
+// CHECK-NEXT: %[[slice_315_121:[^ ]+]] = c64[32,512,512]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_313_120]]), slice={[0:32], [512:1024], [0:512]}
+// CHECK-NEXT: %[[slice_316_122:[^ ]+]] = c64[32,128,512]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_313_120]]), slice={[0:32], [512:640], [0:512]}
+// CHECK-NEXT: %[[real_317_123:[^ ]+]] = f32[32,128,512]{2,1,0} real(c64[32,128,512]{2,1,0} %[[slice_316_122]])
+// CHECK-NEXT: %[[imag_318_124:[^ ]+]] = f32[32,128,512]{2,1,0} imag(c64[32,128,512]{2,1,0} %[[slice_316_122]])
+// CHECK-NEXT: %[[negate_319_125:[^ ]+]] = f32[32,128,512]{2,1,0} negate(f32[32,128,512]{2,1,0} %[[imag_318_124]])
+// CHECK-NEXT: %[[complex_320_126:[^ ]+]] = c64[32,128,512]{2,1,0} complex(f32[32,128,512]{2,1,0} %[[real_317_123]], f32[32,128,512]{2,1,0} %[[negate_319_125]])
+// CHECK-NEXT: %[[dot_321_127:[^ ]+]] = c64[32,512,128]{2,1,0} dot(c64[32,512,512]{2,1,0} %[[slice_315_121]], c64[32,128,512]{2,1,0} %[[complex_320_126]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_322_128:[^ ]+]] = c64[32,512,128]{2,1,0} transpose(c64[32,512,128]{2,1,0} %[[dot_321_127]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_323_129:[^ ]+]] = c64[32,512,128]{2,1,0} subtract(c64[32,512,128]{2,1,0} %[[slice_314_109]], c64[32,512,128]{2,1,0} %[[transpose_322_128]])
+// CHECK-NEXT: %[[slice_324_130:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,512,128]{2,1,0} %[[subtract_323_129]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_325_131:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_326_132:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_325_131]]), dimensions={}
+// CHECK-NEXT: %[[constant_327_133:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_328_134:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_327_133]]), dimensions={}
+// CHECK-NEXT: %[[tuple_330_135:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_329_108]], c64[32,128,128]{2,1,0} %[[slice_324_130]], c64[32,128,128]{2,1,0} %[[broadcast_326_132]], pred[32,1,1]{2,1,0} %[[broadcast_328_134]])
+// CHECK-NEXT: %[[while_377_136:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_330_135]]), condition=%[[unblocked_condition_369_9]], body=%[[unblocked_body_331_8]]
+// CHECK-NEXT: %[[get_tuple_element_378_137:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_377_136]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_379_138:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_377_136]]), index=1
+// CHECK-NEXT: %[[constant_408_139:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_393_140:[^ ]+]] = c64[32,384,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [640:1024], [640:768]}
+// CHECK-NEXT: %[[get_tuple_element_380_141:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_377_136]]), index=2
+// CHECK-NEXT: %[[constant_383_142:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_384_143:[^ ]+]] = s32[] constant(512)
+// CHECK-NEXT: %[[constant_385_144:[^ ]+]] = s32[] constant(512)
+// CHECK-NEXT: %[[dynamic_update_slice_386_145:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_313_120]], c64[32,128,128]{2,1,0} %[[get_tuple_element_380_141]], s32[] %[[constant_383_142]], s32[] %[[constant_384_143]], s32[] %[[constant_385_144]])
+// CHECK-NEXT: %[[slice_387_146:[^ ]+]] = c64[32,384,128]{2,1,0} slice(c64[32,512,128]{2,1,0} %[[subtract_323_129]]), slice={[0:32], [128:512], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_388_147:[^ ]+]] = c64[32,384,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_380_141]], c64[32,384,128]{2,1,0} %[[slice_387_146]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_389_148:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_390_149:[^ ]+]] = s32[] constant(640)
+// CHECK-NEXT: %[[constant_391_150:[^ ]+]] = s32[] constant(512)
+// CHECK-NEXT: %[[dynamic_update_slice_392_151:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_386_145]], c64[32,384,128]{2,1,0} %[[triangular_solve_388_147]], s32[] %[[constant_389_148]], s32[] %[[constant_390_149]], s32[] %[[constant_391_150]])
+// CHECK-NEXT: %[[slice_394_152:[^ ]+]] = c64[32,384,640]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_392_151]]), slice={[0:32], [640:1024], [0:640]}
+// CHECK-NEXT: %[[slice_395_153:[^ ]+]] = c64[32,128,640]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_392_151]]), slice={[0:32], [640:768], [0:640]}
+// CHECK-NEXT: %[[real_396_154:[^ ]+]] = f32[32,128,640]{2,1,0} real(c64[32,128,640]{2,1,0} %[[slice_395_153]])
+// CHECK-NEXT: %[[imag_397_155:[^ ]+]] = f32[32,128,640]{2,1,0} imag(c64[32,128,640]{2,1,0} %[[slice_395_153]])
+// CHECK-NEXT: %[[negate_398_156:[^ ]+]] = f32[32,128,640]{2,1,0} negate(f32[32,128,640]{2,1,0} %[[imag_397_155]])
+// CHECK-NEXT: %[[complex_399_157:[^ ]+]] = c64[32,128,640]{2,1,0} complex(f32[32,128,640]{2,1,0} %[[real_396_154]], f32[32,128,640]{2,1,0} %[[negate_398_156]])
+// CHECK-NEXT: %[[dot_400_158:[^ ]+]] = c64[32,384,128]{2,1,0} dot(c64[32,384,640]{2,1,0} %[[slice_394_152]], c64[32,128,640]{2,1,0} %[[complex_399_157]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_401_159:[^ ]+]] = c64[32,384,128]{2,1,0} transpose(c64[32,384,128]{2,1,0} %[[dot_400_158]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_402_160:[^ ]+]] = c64[32,384,128]{2,1,0} subtract(c64[32,384,128]{2,1,0} %[[slice_393_140]], c64[32,384,128]{2,1,0} %[[transpose_401_159]])
+// CHECK-NEXT: %[[slice_403_161:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,384,128]{2,1,0} %[[subtract_402_160]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_404_162:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_405_163:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_404_162]]), dimensions={}
+// CHECK-NEXT: %[[constant_406_164:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_407_165:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_406_164]]), dimensions={}
+// CHECK-NEXT: %[[tuple_409_166:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_408_139]], c64[32,128,128]{2,1,0} %[[slice_403_161]], c64[32,128,128]{2,1,0} %[[broadcast_405_163]], pred[32,1,1]{2,1,0} %[[broadcast_407_165]])
+// CHECK-NEXT: %[[while_456_167:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_409_166]]), condition=%[[unblocked_condition_448_11]], body=%[[unblocked_body_410_10]]
+// CHECK-NEXT: %[[get_tuple_element_457_168:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_456_167]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_458_169:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_456_167]]), index=1
+// CHECK-NEXT: %[[constant_487_170:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_472_171:[^ ]+]] = c64[32,256,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [768:1024], [768:896]}
+// CHECK-NEXT: %[[get_tuple_element_459_172:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_456_167]]), index=2
+// CHECK-NEXT: %[[constant_462_173:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_463_174:[^ ]+]] = s32[] constant(640)
+// CHECK-NEXT: %[[constant_464_175:[^ ]+]] = s32[] constant(640)
+// CHECK-NEXT: %[[dynamic_update_slice_465_176:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_392_151]], c64[32,128,128]{2,1,0} %[[get_tuple_element_459_172]], s32[] %[[constant_462_173]], s32[] %[[constant_463_174]], s32[] %[[constant_464_175]])
+// CHECK-NEXT: %[[slice_466_177:[^ ]+]] = c64[32,256,128]{2,1,0} slice(c64[32,384,128]{2,1,0} %[[subtract_402_160]]), slice={[0:32], [128:384], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_467_178:[^ ]+]] = c64[32,256,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_459_172]], c64[32,256,128]{2,1,0} %[[slice_466_177]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_468_179:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_469_180:[^ ]+]] = s32[] constant(768)
+// CHECK-NEXT: %[[constant_470_181:[^ ]+]] = s32[] constant(640)
+// CHECK-NEXT: %[[dynamic_update_slice_471_182:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_465_176]], c64[32,256,128]{2,1,0} %[[triangular_solve_467_178]], s32[] %[[constant_468_179]], s32[] %[[constant_469_180]], s32[] %[[constant_470_181]])
+// CHECK-NEXT: %[[slice_473_183:[^ ]+]] = c64[32,256,768]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_471_182]]), slice={[0:32], [768:1024], [0:768]}
+// CHECK-NEXT: %[[slice_474_184:[^ ]+]] = c64[32,128,768]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_471_182]]), slice={[0:32], [768:896], [0:768]}
+// CHECK-NEXT: %[[real_475_185:[^ ]+]] = f32[32,128,768]{2,1,0} real(c64[32,128,768]{2,1,0} %[[slice_474_184]])
+// CHECK-NEXT: %[[imag_476_186:[^ ]+]] = f32[32,128,768]{2,1,0} imag(c64[32,128,768]{2,1,0} %[[slice_474_184]])
+// CHECK-NEXT: %[[negate_477_187:[^ ]+]] = f32[32,128,768]{2,1,0} negate(f32[32,128,768]{2,1,0} %[[imag_476_186]])
+// CHECK-NEXT: %[[complex_478_188:[^ ]+]] = c64[32,128,768]{2,1,0} complex(f32[32,128,768]{2,1,0} %[[real_475_185]], f32[32,128,768]{2,1,0} %[[negate_477_187]])
+// CHECK-NEXT: %[[dot_479_189:[^ ]+]] = c64[32,256,128]{2,1,0} dot(c64[32,256,768]{2,1,0} %[[slice_473_183]], c64[32,128,768]{2,1,0} %[[complex_478_188]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_480_190:[^ ]+]] = c64[32,256,128]{2,1,0} transpose(c64[32,256,128]{2,1,0} %[[dot_479_189]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_481_191:[^ ]+]] = c64[32,256,128]{2,1,0} subtract(c64[32,256,128]{2,1,0} %[[slice_472_171]], c64[32,256,128]{2,1,0} %[[transpose_480_190]])
+// CHECK-NEXT: %[[slice_482_192:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,256,128]{2,1,0} %[[subtract_481_191]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_483_193:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_484_194:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_483_193]]), dimensions={}
+// CHECK-NEXT: %[[constant_485_195:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_486_196:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_485_195]]), dimensions={}
+// CHECK-NEXT: %[[tuple_488_197:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_487_170]], c64[32,128,128]{2,1,0} %[[slice_482_192]], c64[32,128,128]{2,1,0} %[[broadcast_484_194]], pred[32,1,1]{2,1,0} %[[broadcast_486_196]])
+// CHECK-NEXT: %[[while_535_198:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_488_197]]), condition=%[[unblocked_condition_527_13]], body=%[[unblocked_body_489_12]]
+// CHECK-NEXT: %[[get_tuple_element_536_199:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_535_198]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_537_200:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_535_198]]), index=1
+// CHECK-NEXT: %[[constant_566_201:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[slice_551_202:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,1024,1024]{1,2,0} %[[transpose_2_2]]), slice={[0:32], [896:1024], [896:1024]}
+// CHECK-NEXT: %[[get_tuple_element_538_203:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_535_198]]), index=2
+// CHECK-NEXT: %[[constant_541_204:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_542_205:[^ ]+]] = s32[] constant(768)
+// CHECK-NEXT: %[[constant_543_206:[^ ]+]] = s32[] constant(768)
+// CHECK-NEXT: %[[dynamic_update_slice_544_207:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_471_182]], c64[32,128,128]{2,1,0} %[[get_tuple_element_538_203]], s32[] %[[constant_541_204]], s32[] %[[constant_542_205]], s32[] %[[constant_543_206]])
+// CHECK-NEXT: %[[slice_545_208:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,256,128]{2,1,0} %[[subtract_481_191]]), slice={[0:32], [128:256], [0:128]}
+// CHECK-NEXT: %[[triangular_solve_546_209:[^ ]+]] = c64[32,128,128]{2,1,0} triangular-solve(c64[32,128,128]{2,1,0} %[[get_tuple_element_538_203]], c64[32,128,128]{2,1,0} %[[slice_545_208]]), lower=true, transpose_a=ADJOINT
+// CHECK-NEXT: %[[constant_547_210:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_548_211:[^ ]+]] = s32[] constant(896)
+// CHECK-NEXT: %[[constant_549_212:[^ ]+]] = s32[] constant(768)
+// CHECK-NEXT: %[[dynamic_update_slice_550_213:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_544_207]], c64[32,128,128]{2,1,0} %[[triangular_solve_546_209]], s32[] %[[constant_547_210]], s32[] %[[constant_548_211]], s32[] %[[constant_549_212]])
+// CHECK-NEXT: %[[slice_552_214:[^ ]+]] = c64[32,128,896]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_550_213]]), slice={[0:32], [896:1024], [0:896]}
+// CHECK-NEXT: %[[slice_553_215:[^ ]+]] = c64[32,128,896]{2,1,0} slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_550_213]]), slice={[0:32], [896:1024], [0:896]}
+// CHECK-NEXT: %[[real_554_216:[^ ]+]] = f32[32,128,896]{2,1,0} real(c64[32,128,896]{2,1,0} %[[slice_553_215]])
+// CHECK-NEXT: %[[imag_555_217:[^ ]+]] = f32[32,128,896]{2,1,0} imag(c64[32,128,896]{2,1,0} %[[slice_553_215]])
+// CHECK-NEXT: %[[negate_556_218:[^ ]+]] = f32[32,128,896]{2,1,0} negate(f32[32,128,896]{2,1,0} %[[imag_555_217]])
+// CHECK-NEXT: %[[complex_557_219:[^ ]+]] = c64[32,128,896]{2,1,0} complex(f32[32,128,896]{2,1,0} %[[real_554_216]], f32[32,128,896]{2,1,0} %[[negate_556_218]])
+// CHECK-NEXT: %[[dot_558_220:[^ ]+]] = c64[32,128,128]{2,1,0} dot(c64[32,128,896]{2,1,0} %[[slice_552_214]], c64[32,128,896]{2,1,0} %[[complex_557_219]]), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, operand_precision={highest,highest}, frontend_attributes={grad_x="false",grad_y="false"}
+// CHECK-NEXT: %[[transpose_559_221:[^ ]+]] = c64[32,128,128]{2,1,0} transpose(c64[32,128,128]{2,1,0} %[[dot_558_220]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[subtract_560_222:[^ ]+]] = c64[32,128,128]{2,1,0} subtract(c64[32,128,128]{2,1,0} %[[slice_551_202]], c64[32,128,128]{2,1,0} %[[transpose_559_221]])
+// CHECK-NEXT: %[[slice_561_223:[^ ]+]] = c64[32,128,128]{2,1,0} slice(c64[32,128,128]{2,1,0} %[[subtract_560_222]]), slice={[0:32], [0:128], [0:128]}
+// CHECK-NEXT: %[[constant_562_224:[^ ]+]] = c64[] constant((0, 0))
+// CHECK-NEXT: %[[broadcast_563_225:[^ ]+]] = c64[32,128,128]{2,1,0} broadcast(c64[] %[[constant_562_224]]), dimensions={}
+// CHECK-NEXT: %[[constant_564_226:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_565_227:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_564_226]]), dimensions={}
+// CHECK-NEXT: %[[tuple_567_228:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) tuple(s32[] %[[constant_566_201]], c64[32,128,128]{2,1,0} %[[slice_561_223]], c64[32,128,128]{2,1,0} %[[broadcast_563_225]], pred[32,1,1]{2,1,0} %[[broadcast_565_227]])
+// CHECK-NEXT: %[[while_614_229:[^ ]+]] = (s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) while((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[tuple_567_228]]), condition=%[[unblocked_condition_606_15]], body=%[[unblocked_body_568_14]]
+// CHECK-NEXT: %[[get_tuple_element_615_230:[^ ]+]] = s32[] get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_614_229]]), index=0
+// CHECK-NEXT: %[[get_tuple_element_616_231:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_614_229]]), index=1
+// CHECK-NEXT: %[[constant_5_232:[^ ]+]] = pred[] constant(false)
+// CHECK-NEXT: %[[broadcast_6_233:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[] %[[constant_5_232]]), dimensions={}
+// CHECK-NEXT: %[[get_tuple_element_65_234:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_61_10]]), index=3
+// CHECK-NEXT: %[[or_66_235:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[broadcast_6_233]], pred[32,1,1]{2,1,0} %[[get_tuple_element_65_234]])
+// CHECK-NEXT: %[[get_tuple_element_144_236:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_140_43]]), index=3
+// CHECK-NEXT: %[[or_145_237:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_66_235]], pred[32,1,1]{2,1,0} %[[get_tuple_element_144_236]])
+// CHECK-NEXT: %[[get_tuple_element_223_238:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_219_74]]), index=3
+// CHECK-NEXT: %[[or_224_239:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_145_237]], pred[32,1,1]{2,1,0} %[[get_tuple_element_223_238]])
+// CHECK-NEXT: %[[get_tuple_element_302_240:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_298_105]]), index=3
+// CHECK-NEXT: %[[or_303_241:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_224_239]], pred[32,1,1]{2,1,0} %[[get_tuple_element_302_240]])
+// CHECK-NEXT: %[[get_tuple_element_381_242:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_377_136]]), index=3
+// CHECK-NEXT: %[[or_382_243:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_303_241]], pred[32,1,1]{2,1,0} %[[get_tuple_element_381_242]])
+// CHECK-NEXT: %[[get_tuple_element_460_244:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_456_167]]), index=3
+// CHECK-NEXT: %[[or_461_245:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_382_243]], pred[32,1,1]{2,1,0} %[[get_tuple_element_460_244]])
+// CHECK-NEXT: %[[get_tuple_element_539_246:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_535_198]]), index=3
+// CHECK-NEXT: %[[or_540_247:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_461_245]], pred[32,1,1]{2,1,0} %[[get_tuple_element_539_246]])
+// CHECK-NEXT: %[[get_tuple_element_618_248:[^ ]+]] = pred[32,1,1]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_614_229]]), index=3
+// CHECK-NEXT: %[[or_619_249:[^ ]+]] = pred[32,1,1]{2,1,0} or(pred[32,1,1]{2,1,0} %[[or_540_247]], pred[32,1,1]{2,1,0} %[[get_tuple_element_618_248]])
+// CHECK-NEXT: %[[broadcast_624_250:[^ ]+]] = pred[32,1,1]{2,1,0} broadcast(pred[32,1,1]{2,1,0} %[[or_619_249]]), dimensions={0,1,2}
+// CHECK-NEXT: %[[reshape_625_251:[^ ]+]] = pred[32]{0} reshape(pred[32,1,1]{2,1,0} %[[broadcast_624_250]])
+// CHECK-NEXT: %[[broadcast_626_252:[^ ]+]] = pred[32,1024,1024]{2,1,0} broadcast(pred[32]{0} %[[reshape_625_251]]), dimensions={0}
+// CHECK-NEXT: %[[constant_627_253:[^ ]+]] = c64[] constant((nan, 0))
+// CHECK-NEXT: %[[broadcast_628_254:[^ ]+]] = c64[32,1024,1024]{2,1,0} broadcast(c64[] %[[constant_627_253]]), dimensions={}
+// CHECK-NEXT: %[[get_tuple_element_617_255:[^ ]+]] = c64[32,128,128]{2,1,0} get-tuple-element((s32[], c64[32,128,128]{2,1,0}, c64[32,128,128]{2,1,0}, pred[32,1,1]{2,1,0}) %[[while_614_229]]), index=2
+// CHECK-NEXT: %[[constant_620_256:[^ ]+]] = s32[] constant(0)
+// CHECK-NEXT: %[[constant_621_257:[^ ]+]] = s32[] constant(896)
+// CHECK-NEXT: %[[constant_622_258:[^ ]+]] = s32[] constant(896)
+// CHECK-NEXT: %[[dynamic_update_slice_623_259:[^ ]+]] = c64[32,1024,1024]{2,1,0} dynamic-update-slice(c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_550_213]], c64[32,128,128]{2,1,0} %[[get_tuple_element_617_255]], s32[] %[[constant_620_256]], s32[] %[[constant_621_257]], s32[] %[[constant_622_258]])
+// CHECK-NEXT: %[[select_629_260:[^ ]+]] = c64[32,1024,1024]{2,1,0} select(pred[32,1024,1024]{2,1,0} %[[broadcast_626_252]], c64[32,1024,1024]{2,1,0} %[[broadcast_628_254]], c64[32,1024,1024]{2,1,0} %[[dynamic_update_slice_623_259]])
+// CHECK-NEXT: ROOT %[[transpose_630_261:[^ ]+]] = c64[32,1024,1024]{1,2,0} transpose(c64[32,1024,1024]{2,1,0} %[[select_629_260]]), dimensions={0,2,1}
+
+// CHECK: ENTRY %[[test_17:[^ ]+]] (input: c64[32,1024,1024]) -> c64[32,1024,1024] {
+ENTRY test {
+    // CHECK-NEXT: %[[input_0:[^ ]+]] = c64[32,1024,1024]{2,1,0} parameter(0)
+    input = c64[32,1024,1024] parameter(0)
+    // CHECK-NEXT: ROOT %[[call_1:[^ ]+]] = c64[32,1024,1024]{2,1,0} call(c64[32,1024,1024]{2,1,0} %[[input_0]]), to_apply=%[[xla_cholesky_c64_32_1024_1024__upper_631_16]]
+    ROOT decomp = c64[32,1024,1024] cholesky(%input)
+}
