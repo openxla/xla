@@ -198,6 +198,7 @@ xla_test(
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
         "data/single_gemm_fusion.hlo",
+        "data/sharded_computation.hlo",
     ],
     tags = ["no_mac"],
     deps = [

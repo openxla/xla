@@ -603,7 +603,12 @@ absl::Status RocmExecutor::Init() {
   TF_ASSIGN_OR_RETURN(rocm_context_,
                       RocmContext::Create(device_ordinal(), device_));
   TF_ASSIGN_OR_RETURN(version_, GetGpuISAVersion(device_));
-  return absl::OkStatus();
+  // We initialize BLAS interfaces early here since otherwise it might create 
+  // us problems during hipBlasLt initialization under graph capture.
+  // There is no real advantage of explicitly using 'lazy initialization' on 
+  // ROCM platform because rocBLAS/hipBlasLt already use 'lazy initialization' 
+  // internally
+  return InitBlas();
 }
 
 absl::StatusOr<std::unique_ptr<Kernel>> RocmExecutor::LoadKernel(
@@ -825,23 +830,15 @@ void RocmExecutor::DeallocateStream(Stream* stream) {
   alive_gpu_streams_.erase(rocm_stream->stream_handle());
 }
 
-blas::BlasSupport* RocmExecutor::AsBlas() {
-  absl::MutexLock lock(&mu_);
-  if (blas_ != nullptr) {
-    return blas_.get();
-  }
-
+absl::Status RocmExecutor::InitBlas() {
   PluginRegistry* registry = PluginRegistry::Instance();
-  absl::StatusOr<PluginRegistry::BlasFactory> status =
-      registry->GetFactory<PluginRegistry::BlasFactory>(rocm::kROCmPlatformId);
-  if (!status.ok()) {
-    LOG(ERROR) << "Unable to retrieve BLAS factory: "
-               << status.status().message();
-    return nullptr;
-  }
+  TF_ASSIGN_OR_RETURN(auto factory, 
+      registry->GetFactory<PluginRegistry::BlasFactory>(rocm::kROCmPlatformId));
+  blas_.reset(factory(this));
+  return absl::OkStatus();
+}
 
-  auto blas = status.value()(this);
-  blas_.reset(blas);
+blas::BlasSupport* RocmExecutor::AsBlas() {
   return blas_.get();
 }
 
