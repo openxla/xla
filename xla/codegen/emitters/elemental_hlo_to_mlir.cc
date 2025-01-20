@@ -1186,8 +1186,15 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
   }
 
   auto callee = call_target_provider(operand);
-  SmallVector<Value> operands(
-      this_fn.getArguments().take_front(instr->parent()->num_parameters()));
+  SmallVector<Value> operands;
+  if (this_fn->getAttr("xla.entry")) {
+    operands =
+        SmallVector<Value>{this_fn.getArguments().drop_front().take_front(
+            instr->parent()->num_parameters())};
+  } else {
+    operands = SmallVector<Value>{
+        this_fn.getArguments().take_front(instr->parent()->num_parameters())};
+  }
   absl::c_copy(indices, std::back_inserter(operands));
   auto results = builder.create<PureCallOp>(callee, operands).getResults();
   auto callee_subgraph = computation.FindSubgraph(operand);
