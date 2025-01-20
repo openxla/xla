@@ -47,7 +47,6 @@ namespace xla::gpu {
 
 using xla::BufferUse;
 using BufferUseVector = CommandBufferCmd::BufferUseVector;
-using MemoryAccess = BufferUse::MemoryAccess;
 
 static se::StreamExecutor* GpuExecutor() {
   auto name =
@@ -64,27 +63,23 @@ static constexpr auto s1 = ExecutionStreamId(1);
 // buffer cmd sequence. We never execute this command, we need it only to pass
 // buffer usage vector to the command buffer cmd sequence.
 struct TestOnlyCommandBufferCmd : public CommandBufferCmd {
-  TestOnlyCommandBufferCmd(ExecutionStreamId execution_stream_id,
-                           BufferUseVector buffer_usage)
-      : CommandBufferCmd(CommandBufferCmdType::kUnknownCmd,
-                         execution_stream_id),
-        buffer_usage(buffer_usage) {}
+  TestOnlyCommandBufferCmd(BufferUseVector buffer_usage)
+      : CommandBufferCmd(CommandBufferCmdType::kUnknownCmd),
+        buffer_usage_(buffer_usage) {}
 
   absl::Status Record(const Thunk::ExecuteParams&, const RecordParams&,
                       se::CommandBuffer*) override {
     return absl::OkStatus();
   }
 
-  BufferUseVector buffers() override { return buffer_usage; }
-
-  BufferUseVector buffer_usage;
+  BufferUseVector buffers() override { return buffer_usage_; }
+  BufferUseVector buffer_usage_;
 };
 
 class FakeCmd : public CommandBufferCmd {
  public:
   FakeCmd(ExecutionStreamId execution_stream_id)
-      : CommandBufferCmd(CommandBufferCmdType::kTracedCommandBufferCmd,
-                         execution_stream_id) {}
+      : CommandBufferCmd(CommandBufferCmdType::kTracedCommandBufferCmd) {}
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
@@ -106,12 +101,9 @@ TEST(CommandBufferCmdTest, SerializeExecution) {
 
   CommandBufferCmdSequence commands(
       CommandBufferCmdSequence::SynchronizationMode::kSerialize);
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
-
-  ASSERT_EQ(commands.barriers().size(), 2);
-  EXPECT_EQ(commands.barriers().at(0), false);
-  EXPECT_EQ(commands.barriers().at(1), true);
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use1});
+  ASSERT_EQ(commands.size(), 4);
 }
 
 TEST(CommandBufferCmdTest, NoReadBarrier) {
@@ -125,12 +117,12 @@ TEST(CommandBufferCmdTest, NoReadBarrier) {
   auto use1 = BufferUse(slice1, BufferUse::kRead);
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use1});
 
-  ASSERT_EQ(commands.barriers().size(), 2);
-  EXPECT_EQ(commands.barriers().at(0), false);
-  EXPECT_EQ(commands.barriers().at(1), false);
+  ASSERT_EQ(commands.size(), 2);
+  ASSERT_EQ(commands.get_command(0)->dependencies().size(), 0);
+  ASSERT_EQ(commands.get_command(1)->dependencies().size(), 0);
 }
 
 TEST(CommandBufferCmdTest, NoWriteBarrier) {
@@ -144,12 +136,12 @@ TEST(CommandBufferCmdTest, NoWriteBarrier) {
   auto use1 = BufferUse(slice1, BufferUse::kWrite);
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use1});
 
-  ASSERT_EQ(commands.barriers().size(), 2);
-  EXPECT_EQ(commands.barriers().at(0), false);
-  EXPECT_EQ(commands.barriers().at(1), false);
+  ASSERT_EQ(commands.size(), 2);
+  ASSERT_EQ(commands.get_command(0)->dependencies().size(), 0);
+  ASSERT_EQ(commands.get_command(1)->dependencies().size(), 0);
 }
 
 TEST(CommandBufferCmdTest, WriteConflictBarrier) {
@@ -165,14 +157,14 @@ TEST(CommandBufferCmdTest, WriteConflictBarrier) {
   auto use2 = BufferUse(slice1, BufferUse::kWrite);
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use1});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use2});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use2});
 
-  ASSERT_EQ(commands.barriers().size(), 3);
-  EXPECT_EQ(commands.barriers().at(0), false);
-  EXPECT_EQ(commands.barriers().at(1), false);
-  EXPECT_EQ(commands.barriers().at(2), true);
+  ASSERT_EQ(commands.size(), 3);
+  ASSERT_EQ(commands.get_command(0)->dependencies().size(), 0);
+  ASSERT_EQ(commands.get_command(1)->dependencies().size(), 0);
+  ASSERT_EQ(commands.get_command(2)->dependencies().size(), 2);
 }
 
 TEST(CommandBufferCmdTest, NoWriteConflictsAcrossStreams) {
@@ -187,12 +179,12 @@ TEST(CommandBufferCmdTest, NoWriteConflictsAcrossStreams) {
   auto use1 = BufferUse(slice1, BufferUse::kWrite);
 
   CommandBufferCmdSequence commands;
-  commands.Emplace<TestOnlyCommandBufferCmd>(s0, BufferUseVector{use0});
-  commands.Emplace<TestOnlyCommandBufferCmd>(s1, BufferUseVector{use1});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use0});
+  commands.Emplace<TestOnlyCommandBufferCmd>(BufferUseVector{use1});
 
-  ASSERT_EQ(commands.barriers().size(), 2);
-  EXPECT_EQ(commands.barriers().at(0), false);
-  EXPECT_EQ(commands.barriers().at(1), false);
+  ASSERT_EQ(commands.size(), 2);
+  EXPECT_EQ(commands.get_command(0)->dependencies().size(), 0);
+  EXPECT_EQ(commands.get_command(1)->dependencies().size(), 1);
 }
 
 TEST(CommandBufferCmdTest, MemcpyCmd) {
@@ -218,7 +210,7 @@ TEST(CommandBufferCmdTest, MemcpyCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_b, slice_a, byte_length);
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_b, slice_a, byte_length);
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(executor);
@@ -283,13 +275,13 @@ TEST(CommandBufferCmdTest, BarrierCmd) {
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_b, slice_a, byte_length);
-  commands.Emplace<BarrierCmd>(s1, s0);
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s1, slice_c, slice_b, byte_length);
-  commands.Emplace<BarrierCmd>(s0, s1);
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s0, slice_d, slice_c, byte_length);
-  commands.Emplace<BarrierCmd>(s1, s0);
-  commands.Emplace<MemcpyDeviceToDeviceCmd>(s1, slice_e, slice_d, byte_length);
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_b, slice_a, byte_length);
+  commands.Emplace<BarrierCmd>();
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_c, slice_b, byte_length);
+  commands.Emplace<BarrierCmd>();
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_d, slice_c, byte_length);
+  commands.Emplace<BarrierCmd>();
+  commands.Emplace<MemcpyDeviceToDeviceCmd>(slice_e, slice_d, byte_length);
 
   ServiceExecutableRunOptions run_options;
   se::StreamExecutorMemoryAllocator allocator(executor);
@@ -348,11 +340,11 @@ TEST(CommandBufferCmdTest, LaunchCmd) {
   BufferAllocation::Slice slice_b(&alloc_b, 0, byte_length);
 
   auto args = {slice_a, slice_a, slice_b};  // b = a + a
-  auto args_access = {BufferUse::kRead, MemoryAccess::kRead, BufferUse::kWrite};
+  auto args_access = {BufferUse::kRead, BufferUse::kRead, BufferUse::kWrite};
 
   // Prepare commands sequence for constructing command buffer.
   CommandBufferCmdSequence commands;
-  commands.Emplace<LaunchCmd>(s0, "AddI32", args, args_access,
+  commands.Emplace<LaunchCmd>("AddI32", args, args_access,
                               LaunchDimensions(1, 4),
                               /*shmem_bytes=*/0);
 
