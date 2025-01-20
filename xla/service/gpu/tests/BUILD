@@ -895,12 +895,26 @@ xla_test(
     ],
 )
 
+cc_binary(
+    name = "nvshmem_on_stream_test",
+    srcs = ["nvshmem_on_stream_test.cc"],
+    deps = [
+        "@nvshmem//:nvshmem",
+        "@nvshmem//:nvshmem_hdrs",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/time",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cuda_runtime",
+    ],
+)
+
 xla_cc_test(
     name = "nvshmem_test",
     srcs = ["nvshmem_test.cc"],
+    linkopts = ["-v"],
     tags = [
         "gpu",
-        "no_oss",
+       #  "no_oss",
         "noasan",
         "nomsan",
         "requires-gpu-nvidia:2",

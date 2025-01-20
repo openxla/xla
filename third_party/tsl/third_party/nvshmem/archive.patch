@@ -1,0 +1,405 @@
+diff --git a/examples/hello.cpp b/examples/hello.cpp
+--- a/examples/hello.cpp
++++ b/examples/hello.cpp
+@@ -19,8 +19,15 @@ int main(int argc, char **argv) {
+ 
+     printf("[%s][%ld] Starting up...\n", hostname, (long)getpid());
+ 
+-    nvshmem_init();
++    nvshmemx_init_attr_t attr;
++    nvshmemx_uniqueid_t id;
++    nvshmemx_get_uniqueid(&id);
++    nvshmemx_set_attr_uniqueid_args(/*rank=*/0, /*num_ranks=*/1, &id, &attr);
++    nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
+ 
++    // nvshmem_init();
++
++
+     int mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
+     cudaSetDevice(mype_node);
+     void *ptr = nvshmem_malloc(1);  // initialize NVSHMEM after device is set
+diff --git a/src/host/bootstrap/bootstrap_loader.cpp b/src/host/bootstrap/bootstrap_loader.cpp
+--- a/src/host/bootstrap/bootstrap_loader.cpp
++++ b/src/host/bootstrap/bootstrap_loader.cpp
+@@ -58,7 +58,7 @@ static int _bootstrap_loader_init_helper
+     }
+ 
+     if (plugin_hdl == nullptr) {
+-        plugin_hdl = dlopen(plugin, RTLD_NOW);
++        plugin_hdl = dlopen(nullptr, RTLD_NOW);
+     }
+ 
+     NVSHMEMI_NULL_ERROR_JMP(plugin_hdl, status, -1, error, "Bootstrap unable to load '%s'\n\t%s\n",
+@@ -75,13 +75,13 @@ out:
+ 
+ int bootstrap_loader_preinit(const char *plugin, bootstrap_handle_t *handle) {
+     int status = 0;
+-    int (*bootstrap_plugin_preinitops)(bootstrap_handle_t * handle, int nvshmem_version);
++    // int (*bootstrap_plugin_preinitops)(bootstrap_handle_t * handle, int nvshmem_version);
+     status = _bootstrap_loader_init_helper(plugin, handle);
+     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Bootstrap library dlopen failed for %s\n", plugin);
+-    GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_pre_init", bootstrap_plugin_preinitops,
+-               status);
+-    status = bootstrap_plugin_preinitops(handle, NVSHMEMI_BOOTSTRAP_ABI_VERSION);
++    // GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_pre_init", bootstrap_plugin_preinitops,
++    //            status);
++    status = nvshmemi_bootstrap_plugin_pre_init(handle, NVSHMEMI_BOOTSTRAP_ABI_VERSION);
+     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Bootstrap plugin preinit failed for '%s'\n", plugin);
+     goto out;
+@@ -93,12 +93,12 @@ out:
+ 
+ int bootstrap_loader_init(const char *plugin, void *arg, bootstrap_handle_t *handle) {
+     int status = 0;
+-    int (*bootstrap_plugin_initops)(void *arg, bootstrap_handle_t *handle, int nvshmem_version);
++    // int (*bootstrap_plugin_initops)(void *arg, bootstrap_handle_t *handle, int nvshmem_version);
+     status = _bootstrap_loader_init_helper(plugin, handle);
+     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Bootstrap library dlopen failed for %s\n", plugin);
+-    GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_init", bootstrap_plugin_initops, status);
+-    status = bootstrap_plugin_initops(arg, handle, NVSHMEMI_BOOTSTRAP_ABI_VERSION);
++    // GET_SYMBOL(plugin_hdl, "nvshmemi_bootstrap_plugin_init", bootstrap_plugin_initops, status);
++    status = nvshmemi_bootstrap_plugin_init(arg, handle, NVSHMEMI_BOOTSTRAP_ABI_VERSION);
+     NVSHMEMI_NZ_ERROR_JMP(status, NVSHMEMX_ERROR_INTERNAL, error,
+                           "Bootstrap plugin init failed for '%s'\n", plugin);
+     if (NVSHMEM_BOOTSTRAP_MAJOR_MINOR_VERSION(NVSHMEMI_BOOTSTRAP_ABI_VERSION) <
+diff --git a/src/include/device/nvshmemx_coll_defines.cuh b/src/include/device/nvshmemx_coll_defines.cuh
+--- a/src/include/device/nvshmemx_coll_defines.cuh
++++ b/src/include/device/nvshmemx_coll_defines.cuh
+@@ -9,7 +9,7 @@
+ 
+ #ifdef __CUDA_ARCH__
+ #define DEFN_NVSHMEMX_TYPENAME_ALLTOALL_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)      \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
++    __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
+         nvshmem##SC_PREFIX##_##TYPENAME##_alltoall##SC_SUFFIX(nvshmem_team_t team, TYPE *dest,     \
+                                                               const TYPE *source, size_t nelems) { \
+         nvshmemi_alltoall_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(team, dest, source,         \
+@@ -17,7 +17,7 @@
+         return 0;                                                                                  \
+     }
+ 
+-static __device__ NVSHMEMI_DEVICE_INLINE int nvshmemx_alltoallmem_warp(nvshmem_team_t team,
++__device__ NVSHMEMI_DEVICE_INLINE int nvshmemx_alltoallmem_warp(nvshmem_team_t team,
+                                                                        void *dest,
+                                                                        const void *source,
+                                                                        size_t nelems) {
+@@ -26,7 +26,7 @@ static __device__ NVSHMEMI_DEVICE_INLINE
+     return 0;
+ }
+ 
+-static __device__ NVSHMEMI_DEVICE_INLINE int nvshmemx_alltoallmem_block(nvshmem_team_t team,
++__device__ NVSHMEMI_DEVICE_INLINE int nvshmemx_alltoallmem_block(nvshmem_team_t team,
+                                                                         void *dest,
+                                                                         const void *source,
+                                                                         size_t nelems) {
+@@ -41,7 +41,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WIT
+                                                  _block, x)
+ 
+ #define DEFN_NVSHMEMX_BARRIER_SCOPE(SC, SC_SUFFIX, SC_PREFIX)                             \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int nvshmem##SC_PREFIX##_barrier##SC_SUFFIX( \
++    __device__ NVSHMEMI_DEVICE_INLINE int nvshmem##SC_PREFIX##_barrier##SC_SUFFIX( \
+         nvshmem_team_t team) {                                                            \
+         nvshmemi_barrier_threadgroup<nvshmemi_threadgroup_##SC>(team);                    \
+         return 0;                                                                         \
+@@ -52,7 +52,7 @@ DEFN_NVSHMEMX_BARRIER_SCOPE(block, _bloc
+ #undef DEFN_NVSHMEMX_BARRIER_SCOPE
+ 
+ #define DEFN_NVSHMEMX_BARRIER_ALL_SCOPE(SC, SC_SUFFIX, SC_PREFIX)                                 \
+-    static __device__ NVSHMEMI_DEVICE_INLINE void nvshmem##SC_PREFIX##_barrier_all##SC_SUFFIX() { \
++    __device__ NVSHMEMI_DEVICE_INLINE void nvshmem##SC_PREFIX##_barrier_all##SC_SUFFIX() { \
+         nvshmemi_barrier_threadgroup<nvshmemi_threadgroup_##SC>(NVSHMEM_TEAM_WORLD);              \
+     }
+ 
+@@ -61,7 +61,7 @@ DEFN_NVSHMEMX_BARRIER_ALL_SCOPE(block, _
+ #undef DEFN_NVSHMEMX_BARRIER_ALL_SCOPE
+ 
+ #define DEFN_NVSHMEMX_SYNC_SCOPE(SC, SC_SUFFIX, SC_PREFIX)                                  \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int nvshmem##SC_PREFIX##_team_sync##SC_SUFFIX( \
++    __device__ NVSHMEMI_DEVICE_INLINE int nvshmem##SC_PREFIX##_team_sync##SC_SUFFIX( \
+         nvshmem_team_t team) {                                                              \
+         nvshmemi_sync_threadgroup<nvshmemi_threadgroup_##SC>(team);                         \
+         return 0;                                                                           \
+@@ -72,7 +72,7 @@ DEFN_NVSHMEMX_SYNC_SCOPE(block, _block, 
+ #undef DEFN_NVSHMEMX_SYNC_SCOPE
+ 
+ #define DEFN_NVSHMEMX_SYNC_ALL_SCOPE(SC, SC_SUFFIX, SC_PREFIX)                                 \
+-    static __device__ NVSHMEMI_DEVICE_INLINE void nvshmem##SC_PREFIX##_sync_all##SC_SUFFIX() { \
++    __device__ NVSHMEMI_DEVICE_INLINE void nvshmem##SC_PREFIX##_sync_all##SC_SUFFIX() { \
+         nvshmemi_sync_threadgroup<nvshmemi_threadgroup_##SC>(NVSHMEM_TEAM_WORLD);              \
+     }
+ 
+@@ -81,7 +81,7 @@ DEFN_NVSHMEMX_SYNC_ALL_SCOPE(block, _blo
+ #undef DEFN_NVSHMEMX_SYNC_ALL_SCOPE
+ 
+ #define DEFN_NVSHMEMX_TYPENAME_BROADCAST_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE) \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int                                               \
++    __device__ NVSHMEMI_DEVICE_INLINE int                                               \
+         nvshmem##SC_PREFIX##_##TYPENAME##_broadcast##SC_SUFFIX(                                \
+             nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nelems, int PE_root) { \
+         nvshmemi_broadcast_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(team, dest, source,    \
+@@ -96,7 +96,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WIT
+ #undef DEFN_NVSHMEMX_TYPENAME_BROADCAST_THREADGROUP
+ 
+ #define DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE)      \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
++    __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
+         nvshmem##SC_PREFIX##_##TYPENAME##_fcollect##SC_SUFFIX(nvshmem_team_t team, TYPE *dest,     \
+                                                               const TYPE *source, size_t nelems) { \
+         nvshmemi_fcollect_threadgroup<TYPE, nvshmemi_threadgroup_##SC>(                            \
+@@ -111,7 +111,7 @@ NVSHMEMI_REPT_FOR_STANDARD_RMA_TYPES_WIT
+ #undef DEFN_NVSHMEMX_TYPENAME_FCOLLECT_THREADGROUP
+ 
+ #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCE_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, TYPE, OP) \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
++    __device__ NVSHMEMI_DEVICE_INLINE int                                                   \
+         nvshmem##SC_PREFIX##_##TYPENAME##_##OP##_reduce##SC_SUFFIX(                                \
+             nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {                 \
+         nvshmemi_reduce_threadgroup<TYPE, RDXN_OPS_##OP, nvshmemi_threadgroup_##SC>(               \
+@@ -143,7 +143,7 @@ DEFN_NVSHMEM_REDUCE_THREADGROUP(block, _
+ 
+ #define DEFN_NVSHMEMX_TYPENAME_OP_REDUCESCATTER_THREADGROUP(SC, SC_SUFFIX, SC_PREFIX, TYPENAME, \
+                                                             TYPE, OP)                           \
+-    static __device__ NVSHMEMI_DEVICE_INLINE int                                                \
++    __device__ NVSHMEMI_DEVICE_INLINE int                                                \
+         nvshmem##SC_PREFIX##_##TYPENAME##_##OP##_reducescatter##SC_SUFFIX(                      \
+             nvshmem_team_t team, TYPE *dest, const TYPE *source, size_t nreduce) {              \
+         nvshmemi_reducescatter_threadgroup<TYPE, RDXN_OPS_##OP, nvshmemi_threadgroup_##SC>(     \
+diff --git a/src/include/device_host/nvshmem_common.cuh b/src/include/device_host/nvshmem_common.cuh
+--- a/src/include/device_host/nvshmem_common.cuh
++++ b/src/include/device_host/nvshmem_common.cuh
+@@ -420,7 +420,7 @@ enum {
+ #define NVSHMEMI_DECL_THREAD_IDX_warp() \
+     ;                                   \
+     int myIdx;                          \
+-    asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
++    asm volatile("mov.u32  %0, %%laneid;" : "=r"(myIdx));
+ 
+ #define NVSHMEMI_DECL_THREADGROUP_SIZE_warp()                           \
+     ;                                                                   \
+diff --git a/src/include/host/nvshmem_macros.h b/src/include/host/nvshmem_macros.h
+--- a/src/include/host/nvshmem_macros.h
++++ b/src/include/host/nvshmem_macros.h
+@@ -11,7 +11,7 @@
+ #ifdef NVSHMEMI_DEVICE_ONLY
+ #define NVSHMEMI_HOSTDEVICE_PREFIX __device__
+ #else
+-#define NVSHMEMI_HOSTDEVICE_PREFIX __host__ __device__
++#define NVSHMEMI_HOSTDEVICE_PREFIX
+ #endif
+ #endif
+ #else
+diff --git a/src/include/non_abi/device/coll/reduce.cuh b/src/include/non_abi/device/coll/reduce.cuh
+--- a/src/include/non_abi/device/coll/reduce.cuh
++++ b/src/include/non_abi/device/coll/reduce.cuh
+@@ -712,11 +712,11 @@ template <typename T, rdxn_ops_t OP, thr
+ static inline __device__ void gpu_head_check_op_threadgroup(T *dest, T *src, T *actual_src,
+                                                             size_t nelems) {
+     int i, k;
+-    int subelems = sizeof(TYPE) / sizeof(uint32_t);
++    int subelems = sizeof(T) / sizeof(uint32_t);
+     volatile uint32_t *header = NULL;
+     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>;
+     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+-    TYPE tmp;
++    T tmp;
+     uint32_t *tmp_ptr = (uint32_t *)&tmp;
+     uint32_t *payload = NULL;
+     for (i = myIdx; i < nelems; i += groupSize) {
+@@ -761,9 +761,9 @@ static inline __device__ void gpu_head_c
+                 *header = 0;
+                 *(tmp_ptr + k) = *payload;
+             }
+-            dest[i] = perform_gpu_rdxn<TYPE, OP>(src_ptr[i], tmp);
++            dest[i] = perform_gpu_rdxn<TYPE, OP>(src[i], tmp);
+         }
+-        src_ptr = dest;
++        src = dest;
+     }
+     for (j = size - 1; j > my_active_set_pe; j--) {
+         for (i = myIdx; i < nelems; i += groupSize) {
+@@ -776,9 +776,9 @@ static inline __device__ void gpu_head_c
+                 *header = 0;
+                 *(tmp_ptr + k) = *payload;
+             }
+-            dest[i] = perform_gpu_rdxn<TYPE, OP>(src_ptr[i], tmp);
++            dest[i] = perform_gpu_rdxn<TYPE, OP>(src[i], tmp);
+         }
+-        src_ptr = dest;
++        src = dest;
+     }
+ }
+ 
+@@ -787,6 +787,7 @@ static inline __device__ void gpu_linear
+                                                                     TYPE *y, int next_rank, TYPE *z,
+                                                                     size_t nelems) {
+     int i;
++    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+     int group_nelems = ((nelems / groupSize) * groupSize);
+     int excess = nelems - group_nelems;
+     nvshmemi_team_t *teami = nvshmemi_device_state_d.team_pool[team];
+@@ -794,13 +795,12 @@ static inline __device__ void gpu_linear
+     int stride = teami->stride;
+     int size = teami->size;
+     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+-    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+     TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);
+     for (i = myIdx; i < group_nelems; i += groupSize) {
+         nvshmemi_get_threadgroup<TYPE, NVSHMEMI_THREADGROUP_THREAD>(
+             (TYPE *)((TYPE *)pWrk + myIdx), (TYPE *)((TYPE *)y + i), 1, next_rank);
+         nvshmemi_barrier_threadgroup<SCOPE>(team);
+-        z[i] = perform_gpu_rdxn<TYPE, OP>(x[i], pWrk[myId]);
++        z[i] = perform_gpu_rdxn<TYPE, OP>(x[i], pWrk[myIdx]);
+     }
+     if (excess) {
+         if (i < nelems) {
+@@ -815,7 +815,8 @@ static inline __device__ void gpu_linear
+ }
+ 
+ template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
+-static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put(TYPE *x, TYPE *y, int next_rank,
++static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put(nvshmem_team_t team,
++                                                                    TYPE *x, TYPE *y, int next_rank,
+                                                                     TYPE *z, size_t offset,
+                                                                     size_t nelems) {
+     int i;
+@@ -851,7 +852,8 @@ static inline __device__ void gpu_linear
+ }
+ 
+ template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
+-static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put_direct(TYPE *x, TYPE *y,
++static inline __device__ void gpu_linear_reduce_threadgroup_p2p_put_direct(nvshmem_team_t team,
++                                                                           TYPE *x, TYPE *y,
+                                                                            int next_rank, TYPE *z,
+                                                                            size_t offset,
+                                                                            size_t nelems) {
+@@ -971,17 +973,17 @@ static inline void nvshmemi_gpu_rdxn_thr
+     int size = teami->size;
+     int myIdx = nvshmemi_thread_id_in_threadgroup<SCOPE>();
+     int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+-    TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync(teami, REDUCE);
++    // TYPE *pWrk = (TYPE *)nvshmemi_team_get_psync((nvshmemi_team_t *)teami, (nvshmemi_team_op_t)REDUCE);
+     int i;
+     int my_active_set_pe = ((nvshmemi_device_state_d.mype - start) / stride);
+ 
+     next_rank = start + ((my_active_set_pe + 1) % size) * stride;
+-    gpu_linear_reduce_threadgroup_p2p_put<TYPE, OP, SCOPE>(source, source, next_rank, dest, counter,
++    gpu_linear_reduce_threadgroup_p2p_put<TYPE, OP, SCOPE>(team, source, source, next_rank, dest, counter,
+                                                            nreduce);
+ 
+     for (i = 2; i < size; i++) {
+         next_rank = start + ((my_active_set_pe + i) % size) * stride;
+-        gpu_linear_reduce_threadgroup_p2p_put<TYPE, OP, SCOPE>(dest, source, next_rank, dest,
++        gpu_linear_reduce_threadgroup_p2p_put<TYPE, OP, SCOPE>(team, dest, source, next_rank, dest,
+                                                                counter, nreduce);
+     }
+     nvshmemi_threadgroup_sync<SCOPE>();
+@@ -1096,7 +1098,7 @@ static inline __device__ void nvshmemi_g
+     peer_base = (char *)((void *)__ldg(
+         (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + next_rank));
+     peer_source = peer_base + next_offset;
+-    gpu_linear_reduce_threadgroup_p2p_put_direct<TYPE, OP, SCOPE>(source, peer_source, next_rank,
++    gpu_linear_reduce_threadgroup_p2p_put_direct<TYPE, OP, SCOPE>(team, source, peer_source, next_rank,
+                                                                   dest, counter, nreduce);
+ 
+     for (i = 2; i < size; i++) {
+@@ -1105,10 +1107,10 @@ static inline __device__ void nvshmemi_g
+         peer_base = (char *)((void *)__ldg(
+             (const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p + next_rank));
+         peer_source = peer_base + next_offset;
+-        gpu_linear_reduce_threadgroup_p2p_put_direct<TYPE, OP, SCOPE>(dest, peer_source, next_rank,
++        gpu_linear_reduce_threadgroup_p2p_put_direct<TYPE, OP, SCOPE>(team, dest, peer_source, next_rank,
+                                                                       dest, counter, nreduce);
+     }
+-    nvshmemi_threadgroup_sync();
++    nvshmemi_threadgroup_sync<SCOPE>();
+ }
+ 
+ template <typename TYPE, rdxn_ops_t OP, threadgroup_t SCOPE>
+@@ -1135,9 +1137,9 @@ static inline __device__ void nvshmemi_g
+     size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
+     tmp[1] = 1;
+     next_rank =
+-        (nvshmemi_mype_d != (PE_end - stride)) ? (nvshmemi_device_state_d.mype + stride) : start;
++        (nvshmemi_device_state_d.mype != (PE_end - stride)) ? (nvshmemi_device_state_d.mype + stride) : start;
+     prev_rank =
+-        (nvshmemi_mype_d != start) ? (nvshmemi_device_state_d.mype - stride) : (PE_end - stride);
++        (nvshmemi_device_state_d.mype != start) ? (nvshmemi_device_state_d.mype - stride) : (PE_end - stride);
+     my_notif_ptr = (uint32_t *)((uint32_t *)((uint64_t *)pWrk + (nelems * subelems)) + myIdx);
+ 
+     for (j = myIdx; j < nelems * subelems; j += groupSize) {
+@@ -1198,7 +1200,7 @@ static inline __device__ void nvshmemi_g
+     tmp[1] = 1;
+     offset = (char *)pWrk -
+              (char *)(__ldg((const long long unsigned *)nvshmemi_device_state_d.peer_heap_base_p2p +
+-                            nvshmemi_mype_d));
++                            nvshmemi_device_state_d.mype));
+     my_notif_ptr = (uint32_t *)((uint32_t *)((uint64_t *)pWrk + (nelems * subelems)) + myIdx);
+     next_rank = (nvshmemi_device_state_d.mype != (PE_end - stride))
+                     ? (nvshmemi_device_state_d.mype + stride)
+@@ -1370,7 +1372,7 @@ static __forceinline__ __device__ void n
+         nvshmemi_fcollect_threadgroup<TYPE, SCOPE>(
+             NVSHMEMX_TEAM_SAME_MYPE_NODE, pWrk, dest,
+             nvshmemi_team_my_pe(NVSHMEMX_TEAM_SAME_MYPE_NODE) * nreduce, nreduce);
+-#if CUDART_VERSION >= 12000 && defined(__cplusplus) && __cplusplus >= 201703L
++#if CUDART_VERSION >= 12000 && defined(__cplusplus) && __cplusplus >= 201703L
+         if constexpr (SCOPE == NVSHMEMI_THREADGROUP_BLOCK && OP == RDXN_OPS_SUM &&
+                       sizeof(TYPE) >= 4 && sizeof(TYPE) <= 8) {
+             for (int i = myIdx; i < nreduce; i += groupSize) *(dest + i) = 0;
+@@ -1448,7 +1450,7 @@ static inline __device__ void nvshmemi_g
+ #else
+     size_t subelems = sizeof(TYPE) / sizeof(uint32_t);
+     size_t pwrk_req_sz_allgather = ((subelems * nreduce) * sizeof(uint64_t)) * size;
+-    int groupSize = nvshmemi_threadgroup_size<SCCOPE>();
++    int groupSize = nvshmemi_threadgroup_size<SCOPE>();
+     size_t pwrk_req_sz_ring =
+         ((subelems * nreduce) * sizeof(uint64_t)) + (groupSize * sizeof(uint32_t));
+     size_t wrk_size =
+diff --git a/src/include/non_abi/device/pt-to-pt/proxy_device.cuh b/src/include/non_abi/device/pt-to-pt/proxy_device.cuh
+--- a/src/include/non_abi/device/pt-to-pt/proxy_device.cuh
++++ b/src/include/non_abi/device/pt-to-pt/proxy_device.cuh
+@@ -88,9 +88,9 @@ static __device__ inline void nvshmemi_p
+     /* Note, this will block indefinitely, but that is fine as nvshmemi_global_exit should never
+      * return. */
+     long long int now, later;
+-    asm volatile("mov.u64  %0, %globaltimer;" : "=l"(now));
++    asm volatile("mov.u64  %0, %%globaltimer;" : "=l"(now));
+     do {
+-        asm volatile("mov.u64  %0, %globaltimer;" : "=l"(later));
++        asm volatile("mov.u64  %0, %%globaltimer;" : "=l"(later));
+     } while (later >= now);
+ }
+ 
+diff --git a/src/include/non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh b/src/include/non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh
+--- a/src/include/non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh
++++ b/src/include/non_abi/device/threadgroup/nvshmemi_common_device_defines.cuh
+@@ -5,6 +5,7 @@
+  */
+ #ifndef _NVSHMEM_COMMON_DEVICE_DEFINES_CUH_
+ #define _NVSHMEM_COMMON_DEVICE_DEFINES_CUH_
++#include <cassert>
+ #include <cuda_runtime.h>
+ #include "device_host/nvshmem_common.cuh"
+ 
+@@ -34,7 +35,7 @@ template <threadgroup_t scope>
+             return 0;
+         case NVSHMEMI_THREADGROUP_WARP:
+             int myIdx;
+-            asm volatile("mov.u32  %0, %laneid;" : "=r"(myIdx));
++            asm volatile("mov.u32  %0, %%laneid;" : "=r"(myIdx));
+             return myIdx;
+         case NVSHMEMI_THREADGROUP_BLOCK:
+             return (threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y);
+diff --git a/src/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh b/src/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh
+--- a/src/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh
++++ b/src/include/non_abi/device/wait/nvshmemi_wait_until_apis.cuh
+@@ -22,7 +22,7 @@ template <typename T>
+                                                       uintptr_t signal_addr, T signal_val_found,
+                                                       T signal_val_expected) {
+     long long int now;
+-    asm volatile("mov.u64  %0, %globaltimer;" : "=l"(now));
++    asm volatile("mov.u64  %0, %%globaltimer;" : "=l"(now));
+     if ((now - start) > TIMEOUT_NCYCLES) {
+         nvshmemi_timeout_t *timeout_d = nvshmemi_device_state_d.timeout;
+         timeout_d->caller = caller;
