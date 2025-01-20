@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/service/custom_call_status.h"
@@ -73,6 +74,9 @@ class CpuCallback {
   xla::TransposePlanCache& transpose_cache() { return transpose_cache_; }
 
   absl::Status PrepareAndCall(void* result, void** arg_ptrs);
+
+  absl::Status FfiPrepareAndCall(ffi::RemainingRets rets,
+                                 ffi::RemainingArgs args);
 
   absl::StatusOr<nanobind::tuple> Call(nanobind::tuple args);
 

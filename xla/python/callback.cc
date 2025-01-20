@@ -35,12 +35,13 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "xla/ffi/api/ffi.h"
+#include "xla/ffi/ffi_api.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/python_ref_manager.h"
 #include "xla/service/custom_call_status.h"
-#include "tsl/platform/statusor.h"
 
 namespace nb = nanobind;
 
@@ -111,6 +112,60 @@ absl::Status CpuCallback::PrepareAndCall(void* result, void** arg_ptrs) {
   return absl::OkStatus();
 }
 
+absl::Status CpuCallback::FfiPrepareAndCall(ffi::RemainingRets rets,
+                                            ffi::RemainingArgs args) {
+  nb::gil_scoped_acquire gil;
+  nb::tuple nb_args = nb::steal<nb::tuple>(PyTuple_New(args.size()));
+
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (args_[i].type == xla::TOKEN) {
+      PyTuple_SET_ITEM(nb_args.ptr(), i, nb::none().release().ptr());
+    } else {
+      nb_numpy_ndarray array = nb_numpy_ndarray(
+          args_[i].dtype, args_[i].dims, args_[i].strides,
+          const_cast<void*>(
+              args.get<ffi::AnyBuffer>(i).value().untyped_data()));
+      array.attr("flags").attr("writeable") = nb::bool_(false);
+      PyTuple_SET_ITEM(nb_args.ptr(), i, array.release().ptr());
+    }
+  }
+
+  TF_ASSIGN_OR_RETURN(auto result_tuple, Call(std::move(nb_args)));
+
+  for (size_t i = 0; i < results_.size(); ++i) {
+    if (results_[i].type == xla::TOKEN) {
+      continue;
+    }
+    nb::object output =
+        nb::borrow<nb::object>(PyTuple_GetItem(result_tuple.ptr(), i));
+    nb_numpy_ndarray array = nb_numpy_ndarray::ensure(std::move(output));
+    absl::Span<int64_t const> dims(
+        reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
+    absl::Span<int64_t const> strides(
+        reinterpret_cast<const int64_t*>(array.strides()), array.ndim());
+    if (strides == results_[i].expected_strides) {
+      std::memcpy(rets.get<ffi::AnyBuffer>(i).value()->untyped_data(),
+                  array.data(), results_[i].size_in_bytes);
+    } else {
+      xla::TransposePlan::Options options;
+      options.elem_size_in_bytes =
+          xla::primitive_util::ByteWidth(results_[i].type);
+      options.dims = dims;
+      options.permutation = results_[i].reversed_layout;
+      options.input_layout = xla::TransposePlan::Striding{strides};
+      absl::StatusOr<std::shared_ptr<xla::TransposePlan>> plan =
+          transpose_cache_.GetOrCreate(options);
+      if (!plan.ok()) {
+        return std::move(plan).status();
+      }
+      plan.value()->Execute(
+          array.data(), rets.get<ffi::AnyBuffer>(i).value()->untyped_data());
+    }
+  }
+
+  return absl::OkStatus();
+}
+
 absl::StatusOr<nb::tuple> CpuCallback::Call(nb::tuple args) {
   auto py_error_to_status = [](nb::python_error& e) {
     std::string error_message = e.what();
@@ -123,11 +178,14 @@ absl::StatusOr<nb::tuple> CpuCallback::Call(nb::tuple args) {
   } catch (nb::python_error& e) {
     return py_error_to_status(e);
   }
+
+  // TODO(dsuo): Remove this check?
   if (!PyTuple_Check(result_object.ptr())) {
     return absl::InternalError(
         absl::StrFormat("CPU callback expected a tuple result, got %s",
                         nb::cast<absl::string_view>(nb::repr(result_object))));
   }
+  // TODO(dsuo): Remove this check?
   if (PyTuple_Size(result_object.ptr()) != results_.size()) {
     return absl::InternalError(
         absl::StrFormat("CPU callback expected a tuple with %d results, got %d",
@@ -138,6 +196,7 @@ absl::StatusOr<nb::tuple> CpuCallback::Call(nb::tuple args) {
     nb::object output =
         nb::borrow<nb::object>(PyTuple_GetItem(result_tuple.ptr(), i));
     if (results_[i].type == xla::TOKEN) {
+      // TODO(dsuo): Remove this check?
       if (!output.is_none()) {
         return absl::InternalError(absl::StrFormat(
             "Token output from Python callback should be None, got %s",
@@ -146,6 +205,7 @@ absl::StatusOr<nb::tuple> CpuCallback::Call(nb::tuple args) {
       continue;
     }
     nb_numpy_ndarray array;
+    // TODO(dsuo): Remove this try / catch?
     try {
       array = nb_numpy_ndarray::from_any(output, NPY_ARRAY_ENSUREARRAY);
     } catch (nb::python_error& e) {
@@ -155,6 +215,7 @@ absl::StatusOr<nb::tuple> CpuCallback::Call(nb::tuple args) {
                   "Expected ssize_t to be of equal size to int64_t");
     absl::Span<int64_t const> dims(
         reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
+    // TODO(dsuo): Remove this check?
     if (dims != results_[i].expected_dims) {
       return absl::InternalError(absl::StrFormat(
           "Mismatched result shape for %d-th return value from CPU callback; "
@@ -176,5 +237,27 @@ void XlaPythonCpuCallback(void* output, void** inputs,
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
 }
+
+ffi::Error XlaFfiPythonCpuCallbackImpl(uint64_t descriptor,
+                                       ffi::RemainingArgs args,
+                                       ffi::RemainingRets rets) {
+  CpuCallback* callback =
+      absl::bit_cast<CpuCallback*>(static_cast<uintptr_t>(descriptor));
+  auto s = callback->FfiPrepareAndCall(rets, args);
+  if (!s.ok()) {
+    auto msg = s.message();
+    return ffi::Error::Internal({msg.data(), msg.size()});
+  }
+  return ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(XlaFfiPythonCpuCallback,
+                              XlaFfiPythonCpuCallbackImpl,
+                              ffi::Ffi::Bind()
+                                  .Attr<uint64_t>("descriptor")
+                                  .RemainingArgs()
+                                  .RemainingRets());
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_ffi_python_cpu_callback",
+                         "Host", XlaFfiPythonCpuCallback);
 
 }  // namespace xla
