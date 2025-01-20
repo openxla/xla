@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_test.h"
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
+#include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -863,6 +864,17 @@ TEST(PjrtCApiGpuExtensionTest, CustomCallTyped) {
       xla::ffi::FindHandler(function_name, stream_executor::GpuPlatformName())
           .value();
   EXPECT_EQ(reinterpret_cast<void*>(registration.bundle.execute), kNoop);
+}
+
+TEST(PjrtCAPIGpuExtensionTest, TritonCompile) {
+  PJRT_Triton_Compile_Args args;
+  auto api = GetPjrtApi();
+  const auto* triton_ext = pjrt::FindExtension<PJRT_Triton_Extension>(
+      api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
+  ASSERT_NE(triton_ext, nullptr);
+
+  PJRT_Error* error = triton_ext->compile(&args);
+  CHECK_EQ(error, nullptr);
 }
 
 }  // namespace
