@@ -284,6 +284,7 @@ cc_library(
     ]+ if_cuda_is_configured([
         "@local_config_cuda//cuda:cuda_headers",
         "@nvshmem//:nvshmem",
+        "@nvshmem//:nvshmem_hdrs",
     ]),
     alwayslink = True,  # registers collectives implementation
 )

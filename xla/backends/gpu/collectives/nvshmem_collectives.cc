@@ -20,8 +20,8 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "tsl/platform/numbers.h"
 #include "tsl/platform/statusor.h"
-#include "third_party/nvshmem/nvshmem.h"
-#include "third_party/nvshmem/nvshmemx.h"
+#include "nvshmem.h"
+#include "nvshmemx.h"
 #include "xla/core/collectives/collectives_registry.h"
 
 #include <cuda.h>
