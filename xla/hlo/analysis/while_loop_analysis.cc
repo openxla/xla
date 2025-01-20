@@ -56,6 +56,20 @@ using std::nullopt;
 using std::optional;
 namespace m = match;
 
+namespace {
+
+// Traces through a chain of copies until a non-copy instruction is found.
+const HloInstruction* TraceThroughCopyChain(const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kCopy ||
+      instr->opcode() == HloOpcode::kCopyStart ||
+      instr->opcode() == HloOpcode::kCopyDone) {
+    return TraceThroughCopyChain(instr->operand(0));
+  }
+
+  return instr;
+}
+}  // namespace
+
 // Finds and returns the non-constant operand in instr, if there is only one
 // such operand.
 //
@@ -657,7 +671,7 @@ optional<int64_t> MatchTrivialLoopTripCount(const HloInstruction* while_op,
       while_body->root_instruction()->mutable_operand(indvar_tuple_idx);
   auto* while_body_indvar = NonConstantOperand(while_body_indvar_update);
   if (while_body_indvar == nullptr ||
-      while_body_indvar !=
+      TraceThroughCopyChain(while_body_indvar) !=
           hlo_query::GetUniqueGteInstruction(
               while_body->parameter_instruction(0), indvar_tuple_idx)) {
     return std::nullopt;
@@ -806,7 +820,8 @@ optional<int64_t> ComputeWhileLoopTripCount(const HloInstruction* while_op,
   HloEvaluator evaluator(/*max_loop_iterations=*/0);
   auto* while_init = while_op->operand(0);
   auto* indvar_init = while_init->operand(*indvar_tuple_idx);
-  absl::StatusOr<Literal> indvar_init_result = evaluator.Evaluate(indvar_init);
+  absl::StatusOr<Literal> indvar_init_result =
+      evaluator.Evaluate(indvar_init, {}, true);
   if (!indvar_init_result.ok()) {
     VLOG(2) << "Couldn't evaluate induction variable init, "
             << indvar_init_result.status() << ", " << indvar_init->ToString();

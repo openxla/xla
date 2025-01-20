@@ -170,6 +170,7 @@ xla_cc_test(
         "//xla/hlo/testlib:test",
         "//xla/service:constant_value",
         "//xla/service:value_range",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
