@@ -83,9 +83,38 @@ ObjectLoader::ObjectLoader(size_t num_dylibs)
   object_layer_ = CreateObjectLinkingLayer(*execution_session_);
 }
 
+ObjectLoader::ObjectLoader(
+    std::unique_ptr<llvm::orc::ExecutionSession> execution_session,
+    size_t num_dylibs)
+    : execution_session_(std::move(execution_session)),
+      object_layer_(CreateObjectLinkingLayer(*execution_session_)) {
+  // TODO(basioli) avoid code duplication with the other constructor.
+  //  Create at least one dynamic library for the given jit compiler.
+  dylibs_.resize(std::max<size_t>(1, num_dylibs));
+  for (size_t i = 0; i < dylibs_.size(); ++i) {
+    dylibs_[i] = &execution_session_->createBareJITDylib(
+        absl::StrCat("<xla_jit_dylib_", i, ">"));
+    // TODO using target machine might bring some deps we don't need.
+    // as a first attempt fully remove it, consider pruning the reqs
+    // if (definition_generator) {
+    //   dylibs_[i]->addGenerator(definition_generator(target_machine_.get()));
+    // }
+  }
+}
+
 absl::Status ObjectLoader::AddObjFile(const std::string& obj_file,
                                       const std::string& memory_buffer_name,
                                       size_t dylib_index) {
+  llvm::StringRef data(obj_file.data(), obj_file.size());
+
+  auto obj_file_mem_buffer =
+      llvm::MemoryBuffer::getMemBuffer(data, memory_buffer_name);
+
+  return AddObjFile(std::move(obj_file_mem_buffer), dylib_index);
+}
+
+absl::Status ObjectLoader::AddObjFile(
+    std::unique_ptr<llvm::MemoryBuffer> obj_file, size_t dylib_index) {
   if (dylib_index >= dylibs_.size()) {
     return absl::Status(
         absl::StatusCode::kInvalidArgument,
@@ -93,18 +122,13 @@ absl::Status ObjectLoader::AddObjFile(const std::string& obj_file,
                         dylibs_.size()));
   }
 
-  llvm::StringRef data(obj_file.data(), obj_file.size());
-
-  auto obj_file_mem_buffer =
-      llvm::MemoryBuffer::getMemBuffer(data, memory_buffer_name);
-
-  if (!obj_file_mem_buffer) {
+  if (!obj_file) {
     return absl::Status(absl::StatusCode::kInvalidArgument,
                         "Failed to create memory buffer");
   }
 
   llvm::orc::JITDylib* dylib = dylibs_[dylib_index];
-  if (auto err = object_layer_->add(*dylib, std::move(obj_file_mem_buffer))) {
+  if (auto err = object_layer_->add(*dylib, std::move(obj_file))) {
     return absl::Status(
         absl::StatusCode::kInvalidArgument,
         absl::StrFormat("Failed to add object file to dylib %d: %s",
