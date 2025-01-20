@@ -900,7 +900,7 @@ xla_cc_test(
     srcs = ["nvshmem_test.cc"],
     tags = [
         "gpu",
-        "no_oss",
+       #  "no_oss",
         "noasan",
         "nomsan",
         "requires-gpu-nvidia:2",
