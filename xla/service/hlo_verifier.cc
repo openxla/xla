@@ -3006,6 +3006,9 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   }
 
   absl::Status Postprocess(HloInstruction* instruction) override {
+    if (opts_.verify_no_host_memory_space) {
+      TF_RETURN_IF_ERROR(VerifyNoHostMemorySpace(instruction));
+    }
     if (!opts_.InstructionCanChangeLayout(instruction) &&
         LayoutUtil::IsDenseArray(instruction->shape()) &&
         instruction->shape().has_layout()) {
@@ -3097,6 +3100,24 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
           absl::StrCat("Instruction shouldn't change layout memory space: ",
                        instruction->ToString()));
     }
+    return absl::OkStatus();
+  }
+
+  // Returns an error status if an instruction or any operand contains host
+  // memory space.
+  static absl::Status VerifyNoHostMemorySpace(
+      const HloInstruction* instruction) {
+    if (LayoutUtil::IsDenseArray(instruction->shape()) &&
+        instruction->shape().has_layout()) {
+      const Shape& result_shape = instruction->shape();
+      const Layout& result_layout = result_shape.layout();
+      if (result_layout.memory_space() == Layout::kHostMemorySpace) {
+        return absl::InvalidArgumentError(absl::StrCat(
+            "Instruction shouldn't have the layout of host memory ",
+            "space: ", instruction->ToString()));
+      }
+    }
+
     return absl::OkStatus();
   }
 
