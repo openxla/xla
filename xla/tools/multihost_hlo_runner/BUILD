@@ -172,6 +172,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
 
