@@ -66,7 +66,7 @@ namespace gpu {
   return absl::WrapUnique(new HloOpProfiles(std::move(profiles_map)));
 }
 
-const HloOpProfiles::HloOpProfile& HloOpProfiles::GetLatestProfile() const {
+const HloOpProfiles::HloOpProfile& HloOpProfiles::FindLatestProfile() const {
   auto name_to_version = [](std::string profile_name) {
     int32_t version;
     CHECK(absl::SimpleAtoi(profile_name.substr(/*sm_*/ 3), &version))

@@ -55,12 +55,16 @@ class HloOpProfiles {
   const HloOpProfile& GetProfile(
       const se::DeviceDescription& device_info) const;
 
-  const HloOpProfile& GetLatestProfile() const;
+  const HloOpProfile& GetLatestProfile() const { return latest_profile_; }
 
  private:
-  HloOpProfiles(ProfilesNestedMap profiles) : profiles_(std::move(profiles)) {}
+  HloOpProfiles(ProfilesNestedMap profiles)
+      : profiles_(std::move(profiles)), latest_profile_(FindLatestProfile()) {}
+
+  const HloOpProfile& FindLatestProfile() const;
 
   ProfilesNestedMap profiles_;
+  const HloOpProfile& latest_profile_;
 };
 
 }  // namespace gpu
