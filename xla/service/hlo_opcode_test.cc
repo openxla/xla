@@ -57,6 +57,7 @@ TEST(HloOpcodeTest, OpcodeProperties) {
       case HloOpcode::kReduceScatter:
       case HloOpcode::kAllReduceStart:
       case HloOpcode::kAllToAll:
+      case HloOpcode::kBlockScaledDot:
       case HloOpcode::kCall:
       case HloOpcode::kCollectiveBroadcast:
       case HloOpcode::kCollectivePermute:

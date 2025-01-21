@@ -788,6 +788,20 @@ message RaggedDotDimensionNumbers {
   repeated int64 rhs_group_dimensions = 3;
 }
 
+message BlockScaledDotConfig {
+  // The contracting and batch dimensions of the 'lhs' and 'rhs'.
+  DotDimensionNumbers dot_dimension_numbers = 1;
+
+  // Intermediate type used for dequantization. The input/scale argument pairs
+  // are dequantized to this type, and then used as the inputs to the (implied)
+  // dot op. If omitted, will default to the dot result type.
+  optional PrimitiveType dequantize_type = 2;
+
+  // Block sizes for 'lhs' and 'rhs' scaling factors could be set separately.
+  optional int64 lhs_block_size = 3;
+  optional int64 rhs_block_size = 4;
+}
+
 enum SparsityType {
   SPARSITY_INVALID = 0;
 

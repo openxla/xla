@@ -122,6 +122,7 @@ bool CanInferShape(HloOpcode code) {
     case HloOpcode::kBatchNormGrad:
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kBroadcast:
     case HloOpcode::kCall:
     case HloOpcode::kCeil:
@@ -327,6 +328,7 @@ class HloParserImpl : public HloParser {
     kCollectiveDeviceList,
     kResultAccuracy,
     kOriginalValue,
+    kPrimitiveType,
   };
 
   struct AttrConfig {
@@ -3314,6 +3316,102 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
           *shape, operands[0], operands[1], operands[2], ragged_dnum,
           precision_config));
     }
+    case HloOpcode::kBlockScaledDot: {
+      optional<std::vector<int64_t>> lhs_contracting_dims;
+      attrs["lhs_contracting_dims"] = {
+          /*required=*/false, AttrTy::kBracedInt64List, &lhs_contracting_dims};
+      optional<std::vector<int64_t>> rhs_contracting_dims;
+      attrs["rhs_contracting_dims"] = {
+          /*required=*/false, AttrTy::kBracedInt64List, &rhs_contracting_dims};
+      optional<std::vector<int64_t>> lhs_batch_dims;
+      attrs["lhs_batch_dims"] = {/*required=*/false, AttrTy::kBracedInt64List,
+                                 &lhs_batch_dims};
+      optional<std::vector<int64_t>> rhs_batch_dims;
+      attrs["rhs_batch_dims"] = {/*required=*/false, AttrTy::kBracedInt64List,
+                                 &rhs_batch_dims};
+      optional<PrimitiveType> dequantize_type;
+      attrs["dequantize_type"] = {/*required=*/false, AttrTy::kPrimitiveType,
+                                  &dequantize_type};
+      optional<int64_t> block_size;
+      attrs["block_size"] = {/*required=*/false, AttrTy::kInt64, &block_size};
+      optional<int64_t> lhs_block_size;
+      attrs["lhs_block_size"] = {/*required=*/false, AttrTy::kInt64,
+                                 &lhs_block_size};
+      optional<int64_t> rhs_block_size;
+      attrs["rhs_block_size"] = {/*required=*/false, AttrTy::kInt64,
+                                 &rhs_block_size};
+
+      LocTy loc = lexer_.GetLoc();
+      if ((!preset_operands && !ParseOperands(&operands, builder)) ||
+          !ParseAttributes(attrs, allow_attributes, shape)) {
+        return nullptr;
+      }
+
+      // If `block_size` is set, use it for both 'lhs' and 'rhs'.
+      if (block_size) {
+        if (lhs_block_size || rhs_block_size) {
+          Error(loc,
+                "expects lhs/rhs specific block sizes to be empty when op "
+                "block size is set");
+          return nullptr;
+        }
+        lhs_block_size = block_size;
+        rhs_block_size = block_size;
+      }
+      if (!lhs_block_size && !rhs_block_size) {
+        Error(loc, "expects block size to be set");
+        return nullptr;
+      }
+
+      int expected_size = lhs_block_size && rhs_block_size ? 4 : 3;
+      if (operands.size() != expected_size) {
+        Error(loc, StrCat("expects ", expected_size, " operands, but has ",
+                          operands.size(), " operands"));
+        return nullptr;
+      }
+
+      BlockScaledDotConfig config;
+      if (dequantize_type) {
+        config.set_dequantize_type(*dequantize_type);
+      }
+      if (lhs_block_size) {
+        config.set_lhs_block_size(*lhs_block_size);
+      }
+      if (rhs_block_size) {
+        config.set_rhs_block_size(*rhs_block_size);
+      }
+
+      DotDimensionNumbers dnum;
+      if (lhs_contracting_dims) {
+        *dnum.mutable_lhs_contracting_dimensions() = {
+            lhs_contracting_dims->begin(), lhs_contracting_dims->end()};
+      }
+      if (rhs_contracting_dims) {
+        *dnum.mutable_rhs_contracting_dimensions() = {
+            rhs_contracting_dims->begin(), rhs_contracting_dims->end()};
+      }
+      if (lhs_batch_dims) {
+        *dnum.mutable_lhs_batch_dimensions() = {lhs_batch_dims->begin(),
+                                                lhs_batch_dims->end()};
+      }
+      if (rhs_batch_dims) {
+        *dnum.mutable_rhs_batch_dimensions() = {rhs_batch_dims->begin(),
+                                                rhs_batch_dims->end()};
+      }
+      *config.mutable_dot_dimension_numbers() = dnum;
+
+      if (!maybe_infer_shape([&] {
+            return ShapeInference::InferDotOpShape(operands[0]->shape(),
+                                                   operands[1]->shape(), dnum,
+                                                   dequantize_type);
+          })) {
+        return nullptr;
+      }
+      return builder->AddInstruction(HloInstruction::CreateBlockScaledDot(
+          *shape, operands[0], operands[1], config,
+          absl::MakeSpan(operands).subspan(
+              HloBlockScaledDotInstruction::kOperands)));
+    }
     case HloOpcode::kGather: {
       optional<std::vector<int64_t>> offset_dims;
       attrs["offset_dims"] = {/*required=*/true, AttrTy::kBracedInt64List,
@@ -5305,6 +5403,14 @@ bool HloParserImpl::ParseAttributeHelper(
           return false;
         }
         static_cast<optional<ResultAccuracy>*>(attr_out_ptr)->emplace(result);
+        return true;
+      }
+      case AttrTy::kPrimitiveType: {
+        PrimitiveType result;
+        if (!ParsePrimitiveType(&result)) {
+          return false;
+        }
+        static_cast<optional<PrimitiveType>*>(attr_out_ptr)->emplace(result);
         return true;
       }
     }
