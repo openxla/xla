@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/model/hlo_op_profiles.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <variant>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"

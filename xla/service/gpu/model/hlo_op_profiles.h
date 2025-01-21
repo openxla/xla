@@ -58,7 +58,7 @@ class HloOpProfiles {
   const HloOpProfile& GetLatestProfile() const { return latest_profile_; }
 
  private:
-  HloOpProfiles(ProfilesNestedMap profiles)
+  explicit HloOpProfiles(ProfilesNestedMap profiles)
       : profiles_(std::move(profiles)), latest_profile_(FindLatestProfile()) {}
 
   const HloOpProfile& FindLatestProfile() const;
