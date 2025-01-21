@@ -48,8 +48,43 @@ class DynamicSliceThunk : public Thunk {
   // Dynamic slice offset can be either: (1) a statically known constant value
   // or (2) a truly dynamic offset that is computed on device and have to be
   // transferred to host or (3) a temporary HloModule that computes the offset
-  // with induction variable as the input.
+  // with a single induction variable as the input.
   using Offset = std::variant<int64_t, BufferAllocation::Slice, HloModule*>;
+
+  struct OffsetAsFunctionOfIndvarModulesMetadata {
+    // These two modules help keep track of the induction variable. The module
+    // `indvar_init_` is a module with prototype `() -> integer[]`. It takes
+    // no input, and returns the initial value of the induction variable. The
+    // module `indvar_update_` is a module with prototype `(integer[]) ->
+    // integer[]`. It takes the current value of the induction variable, and
+    // returns the next value of the induction variable.
+    std::unique_ptr<HloModule> indvar_init_, indvar_update_;
+
+    // Extracted HloModules for computing dynamic offsets. The modules are
+    // not used here, this is solely for keeping the modules alive and maintain
+    // their ownership with the thunk while their raw pointers would be used
+    // during execution from the `offsets_` vector. These modules are with
+    // signature `(integer[]) -> integer[]`, where the input is the current
+    // value of the loop induction variable, and the output is the offset value
+    // for that iteration.
+    std::vector<std::unique_ptr<HloModule>> extracted_offset_modules;
+
+    OffsetAsFunctionOfIndvarModulesMetadata(
+        std::unique_ptr<HloModule> indvar_init,
+        std::unique_ptr<HloModule> indvar_update,
+        std::vector<std::unique_ptr<HloModule>> extracted_offset_modules)
+        : indvar_init_(std::move(indvar_init)),
+          indvar_update_(std::move(indvar_update)),
+          extracted_offset_modules(std::move(extracted_offset_modules)) {
+      CHECK(indvar_init_ != nullptr && indvar_update_ != nullptr);
+      CHECK(indvar_init_->entry_computation()->num_parameters() == 0)
+          << "Induction variable init module expected with signature `() -> "
+             "integer[]`.";
+      CHECK(indvar_update_->entry_computation()->num_parameters() == 1)
+          << "Induction variable update module expected with signature "
+             "`(integer[]) -> integer[]`.";
+    }
+  };
 
   DynamicSliceThunk(
       ThunkInfo thunk_info, std::unique_ptr<ThunkSequence> embedded_thunk,
@@ -59,9 +94,8 @@ class DynamicSliceThunk : public Thunk {
       std::vector<std::optional<Shape>> orig_shapes,
       std::vector<std::optional<Shape>> sliced_shapes,
       std::vector<std::optional<uint64_t>> offset_byte_sizes,
-      std::vector<std::unique_ptr<HloModule>> extracted_offset_modules = {},
-      std::unique_ptr<HloModule> indvar_init = nullptr,
-      std::unique_ptr<HloModule> indvar_update = nullptr);
+      std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
+          offset_as_function_of_indvar_metadata = std::nullopt);
   DynamicSliceThunk(const DynamicSliceThunk&) = delete;
   DynamicSliceThunk& operator=(const DynamicSliceThunk&) = delete;
 
@@ -136,21 +170,11 @@ class DynamicSliceThunk : public Thunk {
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
-  // Extracted HloModules for computing dynamic offsets. The modules here are
-  // not used, this is solely for keeping the modules alive and maintain their
-  // ownership with the thunk. The pointers to these offsets are stored in the
-  // `offsets_` vector. These modules are of the signature `(integer[]) ->
-  // integer[]`, where the input is the current value of the loop induction
-  // variable, and the output is the offset value for that iteration.
-  std::vector<std::unique_ptr<HloModule>> extracted_offset_modules_;
-
-  // These two modules help keep track of the induction variable. The module
-  // `indvar_init_` is a module of the prototype `() -> integer[]`. It takes no
-  // input, and returns the initial value of the induction variable. The module
-  // `indvar_update_` is a module of the prototype `(integer[]) -> integer[]`.
-  // It takes the current value of the induction variable, and returns the next
-  // value of the induction variable.
-  std::unique_ptr<HloModule> indvar_init_, indvar_update_;
+  // This structure holds the metadata for offset computation on host. It stores
+  // a single induction variable initialization module, its update module and
+  // the offsets that are a function of the induction variable.
+  std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
+      offset_as_function_of_indvar_metadata_;
 };
 
 }  // namespace gpu

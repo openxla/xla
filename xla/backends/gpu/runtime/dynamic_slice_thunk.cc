@@ -51,8 +51,14 @@ namespace gpu {
 namespace {
 
 // Indvar is a thread-local map that stores the induction variable for each
-// dynamic slice thunk. The usage of threadlocal in this context is similar to
-// `LoopCounters` in while_thunk.cc (b/343294327).
+// dynamic slice thunk. The same thunk object in the memory is shared by
+// multiple replicas of the same computation. So, each replica should have its
+// own tracking of the induction variable (threadlocal). With threadlocal, we
+// cannot embed this inside the dynamic slice thunk object, and so we have a
+// static map. There could be multiple dynamic slice thunks in the same module,
+// and so we need a map to store the induction variable for each thunk. The
+// usage of threadlocal in this context is similar to `LoopCounters` in
+// while_thunk.cc (b/343294327).
 Literal& Indvar(DynamicSliceThunk* thunk) {
   static thread_local absl::flat_hash_map<DynamicSliceThunk*, Literal>
       indvar_map;
@@ -69,9 +75,8 @@ DynamicSliceThunk::DynamicSliceThunk(
     std::vector<std::optional<Shape>> orig_shapes,
     std::vector<std::optional<Shape>> sliced_shapes,
     std::vector<std::optional<uint64_t>> offset_byte_sizes,
-    std::vector<std::unique_ptr<HloModule>> extracted_offset_modules,
-    std::unique_ptr<HloModule> indvar_init,
-    std::unique_ptr<HloModule> indvar_update)
+    std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_as_function_of_indvar_metadata)
     : Thunk(Kind::kDynamicSlice, thunk_info),
       embedded_thunk_(std::make_unique<SequentialThunk>(
           ThunkInfo(), std::move(*embedded_thunk))),
@@ -81,11 +86,9 @@ DynamicSliceThunk::DynamicSliceThunk(
       orig_shapes_(orig_shapes),
       sliced_shapes_(sliced_shapes),
       offset_byte_sizes_(offset_byte_sizes),
-      extracted_offset_modules_(std::move(extracted_offset_modules)),
-      indvar_init_(std::move(indvar_init)),
-      indvar_update_(
-          std::move(indvar_update)) {  // Zip all arguments together to create a
-                                       // list of SliceDef.
+      offset_as_function_of_indvar_metadata_(
+          std::move(offset_as_function_of_indvar_metadata)) {
+  // Zip all arguments together to create a list of SliceDef.
   for (auto [arg, offsets, orig_shape, sliced_shape, offset_byte_size] :
        llvm::zip_equal(arguments, offsets, orig_shapes, sliced_shapes,
                        offset_byte_sizes)) {
@@ -127,10 +130,13 @@ absl::Status DynamicSliceThunk::Prepare(
 
   TF_RETURN_IF_ERROR(embedded_thunk_->Prepare(params, resource_requests));
 
-  if (indvar_init_ != nullptr) {
-    Indvar(this) = HloEvaluator()
-                       .Evaluate(/*module=*/*indvar_init_, /*arg_literals=*/{})
-                       .value();
+  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
+    Indvar(this) =
+        HloEvaluator()
+            .Evaluate(/*module=*/*offset_as_function_of_indvar_metadata_
+                          ->indvar_init_,
+                      /*arg_literals=*/{})
+            .value();
     VLOG(2) << "Indvar = " << Indvar(this).ToString();
   }
   return absl::OkStatus();
@@ -294,9 +300,12 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Execute the underlying custom call thunk with the new buffers.
   TF_RETURN_IF_ERROR(embedded_thunk_->ExecuteOnStream(new_params));
 
-  if (indvar_update_ != nullptr) {
+  if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
     Indvar(this) =
-        HloEvaluator().Evaluate(*indvar_update_, {&Indvar(this)}).value();
+        HloEvaluator()
+            .Evaluate(*offset_as_function_of_indvar_metadata_->indvar_update_,
+                      {&Indvar(this)})
+            .value();
     VLOG(2) << "Indvar = " << Indvar(this).ToString();
   }
 
