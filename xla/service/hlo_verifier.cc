@@ -293,6 +293,49 @@ absl::Status ShapeVerifier::HandleRaggedDot(HloInstruction* ragged_dot) {
   return CheckShape(ragged_dot, expected);
 }
 
+absl::Status ShapeVerifier::HandleBlockScaledDot(HloInstruction* hlo) {
+  auto block_scaled_dot = Cast<HloBlockScaledDotInstruction>(hlo);
+  TF_RETURN_IF_ERROR(
+      CheckOperandCount(hlo, HloBlockScaledDotInstruction::kOperands +
+                                 block_scaled_dot->num_scale_operands()));
+  TF_ASSIGN_OR_RETURN(
+      const Shape expected,
+      ShapeInference::InferDotOpShape(
+          block_scaled_dot->operand(0)->shape(),
+          block_scaled_dot->operand(1)->shape(),
+          block_scaled_dot->dot_dimension_numbers(),
+          /*preferred_element_type=*/block_scaled_dot->shape().element_type()));
+  TF_RETURN_IF_ERROR(CheckShape(block_scaled_dot, expected));
+
+  if (block_scaled_dot->has_lhs_scale()) {
+    const Shape& lhs_input_shape = block_scaled_dot->operand(0)->shape();
+    const Shape& lhs_scale_shape =
+        block_scaled_dot->lhs_scale_operand()->shape();
+    TF_ASSIGN_OR_RETURN(int64_t lhs_scale_dim,
+                        ShapeInference::InferBlockScaledDotDimension(
+                            lhs_input_shape, lhs_scale_shape));
+    TF_RET_CHECK(lhs_input_shape.dimensions(lhs_scale_dim) ==
+                 lhs_scale_shape.dimensions(lhs_scale_dim) *
+                     block_scaled_dot->lhs_block_size())
+        << "Block scaled dot LHS block size is incorrect";
+  }
+
+  if (block_scaled_dot->has_rhs_scale()) {
+    const Shape& rhs_input_shape = block_scaled_dot->operand(1)->shape();
+    const Shape& rhs_scale_shape =
+        block_scaled_dot->rhs_scale_operand()->shape();
+    TF_ASSIGN_OR_RETURN(int64_t rhs_scale_dim,
+                        ShapeInference::InferBlockScaledDotDimension(
+                            rhs_input_shape, rhs_scale_shape));
+    TF_RET_CHECK(rhs_input_shape.dimensions(rhs_scale_dim) ==
+                 rhs_scale_shape.dimensions(rhs_scale_dim) *
+                     block_scaled_dot->rhs_block_size())
+        << "Block scaled dot RHS block size is incorrect";
+  }
+
+  return absl::OkStatus();
+}
+
 absl::Status ShapeVerifier::HandleConvolution(HloInstruction* convolution) {
   TF_ASSIGN_OR_RETURN(
       Shape expected,
@@ -1858,6 +1901,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kConstant:
     case HloOpcode::kConvolution:
     case HloOpcode::kDot:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kAllReduce:
     case HloOpcode::kAllReduceStart:
     case HloOpcode::kAllReduceDone:

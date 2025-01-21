@@ -3647,6 +3647,81 @@ ENTRY entry_computation {
   EXPECT_TRUE(status.ok()) << status;
 }
 
+TEST_F(HloVerifierTest, BlockScaledDot) {
+  static const char* const kBlockScaledDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[8,64] parameter(0)
+  lhs_scale = f8e8m0fnu[8,2] parameter(1)
+  rhs = f8e4m3fn[4,64] parameter(2)
+  rhs_scale = f8e8m0fnu[4,2] parameter(3)
+  ROOT dot = f32[8,4] block-scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}, block_size=32
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(kBlockScaledDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  EXPECT_TRUE(status.ok()) << status;
+}
+
+TEST_F(HloVerifierTest, BlockScaledDot_InvalidResultShape) {
+  static const char* const kBlockScaledDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[8,64] parameter(0)
+  lhs_scale = f8e8m0fnu[8,2] parameter(1)
+  rhs = f8e4m3fn[4,64] parameter(2)
+  rhs_scale = f8e8m0fnu[4,2] parameter(3)
+  ROOT dot = f32[4,8] block-scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}, block_size=32
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnUnverifiedModule(kBlockScaledDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Expected instruction to have shape equal to f32[8,4]"));
+}
+
+TEST_F(HloVerifierTest, BlockScaledDot_InvalidLhsBlockSize) {
+  static const char* const kBlockScaledDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[8,64] parameter(0)
+  lhs_scale = f8e8m0fnu[8,2] parameter(1)
+  rhs = f16[4,64] parameter(2)
+  ROOT dot = f32[8,4] block-scaled-dot(lhs, rhs, lhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_block_size=16
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnUnverifiedModule(kBlockScaledDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("LHS block size is incorrect"));
+}
+
+TEST_F(HloVerifierTest, BlockScaledDot_InvalidRhsBlockSize) {
+  static const char* const kBlockScaledDotHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f16[8,64] parameter(0)
+  rhs = f8e4m3fn[4,64] parameter(1)
+  rhs_scale = f8e8m0fnu[4,2] parameter(2)
+  ROOT dot = f32[8,4] block-scaled-dot(lhs, rhs, rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}, rhs_block_size=16
+})";
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnUnverifiedModule(kBlockScaledDotHloString));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("RHS block size is incorrect"));
+}
+
 TEST_F(HloVerifierTest, UnaryOpWithResultAccuracy) {
   constexpr absl::string_view hlo_string = R"(
   HloModule exponential_hw

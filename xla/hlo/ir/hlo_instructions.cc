@@ -3968,6 +3968,77 @@ HloRaggedDotInstruction::CloneWithNewOperandsImpl(
       ragged_dot_dimension_numbers_, precision_config_);
 }
 
+HloBlockScaledDotInstruction::HloBlockScaledDotInstruction(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    const BlockScaledDotConfig& block_scaled_config,
+    absl::Span<HloInstruction* const> scales)
+    : HloInstruction(HloOpcode::kBlockScaledDot, shape),
+      block_scaled_config_(block_scaled_config) {
+  AppendOperand(lhs);
+  AppendOperand(rhs);
+  int expected_scales = block_scaled_config.has_lhs_block_size() +
+                        block_scaled_config.has_rhs_block_size();
+  CHECK_GT(expected_scales, 0);
+  CHECK_EQ(scales.size(), expected_scales);
+  for (HloInstruction* scale : scales) {
+    AppendOperand(scale);
+  }
+}
+
+HloInstructionProto HloBlockScaledDotInstruction::ToProto() const {
+  HloInstructionProto proto = HloInstruction::ToProto();
+  *proto.mutable_block_scaled_dot_config() = block_scaled_config_;
+  return proto;
+}
+
+void HloBlockScaledDotInstruction::PrintExtraAttributesImpl(
+    AttributePrinter& printer, const HloPrintOptions& options) const {
+  printer.Next([this](Printer* printer) {
+    printer->Append(DotDimensionNumbersToString(dot_dimension_numbers()));
+  });
+  bool same_block_size = has_lhs_scale() && has_rhs_scale() &&
+                         lhs_block_size() == rhs_block_size();
+  if (has_lhs_scale()) {
+    printer.Next([this, same_block_size](Printer* printer) {
+      printer->Append(same_block_size ? "block_size=" : "lhs_block_size=");
+      printer->Append(lhs_block_size());
+    });
+  }
+  if (has_rhs_scale() && !same_block_size) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("rhs_block_size=");
+      printer->Append(rhs_block_size());
+    });
+  }
+  if (block_scaled_config_.has_dequantize_type()) {
+    printer.Next([this](Printer* printer) {
+      printer->Append("dequantize_type=");
+      printer->Append(primitive_util::LowercasePrimitiveTypeName(
+          block_scaled_config_.dequantize_type()));
+    });
+  }
+}
+
+bool HloBlockScaledDotInstruction::IdenticalSlowPath(
+    const HloInstruction& other,
+    absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+        eq_computations) const {
+  const auto& casted_other =
+      static_cast<const HloBlockScaledDotInstruction&>(other);
+  return protobuf_util::ProtobufEquals(block_scaled_config(),
+                                       casted_other.block_scaled_config());
+}
+
+std::unique_ptr<HloInstruction>
+HloBlockScaledDotInstruction::CloneWithNewOperandsImpl(
+    const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+    HloCloneContext* context) const {
+  CHECK_EQ(new_operands.size(), kOperands + num_scale_operands());
+  return std::make_unique<HloBlockScaledDotInstruction>(
+      shape, new_operands[0], new_operands[1], block_scaled_config_,
+      new_operands.subspan(kOperands));
+}
+
 HloDomainInstruction::HloDomainInstruction(
     const Shape& shape, HloInstruction* operand,
     std::unique_ptr<DomainMetadata> operand_side_metadata,

@@ -301,6 +301,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
     case HloOpcode::kBitcast:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kBroadcast:
     case HloOpcode::kCall:
     case HloOpcode::kCholesky:

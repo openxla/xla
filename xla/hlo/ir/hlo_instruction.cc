@@ -1132,6 +1132,25 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
           proto.ragged_dot_dimension_numbers(), precision_config);
       break;
     }
+    case HloOpcode::kBlockScaledDot: {
+      TF_RET_CHECK(proto.has_block_scaled_dot_config())
+          << "BlockScaledDot instruction should have block_scaled_dot_config.";
+      const BlockScaledDotConfig& config = proto.block_scaled_dot_config();
+      int expected_operands = HloBlockScaledDotInstruction::kOperands +
+                              config.has_lhs_block_size() +
+                              config.has_rhs_block_size();
+      TF_RET_CHECK(expected_operands > HloBlockScaledDotInstruction::kOperands)
+          << proto.opcode() << " instruction should have a block size set.";
+      TF_RET_CHECK(proto.operand_ids_size() == expected_operands)
+          << proto.opcode() << " instruction should have " << expected_operands
+          << " operands but sees " << proto.operand_ids_size();
+      auto operand_vector = all_operands();
+      instruction = std::make_unique<HloBlockScaledDotInstruction>(
+          shape, operands(0), operands(1), config,
+          absl::MakeSpan(operand_vector)
+              .subspan(HloBlockScaledDotInstruction::kOperands));
+      break;
+    }
     case HloOpcode::kDomain: {
       std::shared_ptr<const HloSharding> entry_hlo_sharding;
       std::shared_ptr<const HloSharding> exit_hlo_sharding;
@@ -1599,6 +1618,15 @@ HloInstruction::CreateTriangularSolve(const Shape& shape, HloInstruction* a,
     const PrecisionConfig& precision_config) {
   return std::make_unique<HloRaggedDotInstruction>(
       shape, lhs, rhs, group_sizes, dimension_numbers, precision_config);
+}
+
+/* static */ std::unique_ptr<HloInstruction>
+HloInstruction::CreateBlockScaledDot(
+    const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+    const BlockScaledDotConfig& block_scaled_config,
+    absl::Span<HloInstruction* const> scales) {
+  return std::make_unique<HloBlockScaledDotInstruction>(
+      shape, lhs, rhs, block_scaled_config, scales);
 }
 
 /* static */ std::unique_ptr<HloInstruction>
@@ -2626,6 +2654,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
     case HloOpcode::kIota:
     case HloOpcode::kDot:
     case HloOpcode::kRaggedDot:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kDomain:
     case HloOpcode::kGetDimensionSize:
     case HloOpcode::kSetDimensionSize:
@@ -3225,6 +3254,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kScatter:
     case HloOpcode::kDot:
     case HloOpcode::kRaggedDot:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kDomain:
     case HloOpcode::kGetDimensionSize:
     case HloOpcode::kRaggedAllToAll:
@@ -4464,6 +4494,8 @@ absl::Status HloInstruction::Visit(
       return visitor->HandleDot(this);
     case HloOpcode::kRaggedDot:
       return visitor->HandleRaggedDot(this);
+    case HloOpcode::kBlockScaledDot:
+      return visitor->HandleBlockScaledDot(this);
     case HloOpcode::kPower:
       return visitor->HandlePower(this);
     case HloOpcode::kRemainder:

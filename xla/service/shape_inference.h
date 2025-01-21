@@ -367,6 +367,10 @@ class ShapeInference {
       const Shape& operand_shape, const DotDimensionNumbers& dimension_numbers,
       const SparsityDescriptor& sparsity, PrimitiveType element_type = U16);
 
+  // Helper that infers the scaled dimension of the block scaled dot operand.
+  static absl::StatusOr<int64_t> InferBlockScaledDotDimension(
+      const Shape& operand_shape, const Shape& scale_shape);
+
   // Helper that infers the shape produced by performing a ragged dot operation
   // with the given LHS and RHS shapes. An optional preferred_element_type can
   // be specified to upcast the element type.

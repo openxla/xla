@@ -1161,6 +1161,38 @@ void GenerateDotResultDimensions(
   return ShapeUtil::MakeShape(element_type, dimensions, is_dynamic);
 }
 
+/* static */ absl::StatusOr<int64_t>
+ShapeInference::InferBlockScaledDotDimension(const Shape& operand_shape,
+                                             const Shape& scale_shape) {
+  TF_RET_CHECK(operand_shape.rank() == scale_shape.rank());
+
+  auto fail = [&](std::string detail) -> absl::Status {
+    return InvalidArgument("Block scaled operand %s with scale %s: %s",
+                           ShapeUtil::HumanString(operand_shape),
+                           ShapeUtil::HumanString(scale_shape), detail);
+  };
+
+  std::vector<int64_t> dims;
+  for (int64_t i = 0; i < operand_shape.rank(); ++i) {
+    int64_t operand_dim = operand_shape.dimensions(i);
+    int64_t scale_dim = scale_shape.dimensions(i);
+    if (operand_dim != scale_dim) {
+      if (operand_dim % scale_dim != 0) {
+        return fail(
+            StrFormat("Expected operand dimension %d (%d) to be divisible by "
+                      "scale dimension (%d)",
+                      i, operand_dim, scale_dim));
+      }
+      dims.push_back(i);
+    }
+  }
+  if (dims.size() != 1) {
+    return fail(StrFormat("Expected exactly one scaled dimension, found %d",
+                          dims.size()));
+  }
+  return dims.front();
+}
+
 /* static */ absl::StatusOr<Shape>
 ShapeInference::InferDegenerateDimensionBroadcastShape(const Shape& lhs,
                                                        const Shape& rhs) {

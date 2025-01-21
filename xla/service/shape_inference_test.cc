@@ -2168,6 +2168,23 @@ TEST_F(ShapeInferenceTest, SparseDotMetadata) {
       ShapeUtil::Equal(inferred_shape, ShapeUtil::MakeShape(U16, {5, 10, 2})));
 }
 
+TEST_F(ShapeInferenceTest, BlockScaledDotDimension) {
+  TF_ASSERT_OK_AND_ASSIGN(int64_t inferred_dim,
+                          ShapeInference::InferBlockScaledDotDimension(
+                              ShapeUtil::MakeShape(F8E4M3FN, {1, 8, 64}),
+                              ShapeUtil::MakeShape(F8E8M0FNU, {1, 8, 4})));
+  EXPECT_EQ(inferred_dim, 2);
+
+  EXPECT_FALSE(ShapeInference::InferBlockScaledDotDimension(
+                   ShapeUtil::MakeShape(F8E4M3FN, {1, 8, 63}),
+                   ShapeUtil::MakeShape(F8E8M0FNU, {1, 8, 4}))
+                   .ok());
+  EXPECT_FALSE(ShapeInference::InferBlockScaledDotDimension(
+                   ShapeUtil::MakeShape(F8E4M3FN, {1, 8, 64}),
+                   ShapeUtil::MakeShape(F8E8M0FNU, {1, 2, 4}))
+                   .ok());
+}
+
 // <ragged-dot> : [m,k], [g,k,n], [g] -> [m,n]
 TEST_F(ShapeInferenceTest, RaggedDotRaggedNonContracting) {
   const Shape lhs_shape = ShapeUtil::MakeShape(F32, {11, 5});

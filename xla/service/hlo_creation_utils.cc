@@ -406,6 +406,34 @@ absl::StatusOr<HloInstruction*> MakeRaggedDotHlo(
       ragged_dot_shape, lhs, rhs, group_sizes, dim_numbers, precision_config));
 }
 
+absl::StatusOr<HloInstruction*> MakeBlockScaledDotHlo(
+    HloInstruction* lhs, HloInstruction* rhs, HloInstruction* lhs_scale,
+    HloInstruction* rhs_scale, const BlockScaledDotConfig& block_scaled_config,
+    std::optional<PrimitiveType> preferred_element_type) {
+  HloComputation* computation = lhs->parent();
+  CHECK_EQ(computation, rhs->parent());
+  std::vector<HloInstruction*> scales;
+  if (lhs_scale != nullptr) {
+    CHECK_EQ(computation, lhs_scale->parent());
+    scales.push_back(lhs_scale);
+  }
+  if (rhs_scale != nullptr) {
+    CHECK_EQ(computation, rhs_scale->parent());
+    scales.push_back(rhs_scale);
+  }
+  if (scales.empty()) {
+    return InvalidArgument("At least one scaling factor must be provided.");
+  }
+  TF_ASSIGN_OR_RETURN(
+      Shape block_scaled_dot_shape,
+      ShapeInference::InferDotOpShape(
+          lhs->shape(), rhs->shape(),
+          block_scaled_config.dot_dimension_numbers(), preferred_element_type));
+  return computation->AddInstruction(HloInstruction::CreateBlockScaledDot(
+      block_scaled_dot_shape, lhs, rhs, block_scaled_config,
+      absl::MakeSpan(scales)));
+}
+
 absl::StatusOr<HloInstruction*> MakeMapHlo(
     absl::Span<HloInstruction* const> operands, HloComputation* map_computation,
     const OpMetadata* metadata) {

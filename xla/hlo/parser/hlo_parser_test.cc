@@ -1957,6 +1957,50 @@ ENTRY dot {
 
 )"
 },
+// block-scaled-dot
+{
+"BlockScaledDot",
+R"(HloModule block_scaled_dot, entry_computation_layout={(f8e4m3fn[2,16,64]{2,1,0}, f8e4m3fn[2,32,64]{2,1,0}, f8e5m2[2,16,2]{2,1,0}, f8e5m2[2,32,2]{2,1,0})->f32[2,16,32]{2,1,0}}
+
+ENTRY block_scaled_dot {
+  lhs = f8e4m3fn[2,16,64]{2,1,0} parameter(0)
+  rhs = f8e4m3fn[2,32,64]{2,1,0} parameter(1)
+  lhs_scale = f8e5m2[2,16,2]{2,1,0} parameter(2)
+  rhs_scale = f8e5m2[2,32,2]{2,1,0} parameter(3)
+  ROOT res = f32[2,16,32]{2,1,0} block-scaled-dot(lhs, rhs, lhs_scale, rhs_scale), lhs_batch_dims={0}, lhs_contracting_dims={2}, rhs_batch_dims={0}, rhs_contracting_dims={2}, block_size=32, dequantize_type=f16
+}
+
+)"
+},
+// block-scaled-dot (lhs)
+{
+"BlockScaledDotLhs",
+R"(HloModule block_scaled_dot, entry_computation_layout={(f8e4m3fn[16,64]{1,0}, f16[32,64]{1,0}, f16[16,8]{1,0})->f32[16,32]{1,0}}
+
+ENTRY block_scaled_dot {
+  lhs = f8e4m3fn[16,64]{1,0} parameter(0)
+  rhs = f16[32,64]{1,0} parameter(1)
+  lhs_scale = f16[16,8]{1,0} parameter(2)
+  ROOT res = f32[16,32]{1,0} block-scaled-dot(lhs, rhs, lhs_scale), lhs_contracting_dims={1}, rhs_contracting_dims={1}, lhs_block_size=8
+}
+
+)"
+},
+// block-scaled-dot (rhs)
+{
+"BlockScaledDotRhs",
+R"(HloModule block_scaled_dot, entry_computation_layout={(f16[16,64]{1,0}, f8e4m3fn[32,64]{1,0}, f16[32,8]{1,0})->f32[16,32]{1,0}}
+
+ENTRY block_scaled_dot {
+  lhs = f16[16,64]{1,0} parameter(0)
+  rhs = f8e4m3fn[32,64]{1,0} parameter(1)
+  rhs_scale = f16[32,8]{1,0} parameter(2)
+  ROOT res = f32[16,32]{1,0} block-scaled-dot(lhs, rhs, rhs_scale), lhs_contracting_dims={1}, rhs_contracting_dims={1}, rhs_block_size=8
+}
+
+)"
+},
+// gather
 {
 "gather",
 R"(HloModule gather, entry_computation_layout={(f32[50,49,48,47,46]{4,3,2,1,0}, s64[10,9,8,7,5]{4,3,2,1,0})->f32[10,9,8,7,30,29,28,27,26]{8,7,6,5,4,3,2,1,0}}

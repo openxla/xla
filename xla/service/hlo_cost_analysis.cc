@@ -482,6 +482,14 @@ absl::Status HloCostAnalysis::HandleRaggedDot(
   return absl::OkStatus();
 }
 
+absl::Status HloCostAnalysis::HandleBlockScaledDot(const HloInstruction* hlo) {
+  auto block_scaled_dot = Cast<HloBlockScaledDotInstruction>(hlo);
+  current_properties_[kFlopsKey] =
+      GetDotFlops(hlo->operand(0)->shape(), hlo->shape(),
+                  block_scaled_dot->dot_dimension_numbers());
+  return absl::OkStatus();
+}
+
 absl::Status HloCostAnalysis::HandleInfeed(const HloInstruction* infeed) {
   // Count nested infeed output tuples.
   int64_t size = 0;
