@@ -5261,15 +5261,39 @@ AllocationResult MsaAlgorithm::WindowPrefetch(
       continue;
     }
 
-    WindowPrefetchedAllocation::Options options;
-    options.bytes = window.size();
-    options.alternate_memory_space = options_.alternate_memory_space;
-    options.notify_operand_appended_fn = options_.notify_operand_appended_fn;
+    int64_t end_time = request.end_time;
+    int64_t start_time = request.end_time - 1;
     AllocationRequest window_prefetch_request = request;
-    window_prefetch_request.window_prefetch_options = &options;
     window_prefetch_request.size = window.size();
-    const Shape shape = ShapeUtil::MakeShape(U8, {window.size()});
-    Prefetch(window_prefetch_request, prev_allocation_in_default_mem, &shape);
+    window_prefetch_request.end_time = end_time;
+    std::vector<int64_t> all_use_times = {end_time};
+    window_prefetch_request.all_use_times = all_use_times;
+
+    MsaBufferInterval alternate_mem_interval;
+    alternate_mem_interval.buffer = request.allocation_value_to_update->value();
+    alternate_mem_interval.size = window.size();
+    alternate_mem_interval.end = end_time;
+    alternate_mem_interval.start = start_time;
+    std::optional<Chunk> candidate_chunk = FindBestChunkCandidate(
+        window_prefetch_request, /*preferred_offset=*/nullptr,
+        &alternate_mem_interval);
+    if (candidate_chunk.has_value()) {
+      AddToPendingChunks(alternate_mem_interval, *candidate_chunk);
+
+      AllocationSequence* allocation_sequence =
+          request.allocation_value_to_update->mutable_allocation_sequence();
+      WindowPrefetchedAllocation::Options options;
+      options.bytes = window.size();
+      options.alternate_memory_space = options_.alternate_memory_space;
+      options.notify_operand_appended_fn = options_.notify_operand_appended_fn;
+      allocation_sequence->push_back(
+          std::make_unique<WindowPrefetchedAllocation>(
+              prev_allocation_in_default_mem, use, *candidate_chunk,
+              start_time - 1, end_time, options));
+      CreateOrAddToAliasedOffset(*allocation_sequence->back(),
+                                 /*aliased_offset=*/nullptr);
+      allocation_sequence->back()->AddUse(use);
+    }
   }
   return AllocationResult::kSuccess;
 }
