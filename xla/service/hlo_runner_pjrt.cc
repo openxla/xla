@@ -169,6 +169,13 @@ class PjRtWrappedExecutable : public Executable {
       : Executable(hlo_module),
         pjrt_loaded_executable_(pjrt_loaded_executable) {}
 
+  explicit PjRtWrappedExecutable(std::shared_ptr<HloModule> hlo_module,
+                                 std::unique_ptr<PjRtLoadedExecutable>& pjrt_loaded_executable)
+      : Executable(hlo_module)
+      {
+        pjrt_loaded_executable_ = std::move(pjrt_loaded_executable);
+      }
+
   absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
       const ServiceExecutableRunOptions* run_options,
       std::vector<ExecutionInput> arguments) override;
@@ -399,7 +406,7 @@ absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
   auto executable = std::make_unique<PjRtWrappedExecutable>(
       std::shared_ptr<HloModule>(
           std::move(pjrt_executable->GetHloModules().value()[0])),
-      pjrt_executable.release());
+      pjrt_executable);
 
   return executable;
 }
