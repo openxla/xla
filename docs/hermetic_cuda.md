@@ -116,7 +116,7 @@ is specified in [third_party/gpus/cuda/hermetic/cuda_redist_versions.bzl](https:
    ```
    build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
    build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
-   build:cuda --repo_env=HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90"
+   build:cuda --repo_env=HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90, compute_100, sm_120"
    ```
 
 3. To enable hermetic CUDA during test execution, or when running a binary via
