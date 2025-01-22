@@ -115,7 +115,6 @@ std::string CommandBufferCmdString(CommandBufferCmdType type);
 // Commands must be thread safe as they can be recorded into multiple command
 // buffers concurrently on different stream executors.
 
-using xla::BufferUse;
 class CommandBufferCmd {
  public:
   using Index = se::CommandBuffer::Index;
@@ -928,7 +927,7 @@ class EmptyCmd : public CommandBufferCmd {
  public:
   // Creates a barrier that will synchronize with commands specified
   // by dependencies.
-  EmptyCmd(std::vector<const CommandBufferCmd*> dependencies);
+  explicit EmptyCmd(std::vector<const CommandBufferCmd*> dependencies);
 
   absl::Status Record(const Thunk::ExecuteParams& execute_params,
                       const RecordParams& record_params,
