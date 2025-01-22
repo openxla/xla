@@ -2664,6 +2664,19 @@ absl::Status IrEmitterUnnested::EmitHloInstruction(
             thunk->set_execution_stream_id(stream);
           }
           thunk_sequence->set_execution_stream_id(stream);
+          auto* async_start = Cast<HloAsyncInstruction>(instr);
+          TF_ASSIGN_OR_RETURN(
+              ExecutionStreamAssignment::AsyncExecutionStreamIds async_streams,
+              stream_assignment.GetAsyncExecutionStreamIds(async_start));
+          // We launch the thunk sequence computation on a concurrent stream.
+          // The concurrent stream needs to first wait until the main stream has
+          // finished calculating any values that may be used as input.
+          // We enforce this by inlining a `WaitForStreams` thunk on the main
+          // stream.
+          AddThunkToThunkSequence(std::make_unique<WaitForStreamsThunk>(
+              Thunk::ThunkInfo::WithProfileAnnotation(instr),
+              async_streams.destination_stream_id,
+              async_streams.source_stream_id));
           AddThunkToThunkSequence(std::move(thunk_sequence));
           return absl::OkStatus();
         }
