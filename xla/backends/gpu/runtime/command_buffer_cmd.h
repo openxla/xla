@@ -801,12 +801,13 @@ class CublasLtCmd : public TracedCommandBufferCmd {
 
  private:
   absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetMatmulPlan(
-      const stream_executor::Stream* stream);
+      const se::Stream* stream);
 
   absl::StatusOr<se::gpu::BlasLt::MatmulAlgorithm> GetMatmulAlgorithm(
+      const se::Stream* stream,
       const se::gpu::BlasLt::MatmulPlan* plan, int64_t max_workspace);
 
-  absl::flat_hash_map<const stream_executor::Stream*,
+  absl::flat_hash_map<const se::Stream*,
                       se::gpu::BlasLt::MatmulPlanPtr>
       matmul_plans_cache_;
 

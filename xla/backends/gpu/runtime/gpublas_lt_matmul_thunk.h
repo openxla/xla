@@ -74,6 +74,7 @@ class CublasLtMatmulThunk : public Thunk {
   absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetMatmulPlan(
       const stream_executor::Stream* stream);
   absl::StatusOr<se::gpu::BlasLt::MatmulAlgorithm> GetMatmulAlgorithm(
+      const se::Stream* stream,
       const se::gpu::BlasLt::MatmulPlan* plan, int64_t max_workspace);
 
   absl::Mutex matmul_plans_cache_mutex_;
