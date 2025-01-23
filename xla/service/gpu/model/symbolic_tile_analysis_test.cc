@@ -168,7 +168,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
 
-  const TiledHloInstruction* root = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
 
   EXPECT_THAT(*root, MatchTiledHloInstruction(/*tile_sizes=*/{1, 10},
                                               /*tile_strides=*/{1, 1},
@@ -224,7 +224,7 @@ ENTRY main {
       TiledHloComputation tiled_hlo_computation,
       analysis->ComputeTiledHloInstructions(/*tile_parameters=*/{1, 10}));
 
-  const TiledHloInstruction* root = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
 
   auto p0_from_subtract0 = root->operand(0)->operand(0);
   auto p0_from_subtract1 = root->operand(1)->operand(0);
@@ -276,7 +276,7 @@ ENTRY main {
       TiledHloComputation tiled_hlo_computation,
       analysis.ComputeTiledHloInstructions(/*tile_parameters=*/{1, 97}));
 
-  const TiledHloInstruction* root = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
 
   const TiledHloInstruction* p0_from_producer =
       root->operand(1)->operand(0)->operand(0)->operand(0);
@@ -293,6 +293,53 @@ ENTRY main {
     tid_0 in [0, 1],
     tid_1 in [0, 0]
   )"));
+}
+
+TEST_F(SymbolicTileAnalysisTest,
+       ProducerConsumerFusionWithExtraOutputIsSupported) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule ProducerConsumerFusionWithExtraOutputIsSupported
+
+max_computation {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT a = f32[] maximum(p0, p1)
+}
+
+fusion {
+  param_0 = f32[2048,8192] parameter(0)
+  ROOT abs = f32[2048,8192] abs(param_0)
+}
+
+fusion.1 {
+  param_0.1 = f32[2048,8192] parameter(0)
+  constant = f32[] constant(-inf)
+  ROOT reduce = f32[8192] reduce(param_0.1, constant), dimensions={0}, to_apply=max_computation
+}
+
+ENTRY main {
+  param_0.2 = f32[2048,8192]{1,0} parameter(0)
+  producer = f32[2048,8192]{1,0} fusion(param_0.2), kind=kCustom, calls=fusion
+  consumer = f32[8192]{0} fusion(producer), kind=kCustom, calls=fusion.1
+  ROOT res = (f32[8192]{0}, f32[2048,8192]{1,0}) tuple(consumer, producer)
+})"));
+
+  const auto* consumer =
+      module->entry_computation()->root_instruction()->operand(0);
+  const auto* producer = consumer->operand(0);
+
+  auto fusion = HloFusionAdaptor::ForProducerConsumer(
+      producer, consumer, /*with_extra_outputs=*/true);
+
+  SymbolicTileAnalysisOrError analysis_or_error =
+      SymbolicTileAnalysis::AnalyzeFusion(*fusion, &mlir_context_);
+  ASSERT_TRUE(std::holds_alternative<SymbolicTileAnalysis>(analysis_or_error));
+  SymbolicTileAnalysis analysis =
+      std::get<SymbolicTileAnalysis>(std::move(analysis_or_error));
+  EXPECT_THAT(analysis.GetRoots(),
+              ::testing::ElementsAre(consumer->fused_expression_root(),
+                                     producer->fused_expression_root()));
 }
 
 TEST_F(SymbolicTileAnalysisTest, TransposeOffsetIndexingIsCorrect) {
@@ -316,7 +363,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
 
-  const TiledHloInstruction* root = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
 
   EXPECT_THAT(*root, MatchTiledHloInstruction(
                          /*tile_sizes=*/{2, 4, 2}, /*tile_strides=*/{1, 1, 1},
@@ -363,7 +410,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
 
-  const TiledHloInstruction* root = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* root = tiled_hlo_computation.GetRoots()[0];
   const TiledHloInstruction* p0_from_slice0 = root->operand(0)->operand(0);
   const TiledHloInstruction* p0_from_slice1 = root->operand(1)->operand(0);
 
@@ -421,7 +468,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
 
-  const TiledHloInstruction* dot = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* dot = tiled_hlo_computation.GetRoots()[0];
   EXPECT_THAT(*dot, MatchTiledHloInstruction(
                         /*tile_sizes=*/{2, 2}, /*tile_strides=*/{1, 1},
                         /*tile_offsets_indexing=*/R"(
@@ -926,7 +973,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/true));
 
-  EXPECT_THAT(*tiled_hlo_computation.GetRoot(),
+  EXPECT_THAT(*tiled_hlo_computation.GetRoots()[0],
               MatchTiledHloInstruction(
                   /*tile_sizes=*/{1, 1},
                   /*tile_strides=*/{1, 1},
@@ -979,7 +1026,7 @@ ENTRY main {
           /*compute_all_tile_offset_indexing_maps=*/true));
 
   const TiledHloInstruction* dynamic_slice =
-      tiled_hlo_computation.GetRoot()->operand(0);
+      tiled_hlo_computation.GetRoots()[0]->operand(0);
   const TiledHloInstruction* param_0_tile = dynamic_slice->operand(0);
 
   EXPECT_THAT(*dynamic_slice, MatchTiledHloInstruction(
@@ -1095,7 +1142,7 @@ ENTRY main {
                               /*constraints_are_known_satisfied=*/false,
                               /*compute_all_tile_offset_indexing_maps=*/false));
 
-  const TiledHloInstruction* iota = tiled_hlo_computation.GetRoot();
+  const TiledHloInstruction* iota = tiled_hlo_computation.GetRoots()[0];
   EXPECT_THAT(iota->tile_offsets_indexing().status(), ::tsl::testing::IsOk());
 }
 
