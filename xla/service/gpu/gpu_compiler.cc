@@ -1158,6 +1158,14 @@ absl::Status RunPostFusionCollectiveOptimizationPasses(HloModule* hlo_module) {
   for (auto collective_op_type : hlo_module->config()
                                      .debug_options()
                                      .xla_gpu_disable_async_collectives()) {
+    if (collective_op_type == DebugOptions::ALLCOLLECTIVES) {
+      for (int64_t i = DebugOptions::ALLREDUCE;
+           i < DebugOptions::ALLCOLLECTIVES; i++) {
+        disabled_async_ops.insert(
+            static_cast<DebugOptions::CollectiveOpType>(i));
+      }
+      break;
+    }
     disabled_async_ops.insert(
         static_cast<DebugOptions::CollectiveOpType>(collective_op_type));
   }
