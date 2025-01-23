@@ -43,7 +43,8 @@ absl::Status RunHloBenchmark(benchmark::State& state,
                              absl::string_view hlo_module,
                              absl::Span<const Literal* const> args,
                              StrToStrMapping replacements,
-                             bool disable_parallel_task_assigner) {
+                             bool disable_parallel_task_assigner,
+                             bool use_thunk_runtime) {
   xla::CpuClientOptions options;
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
                       xla::GetXlaPjrtCpuClient(options));
@@ -61,6 +62,12 @@ absl::Status RunHloBenchmark(benchmark::State& state,
   if (disable_parallel_task_assigner) {
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
+  }
+  // TODO(intel-tf): Remove this once oneDNN custom calls are enabled with thunk
+  // runtime
+  if (!use_thunk_runtime) {
+    compile_options.executable_build_options.mutable_debug_options()
+        ->set_xla_cpu_use_thunk_runtime(false);
   }
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtLoadedExecutable> executable,
                       client->Compile(computation, compile_options));
@@ -125,7 +132,8 @@ absl::Status RunHloBenchmark(benchmark::State& state,
 absl::Status CompileHloBenchmark(benchmark::State& state,
                                  absl::string_view hlo_module,
                                  StrToStrMapping replacements,
-                                 bool disable_parallel_task_assigner) {
+                                 bool disable_parallel_task_assigner,
+                                 bool use_thunk_runtime) {
   xla::CpuClientOptions options;
   TF_ASSIGN_OR_RETURN(std::unique_ptr<PjRtClient> client,
                       xla::GetXlaPjrtCpuClient(options));
@@ -141,6 +149,12 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
   if (disable_parallel_task_assigner) {
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
+  }
+  // TODO(intel-tf): Remove this once oneDNN custom calls are enabled with thunk
+  // runtime
+  if (!use_thunk_runtime) {
+    compile_options.executable_build_options.mutable_debug_options()
+        ->set_xla_cpu_use_thunk_runtime(false);
   }
 
   for (auto _ : state) {

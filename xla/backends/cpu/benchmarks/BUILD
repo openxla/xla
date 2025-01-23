@@ -1,5 +1,6 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl:tsl.bzl", "tsl_copts")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -279,6 +280,25 @@ xla_cc_test(
 xla_cc_test(
     name = "pad_benchmark_test",
     srcs = ["pad_benchmark_test.cc"],
+    deps = [
+        ":hlo_benchmark_runner",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "onednn_util_benchmark_test",
+    srcs = ["onednn_util_benchmark_test.cc"],
+    copts = tsl_copts(),
     deps = [
         ":hlo_benchmark_runner",
         "//xla:literal",

@@ -76,7 +76,7 @@ TEST_P(MemoryUtilTest, VerifyMemRefTest) {
 
   Shape shape = ShapeUtil::MakeShape(F32, GetParam());
   llvm::Argument* ptr = function->getArg(0);
-  llvm::Type* type = llvm_ir::PrimitiveTypeToIrType(F32, &module);
+  llvm::Type* type = llvm_ir::PrimitiveTypeToIrType(F32, builder.getContext());
 
   if (shape.IsArray()) {
     for (auto dim : LayoutUtil::MinorToMajor(shape)) {
