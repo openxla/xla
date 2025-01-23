@@ -25,6 +25,7 @@ limitations under the License.
 #else
 #include "rocm/include/hipblaslt.h"
 #endif
+#include "rocm/include/hipblas/hipblas.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/env.h"
 
