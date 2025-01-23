@@ -1251,6 +1251,8 @@ TEST_F(CommandBufferSchedulingTest, ReturnTrueWhenOnlyParamMoved) {
 
 TEST_F(CommandBufferSchedulingTest,
        DynamicSliceFusionWithDynamicAddressesNotACommand) {
+  // This is not implemented yet. Once this is implemented in codegen, we can
+  // remove this test.
   if (backend().platform()->Name() == "Host") {
     GTEST_SKIP() << "This test requires GPU.";
   }
@@ -1287,8 +1289,9 @@ TEST_F(CommandBufferSchedulingTest,
       .set_xla_gpu_enable_dynamic_slice_fusion(true);
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_opt,
                           GetOptimizedModule(m->Clone()));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
-                          CreateExecutable(m_opt->Clone(), false));
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> exec,
+      CreateExecutable(std::move(m_opt), /*run_hlo_passes=*/false));
   HloInstruction* fusion_start =
       FindInstruction(&exec->module(), HloOpcode::kAsyncStart);
   HloInstruction* fusion_done =
@@ -1297,9 +1300,10 @@ TEST_F(CommandBufferSchedulingTest,
   ASSERT_NE(fusion_done, nullptr);
   EXPECT_EQ(fusion_start->parent(), exec->module().entry_computation());
   EXPECT_EQ(fusion_done->parent(), exec->module().entry_computation());
-  ErrorSpec error{1e-6, 1e-6};
-  RunAndCompareTwoModulesReplicated(std::move(m_ref), std::move(m), true, true,
-                                    error);
+  RunAndCompareTwoModulesReplicated(std::move(m_ref), std::move(m),
+                                    /*run_hlo_passes=*/true,
+                                    /*use_threads=*/true,
+                                    /*error=*/std::nullopt);
 }
 
 }  // namespace

@@ -3275,35 +3275,35 @@ TEST_F(DynamicSliceFusionTest,
   const char* hlo = R"(
     HloModule test-clone, replica_count=2
 
-    %add.clone (x: s32[], y: s32[]) -> s32[] {
-      %x = s32[] parameter(0)
-      %y = s32[] parameter(1)
-      ROOT %add.3 = s32[] add(%x, %y)
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
     }
 
-    %dynamic-slice-fusion.clone (p0.1: s32[8,32], p1.1: s32[2,2,32], p2.1: s32[], p3.1: s32[]) -> s32[2,2,32] {
-      %p1.1 = s32[2,2,32]{2,1,0} parameter(1)
-      %p0.1 = s32[8,32]{1,0} parameter(0)
-      %slice.5 = s32[4,32]{1,0} slice(%p0.1), slice={[4:8], [0:32]}
-      %rs.2 = s32[2,32]{1,0} reduce-scatter(%slice.5), replica_groups={{0,1}}, dimensions={0}, to_apply=%add.clone
-      %bitcast.74 = s32[1,2,32]{2,1,0} bitcast(%rs.2)
-      %p2.1 = s32[] parameter(2)
-      %p3.1 = s32[] parameter(3)
-      ROOT %dynamic-update-slice.4 = s32[2,2,32]{2,1,0} dynamic-update-slice(%p1.1, %bitcast.74, %p2.1, %p3.1, %p3.1)
+    dynamic-slice-fusion {
+      p1 = s32[2,2,32]{2,1,0} parameter(1)
+      p0 = s32[8,32]{1,0} parameter(0)
+      slice = s32[4,32]{1,0} slice(p0), slice={[4:8], [0:32]}
+      rs = s32[2,32]{1,0} reduce-scatter(slice), replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      bitcast = s32[1,2,32]{2,1,0} bitcast(rs)
+      p2 = s32[] parameter(2)
+      p3 = s32[] parameter(3)
+      ROOT dynamic-update-slice = s32[2,2,32]{2,1,0} dynamic-update-slice(p1, bitcast, p2, p3, p3)
     }
 
-    ENTRY %main.clone (destination.1: s32[2,2,32], source.1: s32[8,32], a.1: s32[1024,1024], b.1: s32[1024,1024]) -> (s32[2,2,32], s32[1024,1024]) {
-      %source.1 = s32[8,32]{1,0} parameter(1)
-      %destination.1 = s32[2,2,32]{2,1,0} parameter(0)
-      %copy.1 = s32[2,2,32]{2,1,0} copy(%destination.1)
-      %c1_1 = s32[] constant(1)
-      %c0_1 = s32[] constant(0)
-      %fusion-start.1 = ((s32[8,32]{1,0}, s32[2,2,32]{2,1,0}, s32[], s32[]), s32[2,2,32]{2,1,0}, u32[]) fusion-start(%source.1, %copy.1, %c1_1, %c0_1), kind=kCustom, calls=%dynamic-slice-fusion.clone, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation","kernel_index":0}},"force_earliest_schedule":false}
-      %fusion-done.1 = s32[2,2,32]{2,1,0} fusion-done(%fusion-start.1), backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation","kernel_index":0}},"force_earliest_schedule":false}
-      %a.1 = s32[1024,1024]{1,0} parameter(2)
-      %b.1 = s32[1024,1024]{1,0} parameter(3)
-      %dot.1 = s32[1024,1024]{1,0} dot(%a.1, %b.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-      ROOT %tuple.1 = (s32[2,2,32]{2,1,0}, s32[1024,1024]{1,0}) tuple(%fusion-done.1, %dot.1)
+    ENTRY main {
+      source = s32[8,32]{1,0} parameter(1)
+      destination = s32[2,2,32]{2,1,0} parameter(0)
+      copy = s32[2,2,32]{2,1,0} copy(destination)
+      c1 = s32[] constant(1)
+      c0 = s32[] constant(0)
+      fusion-start = ((s32[8,32]{1,0}, s32[2,2,32]{2,1,0}, s32[], s32[]), s32[2,2,32]{2,1,0}, u32[]) fusion-start(source, copy, c1, c0), kind=kCustom, calls=dynamic-slice-fusion, backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
+      fusion-done = s32[2,2,32]{2,1,0} fusion-done(fusion-start), backend_config={"fusion_backend_config":{"kind":"__custom_fusion","custom_fusion_config":{"name":"dynamic_address_computation"}}}
+      a = s32[1024,1024]{1,0} parameter(2)
+      b = s32[1024,1024]{1,0} parameter(3)
+      dot = s32[1024,1024]{1,0} dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT tuple = (s32[2,2,32]{2,1,0}, s32[1024,1024]{1,0}) tuple(fusion-done, dot)
     }
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,

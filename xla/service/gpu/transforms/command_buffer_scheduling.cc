@@ -110,17 +110,13 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
       // Currently only supporting static address computation in command buffer.
+
       if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
-        if (std::optional<std::string> config_name =
-                GetCustomFusionConfigName(hlo->async_wrapped_instruction());
-            config_name.has_value() &&
-            config_name ==
-                kDynamicSliceFusionWithStaticAddressComputationConfigName) {
-          return config.enabled_commands.contains(
-              DebugOptions::DYNAMIC_SLICE_FUSION);
-        } else {
-          return false;
-        }
+        bool is_static_ds_fusion =
+            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
+            kDynamicSliceFusionWithStaticAddressComputationConfigName;
+        return is_static_ds_fusion && config.enabled_commands.contains(
+                                          DebugOptions::DYNAMIC_SLICE_FUSION);
       } else {
         return config.enabled_commands.contains(DebugOptions::FUSION);
       }
@@ -152,16 +148,11 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
       // Currently only supporting static address computation in command buffer.
       if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
-        if (std::optional<std::string> config_name =
-                GetCustomFusionConfigName(hlo->async_wrapped_instruction());
-            config_name.has_value() &&
-            config_name ==
-                kDynamicSliceFusionWithStaticAddressComputationConfigName) {
-          return config.enabled_commands.contains(
-              DebugOptions::DYNAMIC_SLICE_FUSION);
-        } else {
-          return false;
-        }
+        bool is_static_ds_fusion =
+            GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
+            kDynamicSliceFusionWithStaticAddressComputationConfigName;
+        return is_static_ds_fusion && config.enabled_commands.contains(
+                                          DebugOptions::DYNAMIC_SLICE_FUSION);
       } else {
         return config.enabled_commands.contains(DebugOptions::FUSION);
       }

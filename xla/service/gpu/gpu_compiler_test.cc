@@ -1843,10 +1843,10 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionWithCollectiveShouldWrapInAsync) {
                    kExpected));
   EXPECT_TRUE(filecheck_matched);
 
-  ErrorSpec error{1e-5, 1e-5};
   RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
                                     /*run_hlo_passes=*/true,
-                                    /*use_threads=*/true, error);
+                                    /*use_threads=*/true, std::nullopt);
+}
 
 }  // namespace
 }  // namespace gpu
