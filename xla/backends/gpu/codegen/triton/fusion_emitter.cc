@@ -697,9 +697,10 @@ absl::StatusOr<ScalarOrTensor> EmitTiledHloInstruction(
       absl::StrCat("Unsupported operation ", hlo->ToString()));
 }
 
-// Emit sequence of instructions using compatible tiling ordered producers
-// before consumers.
-absl::StatusOr<ScalarOrTensor> EmitTiledComputation(
+// Emit a sequence of instructions using compatible tiling with producers
+// ordered before consumers in `tiled_computation`. Returns the results for the
+// roots of `tiled_computation`.
+absl::StatusOr<std::vector<ScalarOrTensor>> EmitTiledComputation(
     EmitterLocOpBuilder& b, absl::string_view libdevice_path,
     const se::DeviceDescription& device_info,
     const HloFusionInstruction* fusion,
@@ -717,7 +718,12 @@ absl::StatusOr<ScalarOrTensor> EmitTiledComputation(
     VLOG(8) << "Emitted "
             << tiled_hlo->hlo()->ToString(HloPrintOptions::ShortParsable());
   }
-  return values[tiled_computation.GetRoot()];
+  std::vector<ScalarOrTensor> results;
+  results.reserve(tiled_computation.GetRoots().size());
+  for (const auto* root : tiled_computation.GetRoots()) {
+    results.push_back(values[root]);
+  }
+  return std::move(results);
 }
 
 // Emit sequence of instructions using compatible tiling ordered producers
@@ -969,41 +975,40 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
           b, tiled_hlo_computation.num_output_tiles_per_dim());
 
   TF_ASSIGN_OR_RETURN(
-      ScalarOrTensor result,
+      auto results,
       EmitTiledComputation(b, libdevice_path, device_info, fusion,
                            tiled_hlo_computation, fn, tile_multi_index));
 
-  // Some types are stored using different types, e.g. i1 is stored in memory
-  // as i8. It's important to type checking that we perform a conversion before
-  // storing if the type of the result does not match the type of the output
-  // pointer.
-  Type result_element_type = getElementTypeOrSelf(result.getType());
-  Type result_storage_type = StorageType(b, result_element_type);
+  for (auto [root, result, parent_base_ptr] :
+       llvm::zip(tiled_hlo_computation.GetRoots(), results,
+                 fn.getArguments().drop_front(computation->num_parameters()))) {
+    // Some types are stored using different types, e.g. i1 is stored in memory
+    // as i8. It's important to type checking that we perform a conversion
+    // before storing if the type of the result does not match the type of the
+    // output pointer.
+    Type result_element_type = getElementTypeOrSelf(result.getType());
+    Type result_storage_type = StorageType(b, result_element_type);
 
-  if (result_element_type != result_storage_type) {
-    result =
-        ScalarOrTensor(Cast(b, result.UnwrapUnsafe(), result_storage_type));
+    if (result_element_type != result_storage_type) {
+      result =
+          ScalarOrTensor(Cast(b, result.UnwrapUnsafe(), result_storage_type));
+    }
+
+    if (result.IsScalar()) {
+      b.create<ttir::StoreOp>(parent_base_ptr, result.UnwrapScalar(),
+                              ttir::CacheModifier::NONE,
+                              ttir::EvictionPolicy::NORMAL);
+      return absl::OkStatus();
+    }
+
+    CHECK(root->hlo()->shape().IsArray() && root->hlo()->shape().rank() > 0);
+    TF_ASSIGN_OR_RETURN(auto make_tensor,
+                        ir_emitter_triton_internal::CreateMakeTensorPtrOp(
+                            b, tile_multi_index, *root, parent_base_ptr));
+    b.create<ttir::StoreOp>(
+        make_tensor.op, result.UnwrapTensor(), make_tensor.boundary_checks,
+        ttir::CacheModifier::NONE, ttir::EvictionPolicy::NORMAL);
   }
-
-  const auto& tiled_hlo = *tiled_hlo_computation.GetRoot();
-
-  Value parent_base_ptr = fn.getArgument(computation->num_parameters());
-
-  if (result.IsScalar()) {
-    b.create<ttir::StoreOp>(parent_base_ptr, result.UnwrapScalar(),
-                            ttir::CacheModifier::NONE,
-                            ttir::EvictionPolicy::NORMAL);
-    return absl::OkStatus();
-  }
-
-  CHECK(tiled_hlo.hlo()->shape().IsArray() &&
-        tiled_hlo.hlo()->shape().rank() > 0);
-  TF_ASSIGN_OR_RETURN(auto make_tensor,
-                      ir_emitter_triton_internal::CreateMakeTensorPtrOp(
-                          b, tile_multi_index, tiled_hlo, parent_base_ptr));
-  b.create<ttir::StoreOp>(
-      make_tensor.op, result.UnwrapTensor(), make_tensor.boundary_checks,
-      ttir::CacheModifier::NONE, ttir::EvictionPolicy::NORMAL);
 
   return absl::OkStatus();
 }

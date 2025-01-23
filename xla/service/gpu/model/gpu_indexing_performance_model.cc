@@ -495,19 +495,25 @@ GpuPerformanceModelWithIndexingAnalysis::EstimateRunTimeForTiledHloComputation(
         operand_read_info.read_bandwidth_utilization_rate);
   }
 
-  int64_t bytes_written =
-      GetShapeSizeRecursive(tiled_hlo_computation.GetRoot()->hlo()->shape());
+  auto roots = tiled_hlo_computation.GetRoots();
+  int64_t bytes_written = 0;
+  absl::Duration write_time;
+  for (auto* root : roots) {
+    int64_t effective_bandwidth =
+        BandwidthUtilizationRateHeuristicForTiledMemoryAccess(*root,
+                                                              *device_info_) *
+        device_info_->memory_bandwidth();
+    int64_t bytes_written_for_root =
+        GetShapeSizeRecursive(root->hlo()->shape());
+    write_time +=
+        absl::Seconds(1.0 * bytes_written_for_root / effective_bandwidth);
+    bytes_written += bytes_written_for_root;
+  }
 
   absl::Duration compute_time =
       ComputeTime(*device_info_, flops, launch_dimensions.num_blocks(),
                   launch_dimensions.num_threads_per_block());
 
-  int64_t effective_bandwidth =
-      BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
-          *tiled_hlo_computation.GetRoot(), *device_info_) *
-      device_info_->memory_bandwidth();
-  absl::Duration write_time =
-      absl::Seconds(1.0 * bytes_written / effective_bandwidth);
   absl::Duration memory_access_time = read_time + write_time;
   absl::Duration exec_time = CombineComputeAndMemoryAccessTime(
       compute_time, memory_access_time, GpuPerformanceModelOptions::Default());
