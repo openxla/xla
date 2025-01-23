@@ -147,7 +147,7 @@ cc_library(
 
 cc_library(
     name = "rocm_hip",
-    srcs = glob(["%{rocm_root}/lib/libamdhip*.so"]),
+    srcs = glob(["%{rocm_root}/lib/libamdhip*.so.6*"]),
     hdrs = glob(["%{rocm_root}/include/hip/**"]),
     include_prefix = "rocm",
     includes = [
