@@ -1,9 +1,9 @@
 # Common computation builders for XLA.
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tests:build_defs.bzl", "generate_backend_suites", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -50,7 +50,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -79,18 +79,18 @@ xla_test(
         ":comparators",
         ":constants",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:test",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -136,12 +136,12 @@ xla_test(
     deps = [
         ":constants",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -232,10 +232,6 @@ xla_test(
     name = "math_test",
     timeout = "long",
     srcs = ["math_test.cc"],
-    backend_tags = {
-        # Times out.
-        "ghostfish_iss": ["noasan"],
-    },
     deps = [
         ":constants",
         ":math",
@@ -244,16 +240,15 @@ xla_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/service",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -295,15 +290,15 @@ xla_test(
         "//xla:array2d",
         "//xla:array3d",
         "//xla:array4d",
-        "//xla:test",
         "//xla:types",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -342,7 +337,7 @@ xla_test(
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -371,14 +366,14 @@ xla_test(
         ":constants",
         ":prng",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -412,14 +407,14 @@ xla_test(
         "//xla:array3d",
         "//xla:error_spec",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -497,8 +492,8 @@ xla_test(
         "//xla/hlo/builder:xla_builder",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -536,7 +531,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/algorithm:container",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -564,14 +559,14 @@ xla_test(
     deps = [
         ":quantize",
         "//xla:array2d",
-        "//xla:test",
         "//xla:types",
         "//xla:util",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:bfloat16",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -608,16 +603,16 @@ xla_test(
         "//xla:array3d",
         "//xla:error_spec",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -666,7 +661,7 @@ xla_test(
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -684,6 +679,7 @@ cc_library(
         "//xla/hlo/builder:xla_builder",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
@@ -703,14 +699,14 @@ xla_test(
         "//xla:array3d",
         "//xla:literal",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:util",
         "//xla/hlo/builder:xla_builder",
+        "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
         "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -749,7 +745,7 @@ xla_test(
         "//xla/hlo/builder:xla_builder",
         "//xla/tests:client_library_test_base",
         "//xla/tests:test_macros_header",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -781,7 +777,7 @@ xla_test(
         "//xla/hlo/builder:xla_builder",
         "//xla/service",
         "//xla/tests:client_library_test_base",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )

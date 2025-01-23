@@ -33,12 +33,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
-#include "xla/service/algebraic_simplifier.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_constant_folding.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/shape_inference.h"
@@ -86,12 +86,10 @@ absl::StatusOr<bool> ShiftDequantizationF8(HloComputation* while_body) {
     HloInstruction* operand = param_tuple->mutable_operand(k);
     // Capture bitcast, broadcast, copy, reshape and transpose ops between
     // dequantization and the loop.
-    while (operand->opcode() == HloOpcode::kBitcast ||
-           operand->opcode() == HloOpcode::kBroadcast ||
-           operand->opcode() == HloOpcode::kCopy ||
-           operand->opcode() == HloOpcode::kReshape ||
-           operand->opcode() == HloOpcode::kTranspose) {
-      unaries[k].emplace_back(operand);
+    while (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kBroadcast,
+                            HloOpcode::kCopy, HloOpcode::kReshape,
+                            HloOpcode::kTranspose>(operand)) {
+      unaries[k].push_back(operand);
       operand = operand->mutable_operand(0);
     }
     std::reverse(unaries[k].begin(), unaries[k].end());
@@ -353,6 +351,45 @@ static int64_t GetAgActivationCacheIndex(const HloInstruction* while_loop) {
   return tuple_shape.tuple_shapes_size() - 1;
 }
 
+bool FindDusSliceForCachedActivation(HloInstruction* inst,
+                                     HloInstruction** dus_boundary_constant,
+                                     HloInstruction** slice_indices,
+                                     bool is_first_slice) {
+  // We are only interested in DUS in the loop body.
+  if (HloPredicateIsNotOp<HloOpcode::kDynamicUpdateSlice>(inst)) {
+    return false;
+  }
+  // Check that the first operand of DUS is a:
+  // 1. GTE of loop input param in case of the first slice of data
+  // 2. DUS in case of the second slice of data from unrolled loop.
+  HloInstruction* dus_destination = inst->mutable_operand(0);
+  if (is_first_slice &&
+      !Match(dus_destination, m::GetTupleElement(m::Parameter()))) {
+    return false;
+  }
+  if (!is_first_slice && !Match(dus_destination, m::DynamicUpdateSlice())) {
+    return false;
+  }
+  HloInstruction* dus_constant = nullptr;
+  HloInstruction* dus_slice_index = nullptr;
+  // Now we loop through all the index operands to find boundary and slice
+  // index.
+  for (int64_t i = 2; i < inst->operand_count(); i++) {
+    if (!Match(inst->mutable_operand(i), m::Constant(&dus_constant)) &&
+        !Match(
+            inst->mutable_operand(i),
+            m::Reshape(m::DynamicSlice(&dus_slice_index, m::Op(), m::Op())))) {
+      return false;
+    }
+  }
+  if (!dus_constant || !dus_slice_index) {
+    return false;
+  }
+  *dus_boundary_constant = dus_constant;
+  *slice_indices = dus_slice_index;
+  return true;
+}
+
 absl::Status ProcessWindowedEinsumLoopForActivationCaching(
     WindowedEinsumHandler::WindowedEinsumAgLoops& ag_loop) {
   HloInstruction* loop = ag_loop.loop;
@@ -386,21 +423,19 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
   // collective-permute
   HloInstruction* first_cp_output;
   for (HloInstruction* gte_user : input_gte->users()) {
-    if (gte_user->opcode() == HloOpcode::kCollectivePermute) {
+    if (HloPredicateIsOp<HloOpcode::kCollectivePermute>(gte_user)) {
       first_cp_output = gte_user;
       break;
     }
   }
+
   for (HloInstruction* inst : while_body->MakeInstructionPostOrder()) {
     HloInstruction* slice_indices;
     // If we have a DUS(PARAM,DS) pattern, we need to update the output
     // buffer with the first slice.
-    if (Match(inst,
-              m::DynamicUpdateSlice(
-                  m::GetTupleElement(m::Parameter()), m::Op(),
-                  m::Constant(&dus_boundary_constant),
-                  m::Reshape(m::DynamicSlice(&slice_indices, m::Op(), m::Op())),
-                  m::Op()))) {
+    if (FindDusSliceForCachedActivation(inst, &dus_boundary_constant,
+                                        &slice_indices,
+                                        /*is_first_slice=*/true)) {
       slice_indices = while_body->AddInstruction(HloInstruction::CreateReshape(
           dus_boundary_constant->shape(), slice_indices));
       VLOG(5) << "Created slice op for first slice: "
@@ -415,11 +450,9 @@ absl::Status ProcessWindowedEinsumLoopForActivationCaching(
     // unrolled, we need to update the output buffer again with the
     // second slice. Since the second slice will have different indices,
     // we need to re-capture slice_indices.
-    if (Match(inst,
-              m::DynamicUpdateSlice(
-                  m::DynamicUpdateSlice(), m::Op(), m::Constant(),
-                  m::Reshape(m::DynamicSlice(&slice_indices, m::Op(), m::Op())),
-                  m::Op()))) {
+    if (FindDusSliceForCachedActivation(inst, &dus_boundary_constant,
+                                        &slice_indices,
+                                        /*is_first_slice=*/false)) {
       slice_indices = while_body->AddInstruction(HloInstruction::CreateReshape(
           dus_boundary_constant->shape(), slice_indices));
       VLOG(5) << "Created slice op for second slice: "
@@ -655,7 +688,7 @@ absl::Status PostProcessUnrolledLoop(HloInstruction* loop, int64_t stream_id) {
           SetForceDelayForInstruction(matched_cp, /*force_delay=*/true));
     }
 
-    if (inst->opcode() == HloOpcode::kDot) {
+    if (HloPredicateIsOp<HloOpcode::kDot>(inst)) {
       // Dispatch the dot to additional compute stream.
       TF_RETURN_IF_ERROR(UpdateDotAndConsumerConfig(inst, stream_id));
       ++stream_id;
@@ -711,7 +744,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         allowed_intermediate_ops.insert(allowed_intermediate_ops.end(),
                                         std::begin(curr->operands()),
                                         std::end(curr->operands()));
-      } else if (curr->opcode() == HloOpcode::kAllToAll &&
+      } else if (HloPredicateIsOp<HloOpcode::kAllToAll>(curr) &&
                  curr->user_count() == 1) {
         matched_a2a = DynCast<HloAllToAllInstruction>(curr);
         allowed_intermediate_ops.pop_back();
@@ -732,7 +765,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     int64_t split_dimension = *matched_a2a->split_dimension();
     for (int64_t i = allowed_intermediate_ops.size() - 1; i >= 0; i--) {
       HloInstruction* current_op = allowed_intermediate_ops[i];
-      if (current_op->opcode() == HloOpcode::kReshape) {
+      if (HloPredicateIsOp<HloOpcode::kReshape>(current_op)) {
         std::vector<std::pair<int64_t, int64_t>> unmodified_dims =
             ShapeUtil::DimensionsUnmodifiedByReshape(
                 current_op->operand(0)->shape(), current_op->shape());
@@ -751,7 +784,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         }
         // Assign the new split dim.
         split_dimension = it->second;
-      } else if (current_op->opcode() == HloOpcode::kTranspose) {
+      } else if (HloPredicateIsOp<HloOpcode::kTranspose>(current_op)) {
         const auto& transpose_dims = current_op->dimensions();
         for (int64_t j = 0; j < transpose_dims.size(); j++) {
           if ((int64_t)transpose_dims[j] == split_dimension) {
@@ -926,6 +959,12 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     // Rewrites an all-to-all+gemm into multiple independent partial a2a+gemms
     // to minimize communication overhead. To do this, the original input will
     // be sliced into replica_group size and perform all-to-all+gemm.
+    if (!dot->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_experimental_enable_alltoall_windowed_einsum()) {
+      return absl::OkStatus();
+    }
     HloInstruction* lhs;
     HloInstruction* rhs;
     std::vector<xla::ReplicaGroup> replica_groups;
@@ -1085,7 +1124,8 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         allowed_intermediate_ops.insert(allowed_intermediate_ops.end(),
                                         std::begin(curr->operands()),
                                         std::end(curr->operands()));
-      } else if (curr->opcode() == HloOpcode::kDot && curr->user_count() == 1) {
+      } else if (HloPredicateIsOp<HloOpcode::kDot>(curr) &&
+                 curr->user_count() == 1) {
         matched_dot = curr;
         allowed_intermediate_ops.pop_back();
         break;
@@ -1101,7 +1141,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     int64_t split_dimension = *a2a->split_dimension();
     for (int64_t i = 0; i < allowed_intermediate_ops.size(); i++) {
       HloInstruction* current_op = allowed_intermediate_ops[i];
-      if (current_op->opcode() == HloOpcode::kReshape) {
+      if (HloPredicateIsOp<HloOpcode::kReshape>(current_op)) {
         std::vector<std::pair<int64_t, int64_t>> unmodified_dims =
             ShapeUtil::DimensionsUnmodifiedByReshape(
                 current_op->operand(0)->shape(), current_op->shape());
@@ -1120,7 +1160,7 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
         }
         // Assign the new split dim.
         split_dimension = it->first;
-      } else if (current_op->opcode() == HloOpcode::kTranspose) {
+      } else if (HloPredicateIsOp<HloOpcode::kTranspose>(current_op)) {
         const auto& transpose_dims = current_op->dimensions();
         split_dimension = transpose_dims[split_dimension];
       }
@@ -1149,6 +1189,12 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
   absl::Status HandleAllToAll(HloInstruction* inst) override {
     CHECK_EQ(inst->opcode(), HloOpcode::kAllToAll);
     HloComputation* comp = inst->parent();
+    if (!inst->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_experimental_enable_alltoall_windowed_einsum()) {
+      return absl::OkStatus();
+    }
     // Rewrites a gemm+alltoall into multiple independent partial gemm+a2as
     // to minimize communication overhead.
     std::vector<xla::ReplicaGroup> replica_groups;

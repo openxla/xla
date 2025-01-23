@@ -5,24 +5,24 @@
 #   to other TF components outside of TSL.
 
 load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tsl_cc_test",
-)
-load(
-    "@tsl//tsl/platform:build_config_root.bzl",
-    "if_static",
-)
-load(
-    "@tsl//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
-load(
     "//xla/tsl:tsl.bzl",
     "check_deps",
     "internal_visibility",
     "tsl_copts",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tsl_cc_test",
+)
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "if_static",
+)
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -127,9 +127,9 @@ cc_library(
     srcs = ["byte_swap_array.cc"],
     hdrs = ["byte_swap_array.h"],
     deps = [
-        "@tsl//tsl/platform:byte_order",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
+        "//xla/tsl/platform:byte_order",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
     ],
 )
 
@@ -200,14 +200,14 @@ cc_library(
     srcs = ["env_var.cc"],
     hdrs = ["env_var.h"],
     deps = [
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform:numbers",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringpiece",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -220,14 +220,14 @@ cc_library(
         "@tsl//tsl:__subpackages__",
     ]),
     deps = [
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "//xla/tsl/protobuf:test_log_proto_cc",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:env_impl",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:str_util",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -243,6 +243,7 @@ cc_library(
     copts = tsl_copts(),
     visibility = internal_visibility([
         "//xla/tsl:internal",
+        "//xla/tsl/profiler:friends",
     ]),
 )
 
@@ -251,8 +252,8 @@ tsl_cc_test(
     srcs = ["stats_calculator_test.cc"],
     deps = [
         ":stats_calculator_portable",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -261,8 +262,8 @@ cc_library(
     srcs = ["device_name_utils.cc"],
     hdrs = ["device_name_utils.h"],
     deps = [
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
         "@tsl//tsl/platform:stringpiece",
     ],
 )
@@ -274,11 +275,11 @@ tsl_cc_test(
     deps = [
         ":device_name_utils",
         "//xla/tsl/lib/core:status_test_util",
-        "@tsl//tsl/platform:errors",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -287,12 +288,12 @@ cc_library(
     srcs = ["command_line_flags.cc"],
     hdrs = ["command_line_flags.h"],
     deps = [
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:stringprintf",
-        "@tsl//tsl/platform:types",
     ],
 )
 

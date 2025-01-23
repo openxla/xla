@@ -1,6 +1,6 @@
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -36,10 +36,12 @@ cc_library(
     deps = [
         ":attribute_importer",
         ":hlo_utils",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/mlir_hlo",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
@@ -150,7 +152,6 @@ cc_library(
     hdrs = ["hlo_to_mlir_hlo.h"],
     deps = [
         ":hlo_module_importer",
-        "//xla:status_macros",
         "//xla/mlir/utils:error_util",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/service/llvm_ir:llvm_util",
@@ -194,15 +195,15 @@ xla_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla/mlir_hlo",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -247,7 +248,7 @@ cc_library(
     deps = [
         ":hlo_to_mlir_hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/mlir_hlo",
+        "//xla/hlo/translate:stablehlo",
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/service:hlo_proto_cc",
         "//xla/service/llvm_ir:llvm_util",

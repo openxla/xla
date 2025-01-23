@@ -60,10 +60,10 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -184,10 +184,9 @@ char PjRtExecutable::ID = 0;
 char PjRtLoadedExecutable::ID = 0;
 
 absl::StatusOr<std::unique_ptr<Executable>> PjRtExecutable::Create(
-    std::shared_ptr<xla::PjRtExecutable> pjrt_executable,
-    std::unique_ptr<XlaCompileOptions> compile_options) {
-  return std::unique_ptr<Executable>(new PjRtExecutable(
-      std::move(pjrt_executable), std::move(compile_options)));
+    std::shared_ptr<xla::PjRtExecutable> pjrt_executable) {
+  return std::unique_ptr<Executable>(
+      new PjRtExecutable(std::move(pjrt_executable)));
 }
 
 absl::StatusOr<std::optional<std::string>> PjRtExecutable::Fingerprint() const {

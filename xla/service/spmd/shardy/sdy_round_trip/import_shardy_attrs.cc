@@ -18,6 +18,7 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -44,8 +45,7 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/mlir_hlo/mhlo/transforms/passes.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/service/spmd/shardy/utils.h"
 
@@ -65,14 +65,14 @@ using ::mlir::StringRef;
 using ::mlir::SymbolTable;
 using ::mlir::func::FuncOp;
 
-using ::mlir::mhlo::CustomCallOp;
-
 using ::mlir::sdy::kShardingAttr;
 using ::mlir::sdy::kShardingRuleAttr;
 using ::mlir::sdy::MeshAttr;
 using ::mlir::sdy::OpShardingRuleAttr;
 using ::mlir::sdy::TensorShardingAttr;
 using ::mlir::sdy::TensorShardingPerValueAttr;
+
+namespace stablehlo = ::mlir::stablehlo;
 
 // Builds the shardy attributes coming from Shardy previously. This means
 // the module was exported from Shardy and we are now round-tripping back.
@@ -108,13 +108,19 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter) {
     if (!dictAttr) {
       return;
     }
+    // `SendOp` and `RecvOp` can have a sharding when doing TPU callbacks
+    // through JAX.
+    if (mlir::isa<stablehlo::SendOp, stablehlo::RecvOp>(op)) {
+      op->setAttr(kShardingAttr, parseStringAttr<TensorShardingPerValueAttr>(
+                                     dictAttr, kShardingRoundTripAttr));
+    }
     // NOTE: we are only setting the sharding on known custom-calls. For any
     // other op that has a `kShardingRoundTripAttr` we discard it. XLA sometimes
     // creates new instructions, copying over the operand's frontend attrs,
     // which may mean the shapes are wrong when the new instruction is a reshape
     // for example. This does mean we can't fully round-trip b/w HLO and MLIR
     // after SDY propagation.
-    if (auto customCallOp = mlir::dyn_cast<CustomCallOp>(op)) {
+    if (auto customCallOp = mlir::dyn_cast<stablehlo::CustomCallOp>(op)) {
       StringRef targetName = customCallOp.getCallTargetName();
       if (targetName == kFuncResultShardingTargetName) {
         // This is a temporary CustomCallOp that holds the sharding from a
@@ -139,7 +145,8 @@ void convertShardyAttrs(FuncOp funcOp, IRRewriter& rewriter) {
       }
       if (targetName == kShardingCustomCallTargetName ||
           targetName == kSPMDFullToShardShapeCallTargetName ||
-          targetName == kSPMDShardToFullShapeCallTargetName) {
+          targetName == kSPMDShardToFullShapeCallTargetName ||
+          isPythonCallbackCustomCall(customCallOp)) {
         customCallOp->setAttr(kShardingAttr,
                               parseStringAttr<TensorShardingPerValueAttr>(
                                   dictAttr, kShardingRoundTripAttr));
@@ -165,17 +172,17 @@ class SdyRoundTripImportShardyAttrsPass
 
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation();
+
     // We can use the saved string attributes to restore the original mesh and
     // value shardings with the original mesh axis names and priorities on the
-    // sharding.
-    DictionaryAttr moduleDictAttr = getFrontendAttrs(moduleOp);
-    // If there is no `kMeshesRoundTripAttr, there were no meshes in the
-    // original Shardy model.
+    // sharding. If there is no `kMeshesRoundTripAttr, there were no meshes in
+    // the original Shardy model.
+    std::optional<DictionaryAttr> meshesAttr =
+        tryGetFrontendAttr<DictionaryAttr>(moduleOp, kMeshesRoundTripAttr);
     mlir::ArrayRef<NamedAttribute> sdyMeshes =
-        moduleDictAttr ? parseStringAttr<DictionaryAttr>(moduleDictAttr,
-                                                         kMeshesRoundTripAttr)
-                             .getValue()
-                       : mlir::ArrayRef<NamedAttribute>();
+        meshesAttr.has_value() ? meshesAttr.value().getValue()
+                               : mlir::ArrayRef<NamedAttribute>();
+
     IRRewriter rewriter(moduleOp);
     // Insert the meshes before any functions.
     rewriter.setInsertionPointToStart(moduleOp.getBody());

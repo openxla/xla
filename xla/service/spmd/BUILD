@@ -1,7 +1,7 @@
 # Description: SPMD partitioning pass.
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -40,6 +40,7 @@ cc_library(
         "//xla:literal_util",
         "//xla:protobuf_util",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
@@ -54,9 +55,9 @@ cc_library(
         "//xla/hlo/parser:hlo_lexer",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/hlo/transforms:flatten_call_graph",
-        "//xla/hlo/transforms:hlo_dce",
-        "//xla/hlo/transforms:tuple_simplifier",
+        "//xla/hlo/transforms/simplifiers:flatten_call_graph",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
+        "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/utils:hlo_query",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service:call_graph",
@@ -111,6 +112,8 @@ xla_cc_test(
         "//xla/tests:hlo_test_base",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
@@ -119,8 +122,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -273,7 +274,7 @@ xla_cc_test(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/hlo/transforms:rng_expander",
+        "//xla/hlo/transforms/expanders:rng_expander",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_verifier",

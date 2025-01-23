@@ -37,6 +37,7 @@ from typing import (
 
 import numpy as np
 
+from . import config
 from . import guard_lib
 from . import ifrt_programs
 from . import ifrt_proxy
@@ -73,6 +74,7 @@ class PrimitiveType(enum.IntEnum):
   U16: PrimitiveType
   U32: PrimitiveType
   U64: PrimitiveType
+  F4E2M1FN: PrimitiveType
   F8E3M4: PrimitiveType
   F8E4M3: PrimitiveType
   F8E4M3FN: PrimitiveType
@@ -80,6 +82,7 @@ class PrimitiveType(enum.IntEnum):
   F8E4M3FNUZ: PrimitiveType
   F8E5M2: PrimitiveType
   F8E5M2FNUZ: PrimitiveType
+  F8E8M0FNU: PrimitiveType
   BF16: PrimitiveType
   F16: PrimitiveType
   F32: PrimitiveType
@@ -91,6 +94,11 @@ class PrimitiveType(enum.IntEnum):
   TOKEN: PrimitiveType
 
 # === BEGIN xla_compiler.cc
+
+class ArrayCopySemantics(enum.IntEnum):
+  ALWAYS_COPY: ArrayCopySemantics
+  REUSE_INPUT: ArrayCopySemantics
+  DONATE_INPUT: ArrayCopySemantics
 
 class Layout:
   @overload
@@ -158,7 +166,12 @@ class ShapeIndex:
   def __repr__(self) -> str: ...
 
 class Literal:
+  def __init__(self, shape: Shape) -> Literal: ...
   def __repr__(self) -> str: ...
+  def __array__(
+      self, dtype: Optional[np.dtype] = None, copy: Optional[bool] = None
+  ) -> np.ndarray: ...
+  def shape(self) -> Shape: ...
 
 class XlaComputation:
   def __init__(self, serialized_hlo_module_proto: bytes) -> None: ...
@@ -283,6 +296,11 @@ def register_custom_call_partitioner(
 ) -> None: ...
 def encode_inspect_sharding_callback(handler: Any) -> bytes: ...
 
+class AutotuneCacheMode(enum.IntEnum):
+  UNSPECIFIED: AutotuneCacheMode
+  UPDATE: AutotuneCacheMode
+  READ: AutotuneCacheMode
+
 class DebugOptions:
   def __repr__(self) -> str: ...
   xla_cpu_enable_fast_math: bool
@@ -323,6 +341,7 @@ class DebugOptions:
   xla_gpu_kernel_cache_file: str
   xla_gpu_enable_llvm_module_compilation_parallelism: bool
   xla_gpu_per_fusion_autotune_cache_dir: str
+  xla_gpu_experimental_autotune_cache_mode: AutotuneCacheMode
 
 class CompiledMemoryStats:
   generated_code_size_in_bytes: int
@@ -357,6 +376,18 @@ class PrecisionConfig_Precision(enum.IntEnum):
   DEFAULT: int
   HIGH: int
   HIGHEST: int
+
+
+class ResultAccuracy_Mode(enum.IntEnum):
+  DEFAULT: int
+  HIGHEST: int
+  TOLERANCE: int
+
+class ResultAccuracy:
+  mode: ResultAccuracy_Mode
+  atol: float
+  rtol: float
+  ulps: int
 
 class OpSharding_Type(enum.IntEnum):
   REPLICATED: int
@@ -472,7 +503,7 @@ class PjRtLayout:
   def __eq__(self, other: PjRtLayout) -> bool: ...
   def __hash__(self) -> int: ...
   def __getstate__(self) -> Any: ...
-  def __setstate__(self, Any): ...
+  def __setstate__(self, _: Any): ...
   def _xla_layout(self) -> Layout: ...
 
 class GpuAllocatorConfig:
@@ -497,6 +528,7 @@ class HostBufferSemantics(enum.IntEnum):
 
 class Client:
   platform: str
+  _raw_platform: str
   platform_version: str
   runtime_type: str
   def device_count(self) -> int: ...
@@ -577,6 +609,7 @@ def get_tfrt_cpu_client(
     node_id: int = ...,
     num_nodes: int = ...,
     collectives: Optional[CpuCollectives] = ...,
+    num_devices: int | None = ...,
 ) -> Client: ...
 def get_gpu_client(
     asynchronous: bool = ...,
@@ -645,6 +678,7 @@ def batched_copy_array_to_devices_with_sharding(
     arrays: Sequence[ArrayImpl],
     devices: Sequence[List[Device]],
     sharding: Sequence[Any],
+    array_copy_semantics: Sequence[ArrayCopySemantics],
 ) -> Sequence[ArrayImpl]: ...
 
 def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
@@ -705,7 +739,6 @@ class LoadedExecutable:
   def get_parameter_layouts(self) -> List[Layout]: ...
   def get_output_layouts(self) -> List[Layout]: ...
   def keep_alive(self) -> None: ...
-  def compile_options(self) -> CompileOptions: ...
   def cost_analysis(self) -> Dict[str, Any]: ...
   traceback: Traceback
   fingerprint: Optional[bytes]
@@ -719,7 +752,6 @@ class Executable:
   def get_output_layouts(self) -> List[Layout]: ...
   def get_compiled_memory_stats(self) -> CompiledMemoryStats: ...
   def serialize(self) -> str: ...
-  def compile_options(self) -> CompileOptions: ...
   def cost_analysis(self) -> Dict[str, Any]: ...
 
 class DeviceTopology:
@@ -799,6 +831,8 @@ class DistributedRuntimeClient:
   def blocking_key_value_get_bytes(
       self, key: str, timeout_in_ms: int
   ) -> _Status: ...
+  def key_value_try_get(self, key: str) -> _Status: ...
+  def key_value_try_get_bytes(self, key: str) -> _Status: ...
   def key_value_dir_get(self, key: str) -> _Status: ...
   def key_value_dir_get_bytes(self, key: str) -> _Status: ...
   def key_value_set(self, key: str, value: str,
@@ -851,7 +885,7 @@ class PmapFunction:
 
 def weakref_lru_cache(
     cache_context_fn: Callable, call: Callable, maxsize=...
-): ...
+) -> WeakrefLRUCache: ...
 
 class DeviceList:
   def __init__(self, device_assignment: Tuple[Device, ...]): ...
@@ -966,6 +1000,22 @@ class FlattenCallGraph(HloPassInterface):
 
 class TupleSimplifer(HloPassInterface):
   def __init__(self) -> None: ...
+
+class WeakrefLRUCacheInfo:
+  @property
+  def hits(self) -> int: ...
+  @property
+  def misses(self) -> int: ...
+  @property
+  def maxsize(self) -> int: ...
+  @property
+  def currsize(self) -> int: ...
+
+class WeakrefLRUCache:
+  def __call__(self, weakref_key: Any, *args, **kwargs) -> Any: ...
+  def cache_keys(self) -> list[Any]: ...
+  def cache_info(self) -> WeakrefLRUCacheInfo: ...
+  def cache_clear(self): ...
 
 def is_asan() -> bool: ...
 def is_msan() -> bool: ...

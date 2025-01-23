@@ -90,6 +90,11 @@ class Allocation {
   // Returns the cross-program prefetch index for this allocation.
   std::optional<int64_t> cross_program_prefetch_index() const;
 
+  void set_split_shape(const std::optional<Shape>& split_shape) {
+    split_shape_ = split_shape;
+  }
+  std::optional<Shape> mutable_split_shape() { return split_shape_; }
+
   // Allocation timing methods
   // --------------------------------------------------------------------------
   // TODO(cl/604356742): update all timing methods to explicitly state that
@@ -127,6 +132,7 @@ class Allocation {
   bool has_no_uses() const { return uses_.empty(); }
   // Adds a use to this allocation.
   void AddUse(HloUse use);
+  void RemoveUse(HloUse use);
   // Replaces all uses of the allocation with the copy_complete instruction.
   absl::Status UpdateUses(HloComputation* computation,
                           HloInstruction* producing_instruction);
@@ -190,6 +196,8 @@ class Allocation {
   const bool is_scoped_allocation_;
   std::vector<HloUse> uses_;
   std::optional<int64_t> cross_program_prefetch_index_;
+  // If present, indicates the newly split shape.
+  std::optional<Shape> split_shape_;
 };
 
 using AllocationSequence = std::vector<std::unique_ptr<Allocation>>;
@@ -238,8 +246,6 @@ class PinnedAllocation final : public Allocation {
 // before `copy_done_schedule_before_time`.
 class CopyAllocation final : public Allocation {
  public:
-  // TODO(b/307342076): Reorder scheduling times to be
-  // copy_start_schedule_after_time, copy_done_schedule_before_time, end_time
   CopyAllocation(
       Allocation& prev_allocation, MemorySpace memory_space,
       std::optional<HeapSimulator::Chunk> chunk,

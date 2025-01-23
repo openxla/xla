@@ -180,7 +180,7 @@ class BufferAllocation {
   // to identify the memory range that a LogicalBuffer corresponds to.
   class Slice {
    public:
-    Slice() {}
+    Slice() = default;
     Slice(const BufferAllocation* allocation, int64_t offset, int64_t size)
         : allocation_(allocation), offset_(offset), size_(size) {}
 
@@ -373,7 +373,7 @@ class BufferAllocation {
 };
 
 // Add stream operators for nicer output of CHECK/RET_CHECK failures.
-std::ostream& operator<<(std::ostream& out, const BufferAllocation& s);
+std::ostream& operator<<(std::ostream& out, const BufferAllocation& buffer);
 std::ostream& operator<<(std::ostream& out, const BufferAllocation::Slice& s);
 
 // This class encapsulates an assignment of the LogicalBuffers in an XLA
@@ -518,6 +518,11 @@ class BufferAssignment {
       BufferValue::SizeFunction buffer_size,
       HloDataflowAnalysis::CanShareBuffer can_share_buffer);
 
+  // Returns string representation of buffer assignment statistics. Also
+  // calculates and returns the total fragmentation if
+  // report_total_fragmentation is true.
+  std::string StatsString(bool report_total_fragmentation = false) const;
+
   // Statistics for the assignment.  Values initialized to -1 are not always
   // collected; fragmentation is only collected for instructions that have a
   // sequential total ordering.
@@ -533,9 +538,6 @@ class BufferAssignment {
     int64_t preallocated_temp_fragmentation_bytes = -1;
     int64_t total_allocation_count = 0;
     int64_t total_allocation_bytes = 0;
-    int64_t total_fragmentation_bytes = -1;
-
-    std::string ToString() const;
   };
   const Stats& GetStats() const { return stats_; }
 
@@ -603,7 +605,10 @@ class BufferAssignment {
       std::optional<BufferValue::Color> temp_buffer_color);
 
   // Computes stats for the assignment, to be retrieved by GetStats.
-  absl::Status ComputeSummaryStats();
+  void ComputeSummaryStats();
+
+  // Calculates and returns the total fragmentation in bytes.
+  absl::StatusOr<int64_t> ComputeTotalFragmentationBytes() const;
 
   // The vector of buffer allocations. Indexed by BufferAllocation::Index.
   std::vector<BufferAllocation> allocations_;

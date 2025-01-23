@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+
 #include "xla/error_spec.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -29,9 +31,9 @@ limitations under the License.
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
 #include "xla/shape_util.h"
-#include "xla/test_helpers.h"
 #include "xla/tests/client_library_test_base.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/xla_data.pb.h"

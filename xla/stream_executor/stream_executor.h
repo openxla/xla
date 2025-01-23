@@ -31,10 +31,13 @@ limitations under the License.
 #include "xla/stream_executor/allocator_stats.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event.h"
+#include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -46,19 +49,6 @@ namespace stream_executor {
 
 // Identifies the memory space where an allocation resides.
 enum class MemoryType { kDevice = 0, kUnified, kCollective, kHost = 5 };
-
-inline std::string MemoryTypeString(MemoryType memory_type) {
-  switch (memory_type) {
-    case MemoryType::kDevice:
-      return "device";
-    case MemoryType::kUnified:
-      return "unified";
-    case MemoryType::kCollective:
-      return "collective";
-    case MemoryType::kHost:
-      return "host";
-  }
-}
 
 /// The StreamExecutor is a single-device abstraction for:
 //
@@ -353,6 +343,15 @@ class StreamExecutor {
   // Sets the argument logging mode. Returns true if 'mode' is valid.
   // The mode is a bitmask of the kLog* constants.
   virtual bool SetArgumentLoggingMode(uint64_t mode) { return false; }
+
+  // Creates, allocates, and copies a CUtensorMap object for the given TMA
+  // descriptor.  Returns a DeviceMemoryBase pointing to the allocated
+  // CUtensorMap object to be used as an argument to a kernel.
+  // Only implemented on CUDA GPUs.
+  virtual absl::StatusOr<DeviceMemoryBase> CreateTensorMap(
+      gpu::TmaDescriptor tma_desc, void* global_address) {
+    return absl::UnimplementedError("Not Implemented");
+  }
 };
 
 template <typename T>

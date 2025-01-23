@@ -13,13 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "xla/backends/cpu/runtime/convolution_thunk.h"
-
 #define EIGEN_USE_THREADS
 
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "absl/container/inlined_vector.h"
@@ -40,9 +38,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -214,7 +212,7 @@ absl::StatusOr<std::unique_ptr<ConvolutionThunk>> ConvolutionThunk::Create(
       output_shape, input_batch, input_dims, input_channels, kernel_dims,
       kernel_channels, kernel_filters, output_dims, strides, padding_before,
       padding_after, base_dilation, window_dilation, feature_group_count,
-      options));
+      options, dnums, window));
 }
 
 ConvolutionThunk::ConvolutionThunk(
@@ -230,7 +228,8 @@ ConvolutionThunk::ConvolutionThunk(
     const absl::InlinedVector<int64_t, 2>& padding_after,
     const absl::InlinedVector<int64_t, 2>& base_dilation,
     const absl::InlinedVector<int64_t, 2>& window_dilation,
-    int64_t feature_group_count, Options options)
+    int64_t feature_group_count, Options options,
+    const ConvolutionDimensionNumbers& dnums, const Window& window)
     : Thunk(Kind::kConvolution, std::move(info)),
       input_buffer_(input_buffer),
       input_shape_(input_shape),
@@ -252,7 +251,9 @@ ConvolutionThunk::ConvolutionThunk(
       window_dilation_(window_dilation),
       feature_group_count_(feature_group_count),
       convolution_rank_(input_dims.size()),
-      options_(options) {}
+      options_(options),
+      dnums_(dnums),
+      window_(window) {}
 
 tsl::AsyncValueRef<Thunk::ExecuteEvent> ConvolutionThunk::Execute(
     const ExecuteParams& params) {
@@ -346,23 +347,23 @@ ConvolutionThunk::HandleEigen2DConvolution(const ExecuteParams& params,
         strides_.x, strides_.y, padding_before_.x, padding_after_.x,
         padding_before_.y, padding_after_.y, base_dilation_.x, base_dilation_.y,
         window_dilation_.x, window_dilation_.y, feature_group_count_,
-        std::move(done_callback));
+        std::move(done_callback), /*use_thunk_runtime=*/true);
   };
 
   if (options_.multi_threaded) {
-    auto state = std::make_shared<ExecuteState>(feature_group_count_);
-    auto done_callback = [state] { state->Notify(); };
+    tsl::CountDownAsyncValueRef<ExecuteEvent> state(feature_group_count_);
+    auto done_callback = [state]() mutable { state.CountDown(); };
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), *params.intra_op_threadpool, done_callback);
+      dispatch(Eigen::half{}, *params.intra_op_threadpool, done_callback);
     } else {
       dispatch(float(), *params.intra_op_threadpool, done_callback);
     }
-    return state->event;
+    return state.AsRef();
   } else {
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), Eigen::DefaultDevice());
+      dispatch(Eigen::half{}, Eigen::DefaultDevice());
     } else {
-      dispatch(float(), Eigen::DefaultDevice());
+      dispatch(float{}, Eigen::DefaultDevice());
     }
     return OkExecuteEvent();
   }
@@ -391,19 +392,19 @@ ConvolutionThunk::HandleEigen3DConvolution(const ExecuteParams& params,
   };
 
   if (options_.multi_threaded) {
-    auto state = std::make_shared<ExecuteState>(feature_group_count_);
-    auto done_callback = [state] { state->Notify(); };
+    tsl::CountDownAsyncValueRef<ExecuteEvent> state(feature_group_count_);
+    auto done_callback = [state]() mutable { state.CountDown(); };
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), *params.intra_op_threadpool, done_callback);
+      dispatch(Eigen::half{}, *params.intra_op_threadpool, done_callback);
     } else {
-      dispatch(float(), *params.intra_op_threadpool, done_callback);
+      dispatch(float{}, *params.intra_op_threadpool, done_callback);
     }
-    return state->event;
+    return state.AsRef();
   } else {
     if (input_shape_.element_type() == PrimitiveType::F16) {
-      dispatch(Eigen::half(), Eigen::DefaultDevice());
+      dispatch(Eigen::half{}, Eigen::DefaultDevice());
     } else {
-      dispatch(float(), Eigen::DefaultDevice());
+      dispatch(float{}, Eigen::DefaultDevice());
     }
     return OkExecuteEvent();
   }

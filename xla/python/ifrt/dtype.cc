@@ -32,6 +32,7 @@ std::optional<int> DType::byte_size() const {
     case kU2:
     case kS4:
     case kU4:
+    case kF4E2M1FN:
       // Smaller than a byte.
       return std::nullopt;
     case kPred:
@@ -39,6 +40,7 @@ std::optional<int> DType::byte_size() const {
     case kU8:
     case kF8E3M4:
     case kF8E4M3:
+    case kF8E8M0FNU:
     // The following types are https://arxiv.org/abs/2209.05433
     case kF8E4M3FN:
     case kF8E4M3B11FNUZ:
@@ -63,6 +65,7 @@ std::optional<int> DType::byte_size() const {
     case kC128:
       return 16;
     case kToken:
+    case kOpaque:
     case kInvalid:
     case kString:
       return std::nullopt;
@@ -76,12 +79,14 @@ std::optional<int> DType::bit_size() const {
       return 2;
     case kS4:
     case kU4:
+    case kF4E2M1FN:
       return 4;
     case kPred:
     case kS8:
     case kU8:
     case kF8E3M4:
     case kF8E4M3:
+    case kF8E8M0FNU:
     // The following types are https://arxiv.org/abs/2209.05433
     case kF8E4M3FN:
     case kF8E4M3B11FNUZ:
@@ -106,6 +111,7 @@ std::optional<int> DType::bit_size() const {
     case kC128:
       return 128;
     case kToken:
+    case kOpaque:
     case kInvalid:
     case kString:
       return std::nullopt;
@@ -118,6 +124,8 @@ absl::StatusOr<DType> DType::FromProto(const DTypeProto& dtype_proto) {
       return DType(DType::Kind::kPred);
     case DTypeProto::KIND_TOKEN:
       return DType(DType::Kind::kToken);
+    case DTypeProto::KIND_OPAQUE:
+      return DType(DType::Kind::kOpaque);
 #define CASE(X)              \
   case DTypeProto::KIND_##X: \
     return DType(DType::Kind::k##X);
@@ -137,9 +145,11 @@ absl::StatusOr<DType> DType::FromProto(const DTypeProto& dtype_proto) {
       CASE(BF16);
       CASE(C64);
       CASE(C128);
+      CASE(F4E2M1FN);
       // TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
       // CASE(F8E3M4);
       // CASE(F8E4M3);
+      CASE(F8E8M0FNU);
       CASE(F8E4M3FN);
       CASE(F8E4M3B11FNUZ);
       CASE(F8E4M3FNUZ);
@@ -162,6 +172,9 @@ DTypeProto DType::ToProto() const {
     case DType::Kind::kToken:
       dtype_proto.set_kind(DTypeProto::KIND_TOKEN);
       break;
+    case DType::Kind::kOpaque:
+      dtype_proto.set_kind(DTypeProto::KIND_OPAQUE);
+      break;
 #define CASE(X)                                 \
   case DType::Kind::k##X:                       \
     dtype_proto.set_kind(DTypeProto::KIND_##X); \
@@ -182,9 +195,11 @@ DTypeProto DType::ToProto() const {
       CASE(BF16);
       CASE(C64);
       CASE(C128);
+      CASE(F4E2M1FN);
       // TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
       // CASE(F8E3M4);
       // CASE(F8E4M3);
+      CASE(F8E8M0FNU);
       CASE(F8E4M3FN);
       CASE(F8E4M3B11FNUZ);
       CASE(F8E4M3FNUZ);
@@ -207,6 +222,10 @@ std::string DType::DebugString() const {
       return "INVALID";
     case kPred:
       return "PRED";
+    case kS2:
+      return "S2";
+    case kS4:
+      return "S4";
     case kS8:
       return "S8";
     case kS16:
@@ -215,6 +234,10 @@ std::string DType::DebugString() const {
       return "S32";
     case kS64:
       return "S64";
+    case kU2:
+      return "U2";
+    case kU4:
+      return "U4";
     case kU8:
       return "U8";
     case kU16:
@@ -237,6 +260,26 @@ std::string DType::DebugString() const {
       return "C128";
     case kToken:
       return "TOKEN";
+    case kOpaque:
+      return "OPAQUE";
+    case kF4E2M1FN:
+      return "F4E2M1FN";
+    case kF8E3M4:
+      return "F8E3M4";
+    case kF8E4M3:
+      return "F8E4M3";
+    case kF8E4M3FN:
+      return "F8E4M3FN";
+    case kF8E4M3B11FNUZ:
+      return "F8E4M3B11FNUZ";
+    case kF8E4M3FNUZ:
+      return "F8E4M3FNUZ";
+    case kF8E5M2:
+      return "F8E5M2";
+    case kF8E5M2FNUZ:
+      return "F8E5M2FNUZ";
+    case kF8E8M0FNU:
+      return "F8E8M0FNU";
     case kString:
       return "STRING";
     default:

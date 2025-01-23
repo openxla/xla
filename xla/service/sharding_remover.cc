@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/service/spmd/shard_barrier_partitioner.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "tsl/platform/errors.h"
 
@@ -41,8 +42,13 @@ absl::StatusOr<bool> ShardingRemover::Run(
   bool changed = false;
 
   const absl::flat_hash_set<absl::string_view> to_remove_sharding_ops = {
-      "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape",
-      sdy::kFuncResultShardingTargetName};
+      "Sharding",
+      "SPMDShardToFullShape",
+      "SPMDFullToShardShape",
+      sdy::kShardingGroupCustomCallTargetName,
+      sdy::kFuncResultShardingTargetName,
+      spmd::kShardBarrierFrom,
+      spmd::kShardBarrierTo};
 
   for (HloComputation* computation : module->computations(execution_threads)) {
     auto instructions = computation->MakeInstructionPostOrder();
@@ -57,6 +63,14 @@ absl::StatusOr<bool> ShardingRemover::Run(
       }
       CHECK(instruction->operand_count() == 1)
           << "Sharding instruction must have exactly one operand";
+
+      // ShardingGroupOp is dangling so we just remove it.
+      if (instruction->custom_call_target() ==
+          sdy::kShardingGroupCustomCallTargetName) {
+        TF_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));
+        continue;
+      }
+
       TF_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(
           instruction->mutable_operand(0), name()));
       changed = true;
@@ -65,7 +79,9 @@ absl::StatusOr<bool> ShardingRemover::Run(
       // with a copy instead, so that it can be DCE-ed in later passes.
       if (instruction->custom_call_target() == "Sharding" ||
           instruction->custom_call_target() ==
-              sdy::kFuncResultShardingTargetName) {
+              sdy::kFuncResultShardingTargetName ||
+          instruction->custom_call_target() == spmd::kShardBarrierFrom ||
+          instruction->custom_call_target() == spmd::kShardBarrierTo) {
         auto copy = computation->AddInstruction(
             HloInstruction::CreateUnary(instruction->shape(), HloOpcode::kCopy,
                                         instruction->mutable_operand(0)));

@@ -21,16 +21,18 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/compilation_stats.h"
 #include "xla/types.h"
 
 namespace xla {
-
-class PhaseOrderPipeline;
 
 // Pipeline of HLO passes.
 class HloPassPipeline : public HloPassInterface {
@@ -160,10 +162,6 @@ class HloPassPipeline : public HloPassInterface {
   // Default stats instance for when one is not passed in the constructor.
   // Use via compilation_stats_, not directly.
   std::unique_ptr<CompilationStats> empty_compilation_stats_;
-
-  // Allow PhaseOrderPipeline to modify private passes_ member in order to
-  // perform PhaseOrdering.
-  friend class ::xla::PhaseOrderPipeline;
 };
 
 }  // namespace xla

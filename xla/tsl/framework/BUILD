@@ -4,20 +4,20 @@
 #   The libraries in this package are not allowed to have ANY dependencies
 #   to other TF components outside of TSL.
 
+load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
+load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load(
-    "@tsl//tsl/platform:build_config.bzl",
+    "//xla/tsl/platform:build_config.bzl",
     "tsl_cc_test",
 )
 load(
-    "@tsl//tsl/platform:build_config_root.bzl",
+    "//xla/tsl/platform:build_config_root.bzl",
     "if_static",
 )
 load(
-    "@tsl//tsl/platform:rules_cc.bzl",
+    "//xla/tsl/platform:rules_cc.bzl",
     "cc_library",
 )
-load("//xla/tsl:tsl.bzl", "if_windows", "internal_visibility")
-load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -121,21 +121,21 @@ cc_library(
             "//xla/tsl/lib/gtl:inlined_vector",
             "@tsl//tsl/platform:strcat",
             "@tsl//tsl/platform:stringprintf",
-            "@tsl//tsl/platform:env",
-            "@tsl//tsl/platform:env_impl",
-            "@tsl//tsl/platform:logging",
-            "@tsl//tsl/platform:macros",
+            "//xla/tsl/platform:env",
+            "//xla/tsl/platform:env_impl",
+            "//xla/tsl/platform:logging",
+            "//xla/tsl/platform:macros",
             "@tsl//tsl/platform:mutex",
             "@tsl//tsl/platform:platform_port",
             "@tsl//tsl/platform:thread_annotations",
-            "@tsl//tsl/platform:types",
+            "//xla/tsl/platform:types",
         ],
         otherwise = [
             "//xla/tsl/lib/gtl:inlined_vector",
-            "@tsl//tsl/platform:logging",
+            "//xla/tsl/platform:logging",
             "@tsl//tsl/platform:platform_port",
             "@tsl//tsl/platform:strcat",
-            "@tsl//tsl/platform:env",
+            "//xla/tsl/platform:env",
         ],
     ),
     alwayslink = 1,
@@ -158,22 +158,23 @@ cc_library(
         "//xla:__subpackages__",
         "//tensorflow/core:__subpackages__",
         "@tsl//tsl:__subpackages__",
+        "//tensorflow/python/profiler/internal:__pkg__",
     ]),
     deps = [
         ":numeric_types",
         ":type_traits",
         "//xla/tsl/lib/gtl:inlined_vector",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:strcat",
         "@tsl//tsl/platform:stringprintf",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -195,6 +196,10 @@ cc_library(
         ":metrics",
         ":shared_counter",
         "//xla/tsl/lib/core:bits",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:types",
+        "//xla/tsl/profiler/utils:trace_filter_utils",
         "//xla/tsl/protobuf:bfc_memory_map_proto_cc",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -202,14 +207,8 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:optional",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:stacktrace",
-        "@tsl//tsl/platform:str_util",
-        "@tsl//tsl/platform:strcat",
-        "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],
@@ -249,15 +248,15 @@ cc_library(
     deps = [
         ":device_type",
         "//xla/tsl/lib/gtl:int_type",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:mutex",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -270,14 +269,14 @@ cc_library(
     deps = [
         ":device_id_impl",
         ":device_type",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/util:device_name_utils",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:str_util",
     ],
 )
@@ -299,7 +298,7 @@ cc_library(
     ]),
     deps = [
         ":fixedpoint_types",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -309,7 +308,7 @@ cc_library(
     features = ["parse_headers"],
     visibility = ["//visibility:public"],
     deps = [
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -340,7 +339,7 @@ cc_library(
     ]),
     deps = [
         ":numeric_types",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:types",
     ],
 )
 
@@ -367,16 +366,16 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//xla/tsl/lib/gtl:flatmap",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/memory",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:hash",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:mutex",
         "@tsl//tsl/platform:notification",
-        "@tsl//tsl/platform:status",
         "@tsl//tsl/platform:stringpiece",
         "@tsl//tsl/platform:thread_annotations",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -386,10 +385,10 @@ cc_library(
     hdrs = ["serving_device_selector.h"],
     visibility = ["//visibility:public"],
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:fixed_array",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -415,12 +414,12 @@ tsl_cc_test(
     srcs = ["cancellation_test.cc"],
     deps = [
         ":cancellation",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:env_impl",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:env_impl",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:notification",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -468,10 +467,10 @@ tsl_cc_test(
         ":device_id_impl",
         ":device_id_utils",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/util:device_name_utils",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -480,7 +479,7 @@ tsl_cc_test(
     srcs = ["real_time_in_memory_metric_test.cc"],
     deps = [
         ":real_time_in_memory_metric",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
     ],
 )

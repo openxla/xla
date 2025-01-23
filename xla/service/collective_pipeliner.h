@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_COLLECTIVE_PIPELINER_H_
 #define XLA_SERVICE_COLLECTIVE_PIPELINER_H_
 
+#include <cstdint>
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -105,6 +107,7 @@ class CollectivePipeliner : public HloModulePass {
     bool should_add_loop_invariant_op_in_chain = false;
     // Postprocessing hook which runs for every successfully pipelined op.
     HloPostprocessor postprocess_pipelined_ops = std::nullopt;
+    int64_t collective_size_threshold_to_stop_sinking = INT64_MAX;
   };
   static const char* const kInsertedByPreviousStep;
   static const char* const kSunkByPreviousStep;
@@ -125,6 +128,7 @@ class CollectivePipeliner : public HloModulePass {
     }
   }
 
+  static constexpr absl::string_view kName = "collective-pipeliner";
   absl::string_view name() const override {
     if (config_.pipelining_direction == kForward) {
       return "collective-pipeliner-forward";

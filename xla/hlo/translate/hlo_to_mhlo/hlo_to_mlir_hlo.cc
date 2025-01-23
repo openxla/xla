@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
 
-#include <utility>
-
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "mlir/IR/Location.h"
@@ -73,22 +71,6 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToMlirHlo(
                                          import_all_computations,
                                          flatten_computation_args_result));
   return module;
-}
-
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ConvertHloToStablehlo(
-    mlir::MLIRContext& ctx, const xla::HloModule* hlo_module) {
-  TF_ASSIGN_OR_RETURN(
-      mlir::OwningOpRef<mlir::ModuleOp> module,
-      ConvertHloToMlirHlo(ctx, hlo_module, /*import_all_computations=*/true,
-                          /*flatten_computation_args_result=*/true));
-
-  mlir::BaseScopedDiagnosticHandler diag_handler(&ctx);
-  mlir::PassManager pm(&ctx);
-  pm.addPass(mlir::mhlo::createHloLegalizeToStablehloPass());
-  if (failed(pm.run(*module))) {
-    return diag_handler.ConsumeStatus();
-  }
-  return std::move(module);
 }
 
 }  // namespace xla

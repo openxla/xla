@@ -14,8 +14,6 @@ those to this list.
 """
 
 temporary_patch_list = [
-    "//third_party/triton:temporary/fix_left_shift_overflow.patch",
-    "//third_party/triton:temporary/prefetch.patch",
-    "//third_party/triton:temporary/i4_to_bf16.patch",
+    "//third_party/triton:temporary/numpy_type_promotion.patch",
     # Add new patches just above this line
 ]

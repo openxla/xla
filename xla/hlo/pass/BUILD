@@ -1,13 +1,13 @@
 # Description:
 #   XLA’s HLO Intermediate Representation implementation.
 
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
-load(
-    "@tsl//tsl/platform/default:cuda_build_defs.bzl",
-    "if_cuda_is_configured",
-)
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load(
+    "//xla/tsl/platform/default:cuda_build_defs.bzl",
+    "if_cuda_is_configured",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -29,12 +29,16 @@ cc_library(
         "hlo_pass_interface.h",
     ],
     deps = [
+        "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -61,8 +65,9 @@ cc_library(
         "//xla/service:dump",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_proto_util",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -70,6 +75,7 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:status",
         "@tsl//tsl/profiler/lib:scoped_annotation",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -79,12 +85,13 @@ xla_cc_test(
     deps = [
         ":hlo_pass",
         ":hlo_pass_pipeline",
-        "//xla:test_helpers",
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_group",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test_helpers",
+        "//xla/service:hlo_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
@@ -93,6 +100,5 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )

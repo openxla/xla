@@ -15,11 +15,14 @@ limitations under the License.
 
 // Dumps out the operations that are present in a serialized computation.
 
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"

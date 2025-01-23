@@ -16,9 +16,9 @@ limitations under the License.
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
 
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -26,7 +26,6 @@ limitations under the License.
 #include "mlir/Support/DebugStringHelper.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 

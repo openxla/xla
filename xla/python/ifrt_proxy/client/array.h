@@ -112,7 +112,7 @@ class Array final : public llvm::RTTIExtends<Array, xla::ifrt::Array> {
   std::shared_ptr<const Sharding> shared_ptr_sharding() const override {
     return sharding_;
   }
-  absl::StatusOr<std::unique_ptr<PjRtLayout>> layout() const override {
+  absl::StatusOr<std::shared_ptr<const PjRtLayout>> layout() const override {
     return absl::UnimplementedError(
         "Array::layout() not implemented for IFRT proxy");
   };
@@ -137,6 +137,10 @@ class Array final : public llvm::RTTIExtends<Array, xla::ifrt::Array> {
  private:
   template <typename T, typename... Args>
   friend tsl::RCReference<T> tsl::MakeRef(Args&&... args);
+
+  Future<> CopyToStringHostBuffer(
+      void* data, std::optional<absl::Span<const int64_t>> byte_strides,
+      ArrayCopySemantics semantics);
 
   // Not owned. Used only for implementing `client()` interface method. Note
   // that `client()` will still return the pointer even if the pointed-to memory

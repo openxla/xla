@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -53,10 +54,14 @@ std::string OriginalValueToStringHelper(const OriginalValue& original_value,
   }
 
   const auto& leaf = original_value.element(shape_index);
-  absl::StrAppend(
-      &result, "{", "\"", leaf->instruction_name, "\"",
-      (leaf->shape_index.empty() ? "" : " " + leaf->shape_index.ToString()),
-      "}");
+  if (leaf.has_value()) {
+    absl::StrAppend(
+        &result, "{", "\"", leaf->instruction_name, "\"",
+        (leaf->shape_index.empty() ? "" : " " + leaf->shape_index.ToString()),
+        "}");
+  } else {
+    absl::StrAppend(&result, "{}");
+  }
   return result;
 }
 
