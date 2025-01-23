@@ -3112,9 +3112,10 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
       const Shape& result_shape = instruction->shape();
       const Layout& result_layout = result_shape.layout();
       if (result_layout.memory_space() == Layout::kHostMemorySpace) {
-        return absl::InvalidArgumentError(absl::StrCat(
-            "Instruction shouldn't have the layout of host memory ",
-            "space: ", instruction->ToString()));
+        return Internal(
+            "Instruction shouldn't have the layout of host memory "
+            "space: %s",
+            instruction->ToString());
       }
     }
 

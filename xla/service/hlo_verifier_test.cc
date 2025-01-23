@@ -3750,6 +3750,8 @@ TEST_F(HloVerifierTest, RaggedAllToAllWithRank2OffsetsShapes) {
   EXPECT_FALSE(status.ok()) << status;
   EXPECT_THAT(status.message(),
               HasSubstr("RaggedAllToAll operands have different shapes"));
+}
+
 TEST_F(HloVerifierTest, NoHostMemorySpaceShape) {
   constexpr absl::string_view hlo_no_host_memory_space_shape = R"(
 HloModule hlo_no_host_memory_space
