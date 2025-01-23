@@ -3117,8 +3117,7 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
     SetPartitionedHlo(hlo, [&] { return *operand_hlo; });
     return absl::OkStatus();
   }
-
-  // Then try the desired_output_sharding.
+// Then try the desired_output_sharding.
   std::optional<HloSharding> desired_output_sharding =
       hlo_sharding_util::ReshapeSharding(hlo->operand(0)->shape(), hlo->shape(),
                                          operand.sharding());

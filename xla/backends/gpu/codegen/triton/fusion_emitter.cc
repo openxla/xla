@@ -81,8 +81,8 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
-#include "xla/backends/gpu/codegen/transforms/passes.h"
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/codegen/triton/emitter_helpers.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter_legacy_matmul.h"
@@ -90,7 +90,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/xla_triton_ops.h"
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
-#include "xla/codegen/ir/xla_ops.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -1098,11 +1098,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     if (type == U16) {
       ir_type = b.getI16Type();
     } else if (type == S4) {
-      if (debug_options.xla_gpu_experimental_enable_triton_i4_rewrites()) {
         ir_type = b.getI4Type();
-      } else {
-        ir_type = b.getI8Type();
-      }
     } else {
       TF_ASSIGN_OR_RETURN(ir_type, TritonType(b, type));
     }
@@ -1286,6 +1282,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
   // Lower xla_gpu.apply_indexing into arithmetic ops.
   pm.addPass(CreateSimplifyAffinePass());
+  pm.addPass(CreateConvertIndexTypePass());
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;
   if (!CreateTritonPipeline(&pm, arch_name, block_level_parameters.num_warps,

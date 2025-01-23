@@ -44,8 +44,8 @@ limitations under the License.
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -743,9 +743,9 @@ std::string ConcreteEvenSharding::DebugString() const {
   DCHECK(this);
   return absl::StrFormat(
       "ConcreteEvenSharding(devices: %v, shape: %s, shard_shape: %s, "
-      "memory_kind: %v)",
-      *devices_, shape_.DebugString(), shard_shape_.DebugString(),
-      memory_kind_);
+      "memory_kind: %v, is_fully_replicated: %s)",
+      *devices_, shape_.DebugString(), shard_shape_.DebugString(), memory_kind_,
+      is_fully_replicated_ ? "true" : "false");
 }
 
 absl::StatusOr<std::unique_ptr<ShardingParamSharding>>

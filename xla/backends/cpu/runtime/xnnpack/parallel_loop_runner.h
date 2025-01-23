@@ -19,7 +19,9 @@ limitations under the License.
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <optional>
 
+#include "absl/time/time.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 
@@ -40,11 +42,26 @@ namespace xla::cpu {
 // Parallel loop runner is an implementation of the `pthreadpool` API adaptor
 // for XLA:CPU runtime.
 //
+// ParallelLoopRunner uses "persistent workers" to execute parallel loops.
+// Workers get scheduled into the underlying thread pool and when they start
+// executing they pop tasks from the shared work queue. With this approach we
+// avoid scheduling closures into the thread pool for each parallel task,
+// because fixed thread pool overheads are high and XNNPACK operations tend to
+// launch many parallel loops with larget number of very small tasks.
+//
+// Parallel loop runner can be configured by the `worker_timeslice` parameter,
+// that defines the approximate amount of compute (in terms of wall time) that
+// each persistent worker will handle. We rely on this parameter to avoid
+// scheduling too many workers into the thread pool, because for tiny tasks the
+// overheads can be prohibitively expensive.
+//
 // WARNING: ParallelLoopRunner is not thread-safe, and must be externally
 // synchronized by the user.
 class ParallelLoopRunner {
  public:
-  explicit ParallelLoopRunner(const Eigen::ThreadPoolDevice* device);
+  explicit ParallelLoopRunner(
+      const Eigen::ThreadPoolDevice* device,
+      std::optional<absl::Duration> worker_timeslice = std::nullopt);
 
   // Takes ownership of the runner and returns a done event. After the done
   // event is transferred to the caller, it is illegal to schedule more parallel
@@ -104,33 +121,6 @@ class ParallelLoopRunner {
   size_t num_threads() const;
 
  private:
-  // When parallelizing loops, we split the loop iteration space of `num_tasks`
-  // size into `num_parallel_tasks` parallel tasks, each of which processes
-  // `parallel_task_size` original tasks sequentially on a single thread. We do
-  // this to avoid excessive task scheduling overheads at run time.
-  struct ParallelTaskConfig {
-    struct TaskRange {
-      size_t begin;
-      size_t end;
-    };
-
-    TaskRange ParallelTaskRange(size_t parallel_task_index) const;
-
-    size_t num_tasks;
-    size_t parallel_task_size;
-    size_t num_parallel_tasks;
-  };
-
-  ParallelTaskConfig ComputeParallelTaskConfig(size_t num_tasks) const;
-
-  // Schedules tasks in the [start_index, end_index) range into the Eigen thread
-  // pool using recursive work splitting. Executes the `start_index` task in the
-  // caller thread.
-  template <typename ParallelTask>
-  void Parallelize(tsl::CountDownAsyncValueRef<tsl::Chain> count_down,
-                   size_t start_index, size_t end_index,
-                   ParallelTask&& parallel_task);
-
   // Schedules `task` as the AndThen callback of the `done_event_`. Updates
   // `done_event_` to the new completion event.
   template <typename Task>
@@ -154,6 +144,10 @@ class ParallelLoopRunner {
   // pools for different NUMA nodes, and we have to be able to switch between
   // them from run to run.
   std::atomic<const Eigen::ThreadPoolDevice*> device_;
+
+  // The approximate amount of compute (in terms of wall time) that each
+  // persistent worker should handle.
+  std::optional<absl::Duration> worker_timeslice_;
 };
 
 }  // namespace xla::cpu

@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -33,10 +32,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "xla/backends/cpu/codegen/llvm_ir_kernel_spec.h"
 #include "xla/backends/cpu/runtime/kernel.h"
 #include "xla/backends/cpu/runtime/kernel_c_api.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/codegen/kernel_spec.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -174,7 +173,7 @@ class KernelThunk final : public internal::KernelThunk<> {
       std::optional<uint64_t> min_alignment = std::nullopt);
 
   static absl::StatusOr<std::unique_ptr<Thunk>> Create(
-      Thunk::Info info, std::unique_ptr<LlvmIrKernelSpec> kernel_spec,
+      Thunk::Info info, const KernelSpec& kernel_spec,
       std::optional<uint64_t> min_alignment);
 
   tsl::AsyncValueRef<Thunk::ExecuteEvent> Execute(

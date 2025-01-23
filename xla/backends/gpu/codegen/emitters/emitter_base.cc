@@ -76,13 +76,15 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
-#include "xla/backends/gpu/codegen/transforms/passes.h"
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
+#include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/runtime/kernel_thunk.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
+#include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/codegen/emitters/type_util.h"
-#include "xla/codegen/ir/xla_ops.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -92,7 +94,6 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/dump.h"
-#include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/kernel_arguments.h"
@@ -594,7 +595,7 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
   pm.addNestedPass<FuncOp>(CreateLowerXlaGpuLoopsToScfPass());
   pm.addPass(mlir::mhlo::createConvertToSignlessPass());
   pm.addPass(CreatePropagateSliceIndicesPass());
-  pm.addPass(CreateFlattenTensorsPass());
+  pm.addPass(emitters::CreateFlattenTensorsPass());
   // We need LICM before unswitching loops, because our loop unswitcher only
   // detects for loops with a single if inside them.
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
@@ -612,7 +613,7 @@ void AddLoopTransformationPasses(mlir::OpPassManager& pm,
 void AddLoweringPasses(mlir::OpPassManager& pm,
                        const se::DeviceDescription& device) {
   pm.addNestedPass<FuncOp>(CreateConvertPureCallOpsPass());
-  pm.addPass(CreateLowerTensorsPass(device));
+  pm.addPass(emitters::CreateLowerTensorsPass(device));
   pm.addPass(mlir::createConvertComplexToStandardPass());
   pm.addPass(CreateMergePointersToSameSlicePass());
 
@@ -622,7 +623,7 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
   pm.addPass(mlir::createCSEPass());
   pm.addNestedPass<FuncOp>(CreateSimplifyArithPass());
   pm.addPass(CreateSimplifyAffinePass());
-
+  pm.addPass(CreateConvertIndexTypePass());
   // simplify-affine lowers most affine.apply ops, but if it can't prove a
   // division or modulo is unsigned, affine.apply ops will remain.
   pm.addPass(mlir::createLowerAffinePass());
@@ -637,10 +638,10 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
     pm.addPass(std::move(*maybe_convert_fp8));
   }
 
-  pm.addPass(CreateExpandFloatOpsPass());
+  pm.addPass(emitters::CreateExpandFloatOpsPass());
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createConvertSCFToCFPass());
-  pm.addPass(CreateLowerToLLVMPass(device));
+  pm.addPass(emitters::CreateLowerToLLVMPass(device));
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 }
 

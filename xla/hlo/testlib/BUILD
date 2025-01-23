@@ -83,9 +83,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )

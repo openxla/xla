@@ -28,19 +28,12 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/xnnpack/xnn_fusion_thunk.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
 // Dot operation implemented on top of XNNPACK.
 class XnnDotThunk final : public XnnFusionThunk {
  public:
-  // Returns true if the dot operation is supported by XNNPACK. Returns an error
-  // if the dot operation shape is invalid.
-  static absl::StatusOr<bool> IsSupported(
-      const DotDimensionNumbers& dot_dimensions, const Shape& lhs_shape,
-      const Shape& rhs_shape, const Shape& out_shape);
-
   static absl::StatusOr<std::unique_ptr<XnnDotThunk>> Create(
       Info info, DotDimensionNumbers dot_dimensions,
       BufferAllocation::Slice lhs_buffer, Shape lhs_shape,
