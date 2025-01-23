@@ -1,10 +1,10 @@
-load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tsl_cc_test",
-)
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tsl_cc_test",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 default_visibility = [
     "//xla/tsl/lib/io:__pkg__",
@@ -40,11 +40,11 @@ cc_library(
         ":exact_uniform_int",
         ":philox_random",
         ":random_distributions_utils",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
     ],
     alwayslink = 1,
 )
@@ -73,7 +73,7 @@ cc_library(
     hdrs = ["philox_random_test_utils.h"],
     deps = [
         ":philox_random",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
         "@tsl//tsl/platform:random",
     ],
 )
@@ -84,9 +84,9 @@ cc_library(
     hdrs = ["weighted_picker.h"],
     deps = [
         ":philox",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
     ],
     alwayslink = 1,
 )
@@ -159,11 +159,11 @@ tsl_cc_test(
     srcs = ["distribution_sampler_test.cc"],
     deps = [
         ":philox",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -175,10 +175,10 @@ tsl_cc_test(
         ":philox",
         ":philox_random",
         ":philox_random_test_utils",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:random",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -191,10 +191,10 @@ tsl_cc_test(
         ":philox_random",
         ":philox_random_test_utils",
         "//xla/tsl/lib/math:math_util",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:random",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -204,10 +204,10 @@ tsl_cc_test(
     srcs = ["simple_philox_test.cc"],
     deps = [
         ":philox",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -218,11 +218,11 @@ tsl_cc_test(
     deps = [
         ":philox",
         ":weighted_picker",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
     ],
 )

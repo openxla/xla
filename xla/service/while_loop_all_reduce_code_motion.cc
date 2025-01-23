@@ -25,18 +25,20 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_replication_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/transforms/collectives/while_loop_all_reduce_code_motion_setup.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/literal_util.h"
 #include "xla/map_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/hlo_replication_analysis.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/statusor.h"
 
@@ -961,6 +963,19 @@ absl::StatusOr<bool> WhileLoopAllReduceCodeMotion::Run(
                         HloReplicationAnalysis::RunWithPartialReplication(
                             module, /*cross_partition_spmd=*/true));
   }
+
+  // Run setup passes that may setup the add(all-reduce/reduce-scatter,
+  // accumulation_buffer) pattern.
+  if (run_setup_passes_) {
+    HloPassPipeline pipeline("while-loop-all-reduce-code-motion-setup");
+    if (enable_reduce_scatter_) {
+      pipeline.AddPass<ReorderReduceTranspose>();
+    }
+    pipeline.AddPass<ReorderConvertReduceAdd>(
+        /*enable_reduce_scatter=*/enable_reduce_scatter_);
+    TF_RETURN_IF_ERROR(pipeline.Run(module, execution_threads).status());
+  }
+
   // The while instruction's parent could be a while body for another while
   // loop. We recursively sink the all-reduce through nested while loops if
   // applicable by repeating this process.

@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/all_gather_combiner.h"
 
-#include <cstdint>
 #include <optional>
-#include <string>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -25,12 +23,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/all_gather_combiner.h"
+#include "xla/hlo/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_collective_combiner_utils.h"
-#include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/hlo_domain_map.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
@@ -39,23 +36,15 @@ namespace {
 std::optional<AllGatherCombiner::GroupKey> PipelinedCombinerKey(
     const HloInstruction* instruction, const HloDomainMap& domain_map,
     bool combine_by_dim, bool combine_different_dtypes) {
-  auto combined_key = AllGatherCombiner::CombineKey(
-      instruction, domain_map, combine_by_dim, combine_different_dtypes);
-  if (!combined_key.has_value()) {
-    return std::nullopt;
-  }
   auto backend_config = instruction->backend_config<GpuBackendConfig>();
   if (!backend_config.ok()) {
     return std::nullopt;
   }
-  bool is_pipelined =
-      backend_config->collective_backend_config().is_pipelined();
-  if (!is_pipelined) {
+  if (!backend_config->collective_backend_config().is_pipelined()) {
     return std::nullopt;
   }
-  AllGatherCombiner::GetGroupKeyExtraArgs(*combined_key)
-      .append(" " + std::to_string(static_cast<int64_t>(is_pipelined)));
-  return combined_key.value();
+  return AllGatherCombiner::CombineKey(instruction, domain_map, combine_by_dim,
+                                       combine_different_dtypes);
 }
 
 }  // namespace
@@ -68,18 +57,17 @@ absl::StatusOr<bool> GpuAllGatherCombiner::Run(
     return AllGatherCombiner::Run(module, execution_threads);
   }
 
-  // Pass configuration heuristics are not enabled. Running parent pass code.
-  if (!module->config()
-           .debug_options()
-           .xla_gpu_enable_heuristic_pass_configuration()) {
+  // If there are no pipelined instructions in the IR, the optimizations below
+  // do not kick in anyway.
+  // Exit early so we do not perform expensive scheduling dry run below.
+  if (!ContainsPipelinedInstruction(*module)) {
     return AllGatherCombiner::Run(module, execution_threads);
   }
 
   // Combine as much as possible for pipelined collectives.
   int previous_combiner_threshold = combine_threshold_in_bytes_;
   combine_threshold_in_bytes_ = ComputeSuggestedCombinerThreshold(
-      *module, device_info_, ScheduleGpuModuleWithMemoryScheduler,
-      HloOpcode::kAllGather, pointer_size_);
+      *module, device_info_, HloOpcode::kAllGather, pointer_size_);
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));

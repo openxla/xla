@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/translate/mhlo_to_hlo/attribute_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/layout_util.h"
+#include "xla/hlo/translate/mhlo_to_hlo/literal_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/location_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/module_attributes_exporter.h"
 #include "xla/hlo/translate/mhlo_to_hlo/stack_frame_index_builder.h"
@@ -126,11 +127,14 @@ constexpr char kApproxTopK[] = "ApproxTopK";
 constexpr char kBackendConfig[] = "backend_config";
 constexpr char kCallTargetName[] = "call_target_name";
 constexpr char kCalledComputations[] = "called_computations";
+constexpr char kChannelHandle[] = "channel_handle";
 constexpr char kHasSideEffect[] = "has_side_effect";
 constexpr char kIsFallback[] = "is_fallback";
+constexpr char kRaggedAllToAll[] = "ragged_all_to_all";
 constexpr char kRecallTarget[] = "recall_target";
 constexpr char kReductionDim[] = "reduction_dim";
 constexpr char kReductionInputSizeOverride[] = "reduction_input_size_override";
+constexpr char kReplicaGroups[] = "replica_groups";
 constexpr char kTopK[] = "top_k";
 
 // MHLO attributes. Module level attributes require namespacing.
@@ -212,56 +216,6 @@ bool IsBoundedOrStatic(mlir::Type ty) {
       return false;
   }
   return true;
-}
-
-template <typename T>
-xla::Array<T> ArrayFromDenseElementsAttr(mlir::DenseElementsAttr dense_attr) {
-  constexpr xla::PrimitiveType type =
-      xla::primitive_util::NativeToPrimitiveType<T>();
-  xla::Shape shape = xla::TypeToShape(dense_attr.getType());
-  xla::Array<T> array(shape.dimensions());
-  if constexpr (!xla::primitive_util::IsSubByteNonPredType(type)) {
-    array.SetValues(dense_attr.getValues<T>());
-  } else {
-    // The only way to get subbyte integers from getValues() is to get them as
-    // APInts.
-    auto values = dense_attr.getValues<llvm::APInt>();
-    for (int i = 0; i < values.size(); i++) {
-      if constexpr (xla::primitive_util::IsUnsignedIntegralType(type)) {
-        array.data()[i] = T{values[i].getZExtValue()};
-      } else {
-        static_assert(xla::primitive_util::IsSignedIntegralType(type));
-        array.data()[i] = T{values[i].getSExtValue()};
-      }
-    }
-  }
-  return array;
-}
-
-absl::StatusOr<xla::Literal> CreateArrayLiteralFromAttr(mlir::ElementsAttr attr,
-                                                        xla::Layout layout) {
-  auto dense_attr = mlir::dyn_cast<mlir::DenseElementsAttr>(attr);
-  if (!dense_attr)
-    return tsl::errors::Unimplemented("Only dense elements attr are supported");
-
-  xla::Shape shape = xla::TypeToShape(dense_attr.getType());
-
-  return xla::primitive_util::PrimitiveTypeSwitch<absl::StatusOr<xla::Literal>>(
-      [&](auto primitive_type_constant) -> absl::StatusOr<xla::Literal> {
-        if constexpr (xla::primitive_util::IsArrayType(
-                          primitive_type_constant)) {
-          using cpp_type =
-              xla::primitive_util::NativeTypeOf<primitive_type_constant>;
-          xla::Array<cpp_type> source_data =
-              ArrayFromDenseElementsAttr<cpp_type>(dense_attr);
-          return xla::LiteralUtil::CreateFromArrayWithLayout(source_data,
-                                                             layout);
-        }
-        return tsl::errors::Internal(absl::StrCat(  // NOLINT
-            "Unsupported type: ",
-            xla::PrimitiveType_Name(shape.element_type())));
-      },
-      shape.element_type());
 }
 
 // Convert APInt into an int.
@@ -530,6 +484,55 @@ static xla::DotDimensionNumbers Convert_dot_dimension_numbers(
   }
 
   return dot_dimension_numbers;
+}
+
+static xla::RaggedDotDimensionNumbers Convert_ragged_dot_dimension_numbers(
+    mlir::mhlo::RaggedDotDimensionNumbersAttr
+        ragged_dot_dimension_numbers_attr) {
+  mlir::mhlo::DotDimensionNumbersAttr dot_dimension_numbers_attr =
+      ragged_dot_dimension_numbers_attr.getDotDimensionNumbers();
+
+  xla::DotDimensionNumbers dot_dimension_numbers;
+  xla::RaggedDotDimensionNumbers ragged_dot_dimension_numbers;
+
+  auto rhs_contracting_dimensions =
+      dot_dimension_numbers_attr.getRhsContractingDimensions();
+  auto lhs_contracting_dimensions =
+      dot_dimension_numbers_attr.getLhsContractingDimensions();
+  auto rhs_batch_dimensions =
+      dot_dimension_numbers_attr.getRhsBatchingDimensions();
+  auto lhs_batch_dimensions =
+      dot_dimension_numbers_attr.getLhsBatchingDimensions();
+
+  for (const auto& val : rhs_contracting_dimensions) {
+    dot_dimension_numbers.add_rhs_contracting_dimensions(val);
+  }
+  for (const auto& val : lhs_contracting_dimensions) {
+    dot_dimension_numbers.add_lhs_contracting_dimensions(val);
+  }
+
+  for (const auto& val : rhs_batch_dimensions) {
+    dot_dimension_numbers.add_rhs_batch_dimensions(val);
+  }
+
+  for (const auto& val : lhs_batch_dimensions) {
+    dot_dimension_numbers.add_lhs_batch_dimensions(val);
+  }
+  *ragged_dot_dimension_numbers.mutable_dot_dimension_numbers() =
+      dot_dimension_numbers;
+
+  auto lhs_ragged_dimensions =
+      ragged_dot_dimension_numbers_attr.getLhsRaggedDimensions();
+  auto rhs_group_dimensions =
+      ragged_dot_dimension_numbers_attr.getRhsGroupDimensions();
+  for (const auto& val : lhs_ragged_dimensions) {
+    ragged_dot_dimension_numbers.add_lhs_ragged_dimensions(val);
+  }
+  for (const auto& val : rhs_group_dimensions) {
+    ragged_dot_dimension_numbers.add_rhs_group_dimensions(val);
+  }
+
+  return ragged_dot_dimension_numbers;
 }
 
 static xla::SparsityDescriptor Convert_sparsity_descriptor(
@@ -1013,10 +1016,11 @@ bool SimplyReturnedOp(mlir::Operation* op) {
   return false;
 }
 
-void BuildGetTupleElementsForTupleResults(mlir::Operation* op, xla::XlaOp tuple,
-                                          OpLoweringContext ctx,
-                                          unsigned num_implicit_results = 0) {
-  const std::optional<xla::OpSharding>& sharding = ctx.builder->sharding();
+void BuildGetTupleElementsForTupleResults(
+    mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
+    llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
+    unsigned num_implicit_results = 0) {
+  const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
     assert(!is_tuple_sharding || (op->getNumResults() + num_implicit_results ==
@@ -1025,16 +1029,23 @@ void BuildGetTupleElementsForTupleResults(mlir::Operation* op, xla::XlaOp tuple,
       // If `sharding` is not a tuple sharding, then every `get-tuple-element`
       // gets the same sharding.
       xla::XlaScopedShardingAssignment scoped_sharding(
-          ctx.builder,
+          builder,
           is_tuple_sharding ? sharding->tuple_shardings(index) : sharding);
-      (*ctx.values)[result] = xla::GetTupleElement(tuple, index);
+      values[result] = xla::GetTupleElement(tuple, index);
     }
   } else {
-    xla::XlaScopedShardingAssignment scoped_sharding(ctx.builder, std::nullopt);
+    xla::XlaScopedShardingAssignment scoped_sharding(builder, std::nullopt);
     for (auto [index, result] : llvm::enumerate(op->getResults())) {
-      (*ctx.values)[result] = xla::GetTupleElement(tuple, index);
+      values[result] = xla::GetTupleElement(tuple, index);
     }
   }
+}
+
+void BuildGetTupleElementsForTupleResults(mlir::Operation* op, xla::XlaOp tuple,
+                                          OpLoweringContext ctx,
+                                          unsigned num_implicit_results = 0) {
+  BuildGetTupleElementsForTupleResults(op, tuple, ctx.builder, *ctx.values,
+                                       num_implicit_results);
 }
 
 }  // namespace
@@ -1659,11 +1670,44 @@ LogicalResult ExportXlaOp(DotGeneralOp op, OpLoweringContext ctx) {
     if (!algorithm.ok()) {
       return op.emitError(algorithm.status().ToString());
     }
+    if (precision_config == nullptr) {
+      precision_config = std::make_unique<xla::PrecisionConfig>();
+    }
     precision_config->set_algorithm(algorithm.value());
   }
   auto xlaOp = xla::DotGeneral(
       lhs, rhs, Convert_dot_dimension_numbers(op.getDotDimensionNumbers()),
       Unwrap(precision_config), preferred_element_type);
+
+  value_map[op] = xlaOp;
+  return mlir::success();
+}
+
+LogicalResult ExportXlaOp(RaggedDotOp op, OpLoweringContext ctx) {
+  auto& value_map = *ctx.values;
+  xla::XlaOp lhs, rhs, group_sizes;
+  if (failed(GetXlaOp(op.getLhs(), value_map, &lhs, op)))
+    return mlir::failure();
+  if (failed(GetXlaOp(op.getRhs(), value_map, &rhs, op)))
+    return mlir::failure();
+  if (failed(GetXlaOp(op.getGroupSizes(), value_map, &group_sizes, op)))
+    return mlir::failure();
+  xla::PrimitiveType preferred_element_type =
+      xla::ConvertMlirTypeToPrimitiveType(getElementTypeOrSelf(op.getType()));
+
+  // Precision Config
+  auto precision_config = Convert_precision_config(op.getPrecisionConfig());
+  if (precision_config == nullptr) {
+    precision_config = std::make_unique<xla::PrecisionConfig>();
+  }
+  auto xlaOp = xla::RaggedDot(
+      /*lhs=*/lhs,
+      /*rhs=*/rhs,
+      /*group_sizes=*/group_sizes,
+      /*dimension_numbers=*/
+      Convert_ragged_dot_dimension_numbers(op.getRaggedDotDimensionNumbers()),
+      /*precision_config=*/Unwrap(precision_config),
+      /*preferred_element_type=*/preferred_element_type);
 
   value_map[op] = xlaOp;
   return mlir::success();
@@ -2224,6 +2268,34 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
     }
     BuildGetTupleElementsForTupleResults(op, cc_op, ctx);
     return success();
+  } else if (op.getCallTargetName() == kRaggedAllToAll) {
+    auto backend_config =
+        mlir::dyn_cast_or_null<mlir::DictionaryAttr>(op.getBackendConfigAttr());
+    auto isSupportedAttrName = [](NamedAttribute attr) {
+      auto name = attr.getName();
+      return name == kCallTargetName || name == kBackendConfig ||
+             name == kApiVersion || name == kCalledComputations ||
+             name == kHasSideEffect;
+    };
+    for (const auto& attr : op->getAttrs()) {
+      if (!isSupportedAttrName(attr))
+        return op.emitOpError()
+               << attr.getName().getValue()
+               << " is not a supported attribute for RaggedAllToAll";
+    }
+    DenseIntElementsAttr replica_groups =
+        backend_config.getAs<DenseIntElementsAttr>(kReplicaGroups);
+    mlir::mhlo::ChannelHandleAttr channel_handle_attr =
+        backend_config.getAs<mlir::mhlo::ChannelHandleAttr>(kChannelHandle);
+    xla::ChannelHandle channel_handle;
+    if (channel_handle_attr) {
+      channel_handle = Convert_channel_handle(channel_handle_attr);
+    }
+    xla::XlaOp ragged_all_to_all_op =
+        RaggedAllToAll(args[0], args[1], args[2], args[3], args[4], args[5],
+                       Convert_replica_groups(replica_groups), channel_handle);
+    value_map[op.getResult(0)] = ragged_all_to_all_op;
+    return success();
   }
 
   if (op.getCalledComputations().size() > 1)
@@ -2265,7 +2337,7 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
   const xla::Literal* literal_ptr = nullptr;
   auto literal_attr = op->getAttrOfType<DenseElementsAttr>(kMhloLiteral);
   if (literal_attr) {
-    literal = CreateArrayLiteralFromAttr(literal_attr, {});
+    literal = mhlo::CreateLiteralFromAttribute(literal_attr, {});
     if (!literal.ok()) return failure();
     literal_ptr = &*literal;
   }
@@ -2474,14 +2546,54 @@ LogicalResult ExportXlaOp(RecvOp op, OpLoweringContext ctx) {
   else
     data_shape = xla::ShapeUtil::MakeTupleShape(subshapes);
 
-  token = xla::internal::XlaBuilderFriend::BuildRecv(
-      ctx.builder, token, data_shape,
-      Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
-  xla::XlaOp xla_result = xla::internal::XlaBuilderFriend::BuildRecvDone(
-      ctx.builder, token, data_shape,
-      Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  auto get_sharding = [](const xla::OpSharding& sharding) {
+    xla::OpSharding ret;
+    if (sharding.type() != xla::OpSharding::TUPLE) {
+      ret = sharding;
+    } else {
+      ret = sharding.tuple_shardings(0);
+    }
+    return ret;
+  };
+  if (ctx.builder->sharding().has_value()) {
+    // HLO Recv needs a 3-tuple sharding. Get the sharding from the builder and
+    // make it a 3-tuple sharding.
+    std::optional<xla::OpSharding> sharding = *ctx.builder->sharding();
+    xla::OpSharding single_sharding = get_sharding(*sharding);
+    auto* tuple_shardings = sharding->mutable_tuple_shardings();
+    tuple_shardings->Clear();
+    for (int i = 0; i < 3; ++i) {
+      tuple_shardings->Add(xla::OpSharding(single_sharding));
+    }
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, sharding);
+    token = xla::internal::XlaBuilderFriend::BuildRecv(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  } else {
+    token = xla::internal::XlaBuilderFriend::BuildRecv(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
 
-  auto data_tuple_element = xla::GetTupleElement(xla_result, 0);
+  xla::XlaOp xla_result;
+  {
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder,
+                                                    ctx.builder->sharding());
+    xla_result = xla::internal::XlaBuilderFriend::BuildRecvDone(
+        ctx.builder, token, data_shape,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
+
+  xla::XlaOp data_tuple_element;
+  if (ctx.builder->sharding().has_value()) {
+    // HLO GetTupleElement needs a single sharding,
+    xla::XlaScopedShardingAssignment sharding_scope(
+        ctx.builder, get_sharding(*ctx.builder->sharding()));
+    data_tuple_element = xla::GetTupleElement(xla_result, 0);
+  } else {
+    data_tuple_element = xla::GetTupleElement(xla_result, 0);
+  }
+
   if (subshapes.size() == 1) {
     value_map[op.getResult(0)] = data_tuple_element;
   } else {
@@ -2716,9 +2828,25 @@ LogicalResult ExportXlaOp(SendOp op, OpLoweringContext ctx) {
   xla::XlaOp token;
   if (failed(GetXlaOp(op.getToken(), value_map, &token, op))) return failure();
 
-  token = xla::internal::XlaBuilderFriend::BuildSend(
-      ctx.builder, operand, token,
-      Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  // SendOp has 1 result, but HLO Send has 3 results. Convert the sharding to a
+  // tuple sharding with 3 entries.
+  if (ctx.builder->sharding().has_value()) {
+    xla::OpSharding sharding = *ctx.builder->sharding();
+    const xla::OpSharding single_sharding = *ctx.builder->sharding();
+    sharding.set_type(xla::OpSharding::TUPLE);
+    auto* tuple_shardings = sharding.mutable_tuple_shardings();
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    tuple_shardings->Add(xla::OpSharding(single_sharding));
+    xla::XlaScopedShardingAssignment sharding_scope(ctx.builder, sharding);
+    token = xla::internal::XlaBuilderFriend::BuildSend(
+        ctx.builder, operand, token,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  } else {
+    token = xla::internal::XlaBuilderFriend::BuildSend(
+        ctx.builder, operand, token,
+        Convert_channel_handle(op.getChannelHandle()), op.getIsHostTransfer());
+  }
   value_map[op] = xla::internal::XlaBuilderFriend::BuildSendDone(
       ctx.builder, token, Convert_channel_handle(op.getChannelHandle()),
       op.getIsHostTransfer());
@@ -3309,7 +3437,8 @@ LogicalResult ConvertToHloModule::LowerConstant(
   mlir::FailureOr<xla::Shape> shape_or = ExtractXlaShape(inst);
   if (failed(shape_or)) return failure();
 
-  auto literal_or = CreateArrayLiteralFromAttr(const_attr, shape_or->layout());
+  auto literal_or =
+      mhlo::CreateLiteralFromAttribute(const_attr, shape_or->layout());
   if (!literal_or.ok()) return inst->emitError(literal_or.status().ToString());
 
   xla::XlaScopedShardingAssignment scoped_sharding(
@@ -3432,7 +3561,6 @@ LogicalResult ConvertToHloModule::LowerReturn(
                 /*fast_mem=*/false);
         if (!reshape.ok())
           return inst->emitError() << reshape.status().message();
-
         returns[index] = reshape.value();
       }
     }
@@ -3571,9 +3699,8 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
   // Use GetTupleElement for multiple outputs
   unsigned num_results = call_op.getNumResults();
   if (num_results > 1) {
-    for (unsigned i = 0; i != num_results; ++i) {
-      value_map[call_op.getResult(i)] = xla::GetTupleElement(call_result, i);
-    }
+    BuildGetTupleElementsForTupleResults(call_op, call_result, builder,
+                                         value_map);
   } else if (num_results == 1) {
     value_map[call_op.getResult(0)] = call_result;
   }

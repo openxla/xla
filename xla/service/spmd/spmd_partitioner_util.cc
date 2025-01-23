@@ -202,47 +202,6 @@ std::vector<HloInstruction*> MakePartitionOffsets(
   return offsets;
 }
 
-std::vector<HloInstruction*> MakePartitionOffsetsDiff(
-    const Shape& shape, const HloSharding& sharding_1,
-    const HloSharding& sharding_2, HloInstruction* partition_id, SpmdBuilder* b,
-    absl::Span<const int64_t> dims) {
-  CHECK(!shape.IsTuple());
-  CHECK_EQ(sharding_1.tile_assignment().num_elements(),
-           sharding_2.tile_assignment().num_elements());
-
-  auto shard_shape_1 = MakePartitionedShape(shape, sharding_1);
-  auto shard_shape_2 = MakePartitionedShape(shape, sharding_2);
-  auto const_zero =
-      b->AddInstruction(HloInstruction::CreateConstant(LiteralUtil::Zero(S32)));
-  std::vector<HloInstruction*> offsets;
-
-  for (int64_t i = 0; i < shape.rank(); ++i) {
-    if (!dims.empty() && !absl::c_linear_search(dims, i)) {
-      offsets.push_back(const_zero);
-    } else {
-      std::vector<int32_t> offset_array(
-          sharding_1.tile_assignment().num_elements(), 0);
-      sharding_1.tile_assignment().Each(
-          [&](absl::Span<const int64_t> indices, int64_t device) {
-            offset_array[device] = indices[i] * shard_shape_1.dimensions(i);
-          });
-      sharding_2.tile_assignment().Each(
-          [&](absl::Span<const int64_t> indices, int64_t device) {
-            offset_array[device] -= indices[i] * shard_shape_2.dimensions(i);
-          });
-      if (absl::c_all_of(offset_array,
-                         [](int32_t offset) { return offset == 0; })) {
-        offsets.push_back(const_zero);
-      } else {
-        offsets.push_back(
-            TableLookup<int32_t>(offset_array, S32, partition_id, b));
-      }
-    }
-  }
-
-  return offsets;
-}
-
 std::vector<HloInstruction*> MakeTiledPartitionOrdinals(
     const HloSharding& sharding, HloInstruction* partition_id, SpmdBuilder* b) {
   CHECK(!sharding.IsTileMaximal());
@@ -439,7 +398,7 @@ std::optional<HloSharding> PartialReplicateReshardCompatibleSharding(
   std::vector<int> perm;
   perm.reserve(rank + expand_tile_sizes.size());
   for (int64_t dim = 0; dim < rank; dim++) {
-    perm.emplace_back(dim);
+    perm.push_back(dim);
     if (expand_tile_dims_indices[dim] > -1) {
       perm.emplace_back(expand_tile_dims_indices[dim] + rank);
     }
@@ -571,7 +530,7 @@ std::optional<HloInstruction*> PadFromPartialReplicateShape(
     // If src sharding at this dimension is not partitioned, simply pad to
     // the desired shape.
     if (src_shard_count == 1) {
-      expand_dims_without_halo_exchange.emplace_back(dim);
+      expand_dims_without_halo_exchange.push_back(dim);
       continue;
     }
 
@@ -2182,9 +2141,9 @@ HloSharding CreateMatchingShardingOnDims(
 std::optional<GatherScatterParallelDimSharding>
 GatherScatterOperandsShardedAcrossParallelDims(
     const HloInstruction& operand, const HloInstruction& indices,
-    const hlo_sharding_util::GatherScatterParallelDims& parallel_dims) {
-  const auto& indices_parallel_dims = parallel_dims.indices_parallel_dims;
-  const auto& operand_parallel_dims = parallel_dims.operand_parallel_dims;
+    const hlo_sharding_util::GatherScatterDims& parallel_dims) {
+  const auto& indices_parallel_dims = parallel_dims.indices_dims;
+  const auto& operand_parallel_dims = parallel_dims.operand_dims;
   if (indices_parallel_dims.size() != operand_parallel_dims.size()) {
     return std::nullopt;
   }
@@ -2335,9 +2294,7 @@ std::optional<PadWithWrapPattern> FindPadWithWrapPattern(
   if (lhs->opcode() != HloOpcode::kSlice ||
       rhs->opcode() != HloOpcode::kSlice || lhs->operand(0) != mid ||
       rhs->operand(0) != mid || lhs->slice_strides(dim) != 1 ||
-      rhs->slice_strides(dim) != 1 || lhs->sharding() != mid->sharding() ||
-      rhs->sharding() != mid->sharding() ||
-      lhs->sharding() != concat->sharding()) {
+      rhs->slice_strides(dim) != 1) {
     return std::nullopt;
   }
   pad_pattern.lhs_slice_start = lhs->slice_starts(dim);
@@ -2577,6 +2534,14 @@ CollectiveDeviceList ExpandPartitionGroupListAcrossReplicas(
   return CollectiveDeviceList(
       IotaReplicaGroupList(replica_group_count, partition_group_size,
                            new_reshape_dims, new_transpose_dims));
+}
+
+PartitionedHlo MakeACopyAndReturnItsPartitionedHlo(const PartitionedHlo& phlo,
+                                                   SpmdBuilder* b) {
+  HloInstruction* copy_hlo = b->AddInstruction(HloInstruction::CreateUnary(
+      phlo.hlo()->shape(), HloOpcode::kCopy, phlo.hlo()));
+  copy_hlo->copy_sharding(phlo.hlo());
+  return PartitionedHlo(copy_hlo, phlo.base_shape(), phlo.state());
 }
 
 }  // namespace spmd

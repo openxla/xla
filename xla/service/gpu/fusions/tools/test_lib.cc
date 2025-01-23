@@ -15,6 +15,8 @@ limitations under the License.
 #include "xla/service/gpu/fusions/tools/test_lib.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
@@ -31,14 +33,15 @@ limitations under the License.
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "xla/backends/gpu/codegen/emitters/emitter_base.h"
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/fusions.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
-#include "xla/service/gpu/fusions/fusions.h"
-#include "xla/service/gpu/fusions/ir/xla_gpu_ops.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/status_macros.h"
@@ -50,10 +53,6 @@ namespace gpu {
 absl::StatusOr<std::unique_ptr<HloModule>> LoadTestModule(
     absl::string_view filename) {
   auto module = *xla::LoadModuleFromFile(std::string(filename));
-  module->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_mlir_emitter_level(4);
-
   int num_fusions = absl::c_count_if(
       module->entry_computation()->instructions(),
       [](const HloInstruction* instruction) {
@@ -84,7 +83,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> LoadTestModule(
   return module;
 }
 
-absl::StatusOr<std::unique_ptr<EmitterData>> GetMlirFusionEmitter(
+absl::StatusOr<std::unique_ptr<EmitterData>> GetEmitter(
     const HloModule& module) {
   auto data = std::make_unique<EmitterData>();
   data->fusion = DynCast<HloFusionInstruction>(
@@ -94,14 +93,13 @@ absl::StatusOr<std::unique_ptr<EmitterData>> GetMlirFusionEmitter(
   data->analysis.emplace(
       HloFusionAnalysis::Create(*data->fusion, data->device.value()));
   PreBufferAssignmentFusionInfo info(data->analysis.value());
-  auto emitter = GetFusionEmitter(info);
+  auto fusion_emitter = GetFusionEmitter(info);
 
-  auto mlir_emitter = dynamic_cast<MlirFusionEmitterBase*>(emitter.get());
-  TF_RET_CHECK(mlir_emitter != nullptr)
-      << "Expected emitter to be an MlirFusionEmitter";
+  auto emitter = dynamic_cast<EmitterBase*>(fusion_emitter.get());
+  TF_RET_CHECK(emitter != nullptr) << "Expected emitter to be an EmitterBase";
 
-  emitter.release();
-  data->emitter.reset(mlir_emitter);
+  fusion_emitter.release();
+  data->emitter.reset(emitter);
   return data;
 }
 

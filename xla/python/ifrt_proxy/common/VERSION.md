@@ -41,3 +41,35 @@
 *   Added date: 2024-10-01.
 *   Changes:
     *   Added support for `Client::GetAllDevices()`.
+
+## Version 8
+
+*   Added date: 2024-10-11.
+*   Changes:
+    *   Added support for `SingleDeviceShardSemantics` in Array assembly and disassembly operations.
+
+## Version 9
+
+*   Added date: 2024-10-31.
+*   Changes:
+    *   Added support for string Arrays (i.e., arrays with dtype `DType::kString`).
+
+## Version 10
+
+*   Added date: 2024-11-08.
+*   Changes:
+    *   MakeArrayFromHostBuffer uses client-generated array handles and sends data asynchronously.
+
+
+## Version kClientHandlesOptimization2
+
+*   Added date: 2024-11-19
+*   Changes:
+    *   Introduces a set of performance optimizations where the client generates array handles.
+
+
+## Version kClientHandlesExecutableOptimization
+
+*   Added date: 2024-11-26
+*   Changes:
+    *   Client generates array handles for execute requests.

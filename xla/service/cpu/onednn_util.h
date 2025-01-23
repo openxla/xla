@@ -24,6 +24,7 @@ limitations under the License.
 #include "dnnl.hpp"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/cpu/backend_config.pb.h"
+#include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/tsl/util/onednn_threadpool.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/cpu_info.h"
@@ -52,6 +53,11 @@ inline bool IsSupportedType(xla::PrimitiveType dtype) {
   return false;
 }
 
+struct FusedOperandsRef {
+  const std::vector<void*>& bufs;
+  std::vector<std::pair<int, dnnl::memory>>& postop_args;
+};
+
 std::unique_ptr<tsl::OneDnnThreadPool> CreateOneDnnThreadPool(
     const Eigen::ThreadPoolDevice* threadpool_device);
 
@@ -66,12 +72,19 @@ typedef BackendConfig::BackendConfigOneofCase BackendConfigOneofCase;
 template <typename PrimDesc>
 std::unique_ptr<PrimDesc> CreateOneDnnPrimDesc(HloInstruction*);
 
-template <BackendConfigOneofCase config>
+template <BackendConfigOneofCase config, typename TransformationType = void>
 struct PrimitiveTrait;
 
 template <BackendConfigOneofCase config>
 typename PrimitiveTrait<config>::pointer_type GetKernelConfig(
     absl::StatusOr<BackendConfig>*);
+
+dnnl::post_ops PopulateOneDnnPostOps(
+    const dnnl::engine& cpu_engine,
+    const std::vector<dnnl::memory::desc>& fused_mds,
+    const OneDnnFusionConfig* fusion_config,
+    FusedOperandsRef* fused_operands_ref = nullptr,
+    dnnl::memory::desc* bias_md = nullptr);
 
 }  // namespace cpu
 }  // namespace xla

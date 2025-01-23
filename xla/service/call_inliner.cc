@@ -31,10 +31,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding_metadata.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/hlo_domain_isolator.h"
 #include "xla/service/spmd/shardy/constants.h"
+#include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -148,8 +149,8 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
 bool InlineUnderShardy(HloInstruction* instruction) {
   return !(instruction->GetModule()->config().use_shardy_partitioner() &&
            (absl::StrContains(instruction->to_apply()->name(), "shmap_body") ||
-            absl::StartsWith(instruction->to_apply()->name(),
-                             sdy::kManualComputationBodyFuncName.str())));
+            absl::StrContains(instruction->to_apply()->name(),
+                              sdy::kManualComputationBodyFuncName.str())));
 }
 
 bool InlineComposites(
@@ -158,6 +159,19 @@ bool InlineComposites(
   return !instruction->is_composite() ||
          !composites_to_preserve.contains(
              instruction->frontend_attributes().map().at("composite.name"));
+}
+
+bool InlineStreamAnnotation(HloInstruction* instruction) {
+  if (instruction->GetModule()
+          ->config()
+          .debug_options()
+          .xla_gpu_experimental_stream_annotation()) {
+    if (instruction->frontend_attributes().map().contains(
+            kXlaStreamAnnotationAttr)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -213,7 +227,8 @@ bool CallInliner::IsInlineableCallOp(HloInstruction* instruction) const {
          !instruction->has_backend_config() &&
          !instruction->parent()->IsAsyncComputation() &&
          InlineUnderShardy(instruction) &&
-         InlineComposites(instruction, composites_to_preserve_);
+         InlineComposites(instruction, composites_to_preserve_) &&
+         InlineStreamAnnotation(instruction);
 }
 
 absl::StatusOr<bool> CallInliner::Run(

@@ -28,7 +28,6 @@ limitations under the License.
 #include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/client/client_library.h"
-#include "xla/client/global_data.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/literal.h"
@@ -43,23 +42,6 @@ limitations under the License.
 #include "tsl/platform/test.h"
 
 namespace xla {
-
-// Sets the use_bfloat16 on a container of test cases according to the values in
-// use_bfloat16_params. Generates one set of test cases for each values in
-// use_bfloat16_params with that value. Returns the result.
-template <typename TestCase>
-std::vector<TestCase> ExpandUseBfloat16(
-    absl::Span<const bool> use_bfloat16_params,
-    absl::Span<const TestCase> specs) {
-  std::vector<TestCase> expanded;
-  for (bool use_bfloat16 : use_bfloat16_params) {
-    for (const auto& spec : specs) {
-      expanded.push_back(spec);
-      expanded.back().use_bfloat16 = use_bfloat16;
-    }
-  }
-  return expanded;
-}
 
 template <typename TestCase>
 std::vector<TestCase> ExpandTestType(
@@ -412,13 +394,6 @@ class ClientLibraryTestBase : public ::testing::Test {
                                               const std::string& name,
                                               XlaBuilder* builder,
                                               XlaOp* data_handle);
-
-  // TODO(ralphnathan): These will eventually be removed. Please have new tests
-  // support multiple primitive types, not just BF16.
-  // Getter and setter for the test_type flag, which indicates whether to run
-  // tests with all float-type input/output converted to bfloat16.
-  bool use_bfloat16() const { return test_type_ == BF16; }
-  void set_use_bfloat16(bool value) { test_type_ = value ? BF16 : F32; }
 
   // The float type used in this test.
   PrimitiveType FloatType() const { return test_type_; }

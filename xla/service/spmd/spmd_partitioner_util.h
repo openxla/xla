@@ -46,12 +46,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/hlo_dce.h"
 #include "xla/service/spmd/spmd_partitioner.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -197,17 +197,11 @@ Shape MakeNonPaddedShapeForGivenPartition(const Shape& shape,
 
 // Generates the HLO instructions that represent the dimension offsets on any
 // device. The size of the returned vector is the rank of the given shape.
-// If `dims` is non-empty, the dimensions not in `dims` are constant zero.
+// If `dims` is non-empty, the generated offsets will only be non-zero for those
+// dimensions.
 std::vector<HloInstruction*> MakePartitionOffsets(
     const Shape& shape, const HloSharding& sharding,
     HloInstruction* partition_id, SpmdBuilder* b,
-    absl::Span<const int64_t> dims = {});
-
-// Generates the diff between offsets related to two shardings. It is equivalent
-// to `MakePartitionOffsets(sharding_1) - MakePartitionOffsets(sharding_2)`.
-std::vector<HloInstruction*> MakePartitionOffsetsDiff(
-    const Shape& shape, const HloSharding& sharding_1,
-    const HloSharding& sharding_2, HloInstruction* partition_id, SpmdBuilder* b,
     absl::Span<const int64_t> dims = {});
 
 // Returns the offsets of the partition in the tile assignment.
@@ -542,7 +536,7 @@ HloSharding CreateMatchingShardingOnDims(const Shape& target_shape,
 std::optional<GatherScatterParallelDimSharding>
 GatherScatterOperandsShardedAcrossParallelDims(
     const HloInstruction& operand, const HloInstruction& indices,
-    const hlo_sharding_util::GatherScatterParallelDims& parallel_dims);
+    const hlo_sharding_util::GatherScatterDims& parallel_dims);
 
 // Pattern rewrite preprocessing utilities.
 
@@ -562,9 +556,9 @@ struct PadWithWrapPattern {
   std::vector<const HloInstruction*> rhs_modifiers;
 };
 
-// Returns the `PadWithWrapPattern` if the concat(lhs,mid,rhs) is equivalent to
-// padding mid with wrapping (i.e., padding mid with slices of itself). Return
-// std::nullopt if the pattern is not found.
+// Returns the `PadWithWrapPattern` if the concat(lhs, mid, rhs) is equivalent
+// to padding mid with wrapping (i.e., padding mid with slices of itself).
+// Returns std::nullopt if the pattern is not found.
 std::optional<PadWithWrapPattern> FindPadWithWrapPattern(
     const HloInstruction* concat, const HloInstruction* lhs,
     const HloInstruction* mid, const HloInstruction* rhs);
@@ -963,6 +957,11 @@ absl::StatusOr<std::pair<int64_t, int64_t>> EvaluatePartitionCost(
   }
   return std::make_pair(INT64_MAX, INT64_MAX);
 }
+
+// Creates a copy for the HloInstruction in the PartitionedHlo and returns a
+// new PartitionedHlo for the copy.
+PartitionedHlo MakeACopyAndReturnItsPartitionedHlo(const PartitionedHlo& phlo,
+                                                   SpmdBuilder* b);
 
 }  // namespace spmd
 }  // namespace xla

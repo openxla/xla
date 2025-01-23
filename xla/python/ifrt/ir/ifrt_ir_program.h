@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "llvm/Support/ExtensibleRTTI.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -30,7 +31,9 @@ limitations under the License.
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/ir/ifrt_ir_compile_options.pb.h"
 #include "xla/python/ifrt/program.h"
+#include "xla/python/ifrt/serdes.h"
 
 namespace xla {
 namespace ifrt {
@@ -45,6 +48,8 @@ struct IfrtIRProgram : llvm::RTTIExtends<IfrtIRProgram, Program> {
         mlir_context(std::move(context)),
         owning_mlir_module(std::move(module)) {}
 
+  static absl::string_view type_name() { return "xla::ifrt::IfrtIRProgram"; }
+
   mlir::ModuleOp mlir_module;
 
   static char ID;  // NOLINT
@@ -52,6 +57,42 @@ struct IfrtIRProgram : llvm::RTTIExtends<IfrtIRProgram, Program> {
  private:
   std::unique_ptr<mlir::MLIRContext> mlir_context;
   mlir::OwningOpRef<mlir::ModuleOp> owning_mlir_module;
+};
+
+// Options for serializing IFRT IR programs.
+struct SerializeIfrtIRProgramOptions
+    : llvm::RTTIExtends<SerializeIfrtIRProgramOptions, SerializeOptions> {
+  explicit SerializeIfrtIRProgramOptions(std::string ifrt_version,
+                                         std::string atom_program_version,
+                                         bool version_in_place = true)
+      : ifrt_version(std::move(ifrt_version)),
+        atom_program_version(std::move(atom_program_version)),
+        version_in_place(version_in_place) {}
+
+  static char ID;  // NOLINT
+
+  // String of the form "major.minor.patch", representing the IFRT IR version.
+  std::string ifrt_version;
+  // String of the form "major.minor.patch", representing the atom program
+  // version (currently VHLO version).
+  std::string atom_program_version;
+  // Whether to version the IFRT IR ModuleOp in-place.
+  bool version_in_place;
+};
+
+// Options for deserializing IFRT IR programs.
+// If `context` is not nullptr then deserialization will create a new MLIR
+// context, which will be owned by the deserialized program. Otherwise, the
+// deserialization will use the provided MLIR context and the returned program
+// will not own a MLIR context.
+struct DeserializeIfrtIRProgramOptions
+    : llvm::RTTIExtends<DeserializeIfrtIRProgramOptions, DeserializeOptions> {
+  explicit DeserializeIfrtIRProgramOptions(mlir::MLIRContext* context)
+      : context(context) {}
+
+  static char ID;  // NOLINT
+
+  mlir::MLIRContext* context;
 };
 
 // CompileOptions for an IFRT IR program.
@@ -64,10 +105,12 @@ struct IfrtIRCompileOptions
           loaded_exec_binding = {},
       std::shared_ptr<absl::flat_hash_map<
           std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
-          compile_options_overrides = {})
+          compile_options_overrides = {},
+      bool propagate_shardings = false)
       : device_assignments(std::move(device_assignments)),
         loaded_exec_binding(std::move(loaded_exec_binding)),
-        compile_options_overrides(std::move(compile_options_overrides)) {}
+        compile_options_overrides(std::move(compile_options_overrides)),
+        propagate_shardings(propagate_shardings) {}
 
   // Mapping from logical device ids in IFRT IR MLIR module to runtime device
   // ids obtained from IFRT client.
@@ -85,6 +128,17 @@ struct IfrtIRCompileOptions
   std::shared_ptr<absl::flat_hash_map<
       std::string, std::unique_ptr<xla::ifrt::CompileOptions>>>
       compile_options_overrides;
+
+  // Whether to propagate shardings from atom program executables for
+  // unspecified shardings.
+  bool propagate_shardings;
+
+  // Constructs `IfrtIRCompileOptions` from `IfrtIrCompileOptionsProto`.
+  static absl::StatusOr<std::unique_ptr<IfrtIRCompileOptions>> FromProto(
+      const IfrtIrCompileOptionsProto& proto);
+
+  // Returns a `IfrtIrCompileOptionsProto` representation.
+  absl::StatusOr<IfrtIrCompileOptionsProto> ToProto() const;
 
   static char ID;  // NOLINT
 };

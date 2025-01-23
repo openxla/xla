@@ -22,7 +22,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "stablehlo/api/PortableApi.h"
-#include "xla/test.h"
+#include "xla/hlo/testlib/test.h"
 #include "tsl/platform/statusor.h"
 
 namespace xla {
@@ -55,6 +55,25 @@ TEST(MlirToHloTest, StablehloTest) {
 
   // StableHLO uses VHLO for PJRT serialization.
   EXPECT_THAT(blob, IsVhloArtifact("1.0.0"));
+}
+
+TEST(MlirToHloTest, StablehloPluginNewerThanFramework) {
+  constexpr char kProgram[] =
+      R"(
+    func.func @add(%arg0: tensor<1x2xf32>) -> tensor<1x2xf32> {
+      %cst = stablehlo.constant dense<1.0> : tensor<1x2xf32>
+      %0 = stablehlo.add %arg0, %cst : tensor<1x2xf32>
+      return %0 : tensor<1x2xf32>
+    }
+  )";
+  mlir::MLIRContext context;
+  TF_ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                          ParseMlirModuleString(kProgram, context));
+
+  // Request version v100.99.88, newer than the framework version.
+  // Serialize uses frameworks version when plugin requests a newer version.
+  TF_ASSERT_OK_AND_ASSIGN(std::string blob, Serialize(*module, "100.99.98"));
+  EXPECT_THAT(blob, IsVhloArtifact(mlir::stablehlo::getCurrentVersion()));
 }
 
 TEST(MlirToHloTest, ChloTest) {

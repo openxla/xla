@@ -31,16 +31,16 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/gpu/hlo_traversal.h"
-#include "xla/service/gpu/model/indexing_test_utils.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/model/symbolic_tile.h"
 #include "xla/service/gpu/model/symbolic_tiled_hlo_instruction.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/tests/hlo_test_base.h"
-#include "xla/tests/verified_hlo_module.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "tsl/platform/status_matchers.h"
@@ -78,6 +78,12 @@ Matcher<const TiledHloInstruction> MatchTiledHloInstruction(
     absl::string_view tile_offsets_indexing) {
   return MatchTiledHloInstructionImpl(tile_sizes, tile_strides,
                                       tile_offsets_indexing);
+}
+
+MATCHER_P(MatchConstraintExpressionString, constraint_expression_string, "") {
+  return ExplainMatchResult(
+      true, ApproximateMatch(constraint_expression_string, arg.ToString()),
+      result_listener);
 }
 
 // Fake emitter-specific constraints for testing. Requires that the tile size
@@ -460,8 +466,8 @@ ENTRY main {
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
   const ConstraintExpression& constraints = analysis->GetConstraints();
-  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(2));
-  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(1));
+  EXPECT_THAT(constraints, MatchConstraintExpressionString(
+                               "2 mod d0 in [0, 0] || d0 mod 2 in [0, 0]"));
 }
 
 TEST_F(SymbolicTileAnalysisTest, DoesNotBailOutOnConstrainedBitcast) {
@@ -479,8 +485,8 @@ ENTRY main {
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
   const ConstraintExpression& constraints = analysis->GetConstraints();
-  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(2));
-  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(1));
+  EXPECT_THAT(constraints, MatchConstraintExpressionString(
+                               "2 mod d0 in [0, 0] || d0 mod 2 in [0, 0]"));
 }
 
 TEST_F(SymbolicTileAnalysisTest, BailOutOnUnsupportedConcatenate) {
@@ -534,10 +540,11 @@ ENTRY main {
   std::optional<SymbolicTileAnalysis> analysis = TryAnalyzeModule(module.get());
   ASSERT_TRUE(analysis.has_value());
   const ConstraintExpression& constraints = analysis->GetConstraints();
-  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(4));
-  for (const ConstraintExpression::ConjointConstraints& conjunction :
-       constraints.DisjointConjointConstraints())
-    EXPECT_THAT(conjunction, SizeIs(2));
+  EXPECT_THAT(constraints, MatchConstraintExpressionString(
+                               "6 mod d0 in [0, 0] && 8 mod d1 in [0, 0] || "
+                               "6 mod d0 in [0, 0] && d1 mod 8 in [0, 0] || "
+                               "8 mod d1 in [0, 0] && d0 mod 6 in [0, 0] || "
+                               "d0 mod 6 in [0, 0] && d1 mod 8 in [0, 0]"));
 
   // We expect the constraints here to be
   //    6 mod d0 in [0, 0] && 8 mod s1 in [0, 0] ||
@@ -625,8 +632,11 @@ ENTRY main {
   // Each bitcast in the above module introduces one disjoint constraint. Once
   // they are aggregated, we have four disjoint constraints!
   const ConstraintExpression& constraints = analysis->GetConstraints();
-  EXPECT_THAT(constraints.DisjointConjointConstraints(), SizeIs(4));
-  EXPECT_THAT(constraints.DisjointConjointConstraints().front(), SizeIs(2));
+  EXPECT_THAT(constraints, MatchConstraintExpressionString(
+                               "6 mod d0 in [0, 0] && 8 mod d1 in [0, 0] || "
+                               "6 mod d0 in [0, 0] && d1 mod 8 in [0, 0] || "
+                               "8 mod d1 in [0, 0] && d0 mod 6 in [0, 0] || "
+                               "d0 mod 6 in [0, 0] && d1 mod 8 in [0, 0]"));
 }
 
 bool AlwaysValid(absl::Span<const int64_t>) { return true; }
@@ -961,7 +971,7 @@ ENTRY main {
                                  /*tile_sizes=*/{1, 1, 32},
                                  /*tile_strides=*/{0, 1, 1},
                                  /*tile_offsets_indexing=*/R"(
-    (d0, d1)[rt0, rt1] -> (rt0, d1, rt1),
+    (d0, d1){rt0, rt1} -> (rt0, d1, rt1),
     domain:
     d0 in [0, 0],
     d1 in [0, 1],

@@ -1,28 +1,14 @@
-load("@tsl//tsl/platform:build_config.bzl", "tf_proto_library")
+# copybara:uncomment load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla:xla.bzl", "xla_cc_test")
+load("//xla/python/ifrt:ifrt.bzl", "ifrt_package_groups")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
-
-package_group(
-    name = "friends",
-    includes = [
-        "//xla/python:friends",
-    ],
-    packages = [
-        "//xla/python/...",
-    ],
-)
-
-package_group(
-    name = "internal",
-    packages = [
-        "//xla/python/ifrt/...",
-    ],
-)
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = internal_visibility([
+        ":users",
         ":friends",
         ":internal",
     ]),
@@ -31,6 +17,8 @@ package(
 exports_files([
     "BUILD",
 ])
+
+ifrt_package_groups()
 
 cc_library(
     name = "ifrt",
@@ -110,6 +98,8 @@ cc_library(
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:nullability",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/container:node_hash_set",
@@ -171,6 +161,20 @@ xla_cc_test(
 tf_proto_library(
     name = "execute_options_proto",
     srcs = ["execute_options.proto"],
+    protodeps = [":attribute_map_proto"],
+)
+
+xla_cc_test(
+    name = "executable_test",
+    size = "small",
+    srcs = ["executable_test.cc"],
+    deps = [
+        ":attribute_map",
+        ":ifrt",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:statusor",
+        "@tsl//tsl/platform:test",
+    ],
 )
 
 xla_cc_test(
@@ -394,12 +398,13 @@ cc_library(
     deps = [
         ":attribute_map",
         ":ifrt",
-        "//xla:test",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:test",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_layout",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -471,6 +476,7 @@ cc_library(
         ":ifrt",
         ":serdes",
         ":sharding_serdes_proto_cc",
+        "//xla/python/ifrt/ir:sharding_param",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -489,6 +495,7 @@ xla_cc_test(
         ":serdes",
         ":serdes_proto_cc",
         ":sharding_serdes",
+        "//xla/python/ifrt/ir:sharding_param",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
@@ -575,7 +582,10 @@ xla_cc_test(
         ":device_test_util",
         ":ifrt",
         ":sharding_serdes",
+        "//xla:shape_util",
+        "//xla/pjrt:pjrt_layout",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/lib/core:status_test_util",
         "@com_google_absl//absl/functional:bind_front",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
@@ -600,6 +610,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
+        "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
@@ -623,6 +634,7 @@ tf_proto_library(
     protodeps = [
         ":device_proto",
         ":shape_proto",
+        "//xla/python/ifrt/ir:sharding_param_proto",
     ],
 )
 
@@ -736,3 +748,19 @@ xla_cc_test(
         "@tsl//tsl/platform:test",
     ],
 )
+
+# copybara:uncomment_begin
+# bzl_library(
+#     name = "ifrt_bzl",
+#     srcs = ["ifrt.bzl"],
+#     parse_tests = False,
+#     visibility = ["//visibility:private"],
+# )
+#
+# bzl_library(
+#     name = "ifrt_google_bzl",
+#     srcs = ["ifrt.google.bzl"],
+#     parse_tests = False,
+#     visibility = ["//visibility:private"],
+# )
+# copybara:uncomment_end

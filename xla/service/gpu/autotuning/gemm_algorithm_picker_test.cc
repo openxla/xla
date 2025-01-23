@@ -24,12 +24,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/service/gpu/autotuning/autotuner_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/transforms/gemm_rewriter.h"
 #include "xla/service/gpu/variant_visitor.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -50,7 +50,7 @@ class GemmAlgorithmPickerTest : public HloTestBase,
  public:
   GemmAlgorithmPickerTest() { AutotunerUtil::ClearAutotuneResults(); }
 
-  DebugOptions GetDebugOptionsForTest() override {
+  DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cublaslt(GetParam());
     debug_options.set_xla_gpu_enable_triton_gemm(false);
@@ -68,7 +68,7 @@ class GemmAlgorithmPickerTest : public HloTestBase,
   }
 
   void SetUp() override {
-    std::string_view name =
+    absl::string_view name =
         ::testing::UnitTest::GetInstance()->current_test_info()->name();
     // We need special handling for BlasGetVersion test.
     bool blas_get_version = name.rfind("BlasGetVersion") == 0;

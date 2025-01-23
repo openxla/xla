@@ -1,9 +1,9 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_binary", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -54,6 +54,26 @@ cc_library(
 )
 
 cc_library(
+    name = "literal_exporter",
+    srcs = ["literal_exporter.cc"],
+    hdrs = ["literal_exporter.h"],
+    deps = [
+        ":type_to_shape",
+        "//xla:array",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@tsl//tsl/platform:errors",
+    ],
+)
+
+cc_library(
     name = "location_exporter",
     srcs = ["location_exporter.cc"],
     hdrs = ["location_exporter.h"],
@@ -88,6 +108,7 @@ cc_library(
     hdrs = ["stack_frame_index_builder.h"],
     deps = [
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
@@ -103,6 +124,7 @@ cc_library(
     deps = [
         ":attribute_exporter",
         ":layout_util",
+        ":literal_exporter",
         ":location_exporter",
         ":module_attributes_exporter",
         ":operator_writer_inc",
@@ -117,18 +139,12 @@ cc_library(
         "//xla:status_macros",
         "//xla:types",
         "//xla:xla_data_proto_cc",
-        "//xla/client:xla_builder",
-        "//xla/client:xla_computation",
-        "//xla/client/lib:approx_topk",
-        "//xla/client/lib:approx_topk_shape",
-        "//xla/client/lib:matrix",
-        "//xla/client/lib:quantize",
-        "//xla/client/lib:slicing",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/builder/lib:approx_topk",
         "//xla/hlo/builder/lib:approx_topk_shape",
         "//xla/hlo/builder/lib:matrix",
+        "//xla/hlo/builder/lib:quantize",
         "//xla/hlo/builder/lib:slicing",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
@@ -203,6 +219,7 @@ xla_cc_test(
         ":mlir_hlo_to_hlo",
         "//xla/mlir/utils:error_util",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
@@ -210,7 +227,6 @@ xla_cc_test(
         "@stablehlo//:register",
         "@tsl//tsl/platform:status_matchers",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -289,14 +305,14 @@ xla_cc_test(
     deps = [
         ":type_to_shape",
         "//xla:shape_util",
-        "//xla:test",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/testlib:test",
         "//xla/hlo/translate/hlo_to_mhlo:hlo_utils",
         "//xla/mlir_hlo",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:protobuf",
-        "@tsl//tsl/platform:test_main",
     ],
 )

@@ -16,14 +16,17 @@ limitations under the License.
 #ifndef XLA_TOOLS_MULTIHOST_HLO_RUNNER_FUNCTIONAL_HLO_RUNNER_H_
 #define XLA_TOOLS_MULTIHOST_HLO_RUNNER_FUNCTIONAL_HLO_RUNNER_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <random>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -49,6 +52,15 @@ enum class InputFormat {
   kSnapshotProtoBinary,  // HloSnapshot protobuf binary format. Can be dumped by
                          // TensorFlow by setting the environment variable
                          // xla_dump_hlo_snapshots.
+  kUnoptimizedSnapshotProtoBinary,  // HloUnoptimizedSnapshot protobuf binary
+                                    // format. Can be dumped by
+                                    // setting the flag
+                                    // xla_dump_hlo_snapshots in conjunction
+                                    // with xla_dump_as_text.
+  kUnoptimizedSnapshotProtoText,    // HloUnoptimizedSnapshot protobuf text
+                                    // format. Can be dumped by TensorFlow by
+                                    // setting the flag xla_dump_hlo_snapshots
+                                    // in conjunction with xla_dump_as_text.
 };
 
 // Interface for profiler plugins. If being set in RunningOptions, profiling
@@ -150,6 +162,14 @@ class FunctionalHloRunner {
     // If set, we will remove all infeed and outfeed operations.
     bool remove_infeed_outfeed = true;
 
+    // If set, we will flatten all conditional operations by setting default
+    // branch index to N-1 for indexed conditionals. Default PRED is false for
+    // predicated conditionals if conditional_value is not set.
+    bool flatten_conditional = false;
+
+    // If set, used as default predicate value for predicated conditional ops.
+    bool conditional_value = false;
+
     // Should we flatten all while loops?
     bool flatten_while_loop() const {
       return while_execution_count.has_value();
@@ -203,9 +223,6 @@ class FunctionalHloRunner {
     // Whether to untuple the result of running HLO module into a vector of
     // arrays. If unprovided, use the default in ExecuteOptions.
     std::optional<bool> untuple_result = std::nullopt;
-    // Whether to use the layout on host when allocating buffers for arguments.
-    // Some platforms (e.g. CPU) do not support this yet.
-    bool use_argument_host_layout = false;
 
     // Should we log the inputs and outputs to stderr?
     bool log_input_output() const {
@@ -215,7 +232,11 @@ class FunctionalHloRunner {
 
   struct HloModuleAndArguments {
     std::unique_ptr<HloModule> hlo_module;
-    std::vector<Literal> arguments;
+
+    // The outer `std::vector` represents the list of shards. The inner
+    // `std::vector<Literal>` represents a list of arguments for a single shard
+    // partition.
+    std::vector<std::vector<Literal>> arguments;
   };
 
   struct ReplicasAndPartitions {
@@ -268,9 +289,10 @@ class FunctionalHloRunner {
   static absl::Status LoadAndCompile(
       PjRtClient& client, const DebugOptions& debug_options,
       const PreprocessingOptions& preproc_options,
-      const RawCompileOptions& raw_compile_options, std::string_view hlo_file,
+      const RawCompileOptions& raw_compile_options, absl::string_view hlo_file,
       InputFormat input_format, int task_id = 0, int num_nodes = 1,
-      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
+      std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr,
+      bool use_gpu_count_workaround = true);
 
   // Compiles and runs the given HLO module with the given arguments for each
   // device. The given arguments is a map from device ID to a list of arguments.
@@ -315,6 +337,11 @@ class FunctionalHloRunner {
 
   static absl::StatusOr<HloModuleAndArguments>
   ReadModuleFromSnapshotBinaryProtoFile(absl::string_view hlo_file);
+  static absl::StatusOr<HloModuleAndArguments>
+  ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(absl::string_view hlo_file);
+  static absl::StatusOr<HloModuleAndArguments>
+  ReadModuleFromUnoptimizedSnapshotTextProtoFile(absl::string_view hlo_file);
+
   static absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
       absl::string_view hlo_file, InputFormat input_format);
 

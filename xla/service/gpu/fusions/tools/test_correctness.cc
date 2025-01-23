@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -29,11 +30,11 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/indexing_map_serialization.h"
+#include "xla/hlo/analysis/indexing_test_utils.h"
 #include "xla/service/gpu/fusions/tools/test_lib.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
-#include "xla/service/gpu/model/indexing_map.h"
-#include "xla/service/gpu/model/indexing_map_serialization.h"
-#include "xla/service/gpu/model/indexing_test_utils.h"
 #include "xla/shape.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -107,7 +108,7 @@ std::pair<std::string, std::vector<int64_t>> ParseHeroAndIds(
 TEST_F(CorrectnessTest, InputIndexingIsBijection) {
   auto context = GetMlirContextForTest();
   TF_ASSERT_OK_AND_ASSIGN(auto module, LoadTestModule(flags.input_file));
-  TF_ASSERT_OK_AND_ASSIGN(auto emitter_data, GetMlirFusionEmitter(*module));
+  TF_ASSERT_OK_AND_ASSIGN(auto emitter_data, GetEmitter(*module));
   for (const auto& [hero_name, ids] : flags.bijection_inputs) {
     TF_ASSERT_OK_AND_ASSIGN(int64_t hero_index,
                             GetHeroIndex(hero_name, *emitter_data->analysis));
@@ -129,7 +130,7 @@ TEST_F(CorrectnessTest, InputIndexingIsBijection) {
 TEST_F(CorrectnessTest, OutputIndexingIsBijection) {
   auto context = GetMlirContextForTest();
   TF_ASSERT_OK_AND_ASSIGN(auto module, LoadTestModule(flags.input_file));
-  TF_ASSERT_OK_AND_ASSIGN(auto emitter_data, GetMlirFusionEmitter(*module));
+  TF_ASSERT_OK_AND_ASSIGN(auto emitter_data, GetEmitter(*module));
   for (const auto& hero_name : flags.bijection_outputs) {
     TF_ASSERT_OK_AND_ASSIGN(int64_t hero_index,
                             GetHeroIndex(hero_name, *emitter_data->analysis));

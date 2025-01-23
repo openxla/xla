@@ -1,18 +1,18 @@
 load(
-    "@tsl//tsl/platform:build_config.bzl",
-    "tsl_cc_test",
-)
-load(
-    "@tsl//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
-load(
     "//xla/tsl:tsl.bzl",
     "if_linux_x86_64",
     "internal_visibility",
     "tsl_copts",
 )
 load("//xla/tsl:tsl.default.bzl", "filegroup")
+load(
+    "//xla/tsl/platform:build_config.bzl",
+    "tsl_cc_test",
+)
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
+)
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -34,12 +34,12 @@ cc_library(
     # -msse4.2 enables the use of crc32c compiler builtins.
     copts = tsl_copts() + if_linux_x86_64(["-msse4.2"]),
     deps = [
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/crc:crc32c",
         "@com_google_absl//absl/strings:cord",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:cord",
-        "@tsl//tsl/platform:types",
     ],
 )
 
@@ -67,11 +67,11 @@ tsl_cc_test(
     srcs = ["crc32c_test.cc"],
     deps = [
         ":crc32c",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:types",
         "@com_google_absl//absl/strings:cord",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-        "@tsl//tsl/platform:types",
+        "@com_google_googletest//:gtest_main",
     ],
 )

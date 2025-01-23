@@ -129,6 +129,7 @@ TEST(FfiTest, DataTypeEnumValue) {
 
   EXPECT_EQ(encoded(PrimitiveType::TOKEN), encoded(DataType::TOKEN));
 
+  EXPECT_EQ(encoded(PrimitiveType::F4E2M1FN), encoded(DataType::F4E2M1FN));
   EXPECT_EQ(encoded(PrimitiveType::F8E5M2), encoded(DataType::F8E5M2));
   EXPECT_EQ(encoded(PrimitiveType::F8E4M3), encoded(DataType::F8E4M3));
   EXPECT_EQ(encoded(PrimitiveType::F8E4M3FN), encoded(DataType::F8E4M3FN));
@@ -137,6 +138,7 @@ TEST(FfiTest, DataTypeEnumValue) {
   EXPECT_EQ(encoded(PrimitiveType::F8E5M2FNUZ), encoded(DataType::F8E5M2FNUZ));
   EXPECT_EQ(encoded(PrimitiveType::F8E4M3FNUZ), encoded(DataType::F8E4M3FNUZ));
   EXPECT_EQ(encoded(PrimitiveType::F8E3M4), encoded(DataType::F8E3M4));
+  EXPECT_EQ(encoded(PrimitiveType::F8E8M0FNU), encoded(DataType::F8E8M0FNU));
 }
 
 TEST(FfiTest, DataTypeByteWidth) {
@@ -179,6 +181,8 @@ TEST(FfiTest, DataTypeByteWidth) {
   EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::C128),
             ByteWidth(DataType::C128));
 
+  EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F4E2M1FN),
+            ByteWidth(DataType::F4E2M1FN));
   EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E5M2),
             ByteWidth(DataType::F8E5M2));
   EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E4M3),
@@ -193,6 +197,8 @@ TEST(FfiTest, DataTypeByteWidth) {
             ByteWidth(DataType::F8E4M3FNUZ));
   EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E3M4),
             ByteWidth(DataType::F8E3M4));
+  EXPECT_EQ(primitive_util::ByteWidth(PrimitiveType::F8E8M0FNU),
+            ByteWidth(DataType::F8E8M0FNU));
 }
 
 TEST(FfiTest, ErrorEnumValue) {
@@ -364,6 +370,10 @@ TEST(FfiTest, AnyBufferArgument) {
 
   auto handler = Ffi::Bind().Arg<AnyBuffer>().To([&](auto buffer) {
     EXPECT_EQ(buffer.untyped_data(), storage.data());
+    EXPECT_EQ(buffer.template typed_data<float>(),
+              reinterpret_cast<float*>(storage.data()));
+    EXPECT_EQ(buffer.template reinterpret_data<int32_t>(),
+              reinterpret_cast<int32_t*>(storage.data()));
     EXPECT_EQ(buffer.dimensions().size(), 2);
     return Error::Success();
   });
@@ -400,6 +410,8 @@ TEST(FfiTest, AnyBufferResult) {
 
   auto handler = Ffi::Bind().Ret<AnyBuffer>().To([&](Result<AnyBuffer> buffer) {
     EXPECT_EQ(buffer->untyped_data(), storage.data());
+    EXPECT_EQ(buffer->template typed_data<float>(),
+              reinterpret_cast<float*>(storage.data()));
     EXPECT_EQ(buffer->dimensions().size(), 2);
     return Error::Success();
   });
@@ -1179,6 +1191,11 @@ TEST(FfiTest, ThreadPool) {
   Eigen::ThreadPoolDevice device(pool.AsEigenThreadPool(), pool.NumThreads());
 
   auto fn = [&](ThreadPool thread_pool) {
+    // Check that we can get the size of the underlying thread pool.
+    if (thread_pool.num_threads() != 2) {
+      return Error::Internal("Wrong number of threads");
+    }
+
     // Use a pair of blocking counters to check that scheduled task was executed
     // on a thread pool (it would deadlock if executed inline).
     absl::BlockingCounter prepare(1);

@@ -26,11 +26,11 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/execution_options_util.h"
 #include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal_util.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/test_helpers.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/logging.h"
 
@@ -593,9 +593,7 @@ XlaOp ClientLibraryTestBase::AddParam(const Literal& argument,
 
 XlaOp ClientLibraryTestBase::CreateConstantFromLiteral(const Literal& literal,
                                                        XlaBuilder* builder) {
-  return ConstantLiteral(builder, use_bfloat16()
-                                      ? LiteralUtil::ConvertF32ToBF16(literal)
-                                      : LiteralSlice(literal));
+  return ConstantLiteral(builder, MaybeConvertLiteralToTestType(literal));
 }
 
 absl::StatusOr<std::unique_ptr<GlobalData>>

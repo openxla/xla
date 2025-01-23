@@ -31,17 +31,16 @@ limitations under the License.
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_common.h"
 
 namespace stream_executor {
 namespace gpu {
 
-class CudaStream : public GpuStream {
+class CudaStream : public StreamCommon {
  public:
   absl::Status WaitFor(Stream* other) override;
   absl::Status RecordEvent(Event* event) override;
@@ -58,6 +57,7 @@ class CudaStream : public GpuStream {
                       const DeviceMemoryBase& gpu_src, uint64_t size) override;
   absl::Status DoHostCallbackWithStatus(
       absl::AnyInvocable<absl::Status() &&> callback) override;
+  absl::Status BlockHostUntilDone() override;
 
   void SetName(std::string name) override;
 
@@ -71,7 +71,7 @@ class CudaStream : public GpuStream {
   }
 
   static absl::StatusOr<std::unique_ptr<CudaStream>> Create(
-      GpuExecutor* executor,
+      StreamExecutor* executor,
       std::optional<std::variant<StreamPriority, int>> priority);
 
   ~CudaStream() override;
@@ -79,21 +79,23 @@ class CudaStream : public GpuStream {
   CUstream stream_handle() const { return stream_handle_; }
 
  private:
-  CudaStream(GpuExecutor* executor, CudaEvent completed_event,
+  CudaStream(StreamExecutor* executor, CudaEvent completed_event,
              std::optional<std::variant<StreamPriority, int>> priority,
              CUstream stream_handle)
-      : GpuStream(executor, priority),
+      : StreamCommon(executor, priority),
         executor_(executor),
         completed_event_(std::move(completed_event)),
         stream_handle_(stream_handle) {}
 
   absl::Status RecordCompletedEvent();
 
-  absl::Status Launch(const ThreadDim& thread_dims, const BlockDim& block_dims,
-                      const std::optional<ClusterDim>& cluster_dims,
-                      const Kernel& kernel, const KernelArgs& args) override;
+  absl::Status LaunchKernel(const ThreadDim& thread_dims,
+                            const BlockDim& block_dims,
+                            const std::optional<ClusterDim>& cluster_dims,
+                            void* function, absl::string_view name, void** args,
+                            int64_t shmem_bytes) override;
 
-  GpuExecutor* executor_;
+  StreamExecutor* executor_;
   CudaEvent completed_event_;
   CUstream stream_handle_;
 };

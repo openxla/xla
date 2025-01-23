@@ -77,6 +77,12 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
       Shape shape, std::shared_ptr<const Sharding> sharding,
       absl::Span<tsl::RCReference<xla::ifrt::Array>> arrays,
       ArrayCopySemantics semantics) override;
+  absl::StatusOr<tsl::RCReference<xla::ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      Shape shape, std::shared_ptr<const Sharding> sharding,
+      absl::Span<tsl::RCReference<xla::ifrt::Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,
@@ -134,9 +140,10 @@ class Client final : public llvm::RTTIExtends<Client, xla::ifrt::Client> {
     return absl::UnimplementedError(
         "GetTopologyForDevices is not supported for the IFRT proxy client.");
   }
-  absl::StatusOr<std::unique_ptr<xla::PjRtLayout>> GetDefaultLayoutForDevice(
+  absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> GetDefaultLayout(
       xla::ifrt::DType dtype, absl::Span<const int64_t> dims,
-      xla::ifrt::Device* device) const override {
+      xla::ifrt::Device* device,
+      xla::ifrt::MemoryKind memory_kind) const override {
     return absl::UnimplementedError(
         "GetDefaultLayout is not supported for the IFRT proxy client.");
   }

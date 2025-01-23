@@ -18,24 +18,42 @@ limitations under the License.
 #include <hip/hip_bfloat16.h>
 #include <hip/hip_fp16.h>
 
-#include <functional>
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <map>
 #include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "Eigen/Core"
+#include "rocm/include/hip/amd_detail/amd_hip_bfloat16.h"
+#include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
 #include "rocm/include/miopen/miopen.h"
 #include "rocm/rocm_config.h"
+#include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_allocator.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/gpu/gpu_driver.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#include "xla/stream_executor/gpu/scoped_activate_context.h"
+#include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/rocm/rocm_diagnostics.h"
@@ -45,11 +63,17 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/util/determinism.h"
 #include "xla/tsl/util/env_var.h"
-#include "tsl/platform/dso_loader.h"
-#include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/hash.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/status.h"
+#include "tsl/platform/statusor.h"
+
+#ifndef PLATFORM_GOOGLE
+#include "tsl/platform/dso_loader.h"
+#include "tsl/platform/env.h"
+#endif
 
 namespace {
 
@@ -216,16 +240,18 @@ class MIOpenHandle {
  public:
   // Takes ownership of the executor context and the lock to access MIOpen
   // using handle.
-  MIOpenHandle(GpuExecutor* executor, std::unique_ptr<absl::MutexLock> lock,
+  MIOpenHandle(StreamExecutor* executor, std::unique_ptr<absl::MutexLock> lock,
                miopenHandle_t handle)
-      : context_(executor), lock_(std::move(lock)), handle_(handle) {}
+      : context_(executor->Activate()),
+        lock_(std::move(lock)),
+        handle_(handle) {}
 
   // Returns MIOpen handle. To be passed directly to MIOpen APIs, don't keep
   // a copy.
   miopenHandle_t handle() const { return handle_; }
 
  private:
-  ScopedActivateContext context_;
+  std::unique_ptr<ActivateContext> context_;
   std::unique_ptr<absl::MutexLock> lock_;
   miopenHandle_t handle_;  // Not owned.
 };
@@ -735,10 +761,13 @@ class MIOpenAccess {
   // The null stream synchronizes with all other streams and it is
   // therefore a bad idea (performance wise) to call any MIOpen APIs that
   // enqueue work in the stream.
-  MIOpenHandle GetHandle(GpuExecutor* executor, Stream* stream) {
+  MIOpenHandle GetHandle(StreamExecutor* executor, Stream* stream) {
     auto lock = std::make_unique<absl::MutexLock>(&mutex_);
     mutex_.AssertHeld();
-    hipStream_t hip_stream = stream ? AsGpuStreamValue(stream) : nullptr;
+    hipStream_t hip_stream =
+        stream ? static_cast<hipStream_t>(
+                     stream->platform_specific_handle().stream)
+               : nullptr;
     auto status = wrap::miopenSetStream(handle_, hip_stream);
     CHECK_EQ(status, miopenStatusSuccess) << "Failed to set MIOpen stream.";
     return MIOpenHandle(executor, std::move(lock), handle_);
@@ -752,7 +781,7 @@ class MIOpenAccess {
   miopenHandle_t handle_ ABSL_GUARDED_BY(mutex_);  // Owned.
 };
 
-MIOpenSupport::MIOpenSupport(GpuExecutor* parent) : parent_(parent) {
+MIOpenSupport::MIOpenSupport(StreamExecutor* parent) : parent_(parent) {
   // by default, the Get*Algorithm API will return the list of all applicable
   // algorithms
   return_best_algo_only_ = false;
@@ -775,7 +804,7 @@ MIOpenSupport::MIOpenSupport(GpuExecutor* parent) : parent_(parent) {
 }
 
 absl::Status MIOpenSupport::Init() {
-  ScopedActivateContext context(parent_);
+  std::unique_ptr<ActivateContext> context = parent_->Activate();
   miopenHandle_t miopen_handle = nullptr;
   auto status = wrap::miopenCreateWithStream(
       reinterpret_cast<miopenHandle_t*>(&miopen_handle), (hipStream_t)(0));
@@ -3276,7 +3305,7 @@ absl::Status MIOpenSupport::DoPrepareForConvolution(
 
 class RocmConvRunner : public dnn::ConvRunner {
  public:
-  RocmConvRunner(GpuExecutor* parent, MIOpenAccess* miopen, int64_t algo_id,
+  RocmConvRunner(StreamExecutor* parent, MIOpenAccess* miopen, int64_t algo_id,
                  size_t workspace_size, dnn::ConvolutionKind kind,
                  dnn::DataType input_type, dnn::DataType output_type,
                  bool use_immediate_mode,
@@ -3421,7 +3450,7 @@ class RocmConvRunner : public dnn::ConvRunner {
   }
 
  private:
-  GpuExecutor* parent_;
+  StreamExecutor* parent_;
   MIOpenAccess* miopen_;
   int64_t algo_id_;
   size_t workspace_size_;
@@ -4262,8 +4291,9 @@ absl::Status InplaceBiasActivation(
       typename std::conditional<std::is_same_v<Tbias, Eigen::bfloat16>,
                                 hip_bfloat16, Tbias>::type>::type CTbias;
   launchInplaceBiasActivation<CT, CTbias>(
-      AsGpuStreamValue(stream), c_data.opaque(), bias_data.opaque(),
-      side_input_data.opaque(), side_input_scale,
+      static_cast<hipStream_t>(stream->platform_specific_handle().stream),
+      c_data.opaque(), bias_data.opaque(), side_input_data.opaque(),
+      side_input_scale,
       static_cast<int>(activation_mode) + (transpose ? 10 : 0), batch, m, n,
       ldc, param);
   return absl::OkStatus();
@@ -4890,7 +4920,7 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
  public:
   // Queries the workspace size and constructs a 'RocmFusedConvRunner'.
   static absl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>> Create(
-      GpuExecutor* parent, Stream* stream, MIOpenAccess* miopen,
+      StreamExecutor* parent, Stream* stream, MIOpenAccess* miopen,
       const dnn::AlgorithmDesc& algo, dnn::DataType input_type,
       dnn::DataType bias_type, double conv_scale, double side_input_scale,
       double leakyrelu_alpha, BatchDescriptor input_nd,
@@ -4962,7 +4992,7 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
  private:
   // Private to prevent passing in the wrong workspace_size.
   RocmFusedConvRunner(
-      GpuExecutor* parent, Stream* stream, MIOpenAccess* miopen,
+      StreamExecutor* parent, Stream* stream, MIOpenAccess* miopen,
       int64_t algo_id, size_t workspace_size, dnn::DataType input_type,
       dnn::DataType bias_type, double conv_scale, double side_input_scale,
       double leakyrelu_alpha, BatchDescriptor dnn_input_nd,
@@ -5078,7 +5108,7 @@ class RocmFusedConvRunner : public dnn::FusedConvRunner {
 
   std::string desc_;
 
-  GpuExecutor* parent_;
+  StreamExecutor* parent_;
   MIOpenAccess* miopen_;
   int64_t algo_id_;
   size_t workspace_size_;
@@ -5193,16 +5223,7 @@ void initialize_miopen() {
         PluginRegistry::Instance()->RegisterFactory<PluginRegistry::DnnFactory>(
             rocm::kROCmPlatformId, "MIOpen",
             [](StreamExecutor* parent) -> dnn::DnnSupport* {
-              gpu::GpuExecutor* rocm_executor =
-                  dynamic_cast<gpu::GpuExecutor*>(parent);
-              if (rocm_executor == nullptr) {
-                LOG(ERROR)
-                    << "Attempting to initialize an instance of the MIOpen "
-                    << "support library with a non-ROCM StreamExecutor";
-                return nullptr;
-              }
-
-              gpu::MIOpenSupport* dnn = new gpu::MIOpenSupport(rocm_executor);
+              gpu::MIOpenSupport* dnn = new gpu::MIOpenSupport(parent);
               if (!dnn->Init().ok()) {
                 // Note: Init() will log a more specific error.
                 delete dnn;

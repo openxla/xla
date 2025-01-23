@@ -17,24 +17,35 @@ limitations under the License.
 
 #define EIGEN_USE_GPU
 #define EIGEN_USE_HIP
-#include <assert.h>
 
+#include <algorithm>
+#include <cassert>
 #include <complex>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/types/span.h"
+#include "absl/time/time.h"
+#include "Eigen/Core"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "rocm/include/hip/amd_detail/hip_fp16_gcc.h"
+#include "rocm/include/hipblas/hipblas.h"
 #include "rocm/rocm_config.h"
+#include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/event_based_timer.h"
-#include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/gpu/gpu_helpers.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
-#include "xla/stream_executor/gpu/gpu_types.h"
-#include "xla/stream_executor/gpu/scoped_activate_context.h"
+#include "xla/stream_executor/numeric_options.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
 #include "xla/stream_executor/rocm/rocblas_wrapper.h"
@@ -43,7 +54,11 @@ limitations under the License.
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/util/determinism.h"
+#include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/macros.h"
+#include "tsl/platform/statusor.h"
+
 using tsl::OpDeterminismRequired;
 
 namespace stream_executor {
@@ -109,7 +124,7 @@ static std::string ToString(rocblas_status status) {
 }
 
 bool ROCMBlas::Init() {
-  ScopedActivateContext sac{parent_};
+  std::unique_ptr<ActivateContext> activation = parent_->Activate();
   rocblas_status ret = wrap::rocblas_create_handle(&blas_);
   if (ret != rocblas_status_success) {
     LOG(ERROR) << "failed to create rocBLAS handle: " << ToString(ret);
@@ -136,7 +151,7 @@ bool ROCMBlas::Init() {
   return true;
 }
 
-ROCMBlas::ROCMBlas(gpu::GpuExecutor *parent)
+ROCMBlas::ROCMBlas(StreamExecutor *parent)
     : parent_(CHECK_NOTNULL(parent)),
       blas_(nullptr)
 #if TF_HIPBLASLT
@@ -148,14 +163,17 @@ ROCMBlas::ROCMBlas(gpu::GpuExecutor *parent)
 
 ROCMBlas::~ROCMBlas() {
   if (blas_ != nullptr) {
-    ScopedActivateContext sac{parent_};
+    std::unique_ptr<ActivateContext> activation = parent_->Activate();
     wrap::rocblas_destroy_handle(blas_);
   }
 }
 
 bool ROCMBlas::SetStream(Stream *stream) {
   CHECK(blas_ != nullptr);
-  auto handle = (stream != nullptr) ? AsGpuStreamValue(stream) : nullptr;
+  auto handle =
+      (stream != nullptr)
+          ? static_cast<hipStream_t>(stream->platform_specific_handle().stream)
+          : nullptr;
   if (auto ret = wrap::rocblas_set_stream(blas_, handle);
       ret != rocblas_status_success) {
     LOG(ERROR) << "failed to set stream for rocBLAS calls: " << ToString(ret);
@@ -167,7 +185,7 @@ bool ROCMBlas::SetStream(Stream *stream) {
 absl::StatusOr<bool> ROCMBlas::IsMainStreamSet() const {
   absl::MutexLock lock{&mu_};
   CHECK(blas_ != nullptr);
-  GpuStreamHandle handle{};
+  hipStream_t handle{};
   if (auto ret = wrap::rocblas_get_stream(blas_, &handle);
       ret != rocblas_status_success) {
     return absl::InternalError("failed to get the current stream value");
@@ -350,7 +368,7 @@ absl::Status ROCMBlas::DoBlasInternalImpl(FuncT rocblas_func, Stream *stream,
   absl::MutexLock lock{&mu_};
 
   CHECK(blas_ != nullptr);
-  ScopedActivateContext sac{parent_};
+  std::unique_ptr<ActivateContext> activation = parent_->Activate();
   if (!SetStream(stream)) {
     return absl::InternalError("Setting stream failed");
   }
@@ -585,7 +603,7 @@ absl::Status ROCMBlas::DoBlasGemmWithAlgorithm(
     TF_RETURN_IF_ERROR(DoBlasInternalImpl(
         wrap::rocblas_gemm_ex, stream,
         /* pointer_mode_host = */ true,
-        /* error_on_failure = */ false, ROCMBlasTranspose(transa),
+        /* err_on_failure = */ false, ROCMBlasTranspose(transa),
         ROCMBlasTranspose(transb), (rocblas_int)m, (rocblas_int)n,
         (rocblas_int)k, alpha, a.opaque(), roc_type_a, lda, b.opaque(),
         roc_type_a, ldb, beta, c->opaque(), roc_type_c, ldc, c->opaque(),
@@ -647,7 +665,7 @@ absl::Status ROCMBlas::DoBlasGemmStridedBatchedWithAlgorithm(
     TF_RETURN_IF_ERROR(DoBlasInternalImpl(
         wrap::rocblas_gemm_strided_batched_ex, stream,
         /* pointer_mode_host = */ true,
-        /* error_on_failure = */ false, ROCMBlasTranspose(transa),
+        /* err_on_failure = */ false, ROCMBlasTranspose(transa),
         ROCMBlasTranspose(transb), (rocblas_int)m, (rocblas_int)n,
         (rocblas_int)k, alpha, a.opaque(), roc_type_a, lda, stride_a,
         b.opaque(), roc_type_a, ldb, stride_b, beta, c->opaque(), roc_type_c,
@@ -844,10 +862,10 @@ absl::Status ReorganizeMemory(Stream *stream,
   int i = 0;
   for (auto &x : mem_copy_ops) {
     if (x.src_count > 1 || x.count > 1) {
-      rocm_Broadcast_fp32(AsGpuStreamValue(stream),
-                          reinterpret_cast<float *>(x.dst_ptr),
-                          x.dst_stride >> 2, x.count, x.src_count,
-                          reinterpret_cast<float *>(x.src_ptr), x.size >> 2);
+      rocm_Broadcast_fp32(
+          static_cast<hipStream_t>(stream->platform_specific_handle().stream),
+          reinterpret_cast<float *>(x.dst_ptr), x.dst_stride >> 2, x.count,
+          x.src_count, reinterpret_cast<float *>(x.src_ptr), x.size >> 2);
     } else {
       DeviceMemoryBase src_mem = DeviceMemoryBase(x.src_ptr, x.size);
       DeviceMemoryBase target_mem = DeviceMemoryBase(x.dst_ptr, x.size);
@@ -1271,17 +1289,7 @@ void initialize_rocblas() {
             ->RegisterFactory<PluginRegistry::BlasFactory>(
                 rocm::kROCmPlatformId, "rocBLAS",
                 [](StreamExecutor *parent) -> blas::BlasSupport * {
-                  gpu::GpuExecutor *rocm_executor =
-                      dynamic_cast<gpu::GpuExecutor *>(parent);
-                  if (rocm_executor == nullptr) {
-                    LOG(ERROR)
-                        << "Attempting to initialize an instance of the "
-                           "rocBLAS "
-                        << "support library with a non-ROCM StreamExecutor";
-                    return nullptr;
-                  }
-
-                  gpu::ROCMBlas *blas = new gpu::ROCMBlas(rocm_executor);
+                  gpu::ROCMBlas *blas = new gpu::ROCMBlas(parent);
                   if (!blas->Init()) {
                     // Note: Init() will log a more specific error.
                     delete blas;

@@ -26,7 +26,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_executor.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_memory.h"
-#include "xla/stream_executor/gpu/gpu_stream.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_spec.h"
@@ -67,13 +66,11 @@ class CudaTimerTest : public ::testing::TestWithParam<CudaTimer::TimerType> {
     ASSERT_THAT(stream->Memset32(&b, 2, byte_length), IsOk());
     ASSERT_THAT(stream->MemZero(&c, byte_length), IsOk());
 
-    ASSERT_THAT(stream->ThenLaunch(ThreadDim(), BlockDim(4), add, a, b, c),
-                IsOk());
+    ASSERT_THAT(add.Launch(ThreadDim(), BlockDim(4), stream, a, b, c), IsOk());
   }
 
   StreamExecutor* executor_;
   std::unique_ptr<Stream> stream_;
-  GpuStream* gpu_stream_;
 
  private:
   void SetUp() override {
@@ -82,16 +79,12 @@ class CudaTimerTest : public ::testing::TestWithParam<CudaTimer::TimerType> {
                                 stream_executor::cuda::kCudaPlatformId));
     TF_ASSERT_OK_AND_ASSIGN(executor_, platform->ExecutorForDevice(0));
     TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
-    gpu_stream_ = AsGpuStream(stream_.get());
   }
 };
 
 TEST_P(CudaTimerTest, Create) {
   TF_ASSERT_OK_AND_ASSIGN(
-      CudaTimer timer,
-      CudaTimer::Create(
-          reinterpret_cast<CudaExecutor*>(executor_)->gpu_context(),
-          gpu_stream_, GetParam()));
+      CudaTimer timer, CudaTimer::Create(executor_, stream_.get(), GetParam()));
 
   // We don't really care what kernel we launch here as long as it takes a
   // non-zero amount of time.

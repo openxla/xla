@@ -1,11 +1,11 @@
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@tsl//tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
-load("@tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_binary")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_cuda_or_rocm", "if_google")
+load("//xla/tsl/platform:build_config_root.bzl", "tf_gpu_tests_tags")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -42,8 +42,11 @@ cc_library(
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:service",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:cpu_plugin",
         "//xla/tsl/util:command_line_flags",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -105,12 +108,14 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
-        "//xla/pjrt/cpu:cpu_client",
         "//xla/pjrt/distributed",
         "//xla/pjrt/distributed:client",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:service",
-        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -144,6 +149,7 @@ cc_library(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt:pjrt_layout",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:computation_layout",
         "//xla/service:computation_placer_hdr",
@@ -158,6 +164,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:env",
@@ -183,21 +190,29 @@ xla_test(
         "gpu",
     ],
     data = [
-        "data/multiple_gemm_fusions.hlo",
+        "data/multiple_gemm_fusions_1.hlo",
+        "data/multiple_gemm_fusions_2.hlo",
         "data/sharded_16_devices.hlo",
         "data/sharded_2_devices.hlo",
+        "data/sharded_unoptimized_hlo_snapshot.pbtxt",
         "data/single_device.hlo",
         "data/single_device_tupled.hlo",
+        "data/single_gemm_fusion.hlo",
     ],
     tags = ["no_mac"],
     deps = [
         ":create_client",
         ":functional_hlo_runner",
         "//xla:debug_options_flags",
+        "//xla:status_macros",
         "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:filecheck",
         "//xla/pjrt:pjrt_client",
-        "//xla/tests:filecheck",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/service:hlo_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:subprocess",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -210,7 +225,6 @@ xla_test(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:subprocess",
         "@tsl//tsl/platform:test",
     ],
 )

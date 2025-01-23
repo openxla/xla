@@ -48,6 +48,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_cost_graph.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_device_mesh.h"
 #include "xla/hlo/experimental/auto_sharding/auto_sharding_memory.h"
@@ -68,20 +69,19 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/transforms/hlo_constant_splitter.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_splitter.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
+#include "xla/hlo/transforms/simplifiers/optimize_input_output_buffer_alias.h"
 #include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/dump.h"
-#include "xla/service/hlo_alias_analysis.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
-#include "xla/service/hlo_dce.h"
-#include "xla/service/hlo_memory_scheduler.h"
 #include "xla/service/hlo_value.h"
-#include "xla/service/optimize_input_output_buffer_alias.h"
 #include "xla/service/sharding_propagation.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
@@ -3420,6 +3420,7 @@ absl::flat_hash_set<const HloInstruction*> ComputeInstructionsToShard(
     const HloModule& module, const HloInstructionSequence& sequence) {
   std::queue<const HloInstruction*> queue;
 
+  // Initialize queue
   for (HloInstruction* instruction : sequence.instructions()) {
     if (spmd::IsSPMDFullToShardShapeCustomCall(instruction)) {
       for (const HloInstruction* user : instruction->users()) {
@@ -3437,6 +3438,17 @@ absl::flat_hash_set<const HloInstruction*> ComputeInstructionsToShard(
   }
 
   absl::flat_hash_set<const HloInstruction*> visited;
+  auto push_into_queue =
+      [&visited, &queue](absl::Span<HloInstruction* const> instructions) {
+        for (const HloInstruction* instruction : instructions) {
+          if (!spmd::IsSPMDShardToFullShapeCustomCall(instruction) &&
+              !spmd::IsSPMDFullToShardShapeCustomCall(instruction) &&
+              !visited.contains(instruction)) {
+            queue.push(instruction);
+          }
+        }
+      };
+
   while (!queue.empty()) {
     const HloInstruction* instruction = queue.front();
     queue.pop();
@@ -3447,30 +3459,12 @@ absl::flat_hash_set<const HloInstruction*> ComputeInstructionsToShard(
 
     for (const HloComputation* computation :
          instruction->called_computations()) {
-      for (const HloInstruction* parameter :
-           computation->parameter_instructions()) {
-        if (!spmd::IsSPMDShardToFullShapeCustomCall(parameter) &&
-            !spmd::IsSPMDFullToShardShapeCustomCall(parameter) &&
-            parameter != instruction && !visited.contains(parameter)) {
-          queue.push(parameter);
-        }
-      }
+      push_into_queue(computation->parameter_instructions());
+      push_into_queue({computation->root_instruction()});
     }
 
-    for (const HloInstruction* user : instruction->users()) {
-      if (!spmd::IsSPMDShardToFullShapeCustomCall(user) &&
-          !spmd::IsSPMDFullToShardShapeCustomCall(user) &&
-          !visited.contains(user)) {
-        queue.push(user);
-      }
-    }
-    for (const HloInstruction* operand : instruction->operands()) {
-      if (!spmd::IsSPMDShardToFullShapeCustomCall(operand) &&
-          !spmd::IsSPMDFullToShardShapeCustomCall(operand) &&
-          operand != instruction && !visited.contains(operand)) {
-        queue.push(operand);
-      }
-    }
+    push_into_queue(instruction->users());
+    push_into_queue(instruction->operands());
   }
 
   absl::flat_hash_set<const HloInstruction*> to_shard;
@@ -3527,6 +3521,7 @@ absl::StatusOr<bool> AutoShardingImplementation::RunAutoSharding(
   bool module_is_changed = false;
 
   bool set_to_memory_lower_bound = (option_.memory_budget_per_device == 0);
+  bool hard_memory_constraint = (option_.memory_budget_ratio < 0);
 
   // Remove CustomCalls with custom_call_target="Sharding" and move their
   // shardings to their input ops.
@@ -3690,7 +3685,7 @@ absl::StatusOr<bool> AutoShardingImplementation::RunAutoSharding(
       option_.memory_budget_per_device =
           memory_lower_bound * std::abs(option_.memory_budget_ratio);
       // TODO(b/341299984): Document this flag syntax, or automate the behavior.
-      if (option_.memory_budget_ratio < 0) {
+      if (hard_memory_constraint) {
         option_.memory_overbudget_coeff = -1.0;  // Disables the soft constraint
       }
     } else if (option_.memory_budget_per_device > 0) {
@@ -3813,7 +3808,12 @@ absl::StatusOr<bool> AutoShardingImplementation::RunAutoSharding(
               option_, request_name, sharding_propagation_solution));
     if (mesh_idx == partial_mesh_shapes.size() - 1) {
       this->solver_optimal_objective_value_ = output.cost;
+    } else if (hard_memory_constraint) {
+      // If the memory budget constraint is *hard*, we're already guaranteed
+      // that this intermediate solution honors the maximum value.
     } else {
+      // If the memory budget constraint is *soft*, we require the intermediate
+      // solution to be optimal (since otherwise, it's probably degenerate).
       TF_RET_CHECK(output.is_optimal)
           << "The solver did not find an optimal solution for a partial mesh "
           << "shape.";
@@ -3993,6 +3993,16 @@ void RecordPassEndAndDumpModule(absl::Time start_time,
   DumpHloModuleIfEnabled(*module, "after_auto_spmd_sharding");
 }
 
+std::vector<int> FindAllIndices(std::vector<int64_t> vec, int64_t element) {
+  std::vector<int> result;
+  for (int i = 0; i < vec.size(); ++i) {
+    if (vec[i] == element) {
+      result.push_back(i);
+    }
+  }
+  return result;
+}
+
 absl::StatusOr<bool> AutoSharding::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -4114,6 +4124,12 @@ absl::StatusOr<bool> AutoSharding::Run(
     }
   }
 
+  // A negative solver timeout means we want to disable iterative ND sharding.
+  if (option_.solver_timeout_in_seconds < 0) {
+    option_.solve_nd_sharding_iteratively = false;
+    option_.solver_timeout_in_seconds *= -1;
+  }
+
   bool module_is_changed = false;
   VLOG(1) << "Original mesh shape "
           << spmd::ToString(option_.device_mesh_shape);
@@ -4123,6 +4139,7 @@ absl::StatusOr<bool> AutoSharding::Run(
   std::vector<std::string> mesh_shape_error_messages(mesh_shapes.size());
   for (size_t i = 0; i < mesh_shapes.size(); ++i) {
     VLOG(1) << "Trying mesh shape " << spmd::ToString(mesh_shapes[i]);
+
     AutoShardingOption this_option = option_;
     this_option.device_mesh_shape = mesh_shapes[i];
     if (this_option.device_mesh_shape.size() !=
@@ -4135,6 +4152,26 @@ absl::StatusOr<bool> AutoSharding::Run(
     this_option.solver_timeout_in_seconds /= mesh_shapes.size();
     LOG(INFO) << "Setting solver timeout per mesh shape to "
               << this_option.solver_timeout_in_seconds << " seconds.";
+
+    // Try to infer DCN axis if the HLO is multi-slice.
+    // TODO(b/372720563) Improve this DCN axis inference. Currently, we assume
+    // there is only one DCN axis, and that there is no ICI axis with the same
+    // size as the DCN axis.
+    if (option_.num_dcn_slices.has_value() && *option_.num_dcn_slices > 1) {
+      std::vector<int> dcn_indices =
+          FindAllIndices(mesh_shapes[i], *option_.num_dcn_slices);
+      if (dcn_indices.empty()) {
+        VLOG(1) << " Mesh shape does not contain DCN axis.";
+      } else {
+        if (dcn_indices.size() > 1) {
+          LOG(WARNING)
+              << "Could not infer a unique DCN axis. Choosing one randomly.";
+        }
+        this_option.device_mesh_alpha[dcn_indices[0]] = kDcnDeviceMeshAlpha;
+        this_option.device_mesh_beta[dcn_indices[0]] = kDcnDeviceMeshBeta;
+      }
+    }
+
     auto pass = std::make_unique<AutoShardingImplementation>(this_option);
     std::unique_ptr<HloModule> module_clone = CloneModule(module);
     absl::StatusOr<bool> pass_result =
