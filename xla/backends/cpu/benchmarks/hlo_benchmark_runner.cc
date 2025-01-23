@@ -63,8 +63,8 @@ absl::Status RunHloBenchmark(benchmark::State& state,
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
   }
-  // TODO(intel-tf): Remove this once oneDNN custom calls are enabled with thunk
-  // runtime
+  // TODO(intel-tf): Remove this if-block once oneDNN custom calls are enabled
+  // with thunk runtime
   if (!use_thunk_runtime) {
     compile_options.executable_build_options.mutable_debug_options()
         ->set_xla_cpu_use_thunk_runtime(false);
@@ -150,8 +150,8 @@ absl::Status CompileHloBenchmark(benchmark::State& state,
     compile_options.executable_build_options.mutable_debug_options()
         ->add_xla_disable_hlo_passes("cpu-parallel-task-assigner");
   }
-  // TODO(intel-tf): Remove this once oneDNN custom calls are enabled with thunk
-  // runtime
+  // TODO(intel-tf): Remove this if-block once oneDNN custom calls are enabled
+  // with thunk runtime
   if (!use_thunk_runtime) {
     compile_options.executable_build_options.mutable_debug_options()
         ->set_xla_cpu_use_thunk_runtime(false);
