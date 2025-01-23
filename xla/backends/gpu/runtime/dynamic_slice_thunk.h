@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -58,7 +59,7 @@ class DynamicSliceThunk : public Thunk {
     // module `indvar_update_` is a module with prototype `(integer[]) ->
     // integer[]`. It takes the current value of the induction variable, and
     // returns the next value of the induction variable.
-    std::unique_ptr<HloModule> indvar_init_, indvar_update_;
+    std::unique_ptr<HloModule> indvar_init, indvar_update;
 
     // Extracted HloModules for computing dynamic offsets. The modules are
     // not used here, this is solely for keeping the modules alive and maintain
@@ -73,14 +74,29 @@ class DynamicSliceThunk : public Thunk {
         std::unique_ptr<HloModule> indvar_init,
         std::unique_ptr<HloModule> indvar_update,
         std::vector<std::unique_ptr<HloModule>> extracted_offset_modules)
-        : indvar_init_(std::move(indvar_init)),
-          indvar_update_(std::move(indvar_update)),
+        : indvar_init(std::move(indvar_init)),
+          indvar_update(std::move(indvar_update)),
           extracted_offset_modules(std::move(extracted_offset_modules)) {
-      CHECK(indvar_init_ != nullptr && indvar_update_ != nullptr);
-      CHECK(indvar_init_->entry_computation()->num_parameters() == 0)
+      CHECK(this->indvar_init != nullptr && this->indvar_update != nullptr);
+      Shape init_output_shape =
+          this->indvar_init->entry_computation()->root_instruction()->shape();
+      CHECK(this->indvar_init->entry_computation()->num_parameters() == 0 &&
+            init_output_shape.IsInteger() &&
+            ShapeUtil::IsScalar(init_output_shape))
           << "Induction variable init module expected with signature `() -> "
              "integer[]`.";
-      CHECK(indvar_update_->entry_computation()->num_parameters() == 1)
+      Shape update_output_shape =
+          this->indvar_update->entry_computation()->root_instruction()->shape();
+      CHECK(this->indvar_update->entry_computation()->num_parameters() == 1 &&
+            update_output_shape.IsInteger() &&
+            ShapeUtil::IsScalar(update_output_shape))
+          << "Induction variable update module expected with signature "
+             "`(integer[]) -> integer[]`.";
+      Shape update_input_shape = this->indvar_update->entry_computation()
+                                     ->parameter_instruction(0)
+                                     ->shape();
+      CHECK(ShapeUtil::IsScalar(update_input_shape) &&
+            update_input_shape.IsInteger())
           << "Induction variable update module expected with signature "
              "`(integer[]) -> integer[]`.";
     }
@@ -170,9 +186,9 @@ class DynamicSliceThunk : public Thunk {
   // A mapping from argument index to the base offset in the `offsets_allocs_`.
   std::vector<int64_t> offsets_allocs_base_;
 
-  // This structure holds the metadata for offset computation on host. It stores
-  // a single induction variable initialization module, its update module and
-  // the offsets that are a function of the induction variable.
+  // This structure holds the metadata for offset computations on host. It
+  // stores a single induction variable initialization module, its update module
+  // and the offsets that are a function of the induction variable.
   std::optional<OffsetAsFunctionOfIndvarModulesMetadata>
       offset_as_function_of_indvar_metadata_;
 };

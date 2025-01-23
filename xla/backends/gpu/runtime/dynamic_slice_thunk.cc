@@ -133,9 +133,9 @@ absl::Status DynamicSliceThunk::Prepare(
   if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
     Indvar(this) =
         HloEvaluator()
-            .Evaluate(/*module=*/*offset_as_function_of_indvar_metadata_
-                          ->indvar_init_,
-                      /*arg_literals=*/{})
+            .Evaluate(
+                /*module=*/*offset_as_function_of_indvar_metadata_->indvar_init,
+                /*arg_literals=*/{})
             .value();
     VLOG(2) << "Indvar = " << Indvar(this).ToString();
   }
@@ -303,7 +303,7 @@ absl::Status DynamicSliceThunk::ExecuteOnStream(const ExecuteParams& params) {
   if (offset_as_function_of_indvar_metadata_ != std::nullopt) {
     Indvar(this) =
         HloEvaluator()
-            .Evaluate(*offset_as_function_of_indvar_metadata_->indvar_update_,
+            .Evaluate(*offset_as_function_of_indvar_metadata_->indvar_update,
                       {&Indvar(this)})
             .value();
     VLOG(2) << "Indvar = " << Indvar(this).ToString();
