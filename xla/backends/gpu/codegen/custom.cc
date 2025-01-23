@@ -832,8 +832,6 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
     IrEmitterContext& ir_emitter_context, const HloFusionAdaptor& adaptor,
     const HloFusionInstruction& fusion_instr, const HloInstType* instr,
     bool use_global_device_ids) {
-  // If the fusion is async, we do not emit the done thunk at the end.
-  bool is_async = fusion_instr.parent()->IsAsyncComputation();
   Thunk::Kind collective_done_thunk_kind;
   switch (instr->opcode()) {
     case HloOpcode::kReduceScatter:
@@ -975,16 +973,17 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
     std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events =
         collective_start_thunk->async_events();
     seq.emplace_back(std::move(collective_start_thunk));
-    if (!is_async) {
+    // If the fusion is async, we do not emit the done thunk at the end.
+    if (fusion_instr.parent()->IsAsyncComputation()) {
+      ir_emitter_context.collectives_async_events().insert(
+          {fusion_instr.parent()->AsyncStart(), async_events});
+    } else {
       auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
           /*kind=*/collective_done_thunk_kind,
           /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
           /*async_events=*/async_events,
           /*async_stream_kind=*/AsyncStreamKind::kCollective);
       seq.emplace_back(std::move(collective_done_thunk));
-    } else {
-      ir_emitter_context.collectives_async_events().insert(
-          {fusion_instr.parent()->AsyncStart(), async_events});
     }
   } else {
     return implementable_status;
