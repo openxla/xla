@@ -37,7 +37,7 @@ class NcclRecvThunk : public NcclCollectiveThunk {
  public:
   NcclRecvThunk(ThunkInfo thunk_info, const HloRecvInstruction* instr,
                 int64_t replica_count, int64_t partition_count,
-                const Buffer& buffer);
+                const Buffer& buffer, CollectiveStreamId nccl_stream_id);
   absl::Status Initialize(const InitializeParams& params) override;
 
  protected:

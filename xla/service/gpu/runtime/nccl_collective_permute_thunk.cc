@@ -90,9 +90,9 @@ bool IsLocalPeerTransfer(
 NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count, const Buffer& buffer,
-    bool p2p_memcpy_enabled)
+    CollectiveStreamId nccl_stream_id, bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclCollectivePermuteStart, thunk_info,
-                          IsSyncCollective(instr)),
+                          IsSyncCollective(instr), nccl_stream_id),
       config_(GetNcclP2PConfig(instr, replica_count, partition_count)),
       buffer_(buffer),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}

@@ -42,8 +42,8 @@ class NcclAllReduceReduceScatterThunkBase : public NcclCollectiveThunk {
  public:
   NcclAllReduceReduceScatterThunkBase(Kind kind, ThunkInfo thunk_info,
                                       NcclAllReduceConfig config,
-                                      std::vector<Buffer> buffers,
-                                      bool is_sync);
+                                      std::vector<Buffer> buffers, bool is_sync,
+                                      CollectiveStreamId nccl_stream_id);
 
   const NcclCollectiveConfig& config() const override { return config_.config; }
   ReductionKind reduction_kind() const { return config_.reduction_kind; }
@@ -64,6 +64,7 @@ class NcclAllReduceStartThunk : public NcclAllReduceReduceScatterThunkBase {
   NcclAllReduceStartThunk(ThunkInfo thunk_info,
                           const HloAllReduceInstruction* inst,
                           std::vector<Buffer> buffers,
+                          CollectiveStreamId nccl_stream_id,
                           bool p2p_memcpy_enabled = false);
 
   static const char* GetHloOpName() { return "all-reduce-start"; }
@@ -89,6 +90,7 @@ class NcclReduceScatterStartThunk : public NcclAllReduceReduceScatterThunkBase {
   NcclReduceScatterStartThunk(ThunkInfo thunk_info,
                               const HloReduceScatterInstruction* inst,
                               std::vector<Buffer> buffers,
+                              CollectiveStreamId nccl_stream_id,
                               bool p2p_memcpy_enabled = false);
 
   static const char* GetHloOpName() { return "reduce-scatter-start"; }

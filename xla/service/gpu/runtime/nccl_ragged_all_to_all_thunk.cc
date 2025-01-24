@@ -122,9 +122,10 @@ absl::StatusOr<std::vector<IntegerOperandData>> LoadRaggedTensorMetadata(
 
 NcclRaggedAllToAllStartThunk::NcclRaggedAllToAllStartThunk(
     ThunkInfo thunk_info, const HloRaggedAllToAllInstruction* instr,
-    std::vector<NcclCollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<NcclCollectiveThunk::Buffer> buffers,
+    CollectiveStreamId nccl_stream_id, bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclAllToAllStart, thunk_info,
-                          IsSyncCollective(instr)),
+                          IsSyncCollective(instr), nccl_stream_id),
       config_(GetNcclRaggedAllToAllConfig(instr)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_count, buffers_.size());

@@ -40,6 +40,7 @@ class NcclAllGatherStartThunk : public NcclCollectiveThunk {
   NcclAllGatherStartThunk(ThunkInfo thunk_info,
                           const HloAllGatherInstruction* inst,
                           std::vector<Buffer> buffers,
+                          CollectiveStreamId nccl_stream_id,
                           bool p2p_memcpy_enabled = false);
 
   static const char* GetHloOpName() { return "all-gather-start"; }

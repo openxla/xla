@@ -98,6 +98,7 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
                                   const HloCollectivePermuteInstruction* instr,
                                   int64_t replica_count,
                                   int64_t partition_count, const Buffer& buffer,
+                                  CollectiveStreamId nccl_stream_id,
                                   bool p2p_memcpy_enabled);
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status Cleanup(const CleanupParams& params) override;

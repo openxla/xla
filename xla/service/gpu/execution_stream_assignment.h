@@ -67,6 +67,7 @@ class ExecutionStreamAssignment {
     // `async-start` instruction).
     ExecutionStreamId destination_stream_id;
   };
+  bool HasAsyncExecutionStreamIds(const HloInstruction* instruction) const;
   absl::StatusOr<AsyncExecutionStreamIds> GetAsyncExecutionStreamIds(
       const HloInstruction* instruction) const;
 

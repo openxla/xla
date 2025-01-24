@@ -959,13 +959,25 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
         /*destination_memory_space=*/dst_shape.layout().memory_space(),
         /*source_value=*/nullptr,
         /*destination_value=*/nullptr});
-    auto collective_start_thunk =
-        std::make_unique<NcclThunkType>(thunk_info, instr, buffers);
+
+    const ExecutionStreamAssignment& stream_assignment =
+        ir_emitter_context.execution_stream_assignment();
+    uint64_t nccl_stream_id = 0;
+    if (stream_assignment.HasAsyncExecutionStreamIds(instr)) {
+      TF_ASSIGN_OR_RETURN(
+          ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+          stream_assignment.GetAsyncExecutionStreamIds(instr));
+      nccl_stream_id = streams.destination_stream_id.value();
+    }
+
+    auto collective_start_thunk = std::make_unique<NcclThunkType>(
+        thunk_info, instr, buffers, CollectiveStreamId(nccl_stream_id));
     auto collective_done_thunk = std::make_unique<NcclCollectiveDoneThunk>(
         /*kind=*/collective_done_thunk_kind,
         /*thunk_info=*/Thunk::ThunkInfo::WithProfileAnnotation(instr),
         /*async_events=*/collective_start_thunk->async_events(),
-        /*async_stream_kind=*/AsyncStreamKind::kCollective);
+        /*async_stream_kind=*/AsyncStreamKind::kCollective,
+        CollectiveStreamId(nccl_stream_id));
     seq.emplace_back(std::move(collective_start_thunk));
     seq.emplace_back(std::move(collective_done_thunk));
   } else {

@@ -195,16 +195,24 @@ ExecutionStreamAssignment::GetSyncExecutionStreamId(
   return stream->second;
 }
 
+bool ExecutionStreamAssignment::HasAsyncExecutionStreamIds(
+    const HloInstruction* instruction) const {
+  if (instruction->IsAsynchronous() ||
+      instruction->opcode() == HloOpcode::kCopyStart ||
+      is_async_collective(instruction)) {
+    auto streams = async_instructions_.find(instruction);
+    return streams != async_instructions_.end();
+  }
+  return false;
+}
+
 absl::StatusOr<ExecutionStreamAssignment::AsyncExecutionStreamIds>
 ExecutionStreamAssignment::GetAsyncExecutionStreamIds(
     const HloInstruction* instruction) const {
-  CHECK(instruction->IsAsynchronous() ||
-        instruction->opcode() == HloOpcode::kCopyStart ||
-        is_async_collective(instruction));
-  auto streams = async_instructions_.find(instruction);
-  if (streams == async_instructions_.end()) {
+  if (!HasAsyncExecutionStreamIds(instruction)) {
     return StreamNotFoundError(instruction);
   }
+  auto streams = async_instructions_.find(instruction);
   return streams->second;
 }
 

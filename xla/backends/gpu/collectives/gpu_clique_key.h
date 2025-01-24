@@ -40,8 +40,10 @@ enum class AsyncStreamKind : int64_t {
   kMemCpyP2P = 3,   // Stream for MemCpyP2P
 };
 
+// Taking the maximum of max stream kind + 1 and 4 (max compute stream) + 2 (max
+// collective stream) + 1;
 inline constexpr int64_t kAsyncStreamTotal =
-    static_cast<int64_t>(AsyncStreamKind::kMemCpyP2P) + 1;
+    std::max(static_cast<int64_t>(AsyncStreamKind::kMemCpyP2P) + 1, (int64_t)7);
 
 // Strongly-typed wrapper to represent collective stream ID.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CollectiveStreamId, uint64_t);
