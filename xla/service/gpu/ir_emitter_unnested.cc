@@ -1511,7 +1511,7 @@ absl::Status IrEmitterUnnested::EmitAsyncComputation(
       ir_emitter_context_->execution_stream_assignment();
   TF_ASSIGN_OR_RETURN(auto stream,
                       stream_assignment.GetSyncExecutionStreamId(wrapped));
-  CHECK(wrapped->called_computations().size() == 1);
+  TF_RET_CHECK(wrapped->called_computations().size() == 1);
   auto computation = wrapped->called_computations().front();
   auto ir_emitter = IrEmitterUnnested::Create(ir_emitter_context_);
   TF_RETURN_IF_ERROR(ir_emitter->EmitHloComputation(computation));
@@ -1520,7 +1520,6 @@ absl::Status IrEmitterUnnested::EmitAsyncComputation(
   for (auto& thunk : thunk_sequence->thunks()) {
     thunk->set_execution_stream_id(stream);
   }
-  thunk_sequence->set_execution_stream_id(stream);
   auto* async_start = Cast<HloAsyncInstruction>(instr);
   TF_ASSIGN_OR_RETURN(
       ExecutionStreamAssignment::AsyncExecutionStreamIds async_streams,

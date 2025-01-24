@@ -1292,22 +1292,36 @@ ENTRY entry {
   }
 }
 
+MATCHER_P(ThunkKindIs, kind, "") {
+  return ExplainMatchResult(::testing::Eq(kind), arg->kind(), result_listener);
+}
+
 TEST_F(GpuCompilerTest, StreamAnnotationThunkTest) {
   const absl::string_view hlo_text = R"(
-  HloModule composite
-gemm () -> f32[32,32] {
-  a = f32[32,32]{1,0} parameter(0)
-  b = f32[32,32]{1,0} parameter(1)
-  c = (f32[32,32]{1,0}, s8[8192]{0}) custom-call(b, a), custom_call_target="__cublas$gemm",
-    backend_config={"gemm_backend_config":{"dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["0"]}}}
-  ROOT %get-tuple-element = f32[32,32]{1,0} get-tuple-element(c), index=0
+HloModule composite
+
+async_call {
+  p0 = f32[32,32] parameter(0)
+  p1 = f32[32,32] parameter(1)
+  gemm = (f32[32,32], s8[8192]) custom-call(p0, p1), custom_call_target="__cublas$gemm",
+    backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],
+      "gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,
+      "dot_dimension_numbers":
+        {"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["0"]},
+      "precision_config":{"operand_precision":["DEFAULT","DEFAULT"]},
+      "lhs_stride":"1024","rhs_stride":"1024"}}
+  ROOT get-tuple-element = f32[32,32] get-tuple-element(gemm), index=0
 }, execution_thread="explicit"
 
-ENTRY main () -> f32[32,32] {
-  a = f32[32,32]{1,0} parameter(1)
-  b = f32[32,32]{1,0} parameter(0)
-  %call-start = ((f32[32,32]{1,0}, f32[32,32]{1,0}), f32[32,32]{1,0}) call-start(b, a), to_apply=gemm, frontend_attributes={_xla_stream_annotation="1"}
-  ROOT %call-done = f32[32,32]{1,0} call-done(%call-start), frontend_attributes={_xla_stream_annotation="1"}
+ENTRY main {
+  p0 = f32[32,32] parameter(0)
+  p1 = f32[32,32] parameter(1)
+  call-start = ((f32[32,32], f32[32,32]), f32[32,32]) call-start(p0, p1),
+    async_execution_thread="explicit", to_apply=async_call,
+    frontend_attributes={_xla_stream_annotation="1"}
+  ROOT call-done = f32[32,32]{1,0} call-done(call-start),
+    frontend_attributes={_xla_stream_annotation="1"},
+    backend_config={"operation_queue_id":"0"}
 })";
   auto module = ParseAndReturnVerifiedModule(hlo_text).value();
 
@@ -1322,24 +1336,21 @@ ENTRY main () -> f32[32,32] {
           .value();
   std::unique_ptr<GpuExecutable> gpu_exec(
       static_cast<GpuExecutable*>(executable.release()));
-  // We expect there to be only 3 thunks:
-  // 1) wait 2) a sequential thunk and 3) another wait.
+
   EXPECT_EQ(gpu_exec->GetThunk().thunks().size(), 3);
+  EXPECT_THAT(gpu_exec->GetThunk().thunks(),
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kWaitForStreams),
+                                     ThunkKindIs(Thunk::kSequential),
+                                     ThunkKindIs(Thunk::kWaitForStreams)));
 
-  // Check that the waits exist.
-  EXPECT_EQ(gpu_exec->GetThunk().thunks()[0]->kind(), Thunk::kWaitForStreams);
-  EXPECT_EQ(gpu_exec->GetThunk().thunks()[2]->kind(), Thunk::kWaitForStreams);
-
-  // The second operation should be a custom call with a specified execution
-  // stream id == 1
-  EXPECT_EQ(gpu_exec->GetThunk().thunks()[1]->kind(), Thunk::kSequential);
-  EXPECT_EQ(gpu_exec->GetThunk().thunks()[1]->execution_stream_id(), 1);
-
-  // Within the sequential thunk, there should only be a single custom call
-  // thunk with the same execution stream id.
+  // Within the sequential thunk, there should only be a single gemm
+  // thunk with an explicitly set execution stream id.
   auto sequential_thunk =
       static_cast<SequentialThunk*>(gpu_exec->GetThunk().thunks()[1].get());
-  EXPECT_EQ(sequential_thunk->thunks()[0]->kind(), Thunk::kGemm);
+  EXPECT_EQ(sequential_thunk->thunks().size(), 1);
+  EXPECT_THAT(sequential_thunk->thunks(),
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kGemm)));
+  // Ensure the gemm is run on the explicitly set stream.
   EXPECT_EQ(sequential_thunk->thunks()[0]->execution_stream_id(), 1);
 }
 
