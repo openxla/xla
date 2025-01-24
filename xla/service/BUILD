@@ -6336,7 +6336,6 @@ cc_library(
 
 cc_library(
     name = "time_utils",
-    srcs = ["time_utils.cc"],
     hdrs = ["time_utils.h"],
     deps = [],
 )
