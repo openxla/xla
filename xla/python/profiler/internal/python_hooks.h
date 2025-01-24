@@ -15,6 +15,7 @@ limitations under the License.
 #ifndef XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
 #define XLA_PYTHON_PROFILER_INTERNAL_PYTHON_HOOKS_H_
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -46,6 +47,8 @@ struct PythonHooksOptions {
   // result, profiler start, end time are used respectively to the absent
   // timestamps.
   bool include_incomplete_events = true;
+
+  uint64_t min_entry_duration_ns = 0;
 };
 
 struct PythonTraceEntry {

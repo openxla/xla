@@ -304,7 +304,9 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
       if (!thread_traces.active.empty()) {
         auto& entry = thread_traces.active.top();
         entry.end_time_ns = now;
-        thread_traces.completed.emplace_back(std::move(entry));
+        if (entry.end_time_ns-entry.start_time_ns >= options_.min_entry_duration_ns) {
+          thread_traces.completed.emplace_back(std::move(entry));
+        }
         thread_traces.active.pop();
       } else if (options_.include_incomplete_events) {
 #if PY_VERSION_HEX < 0x030b0000
@@ -332,7 +334,9 @@ void PythonHookContext::ProfileFast(PyFrameObject* frame, int what,
         if (!thread_traces.active.empty()) {
           auto& entry = thread_traces.active.top();
           entry.end_time_ns = now;
-          thread_traces.completed.emplace_back(std::move(entry));
+          if (entry.end_time_ns-entry.start_time_ns >= options_.min_entry_duration_ns) {
+            thread_traces.completed.emplace_back(std::move(entry));
+          }
           thread_traces.active.pop();
         } else if (options_.include_incomplete_events) {
           // Only the end of the events is recorded, use profiler start as

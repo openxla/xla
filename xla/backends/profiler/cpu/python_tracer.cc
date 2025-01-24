@@ -94,6 +94,7 @@ std::unique_ptr<tsl::profiler::ProfilerInterface> CreatePythonTracer(
       options.enable_trace_python_function;
   pyhooks_options.enable_python_traceme = options.enable_python_traceme;
   pyhooks_options.end_to_end_mode = options.end_to_end_mode;
+  pyhooks_options.min_entry_duration_ns = options.min_entry_duration_ns;
   return std::make_unique<PythonTracer>(pyhooks_options);
 }
 
