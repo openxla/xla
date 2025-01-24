@@ -208,6 +208,18 @@ def _rocm_include_path(repository_ctx, rocm_config, bash_bin):
     """
     inc_dirs = []
 
+    # TODO (Ruturaj4) @Alex @Harsha please check hermetic build on 6.0.x and 6.1.x.
+    if int(rocm_config.rocm_version_number) < 60200:
+        rocm_toolkit_path = realpath(repository_ctx, rocm_config.rocm_toolkit_path, bash_bin)
+        inc_dirs.append(rocm_toolkit_path + "/include")
+        inc_dirs.append(rocm_toolkit_path + "/include/hip")
+        inc_dirs.append(rocm_toolkit_path + "/include/rocprim")
+        inc_dirs.append(rocm_toolkit_path + "/include/rocsolver")
+        inc_dirs.append(rocm_toolkit_path + "/include/rocblas")
+        inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17/include")
+        rocm_toolkit_path = str(repository_ctx.path(rocm_config.rocm_toolkit_path))
+        inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/17/include")
+
     # Add full paths
     rocm_toolkit_path = str(repository_ctx.path(rocm_config.rocm_toolkit_path))
     inc_dirs.append(rocm_toolkit_path + "/llvm/lib/clang/8.0/include")
