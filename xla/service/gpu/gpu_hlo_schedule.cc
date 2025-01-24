@@ -715,7 +715,12 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
     const HloModule* module, int64_t pointer_size, int64_t* peak_memory_bytes) {
   BufferValue::SizeFunction size_func =
       [pointer_size](const BufferValue& buffer) {
-        return ShapeUtil::ByteSizeOf(buffer.shape(), pointer_size);
+        const Shape& shape = buffer.shape();
+        if (shape.has_layout() &&
+            shape.layout().memory_space() == Layout::kHostMemorySpace) {
+          return static_cast<int64_t>(0);
+        }
+        return ShapeUtil::ByteSizeOf(shape, pointer_size);
       };
   ModuleSchedulerAlgorithm algorithm = ComputationSchedulerToModuleScheduler(
       DefaultMemoryScheduler, PostProcessSchedule);
