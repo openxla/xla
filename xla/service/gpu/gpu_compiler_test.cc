@@ -1295,18 +1295,19 @@ ENTRY entry {
 TEST_F(GpuCompilerTest, StreamAnnotationThunkTest) {
   const absl::string_view hlo_text = R"(
   HloModule composite
-%f.3 (Arg_0.4: f32[32,32], Arg_1.5: f32[32,32]) -> f32[32,32] {
-  %Arg_1.5 = f32[32,32]{1,0} parameter(1), metadata={op_name="jit(h)/jit(main)/pjit" scheduling_name="Arg_1.5"}
-  %Arg_0.4 = f32[32,32]{1,0} parameter(0), metadata={op_name="jit(h)/jit(main)/pjit" scheduling_name="Arg_0.4"}
-  %custom-call.1 = (f32[32,32]{1,0}, s8[8192]{0}) custom-call(f32[32,32]{1,0} %Arg_0.4, f32[32,32]{1,0} %Arg_1.5), custom_call_target="__cublas$gemm", metadata={op_name="jit(h)/jit(main)/jit(f)/dot_general" source_file="/mounted/scheduling-example/tiny.py" source_line=17 scheduling_name="custom-call.1"}, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,"dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["0"],"lhs_batch_dimensions":[],"rhs_batch_dimensions":[]},"precision_config":{"operand_precision":["DEFAULT","DEFAULT"],"algorithm":"ALG_UNSET"},"epilogue":"DEFAULT","damax_output":false,"lhs_stride":"1024","rhs_stride":"1024","grad_x":false,"grad_y":false},"force_earliest_schedule":false}
-  ROOT %get-tuple-element = f32[32,32]{1,0} get-tuple-element((f32[32,32]{1,0}, s8[8192]{0}) %custom-call.1), index=0, metadata={op_name="jit(h)/jit(main)/jit(f)/dot_general" source_file="/mounted/scheduling-example/tiny.py" source_line=17 scheduling_name="get-tuple-element"}
+gemm () -> f32[32,32] {
+  a = f32[32,32]{1,0} parameter(0)
+  b = f32[32,32]{1,0} parameter(1)
+  c = (f32[32,32]{1,0}, s8[8192]{0}) custom-call(b, a), custom_call_target="__cublas$gemm",
+    backend_config={"gemm_backend_config":{"dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["0"]}}}
+  ROOT %get-tuple-element = f32[32,32]{1,0} get-tuple-element(c), index=0
 }, execution_thread="explicit"
 
-ENTRY %main.8 (Arg_0.1.0: f32[32,32], Arg_1.2.0: f32[32,32]) -> f32[32,32] {
-  %Arg_1.2.0 = f32[32,32]{1,0} parameter(1), metadata={op_name="b" scheduling_name="Arg_1.2.0"}
-  %Arg_0.1.0 = f32[32,32]{1,0} parameter(0), metadata={op_name="a" scheduling_name="Arg_0.1.0"}
-  %call-start = ((f32[32,32]{1,0}, f32[32,32]{1,0}), f32[32,32]{1,0}) call-start(f32[32,32]{1,0} %Arg_0.1.0, f32[32,32]{1,0} %Arg_1.2.0), async_execution_thread="explicit", to_apply=%f.3, frontend_attributes={_xla_stream_annotation="1"}, metadata={scheduling_name="call-start"}
-  ROOT %call-done = f32[32,32]{1,0} call-done(((f32[32,32]{1,0}, f32[32,32]{1,0}), f32[32,32]{1,0}) %call-start), frontend_attributes={_xla_stream_annotation="1"}, metadata={scheduling_name="call-done"}, backend_config={"operation_queue_id":"0","wait_on_operation_queues":[],"force_earliest_schedule":false}
+ENTRY main () -> f32[32,32] {
+  a = f32[32,32]{1,0} parameter(1)
+  b = f32[32,32]{1,0} parameter(0)
+  %call-start = ((f32[32,32]{1,0}, f32[32,32]{1,0}), f32[32,32]{1,0}) call-start(b, a), to_apply=gemm, frontend_attributes={_xla_stream_annotation="1"}
+  ROOT %call-done = f32[32,32]{1,0} call-done(%call-start), frontend_attributes={_xla_stream_annotation="1"}
 })";
   auto module = ParseAndReturnVerifiedModule(hlo_text).value();
 
@@ -1324,6 +1325,10 @@ ENTRY %main.8 (Arg_0.1.0: f32[32,32], Arg_1.2.0: f32[32,32]) -> f32[32,32] {
   // We expect there to be only 3 thunks:
   // 1) wait 2) a sequential thunk and 3) another wait.
   EXPECT_EQ(gpu_exec->GetThunk().thunks().size(), 3);
+
+  // Check that the waits exist.
+  EXPECT_EQ(gpu_exec->GetThunk().thunks()[0]->kind(), Thunk::kWaitForStreams);
+  EXPECT_EQ(gpu_exec->GetThunk().thunks()[2]->kind(), Thunk::kWaitForStreams);
 
   // The second operation should be a custom call with a specified execution
   // stream id == 1
