@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/codegen/elemental_kernel_emitter.h"
-#include "xla/backends/cpu/codegen/llvm_ir_kernel_spec.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/all_gather_thunk.h"
 #include "xla/backends/cpu/runtime/all_reduce_thunk.h"
@@ -59,6 +58,8 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/xnnpack/xnn_dot_thunk.h"
 #include "xla/backends/cpu/runtime/xnnpack/xnn_fusion_thunk.h"
 #include "xla/backends/cpu/xnn_emitter.h"
+#include "xla/backends/cpu/xnn_fusion.h"
+#include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_ir_kernel_source.h"
 #include "xla/comparison_util.h"
@@ -526,6 +527,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCallThunk(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
     const HloInstruction* instruction) {
+  if (absl::Status status = ir_emitter_.CanDoFastConcatenate(instruction);
+      !status.ok()) {
+    VLOG(1) << "Could not emit fast concatenate for " << instruction->ToString()
+            << ": " << status.message();
+    return EmitElementalKernelThunk(instruction);
+  }
+
   auto* concatenate = Cast<HloConcatenateInstruction>(instruction);
   TF_ASSIGN_OR_RETURN(auto kernel,
                       ir_emitter_.EmitConcatenateHostKernel(concatenate));
@@ -622,18 +630,18 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitElementalKernelThunk(
     const HloInstruction* instruction) {
   ElementalKernelEmitter emitter(instruction, &buffer_assignment_,
                                  &target_machine_features_);
-  TF_ASSIGN_OR_RETURN(std::unique_ptr<KernelSpec> kernel_spec,
-                      emitter.EmitKernelSpec());
-  auto llvm_ir_kernel_spec = absl::WrapUnique<LlvmIrKernelSpec>(
-      tsl::down_cast<LlvmIrKernelSpec*>(kernel_spec.release()));
+  TF_ASSIGN_OR_RETURN(KernelDefinition kernel_definition,
+                      emitter.EmitKernelDefinition());
 
-  LlvmIrKernelSource& kernel_source = llvm_ir_kernel_spec->kernel_source();
-  std::string kernel_name = kernel_source.kernel_name();
-  kernels_.push_back(
-      {std::move(kernel_name), std::move(kernel_source).thread_safe_module()});
+  auto [kernel_spec, kernel_source] = std::move(kernel_definition).release();
+  auto llvm_ir_kernel_source = absl::WrapUnique<LlvmIrKernelSource>(
+      tsl::down_cast<LlvmIrKernelSource*>(kernel_source.release()));
+
+  kernels_.push_back({kernel_spec.name(),
+                      std::move(*llvm_ir_kernel_source).thread_safe_module()});
 
   return MakeKernelThunkSequence(
-      instruction, std::move(llvm_ir_kernel_spec),
+      instruction, std::move(kernel_spec),
       /*min_alignment=*/cpu_function_runtime::MinAlign());
 }
 
@@ -661,13 +669,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFusionKernelThunk(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitReductionKernelThunk(
     const HloInstruction* instruction) {
-  TF_ASSIGN_OR_RETURN(auto kernel,
-                      ir_emitter_.EmitReductionHostKernel(instruction));
-  TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
-
-  return MakeKernelThunkSequence(
-      instruction, buffers, kernel,
-      /*min_alignment=*/cpu_function_runtime::MinAlign());
+  // TODO(ezhulenev): Port vectorized reduction emitter from IrEmitter.
+  return EmitElementalKernelThunk(instruction);
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitRngThunk(
@@ -837,8 +840,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDotThunk(
       // Decide whether to use XNNPACK or Eigen.
       bool use_xnn = hlo_module_config_.debug_options().xla_cpu_use_xnnpack();
       if (use_xnn) {
-        TF_ASSIGN_OR_RETURN(
-            use_xnn, XnnDotThunk::IsSupported(dnums, lhs->shape(), rhs->shape(),
+        TF_ASSIGN_OR_RETURN(use_xnn,
+                            IsXnnDotSupported(dnums, lhs->shape(), rhs->shape(),
                                               instruction->shape()));
       }
 
@@ -1041,6 +1044,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitSliceThunk(
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitDynamicUpdateSliceThunk(
     const HloInstruction* instruction) {
+  if (!ir_emitter_.CanUpdateDynamicSliceInPlace(instruction)) {
+    VLOG(2) << "Could not emit in-place dynamic-update-slice kernel: "
+            << instruction->name();
+    return EmitElementalKernelThunk(instruction);
+  }
+
   TF_ASSIGN_OR_RETURN(
       auto kernel, ir_emitter_.EmitDynamicUpdateSliceHostKernel(instruction));
   TF_ASSIGN_OR_RETURN(auto buffers, GetHostKernelAllocationSlices(instruction));
@@ -1236,11 +1245,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::MakeKernelThunkSequence(
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::MakeKernelThunkSequence(
-    const HloInstruction* instruction,
-    std::unique_ptr<LlvmIrKernelSpec> kernel_spec,
+    const HloInstruction* instruction, const KernelSpec& kernel_spec,
     std::optional<uint64_t> min_alignment) {
-  return ThunkSequence::Of<KernelThunk>(ThunkInfo(instruction),
-                                        std::move(kernel_spec), min_alignment);
+  return ThunkSequence::Of<KernelThunk>(ThunkInfo(instruction), kernel_spec,
+                                        min_alignment);
 }
 
 }  // namespace xla::cpu

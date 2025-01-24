@@ -71,9 +71,9 @@ module @multiple_func_result_shardings attributes {mhlo.frontend_attributes = {x
     // CHECK-NEXT:   stablehlo.return %[[ADD_1]], %[[ADD_0]]
     // CHECK-NEXT: }
     // CHECK-NEXT: return %[[WHILE]]#0
-    %0 = mhlo.constant dense<0> : tensor<i32>
-    %1 = mhlo.constant dense<1> : tensor<i32>
-    %2 = mhlo.constant dense<32> : tensor<i32>
+    %0 = stablehlo.constant dense<0> : tensor<i32>
+    %1 = stablehlo.constant dense<1> : tensor<i32>
+    %2 = stablehlo.constant dense<32> : tensor<i32>
     %3:2 = stablehlo.while(%iterArg = %arg0, %iterArg_0 = %0) : tensor<32x96xf32>, tensor<i32>
       cond {
       %4 = stablehlo.compare LT, %iterArg_0, %2 : (tensor<i32>, tensor<i32>) -> tensor<i1>
@@ -101,14 +101,14 @@ module @multiple_func_result_shardings attributes {mhlo.frontend_attributes = {x
     // CHECK-NEXT:   stablehlo.return %[[ADD_1]], %[[ADD_0]]
     // CHECK-NEXT: }
     // CHECK-NEXT: return %[[WHILE]]#0
-    %0 = mhlo.constant dense<0> : tensor<i32>
+    %0 = stablehlo.constant dense<0> : tensor<i32>
     %1:2 = stablehlo.while(%iterArg = %arg0, %iterArg_0 = %0) : tensor<32x96xf32>, tensor<i32>
       cond {
-      %2 = mhlo.constant dense<32> : tensor<i32>
+      %2 = stablehlo.constant dense<32> : tensor<i32>
       %3 = stablehlo.compare LT, %iterArg_0, %2 : (tensor<i32>, tensor<i32>) -> tensor<i1>
       stablehlo.return %3 : tensor<i1>
     } do {
-      %2 = mhlo.constant dense<1> : tensor<i32>
+      %2 = stablehlo.constant dense<1> : tensor<i32>
       %3 = stablehlo.add %iterArg_0, %2 : tensor<i32>
       %4 = stablehlo.add %iterArg, %iterArg : tensor<32x96xf32>
       stablehlo.return %4, %3 : tensor<32x96xf32>, tensor<i32>
@@ -240,4 +240,19 @@ func.func @import_sharding_group(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
   // CHECK sdy.sharding_group %arg0 group_id = 21:  tensor<8x8xf32>
   stablehlo.custom_call @xla.sdy.ShardingGroup(%arg0) {has_side_effect = true, mhlo.frontend_attributes = {xla.sdy.sharding_group_id = "21 : i64"}} : (tensor<8x8xf32>) -> ()
   return %arg0 : tensor<8x8xf32>
+}
+
+// -----
+
+func.func @callback_no_result(%arg0: tensor<f64>) {
+  // CHECK:      %[[C:.*]] = sdy.constant
+  // CHECK-NEXT: stablehlo.custom_call @xla_python_cpu_callback(%[[C]], %arg0) {
+  // CHECK-SAME:   api_version = 2 : i32, backend_config = "56238273106176",
+  // CHECK-SAME:   has_side_effect = true,
+  // CHECK-SAME:   operand_layouts = [dense<> : tensor<0xindex>, dense<> : tensor<0xindex>],
+  // CHECK-SAME:   result_layouts = [dense<> : tensor<0xindex>]
+  // CHECK-SAME: } : (tensor<i64>, tensor<f64>) -> tensor<i64>
+  %c = stablehlo.constant dense<56238273106176> : tensor<i64>
+  stablehlo.custom_call @xla_python_cpu_callback(%c, %arg0) {api_version = 2 : i32, backend_config = "56238273106176", has_side_effect = true, operand_layouts = [dense<> : tensor<0xindex>, dense<> : tensor<0xindex>], result_layouts = []} : (tensor<i64>, tensor<f64>) -> ()
+  return
 }

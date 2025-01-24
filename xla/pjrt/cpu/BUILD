@@ -1,6 +1,6 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/pjrt/cpu:package_groups.bzl", "xla_cpu_internal_packages")
-load("//xla/tsl:tsl.bzl", "if_oss", "internal_visibility")
+load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -18,7 +18,7 @@ xla_cc_test(
     deps = [
         ":cpu_client",
         "//xla/pjrt:pjrt_client_test_common",
-        "@tsl//tsl/platform:test_main",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -151,6 +151,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/cpu/codegen:cpu_features",
+        "//xla/backends/cpu/collectives:cpu_collectives",
         "//xla/backends/cpu/runtime:buffer_allocations",
         "//xla/backends/cpu/runtime:thread_pool_task_runner",
         "//xla/backends/cpu/runtime:thunk",
@@ -186,7 +187,6 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_value",
         "//xla/service:maybe_owning_device_memory",
-        "//xla/service/cpu:collectives_interface",
         "//xla/service/cpu:cpu_compiler",
         "//xla/service/cpu:cpu_event",
         "//xla/service/cpu:cpu_executable",
@@ -196,6 +196,9 @@ cc_library(
         "//xla/stream_executor:device_memory",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:dynamic_annotations",
@@ -219,7 +222,6 @@ cc_library(
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
         "@tsl//tsl/platform:setround",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:connected_traceme",
         "@tsl//tsl/profiler/lib:context_types_hdrs",
         "@tsl//tsl/profiler/lib:traceme",
@@ -248,148 +250,16 @@ xla_cc_test(
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
-        "@tsl//tsl/platform:test_main",
-    ],
-)
-
-cc_library(
-    name = "gloo_kv_store",
-    srcs = ["gloo_kv_store.cc"],
-    hdrs = ["gloo_kv_store.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = [
-        "//xla/pjrt/cpu:legacy_cpu_internal_users",
-    ],
-    deps = [
-        "//xla/pjrt:status_casters",
-        "//xla/pjrt/distributed:key_value_store_interface",
-        "@com_google_absl//absl/time",
-        "@gloo",
-    ],
-)
-
-cc_library(
-    name = "gloo_collectives",
-    srcs = ["gloo_collectives.cc"],
-    hdrs = ["gloo_collectives.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = [
-        "//xla/pjrt/cpu:legacy_cpu_internal_users",
-    ],
-    deps = [
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/collectives:cpu_collectives",
-        "//xla/core/collectives:rank_id",
-        "//xla/service:collective_ops_utils",
-        "//xla/service:global_device_id",
-        "//xla/service/cpu:collectives_interface",
-        "//xla/stream_executor:device_memory",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:span",
-        "@gloo",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-    ],
-)
-
-xla_cc_test(
-    name = "gloo_collectives_test",
-    srcs = ["gloo_collectives_test.cc"],
-    linkstatic = True,
-    deps = [
-        ":gloo_collectives",
-        ":gloo_kv_store",
-        "//xla:executable_run_options",
-        "//xla:xla_data_proto_cc",
-        "//xla/backends/cpu/collectives:cpu_collectives",
-        "//xla/pjrt/distributed:in_memory_key_value_store",
-        "//xla/pjrt/distributed:key_value_store_interface",
-        "//xla/service:collective_ops_utils",
-        "//xla/service:global_device_id",
-        "//xla/service/cpu:collectives_interface",
-        "//xla/stream_executor:device_memory",
-        "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "//xla/tsl/platform:test_main",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:span",
-    ] + select({
-        # Gloo's transport_tcp is not available on MacOS
-        "//xla/tsl:macos": [
-            "@gloo//:transport_uv",
-        ],
-        "//conditions:default": [
-            "@gloo//:transport_tcp",
-        ],
-    }),
-)
-
-cc_library(
-    name = "mpi_collectives",
-    srcs = if_oss(["mpi_collectives.cc"]),
-    hdrs = if_oss(["mpi_collectives.h"]),
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    visibility = [
-        "//xla/pjrt/cpu:legacy_cpu_internal_users",
-    ],
-    deps = if_oss([
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
-        "@com_google_absl//absl/time",
-        "@com_google_absl//absl/types:span",
-        "//xla:shape_util",
-        "//xla:status_macros",
-        "//xla:types",
-        "//xla:util",
-        "//xla:xla_data_proto_cc",
-        "//xla/service:collective_ops_utils",
-        "//xla/service:global_device_id",
-        "//xla/service/cpu:collectives_interface",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@mpitrampoline",
-    ]),
+        "@com_google_googletest//:gtest_main",
+    ],
 )

@@ -36,9 +36,9 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -260,7 +260,7 @@ TEST_P(RemapPlanTest, InvalidLayout) {
                                    /*shape=*/Shape({2, 3}),
                                    /*shard_shape=*/Shape({2, 3})),
       /*layout=*/
-      std::make_shared<xla::PjRtXlaLayout>(
+      std::make_shared<xla::PjRtLayout>(
           xla::LayoutUtil::MakeDescendingLayout(2)),
   });
   plan.output_specs.push_back(ArraySpec{
@@ -271,7 +271,7 @@ TEST_P(RemapPlanTest, InvalidLayout) {
                                    /*shape=*/Shape({2, 3}),
                                    /*shard_shape=*/Shape({2, 3})),
       /*layout=*/
-      std::make_shared<xla::PjRtXlaLayout>(
+      std::make_shared<xla::PjRtLayout>(
           xla::LayoutUtil::MakeAscendingLayout(2)),  // layout differs
   });
   plan.mappings = std::make_shared<std::vector<RemapPlan::Mapping>>();

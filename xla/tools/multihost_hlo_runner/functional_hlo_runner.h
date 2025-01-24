@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/statusor.h"
 
@@ -52,6 +53,15 @@ enum class InputFormat {
   kSnapshotProtoBinary,  // HloSnapshot protobuf binary format. Can be dumped by
                          // TensorFlow by setting the environment variable
                          // xla_dump_hlo_snapshots.
+  kUnoptimizedSnapshotProtoBinary,  // HloUnoptimizedSnapshot protobuf binary
+                                    // format. Can be dumped by
+                                    // setting the flag
+                                    // xla_dump_hlo_snapshots in conjunction
+                                    // with xla_dump_as_text.
+  kUnoptimizedSnapshotProtoText,    // HloUnoptimizedSnapshot protobuf text
+                                    // format. Can be dumped by TensorFlow by
+                                    // setting the flag xla_dump_hlo_snapshots
+                                    // in conjunction with xla_dump_as_text.
 };
 
 // Interface for profiler plugins. If being set in RunningOptions, profiling
@@ -214,6 +224,10 @@ class FunctionalHloRunner {
     // Whether to untuple the result of running HLO module into a vector of
     // arrays. If unprovided, use the default in ExecuteOptions.
     std::optional<bool> untuple_result = std::nullopt;
+    // If not null, profiles will be stored for this run, one per repeat.
+    // Note that the first repeat is a warmup run, and uses less precise
+    // profiling method.
+    std::vector<ExecutionProfile>* execution_profiles = nullptr;
 
     // Should we log the inputs and outputs to stderr?
     bool log_input_output() const {
@@ -223,7 +237,11 @@ class FunctionalHloRunner {
 
   struct HloModuleAndArguments {
     std::unique_ptr<HloModule> hlo_module;
-    std::vector<Literal> arguments;
+
+    // The outer `std::vector` represents the list of shards. The inner
+    // `std::vector<Literal>` represents a list of arguments for a single shard
+    // partition.
+    std::vector<std::vector<Literal>> arguments;
   };
 
   struct ReplicasAndPartitions {
@@ -324,6 +342,11 @@ class FunctionalHloRunner {
 
   static absl::StatusOr<HloModuleAndArguments>
   ReadModuleFromSnapshotBinaryProtoFile(absl::string_view hlo_file);
+  static absl::StatusOr<HloModuleAndArguments>
+  ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(absl::string_view hlo_file);
+  static absl::StatusOr<HloModuleAndArguments>
+  ReadModuleFromUnoptimizedSnapshotTextProtoFile(absl::string_view hlo_file);
+
   static absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
       absl::string_view hlo_file, InputFormat input_format);
 

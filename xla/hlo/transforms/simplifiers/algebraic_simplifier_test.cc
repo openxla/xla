@@ -45,6 +45,8 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -53,11 +55,9 @@ limitations under the License.
 #include "xla/service/host_memory_offload_annotations.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/service/pattern_matcher_gmock.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/test.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
 #include "xla/window_util.h"
@@ -12686,6 +12686,72 @@ TEST_F(AlgebraicSimplifierTest, TestNew123) {
   options.set_is_layout_sensitive(true);
   AlgebraicSimplifier simplifier(options);
   EXPECT_FALSE(simplifier.Run(module.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       ReducePrecisionWithSamePrecisionAsOperandIsRemovedIfRemoveNoOpIsSet) {
+  const char* hlo = R"(
+  HloModule test
+  ENTRY main {
+    p0 = bf16[64]{0} parameter(0)
+    ROOT reduce-precision = bf16[64] reduce-precision(p0), exponent_bits=8, mantissa_bits=7
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+  default_options_.set_enable_remove_no_op_reduce_precision(true);
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter()));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       ReducePrecisionWithDifferentPrecisionFromOperandIsNotModifiedByDefault) {
+  const char* hlo = R"(
+  HloModule test
+  ENTRY main {
+    p0 = bf16[64]{0} parameter(0)
+    ROOT reduce-precision = bf16[64] reduce-precision(p0), exponent_bits=7, mantissa_bits=8
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                          ParseAndReturnVerifiedModule(hlo));
+
+  default_options_.set_enable_remove_no_op_reduce_precision(true);
+  EXPECT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, TestWithControlDependencies) {
+  const char* hlo = R"(
+  HloModule extracted, entry_computation_layout={((s8[2]{0}, s8[]))->s8[]}
+
+  inner_body (p.1: (s8[2], s8[])) -> (s8[2], s8[]) {
+    z.1 = s8[2]{0} constant({0, 0})
+    p.1 = (s8[2]{0}, s8[]) parameter(0)
+    s = s8[] get-tuple-element((s8[2]{0}, s8[]) p.1), index=1
+    sz = s8[] constant(0)
+    add = s8[] add(s8[] s, s8[] sz), control-predecessors={z.1}
+    ROOT r.1 = (s8[2]{0}, s8[]) tuple(s8[2]{0} z.1, s8[] add)
+  }
+
+  cond (p: (s8[2], s8[])) -> pred[] {
+    p = (s8[2]{0}, s8[]) parameter(0)
+    i = s8[] get-tuple-element((s8[2]{0}, s8[]) p), index=1
+    z = s8[] constant(0)
+    ROOT r = pred[] compare(s8[] i, s8[] z), direction=LT
+  }
+
+  ENTRY outer_body (p.2: (s8[2], s8[])) -> s8[] {
+    z.2 = s8[2]{0} constant({0, 0})
+    p.2 = (s8[2]{0}, s8[]) parameter(0)
+    s.1 = s8[] get-tuple-element((s8[2]{0}, s8[]) p.2), index=1
+    t = (s8[2]{0}, s8[]) tuple(s8[2]{0} z.2, s8[] s.1)
+    w = (s8[2]{0}, s8[]) while((s8[2]{0}, s8[]) t), condition=cond, body=inner_body
+    ROOT ss = s8[] get-tuple-element((s8[2]{0}, s8[]) w), index=1
+  })";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  AlgebraicSimplifier simplifier(options);
+  EXPECT_TRUE(simplifier.Run(m.get()).value());
 }
 
 }  // namespace

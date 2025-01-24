@@ -570,6 +570,22 @@ PJRT_Error* PJRT_Client_CreateBuffersForAsyncHostToDevice(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Client_DmaMap(PJRT_Client_DmaMap_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_DmaMap_Args", PJRT_Client_DmaMap_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_RETURN_IF_ERROR(args->client->client->DmaMap(args->data, args->size));
+  return nullptr;
+}
+
+PJRT_Error* PJRT_Client_DmaUnmap(PJRT_Client_DmaUnmap_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Client_DmaUnmap_Args", PJRT_Client_DmaUnmap_Args_STRUCT_SIZE,
+      args->struct_size));
+  PJRT_RETURN_IF_ERROR(args->client->client->DmaUnmap(args->data));
+  return nullptr;
+}
+
 // Searches `device_list` for a PJRT_Device* that wraps a provided
 // `xla::PjRtDevice *` (`cpp_device`). If a match is found, that PJRT_Device*
 // is returned. Otherwise, returns nullptr.
@@ -649,6 +665,89 @@ PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_TransferData(
           args->is_last_transfer, std::move(on_done_with_d2h_transfer)));
   args->done_with_h2d_transfer =
       new PJRT_Event{xla::PjRtFuture<>(std::move(promise))};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer(
+    PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args",
+      PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args_STRUCT_SIZE,
+      args->struct_size));
+  std::unique_ptr<xla::PjRtBuffer> buffer_out =
+      args->transfer_manager->transfer_manager->RetrieveBuffer(
+          args->buffer_index);
+  args->buffer_out =
+      new PJRT_Buffer{std::move(buffer_out), args->transfer_manager->client};
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_Device(
+    PJRT_AsyncHostToDeviceTransferManager_Device_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_Device_Args",
+      PJRT_AsyncHostToDeviceTransferManager_Device_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->device_out =
+      FindDeviceWrapper(args->transfer_manager->transfer_manager->device(),
+                        args->transfer_manager->client->addressable_devices);
+  CHECK(args->device_out != nullptr)
+      << "No PJRT_Device* found in the client's `addressable_devices` that "
+         "wraps this "
+      << args->transfer_manager->transfer_manager->device()->DebugString();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferCount(
+    PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args",
+      PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->buffer_count = args->transfer_manager->transfer_manager->buffer_count();
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_BufferSize(
+    PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args",
+      PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args_STRUCT_SIZE,
+      args->struct_size));
+  args->buffer_size =
+      args->transfer_manager->transfer_manager->buffer_size(args->buffer_index);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_SetBufferError(
+    PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args",
+      PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args_STRUCT_SIZE,
+      args->struct_size));
+  auto error_message =
+      absl::string_view(args->error_message, args->error_message_size);
+  auto error = absl::Status(pjrt::PjrtErrorCodeToStatusCode(args->error_code),
+                            error_message);
+  args->transfer_manager->transfer_manager->SetBufferError(args->buffer_index,
+                                                           error);
+  return nullptr;
+}
+
+PJRT_Error* PJRT_AsyncHostToDeviceTransferManager_AddMetadata(
+    PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args",
+      PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args_STRUCT_SIZE,
+      args->struct_size));
+
+  auto pjrt_metadata = ConvertFromPjRtNamedValueList(args->transfer_metadata,
+                                                     args->num_metadata);
+  absl::flat_hash_map<std::string, std::string> metadata;
+  for (const auto& [key, value] : pjrt_metadata) {
+    metadata[key] = std::get<std::string>(value);
+  }
+  args->transfer_manager->transfer_manager->AddTransferMetadata(metadata);
   return nullptr;
 }
 
@@ -886,10 +985,22 @@ PJRT_Error* PJRT_Client_CreateViewOfDeviceBuffer(
     stream = args->stream;
   }
   std::unique_ptr<xla::PjRtBuffer> buffer;
-  PJRT_ASSIGN_OR_RETURN(
-      buffer, args->client->client->CreateViewOfDeviceBuffer(
-                  args->device_buffer_ptr, shape, args->device->device,
-                  on_delete_callback, stream));
+  bool has_memory_space = args->struct_size >=
+                          PJRT_Client_CreateViewOfDeviceBuffer_Args_STRUCT_SIZE;
+  xla::PjRtMemorySpace* memory_space = nullptr;
+  if (has_memory_space && args->memory != nullptr) {
+    memory_space = args->memory->memory_space;
+  } else if (args->device != nullptr) {
+    PJRT_ASSIGN_OR_RETURN(memory_space,
+                          args->device->device->default_memory_space());
+  } else {
+    return new PJRT_Error{
+        absl::InvalidArgumentError("PJRT_Client_CreateViewOfDeviceBuffer "
+                                   "requires either a device or a memory")};
+  }
+  PJRT_ASSIGN_OR_RETURN(buffer, args->client->client->CreateViewOfDeviceBuffer(
+                                    args->device_buffer_ptr, shape,
+                                    memory_space, on_delete_callback, stream));
   args->buffer = new PJRT_Buffer{std::move(buffer), args->client};
   return nullptr;
 }
@@ -969,6 +1080,15 @@ PJRT_Error* PJRT_DeviceDescription_MemoryDescriptions(
   args->memory_descriptions =
       reinterpret_cast<const PJRT_MemoryDescription* const*>(
           memory_spaces.data());
+
+  absl::StatusOr<const xla::PjRtMemorySpaceDescription*> default_memory =
+      args->device_description->device_description->default_memory_space();
+  args->default_memory_index = -1;
+  for (int i = 0; i < memory_spaces.size(); i++) {
+    if (default_memory.ok() && *default_memory == memory_spaces[i]) {
+      args->default_memory_index = i;
+    }
+  }
 
   args->num_memory_descriptions = memory_spaces.size();
   return nullptr;
@@ -1548,7 +1668,9 @@ PJRT_Error* PJRT_LoadedExecutable_Execute(
   options.strict_shape_checking = true;
   options.arguments_are_tupled = false;
   options.untuple_result = true;
-  options.context = nullptr;
+  options.context = args->options->context
+                        ? args->options->context->execute_context.get()
+                        : nullptr;
   options.multi_slice_config = nullptr;
   options.use_major_to_minor_data_layout_for_callbacks = true;
   if (args->options->num_non_donatable_input_indices > 0) {
@@ -1829,10 +1951,7 @@ PJRT_Error* PJRT_Buffer_GetMemoryLayout(
       // TODO(skyewm): change PJRT C API to also use opaque layout type
       std::shared_ptr<const xla::PjRtLayout> pjrt_layout =
           args->buffer->buffer->layout();
-      const xla::PjRtXlaLayout* pjrt_xla_layout =
-          tensorflow::down_cast<const xla::PjRtXlaLayout*>(pjrt_layout.get());
-      CHECK(pjrt_xla_layout != nullptr) << "Got unexpected layout type";
-      const xla::Layout& xla_layout = pjrt_xla_layout->xla_layout();
+      const xla::Layout& xla_layout = pjrt_layout->xla_layout();
 
       PJRT_ASSIGN_OR_RETURN(BufferMemoryLayoutData data,
                             ConvertToBufferMemoryLayoutData(xla_layout));
@@ -2313,7 +2432,7 @@ PJRT_Error* PJRT_Layouts_PJRT_Client_GetDefaultLayout(
                         args->client->client->GetDefaultLayout(
                             pjrt::ConvertFromPjRtBufferType(args->type),
                             {args->dims, args->num_dims}));
-  auto pjrt_xla_layout = std::make_shared<xla::PjRtXlaLayout>(xla_layout);
+  auto pjrt_xla_layout = std::make_shared<xla::PjRtLayout>(xla_layout);
   args->layout = new PJRT_Layouts_MemoryLayout{std::move(pjrt_xla_layout)};
   return nullptr;
 }
@@ -2690,6 +2809,20 @@ PJRT_Api CreatePjrtApi(PJRT_Client_Create* create_fn,
       pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferData,
       /*PJRT_Client_CreateBuffersForAsyncHostToDevice=*/
       pjrt::PJRT_Client_CreateBuffersForAsyncHostToDevice,
+      /*PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer,
+      /*PJRT_AsyncHostToDeviceTransferManager_Device=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_Device,
+      /*PJRT_AsyncHostToDeviceTransferManager_BufferCount=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferCount,
+      /*PJRT_AsyncHostToDeviceTransferManager_BufferSize=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferSize,
+      /*PJRT_AsyncHostToDeviceTransferManager_SetBufferError=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_SetBufferError,
+      /*PJRT_AsyncHostToDeviceTransferManager_AddMetadata=*/
+      pjrt::PJRT_AsyncHostToDeviceTransferManager_AddMetadata,
+      /*PJRT_Client_DmaMap=*/pjrt::PJRT_Client_DmaMap,
+      /*PJRT_Client_DmaUnmap=*/pjrt::PJRT_Client_DmaUnmap,
   };
 }
 

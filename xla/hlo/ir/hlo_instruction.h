@@ -118,7 +118,8 @@ class HloPrintOptions {
         print_extra_attributes_(true),
         syntax_sugar_async_ops_(true),
         print_name_after_closing_brace_(false),
-        print_full_replica_group_list_(false) {}
+        print_full_replica_group_list_(false),
+        print_parameter_number_(true) {}
   // Static reference to a default construction HloPrintOptions, to avoid
   // constructing a new one each time default is needed.
   static const HloPrintOptions& Default() {
@@ -400,6 +401,12 @@ class HloPrintOptions {
     return *this;
   }
 
+  // If true, prints the parameter number of a parameter instruction.
+  HloPrintOptions& set_print_parameter_number(bool value) {
+    print_parameter_number_ = value;
+    return *this;
+  }
+
   bool print_large_constants() const { return print_large_constants_; }
   bool print_only_essential_constants() const {
     return print_only_essential_constants_;
@@ -445,6 +452,7 @@ class HloPrintOptions {
   bool print_full_replica_group_list() const {
     return print_full_replica_group_list_;
   }
+  bool print_parameter_number() const { return print_parameter_number_; }
 
  private:
   // The interval between the /*index=*/ annotated operands. 0 means never print
@@ -476,6 +484,7 @@ class HloPrintOptions {
   bool syntax_sugar_async_ops_;
   bool print_name_after_closing_brace_;
   bool print_full_replica_group_list_;
+  bool print_parameter_number_;
 };
 
 // For canonical string output, we need to have a canonical way to rename
@@ -1152,6 +1161,10 @@ class HloInstruction {
       const Shape& shape, HloInstruction* operand,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<int64_t>& channel_id);
+  static std::unique_ptr<HloInstruction> CreateCollectivePermute(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
+      const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
+      const std::optional<int64_t>& channel_id);
 
   static std::unique_ptr<HloInstruction> CreateCollectivePermute(
       const Shape& shape, HloInstruction* input, HloInstruction* output,
@@ -1164,6 +1177,10 @@ class HloInstruction {
   // CollectivePermute.
   static std::unique_ptr<HloInstruction> CreateCollectivePermuteStart(
       const Shape& shape, HloInstruction* operand,
+      const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
+      const std::optional<int64_t>& channel_id);
+  static std::unique_ptr<HloInstruction> CreateCollectivePermuteStart(
+      const Shape& shape, absl::Span<HloInstruction* const> operands,
       const std::vector<std::pair<int64_t, int64_t>>& source_target_pairs,
       const std::optional<int64_t>& channel_id);
 
@@ -1561,7 +1578,6 @@ class HloInstruction {
   static bool IsThreadIncluded(
       absl::string_view execution_thread,
       const absl::flat_hash_set<absl::string_view>& execution_threads_set);
-
 
   // Returns the opcode for this instruction.
   HloOpcode opcode() const { return opcode_; }
@@ -2219,8 +2235,6 @@ class HloInstruction {
   // if no id has been assigned yet).
   int unique_id() const { return unique_id_; }
 
-  bool preserve_layout() const { return metadata_->preserve_layout(); }
-
   bool has_backend_config() const { return !backend_config_.empty(); }
 
   void clear_backend_config() { backend_config_ = BackendConfigWrapper(); }
@@ -2371,9 +2385,6 @@ class HloInstruction {
   }
   void set_metadata_deduplicated_name(std::string deduplicated_name) {
     metadata_->set_deduplicated_name(std::move(deduplicated_name));
-  }
-  void set_metadata_preserve_layout(bool preserve_layout) {
-    metadata_->set_preserve_layout(preserve_layout);
   }
   void set_metadata_scheduling_name(absl::string_view name) {
     metadata_->set_scheduling_name(std::string(name));
@@ -2720,9 +2731,10 @@ class HloInstruction {
       std::vector<std::pair<ShapeIndex, std::pair<int64_t, ShapeIndex>>>
           aliasing);
 
-  // Appends operand to the list of operands and adds this instruction as a user
-  // of the operand.
+  // Appends operand(s) to the list of operands and adds this instruction as a
+  // user of the operand.
   void AppendOperand(HloInstruction* operand);
+  void AppendOperands(absl::Span<HloInstruction* const> operands);
 
   // Old methods kept for smooth subclassing transition END.
 

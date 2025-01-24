@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
@@ -601,6 +602,10 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<FloatNormalization>(&s4_support);
   FloatSupport u4_support(U4, U8);
   pipeline.AddPass<FloatNormalization>(&u4_support);
+  FloatSupport f4e2m1fn_support(F4E2M1FN, F16);
+  pipeline.AddPass<FloatNormalization>(&f4e2m1fn_support);
+  FloatSupport f8e8m0fnu_support(F8E8M0FNU, F32);
+  pipeline.AddPass<FloatNormalization>(&f8e8m0fnu_support);
   // After canonicalization, there may be more batch dots that can be
   // simplified.
   pipeline.AddPass<BatchDotSimplification>();
@@ -1503,7 +1508,17 @@ CpuCompiler::CompileLegacyCpuExecutable(std::unique_ptr<HloModule> module) {
 
     std::string ir_module_string;
     if (embed_ir_in_executable) {
-      ir_module_string = llvm_ir::DumpToString(llvm_module.get());
+      std::string emitter2_ir = llvm_ir::DumpToString(llvm_module.get());
+
+      auto thunk_kernel_fmt = [](std::string* out,
+                                 const ThunkEmitter::EmittedKernel& kernel) {
+        absl::StrAppend(
+            out, llvm_ir::DumpToString(kernel.module.getModuleUnlocked()));
+      };
+      std::string thunks_ir =
+          absl::StrJoin(thunk_emitter.kernels(), "\n", thunk_kernel_fmt);
+
+      ir_module_string = absl::StrCat(emitter2_ir, "\n", thunks_ir);
     }
 
     TF_RETURN_IF_ERROR(VerifyLlvmModule(*llvm_module));

@@ -8498,11 +8498,11 @@ bool CudnnSupport::DeriveOutputBatchDescriptor(
 #if CUDNN_VERSION >= 8100
 
 absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> CudnnSupport::DeserializeGraph(
-    absl::string_view serialized_data) const {
-  TF_ASSIGN_OR_RETURN(auto cudnn, cudnn_->GetLocalHandle());
+    Stream& stream, absl::string_view serialized_data) const {
+  auto cudnn = cudnn_->GetHandle(stream.parent(), &stream);
   cudnn_frontend::graph::Graph graph;
   RETURN_IF_CUDNN_FRONTEND_ERROR(graph.deserialize(
-      cudnn->handle(),
+      cudnn.handle(),
       std::vector<uint8_t>(serialized_data.data(),
                            serialized_data.data() + serialized_data.size())));
   return std::make_unique<CudnnGraph>(std::move(graph));
@@ -8520,8 +8520,7 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport& dnn_support,
   }
   RETURN_IF_CUDNN_FRONTEND_ERROR(
       graph_.create_execution_plans({cudnn_frontend::HeurMode_t::A}));
-  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.check_support(cudnn->handle()));
-  return absl::OkStatus();
+  RETURN_CUDNN_FRONTEND_STATUS(graph_.check_support(cudnn->handle()));
 }
 
 absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support,
@@ -8529,12 +8528,10 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport& dnn_support,
   const CudnnSupport& cudnn_support = static_cast<CudnnSupport&>(dnn_support);
   TF_ASSIGN_OR_RETURN(auto cudnn, cudnn_support.cudnn_->GetLocalHandle());
   if (plan_id.has_value()) {
-    RETURN_IF_CUDNN_FRONTEND_ERROR(
+    RETURN_CUDNN_FRONTEND_STATUS(
         graph_.build_plan_at_index(cudnn->handle(), *plan_id));
-  } else {
-    RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.build_plans(cudnn->handle()));
   }
-  return absl::OkStatus();
+  RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plans(cudnn->handle()));
 }
 
 absl::Status CudnnGraph::Execute(Stream& stream,
@@ -8570,10 +8567,9 @@ absl::Status CudnnGraph::Execute(Stream& stream,
 
   const CudnnSupport& dnn_support =
       static_cast<CudnnSupport&>(*stream.parent()->AsDnn());
-  RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.execute(
-      dnn_support.cudnn_->GetHandle(stream.parent(), &stream).handle(),
-      tensor_to_ptr_map, workspace.opaque()));
-  return absl::OkStatus();
+  auto cudnn = dnn_support.cudnn_->GetHandle(stream.parent(), &stream);
+  RETURN_CUDNN_FRONTEND_STATUS(
+      graph_.execute(cudnn.handle(), tensor_to_ptr_map, workspace.opaque()));
 }
 
 #endif  // CUDNN_VERSION >= 8100

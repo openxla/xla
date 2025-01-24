@@ -74,12 +74,12 @@
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_to_from_proto.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status_to_from_proto.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace ifrt {
@@ -1150,9 +1150,10 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
                       std::move(request))]() -> absl::StatusOr<Response> {
     const CompileRequest& compile_request = request->compile_request();
 
+    auto lookup_fn = absl::bind_front(&Client::LookupDevice, client_.get());
     auto deserialize_program_options =
-        std::make_unique<DeserializeProgramOptions>(
-            absl::bind_front(&Client::LookupDevice, client_.get()));
+        std::make_unique<DeserializeProgramOptions>(lookup_fn);
+
     TF_ASSIGN_OR_RETURN(
         auto program,
         Deserialize<xla::ifrt::Program>(
@@ -1290,12 +1291,7 @@ IfrtBackend::HandleLoadedExecutableMetadataRequest(
       for (const std::shared_ptr<const xla::PjRtLayout>& parameter_layout :
            *parameter_layouts) {
         // TODO(b/329165105): use PjRtLayout::Serialize instead
-        const xla::PjRtXlaLayout* layout =
-            dynamic_cast<const xla::PjRtXlaLayout*>(parameter_layout.get());
-        TF_RET_CHECK(layout != nullptr)
-            << "IFRT proxy only supports PjRtXlaLayout, got a different "
-               "subclass";
-        layouts->Add(layout->xla_layout().ToProto());
+        layouts->Add(parameter_layout->xla_layout().ToProto());
       }
     } else {
       *metadata_resp->mutable_parameter_layouts_error() =
@@ -1308,12 +1304,7 @@ IfrtBackend::HandleLoadedExecutableMetadataRequest(
       for (const std::shared_ptr<const xla::PjRtLayout>& output_layout :
            *output_layouts) {
         // TODO(b/329165105): use PjRtLayout::Serialize instead
-        const xla::PjRtXlaLayout* layout =
-            dynamic_cast<const xla::PjRtXlaLayout*>(output_layout.get());
-        TF_RET_CHECK(layout != nullptr)
-            << "IFRT proxy only supports PjRtXlaLayout, got a different "
-               "subclass";
-        layouts->Add(layout->xla_layout().ToProto());
+        layouts->Add(output_layout->xla_layout().ToProto());
       }
     } else {
       *metadata_resp->mutable_output_layouts_error() =

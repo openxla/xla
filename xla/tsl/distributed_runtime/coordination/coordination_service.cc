@@ -48,12 +48,12 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_error_util.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/device_name_utils.h"
-#include "tsl/platform/env.h"
 #include "tsl/platform/random.h"
-#include "tsl/platform/status.h"
 
 namespace tsl {
 namespace {
@@ -317,7 +317,7 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   // Returns whether the clients are polling for error from the service. If the
   // clients are not polling for error from the service, the service should stop
   // when there is an error. Otherwise, the service should not stop.
-  bool IsClientPollingForError() const;
+  bool IsClientPollingForError() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(state_mu_);
 
   class ErrorPollingState {
    public:
@@ -458,10 +458,6 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
   // silently if configured. This is useful when we know that a task can
   // immediately resume work upon re-connecting to the service.
   bool allow_new_incarnation_to_reconnect_ = false;
-  // Whether the agents are polling for error from the service. It will be set
-  // to true when the service sees the first error polling request. Once set to
-  // true, the value will never change back to false, so no mutex is needed.
-  bool client_polling_for_error_ = false;
   std::function<DeviceInfo(const DeviceInfo& devices)>
       post_aggregate_device_fn_;
 
@@ -494,6 +490,10 @@ class CoordinationServiceStandaloneImpl : public CoordinationServiceInterface {
 
   absl::flat_hash_set<std::string> recoverable_jobs_;
 
+  // Whether the agents are polling for error from the service. It will be set
+  // to true when the service sees the first error polling request. Once set to
+  // true, the value will never change back to false.
+  bool client_polling_for_error_ ABSL_GUARDED_BY(state_mu_) = false;
   ErrorPollingState error_polling_state_ ABSL_GUARDED_BY(state_mu_);
 
   absl::CondVar check_staleness_thread_cv_;
@@ -1350,8 +1350,9 @@ std::vector<KeyValueEntry> CoordinationServiceStandaloneImpl::GetKeyValueDir(
   for (it = begin; it != kv_store_.end(); ++it) {
     // Stop once the next key does not have the directory prefix. Since keys are
     // ordered, none of the other keys would have a matching prefix.
-    if (std::mismatch(dir.begin(), dir.end(), it->first.begin()).first !=
-        dir.end()) {
+    if (std::mismatch(dir.begin(), dir.end(), it->first.begin(),
+                      it->first.end())
+            .first != dir.end()) {
       break;
     }
     KeyValueEntry kv;
@@ -1373,8 +1374,9 @@ absl::Status CoordinationServiceStandaloneImpl::DeleteKeyValue(
   auto begin = kv_store_.lower_bound(dir);
   std::map<std::string, std::string>::iterator end;
   for (end = begin; end != kv_store_.end(); end++) {
-    if (std::mismatch(dir.begin(), dir.end(), end->first.begin()).first !=
-        dir.end())
+    if (std::mismatch(dir.begin(), dir.end(), end->first.begin(),
+                      end->first.end())
+            .first != dir.end())
       break;
   }
   kv_store_.erase(begin, end);

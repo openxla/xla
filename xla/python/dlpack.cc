@@ -338,7 +338,7 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> MakePjrtBuffer(
   void* data =
       static_cast<char*>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
   auto result = device.client()->CreateViewOfDeviceBuffer(
-      data, shape, &device, on_delete_callback, stream);
+      data, shape, *device.default_memory_space(), on_delete_callback, stream);
 
   // If that fails with invalid argument, it's possibly because of the incorrect
   // alignment. If we're on CPU, we can create a copy of buffer.
@@ -418,7 +418,7 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
                                      pjrt_buffer->dimensions().end());
 
   // TODO(b/327524065): use PjRtLayout directly instead of xla::Layout
-  Layout xla_layout = GetXlaLayoutUnsafe(pjrt_buffer->layout());
+  Layout xla_layout = pjrt_buffer->layout()->xla_layout();
   pack->strides = StridesForShape(pjrt_buffer->element_type(),
                                   pjrt_buffer->dimensions(), xla_layout);
 

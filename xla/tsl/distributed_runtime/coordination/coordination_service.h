@@ -30,10 +30,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_client.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_config.pb.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/status.h"
 
 namespace tsl {
 class Env;
@@ -101,14 +101,7 @@ class CoordinationServiceInterface {
       return nullptr;
     }
     auto service = factories_iter->second(env, config, std::move(cache));
-    if (service != nullptr) {
-      *GetCoordinationServiceInstancePtr() = service.get();
-    }
     return service;
-  }
-
-  static CoordinationServiceInterface* GetCoordinationServiceInstance() {
-    return *GetCoordinationServiceInstancePtr();
   }
 
   // This function is invoked after each task's local devices are appended in a
@@ -313,11 +306,6 @@ class CoordinationServiceInterface {
     static auto* coordination_service_factories =
         new std::unordered_map<std::string, CoordinationServiceFactory>();
     return coordination_service_factories;
-  }
-
-  static CoordinationServiceInterface** GetCoordinationServiceInstancePtr() {
-    static CoordinationServiceInterface* instance = nullptr;
-    return &instance;
   }
 };
 

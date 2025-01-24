@@ -316,11 +316,11 @@ class TfPjRtClient : public PjRtClient {
     return WrapBuffer(wrapped_->BufferFromHostLiteral(literal, device));
   }
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
-      void* device_ptr, const Shape& shape, PjRtDevice* device,
+      void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
       std::function<void()> on_delete_callback,
       std::optional<std::intptr_t> stream) override {
     return WrapBuffer(wrapped_->CreateViewOfDeviceBuffer(
-        device_ptr, shape, device, on_delete_callback, stream));
+        device_ptr, shape, memory_space, on_delete_callback, stream));
   }
   absl::StatusOr<std::uintptr_t> UnsafeBufferPointer(
       PjRtBuffer* buffer) override {
@@ -339,12 +339,6 @@ class TfPjRtClient : public PjRtClient {
       PjRtDevice* device, PjRtCrossHostRecvNotifier notifier) override {
     return wrapped_->MakeCrossHostReceiveBuffersForGather(
         shapes, std::move(gather_details), device, std::move(notifier));
-  }
-  absl::StatusOr<ChannelHandle> CreateChannelHandle() override {
-    return wrapped_->CreateChannelHandle();
-  }
-  absl::StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override {
-    return wrapped_->CreateDeviceToHostChannelHandle();
   }
   absl::StatusOr<const PjRtTopologyDescription*> GetTopologyDescription()
       const override {

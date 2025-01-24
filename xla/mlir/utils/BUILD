@@ -8,6 +8,7 @@ package(
     default_visibility = internal_visibility([
         "//third_party/golang/github_com/gomlx/gomlx:__subpackages__",
         "//xla:internal",
+        "//learning/infra/mira/experimental/orbax_model:__subpackages__",  # For ConvertPrimitiveTypeToMlirType
     ]),
     licenses = ["notice"],
 )
@@ -41,7 +42,6 @@ cc_test(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -70,9 +70,9 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )

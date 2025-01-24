@@ -188,6 +188,7 @@ Useful logging and error messages
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -322,6 +323,8 @@ class MemorySpaceAssignment {
   absl::Status VerifyAndExportHeapSimulatorTrace(
       const HloAliasAnalysis& alias_analysis,
       std::vector<int64_t>* alt_mem_bytes_occupied = nullptr);
+
+  static constexpr absl::string_view kName = "memory-space-assignment";
 
  protected:
   // Main driver of the memory space assignment pass.

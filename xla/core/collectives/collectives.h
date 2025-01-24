@@ -70,8 +70,8 @@ class Collectives {
 
   // Creates communicators for given clique key and id.
   virtual absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
-  CreateCommunicators(int32_t nranks, const CliqueKey& clique_key,
-                      const std::optional<CliqueId>& clique_id,
+  CreateCommunicators(const CliqueKey& clique_key,
+                      const std::optional<CliqueIds>& clique_ids,
                       absl::Span<const DeviceRank> ranks,
                       const Config& config) = 0;
 

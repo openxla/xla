@@ -228,9 +228,9 @@ cc_library(
     deps = [
         "//xla:xla_data_proto_cc",
         "//xla/hlo/pass:hlo_pass_pipeline",
-        "//xla/hlo/transforms:cholesky_expander",
-        "//xla/hlo/transforms:rng_bit_generator_expander",
-        "//xla/hlo/transforms:rng_expander",
+        "//xla/hlo/transforms/expanders:cholesky_expander",
+        "//xla/hlo/transforms/expanders:rng_bit_generator_expander",
+        "//xla/hlo/transforms/expanders:rng_expander",
         "//xla/service:batchnorm_expander",
         "//xla/service:hlo_proto_cc",
         "//xla/service:hlo_verifier",
@@ -256,9 +256,9 @@ xla_cc_test(
     deps = [
         "//xla/tsl/platform:subprocess",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -339,10 +339,10 @@ xla_cc_test(
     deps = [
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -408,11 +408,11 @@ xla_cc_test(
     srcs = ["prepare_reference_module_test.cc"],
     deps = [
         ":prepare_reference_module",
-        "//xla:test",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:test",
         "//xla/tests:hlo_test_base",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -494,9 +494,9 @@ xla_cc_test(
         "//xla:literal_util",
         "//xla:xla_data_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -553,11 +553,11 @@ xla_cc_test(
         "//xla/tsl/platform:subprocess",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -715,6 +715,7 @@ tsl_gpu_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:stream_executor_memory_allocator",
+        "//xla/tsl/platform:env",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -761,6 +762,7 @@ xla_test(
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/protobuf:error_codes_proto_impl_cc",
         "//xla/tsl/protobuf:status_proto_cc",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",

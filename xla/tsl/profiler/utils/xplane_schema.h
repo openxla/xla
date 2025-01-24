@@ -25,9 +25,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/macros.h"
-#include "tsl/platform/types.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/macros.h"
+#include "xla/tsl/platform/types.h"
 #include "tsl/profiler/lib/context_types.h"
 
 namespace tsl {
@@ -73,6 +73,8 @@ TF_CONST_INIT extern const absl::string_view kTensorFlowOpLineName;
 TF_CONST_INIT extern const absl::string_view kXlaModuleLineName;
 TF_CONST_INIT extern const absl::string_view kXlaOpLineName;
 TF_CONST_INIT extern const absl::string_view kSparseCoreStepLineName;
+TF_CONST_INIT extern const absl::string_view kSparseCoreOpLineName;
+TF_CONST_INIT extern const absl::string_view kSparseCoreModuleLineName;
 TF_CONST_INIT extern const absl::string_view kXlaAsyncOpLineName;
 TF_CONST_INIT extern const absl::string_view kKernelLaunchLineName;
 TF_CONST_INIT extern const absl::string_view kSourceLineName;

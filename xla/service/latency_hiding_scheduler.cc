@@ -56,9 +56,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -214,6 +214,7 @@ bool AsyncTracker::IsSupportedAsyncDone(const HloInstruction& hlo) const {
     }
     switch (op.inner) {
       case HloOpcode::kAllToAll:
+      case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectiveBroadcast:
@@ -243,6 +244,7 @@ bool AsyncTracker::IsSupportedAsyncStart(const HloInstruction& hlo) const {
     }
     switch (op.inner) {
       case HloOpcode::kAllToAll:
+      case HloOpcode::kRaggedAllToAll:
       case HloOpcode::kAllGather:
       case HloOpcode::kAllReduce:
       case HloOpcode::kCollectiveBroadcast:
@@ -268,6 +270,8 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
         return ResourceType::kAllGather;
       case HloOpcode::kAllToAll:
         return ResourceType::kAllToAll;
+      case HloOpcode::kRaggedAllToAll:
+        return ResourceType::kRaggedAllToAll;
       case HloOpcode::kCollectiveBroadcast:
         return ResourceType::kCollectiveBroadcast;
       case HloOpcode::kCollectivePermute:
@@ -420,6 +424,8 @@ void AsyncTracker::SetConcurrentResourceLimits(
       config_.copy_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllToAll)] =
       config_.all_to_all_overlap_limit;
+  max_concurrent_resource[ResourceTypeToIndex(ResourceType::kRaggedAllToAll)] =
+      config_.ragged_all_to_all_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllGather)] =
       config_.all_gather_overlap_limit;
   max_concurrent_resource[ResourceTypeToIndex(ResourceType::kAllReduce)] =
@@ -453,6 +459,8 @@ absl::string_view AsyncTracker::GetResourceName(int64_t resource_type) const {
       return "kNoResource";
     case ResourceTypeToIndex(ResourceType::kAllToAll):
       return "kAllToAll";
+    case ResourceTypeToIndex(ResourceType::kRaggedAllToAll):
+      return "kRaggedAllToAll";
     case ResourceTypeToIndex(ResourceType::kAllGather):
       return "kAllGather";
     case ResourceTypeToIndex(ResourceType::kAllReduce):
@@ -1618,17 +1626,18 @@ absl::StatusOr<HloGraphNode*> FindAndExtractBestAnnotatedNode(
 }
 
 absl::Status DefaultSchedulerCore::ScheduleAnnotation(
-    int64_t annotation,
+    const HloComputation* computation, int64_t annotation,
     DefaultSchedulerCore::SchedulingState* sched_state) const {
   // Create the ready set with the roots of the annotation
   TF_RET_CHECK(sched_state->annotation_ready.empty());
   for (const HloInstruction* instr :
-       annotation_tracker_->GetRootInstructions(annotation)) {
+       annotation_tracker_->GetRootInstructions(computation, annotation)) {
     sched_state->annotation_ready.push_back(
         &sched_state->sched_graph.GetNode(instr));
   }
   int64_t num_scheduled = 0;
-  int64_t annotation_size = annotation_tracker_->GetNumInstructions(annotation);
+  int64_t annotation_size =
+      annotation_tracker_->GetNumInstructions(computation, annotation);
   while (!sched_state->annotation_ready.empty()) {
     // Print the current annotation ready queue.
     VLOG(2) << "Current annotation ready queue:";
@@ -1863,11 +1872,13 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
               << " ready_num_nodes_with_annotation: "
               << sched_state->ready_num_nodes_with_annotation[annotation]
               << " num_root_instructions: "
-              << annotation_tracker_->GetNumRootInstructions(annotation);
+              << annotation_tracker_->GetNumRootInstructions(
+                     n->GetInstr().parent(), annotation);
       // LegalizeSchedulingAnnotations pass should have made sure that we will
       // eventually reach a state where all of the annotation root instructions
       // will be ready at the same time.
-      if (annotation_tracker_->GetNumRootInstructions(annotation) ==
+      if (annotation_tracker_->GetNumRootInstructions(n->GetInstr().parent(),
+                                                      annotation) ==
           sched_state->ready_num_nodes_with_annotation[annotation]) {
         sched_state->ready_annotations.push_back(annotation);
       }
@@ -2245,7 +2256,7 @@ void HloScheduleGraph::AnnotateGraph(
   const HloComputation* comp = original_order_[0]->parent();
   for (int64_t annotation : annotation_tracker->GetAnnotations(comp)) {
     for (const HloInstruction* instr :
-         annotation_tracker->GetInstructions(annotation)) {
+         annotation_tracker->GetInstructions(comp, annotation)) {
       HloGraphNode& node = GetNode(instr);
       TF_CHECK_OK(node.SetAnnotation(annotation));
     }
@@ -2306,8 +2317,10 @@ absl::Status DefaultSchedulerCore::SchedulingStep(
 
 bool DefaultSchedulerCore::SchedulingAnnotationCrossesOverlapLimit(
     const SchedulingState& sched_state, int64_t annotation) {
+  const HloComputation* comp =
+      sched_state.sched_graph.GetOriginalInstrList()[0]->parent();
   for (const HloInstruction* instr :
-       annotation_tracker_->GetInstructions(annotation)) {
+       annotation_tracker_->GetInstructions(comp, annotation)) {
     if (scheduling_instruction_crosses_overlap_limit_(
             sched_state, &sched_state.sched_graph.GetNode(instr))) {
       return true;
@@ -2359,8 +2372,10 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
               << " ready_num_nodes_with_annotation: "
               << sched_state.ready_num_nodes_with_annotation[annotation]
               << " num_root_instructions: "
-              << annotation_tracker_->GetNumRootInstructions(annotation);
-      if (annotation_tracker_->GetNumRootInstructions(annotation) ==
+              << annotation_tracker_->GetNumRootInstructions(computation,
+                                                             annotation);
+      if (annotation_tracker_->GetNumRootInstructions(computation,
+                                                      annotation) ==
           sched_state.ready_num_nodes_with_annotation[annotation]) {
         sched_state.ready_annotations.push_back(annotation);
       }
@@ -2400,7 +2415,8 @@ DefaultSchedulerCore::ScheduleComputation(const HloComputation* computation) {
         sched_state.ready_annotations.pop_back();
         VLOG(2) << "------- BEGIN ANNOTATION: " << annotation << " -------";
         sched_state.ongoing_annotation = annotation;
-        TF_RETURN_IF_ERROR(ScheduleAnnotation(annotation, &sched_state));
+        TF_RETURN_IF_ERROR(
+            ScheduleAnnotation(computation, annotation, &sched_state));
         VLOG(2) << "-------  END ANNOTATION: " << annotation << " --------";
         sched_state.ongoing_annotation = -1;
         continue;
@@ -2491,6 +2507,7 @@ LatencyHidingScheduler::LatencyHidingStatistics(
     kAllReduce,
     kCollectivePermute,
     kAllToAll,
+    kRaggedAllToAll,
     kReduceScatter,
     kSend,
     kRecv,
@@ -2508,6 +2525,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
         return AsyncKind::kCollectivePermute;
       case HloOpcode::kAllToAll:
         return AsyncKind::kAllToAll;
+      case HloOpcode::kRaggedAllToAll:
+        return AsyncKind::kRaggedAllToAll;
       case HloOpcode::kReduceScatter:
         return AsyncKind::kReduceScatter;
       case HloOpcode::kSend:
@@ -2606,6 +2625,8 @@ LatencyHidingScheduler::LatencyHidingStatistics(
       wasted_time_per_collective[AsyncKind::kCollectivePermute],
       /*all_to_all_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kAllToAll],
+      /*ragged_all_to_all_wasted_cycles=*/
+      wasted_time_per_collective[AsyncKind::kRaggedAllToAll],
       /*reduce_scatter_wasted_cycles=*/
       wasted_time_per_collective[AsyncKind::kReduceScatter],
       /*send_wasted_cycles=*/wasted_time_per_collective[AsyncKind::kSend],
@@ -2632,6 +2653,7 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                       sched_stats.collective_broadcast_wasted_cycles +
                       sched_stats.collective_permute_wasted_cycles +
                       sched_stats.all_to_all_wasted_cycles +
+                      sched_stats.ragged_all_to_all_wasted_cycles +
                       sched_stats.reduce_scatter_wasted_cycles +
                       sched_stats.send_wasted_cycles +
                       sched_stats.recv_wasted_cycles,
@@ -2646,6 +2668,8 @@ std::string LatencyHidingScheduler::SchedulerStatisticsString(
                   sched_stats.collective_permute_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for all-to-all: ",
                   sched_stats.all_to_all_wasted_cycles, "\n");
+  absl::StrAppend(&result, "Wasted cycles for ragged-all-to-all: ",
+                  sched_stats.ragged_all_to_all_wasted_cycles, "\n");
   absl::StrAppend(&result, "Wasted cycles for reduce-scatter: ",
                   sched_stats.reduce_scatter_wasted_cycles, "\n");
   absl::StrAppend(&result,
@@ -2675,6 +2699,8 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
   // Currently we expect that a schedule that minimizes memory pressure is
   // provided as a base. It's not necessary for the algorithm itself but it
   // allows us to not having to think for now about memory pressure.
+  CHECK(module->has_schedule()) << "LatencyHidingScheduler expects a base "
+                                   "schedule that minimizes memory pressure.";
   std::vector<HloComputation*> computations_to_schedule;
   computations_to_schedule.reserve(module->computation_count());
   // Collect which computations have latency hiding opportunities.

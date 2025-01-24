@@ -49,6 +49,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/array.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
+#include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -85,7 +86,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/compiler.h"
 #include "xla/service/computation_placer.h"
-#include "xla/service/cpu/collectives_interface.h"
 #include "xla/service/cpu/cpu_compiler.h"
 #include "xla/service/cpu/cpu_event.h"
 #include "xla/service/cpu/cpu_executable.h"
@@ -108,17 +108,17 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
 #include "tsl/platform/denormal.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/setround.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/threadpool.h"
 #include "tsl/profiler/lib/connected_traceme.h"
 #include "tsl/profiler/lib/context_types.h"
 #include "tsl/profiler/lib/traceme.h"
@@ -311,7 +311,7 @@ static tsl::ThreadOptions GetThreadOptions() {
 
 TfrtCpuClient::TfrtCpuClient(
     int process_index, std::vector<std::unique_ptr<TfrtCpuDevice>> devices,
-    std::shared_ptr<cpu::CollectivesInterface> collectives, size_t num_threads,
+    std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
     bool asynchronous,
     std::function<void(HloModuleConfig&)> customize_hlo_module_config)
     : process_index_(process_index),
@@ -642,9 +642,12 @@ static absl::StatusOr<std::unique_ptr<xla::Executable>> JitCompile(
 
   // Run Hlo Passes
   cpu::CpuCompiler compiler;
-  TF_ASSIGN_OR_RETURN(hlo_module, compiler.RunHloPasses(std::move(hlo_module),
-                                                        /*stream_exec=*/nullptr,
-                                                        compile_options));
+  if (!build_options.run_backend_only()) {
+    TF_ASSIGN_OR_RETURN(
+        hlo_module,
+        compiler.RunHloPasses(std::move(hlo_module),
+                              /*stream_exec=*/nullptr, compile_options));
+  }
 
   // Run backend.
   return compiler.RunBackend(std::move(hlo_module), /*stream_exec=*/nullptr,
@@ -791,7 +794,7 @@ static bool IsAlignedData(void* ptr) {
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>>
 TfrtCpuClient::CreateViewOfDeviceBuffer(
-    void* device_ptr, const Shape& shape, PjRtDevice* device,
+    void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
     std::function<void()> on_delete_callback,
     std::optional<std::intptr_t> stream) {
   if (stream) {
@@ -816,10 +819,11 @@ TfrtCpuClient::CreateViewOfDeviceBuffer(
       /*is_tuple=*/false, /*owns_buffers=*/false, std::move(buffers),
       /*definition_event=*/tsl::MakeAvailableAsyncValueRef<CpuEvent>(),
       std::move(on_delete_callback));
+  CHECK_EQ(memory_space->devices().size(), 1);
+  auto* device = memory_space->devices().front();
   return std::unique_ptr<PjRtBuffer>(std::make_unique<TfrtCpuBuffer>(
       shape, std::move(tracked_device_buffer), this,
-      tensorflow::down_cast<TfrtCpuDevice*>(device),
-      *device->default_memory_space()));
+      tensorflow::down_cast<TfrtCpuDevice*>(device), memory_space));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
@@ -827,11 +831,16 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> TfrtCpuClient::CreateErrorBuffer(
   if (device->client() != this) {
     return absl::InvalidArgumentError("Device is not attached to this client");
   }
+  // Create a dummy buffer because the rest of the code expects a buffer
+  // regardless of whether the definition event is an error.
+  TF_ASSIGN_OR_RETURN(auto buffer, MaybeOwningCpuMemory::AllocateAvailableAvr(
+                                       ShapeUtil::ByteSizeOf(shape)));
   return std::make_unique<TfrtCpuBuffer>(
       shape,
       std::make_unique<TrackedTfrtCpuDeviceBuffer>(
           /*is_tuple=*/false, /*owns_buffers=*/true,
-          absl::InlinedVector<tsl::AsyncValueRef<MaybeOwningCpuMemory>, 4>{},
+          absl::InlinedVector<tsl::AsyncValueRef<MaybeOwningCpuMemory>, 4>{
+              std::move(buffer)},
           absl::InlinedVector<tsl::AsyncValueRef<CpuEvent>, 4>{
               tsl::AsyncValueRef<CpuEvent>(
                   tsl::MakeErrorAsyncValueRef(std::move(error)))}),
@@ -973,6 +982,12 @@ static std::vector<tsl::RCReference<tsl::AsyncValue>> CopyAsyncValues(
     avs.push_back(ev.CopyRef());
   }
   return avs;
+}
+
+PjRtFuture<> TfrtCpuBuffer::CopyRawToHost(void* dst, int64_t offset,
+                                          int64_t transfer_size) {
+  return CopyRawToHostHelper(dst, offset, transfer_size,
+                             client()->async_work_runner());
 }
 
 PjRtFuture<> TfrtCpuBuffer::ToLiteral(MutableLiteralBase* literal) {
@@ -1383,9 +1398,12 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     };
     TF_RETURN_IF_ERROR(get_buffer(i));
 
-    // Definition events are never modified after buffer construction.
+    // Definition events are never modified after buffer construction. If they
+    // are available and have no error, they can be skipped in input deps.
+    // In contrast, already known errors in the input are taken as deps so that
+    // they can poison output buffers.
     const auto& definition_event = tracked_buffer->definition_event();
-    if (!definition_event.IsAvailable()) {
+    if (!definition_event.IsAvailable() || definition_event.IsError()) {
       input_deps.push_back(definition_event.CopyRCRef());
     }
   }
@@ -1461,10 +1479,16 @@ absl::StatusOr<PjRtLoadedExecutable::Result> TfrtCpuExecutable::ExecuteHelper(
     input_deps.push_back(std::move(last_collective_launch_event));
   } else {
     // This is a non-parallel computation. Add the last enqueue event as a
-    // dependency.
+    // dependency with any error cleared.
     auto last_enqueue_event = client_->GetLastEnqueueEvent();
     if (!last_enqueue_event.IsAvailable()) {
-      input_deps.push_back(std::move(last_enqueue_event));
+      auto last_enqueue_done_event =
+          tsl::MakeUnconstructedAsyncValueRef<CpuEvent>();
+      last_enqueue_event.AndThen(
+          [last_enqueue_done_event = last_enqueue_done_event.CopyRef()]() {
+            last_enqueue_done_event.emplace();
+          });
+      input_deps.push_back(std::move(last_enqueue_done_event));
     }
   }
   if (options.context != nullptr) {

@@ -32,13 +32,13 @@ limitations under the License.
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout.h"
-#include "xla/service/gpu/fusions/fusion_emitter.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/affine_map_evaluator.h"
@@ -548,7 +548,7 @@ std::vector<Interval> FindContiguousIntervals(
   }
   // Case 2: f(thread_x) != thread_x * multiplier.
   auto intervals = FindIntervals(partitioned_expr.func_of_d0,
-                                 {indexing_map.GetDimVars(0).bounds});
+                                 {indexing_map.GetDimVar(0).bounds});
   // Case 2.1: g(s) != s.
   if (partitioned_expr.func_of_s0 != range) {
     return intervals;

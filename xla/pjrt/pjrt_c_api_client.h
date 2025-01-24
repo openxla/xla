@@ -83,6 +83,9 @@ class PjRtCApiDeviceDescription : public PjRtDeviceDescription {
   absl::Span<const PjRtMemorySpaceDescription* const> memory_spaces()
       const override;
 
+  absl::StatusOr<const PjRtMemorySpaceDescription*> default_memory_space()
+      const override;
+
  private:
   const PJRT_Api* c_api_;
   // `device_description_` is owned by the `PJRT_Client` wrapped by `client_`
@@ -92,9 +95,13 @@ class PjRtCApiDeviceDescription : public PjRtDeviceDescription {
   mutable std::vector<PjRtMemorySpaceDescription> memory_space_descriptions_;
   mutable std::vector<PjRtMemorySpaceDescription*>
       memory_space_description_pointers_;
+  mutable absl::StatusOr<PjRtMemorySpaceDescription*>
+      default_memory_space_description_;
 
   // Initializes device specific attributes.
   void InitAttributes();
+  // Initialize device specific memory descriptions.
+  void InitMemoryDescriptions() const;
 };
 
 class PjRtCApiMemorySpace : public PjRtMemorySpace {
@@ -374,7 +381,7 @@ class PjRtCApiClient : public PjRtClient {
   }
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
-      void* device_ptr, const Shape& shape, PjRtDevice* device,
+      void* device_ptr, const Shape& shape, PjRtMemorySpace* memory_space,
       std::function<void()> on_delete_callback,
       std::optional<std::intptr_t> stream) override;
 
@@ -401,27 +408,15 @@ class PjRtCApiClient : public PjRtClient {
         "this feature.");
   }
 
-  absl::StatusOr<ChannelHandle> CreateChannelHandle() override {
-    return Unimplemented(
-        "PJRT C API does not support CreateChannelHandle. Please report an "
-        "issue at https://github.com/google/jax/issues if you need this "
-        "feature.");
-  }
-
-  absl::StatusOr<ChannelHandle> CreateDeviceToHostChannelHandle() override {
-    return Unimplemented(
-        "PJRT C API does not support CreateDeviceToHostChannelHandle. Please "
-        "report an issue at https://github.com/google/jax/issues if you need "
-        "this feature.");
-  }
-
   absl::Status Defragment() override {
     return Unimplemented(
         "PJRT C API does not support Defragment. Please report an issue at "
         "https://github.com/google/jax/issues if you need this feature.");
   }
 
-  bool SupportsSendRecvCallbacks() const override { return true; }
+  absl::Status DmaMap(void* data, size_t size) override;
+
+  absl::Status DmaUnmap(void* data) override;
 
   const PJRT_Api* pjrt_c_api() const;
 
@@ -583,7 +578,7 @@ class PjRtCApiBuffer : public PjRtBuffer {
   // we set on `readiness_event` modifies `readiness_promise_`.
   std::shared_ptr<PjRtFuture<>::Promise> readiness_promise_;
   // Set and cached the first time layout() is called.
-  mutable std::shared_ptr<const PjRtXlaLayout> layout_;
+  mutable std::shared_ptr<const PjRtLayout> layout_;
   // Set and cached the first time is_dynamic_dimension() is called.
   mutable std::optional<absl::InlinedVector<bool, InlineRank()>>
       is_dynamic_dimension_;

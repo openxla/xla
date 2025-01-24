@@ -15,9 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/reduce_scatter_combiner.h"
 
-#include <cstdint>
 #include <optional>
-#include <string>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -26,10 +24,9 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_collective_combiner_utils.h"
-#include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/service/reduce_scatter_combiner.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -37,23 +34,15 @@ namespace {
 std::optional<ReduceScatterCombiner::GroupKey> PipelinedCombinerKey(
     const HloInstruction* instruction, const HloDomainMap& domain_map,
     bool combine_by_dim) {
-  auto combined_key = ReduceScatterCombiner::CombineKey(instruction, domain_map,
-                                                        combine_by_dim);
-  if (!combined_key.has_value()) {
-    return std::nullopt;
-  }
   auto backend_config = instruction->backend_config<GpuBackendConfig>();
   if (!backend_config.ok()) {
     return std::nullopt;
   }
-  bool is_pipelined =
-      backend_config->collective_backend_config().is_pipelined();
-  if (!is_pipelined) {
+  if (!backend_config->collective_backend_config().is_pipelined()) {
     return std::nullopt;
   }
-  ReduceScatterCombiner::GetGroupKeyExtraArgs(*combined_key)
-      .append(" " + std::to_string(static_cast<int64_t>(is_pipelined)));
-  return combined_key.value();
+  return ReduceScatterCombiner::CombineKey(instruction, domain_map,
+                                           combine_by_dim);
 }
 
 }  // namespace
@@ -76,8 +65,7 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::Run(
   // Combine as much as possible for pipelined collectives.
   int previous_combiner_threshold = combine_threshold_in_bytes_;
   combine_threshold_in_bytes_ = ComputeSuggestedCombinerThreshold(
-      *module, device_info_, ScheduleGpuModuleWithMemoryScheduler,
-      HloOpcode::kReduceScatter, pointer_size_);
+      *module, device_info_, HloOpcode::kReduceScatter, pointer_size_);
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));

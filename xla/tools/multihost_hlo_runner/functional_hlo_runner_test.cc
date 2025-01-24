@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/tools/multihost_hlo_runner/functional_hlo_runner.h"
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,12 +31,15 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tools/multihost_hlo_runner/create_client.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/subprocess.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/file_system.h"
@@ -84,6 +88,26 @@ TEST_F(FunctionalHloRunnerTest, SingleDeviceHlo) {
   TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
       *client, debug_options, preproc_options, raw_compile_options,
       running_options, {GetHloPath("single_device.hlo")}, InputFormat::kText));
+}
+
+TEST_F(FunctionalHloRunnerTest, SingleDeviceHloWithExecutionProfile) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+  std::vector<ExecutionProfile> profiles;
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.num_repeats = 2;
+  running_options.execution_profiles = &profiles;
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
+      *client,
+      /* debug_options= */ {}, /* preproc_options= */ {},
+      /* raw_compile_options = */ {}, running_options,
+      {GetHloPath("single_device.hlo")}, InputFormat::kText));
+  ASSERT_EQ(profiles.size(), 2);
+  if (client->platform_name() == "cuda") {
+    // CPU backend does not fill the profile at the moment.
+    EXPECT_GT(profiles[0].compute_time_ns(), 0);
+    EXPECT_GT(profiles[1].compute_time_ns(), 0);
+  }
 }
 
 TEST_F(FunctionalHloRunnerTest, Sharded2Devices) {
@@ -176,6 +200,42 @@ TEST_F(FunctionalHloRunnerTest, UseUninitializedInputs) {
   TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
       *client, debug_options, preproc_options, raw_compile_options,
       running_options, {GetHloPath("sharded_2_devices.hlo")},
+      InputFormat::kText));
+}
+
+// ROCM Error:
+// E0000 00:00:1737155629.780742  137227 pjrt_stream_executor_client.cc:3045]
+// Execution of replica 0 failed: INTERNAL: Failed to end stream capture:
+// hipError_t(901)
+TEST_F(FunctionalHloRunnerTest, ShardedComputationUnderStreamCapture) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  constexpr int kRequiredDeviceCount = 2;
+  const int kDeviceCount = client->device_count();
+  if (kDeviceCount < kRequiredDeviceCount) {
+    GTEST_SKIP() << "Requires " << kRequiredDeviceCount
+                 << " devices, but found only " << kDeviceCount;
+    return;
+  }
+
+  // NOTE: debug_options sent to FunctionalHloRunner::LoadAndRunAndDump() get
+  // lost during the creating of XlaComputation from HloModuleProto in
+  // FunctionalHloRunner::Compile
+  xla::DebugOptions debug_options;
+  FunctionalHloRunner::PreprocessingOptions preproc_options;
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.spmd_mode =
+      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
+  raw_compile_options.num_replicas = 1;
+  raw_compile_options.num_partitions = 2;
+  FunctionalHloRunner::RunningOptions running_options;
+  running_options.module_argument_mode =
+      FunctionalHloRunner::ModuleArgumentMode::kUseRandomInputs;
+
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
+      *client, debug_options, preproc_options, raw_compile_options,
+      running_options, {GetHloPath("sharded_computation.hlo")},
       InputFormat::kText));
 }
 
@@ -389,6 +449,98 @@ TEST_F(FunctionalHloRunnerTest, CanCreateMockClientInPjRtEnv) {
       GetPjRtEnvironmentForGpu("", gpu_options, absl::Seconds(120)));
 
   TF_EXPECT_OK(RunShardedHloWithClient(*env.client));
+}
+
+TEST_F(FunctionalHloRunnerTest, Sharded2DevicesHloUnoptimizedSnapshot) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                          GetPjRtClient());
+
+  constexpr int kRequiredDeviceCount = 2;
+  int device_count = client->device_count();
+  if (device_count < kRequiredDeviceCount) {
+    GTEST_SKIP() << "Requires " << kRequiredDeviceCount
+                 << " devices, but found only " << device_count;
+    return;
+  }
+
+  // Options corresponding to:
+  // --use_spmd_partitioning=true --num_replicas=1 --num_partitions=2
+  xla::DebugOptions debug_options;
+  FunctionalHloRunner::PreprocessingOptions preproc_options;
+  FunctionalHloRunner::RawCompileOptions raw_compile_options;
+  raw_compile_options.spmd_mode =
+      FunctionalHloRunner::SpmdMode::kUseSpmdPartitioning;
+  raw_compile_options.num_replicas = 1;
+  raw_compile_options.num_partitions = 2;
+  FunctionalHloRunner::RunningOptions running_options;
+
+  TF_EXPECT_OK(FunctionalHloRunner::LoadAndRunAndDump(
+      *client, debug_options, preproc_options, raw_compile_options,
+      running_options, {GetHloPath("sharded_unoptimized_hlo_snapshot.pbtxt")},
+      InputFormat::kUnoptimizedSnapshotProtoText,
+      tsl::io::JoinPath(std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"),
+                        "dump.txt")));
+  tsl::Env* env = tsl::Env::Default();
+  tsl::FileSystem* fs = nullptr;
+  TF_ASSERT_OK(env->GetFileSystemForFile(
+      std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"), &fs));
+
+  std::vector<std::string> filenames;
+  TF_ASSERT_OK(fs->GetMatchingPaths(
+      tsl::io::JoinPath(std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"), "dump.*"),
+      &filenames));
+
+  // The test is sharded, so we expect two dump files with the same result.
+  ASSERT_THAT(filenames, SizeIs(2));
+  std::string result;
+  std::string exp_result = R"(s64[8,1] {
+  {0},
+  {2},
+  {4},
+  {6},
+  {8},
+  {10},
+  {12},
+  {14}
+})";
+  for (const auto& filename : filenames) {
+    TF_ASSERT_OK(tsl::ReadFileToString(env, filename, &result));
+    CHECK_EQ(result, exp_result);
+  }
+}
+
+TEST_F(FunctionalHloRunnerTest, ReadHloUnoptimizedSnapshot) {
+  FunctionalHloRunner::HloModuleAndArguments hlo_module_and_arguments_from_text;
+  FunctionalHloRunner::HloModuleAndArguments
+      hlo_module_and_arguments_from_binary;
+  std::string path_to_text_hlo =
+      GetHloPath("sharded_unoptimized_hlo_snapshot.pbtxt");
+  std::string path_to_binary_hlo =
+      tsl::io::JoinPath(std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"),
+                        "sharded_unoptimized_hlo_snapshot.pb");
+
+  // Read the text proto, dump it as a binary proto and read it back.
+  HloUnoptimizedSnapshot message;
+  TF_ASSERT_OK(
+      tsl::ReadTextProto(tsl::Env::Default(), path_to_text_hlo, &message));
+  TF_ASSERT_OK(
+      tsl::WriteBinaryProto(tsl::Env::Default(), path_to_binary_hlo, message));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_module_and_arguments_from_text,
+      FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
+          path_to_text_hlo));
+  TF_ASSERT_OK_AND_ASSIGN(
+      hlo_module_and_arguments_from_binary,
+      FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(
+          path_to_binary_hlo));
+  CHECK_EQ(hlo_module_and_arguments_from_binary.arguments.size(), 2);
+
+  CHECK_EQ(hlo_module_and_arguments_from_text.hlo_module->ToString(),
+           hlo_module_and_arguments_from_binary.hlo_module->ToString());
+
+  CHECK_EQ(hlo_module_and_arguments_from_text.arguments.size(),
+           hlo_module_and_arguments_from_binary.arguments.size());
 }
 
 }  // namespace

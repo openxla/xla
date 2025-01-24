@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
 #include "xla/service/computation_layout.h"
@@ -256,16 +257,6 @@ HloRunnerPjRt::TransferLiteralToDevice(const Literal& literal,
                                        const Layout& parameter_layout) {
   auto devices = pjrt_client_->addressable_devices();
   PjRtDevice* device = devices[kDeviceIdx];
-
-  if (pjrt_client_->memory_spaces().empty()) {
-    TF_ASSIGN_OR_RETURN(
-        auto assignment,
-        use_parameter_layout_on_device_
-            ? pjrt_client_->BufferFromHostLiteral(literal, device,
-                                                  &parameter_layout)
-            : pjrt_client_->BufferFromHostLiteral(literal, device));
-    return std::move(assignment);
-  }
 
   auto get_pjrt_memory_space = [](PjRtDevice* pjrt_device,
                                   int64_t xla_memory_space) {
@@ -566,13 +557,14 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
     for (int64_t arg_index = 0; arg_index < argument_count; arg_index++) {
       const Literal* const argument = argument_provider(i, arg_index);
       TF_RET_CHECK(argument != nullptr);
-
+      TF_ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
+                          device_ptr->default_memory_space());
       TF_ASSIGN_OR_RETURN(
           std::unique_ptr<PjRtBuffer> assignment,
           use_parameter_layout_on_device_
-              ? pjrt_client_->BufferFromHostLiteral(*argument, device_ptr,
+              ? pjrt_client_->BufferFromHostLiteral(*argument, memory_space,
                                                     &argument->shape().layout())
-              : pjrt_client_->BufferFromHostLiteral(*argument, device_ptr));
+              : pjrt_client_->BufferFromHostLiteral(*argument, memory_space));
       replica_buffers.push_back(std::move(assignment));
     }
     argument_buffer_slices.push_back(std::move(replica_buffers));
@@ -665,5 +657,15 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicatedImpl(
 }
 
 absl::string_view HloRunnerPjRt::Name() const { return "HloRunnerPjRt"; }
+
+bool HloRunnerPjRt::HasProperty(const HloRunnerPropertyTag::Type tag) const {
+  if (tag == HloRunnerPropertyTag::kUsingGpuRocm) {
+    return pjrt_client_->platform_name() == xla::RocmName();
+  }
+  if (tag == HloRunnerPropertyTag::kCpu) {
+    return pjrt_client_->platform_name() == xla::CpuName();
+  }
+  return false;
+}
 
 }  // namespace xla

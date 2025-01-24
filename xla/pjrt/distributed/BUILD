@@ -51,12 +51,14 @@ xla_cc_test(
         ":topology_util",
         "//xla:test_helpers",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ],
 )
 
@@ -102,8 +104,8 @@ cc_library(
     deps = [
         ":client",
         ":service",
+        "//xla/tsl/platform:grpc_credentials",
         "@com_google_absl//absl/status:statusor",
-        "@tsl//tsl/platform:grpc_credentials",
     ] + tsl_grpc_cc_dependencies(),
 )
 
@@ -152,11 +154,11 @@ xla_cc_test(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_main",
     ] + tsl_grpc_cc_dependencies(),
 )
 
