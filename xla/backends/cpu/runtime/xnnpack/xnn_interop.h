@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "xnnpack.h"
 #include "absl/base/optimization.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
