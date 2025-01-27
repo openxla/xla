@@ -978,6 +978,33 @@ TEST_P(HloCseCommutativeOpTest, DoIt) {
   EXPECT_EQ(op0, op1);
 }
 
+TEST_F(HloCseTest, CombineAllGather) {
+  const char* const hlo_string = R"(
+    HloModule m
+
+    ENTRY main {
+      param0 = s32[4] parameter(0)
+      all-gather.1 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=1
+      all-gather.2 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=2
+      all-gather.3 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=3
+      custom-call.1 = s32[32] custom-call(all-gather.3), custom_call_target="my_custom_call1"
+      ROOT tuple = (s32[32]) tuple(custom-call.1)
+    }
+  )";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  DebugOptions options = config.debug_options();
+  options.set_xla_experimental_ignore_channel_id(true);
+  config.set_debug_options(options);
+  TF_ASSERT_OK_AND_ASSIGN(auto m,
+                          ParseAndReturnVerifiedModule(hlo_string, config));
+  HloCSE cse(/*is_layout_sensitive=*/false);
+  EXPECT_TRUE(cse.Run(m.get()).value());
+  EXPECT_TRUE(FindInstruction(m.get(), "all-gather.1"));
+  EXPECT_FALSE(FindInstruction(m.get(), "all-gather.2"));
+  EXPECT_FALSE(FindInstruction(m.get(), "all-gather.3"));
+}
+
 INSTANTIATE_TEST_SUITE_P(AlgebraicSimplifierCanonicalizeCommutativeTestSuite,
                          HloCseCommutativeOpTest,
                          ::testing::Values("add", "multiply", "and", "or",

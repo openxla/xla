@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_domain_map.h"
 #include "xla/shape_util.h"
 #include "tsl/platform/errors.h"
@@ -245,6 +246,8 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
                         ? CombineConstants<true>(computation, only_scalars_)
                         : CombineConstants<false>(computation, only_scalars_));
 
+  const auto debug_options = computation->parent()->config().debug_options();
+
   const auto eq_instructions = [&](const HloInstruction* a,
                                    const HloInstruction* b) {
     if (a == b) {
@@ -264,9 +267,16 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
   };
 
   auto cse_equal = [&](const CseKey& lhs, const CseKey& rhs) {
-    return lhs.hlo->IdenticalIgnoringCommutativeOperandOrder(
-        *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
-        /*sharding_sensitive=*/true);
+    if (debug_options.xla_experimental_ignore_channel_id() &&
+        IsNonFusionCollective(lhs.hlo)) {
+      return lhs.hlo->IdenticalIgnoringChannelIdValues(
+          *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
+          /*sharding_sensitive=*/true);
+    } else {
+      return lhs.hlo->IdenticalIgnoringCommutativeOperandOrder(
+          *rhs.hlo, eq_instructions, eq_computations, is_layout_sensitive_,
+          /*sharding_sensitive=*/true);
+    }
   };
 
   // HLO instructions are grouped into equivalency classes by using the
@@ -284,7 +294,9 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
       continue;
     }
     // Skip instructions which have side effects.
-    if (instruction->HasSideEffect()) {
+    if (instruction->HasSideEffect() &&
+        (!IsNonFusionCollective(instruction) ||
+         !debug_options.xla_experimental_ignore_channel_id())) {
       continue;
     }
 
