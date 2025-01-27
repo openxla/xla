@@ -785,7 +785,7 @@ xla_cc_test(
         ":stream_executor_h",
         ":typed_kernel_factory",
         "//xla/stream_executor/host:host_platform",
-        "@com_google_googletest//:gtest_main",
+        "//xla/tsl/platform:test_main",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
     ],
