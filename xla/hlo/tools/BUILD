@@ -79,6 +79,8 @@ xla_cc_binary(
     srcs = ["convert_computation.cc"],
     deps = [
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
@@ -100,6 +102,8 @@ xla_cc_binary(
     deps = [
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@tsl//tsl/platform:env",
