@@ -32,6 +32,7 @@ cc_library(
         "//xla/mlir_hlo:mhlo_passes",
         "//xla/pjrt:mlir_to_hlo",
         "//xla/python/ifrt:serdes",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -40,7 +41,6 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@stablehlo//:stablehlo_serialization",
-        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
 )
@@ -55,6 +55,8 @@ xla_cc_test(
         "//xla/pjrt:mlir_to_hlo",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_proto_cc",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
@@ -63,7 +65,5 @@ xla_cc_test(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
     ],
 )
