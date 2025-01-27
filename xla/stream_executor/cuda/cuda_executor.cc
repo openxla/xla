@@ -520,8 +520,11 @@ bool HostRegister(Context* context, void* location, uint64_t size) {
 absl::StatusOr<void*> HostAllocate(Context* context, int numa_node,
                                    uint64_t size) {
   if (numa_node != tsl::port::kNUMANoAffinity) {
+    // CUDA programming guide: "Any address of a variable ... returned by one
+    // of the memory allocation routines from the driver ... API is always
+    // aligned to at least 256 bytes."
     auto* buffer =
-        tsl::port::NUMAMalloc(numa_node, size, /* minimum_alignment=*/16);
+        tsl::port::NUMAMalloc(numa_node, size, /* minimum_alignment=*/256);
     if (buffer == nullptr && size > 0) {
       return absl::InternalError(
           absl::StrFormat("Failed to allocate pinned host memory of size %d "
