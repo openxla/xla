@@ -1211,6 +1211,7 @@ xla_cc_test(
             "//xla/tsl/util:command_line_flags",
             "@com_google_absl//absl/container:flat_hash_map",
             "@com_google_absl//absl/strings",
+            "@com_google_googletest//:gtest",
             "@tsl//tsl/platform:env",
             "@tsl//tsl/platform:test",
         ],
