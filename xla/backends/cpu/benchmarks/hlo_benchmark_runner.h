@@ -41,7 +41,8 @@ absl::Status RunHloBenchmark(benchmark::State& state,
                              absl::string_view hlo_module,
                              absl::Span<const Literal* const> args,
                              StrToStrMapping replacements = {},
-                             bool disable_parallel_task_assigner = false);
+                             bool disable_parallel_task_assigner = false,
+                             bool use_thunk_runtime = true);
 
 // Benchmarks the given HLO's compilation time.
 //
@@ -50,7 +51,8 @@ absl::Status RunHloBenchmark(benchmark::State& state,
 absl::Status CompileHloBenchmark(benchmark::State& state,
                                  absl::string_view hlo_module,
                                  StrToStrMapping replacements = {},
-                                 bool disable_parallel_task_assigner = false);
+                                 bool disable_parallel_task_assigner = false,
+                                 bool use_thunk_runtime = true);
 
 }  // namespace xla::cpu
 
