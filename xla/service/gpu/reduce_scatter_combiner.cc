@@ -39,9 +39,14 @@ std::optional<ReduceScatterCombiner::GroupKey> PipelinedCombinerKey(
   if (backend_config.ok()) {
     is_pipelined = backend_config->collective_backend_config().is_pipelined();
   }
-  return ReduceScatterCombiner::CombineKey(
-      instruction, domain_map, combine_by_dim,
-      is_pipelined ? "pipelined" : "non-pipelined");
+  auto key = ReduceScatterCombiner::CombineKey(instruction, domain_map,
+                                               combine_by_dim);
+  if (!key.has_value()) {
+    return std::nullopt;
+  }
+  return ReduceScatterCombiner::GroupKey{
+      std::move(std::get<0>(key.value())), std::get<1>(key.value()),
+      is_pipelined ? "pipelined" : "non-pipelined"};
 }
 
 }  // namespace

@@ -180,8 +180,7 @@ absl::Status CombineAllGathers(absl::Span<HloInstruction* const> to_combine,
 AllGatherCombiner::CombineKey(const HloInstruction* instruction,
                               const HloDomainMap& domain_map,
                               bool combine_by_dim,
-                              bool combine_different_dtypes,
-                              absl::string_view extra_key) {
+                              bool combine_different_dtypes) {
   if (instruction->opcode() != HloOpcode::kAllGather) {
     return std::nullopt;
   }
@@ -207,7 +206,7 @@ AllGatherCombiner::CombineKey(const HloInstruction* instruction,
                   ag->use_global_device_ids(),
                   data_type,
                   replica_groups,
-                  extra_key};
+                  ""};
 }
 
 AllGatherCombiner::AllGatherCombiner(int64_t combine_threshold_in_bytes,

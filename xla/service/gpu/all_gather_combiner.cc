@@ -41,9 +41,19 @@ std::optional<AllGatherCombiner::GroupKey> PipelinedCombinerKey(
   if (backend_config.ok()) {
     is_pipelined = backend_config->collective_backend_config().is_pipelined();
   }
-  return AllGatherCombiner::CombineKey(
-      instruction, domain_map, combine_by_dim, combine_different_dtypes,
-      is_pipelined ? "pipelined" : "unpipelined");
+  auto key = AllGatherCombiner::CombineKey(
+      instruction, domain_map, combine_by_dim, combine_different_dtypes);
+  if (!key.has_value()) {
+    return std::nullopt;
+  }
+  return AllGatherCombiner::GroupKey{
+      std::get<0>(key.value()),
+      std::get<1>(key.value()),
+      std::get<2>(key.value()),
+      std::get<3>(key.value()),
+      std::get<4>(key.value()),
+      std::move(std::get<5>(key.value())),
+      is_pipelined ? "pipelined" : "non-pipelined"};
 }
 
 }  // namespace

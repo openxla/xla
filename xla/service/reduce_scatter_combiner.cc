@@ -186,8 +186,7 @@ absl::Status CombineReduceScatters(
 std::optional<ReduceScatterCombiner::GroupKey>
 ReduceScatterCombiner::CombineKey(const HloInstruction* instruction,
                                   const HloDomainMap& domain_map,
-                                  bool combine_by_dim,
-                                  absl::string_view extra_key) {
+                                  bool combine_by_dim) {
   auto* rs = DynCast<HloReduceScatterInstruction>(instruction);
   std::optional<AllReduceKey> key = GetAllReduceKey(instruction, &domain_map);
 
@@ -200,8 +199,7 @@ ReduceScatterCombiner::CombineKey(const HloInstruction* instruction,
 
   // Ignore dimension (set to -1) if we are not grouping by dimension.
   int64_t rs_dim_key = combine_by_dim ? rs->scatter_dimension() : -1;
-  return ReduceScatterCombiner::GroupKey{std::move(*key), rs_dim_key,
-                                         extra_key};
+  return ReduceScatterCombiner::GroupKey{std::move(*key), rs_dim_key, ""};
 }
 
 absl::StatusOr<bool> ReduceScatterCombiner::RunWithKeyCombiner(
