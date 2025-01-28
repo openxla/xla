@@ -34,15 +34,14 @@ namespace {
 std::optional<ReduceScatterCombiner::GroupKey> PipelinedCombinerKey(
     const HloInstruction* instruction, const HloDomainMap& domain_map,
     bool combine_by_dim) {
+  bool is_pipelined = false;
   auto backend_config = instruction->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) {
-    return std::nullopt;
+  if (backend_config.ok()) {
+    is_pipelined = backend_config->collective_backend_config().is_pipelined();
   }
-  if (!backend_config->collective_backend_config().is_pipelined()) {
-    return std::nullopt;
-  }
-  return ReduceScatterCombiner::CombineKey(instruction, domain_map,
-                                           combine_by_dim);
+  return ReduceScatterCombiner::CombineKey(
+      instruction, domain_map, combine_by_dim,
+      is_pipelined ? "pipelined" : "non-pipelined");
 }
 
 }  // namespace
@@ -68,13 +67,7 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::Run(
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));
-
-  // Use previous combiner thresholds after we combine pipelined collectives.
-  // The rest is combined by the parent pass code.
-  combine_threshold_in_bytes_ = previous_combiner_threshold;
-  TF_ASSIGN_OR_RETURN(bool combined_rest,
-                      ReduceScatterCombiner::Run(module, execution_threads));
-  return combined_pipelined_instructions || combined_rest;
+  return combined_pipelined_instructions;
 }
 
 }  // namespace xla::gpu

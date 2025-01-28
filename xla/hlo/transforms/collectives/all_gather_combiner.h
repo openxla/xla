@@ -66,7 +66,8 @@ class AllGatherCombiner : public HloModulePass {
   // or different if not.
   static std::optional<AllGatherCombiner::GroupKey> CombineKey(
       const HloInstruction* instruction, const HloDomainMap& domain_map,
-      bool combine_by_dim, bool combine_different_dtypes = true);
+      bool combine_by_dim, bool combine_different_dtypes = true,
+      absl::string_view extra_key = "");
 
  protected:
   absl::StatusOr<bool> RunWithKeyCombiner(

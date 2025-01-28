@@ -60,7 +60,7 @@ class ReduceScatterCombiner : public HloModulePass {
   // or different if not.
   static std::optional<ReduceScatterCombiner::GroupKey> CombineKey(
       const HloInstruction* instruction, const HloDomainMap& domain_map,
-      bool combine_by_dim);
+      bool combine_by_dim, absl::string_view extra_key);
 
  protected:
   absl::StatusOr<bool> RunWithKeyCombiner(
