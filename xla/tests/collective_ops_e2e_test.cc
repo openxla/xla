@@ -973,9 +973,6 @@ TEST_F(CollectiveOpsTestE2E, NoAllToAllDecomposition) {
 }
 
 // Verify that collectives won't be transformed into async ones.
-// This needs to have:
-// --test_env=XLA_FLAGS="--xla_gpu_disable_async_collectives=ALLCOLLECTIVES"
-// set in the bazel command.
 TEST_F(CollectiveOpsTestE2E, NoAsyncCollectives) {
   const absl::string_view kModuleStr = R"(
   HloModule test
@@ -1004,7 +1001,8 @@ TEST_F(CollectiveOpsTestE2E, NoAsyncCollectives) {
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   config.mutable_debug_options().add_xla_disable_hlo_passes(
       "gpu-convert-async-collectives-to-sync");
-
+  config.mutable_debug_options().add_xla_gpu_disable_async_collectives(
+      DebugOptions::ALLCOLLECTIVES);
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnVerifiedModule(kModuleStr, config));
 
