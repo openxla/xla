@@ -152,6 +152,7 @@ xla_cc_test(
         ":export_shardings",
         ":mhlo_import",
         "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:test",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
@@ -159,7 +160,6 @@ xla_cc_test(
         "@llvm-project//mlir:Support",
         "@shardy//shardy/dialect/sdy/ir:dialect",
         "@shardy//shardy/dialect/sdy/ir:register",
-        "@tsl//tsl/platform:test",
     ],
 )
 

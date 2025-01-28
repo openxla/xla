@@ -27,7 +27,7 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/test.h"
 
 namespace mlir::sdy {
 
