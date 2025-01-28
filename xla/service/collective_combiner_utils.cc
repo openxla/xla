@@ -11,6 +11,9 @@ OpMetadata MergeOpMetadata(absl::Span<HloInstruction* const> to_combine) {
   std::string source_info;
   for (const HloInstruction* instr : to_combine) {
     const auto& metadata = instr->metadata();
+    if (metadata.source_file().empty()) {
+      continue;
+    }
     absl::StrAppend(&source_info, metadata.source_file(), ":",
                     metadata.source_line(), ",");
   }
