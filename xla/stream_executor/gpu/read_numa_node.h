@@ -24,7 +24,7 @@ namespace stream_executor::gpu {
 // Attempts to read the NUMA node corresponding to the GPU device's PCI bus out
 // of SysFS. Returns an empty optional if no value could be determined, returns
 // tsl::port::kNUMANoAffinity if the kernel reports a negative value.
-std::optional<int> ReadNumaNode(const std::string& pci_bus_id,
+std::optional<int> ReadNumaNode(std::string_view pci_bus_id,
                                 int device_ordinal);
 
 }  // namespace stream_executor::gpu

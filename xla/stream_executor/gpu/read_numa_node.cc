@@ -26,7 +26,7 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-std::optional<int> ReadNumaNode(const std::string& pci_bus_id,
+std::optional<int> ReadNumaNode(std::string_view pci_bus_id,
                                 int device_ordinal) {
   if (tsl::port::NUMANumNodes() < 2) {
     // NUMA support is not currently enabled, or there is only one node.
