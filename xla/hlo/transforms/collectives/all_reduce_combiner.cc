@@ -95,6 +95,11 @@ absl::Status CombineAllReduces(absl::Span<HloInstruction* const> to_combine) {
   // not guaranteed to preserve it for side effecting instructions.
   combined->set_sharding(
       hlo_sharding_util::CreateTupleSharding(combined->shape(), to_combine));
+  combined->set_metadata(MergeOpMetadata(to_combine));
+  std::string backend_config_str = MaybeMergeBackendConfigString(to_combine);
+  if (!backend_config_str.empty()) {
+    combined->set_raw_backend_config_string(backend_config_str);
+  }
   VLOG(1) << "Replacing with : " << combined->ToString();
 
   // Replace all the smaller AllReduces with elements of the tuple output

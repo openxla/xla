@@ -153,6 +153,11 @@ absl::Status CombineReduceScatters(
   if (to_combine.front()->has_sharding()) {
     combined->set_sharding(to_combine.front()->sharding());
   }
+  combined->set_metadata(MergeOpMetadata(to_combine));
+  std::string backend_config_str = MaybeMergeBackendConfigString(to_combine);
+  if (!backend_config_str.empty()) {
+    combined->set_raw_backend_config_string(backend_config_str);
+  }
   VLOG(1) << "Replacing with : " << combined->ToString();
 
   // Replace all the smaller ReduceScatters with elements of the tuple output

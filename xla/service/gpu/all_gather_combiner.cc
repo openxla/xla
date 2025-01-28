@@ -52,11 +52,6 @@ std::optional<AllGatherCombiner::GroupKey> PipelinedCombinerKey(
 absl::StatusOr<bool> GpuAllGatherCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  // Combiner threshold is specified. Running parent pass code.
-  if (combine_threshold_in_bytes_ != default_combine_threshold_in_bytes_) {
-    return AllGatherCombiner::Run(module, execution_threads);
-  }
-
   // If there are no pipelined instructions in the IR, the optimizations below
   // do not kick in anyway.
   // Exit early so we do not perform expensive scheduling dry run below.
@@ -65,9 +60,13 @@ absl::StatusOr<bool> GpuAllGatherCombiner::Run(
   }
 
   // Combine as much as possible for pipelined collectives.
-  int previous_combiner_threshold = combine_threshold_in_bytes_;
-  combine_threshold_in_bytes_ = ComputeSuggestedCombinerThreshold(
-      *module, device_info_, HloOpcode::kAllGather, pointer_size_);
+  // Always respects the threshold users set if it doesn't increase
+  // memory pressure.
+  int64_t previous_combiner_threshold = combine_threshold_in_bytes_;
+  combine_threshold_in_bytes_ = std::min(
+      ComputeSuggestedCombinerThreshold(
+          *module, device_info_, HloOpcode::kReduceScatter, pointer_size_),
+      previous_combiner_threshold);
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));
