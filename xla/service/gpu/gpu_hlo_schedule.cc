@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/service/gpu/transforms/scheduling_instruction_annotator.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "xla/service/legalize_scheduling_annotations.h"
 #include "xla/service/p2p_schedule_preparation.h"
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/shape.h"
@@ -564,7 +565,8 @@ absl::Status RunLatencyHidingSchedulerPasses(
       /*post_processing_fn=*/nullptr,
       /*scheduling_instruction_crosses_overlap_limit=*/
       GpuScheduleCrossesOverlapLimit);
-
+  pipeline.AddPass<LegalizeSchedulingAnnotations>(
+      LegalizeSchedulingAnnotations::Config());
   pipeline.AddPass<LatencyHidingScheduler>(
       std::move(estimator), std::move(async_tracker), std::move(scheduler_core),
       shape_size_in_bytes);
