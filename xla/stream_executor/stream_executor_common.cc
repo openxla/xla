@@ -52,4 +52,13 @@ const DeviceDescription& StreamExecutorCommon::GetDeviceDescription() const {
   return *device_description_;
 }
 
+/* deprecated */ void StreamExecutorCommon::HostMemoryDeallocate(void* mem) {
+  LOG(ERROR) << "deprecated compatibility stub called";
+}
+
+[[deprecated("so it can quietly call deprecated methods")]] void
+StreamExecutorCommon::HostMemoryDeallocate(void* mem, uint64_t size) {
+  HostMemoryDeallocate(mem);
+}
+
 }  // namespace stream_executor
