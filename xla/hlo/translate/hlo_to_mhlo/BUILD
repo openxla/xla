@@ -115,6 +115,7 @@ cc_library(
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:SparseTensorDialect",
         "@llvm-project//mlir:Support",
+        "@stablehlo//:base",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
