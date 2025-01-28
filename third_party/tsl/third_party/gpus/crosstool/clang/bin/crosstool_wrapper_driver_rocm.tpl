@@ -80,6 +80,7 @@ def GetHostCompilerOptions(argv):
   parser.add_argument('-fno-canonical-system-headers', action='store_true')
   parser.add_argument('-no-canonical-prefixes', action='store_true')
   parser.add_argument('--genco', action='store_true')
+  parser.add_argument('--offload-arch', nargs='*', action='append')
 
   args, _ = parser.parse_known_args(argv)
 
@@ -97,6 +98,8 @@ def GetHostCompilerOptions(argv):
     opts += ' --sysroot ' + args.sysroot[0]
   if args.genco:
     opts += ' --genco'
+  if args.offload_arch:
+    opts += ' --offload-arch=' + ' --offload-arch='.join(sum(args.offload_arch, []))
 
   return opts
 
