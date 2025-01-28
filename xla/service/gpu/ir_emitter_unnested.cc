@@ -1543,8 +1543,11 @@ absl::Status IrEmitterUnnested::EmitFusion(const HloFusionInstruction* instr) {
   const HloFusionAnalysis fusion_analysis =
       HloFusionAnalysis::Create(*instr, device_info);
   VLOG(3) << "IrEmitterUnnested::EmitFusion:start";
-  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(HloFusionInfo(
-      fusion_analysis, instr, &ir_emitter_context_->buffer_assignment(), *call_graph_));
+  std::unique_ptr<FusionInterface> emitter = GetFusionEmitter(
+      /*fusion_info=*/HloFusionInfo(
+          /*analysis=*/fusion_analysis, instr,
+          /*buffer_assignment=*/&ir_emitter_context_->buffer_assignment(),
+          /*call_graph=*/*call_graph_));
   TF_ASSIGN_OR_RETURN(auto result, emitter->Emit(*ir_emitter_context_, *instr));
 
   const ExecutionStreamAssignment& stream_assignment =

@@ -662,13 +662,21 @@ absl::StatusOr<FusionEmissionResult> EmitGemm(
     std::vector<std::optional<BufferAllocation::Slice>> arguments{
         lhs_slice, rhs_slice, output, workspace};
 
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata{
+              /*indvar_init=*/std::move(init_module),
+              /*indvar_update=*/std::move(update_module),
+              /*extracted_offset_modules=*/std::move(extracted_offset_modules)};
+    }
     thunk = std::make_unique<DynamicSliceThunk>(
         thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
         std::move(arguments), std::move(fake_allocations),
         std::move(offset_buffer_indices), std::move(orig_shapes),
         std::move(sliced_shapes), std::move(offset_byte_sizes),
-        std::move(extracted_offset_modules), std::move(init_module),
-        std::move(update_module));
+        std::move(offset_modules_metadata));
   } else {
     thunk = std::make_unique<GemmThunk>(thunk_info, std::move(config),
                                         lhs_slice, rhs_slice, output, workspace,
@@ -956,12 +964,20 @@ absl::StatusOr<FusionEmissionResult> EmitCustomCall(
             ? ffi_thunk(std::move(fake_operands), std::move(fake_results))
             : legacy_thunk(std::move(fake_operands), std::move(fake_results)));
 
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata{
+              /*indvar_init=*/std::move(init_module),
+              /*indvar_update=*/std::move(update_module),
+              /*extracted_offset_modules=*/std::move(extracted_offset_modules)};
+    }
     thunk = std::make_unique<DynamicSliceThunk>(
         thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
         std::move(arguments), std::move(fake_allocations), std::move(offsets),
         std::move(orig_shapes), std::move(sliced_shapes),
-        std::move(offset_byte_sizes), std::move(extracted_offset_modules),
-        std::move(init_module), std::move(update_module));
+        std::move(offset_byte_sizes), std::move(offset_modules_metadata));
   } else {
     TF_ASSIGN_OR_RETURN(
         thunk, found_ffi_handler
@@ -1144,13 +1160,22 @@ absl::StatusOr<FusionEmissionResult> EmitCollective(
   // Depending on whether this is a dynamic fusion or not, we wrap the thunk(s)
   // within a dynamic-slice thunk.
   if (isDynamic) {
+    std::optional<DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata>
+        offset_modules_metadata = std::nullopt;
+    if (can_compute_indvar_on_host) {
+      offset_modules_metadata =
+          DynamicSliceThunk::OffsetAsFunctionOfIndvarModulesMetadata(
+              /*indvar_init=*/std::move(init_module),
+              /*indvar_update=*/std::move(update_module),
+              /*extracted_offset_modules=*/std::move(extracted_offset_modules));
+    }
     std::unique_ptr<Thunk> thunk = std::make_unique<DynamicSliceThunk>(
-        thunk_info, std::make_unique<ThunkSequence>(std::move(seq)),
+        thunk_info,
+        /*embedded_thunk=*/std::make_unique<ThunkSequence>(std::move(seq)),
         std::move(arguments), std::move(fake_allocations),
         std::move(offset_buffer_indices), std::move(orig_shapes),
         std::move(sliced_shapes), std::move(offset_byte_sizes),
-        std::move(extracted_offset_modules), std::move(init_module),
-        std::move(update_module));
+        std::move(offset_modules_metadata));
     result.thunks.push_back(std::move(thunk));
   } else {
     for (auto& thunk : seq) {

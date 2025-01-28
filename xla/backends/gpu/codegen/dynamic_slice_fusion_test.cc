@@ -3377,8 +3377,11 @@ TEST_F(DynamicSliceFusionTest,
   )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> fused_module,
                           ParseAndReturnVerifiedModule(hlo_fused));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<OpaqueExecutable> wrapped_exec,
                           CreateExecutable(fused_module->Clone(), false));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          test_runner_as_hlo_runner().ExecutableFromWrapped(
+                              std::move(wrapped_exec)));
   GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec.get());
   ASSERT_NE(gpu_exec, nullptr);
 
