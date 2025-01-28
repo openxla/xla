@@ -442,6 +442,7 @@ xla_test(
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_future",
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/service:custom_call_target_registry",
         "//xla/stream_executor/gpu:gpu_init",
