@@ -56,6 +56,11 @@ cc_library(
     }),
 )
 
+# This target is required to
+# add includes that are used by rocm headers themself 
+# through the virtual includes
+# cleaner solution would be to adjust the xla code
+# and remove include prefix that is used to include rocm headers.
 cc_library(
     name = "rocm_headers_includes",
     hdrs = glob([
