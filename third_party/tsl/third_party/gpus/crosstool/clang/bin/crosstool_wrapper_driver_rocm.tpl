@@ -34,7 +34,7 @@ HIP_RUNTIME_PATH = '%{hip_runtime_path}'
 HIP_RUNTIME_LIBRARY = '%{hip_runtime_library}'
 ROCR_RUNTIME_PATH = '%{rocr_runtime_path}'
 ROCR_RUNTIME_LIBRARY = '%{rocr_runtime_library}'
-VERBOSE = 1#'%{crosstool_verbose}'=='1'
+VERBOSE = '%{crosstool_verbose}'=='1'
 
 def Log(s):
   print('gpus/crosstool: {0}'.format(s))
