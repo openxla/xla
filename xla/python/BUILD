@@ -466,6 +466,7 @@ cc_library(
         "//xla/pjrt:host_callback",
         "//xla/pjrt:transpose",
         "//xla/service:custom_call_status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -475,7 +476,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
