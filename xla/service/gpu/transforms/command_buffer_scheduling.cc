@@ -109,8 +109,8 @@ static bool IsAsyncStartCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      // Currently only supporting static address computation in command buffer.
-
+      // We currently only support static address computations in command
+      // buffers.
       if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
         bool is_static_ds_fusion =
             GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==
@@ -146,7 +146,8 @@ static bool IsAsyncDoneCommand(const HloInstruction* hlo,
       return config.enabled_commands.contains(DebugOptions::CUBLAS);
     }
     if (hlo->async_wrapped_opcode() == HloOpcode::kFusion) {
-      // Currently only supporting static address computation in command buffer.
+      // We currently only support static address computations in command
+      // buffers.
       if (IsDynamicSliceFusion(hlo->async_wrapped_instruction())) {
         bool is_static_ds_fusion =
             GetCustomFusionConfigName(hlo->async_wrapped_instruction()) ==

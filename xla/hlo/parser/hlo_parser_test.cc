@@ -5960,17 +5960,15 @@ TEST_F(HloParserTest,
   HloInstruction* async_done = m->entry_computation()->root_instruction();
   HloInstruction* async_start = async_done->async_chain_start();
   EXPECT_EQ(async_start->metadata().DebugString(),
-            "op_type: \"add\"\nop_name: \"\\\"sample name\\n\"\nsource_file: "
-            "\"path/to/test.cc\"\nsource_line: 68\n");
-  EXPECT_EQ(async_start->raw_backend_config_string(), "foo\" bar");
+            wrapped_instr->metadata().DebugString());
+  EXPECT_EQ(async_start->raw_backend_config_string(),
+            wrapped_instr->raw_backend_config_string());
   EXPECT_EQ(async_start->frontend_attributes().DebugString(),
-            "map {\n  key: \"attr_a\"\n  value: \"test_a\"\n}\nmap {\n  key: "
-            "\"attr_b\"\n  value: \"b\"\n}\n");
+            wrapped_instr->frontend_attributes().DebugString());
   EXPECT_EQ(async_start->statistics_viz().DebugString(),
-            "stat_index_to_visualize: 1\nstatistics {\n  stat_name: "
-            "\"stat-1\"\n  stat_val: 33\n}\nstatistics {\n  stat_name: "
-            "\"stat-2\"\n  stat_val: 44\n}\n");
-  EXPECT_EQ(OriginalValueToString(*async_done->original_value()), "{\"v3\"}");
+            wrapped_instr->statistics_viz().DebugString());
+  EXPECT_EQ(OriginalValueToString(*async_done->original_value()),
+            OriginalValueToString(*wrapped_instr->original_value()));
 }
 
 }  // namespace
