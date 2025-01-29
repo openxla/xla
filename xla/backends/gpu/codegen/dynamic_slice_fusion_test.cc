@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <cstddef>
 #include <memory>
+#include <gmock/gmock.h>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -82,6 +82,14 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+using ::testing::ElementsAre;
+using ::testing::Optional;
+using ::testing::VariantWith;
+
+MATCHER_P(ThunkKindIs, kind, "") {
+  return ExplainMatchResult(::testing::Eq(kind), arg->kind(), result_listener);
+}
 
 class DynamicSliceFusionTest : public HloTestBase {
  public:
@@ -3123,17 +3131,28 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
 
   auto module_new_opt_clone = module_new_opt->Clone();
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<OpaqueExecutable> wrapped_executable,
+    std::unique_ptr<OpaqueExecutable> wrapped_executable,
       CreateExecutable(std::move(module_new_opt_clone), false));
   TF_ASSERT_OK_AND_ASSIGN(Executable* const exec,
                           test_runner_as_hlo_runner().ExecutableFromWrapped(
                               wrapped_executable.get()));
   GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec);
+  
+  // The pattern we have here is a static slice along with reduce-scatter
+  // operation. With this pattern, we can compute the offset at compile time and
+  // we do not need to emit a dynamic slice thunk to compute the offset at
+  // runtime. So, we expect to see kNcclReduceScatterStart and
+  // kNcclReduceScatterDone thunks. We also expect to see surrounding
+  // kWaitsForStreams thunks because dynamic slice fusion with a collective hero
+  // is converted into an async operation. The kWaitForStreams thunks are
+  // expected because of the async operation.
   ASSERT_EQ(gpu_exec->GetThunk().thunks().size(), 4ul);
-  auto& rs_start_thunk = gpu_exec->GetThunk().thunks()[1];
-  auto& rs_done_thunk = gpu_exec->GetThunk().thunks()[2];
-  ASSERT_EQ(rs_start_thunk->kind(), Thunk::kNcclReduceScatterStart);
-  ASSERT_EQ(rs_done_thunk->kind(), Thunk::kNcclReduceScatterDone);
+  EXPECT_THAT(
+      gpu_exec->GetThunk().thunks(),
+      ::testing::ElementsAre(ThunkKindIs(Thunk::kWaitForStreams),
+                             ThunkKindIs(Thunk::kNcclReduceScatterStart),
+                             ThunkKindIs(Thunk::kNcclReduceScatterDone),
+                             ThunkKindIs(Thunk::kWaitForStreams)));
 
   ErrorSpec error{/*aabs=*/1e-3, /*arel=*/1e-3};
   EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(module_ref_opt),
@@ -3315,14 +3334,16 @@ TEST_F(DynamicSliceFusionTest,
   const ThunkSequence& thunks = gpu_exec->GetThunk().thunks();
 
   // This is only needed to ensure that the next checks don't fail.
-  ASSERT_GE(thunks.size(), 6);
+  ASSERT_EQ(thunks.size(), 6);
 
   // In the following checks, only the order of the thunks matter.
-  EXPECT_EQ(thunks[1]->kind(), Thunk::kWaitForStreams);
-  EXPECT_EQ(thunks[2]->kind(), Thunk::kDynamicSlice);
-  EXPECT_EQ(thunks[3]->kind(), Thunk::kKernel);
-  EXPECT_EQ(thunks[4]->kind(), Thunk::kNcclReduceScatterDone);
-  EXPECT_EQ(thunks[5]->kind(), Thunk::kWaitForStreams);
+  EXPECT_THAT(thunks,
+              ::testing::ElementsAre(ThunkKindIs(Thunk::kCopy),
+                                     ThunkKindIs(Thunk::kWaitForStreams),
+                                     ThunkKindIs(Thunk::kDynamicSlice),
+                                     ThunkKindIs(Thunk::kKernel),
+                                     ThunkKindIs(Thunk::kNcclReduceScatterDone),
+                                     ThunkKindIs(Thunk::kWaitForStreams)));
 
   // Check that the dynamic slice thunk only produces a start thunk, and not a
   // done thunk.
@@ -3339,18 +3360,11 @@ TEST_F(DynamicSliceFusionTest,
   // Check that the offsets were propagated as constants, and not as device
   // allocated buffers.
   auto offsets = dynamic_slice_thunk->get_offsets();
-  auto arg_offset = offsets[0];
-  EXPECT_FALSE(arg_offset.has_value());
-  auto result_offset = offsets[1];
-  ASSERT_TRUE(result_offset.has_value());
-  ASSERT_EQ(result_offset->size(), 3);
-  int64_t* result_offset_0 = std::get_if<int64_t>(&result_offset->at(0));
-  int64_t* result_offset_1 = std::get_if<int64_t>(&result_offset->at(1));
-  int64_t* result_offset_2 = std::get_if<int64_t>(&result_offset->at(2));
-  ASSERT_NE(result_offset_0 && result_offset_1 && result_offset_2, false);
-  EXPECT_EQ(*result_offset_0, 1l);
-  EXPECT_EQ(*result_offset_1, 0l);
-  EXPECT_EQ(*result_offset_2, 0l);
+  EXPECT_THAT(offsets,
+              ElementsAre(std::nullopt,
+                          Optional(ElementsAre(VariantWith<int64_t>(1),
+                                               VariantWith<int64_t>(0),
+                                               VariantWith<int64_t>(0)))));
 }
 
 }  // namespace

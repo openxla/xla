@@ -1788,8 +1788,10 @@ tmp_9 = f64[1,2]{1,0} reshape(tmp_8)
 tmp_10 = f64[3,2]{1,0} dot(tmp_4, tmp_9), lhs_contracting_dims={1}, rhs_contracting_dims={0}
 ROOT tmp_11 = f64[3,2]{1,0} reshape(tmp_10)
 })");
+}
 
-TEST_F(GpuCompilerTest, DynamicSliceFusionWithCollectiveShouldWrapInAsync) {
+TEST_F(GpuCompilerTest,
+       DynamicSliceFusionWithCollectiveShouldWrapInAsyncAndTestE2E) {
   const char* hlo = R"(
     HloModule test, replica_count=2
     add {
@@ -1835,13 +1837,12 @@ TEST_F(GpuCompilerTest, DynamicSliceFusionWithCollectiveShouldWrapInAsync) {
     // CHECK-NEXT:   %[[fusion_done:.+]] = {{.+}} fusion-done(%[[fusion_start]]), {{.+}}"name":"dynamic_address_computation"
     // CHECK:        ROOT {{.+}} = {{.+}} tuple(%[[fusion_done]], %[[wrapped_dot]])
   )";
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool filecheck_matched,
+  EXPECT_THAT(
       RunFileCheck(exec->module().ToString(HloPrintOptions{}
                                                .set_print_operand_shape(false)
                                                .set_print_metadata(false)),
-                   kExpected));
-  EXPECT_TRUE(filecheck_matched);
+                   kExpected),
+      ::tsl::testing::IsOkAndHolds(true));
 
   RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
                                     /*run_hlo_passes=*/true,

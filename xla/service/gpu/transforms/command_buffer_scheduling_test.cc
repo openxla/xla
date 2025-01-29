@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/gpu_executable.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_test_base.h"
@@ -1146,18 +1147,16 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
     ROOT tuple = tuple(rs, dot)
   })";
 
+  HloModuleConfig config;
+  DebugOptions options;
+  options.set_xla_gpu_enable_dynamic_slice_fusion(true);
+  options.set_xla_gpu_graph_min_graph_size(0);
+  config.set_debug_options(options);
+
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
-  m->mutable_config()
-      .mutable_debug_options()
-      .set_xla_gpu_enable_dynamic_slice_fusion(true);
-  m->mutable_config().mutable_debug_options().set_xla_gpu_graph_min_graph_size(
-      0);
-
-  HloModuleConfig config(m->config());
-  DebugOptions options(config.debug_options());
-
+                          ParseAndReturnVerifiedModule(hlo, config));
   TF_ASSERT_OK_AND_ASSIGN(m, GetOptimizedModule(std::move(m)));
+
   auto get_exec = [&m, this](DebugOptions options)
       -> absl::StatusOr<std::unique_ptr<GpuExecutable>> {
     std::unique_ptr<HloModule> m_clone = m->Clone();
@@ -1171,7 +1170,7 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
         static_cast<GpuExecutable*>(exec.release()));
   };
 
-  // FUSION on, COLLECTIVES on -> command buffer
+  // DYNAMIC_SLICE_FUSION on, FUSION on
   {
     options.clear_xla_gpu_enable_command_buffer();
     options.add_xla_gpu_enable_command_buffer(
@@ -1182,9 +1181,10 @@ TEST_F(CommandBufferSchedulingTest, DynamicSliceFusionStaticSlicing) {
     ASSERT_EQ(child->kind(), Thunk::kCommandBuffer);
   }
 
-  // FUSION off, COLLECTIVES off -> no command buffer because collective hero.
+  // DYNAMIC_SLICE_FUSION off, FUSION on
   {
     options.clear_xla_gpu_enable_command_buffer();
+    options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
     TF_ASSERT_OK_AND_ASSIGN(auto gpu_exec, get_exec(options));
     Thunk* child = gpu_exec->GetThunk().thunks()[0].get();
     ASSERT_NE(child->kind(), Thunk::kCommandBuffer);

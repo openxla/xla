@@ -639,11 +639,6 @@ absl::StatusOr<std::string> GetProtoFingerprint(
   return absl::WebSafeBase64Escape(result);
 }
 
-// Returns the name of the custom fusion config if the given instruction is a
-// custom fusion and has a custom fusion name, otherwise returns std::nullopt.
-// The custom fusion name is basically the value of
-// instr.backend_config().fusion_backend_config().custom_fusion_config().name().
-// If any of this does not exist in the chain, then we return std::nullopt.
 std::optional<std::string> GetCustomFusionConfigName(
     const HloInstruction* instr) {
   if (instr->opcode() != HloOpcode::kFusion ||
@@ -663,13 +658,8 @@ std::optional<std::string> GetCustomFusionConfigName(
   return fusion_backend_config.custom_fusion_config().name();
 }
 
-// Returns true if the given instruction is a custom fusion for dynamic slice
-// fusion. This is determined by checking the name of custom fusion config.
 bool IsDynamicSliceFusion(const HloInstruction* instr) {
   std::optional<std::string> name = GetCustomFusionConfigName(instr);
-  if (!name.has_value()) {
-    return false;
-  }
   return name == kDynamicSliceFusionWithStaticAddressComputationConfigName ||
          name == kDynamicSliceFusionWithDynamicAddressComputationConfigName;
 }
