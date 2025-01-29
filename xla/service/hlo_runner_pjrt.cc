@@ -177,36 +177,36 @@ absl::StatusOr<absl::Nonnull<PjRtMemorySpace*>> GetMemorySpaceFromLayout(
   return memory_space;
 }
 
-}  // namespace
-
-// TODO(b/245550554): Remove the use of PjRtWrappedExecutable.
-class PjRtWrappedExecutable : public Executable {
+class HloRunnerPjRtExecutable : public OpaqueExecutable {
  public:
-  // Takes ownership of the provided executable.
-  explicit PjRtWrappedExecutable(
-      std::shared_ptr<HloModule> hlo_module,
+  HloRunnerPjRtExecutable(
+      absl::Nonnull<const HloRunnerPjRt*> creator,
       std::unique_ptr<PjRtLoadedExecutable> pjrt_loaded_executable)
-      : Executable(hlo_module),
+      : OpaqueExecutable(creator),
         pjrt_loaded_executable_(std::move(pjrt_loaded_executable)) {}
 
-  absl::StatusOr<ExecutionOutput> ExecuteAsyncOnStream(
-      const ServiceExecutableRunOptions* run_options,
-      std::vector<ExecutionInput> arguments) override;
-
-  PjRtLoadedExecutable* GetPjRtLoadedExecutable() const {
+  PjRtLoadedExecutable* pjrt_loaded_executable() const {
     return pjrt_loaded_executable_.get();
+  }
+
+  static absl::StatusOr<HloRunnerPjRtExecutable*> TryUnwrap(
+      const HloRunnerPjRt& runner,
+      absl::Nonnull<OpaqueExecutable*> const wrapped) {
+    return OpaqueExecutable::TryUnwrap<HloRunnerPjRtExecutable>(runner,
+                                                                wrapped);
+  }
+  static absl::StatusOr<const HloRunnerPjRtExecutable*> TryUnwrap(
+      const HloRunnerPjRt& runner,
+      absl::Nonnull<const OpaqueExecutable*> const wrapped) {
+    return OpaqueExecutable::TryUnwrap<HloRunnerPjRtExecutable>(runner,
+                                                                wrapped);
   }
 
  private:
   std::unique_ptr<PjRtLoadedExecutable> pjrt_loaded_executable_;
 };
 
-absl::StatusOr<ExecutionOutput> PjRtWrappedExecutable::ExecuteAsyncOnStream(
-    const ServiceExecutableRunOptions* run_options,
-    std::vector<ExecutionInput> arguments) {
-  return Unimplemented(
-      "PjRtWrappedExecutable: Unimplemented ExecuteAsyncOnStream");
-}
+}  // namespace
 
 HloRunnerPjRt::HloRunnerPjRt(
     std::unique_ptr<PjRtClient> pjrt_client,
@@ -373,26 +373,26 @@ HloRunnerPjRt::ExecuteWithDeviceBuffers(
 }
 
 absl::StatusOr<Literal> HloRunnerPjRt::ExecuteWithExecutable(
-    Executable* executable, absl::Span<const Literal* const> arguments,
+    OpaqueExecutable* executable, absl::Span<const Literal* const> arguments,
     ExecutionProfile* profile) {
-  PjRtWrappedExecutable* wrapped_executable =
-      static_cast<PjRtWrappedExecutable*>(executable);
+  TF_ASSIGN_OR_RETURN(HloRunnerPjRtExecutable* const wrapped_executable,
+                      HloRunnerPjRtExecutable::TryUnwrap(*this, executable));
 
-  auto* pjrt_executable = wrapped_executable->GetPjRtLoadedExecutable();
-  TF_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
-                      pjrt_executable->GetHloModules());
+  TF_ASSIGN_OR_RETURN(
+      std::vector<std::shared_ptr<HloModule>> hlo_modules,
+      wrapped_executable->pjrt_loaded_executable()->GetHloModules());
   TF_RET_CHECK(hlo_modules.size() == 1);
   const HloModule& module = *hlo_modules.front();
 
   TF_ASSIGN_OR_RETURN(ExecuteOptions execute_options,
                       GenerateExecuteOptions(module));
   TF_ASSIGN_OR_RETURN(
-      auto argument_handles,
+      std::vector<std::unique_ptr<PjRtBuffer>> argument_handles,
       TransferLiteralsToDevice(module.entry_computation_layout(), arguments));
 
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<PjRtBuffer>> output_buffers,
-      ExecuteWithDeviceBuffers(wrapped_executable->GetPjRtLoadedExecutable(),
+      ExecuteWithDeviceBuffers(wrapped_executable->pjrt_loaded_executable(),
                                execute_options, std::move(argument_handles)));
   if (!execute_options.untuple_result) {
     TF_RET_CHECK(output_buffers.size() == 1)
@@ -407,20 +407,17 @@ absl::StatusOr<Literal> HloRunnerPjRt::ExecuteWithExecutable(
   return Literal::MoveIntoTuple(absl::MakeSpan(result_leaves));
 }
 
-absl::StatusOr<std::unique_ptr<Executable>> HloRunnerPjRt::CreateExecutable(
-    std::unique_ptr<HloModule> module, bool run_hlo_passes) {
-  TF_ASSIGN_OR_RETURN(auto compile_options, GenerateDefaultCompileOptions(
-                                                module.get(), run_hlo_passes));
-
-  TF_ASSIGN_OR_RETURN(auto pjrt_executable,
-                      CreateExecutable(module.get(), compile_options));
-
-  auto executable = std::make_unique<PjRtWrappedExecutable>(
-      std::shared_ptr<HloModule>(
-          std::move(pjrt_executable->GetHloModules().value()[0])),
-      std::move(pjrt_executable));
-
-  return executable;
+absl::StatusOr<std::unique_ptr<OpaqueExecutable>>
+HloRunnerPjRt::CreateExecutable(std::unique_ptr<HloModule> module,
+                                bool run_hlo_passes) {
+  TF_ASSIGN_OR_RETURN(
+      CompileOptions compile_options,
+      GenerateDefaultCompileOptions(module.get(), run_hlo_passes));
+  TF_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtLoadedExecutable> pjrt_executable,
+      CreateExecutable(module.get(), std::move(compile_options)));
+  return std::make_unique<HloRunnerPjRtExecutable>(this,
+                                                   std::move(pjrt_executable));
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
@@ -440,25 +437,25 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
   module->mutable_config().set_replica_count(options.num_replicas);
 
   TF_ASSIGN_OR_RETURN(
-      std::unique_ptr<Executable> executable,
+      std::unique_ptr<OpaqueExecutable> executable,
       CreateExecutable(std::move(module), options.run_hlo_passes));
 
   return ExecuteReplicated(executable.get(), options, device_assignment);
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
-    Executable* executable,
+    OpaqueExecutable* executable,
     const HloRunnerInterface::ReplicatedExecuteOptions& options,
     DeviceAssignment* device_assignment, ExecutionProfile* profile) {
+  TF_ASSIGN_OR_RETURN(HloRunnerPjRtExecutable* const wrapped_executable,
+                      HloRunnerPjRtExecutable::TryUnwrap(*this, executable));
+
   return ExecuteReplicatedImpl(
       [&](absl::Span<const std::vector<PjRtBuffer*>> argument_buffer_slices)
           -> absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>> {
-        PjRtWrappedExecutable* wrapped_executable =
-            static_cast<PjRtWrappedExecutable*>(executable);
-
         TF_ASSIGN_OR_RETURN(
             auto execution_results,
-            wrapped_executable->GetPjRtLoadedExecutable()->Execute(
+            wrapped_executable->pjrt_loaded_executable()->Execute(
                 argument_buffer_slices, {}));
 
         std::vector<std::unique_ptr<PjRtBuffer>> results;
@@ -477,7 +474,7 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
 }
 
 absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
-    std::function<Executable*(int64_t)> executable_provider,
+    std::function<OpaqueExecutable*(int64_t)> executable_provider,
     std::function<int64_t(int64_t)> argument_count_provider,
     std::function<const Literal*(int64_t, int64_t)> argument_provider,
     const HloRunnerInterface::ReplicatedExecuteOptions& options,
@@ -504,15 +501,9 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
             for (const PjRtBuffer* const buffer : argument_buffer_slices[i]) {
               TF_RET_CHECK(buffer != nullptr);
             }
-            PjRtWrappedExecutable* executable =
-                tensorflow::down_cast<PjRtWrappedExecutable*>(
-                    executable_provider(i));
-            if (executable == nullptr) {
-              return absl::InternalError(
-                  absl::StrFormat("Failed to cast executable for replica %d "
-                                  "to PjRtWrappedExecutable.",
-                                  i));
-            }
+            TF_ASSIGN_OR_RETURN(HloRunnerPjRtExecutable* const executable,
+                                HloRunnerPjRtExecutable::TryUnwrap(
+                                    *this, executable_provider(i)));
             TF_ASSIGN_OR_RETURN(
                 PjRtDevice * device_ptr,
                 pjrt_client_->LookupDevice(
@@ -520,7 +511,7 @@ absl::StatusOr<std::vector<Literal>> HloRunnerPjRt::ExecuteReplicated(
             pool.Schedule([&per_replica_results, i, executable,
                            args = argument_buffer_slices[i], device_ptr]() {
               per_replica_results[i] =
-                  executable->GetPjRtLoadedExecutable()->ExecuteSharded(
+                  executable->pjrt_loaded_executable()->ExecuteSharded(
                       args, device_ptr, {});
             });
           }
@@ -681,6 +672,21 @@ bool HloRunnerPjRt::HasProperty(const HloRunnerPropertyTag::Type tag) const {
     return pjrt_client_->platform_name() == xla::CpuName();
   }
   return false;
+}
+
+absl::StatusOr<absl::Nonnull<const HloModule*>>
+HloRunnerPjRt::HloModuleFromWrapped(const OpaqueExecutable* wrapped) const {
+  TF_ASSIGN_OR_RETURN(
+      const HloRunnerPjRtExecutable* const hlo_runner_pjrt_executable,
+      HloRunnerPjRtExecutable::TryUnwrap(*this, wrapped));
+  const PjRtLoadedExecutable* const executable =
+      hlo_runner_pjrt_executable->pjrt_loaded_executable();
+  TF_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> modules,
+                      executable->GetHloModules());
+  if (modules.empty()) {
+    return absl::NotFoundError("PjRtLoadedExecutable has no modules.");
+  }
+  return modules.front().get();
 }
 
 }  // namespace xla
