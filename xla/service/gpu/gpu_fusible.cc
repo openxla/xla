@@ -858,6 +858,7 @@ std::vector<HloComputation*> GetFusibleComputations(
       // flow. See also fusion_wrapper.cc, which does the same.
       if (HloInstruction::MightHaveCalledComputations(instr->opcode()) &&
           instr->opcode() != HloOpcode::kWhile &&
+          instr->opcode() != HloOpcode::kCall &&
           instr->opcode() != HloOpcode::kConditional &&
           // No need to add fusion computations, just check the flag.
           instr->opcode() != HloOpcode::kFusion) {
