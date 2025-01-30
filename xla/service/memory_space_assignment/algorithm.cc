@@ -363,8 +363,8 @@ CrossProgramPrefetches FindCrossProgramPrefetches(
 
 std::string AllocationValue::ToString() const {
   std::string out = absl::StrCat("computation = ", computation()->name());
-  absl::StrAppend(&out,
-                  (requires_contiguous_allocation_ ? " (cont alloc)" : ""));
+  absl::StrAppend(
+      &out, (requires_contiguous_allocation_ ? " (contiguous alloc)" : ""));
   absl::StrAppend(&out, "\n position:\n");
   absl::StrAppend(&out, "  ", defining_position_.ToString(), "\n");
   absl::StrAppend(&out, " uses:\n");
@@ -627,6 +627,17 @@ void MsaAlgorithm::FindAliases(
   }
 }
 
+std::string MsaAlgorithm::RequiredMemoryAssignment::ToString() const {
+  std::string memory_space_str =
+      memory_space == MemorySpace::kDefault ? "def" : "alt";
+  std::string offset_str =
+      offset == nullptr ? "null" : absl::StrCat(offset->offset);
+
+  return absl::StrCat(
+      "RequiredMemoryAssignment(memory_space=", memory_space_str,
+      ", time=", time, ", offset=", offset_str, ")");
+}
+
 std::vector<const MsaBufferInterval*> MsaAlgorithm::GetSortedColocatedIntervals(
     const MsaBufferInterval& interval) const {
   std::vector<const MsaBufferInterval*> colocated_intervals;
@@ -879,6 +890,20 @@ void MsaAlgorithm::DumpDebugStringsIfEnabled() const {
   options_.dump_fn("bufferinfo", buffer_info_str_);
   options_.dump_fn("allocinfo", allocation_info_str_);
   options_.dump_fn("scheduleinfo", instruction_schedule_str_);
+}
+
+std::string MsaAlgorithm::OptionalRequiredMemoryAssignmentToString(
+    const std::optional<MsaAlgorithm::RequiredMemoryAssignment>& assignment) {
+  if (!assignment.has_value()) {
+    return "null";
+  }
+
+  if (assignment->offset) {
+    return absl::StrCat(MemorySpaceToString(assignment->memory_space),
+                        " at offset ", assignment->offset->offset);
+  }
+
+  return MemorySpaceToString(assignment->memory_space);
 }
 
 absl::Status MsaAlgorithm::OptimizeMemoryBoundLoop(int loop_start_idx,
@@ -2577,7 +2602,8 @@ absl::StatusOr<AllocationResult> MsaAlgorithm::AllocateAllocationValues(
           preferred_offset_for_allocation_value.at(&allocation_value_to_update),
           definition_time_for_allocation_value.at(&allocation_value_to_update),
           RequiresNoCopyAlternateMemAllocation(allocation_value_to_update),
-          all_use_times, entry.only_extend_existing_allocation);
+          all_use_times, entry.only_extend_existing_allocation,
+          allocation_values.subspan(0, alloc_value_idx));
       if (options_.allocation_request_modifier_testing_fn) {
         options_.allocation_request_modifier_testing_fn(request);
       }
@@ -2588,7 +2614,10 @@ absl::StatusOr<AllocationResult> MsaAlgorithm::AllocateAllocationValues(
       if (use.hlo_use.instruction->opcode() != HloOpcode::kBitcast ||
           use.hlo_use.instruction ==
               use.hlo_use.instruction->parent()->root_instruction()) {
-        result_mark(AllocateSegment(request), result);
+        AllocationResult allocate_segment_result = AllocateSegment(request);
+        VLOG(2) << "AllocateSegment result: "
+                << ResultToString(allocate_segment_result);
+        result_mark(allocate_segment_result, result);
         if (options_.allocation_result_modifier_testing_fn) {
           options_.allocation_result_modifier_testing_fn(request, result);
         }
@@ -2750,7 +2779,8 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
     AliasedOffset* preferred_offset, int64_t definition_time,
     bool require_no_copy_alternate_mem_allocation,
     const std::vector<int64_t>& all_use_times,
-    bool only_extend_existing_allocation) {
+    bool only_extend_existing_allocation,
+    absl::Span<AllocationValue> processed_allocation_values) {
   const HloUse& hlo_use = use.hlo_use;
   const auto& instruction_schedule = hlo_live_range_.instruction_schedule();
   bool require_copy_allocation = false;
@@ -2984,6 +3014,7 @@ AllocationRequest MsaAlgorithm::CreateAllocationRequest(
 
   request.end_time = use_time;
   request.only_extend_existing_allocation = only_extend_existing_allocation;
+  request.processed_allocation_values = processed_allocation_values;
 
   return request;
 }
@@ -4483,6 +4514,58 @@ std::string MsaAlgorithm::ResultToString(const AllocationResult& result) {
   return result_str;
 }
 
+void MsaAlgorithm::CheckAndUpdateForDualLiveAllocationValues(
+    const std::optional<RequiredMemoryAssignment>&
+        required_memory_assignment_at_start,
+    AllocationRequest& request) {
+  if (!request.allocation_value->requires_contiguous_allocation()) {
+    return;
+  }
+  if (!required_memory_assignment_at_start.has_value()) {
+    return;
+  }
+  if (required_memory_assignment_at_start->memory_space !=
+      MemorySpace::kAlternate) {
+    return;
+  }
+  // Go through previous allocations, for the same HloValue, and check if they
+  // have already allocated alternate memory at the beginning of the current
+  // AllocationValue, such that we are required to use the same heap offset.
+  std::vector<Allocation*> overlapping_allocations;
+  Chunk required_chunk = Chunk::FromOffsetSize(
+      required_memory_assignment_at_start->offset->offset, request.size);
+  for (const AllocationValue& processed_allocation_value :
+       request.processed_allocation_values) {
+    for (const std::unique_ptr<Allocation>& allocation :
+         *processed_allocation_value.allocation_sequence()) {
+      if (allocation->is_in_alternate_mem() &&
+          allocation->start_time() <= request.inclusive_start_time &&
+          request.inclusive_start_time <= allocation->end_time() &&
+          allocation->chunk() == required_chunk) {
+        overlapping_allocations.push_back(allocation.get());
+      }
+    }
+  }
+  absl::c_sort(overlapping_allocations,
+               [](const Allocation* a, const Allocation* b) {
+                 return a->start_time() < b->start_time();
+               });
+  int64_t chunk_start_time = request.inclusive_start_time;
+  for (const Allocation* allocation : overlapping_allocations) {
+    chunk_start_time = std::max(chunk_start_time, allocation->end_time() + 1);
+  }
+
+  // Note, we don't have to set request.preferred_offset, or do anything special
+  // to handle aliasing. This is done for us. Specifically, before calling
+  // CheckAndUpdateForDualLiveAllocationValues(), AllocateSegment() inserts a
+  // PinnedAllocation with no associated heap chunk, at the beginning of
+  // request.allocation_value. It aliases that PinnedAllocation with any
+  // overlapping allocations calculated above. In
+  // AllocateInAlternateMemoryNoCopy(), we will find that PinnedAllocation and
+  // realize we need to use the same alternate memory offset.
+  request.no_copy_chunk_inclusive_start_time = chunk_start_time;
+}
+
 AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
   auto allocation_sequence =
       request.allocation_value->mutable_allocation_sequence();
@@ -4596,12 +4679,20 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
     }
   }
 
+  VLOG(3)
+      << "Required memory assignment at start: "
+      << OptionalRequiredMemoryAssignmentToString(required_assignment_at_start)
+      << "; required memory assignment at end: "
+      << OptionalRequiredMemoryAssignmentToString(required_assignment_at_end);
+
   AllocationResult allocation_result = AllocationResult::kSuccess;
   // First try keeping the allocation entirely in the alternate memory.
   if (required_memory_space_at_start != MemorySpace::kDefault &&
       required_memory_space_at_end != MemorySpace::kDefault &&
       request.allow_no_copy_alternate_mem_allocation &&
       !request.require_copy_allocation) {
+    CheckAndUpdateForDualLiveAllocationValues(required_assignment_at_start,
+                                              request);
     allocation_result = AllocateInAlternateMemoryNoCopy(request);
     if (allocation_result == AllocationResult::kSuccess) {
       return AllocationResult::kSuccess;
@@ -4998,6 +5089,10 @@ AllocationResult MsaAlgorithm::AllocateInAlternateMemoryNoCopy(
     // If there is a previous allocation, set the start time one after the end
     // of the previous allocation's end.
     alternate_mem_interval.start = prev_allocation->end_time() + 1;
+    if (request.no_copy_chunk_inclusive_start_time.has_value()) {
+      alternate_mem_interval.start =
+          *request.no_copy_chunk_inclusive_start_time;
+    }
   }
 
   if (request.preferred_offset) {
