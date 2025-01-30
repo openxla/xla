@@ -49,20 +49,17 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
-#include "xla/hlo/translate/hlo_to_mhlo/hlo_to_mlir_hlo.h"
-#include "xla/hlo/translate/mhlo_to_hlo/mlir_hlo_to_hlo.h"
 #include "xla/hlo/translate/stablehlo.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
 #include "xla/map_util.h"
-#include "xla/mlir_hlo/mhlo/transforms/passes.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/spmd/shardy/constants.h"
-#include "xla/service/spmd/shardy/mhlo_round_trip/mhlo_export.h"
-#include "xla/service/spmd/shardy/mhlo_round_trip/mhlo_import.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_export.h"
+#include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
 #include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -351,13 +348,13 @@ absl::StatusOr<bool> ShardyXLA::Run(
     removeFrontendAttribute(*mlirModule, kUseTupleArgs);
   }
 
-  if (hasKey(moduleFrontendAttrs, kImportMhloShardings)) {
-    removeFrontendAttribute(*mlirModule, kImportMhloShardings);
+  if (hasKey(moduleFrontendAttrs, kImportStablehloShardings)) {
+    removeFrontendAttribute(*mlirModule, kImportStablehloShardings);
     auto spanToArrayRef = [](absl::Span<const bool> span) {
       return mlir::ArrayRef<bool>(span.data(), span.size());
     };
 
-    addMhloImportPipeline(
+    addStablehloImportPipeline(
         pm,
         spanToArrayRef(hloModule->config()
                            .allow_spmd_sharding_propagation_to_parameters()),
@@ -393,7 +390,7 @@ absl::StatusOr<bool> ShardyXLA::Run(
     options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
     mlir::sdy::addPropagationPipeline(pm, options);
   }
-  addMhloExportPipeline(pm);
+  addStablehloExportPipeline(pm);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
                                                "sdy_module_after_xla_export"));
   tsl::StatusScopedDiagnosticHandler diagnosticHandler(mlirContext.get());
