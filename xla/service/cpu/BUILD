@@ -908,6 +908,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:JITLink",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
