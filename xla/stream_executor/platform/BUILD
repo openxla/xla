@@ -20,9 +20,9 @@ cc_library(
         "initialize.h",
     ],
     deps = [
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:macros",
+        "//xla/tsl/platform:types",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:macros",
-        "@tsl//tsl/platform:types",
     ] + tf_stream_executor_deps("platform", "//xla/stream_executor/platform/"),
 )
