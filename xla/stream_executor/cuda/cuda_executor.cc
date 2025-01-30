@@ -592,13 +592,13 @@ CudaExecutor::CreateMemoryAllocator(MemoryType type) {
         [this](uint64_t size)
             -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
           TF_ASSIGN_OR_RETURN(
-              void* ptr, CudaCollectives::CollectiveMemoryAllocate(this, size));
+              void* ptr, Collectives::CollectiveMemoryAllocate(this, size));
           VLOG(2) << "allocated " << ptr << " for context " << cuda_context_
                   << " of " << size << " bytes of collective memory";
           return std::make_unique<GenericMemoryAllocation>(
               ptr, size, [this](void* location, uint64_t size) {
                 auto status =
-                    CudaCollectives::CollectiveMemoryDeallocate(this, location);
+                    Collectives::CollectiveMemoryDeallocate(this, location);
                 if (!status.ok()) {
                   LOG(ERROR) << "failed to free collective memory at "
                              << location << "; result: " << status;
@@ -926,7 +926,7 @@ CudaExecutor::CreateOrShareConstant(Stream* stream,
 
 DeviceMemoryBase CudaExecutor::Allocate(uint64_t size, int64_t memory_space) {
   if (memory_space == static_cast<int64_t>(MemoryType::kCollective)) {
-    auto result = CudaCollectives::CollectiveMemoryAllocate(this, size);
+    auto result = Collectives::CollectiveMemoryAllocate(this, size);
     if (!result.ok()) {
       LOG(ERROR) << result.status();
       return DeviceMemoryBase(nullptr, 0);

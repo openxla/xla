@@ -175,6 +175,8 @@ cc_library(
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:memory_allocator",
         "//xla/stream_executor:module_spec",
+        "//xla/stream_executor:collectives",
+        "//xla/stream_executor:collectives_impl",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:plugin_registry",
         "//xla/stream_executor:semantic_version",

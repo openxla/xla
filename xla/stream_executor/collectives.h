@@ -13,24 +13,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#ifndef XLA_STREAM_EXECUTOR_COLLECTIVES_H_
+#define XLA_STREAM_EXECUTOR_COLLECTIVES_H_
+
 #include <cstdint>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/stream_executor/cuda/cuda_collectives.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace stream_executor::gpu {
 
-/* static */ absl::StatusOr<void *> CudaCollectives::CollectiveMemoryAllocate(
-    StreamExecutor *executor, uint64_t bytes) {
-  if (bytes == 0) return nullptr;
-  return absl::FailedPreconditionError("XLA was compiled without NCCL support");
-}
+struct Collectives {
+  // Allocates a collective device memory space of size bytes associated with
+  // the given context.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclmemalloc
+  static absl::StatusOr<void *> CollectiveMemoryAllocate(
+      StreamExecutor *executor, uint64_t bytes);
 
-/* static */ absl::Status CudaCollectives::CollectiveMemoryDeallocate(
-    StreamExecutor *executor, void *location) {
-  return absl::FailedPreconditionError("XLA was compiled without NCCL support");
-}
+  // Deallocates a collective device memory space of size bytes associated with
+  // the given context.
+  //
+  // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclmemfree
+  static absl::Status CollectiveMemoryDeallocate(StreamExecutor *executor,
+                                                 void *location);
+};
 
 }  // namespace stream_executor::gpu
+
+#endif  // XLA_STREAM_EXECUTOR_COLLECTIVES_H_

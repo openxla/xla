@@ -32,7 +32,7 @@ namespace {
 using ::tsl::testing::IsOk;
 using ::tsl::testing::IsOkAndHolds;
 
-TEST(CudaCollectivesTest, CollectiveMemoryAllocation) {
+TEST(CollectivesTest, CollectiveMemoryAllocation) {
   auto* collectives = xla::gpu::GpuCollectives::Default();
   if (collectives->IsImplemented()) {
     GTEST_SKIP() << "Compiled without NCCL support";
@@ -44,14 +44,13 @@ TEST(CudaCollectivesTest, CollectiveMemoryAllocation) {
                           platform->ExecutorForDevice(0));
 
   constexpr size_t kAllocateSize = 1024;
-  TF_ASSERT_OK_AND_ASSIGN(
-      void* memory,
-      CudaCollectives::CollectiveMemoryAllocate(executor, kAllocateSize));
+  TF_ASSERT_OK_AND_ASSIGN(void* memory, Collectives::CollectiveMemoryAllocate(
+                                            executor, kAllocateSize));
 
   EXPECT_THAT(executor->GetPointerMemorySpace(memory),
               IsOkAndHolds(MemoryType::kDevice));
 
-  EXPECT_THAT(CudaCollectives::CollectiveMemoryDeallocate(executor, memory),
+  EXPECT_THAT(Collectives::CollectiveMemoryDeallocate(executor, memory),
               IsOk());
 }
 

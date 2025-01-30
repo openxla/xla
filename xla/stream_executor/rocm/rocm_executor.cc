@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_memory.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/collectives.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/event_based_timer.h"
 #include "xla/stream_executor/fft.h"
@@ -419,7 +420,7 @@ void* DeviceAllocate(Context* context, uint64_t bytes) {
   }
 
   ScopedActivateContext activated(context);
-  hipDeviceptr_t result = 0;
+  hipDeviceptr_t result = nullptr;
   hipError_t res = wrap::hipMalloc(&result, bytes);
   if (res != hipSuccess) {
     // LOG(INFO) because this isn't always important to users (e.g. BFCAllocator
@@ -773,6 +774,26 @@ RocmExecutor::CreateMemoryAllocator(MemoryType type) {
                 } else {
                   VLOG(2) << "deallocated unified memory at " << location
                           << " for context " << rocm_context_;
+                }
+              });
+        });
+  } else if (type == MemoryType::kCollective) {
+    return std::make_unique<GenericMemoryAllocator>(
+        [this](uint64_t size)
+            -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
+          TF_ASSIGN_OR_RETURN(
+              void* ptr, Collectives::CollectiveMemoryAllocate(this, size));
+          VLOG(2) << "allocated " << ptr << " of " << size
+                  << " bytes of collective memory";
+          return std::make_unique<GenericMemoryAllocation>(
+              ptr, size, [this](void* location, uint64_t size) {
+                auto status =
+                    Collectives::CollectiveMemoryDeallocate(this, location);
+                if (!status.ok()) {
+                  LOG(ERROR) << "failed to free collective memory at "
+                             << location << "; result: " << status;
+                } else {
+                  VLOG(2) << "deallocated collective memory at " << location;
                 }
               });
         });

@@ -1,9 +1,12 @@
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/stream_executor:build_defs.bzl", "stream_executor_build_defs_bzl_deps", "stream_executor_friends", "stream_executor_internal")
-load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
+load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tsl:tsl.bzl", "if_google", "if_nccl", "if_oss", "internal_visibility")
 load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
+load("//xla/tsl/platform/default:cuda_build_defs.bzl", "if_cuda_is_configured")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -907,6 +910,87 @@ cc_test(
     deps = [
         ":bit_pattern",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:test",
+    ],
+)
+
+cc_library(
+    name = "collectives",
+    hdrs = ["collectives.h"],
+    tags = [
+        "gpu",
+    ],
+    deps = if_nccl(
+        [":collectives_impl"],
+        [":collectives_stub"],
+    ) + [
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:context",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
+    name = "collectives_impl",
+    srcs = [
+        "collectives.cc",
+        "collectives.h",
+    ],
+    tags = [
+        "gpu",
+        "manual",
+    ],
+    deps = [
+        "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:numbers",
+    ] + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rccl",
+        "@local_config_rocm//rocm:hip",
+        "//xla/stream_executor/rocm:rocm_driver_wrapper",
+    ]) + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1"
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+        "__HIP_DISABLE_CPP_FUNCTIONS__=1",
+    ]),
+)
+
+cc_library(
+    name = "collectives_stub",
+    srcs = [
+        "collectives.h",
+        "collectives_stub.cc",
+    ],
+    deps = [
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:context",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_test(
+    name = "collectives_test",
+    srcs = ["collectives_test.cc"],
+    backends = ["gpu_any"],
+    deps = [
+        ":collectives",
+        "//xla/backends/gpu/collectives:gpu_collectives",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:status_matchers",
+        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
 )
