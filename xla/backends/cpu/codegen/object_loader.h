@@ -35,7 +35,6 @@ limitations under the License.
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "xla/backends/cpu/codegen/compiled_function_library.h"
-#include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 
 namespace xla::cpu {
@@ -46,14 +45,15 @@ class ObjectLoader {
   using ResolvedSymbol = CompiledFunctionLibrary::ResolvedSymbol;
 
   explicit ObjectLoader(size_t num_dylibs);
-  explicit ObjectLoader(std::unique_ptr<ExecutionEngine> execution_engine);
+  ObjectLoader(std::unique_ptr<llvm::orc::ExecutionSession> execution_session,
+               size_t num_dylibs);
 
   absl::Status AddObjFile(const std::string& obj_file,
                           const std::string& memory_buffer_name,
                           size_t dylib_index = 0);
 
   absl::Status AddObjFile(std::unique_ptr<llvm::MemoryBuffer> obj_file,
-                          size_t dylib_index = 0);
+                          size_t dylib_index);
 
   absl::StatusOr<llvm::orc::SymbolMap> LookupSymbols(
       absl::Span<const Symbol> symbols, const llvm::DataLayout& data_layout);
@@ -65,25 +65,34 @@ class ObjectLoader {
   absl::StatusOr<std::unique_ptr<FunctionLibrary>> Load(
       absl::Span<const Symbol> symbols, const llvm::DataLayout& data_layout) &&;
 
-  size_t num_dylibs() const { return execution_engine_->num_dylibs(); }
+  size_t num_dylibs() const { return dylibs_.size(); }
 
   llvm::orc::RTDyldObjectLinkingLayer* object_layer() {
-    return execution_engine_->object_layer();
+    return object_layer_.get();
   }
 
   llvm::orc::ExecutionSession* execution_session() {
-    return execution_engine_->execution_session();
+    return execution_session_.get();
   }
 
   absl::StatusOr<llvm::orc::JITDylib*> dylib(size_t dylib_index) {
-    return execution_engine_->dylib(dylib_index);
+    if (dylib_index >= dylibs_.size()) {
+      return absl::Status(
+          absl::StatusCode::kInvalidArgument,
+          absl::StrFormat("Invalid dylib index %d (num dylibs: %d))",
+                          dylib_index, dylibs_.size()));
+    }
+    return dylibs_[dylib_index];
   }
+
+  ~ObjectLoader();
 
  private:
   std::function<std::string(absl::string_view)> GetMangler(
       const llvm::DataLayout& data_layout);
 
-  std::unique_ptr<ExecutionEngine> execution_engine_;
+  std::unique_ptr<llvm::orc::ExecutionSession> execution_session_;
+  std::unique_ptr<llvm::orc::RTDyldObjectLinkingLayer> object_layer_;
 
   // Non-owning pointers to dynamic libraries created for the execution session.
   std::vector<llvm::orc::JITDylib*> dylibs_;
