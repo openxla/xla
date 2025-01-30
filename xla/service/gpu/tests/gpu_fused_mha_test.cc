@@ -181,7 +181,7 @@ class FlashAttentionBMMScaleCausalMaskSoftmaxBMM
     return hlo_text;
   }
 
-const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_CuDNN_BMM1_CausalMask_Softmax_BMM2_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,2048]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
@@ -414,7 +414,7 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     return hlo_text;
   }
 
-  const std::string                                                   // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_CuDNN_BMM1_Bias_Softmax_BMM2_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,2048]{3,2,1,0}, bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,2048,2048]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
@@ -599,7 +599,7 @@ class FlashAttentionBMMScaleBiasSoftmaxBMM : public MultiHeadedAttentionTest {
     return hlo_text;
   }
 
-const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_CuDNN_BMM1_Bias_Softmax_BMM2_Cross_Attention_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,2048,128]{3,2,1,0}, bf16[2,6,128,1024]{3,2,1,0}, bf16[2,6,1024,128]{3,2,1,0}, bf16[2,6,2048,1024]{3,2,1,0})->bf16[2,6,2048,128]{3,2,1,0}}, allow_spmd_sharding_propagation_to_output={true}
@@ -696,7 +696,7 @@ const std::string  // NOLINT
     return hlo_text;
   }
 
-const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_CuDNN_BMM1_Bias_Softmax_BMM2_Dbias_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[4,1024,1024]{2,1,0})->(bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[2,1024,4,64]{3,2,1,0}, bf16[4,1024,1024]{2,1,0})}, allow_spmd_sharding_propagation_to_parameters={true,true,true,true,true}, allow_spmd_sharding_propagation_to_output={true,true,true,true,true}
@@ -926,7 +926,7 @@ class FlashAttentionBMMScaleSoftmaxBMM : public MultiHeadedAttentionTest {
     return hlo_text;
   }
 
-const std::string  // NOLINT
+  const std::string  // NOLINT
   GetModuleFlash_Attention_CuDNN_Training_BMM1_Softmax_BMM2_Deterministic_HloString_BF16() {  // NOLINT
     const std::string hlo_text = R"(
     HloModule jit__unnamed_wrapped_function_, entry_computation_layout={(bf16[2,6,1024,64]{3,2,1,0}, bf16[2,6,64,1024]{3,2,1,0}, bf16[2,6,1024,64]{3,2,1,0}, bf16[2,6,1024,64]{3,2,1,0})->(bf16[2,6,1024,64]{3,2,1,0}, bf16[2,6,1024,64]{3,2,1,0}, bf16[2,6,64,1024]{3,2,1,0}, bf16[2,6,1024,64]{3,2,1,0})}, allow_spmd_sharding_propagation_to_output={true,true,true,true}
@@ -979,8 +979,8 @@ const std::string  // NOLINT
     XlaBuilder builder(TestName());
     std::string hlo_string =
         GetModuleFlash_Attention_CuDNN_Training_BMM1_Softmax_BMM2_Deterministic_HloString_BF16();  // NOLINT
-    EXPECT_TRUE(RunAndCompareTwoModules(hlo_string, hlo_string,
-                                        ErrorSpec{1e-8, 1e-8}));
+    EXPECT_TRUE(
+        RunAndCompareTwoModules(hlo_string, hlo_string, ErrorSpec{1e-8, 1e-8}));
   }
 };
 
