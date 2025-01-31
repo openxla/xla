@@ -84,6 +84,8 @@ INCLUDEPRE_RE = re.compile(r"absl::lts_[0-9]+::base_internal::ThrowStdOutOfRange
                            r"tsl::ops::internal::Enter|"
                            r"tsl::strings::internal::AppendPieces|"
                            r"tsl::strings::internal::CatPieces|"
+                           r"xla::status_macros::MakeErrorStream|"
+                           r"xla::status_macros::MakeErrorStream::MakeErrorStreamWithOutput|"
                            r"tensorflow::io::internal::JoinPathImpl")
 
 # Include if matched after exclude
