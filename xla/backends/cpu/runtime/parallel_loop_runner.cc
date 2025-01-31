@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/backends/cpu/runtime/xnnpack/parallel_loop_runner.h"
+#include "xla/backends/cpu/runtime/parallel_loop_runner.h"
 
 #include <algorithm>
 #include <atomic>
@@ -69,6 +69,10 @@ tsl::AsyncValueRef<tsl::Chain> ParallelLoopRunner::ResetDoneEvent() {
 
 size_t ParallelLoopRunner::num_threads() const {
   return device_.load()->numThreadsInPool();
+}
+
+bool ParallelLoopRunner::is_in_runner() const {
+  return device_.load()->currentThreadId() > -1;
 }
 
 tsl::AsyncValueRef<tsl::Chain> ParallelLoopRunner::TakeDoneEvent(
