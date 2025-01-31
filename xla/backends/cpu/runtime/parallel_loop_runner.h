@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_BACKENDS_CPU_RUNTIME_XNNPACK_PARALLEL_LOOP_RUNNER_H_
-#define XLA_BACKENDS_CPU_RUNTIME_XNNPACK_PARALLEL_LOOP_RUNNER_H_
+#ifndef XLA_BACKENDS_CPU_RUNTIME_PARALLEL_LOOP_RUNNER_H_
+#define XLA_BACKENDS_CPU_RUNTIME_PARALLEL_LOOP_RUNNER_H_
 
 #include <atomic>
 #include <cstddef>
@@ -118,7 +118,11 @@ class ParallelLoopRunner {
   const Eigen::ThreadPoolDevice* device() const { return device_; }
   void set_device(const Eigen::ThreadPoolDevice* device) { device_ = device; }
 
+  // Returns the number of threads in the underlying thread pool.
   size_t num_threads() const;
+
+  // Returns true if the current thread belongs to the underlying thread pool.
+  bool is_in_runner() const;
 
  private:
   // Forward declarations of the parallel tasks.
@@ -158,4 +162,4 @@ class ParallelLoopRunner {
 
 }  // namespace xla::cpu
 
-#endif  // XLA_BACKENDS_CPU_RUNTIME_XNNPACK_PARALLEL_LOOP_RUNNER_H_
+#endif  // XLA_BACKENDS_CPU_RUNTIME_PARALLEL_LOOP_RUNNER_H_
