@@ -850,6 +850,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
+        "@stablehlo//:stablehlo_passes",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:fingerprint",
     ],
