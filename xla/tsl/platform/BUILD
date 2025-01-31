@@ -407,6 +407,43 @@ tsl_cc_test(
 )
 
 cc_library(
+    name = "file_system_helper",
+    srcs = [
+        "file_system.h",
+        "file_system_helper.cc",
+    ],
+    hdrs = ["file_system_helper.h"],
+    deps = [
+        ":env",
+        ":errors",
+        ":file_statistics",
+        ":macros",
+        ":status",
+        ":statusor",
+        ":types",
+        "@tsl//tsl/platform",
+        "@tsl//tsl/platform:cord",
+        "@tsl//tsl/platform:mutex",
+        "@tsl//tsl/platform:path",
+        "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/platform:str_util",
+        "@tsl//tsl/platform:stringpiece",
+    ],
+)
+
+tsl_cc_test(
+    name = "file_system_helper_test",
+    size = "small",
+    srcs = ["file_system_helper_test.cc"],
+    deps = [
+        ":env",
+        ":file_system_helper",
+        "//xla/tsl/lib/core:status_test_util",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "file_statistics",
     hdrs = ["file_statistics.h"],
     deps = [

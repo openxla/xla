@@ -68,6 +68,7 @@ absl::Status SerializeHloUnoptimizedSnapshot(
       TF_RETURN_IF_ERROR(literal.Serialize(output_it));
     }
   }
+  output_stream.Trim();
   return absl::OkStatus();
 }
 

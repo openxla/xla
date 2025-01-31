@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/file_system_helper.h"
 #include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/subprocess.h"
@@ -592,22 +593,35 @@ TEST_F(FunctionalHloRunnerTest, ReadHloUnoptimizedSnapshot) {
   std::string path_to_binary_hlo =
       tsl::io::JoinPath(std::getenv("TEST_UNDECLARED_OUTPUTS_DIR"),
                         "sharded_unoptimized_hlo_snapshot.pb");
+  tsl::Env* env = tsl::Env::Default();
 
-  // Read the text proto, dump it as a binary proto and read it back.
+  // Read the text proto
   HloUnoptimizedSnapshot message;
-  TF_ASSERT_OK(
-      tsl::ReadTextProto(tsl::Env::Default(), path_to_text_hlo, &message));
-  TF_ASSERT_OK(
-      tsl::WriteBinaryProto(tsl::Env::Default(), path_to_binary_hlo, message));
+  TF_ASSERT_OK(tsl::ReadTextProto(env, path_to_text_hlo, &message));
 
+  // Dump message in the custom binary format
+  std::unique_ptr<tsl::WritableFile> file;
+  TF_ASSERT_OK(env->NewWritableFile(path_to_binary_hlo, &file));
+
+  tsl::WritableFileCopyingOutputStream output(file.get());
+
+  proto2::io::CopyingOutputStreamAdaptor adaptor(&output);
+  TF_ASSERT_OK(SerializeHloUnoptimizedSnapshot(message, &adaptor));
+
+  TF_ASSERT_OK(file->Close());
+
+  // Read HloModuleAndArguments from text dump.
   TF_ASSERT_OK_AND_ASSIGN(
       hlo_module_and_arguments_from_text,
       FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
           path_to_text_hlo));
+  // Read HloModuleAndArguments from binary dump.
   TF_ASSERT_OK_AND_ASSIGN(
       hlo_module_and_arguments_from_binary,
       FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(
           path_to_binary_hlo));
+
+  // Compare
   CHECK_EQ(hlo_module_and_arguments_from_binary.arguments.size(), 2);
 
   CHECK_EQ(hlo_module_and_arguments_from_text.hlo_module->ToString(),
