@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "pthreadpool.h"
@@ -64,6 +66,19 @@ void AbslStringify(Sink& sink, ParallelizationMode m) {
 }
 
 }  // namespace
+
+absl::string_view XnnFusionThunk::XnnFusionKindToString(XnnFusionKind kind) {
+  switch (kind) {
+    case XnnFusionKind::kDot:
+      return "xnn-dot";
+    case XnnFusionKind::kConvolution:
+      return "xnn-convolution";
+  }
+}
+
+std::ostream& operator<<(std::ostream& os, XnnFusionThunk::XnnFusionKind kind) {
+  return os << XnnFusionThunk::XnnFusionKindToString(kind);
+}
 
 // XNNPACK runtime instantiated for the fusion operation.
 struct XnnFusionThunk::XnnRuntime {
@@ -202,29 +217,30 @@ absl::StatusOr<XnnFusionThunk::XnnRuntime> XnnFusionThunk::CreateXnnRuntime(
 }
 
 absl::StatusOr<std::unique_ptr<XnnFusionThunk>> XnnFusionThunk::Create(
-    Options options, Info info, std::vector<Argument> arguments,
-    std::vector<Result> results, Builder builder) {
+    XnnFusionKind kind, Options options, Info info,
+    std::vector<Argument> arguments, std::vector<Result> results,
+    Builder builder) {
   TF_RETURN_IF_ERROR(InitializeXnnPack());
 
   return absl::WrapUnique(new XnnFusionThunk(
-      std::move(options), std::move(info), std::move(arguments),
+      kind, std::move(options), std::move(info), std::move(arguments),
       std::move(results), std::move(builder)));
 }
 
 absl::StatusOr<std::unique_ptr<XnnFusionThunk>> XnnFusionThunk::Create(
-    Options options, Info info, std::vector<Argument> arguments,
-    std::vector<Result> results, OneUseBuilder one_use_builder,
-    absl::Span<const int64_t> value_arguments,
+    XnnFusionKind kind, Options options, Info info,
+    std::vector<Argument> arguments, std::vector<Result> results,
+    OneUseBuilder one_use_builder, absl::Span<const int64_t> value_arguments,
     absl::Span<const int64_t> value_results) {
   TF_RETURN_IF_ERROR(InitializeXnnPack());
 
   return absl::WrapUnique(new XnnFusionThunk(
-      std::move(options), std::move(info), std::move(arguments),
+      kind, std::move(options), std::move(info), std::move(arguments),
       std::move(results), std::move(one_use_builder), value_arguments,
       value_results));
 }
 
-XnnFusionThunk::XnnFusionThunk(Options options, Info info,
+XnnFusionThunk::XnnFusionThunk(XnnFusionKind kind, Options options, Info info,
                                std::vector<Argument> arguments,
                                std::vector<Result> results, Builder builder)
     : Thunk(Kind::kXnnFusion, std::move(info)),
@@ -232,13 +248,14 @@ XnnFusionThunk::XnnFusionThunk(Options options, Info info,
       arguments_(std::move(arguments)),
       results_(std::move(results)),
       builder_(std::move(builder)),
+      xnn_fusion_kind_(kind),
       xnn_runtime_pool_([this](const Eigen::ThreadPoolDevice* device) {
         return CreateXnnRuntime(device, /*one_use=*/false, [this] {
           return builder_(arguments_, results_);
         });
       }) {}
 
-XnnFusionThunk::XnnFusionThunk(Options options, Info info,
+XnnFusionThunk::XnnFusionThunk(XnnFusionKind kind, Options options, Info info,
                                std::vector<Argument> arguments,
                                std::vector<Result> results,
                                OneUseBuilder one_use_builder,
@@ -249,6 +266,7 @@ XnnFusionThunk::XnnFusionThunk(Options options, Info info,
       arguments_(std::move(arguments)),
       results_(std::move(results)),
       one_use_builder_(std::move(one_use_builder)),
+      xnn_fusion_kind_(kind),
       by_value_arguments_(by_value_arguments.begin(), by_value_arguments.end()),
       by_value_results_(by_value_results.begin(), by_value_results.end()),
       xnn_runtime_pool_(nullptr) {}
