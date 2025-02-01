@@ -1,0 +1,12 @@
+// RUN: print_indexing %s | FileCheck %s
+
+// CHECK: Operand 0 has 1 indexing maps:
+// CHECK: (d0, d1)[s0] -> (d0, s0), domain: d0 in [0, 255], d1 in [0, 255], s0 in [0, 511]
+// CHECK: Operand 1 has 1 indexing maps:
+// CHECK: (d0, d1)[s0] -> (s0, d1), domain: d0 in [0, 255], d1 in [0, 255], s0 in [0, 511]
+
+entry {
+  a = f32[256, 512] parameter(0)
+  b = f32[512, 256] transpose(a), dimensions={0,1}
+  ROOT out = f32[256, 256] dot(a, b), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
