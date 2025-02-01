@@ -114,6 +114,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/tracked_device_buffer.h"
 #include "xla/pjrt/transpose.h"
@@ -2879,6 +2880,11 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
         device_state->compute_semaphore().ScopedAcquire(1));
   }
 
+  auto start_time_ns = std::make_shared<uint64_t>();
+  TF_RETURN_IF_ERROR(device_state->ThenExecuteCallback(
+      device_state->compute_stream(), [&start_time_ns]() {
+        *start_time_ns = tsl::Env::Default()->NowNanos();
+      }));
   absl::StatusOr<ExecutionOutput> result_buffer_or_status =
       executables_[executable_idx]->RunAsync(std::move(execution_inputs),
                                              run_options);
@@ -2888,6 +2894,18 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
 
   if (!result_buffer_or_status.ok()) {
     return result_buffer_or_status.status();
+  }
+
+  // Measure device time after execution completes.
+  std::optional<uint64_t> key = xla::GetDeviceTimeMeasurementKey();
+  if (key.has_value()) {
+    compute_callbacks.push_back(
+        [key, &start_time_ns,
+         device_type = GetDeviceType(client_->platform_id())]() {
+          auto elapsed = absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
+                         absl::FromUnixNanos(*start_time_ns);
+          xla::RecordDeviceTimeMeasurement(*key, elapsed, device_type);
+        });
   }
 
   if (device_state->allocation_model() == LocalDeviceState::kSynchronous) {
