@@ -18,22 +18,6 @@ limitations under the License.
 
 include "mlir/Pass/PassBase.td"
 
-def PropagateSliceIndicesPass :
-   Pass<"xla-gpu-propagate-slice-indices", "mlir::ModuleOp"> {
-  let summary = "Propagates slice indices from the entry function to all callees.";
-
-  let description = [{
-      Propagates xla.slice_index attributes from the function with the xla.entry
-      attribute to all other functions.
-  }];
-
-  let dependentDialects = [
-    "mlir::func::FuncDialect"
-  ];
-
-  let constructor = "CreatePropagateSliceIndicesPass()";
-}
-
 def ConvertPureCallOpsPass
     : Pass<"xla-gpu-convert-pure-call-ops", "mlir::func::FuncOp"> {
   let summary = "Converts xla_gpu.pure_call to func.call";
@@ -63,22 +47,6 @@ def MergePointersToSameSlicePass :
   ];
 
   let constructor = "CreateMergePointersToSameSlicePass()";
-}
-
-def SimplifyArithPass : Pass<"xla-gpu-simplify-arith", "mlir::func::FuncOp"> {
-  let summary = "Simplifies arith using XLA's range-aware simplifier.";
-
-  let description = [{
-      We often emit bounds checks that are statically known to be satisfied.
-      This pass removes them.
-  }];
-
-  let dependentDialects = [
-    "mlir::arith::ArithDialect",
-    "mlir::func::FuncDialect",
-  ];
-
-  let constructor = "CreateSimplifyArithPass()";
 }
 
 def SimplifyAffinePass : Pass<"xla-gpu-simplify-affine", "mlir::ModuleOp"> {
@@ -165,22 +133,6 @@ def LowerXlaGpuLoopsToScfPass : Pass<
   let constructor = "CreateLowerXlaGpuLoopsToScfPass()";
 }
 
-def EraseDeadFunctionsPass : Pass<"xla-erase-dead-functions", "mlir::ModuleOp"> {
-  let summary = "Deletes unused functions";
-
-  let description = [{
-      Deletes functions that are not called.
-  }];
-
-  let dependentDialects = [
-    "mlir::func::FuncDialect",
-    "xla::gpu::XlaGpuDialect",
-    "xla::XlaDialect",
-  ];
-
-  let constructor = "CreateEraseDeadFunctionsPass()";
-}
-
 def VectorizeLoadsAndStoresPass :
    Pass<"xla-gpu-vectorize-loads-stores", "mlir::func::FuncOp"> {
   let summary = "Vectorizes loads and stores.";
@@ -233,17 +185,6 @@ def FuseLoopsPass : Pass<"xla-gpu-fuse-loops", "mlir::func::FuncOp"> {
   }];
   let dependentDialects = ["xla::gpu::XlaGpuDialect", "xla::XlaDialect"];
   let constructor = "CreateFuseLoopsPass()";
-}
-
-def PeelLoopsPass : Pass<"xla-gpu-peel-loops", "mlir::func::FuncOp"> {
-  let summary = "Peels xla_gpu.loop.";
-  let description = [{
-      Attempts to split each loop dimension [0, NUM_ITERATIONS)
-      as [0, NUM_ITERATIONS - 1) and [NUM_ITERATIONS - 1, NUM_ITERATIONS)
-      if it removes a constraint.
-  }];
-  let dependentDialects = ["xla::gpu::XlaGpuDialect", "xla::XlaDialect"];
-  let constructor = "CreatePeelLoopsPass()";
 }
 
 def OptimizeLoopsPass :
