@@ -85,6 +85,8 @@ absl::Status MlirToXlaComputation(mlir::ModuleOp module,
     // Expand stablehlo complex math functions such as log_plus_one, etc.
     pm.addNestedPass<mlir::func::FuncOp>(
         mlir::stablehlo::createStablehloComplexMathExpanderPass());
+    pm.addPass(mlir::stablehlo::createStablehloAggressiveSimplificationPass());
+    pm.addPass(mlir::stablehlo::createStablehloAggressiveFolderPass());
     pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
     pm.addNestedPass<mlir::func::FuncOp>(
         mlir::mhlo::createChloLegalizeToHloPass());
