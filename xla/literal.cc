@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -332,6 +333,9 @@ Literal LiteralBase::CreateFromShape(const Shape& shape) {
   literal.root_piece_.ForEachMutableSubpiece(
       [&](const ShapeIndex& index, Piece* piece) {
         if (piece->subshape().IsArray()) {
+          CHECK_LE(piece->size_bytes_dense(),
+                   1ULL * 1024 * 1024 * 1024)  // 1 TB
+              << "Literal size is too large";
           memset(piece->untyped_data(), 0, piece->size_bytes_dense());
         }
       });
