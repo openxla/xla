@@ -542,6 +542,7 @@ PjRtLoadedExecutable::Execute(
   const bool returned_future_supported =
       pjrt_loaded_executable_->IsReturnedFutureSupported();
 
+  // Options are set here!!
   xla::ExecuteOptions opts;
   opts.untuple_result = true;
   opts.launch_id = options.launch_id;
