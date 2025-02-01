@@ -295,12 +295,12 @@ TEST_F(StatelessAutotunerTest, CublasFallbackForBf16Bf16F32Algorithm) {
                           GetPossibleMatmulAutotuneConfigs(*module));
   if (!isRocm()) {
     switch (GetCudaComputeCapability().major) {
-      case se::CudaComputeCapability::AMPERE:
+      case se::CudaComputeCapability::kAmpere:
         EXPECT_TRUE(hasCublasConfig(configs))
             << "There should be a cublas fallback for dot_bf16_bf16_f32 on "
                "Ampere";
         break;
-      case se::CudaComputeCapability::HOPPER:
+      case se::CudaComputeCapability::kHopper:
         EXPECT_TRUE(hasCublasConfig(configs))
             << "There should be a cublas fallback for dot_bf16_bf16_f32 on "
                "Hopper";
@@ -332,7 +332,7 @@ class GemmFusionAutotunerTest : public StatelessAutotunerTest {
     } else {
       return stream_executor::GpuComputeCapability{
           stream_executor::CudaComputeCapability{
-              stream_executor::CudaComputeCapability::AMPERE, 0}};
+              stream_executor::CudaComputeCapability::kAmpere, 0}};
     }
   }
 
@@ -420,7 +420,7 @@ ENTRY e {
 })")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -442,7 +442,7 @@ ENTRY e {
 })")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -464,7 +464,7 @@ ENTRY e {
 })")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1025,7 +1025,7 @@ ENTRY e {
 )")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1052,7 +1052,7 @@ ENTRY e {
 )")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1080,7 +1080,7 @@ ENTRY e {
 )")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1107,7 +1107,7 @@ ENTRY e {
 )")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1142,7 +1142,7 @@ ENTRY e {
 })")
                                                   .value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<TritonGemmConfig> configs,
       GetPossibleMatmulAutotuneTritonConfigs(
@@ -1170,7 +1170,7 @@ ENTRY wais {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.set_xla_gpu_exhaustive_tiling_search(GetParam());
 
@@ -1311,7 +1311,7 @@ TEST_F(GemmFusionAutotunerTest, GeneratesConfigForUpcastGemmWithPrologue) {
   std::unique_ptr<VerifiedHloModule> module =
       ParseAndReturnVerifiedModule(kHlo).value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
 
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<GemmFusionAutotunerImpl::BackendConfig> configs,
@@ -1359,7 +1359,7 @@ TEST_F(GemmFusionAutotunerTest,
   std::unique_ptr<VerifiedHloModule> module =
       ParseAndReturnVerifiedModule(kHlo).value();
   const se::CudaComputeCapability compute_capability{
-      se::CudaComputeCapability::AMPERE, /*minor=*/0};
+      se::CudaComputeCapability::kAmpere, /*minor=*/0};
 
   TF_ASSERT_OK_AND_ASSIGN(
       const std::vector<GemmFusionAutotunerImpl::BackendConfig> configs,
