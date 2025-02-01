@@ -37,8 +37,8 @@ limitations under the License.
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/constant_value.h"
 #include "xla/service/value_range.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
