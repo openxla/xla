@@ -341,6 +341,34 @@ ResourcesVector AsyncTracker::GetResourcesFromInstructionImpl(
               : std::make_pair(ResourceTypeToIndex(ResourceType::kSendRecv),
                                ResourceUsageType::kResourceOccupy)};
     }
+    case HloOpcode::kWhile: {
+      ResourcesVector result;
+      absl::flat_hash_set<int64_t> seen_occupied_resources;
+      absl::flat_hash_set<int64_t> seen_released_resources;
+      absl::flat_hash_set<int64_t> seen_no_resource;
+      for (const HloInstruction* instr : hlo.while_body()->instructions()) {
+        ResourcesVector rv = GetResourcesFromInstructionImpl(*instr);
+        if (rv.empty()) {
+          continue;
+        }
+        for (const auto& [resource, usage] : rv) {
+          if (usage == ResourceUsageType::kResourceOccupy &&
+              !seen_occupied_resources.contains(resource)) {
+            seen_occupied_resources.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          } else if (usage == ResourceUsageType::kResourceRelease &&
+                     !seen_released_resources.contains(resource)) {
+            seen_released_resources.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          } else if (usage == ResourceUsageType::kNoResource &&
+                     !seen_no_resource.contains(resource)) {
+            seen_no_resource.insert(resource);
+            result.push_back(std::make_pair(resource, usage));
+          }
+        }
+      }
+      return result;
+    }
     default:
       return ResourcesVector{};
   }
@@ -370,10 +398,19 @@ AsyncTracker::RecursivelyComputeResourceMap(
   }
   per_opcode_map = std::make_unique<absl::flat_hash_map<int64_t, int64_t>>();
   auto* m = per_opcode_map.get();
+  absl::flat_hash_set<int64_t> seen_resources_per_comp;
   for (HloInstruction* instr : computation->instructions()) {
+    absl::flat_hash_set<int64_t> seen_resources_per_inst;
     if (IsSupportedAsyncDone(*instr)) {
       for (const auto& resource : GetResourcesFromInstruction(*instr)) {
+        if (seen_resources_per_comp.contains(resource.first)) {
+          continue;
+        }
         ++(*m)[resource.first];
+        seen_resources_per_inst.insert(resource.first);
+      }
+      for (const auto& resource : seen_resources_per_inst) {
+        seen_resources_per_comp.insert(resource);
       }
     }
     for (const HloComputation* called_comp : instr->called_computations()) {
