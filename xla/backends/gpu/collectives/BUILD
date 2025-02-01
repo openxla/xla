@@ -264,3 +264,29 @@ cc_library(
         "@local_config_rocm//rocm:rccl",
     ]),
 )
+
+cc_test(
+    name = "nccl_communicator_test",
+    srcs = if_gpu_is_configured(["nccl_communicator_test.cc"]),
+    local_defines = if_cuda_is_configured([
+        "GOOGLE_CUDA=1",
+    ]) + if_rocm_is_configured([
+        "TENSORFLOW_USE_ROCM=1",
+    ]),
+    tags = ["requires-gpu-nvidia"],
+    deps = [
+        ":nccl_communicator",
+        ":nccl_errors",
+        "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/utility",
+        "@com_google_googletest//:gtest_main",
+    ] + if_cuda_is_configured([
+        "@local_config_nccl//:nccl",
+    ]) + if_rocm_is_configured([
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rccl",
+    ]),
+)
