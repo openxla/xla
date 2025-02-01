@@ -878,7 +878,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
         /*last_run=*/true,
-        /*pipeline_use_tree=*/false,
+        /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         CollectivePipeliner::PipeliningDirection::kForward,
@@ -901,7 +901,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
         /*last_run=*/true,
-        /*pipeline_use_tree=*/false,
+        /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         CollectivePipeliner::PipeliningDirection::kBackward,
@@ -924,7 +924,7 @@ absl::Status RunCollectiveOptimizationPasses(
         /*level_to_operate_on=*/0,
         /*max_pipelining_per_loop=*/INT64_MAX,
         /*last_run=*/true,
-        /*pipeline_use_tree=*/false,
+        /*pipeline_use_tree=*/true,
         /*process_different_sized_ops=*/true,
         /*pipelining_direction=*/
         CollectivePipeliner::PipeliningDirection::kForward,
