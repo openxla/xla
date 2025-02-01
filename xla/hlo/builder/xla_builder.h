@@ -627,6 +627,11 @@ class XlaBuilder {
       const PrecisionConfig* precision_config = nullptr,
       std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
+  XlaOp BlockScaledDot(
+      XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
+      const BlockScaledDotConfig& block_scaled_config,
+      std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
   XlaOp Conv(
       XlaOp lhs, XlaOp rhs, absl::Span<const int64_t> window_strides,
       Padding padding, int64_t feature_group_count = 1,
@@ -1342,6 +1347,10 @@ class XlaBuilder {
                          const RaggedDotDimensionNumbers& dimension_numbers,
                          const PrecisionConfig* precision_config,
                          std::optional<PrimitiveType> preferred_element_type);
+  friend XlaOp BlockScaledDot(
+      XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
+      const BlockScaledDotConfig& block_scaled_config,
+      std::optional<PrimitiveType> preferred_element_type);
   friend XlaOp Conv(XlaOp lhs, XlaOp rhs,
                     absl::Span<const int64_t> window_strides, Padding padding,
                     int64_t feature_group_count, int64_t batch_group_count,
@@ -2237,6 +2246,12 @@ XlaOp RaggedDot(
     XlaOp lhs, XlaOp rhs, XlaOp group_sizes,
     const RaggedDotDimensionNumbers& dimension_numbers,
     const PrecisionConfig* precision_config = nullptr,
+    std::optional<PrimitiveType> preferred_element_type = std::nullopt);
+
+// Enqueues a block scaled dot instruction onto the computation.
+XlaOp BlockScaledDot(
+    XlaOp lhs, XlaOp rhs, XlaOp lhs_scale, XlaOp rhs_scale,
+    const BlockScaledDotConfig& block_scaled_config,
     std::optional<PrimitiveType> preferred_element_type = std::nullopt);
 
 // Enqueues a convolution instruction onto the computation, which uses the

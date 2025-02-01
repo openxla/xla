@@ -84,6 +84,9 @@ class DfsHloVisitorWithDefaultBase
   absl::Status HandleRaggedDot(HloInstructionPtr dot) override {
     return DefaultAction(dot);
   }
+  absl::Status HandleBlockScaledDot(HloInstructionPtr dot) override {
+    return DefaultAction(dot);
+  }
   absl::Status HandleConvolution(HloInstructionPtr convolution) override {
     return DefaultAction(convolution);
   }
