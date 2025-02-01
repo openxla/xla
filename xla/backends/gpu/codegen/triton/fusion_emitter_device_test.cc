@@ -91,6 +91,39 @@ CHECK:  "tt.reduce"(%[[LOAD:.*]]) <{axis = 1 : i32}>
       RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
 }
 
+TEST_F(TritonEmitterTest,
+       ReductionOnMinormostAxisWithExtraOutputIsEmittedCorrectly) {
+  constexpr absl::string_view kHloText = R"(
+HloModule FusionWithExtraOutput
+
+max_computation {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT m = f32[] maximum(p0, p1)
+}
+
+triton_reduction_computation {
+  param_0 = f32[128,512] parameter(0)
+  log = f32[128,512] log(param_0)
+  constant = f32[] constant(-inf)
+  reduce = f32[128] reduce(log, constant), dimensions={1}, to_apply=max_computation
+  ROOT result = (f32[128]{0}, f32[128,512]{1,0}) tuple(reduce, log)
+}
+
+ENTRY main {
+  param_0.1 = f32[128,512]{1,0} parameter(0)
+  ROOT res = (f32[128]{0}, f32[128,512]{1,0}) fusion(param_0.1), kind=kCustom, calls=triton_reduction_computation, backend_config={"fusion_backend_config":{"kind":"__triton","block_level_fusion_config":{"output_tile_sizes":["256"],"num_warps":"4"}}}
+})";
+  TF_EXPECT_OK(CreateTritonIrAndFileCheck(this, kHloText,
+                                          "triton_reduction_computation", R"(
+CHECK:  %[[LOAD:.*]] = tt.load
+CHECK:  %[[LOG:.*]] = tt.extern_elementwise %[[LOAD]]
+CHECK: %[[REDUCE:.*]] = "tt.reduce"(%[[LOG:.*]]) <{axis = 1 : i32}>
+CHECK:  tt.store %[[TENSOR_PTR:.*]], %[[REDUCE]]
+CHECK:  tt.store %[[TENSOR_PTR2:.*]], %[[LOG]]
+)"));
+}
+
 TEST_F(TritonEmitterTest, ReductionOnMajormostAxisIsEmittedCorrectly) {
   constexpr absl::string_view kHloText = R"(
 HloModule t

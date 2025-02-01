@@ -75,8 +75,9 @@ class TiledHloComputation {
   // expected to be sorted in def-before-use order.
   static TiledHloComputation FromSortedTiledHloInstructions(
       std::vector<std::unique_ptr<TiledHloInstruction>> instructions,
+      const std::vector<const HloInstruction*>& roots,
       llvm::SmallVector<int64_t> num_output_tiles_per_dim) {
-    return TiledHloComputation(std::move(instructions),
+    return TiledHloComputation(std::move(instructions), roots,
                                std::move(num_output_tiles_per_dim));
   }
 
@@ -99,9 +100,9 @@ class TiledHloComputation {
     return Product(num_output_tiles_per_dim());
   }
 
-  // Returns the root instruction of the computation.
-  const TiledHloInstruction* GetRoot() const {
-    return instructions_.back().get();
+  // Returns the root instructions of the computation.
+  const std::vector<const TiledHloInstruction*>& GetRoots() const {
+    return roots_;
   }
 
   // Returns a string representation of the computation. Used only for error
@@ -111,12 +112,19 @@ class TiledHloComputation {
  private:
   explicit TiledHloComputation(
       std::vector<std::unique_ptr<TiledHloInstruction>> instructions,
+      const std::vector<const HloInstruction*>& roots,
       llvm::SmallVector<int64_t> num_output_tiles_per_dim)
       : instructions_(std::move(instructions)),
-        num_output_tiles_per_dim_(std::move(num_output_tiles_per_dim)) {}
+        num_output_tiles_per_dim_(std::move(num_output_tiles_per_dim)) {
+    InitializeRoots(roots);
+  }
+
+  void InitializeRoots(const std::vector<const HloInstruction*>& roots);
 
   // Stores instructions in the computation in def-before-use order.
   std::vector<std::unique_ptr<TiledHloInstruction>> instructions_;
+
+  std::vector<const TiledHloInstruction*> roots_;
 
   // Stores the number of output tiles for each dimension.
   llvm::SmallVector<int64_t> num_output_tiles_per_dim_;

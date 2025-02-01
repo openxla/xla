@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -359,16 +360,30 @@ void SortTiledHloInstructionsInPostOrder(
   OrderedUniquePtrValueHashSet<SymbolicTiledHloInstruction>
       tiled_hlo_instructions_set;
 
-  auto roots = fusion.GetRoots();
-  if (roots.size() > 1) {
-    return FusionDecision::Forbid("Multi-output fusions are not supported. ")
-           << fusion.ToString();
+  auto fusion_adaptor_roots = fusion.GetRoots();
+  int64_t root_index = -1;
+  // Check if there is just one root without any users inside `fusion`.
+  for (int64_t i = 0; i < fusion_adaptor_roots.size(); ++i) {
+    if (fusion_adaptor_roots[i].GetUsers().empty()) {
+      if (root_index >= 0) {
+        return FusionDecision::Forbid(
+                   "Only simple multi-output fusions with one real root are "
+                   "supported. ")
+               << fusion.ToString();
+      }
+      root_index = i;
+    }
   }
-  auto& root = roots[0];
+  std::vector<const HloInstruction*> roots;
+  roots.reserve(fusion_adaptor_roots.size());
+  absl::c_transform(
+      fusion_adaptor_roots, std::back_inserter(roots),
+      [&](const HloInstructionAdaptor instr) { return &instr.instruction(); });
+  auto& root = roots[root_index];
 
   auto [root_tiled_hlo, _] = tiled_hlo_instructions_set.Insert(
       std::make_unique<SymbolicTiledHloInstruction>(
-          &root.instruction(), CreateIdentityMap(root.shape(), ctx)));
+          root, CreateIdentityMap(root->shape(), ctx)));
 
   std::vector<SymbolicTiledHloInstruction*> worklist = {root_tiled_hlo};
 
@@ -438,7 +453,7 @@ void SortTiledHloInstructionsInPostOrder(
   }
 
   return SymbolicTileAnalysis(
-      std::move(tiled_hlo_instructions),
+      std::move(tiled_hlo_instructions), std::move(roots),
       std::get<ConstraintExpression>(std::move(constraints_or)),
       std::move(emitter_specific_constraints), ctx);
 }
@@ -529,8 +544,12 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
     }
   }
 
+  // TODO(b/390569102): This assumes that there is only one root that matters
+  // for computing the tiling, and that it is the last symbolic tiled hlo
+  // instruction in the list.
   OutputTilingInfo output_tiling_info = ComputeOutputTilingInfo(
-      GetRoot()->hlo()->shape().dimensions(), tile_parameters, context_);
+      symbolic_tiled_hlo_instructions_.back()->hlo()->shape().dimensions(),
+      tile_parameters, context_);
 
   OrderedUniquePtrValueHashSet<TiledHloInstruction> tiled_hlo_instructions_set;
   absl::flat_hash_map<const SymbolicTiledHloInstruction*, TiledHloInstruction*>
@@ -583,7 +602,7 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
     symbolic_to_tiled_hlo_map[symbolic_tiled_hlo.get()] = tiled_hlo;
   }
   return TiledHloComputation::FromSortedTiledHloInstructions(
-      tiled_hlo_instructions_set.ExtractData(),
+      tiled_hlo_instructions_set.ExtractData(), roots_,
       output_tiling_info.num_output_tiles_per_dim);
 }
 

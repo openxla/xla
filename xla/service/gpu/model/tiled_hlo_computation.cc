@@ -15,11 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 
+#include <cstdint>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -51,6 +54,35 @@ std::string TiledHloComputation::ToString() const {
     ss << tiled_hlo->ToString() << "\n";
   }
   return ss.str();
+}
+
+void TiledHloComputation::InitializeRoots(
+    const std::vector<const HloInstruction*>& roots) {
+  absl::flat_hash_map<const HloInstruction*, int64_t> roots_to_output_index;
+  roots_to_output_index.reserve(roots.size());
+  int64_t output_index = 0;
+  for (auto* root : roots) {
+    roots_to_output_index[root] = output_index;
+    ++output_index;
+  }
+
+  // Collect a tiled hlo instruction for each root. The roots which are extra
+  // outputs can reference "internal" tiled hlo instructions and may appear
+  // multiple times in `instructions_`.
+  roots_.assign(roots.size(), nullptr);
+  for (const auto& tiled_hlo_instr : instructions_) {
+    auto it = roots_to_output_index.find(tiled_hlo_instr->hlo());
+    if (it != roots_to_output_index.end()) {
+      // We may overwrite a previous value, but in case there are multiple
+      // tiled hlo instructions for the root, we prefer the last one in
+      // def-before-use order.
+      roots_[it->second] = tiled_hlo_instr.get();
+    }
+  }
+  // We expect that we found at least one tiled hlo instruction for each root.
+  for (auto& root : roots_) {
+    CHECK_NE(root, nullptr);
+  }
 }
 
 }  // namespace gpu
