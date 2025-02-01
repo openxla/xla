@@ -868,8 +868,6 @@ xla_cc_test(
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
