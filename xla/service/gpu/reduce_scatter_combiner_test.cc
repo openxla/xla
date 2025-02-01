@@ -127,7 +127,9 @@ ENTRY entry {
     // CHECK-DAG: %[[NONPIPELINED_PARAM_0:.*]] = {{.*}} index=4
     // CHECK-DAG: %[[NONPIPELINED_PARAM_1:.*]] = {{.*}} index=5
     // CHECK-DAG: %[[NONPIPELINED_PARAM_2:.*]] = {{.*}} index=6
-    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_0]], %[[PIPELINED_PARAM_1]], %[[PIPELINED_PARAM_2]])
+    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_0]], %[[PIPELINED_PARAM_1]])
+    // CHECK-SAME-DAG: backend_config={"collective_backend_config": {"is_pipelined": true}}
+    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_2]])
     // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_0]], %[[NONPIPELINED_PARAM_1]])
     // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_2]])
   )";
@@ -330,8 +332,10 @@ ENTRY entry {
     // CHECK-DAG: %[[NONPIPELINED_PARAM_1:.*]] = {{.*}} index=5
     // CHECK-DAG: %[[NONPIPELINED_PARAM_2:.*]] = {{.*}} index=6
     // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_0]], %[[PIPELINED_PARAM_1]])
-    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_2]], %[[NONPIPELINED_PARAM_0]])
-    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_1]], %[[NONPIPELINED_PARAM_2]])
+    // CHECK-SAME-DAG: backend_config={"collective_backend_config": {"is_pipelined": true}}
+    // CHECK-DAG: reduce-scatter(%[[PIPELINED_PARAM_2]])
+    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_0]], %[[NONPIPELINED_PARAM_1]])
+    // CHECK-DAG: reduce-scatter(%[[NONPIPELINED_PARAM_2]])
   )";
 
   EXPECT_TRUE(
