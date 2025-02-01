@@ -21,6 +21,7 @@ PywrapFilters = provider(
     fields = {
         "pywrap_lib_filter": "",
         "common_lib_filters": "",
+        "dynamic_lib_filter": "",
     },
 )
 
@@ -68,12 +69,16 @@ def pywrap_library(
     if starlark_only_pywrap_count > 0:
         starlark_only_filter_full_name = "%s%s__starlark_only_common" % (cur_pkg, name)
 
+    inverse_common_lib_filters = _construct_inverse_common_lib_filters(
+        common_lib_filters,
+    )
+
     _linker_input_filters(
         name = linker_input_filters_name,
         dep = ":%s" % info_collector_name,
         pywrap_lib_filter = pywrap_lib_filter,
         pywrap_lib_exclusion_filter = pywrap_lib_exclusion_filter,
-        common_lib_filters = {v: k for k, v in common_lib_filters.items()},
+        common_lib_filters = inverse_common_lib_filters,
         starlark_only_filter_name = starlark_only_filter_full_name,
     )
 
@@ -332,15 +337,24 @@ def _pywrap_common_split_library_impl(ctx):
     else:
         libs_to_include = filters.common_lib_filters[ctx.attr.common_lib_full_name]
 
+    user_link_flags = {}
+    dynamic_lib_filter = filters.dynamic_lib_filter
     for pw in pywrap_infos:
         pw_lis = pw.cc_info.linking_context.linker_inputs.to_list()[1:]
         for li in pw_lis:
             if li in libs_to_exclude:
                 continue
-            if include_all_not_excluded or (li in libs_to_include):
+            if include_all_not_excluded or (li in libs_to_include) or li in dynamic_lib_filter:
                 split_linker_inputs.append(li)
+                for user_link_flag in li.user_link_flags:
+                    user_link_flags[user_link_flag] = True
 
-    return _construct_split_library_cc_info(ctx, split_linker_inputs, [], [])
+    return _construct_split_library_cc_info(
+        ctx,
+        split_linker_inputs,
+        list(user_link_flags.keys()),
+        [],
+    )
 
 _pywrap_common_split_library = rule(
     attrs = {
@@ -400,7 +414,7 @@ def _construct_dependency_libraries(ctx, split_linker_inputs):
     for split_linker_input in split_linker_inputs:
         for lib in split_linker_input.libraries:
             lib_copy = lib
-            if not lib.alwayslink:
+            if not lib.alwayslink and (lib.static_library or lib.pic_static_library):
                 lib_copy = cc_common.create_library_to_link(
                     actions = ctx.actions,
                     cc_toolchain = cc_toolchain,
@@ -418,6 +432,10 @@ def _linker_input_filters_impl(ctx):
     pywrap_lib_exclusion_filter = {}
     pywrap_lib_filter = {}
     visited_filters = {}
+
+    #
+    # pywrap private filter
+    #
     if ctx.attr.pywrap_lib_exclusion_filter:
         for li in ctx.attr.pywrap_lib_exclusion_filter[CcInfo].linking_context.linker_inputs.to_list():
             pywrap_lib_exclusion_filter[li] = li.owner
@@ -429,6 +447,9 @@ def _linker_input_filters_impl(ctx):
 
     common_lib_filters = {k: {} for k in ctx.attr.common_lib_filters.values()}
 
+    #
+    # common lib filters
+    #
     for filter, name in ctx.attr.common_lib_filters.items():
         filter_li = filter[CcInfo].linking_context.linker_inputs.to_list()
         for li in filter_li:
@@ -436,6 +457,9 @@ def _linker_input_filters_impl(ctx):
                 common_lib_filters[name][li] = li.owner
                 visited_filters[li] = li.owner
 
+    #
+    # starlark -only filter
+    #
     pywrap_infos = ctx.attr.dep[CollectedPywrapInfo].pywrap_infos.to_list()
     starlark_only_filter = {}
 
@@ -451,10 +475,29 @@ def _linker_input_filters_impl(ctx):
                     starlark_only_filter.pop(li, None)
 
         common_lib_filters[ctx.attr.starlark_only_filter_name] = starlark_only_filter
+
+    #
+    # dynamic libs filter
+    #
+    dynamic_lib_filter = {}
+    empty_lib_filter = {}
+    for pw in pywrap_infos:
+        for li in pw.cc_info.linking_context.linker_inputs.to_list()[1:]:
+            all_dynamic = None
+            for lib in li.libraries:
+                if lib.static_library or lib.pic_static_library or not lib.dynamic_library:
+                    all_dynamic = False
+                    break
+                elif all_dynamic == None:
+                    all_dynamic = True
+            if all_dynamic:
+                dynamic_lib_filter[li] = li.owner
+
     return [
         PywrapFilters(
             pywrap_lib_filter = pywrap_lib_filter,
             common_lib_filters = common_lib_filters,
+            dynamic_lib_filter = dynamic_lib_filter,
         ),
     ]
 
@@ -922,6 +965,20 @@ def _get_common_lib_package_and_name(common_lib_full_name):
     if "/" in common_lib_full_name:
         return common_lib_full_name.rsplit("/", 1)
     return "", common_lib_full_name
+
+def _construct_inverse_common_lib_filters(common_lib_filters):
+    inverse_common_lib_filters = {}
+    for common_lib_k, common_lib_v in common_lib_filters.items():
+        new_common_lib_k = common_lib_v
+        if type(common_lib_v) == type([]):
+            new_common_lib_k = "_%s_common_lib_filter" % common_lib_k.rsplit("/", 1)[-1]
+            native.cc_library(
+                name = new_common_lib_k,
+                deps = common_lib_v,
+            )
+
+        inverse_common_lib_filters[new_common_lib_k] = common_lib_k
+    return inverse_common_lib_filters
 
 def _construct_linkopt_soname(name):
     soname = name.rsplit("/", 1)[1] if "/" in name else name
