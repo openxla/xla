@@ -18,6 +18,36 @@ limitations under the License.
 
 include "mlir/Pass/PassBase.td"
 
+def ConvertPureCallOpsPass
+    : Pass<"xla-convert-pure-call-ops", "mlir::func::FuncOp"> {
+  let summary = "Converts xla.pure_call to func.call";
+  let description = [{
+      We use xla.pure_call ops for calls to enable CSE and other
+      transformations (e.g. LICM). This pass rewrites our custom ops to standard
+      ops.
+  }];
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "xla::XlaDialect"
+  ];
+  let constructor = "CreateConvertPureCallOpsPass()";
+}
+
+def EraseDeadFunctionsPass : Pass<"xla-erase-dead-functions", "mlir::ModuleOp"> {
+  let summary = "Deletes unused functions";
+
+  let description = [{
+      Deletes functions that are not called.
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect",
+    "xla::XlaDialect",
+  ];
+
+  let constructor = "CreateEraseDeadFunctionsPass()";
+}
+
 def FlattenTensorsPass : Pass<"xla-flatten-tensors", "mlir::ModuleOp"> {
   let summary = "Flatten tensors.";
 
@@ -100,6 +130,116 @@ def LowerToLLVMPass :
            "Whether the pass targets a 'cpu' or 'gpu'. If 'cpu', gpu_device_info_ must be empty.">,
   ];
   let constructor = "CreateLowerToLLVMPass()";
+}
+
+def PeelLoopsPass : Pass<"xla-peel-loops", "mlir::func::FuncOp"> {
+  let summary = "Peels xla.loop.";
+  let description = [{
+      Attempts to split each loop dimension [0, NUM_ITERATIONS)
+      as [0, NUM_ITERATIONS - 1) and [NUM_ITERATIONS - 1, NUM_ITERATIONS)
+      if it removes a constraint.
+  }];
+  let dependentDialects = ["xla::XlaDialect"];
+  let constructor = "CreatePeelLoopsPass()";
+}
+
+def PropagateSliceIndicesPass :
+   Pass<"xla-propagate-slice-indices", "mlir::ModuleOp"> {
+  let summary = "Propagates slice indices from the entry function to all callees.";
+
+  let description = [{
+      Propagates xla.slice_index attributes from the function with the xla.entry
+      attribute to all other functions.
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect"
+  ];
+
+  let constructor = "CreatePropagateSliceIndicesPass()";
+}
+
+def SimplifyAffinePass : Pass<"xla-simplify-affine", "mlir::ModuleOp"> {
+  let summary = "Simplifies affine.apply using XLA's range-aware simplifier.";
+
+  let description = [{
+      The standard affine canonicalizer cannot simplify all expressions, since
+      it is unaware of range information. This pass uses `xla.range` attributes
+      on arguments and ops for simplification. It also lowers floordiv and mod
+      to simpler expressions than lower-affine. This pass only works for
+      expressions for which we can prove the LHS of mod and div is nonnegative.
+  }];
+
+  let dependentDialects = [
+    "mlir::affine::AffineDialect", "mlir::func::FuncDialect",
+    "mlir::scf::SCFDialect",
+  ];
+
+  let constructor = "CreateSimplifyAffinePass()";
+}
+
+def SimplifyArithPass : Pass<"xla-simplify-arith", "mlir::func::FuncOp"> {
+  let summary = "Simplifies arith using XLA's range-aware simplifier.";
+
+  let description = [{
+      We often emit bounds checks that are statically known to be satisfied.
+      This pass removes them.
+  }];
+
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+  ];
+
+  let constructor = "CreateSimplifyArithPass()";
+}
+
+def UnswitchLoopsPass :
+   Pass<"xla-unswitch-loops", "mlir::func::FuncOp"> {
+  let summary = "Swaps scf.if and scf.for.";
+
+  let description = [{
+      Extracts `scf.if` ops with conditions that are independent of the loop
+      variable from `scf.for` by doing the following rewrite:
+
+      Before:
+
+      %cond = some_cond() : i1
+      %results = scf.for {
+        %some_val = scf.if %cond  {
+        } else {
+        }
+        scf.yield %some_val
+      }
+
+      After:
+
+      %cond = some_cond() : i1
+      %results = scf.if %cond {
+         %results = scf.for {
+            %some_val = scf.if %true  {
+            } else {
+            }
+         }
+         yield %results
+      } else {
+         %results = scf.for {
+            %some_val = scf.if %false  {
+            } else {
+            }
+         }
+         yield %results
+      }
+
+      This only triggers if there is a single `scf.if` op in the loop body (and
+      nothing else).
+  }];
+
+  let dependentDialects = [
+    "mlir::func::FuncDialect", "mlir::scf::SCFDialect"
+  ];
+
+  let constructor = "CreateUnswitchLoopsPass()";
 }
 
 #endif  // XLA_CODEGEN_EMITTERS_TRANSFORMS_PASSES_TD_
