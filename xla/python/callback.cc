@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "xla/ffi/ffi.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
@@ -179,6 +180,35 @@ void XlaPythonCpuCallback(void* output, void** inputs,
     auto msg = s.message();
     XlaCustomCallStatusSetFailure(status, msg.data(), msg.length());
   }
+}
+
+absl::StatusOr<nb::tuple> CpuCallback::FfiCall(nb::tuple args,
+                                               ffi::RemainingRets rets) {
+  auto py_error_to_status = [](nb::python_error& e) {
+    std::string error_message = e.what();
+    return absl::InternalError(
+        absl::StrFormat("CpuCallback error: %s", error_message));
+  };
+  nb::object result_object;
+  try {
+    result_object = callable_(*nb::borrow<nb::args>(args));
+  } catch (nb::python_error& e) {
+    return py_error_to_status(e);
+  }
+
+  nb::tuple result_tuple = nb::cast<nb::tuple>(result_object);
+  for (size_t i = 0; i < rets.size(); ++i) {
+    nb::object output =
+        nb::borrow<nb::object>(PyTuple_GetItem(result_tuple.ptr(), i));
+    if (rets.get<ffi::AnyBuffer>(i).value()->element_type() == TOKEN) continue;
+    nb_numpy_ndarray array;
+    try {
+      array = nb_numpy_ndarray::from_any(output, NPY_ARRAY_ENSUREARRAY);
+    } catch (nb::python_error& e) {
+      return py_error_to_status(e);
+    }
+  }
+  return result_tuple;
 }
 
 }  // namespace xla

@@ -647,6 +647,18 @@ PyClient::GetEmitPythonCallbackDescriptor(
   return std::make_pair(descriptor, nb::object(std::move(callback_capsule)));
 }
 
+absl::StatusOr<nb::object> PyClient::GetEmitPythonCallback(
+    nb::callable callable) {
+  TF_ASSIGN_OR_RETURN(
+      auto loaded_host_callback,
+      PyCpuLoadedHostCallback::Create(ifrt_client(), std::move(callable)));
+  nb::capsule callback_capsule(
+      loaded_host_callback.release(), [](void* ptr) noexcept {
+        static_cast<ifrt::LoadedHostCallback*>(ptr)->DropRef();
+      });
+  return nb::object(std::move(callback_capsule));
+}
+
 XLA_CPU_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("xla_python_cpu_callback",
                                              &XlaPythonCpuCallback);
 
@@ -764,6 +776,9 @@ PyType_Slot PyClient::slots_[] = {
            xla::ValueOrThrowWrapper(&PyClient::GetEmitPythonCallbackDescriptor),
            nb::arg("callable"), nb::arg("operand_shapes"),
            nb::arg("result_shapes").none() = nb::none())
+      .def("get_emit_python_callback",
+           xla::ValueOrThrowWrapper(&PyClient::GetEmitPythonCallback),
+           nb::arg("callable"))
       .def("make_python_callback_from_host_send_and_recv",
            xla::ValueOrThrowWrapper(
                &PyClient::MakePythonCallbackUsingHostSendAndRecv),
