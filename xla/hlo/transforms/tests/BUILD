@@ -23,9 +23,10 @@ lit_test_suite(
     name = "hlo_opt_tests",
     srcs = enforce_glob(
         [
-            "run_single_pass.hlo",
-            "run_multiple_passes.hlo",
             "algebraic_simplifier.hlo",
+            "cholesky_expander.hlo",
+            "run_multiple_passes.hlo",
+            "run_single_pass.hlo",
         ],
         include = [
             "*.hlo",
