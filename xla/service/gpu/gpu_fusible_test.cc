@@ -1518,7 +1518,8 @@ TEST_F(GpuFusibleTest, GetFusibleComputations) {
     ENTRY main {
       p0 = s32[] parameter(0)
       p1 = f32[128,1024] parameter(1)
-      called = f32[128] call(p1), to_apply=body_c
+      called = f32[128] call(p1), to_apply=body_c,
+        frontend_attributes={_xla_stream_annotation="1"}
       ROOT conditional = f32[128] conditional(p0, p1, p1),
         branch_computations={body_a, body_b}
     })"))
