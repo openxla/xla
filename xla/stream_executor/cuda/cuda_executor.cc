@@ -462,7 +462,7 @@ std::string GetPCIBusID(CUdevice device) {
     return "";
   }
   // Lower the hex characters to match sysfs.
-  return absl::AsciiStrToLower(std::string_view(raw_pci_bus_id.data()));
+  return absl::AsciiStrToLower(absl::string_view(raw_pci_bus_id.data()));
 }
 
 bool HostRegister(Context* context, void* location, uint64_t size) {
