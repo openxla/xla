@@ -72,10 +72,10 @@ absl::StatusOr<bool> GpuAllGatherCombiner::Run(
   // Always respects the threshold users set if it doesn't increase
   // memory pressure.
   int64_t previous_combiner_threshold = combine_threshold_in_bytes_;
-  combine_threshold_in_bytes_ = std::min(
-      ComputeSuggestedCombinerThreshold(
-          *module, device_info_, HloOpcode::kReduceScatter, pointer_size_),
-      previous_combiner_threshold);
+  combine_threshold_in_bytes_ =
+      std::min(ComputeSuggestedCombinerThreshold(
+                   *module, device_info_, HloOpcode::kAllGather, pointer_size_),
+               previous_combiner_threshold);
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));
