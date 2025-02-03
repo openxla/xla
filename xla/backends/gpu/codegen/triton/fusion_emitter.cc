@@ -1232,8 +1232,13 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
     mlir::MLIRContext& mlir_context, bool is_xla_fusion, bool emit_kernel) {
   const auto& cc = device_info.gpu_compute_capability();
-  const std::string arch_name =
+  std::string arch_name =
       std::visit([](auto& cc) { return cc.ToString(); }, cc);
+  // Pass CC 10.0 to Triton to avoid spurious "unsupported conversion" errors,
+  // until Triton supports sm_120.
+  if (arch_name == "12.0") {
+    arch_name = "10.0";
+  }
   if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
     auto ccCuda = std::get<se::CudaComputeCapability>(cc);
     if (!ccCuda.IsAtLeastAmpere()) {
