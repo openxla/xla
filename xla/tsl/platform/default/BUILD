@@ -343,7 +343,11 @@ cc_library(
         "@tsl//tsl/platform:snappy.h",
     ],
     copts = tsl_copts(),
-    defines = ["TENSORFLOW_USE_NUMA", "TF_USE_SNAPPY"],
+    defines = ["TF_USE_SNAPPY"] + select({
+        # TF Additional NUMA defines
+        "//xla/tsl:with_numa_support": ["TENSORFLOW_USE_NUMA"],
+        "//conditions:default": [],
+    }),
     tags = [
         "manual",
         "no_oss",
@@ -357,10 +361,16 @@ cc_library(
         "//xla/tsl/platform:types",
         "//xla/tsl/platform/profile_utils:profile_utils_cpu_utils",
         "@com_google_absl//absl/base",
-        "@hwloc",
         "@snappy",
         "@tsl//tsl/platform",
-    ],
+    ] + select({
+        # TF Additional NUMA dependencies
+        "//xla/tsl:with_numa_support": [
+            # Don't merge in a single line
+            "@hwloc",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_library(
