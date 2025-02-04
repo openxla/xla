@@ -17,10 +17,10 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_NVSHMEM_COLLECTIVES_H_
 
 #include <functional>
-#include <string_view>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/core/collectives/collectives.h"
 
 namespace xla::gpu {
@@ -34,8 +34,8 @@ class NvshmemCollectives : public Collectives {
 
   void SetEnvInfo(
       int process_id, size_t num_processes, size_t device_count_per_process,
-      std::function<absl::StatusOr<std::string>(std::string_view)> kv_store_get,
-      std::function<absl::Status(std::string_view, std::string_view)>
+      std::function<absl::StatusOr<std::string>(absl::string_view)> kv_store_get,
+      std::function<absl::Status(absl::string_view, absl::string_view)>
           kv_store_set);
 
   absl::StatusOr<void*> Allocate(uint64_t bytes);
@@ -68,9 +68,9 @@ class NvshmemCollectives : public Collectives {
   int process_id_ = -1;
   size_t num_processes_ = 0;
   size_t device_count_per_process_ = 0;
-  std::function<absl::StatusOr<std::string>(std::string_view)> kv_store_get_ =
+  std::function<absl::StatusOr<std::string>(absl::string_view)> kv_store_get_ =
       nullptr;
-  std::function<absl::Status(std::string_view, std::string_view)>
+  std::function<absl::Status(absl::string_view, absl::string_view)>
       kv_store_set_ = nullptr;
   bool initialized_ = false;
 
