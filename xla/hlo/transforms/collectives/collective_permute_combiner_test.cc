@@ -135,7 +135,7 @@ TEST_F(CollectivePermuteCombinerTest, RespectThreshold) {
   std::vector<HloInstruction*> inputs;
   std::vector<std::pair<int64_t, int64_t>> source_target_pairs{
       {0, 1}, {1, 2}, {2, 3}};
-  auto root =
+  [[maybe_unused]] auto root =
       MakeCollectivePermutes({2, 10, 7}, &inputs, source_target_pairs, &b);
   module->AddEntryComputation(b.Build());
 
