@@ -52,6 +52,8 @@ cc_library(
         "flatten_tensors.cc",
         "lower_tensors.cc",
         "lower_to_llvm.cc",
+        "peel_loops.cc",
+        "simplify_arith.cc",
     ],
     hdrs = ["passes.h"],
     deps = [
@@ -70,6 +72,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
