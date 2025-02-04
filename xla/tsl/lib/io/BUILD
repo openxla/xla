@@ -48,6 +48,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:raw_coding",
@@ -111,6 +112,7 @@ cc_library(
     hdrs = ["iterator.h"],
     deps = [
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:stringpiece",
     ],
     alwayslink = True,
@@ -237,6 +239,7 @@ cc_library(
         ":table_options",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
     ],
     alwayslink = True,
