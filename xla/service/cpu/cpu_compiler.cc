@@ -801,6 +801,18 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     if (debug_options.xla_allow_excess_precision()) {
       pipeline.AddPass<SimplifyFPConversions>();
     }
+    // Run AlgebraicSimplifier pass to remove redundant hlo operations, for
+    // example, a sequence of bitcast. Such redundancy could be a result
+    // from oneDNN related HLO passes.
+    AlgebraicSimplifierOptions options;
+    options.set_is_layout_sensitive(true);
+    options.set_supports_non_canonical_dots(false);
+    options.set_enable_dot_strength_reduction(false);
+    // TODO(b/209827141): XLA:CPU doesn't propagate NaN through min/max, but
+    // other platforms do, so it should be changed.
+    options.set_minmax_propagate_nan(false);
+    options.set_executing_on_cpu(true);
+    pipeline.AddPass<AlgebraicSimplifier>(options);
   }
 #endif  // INTEL_MKL && ENABLE_ONEDNN_V3
 
