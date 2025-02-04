@@ -82,8 +82,8 @@ NvshmemCollectives* NvshmemCollectives::Default() {
 
 void NvshmemCollectives::SetEnvInfo(
     int process_id, size_t num_processes, size_t device_count_per_process,
-    std::function<absl::StatusOr<std::string>(std::string_view)> kv_store_get,
-    std::function<absl::Status(std::string_view, std::string_view)>
+    std::function<absl::StatusOr<std::string>(absl::string_view)> kv_store_get,
+    std::function<absl::Status(absl::string_view, absl::string_view)>
         kv_store_set) {
   process_id_ = process_id;
   num_processes_ = num_processes;
@@ -106,8 +106,8 @@ absl::Status NvshmemCollectives::Initialize() {
   // Initialize NVSHMEM
   if (process_id_ == 0) {
     XLA_NVSHMEM_RETURN_IF_ERROR(nvshmemx_get_uniqueid(&nvshmem_id));
-    std::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
-                                    sizeof(nvshmemx_uniqueid_t));
+    absl::string_view nvshmem_id_str(reinterpret_cast<char*>(&nvshmem_id),
+                                     sizeof(nvshmemx_uniqueid_t));
     TF_RETURN_IF_ERROR(kv_store_set_(kv_store_key_, nvshmem_id_str));
   } else {
     TF_ASSIGN_OR_RETURN(std::string id_str, kv_store_get_(kv_store_key_));

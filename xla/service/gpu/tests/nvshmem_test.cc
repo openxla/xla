@@ -77,7 +77,7 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
       GetDistributedKeyValueStore(distributed_client, /*key_prefix=*/"gpu:");
   std::weak_ptr<KeyValueStoreInterface> kv_store_weak_ptr = kv_store;
   auto store_get_fn =
-      [kv_store_weak_ptr](std::string_view key) -> absl::StatusOr<std::string> {
+      [kv_store_weak_ptr](absl::string_view key) -> absl::StatusOr<std::string> {
     if (std::shared_ptr<KeyValueStoreInterface> kv_store =
             kv_store_weak_ptr.lock()) {
       return kv_store->Get(key, absl::Minutes(10));
@@ -86,8 +86,8 @@ absl::Status InitializationTestBody(const int node_id, const int num_nodes) {
         "KV store is not available for nvshmem initialization");
   };
   auto store_set_fn = [kv_store_weak_ptr](
-                          std::string_view key,
-                          std::string_view value) -> absl::Status {
+                          absl::string_view key,
+                          absl::string_view value) -> absl::Status {
     if (std::shared_ptr<KeyValueStoreInterface> kv_store =
             kv_store_weak_ptr.lock()) {
       return kv_store->Set(key, value);
