@@ -159,6 +159,15 @@ absl::StatusOr<bool> CombineInstructionsByKey(
   return changed;
 }
 
+// Merges op metadata from a list of instructions to be combined
+// as much as possible.
+OpMetadata MergeOpMetadata(absl::Span<HloInstruction* const> to_combine);
+
+// Merges backend config only when all instructions to be combined share
+// the same backend config.
+std::string MaybeMergeBackendConfigString(
+    absl::Span<HloInstruction* const> to_combine);
+
 }  // namespace xla
 
 #endif  // XLA_SERVICE_COLLECTIVE_COMBINER_UTILS_H_

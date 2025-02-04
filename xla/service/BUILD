@@ -2402,6 +2402,7 @@ cc_library(
 cc_library(
     name = "collective_combiner_utils",
     hdrs = ["collective_combiner_utils.h"],
+    srcs = ["collective_combiner_utils.cc"],
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",

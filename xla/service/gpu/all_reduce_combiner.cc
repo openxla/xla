@@ -35,14 +35,17 @@ namespace {
 
 std::optional<AllReduceCombiner::GroupKey> PipelinedCombinerKey(
     const HloInstruction* instruction, const HloDomainMap& domain_map) {
+  std::optional<AllReduceKey> key = GetAllReduceKey(instruction, &domain_map);
+  if (!key.has_value()) {
+    return std::nullopt;
+  }
+  bool is_pipelined = false;
   auto backend_config = instruction->backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) {
-    return std::nullopt;
+  if (backend_config.ok()) {
+    is_pipelined = backend_config->collective_backend_config().is_pipelined();
   }
-  if (!backend_config->collective_backend_config().is_pipelined()) {
-    return std::nullopt;
-  }
-  return AllReduceCombiner::CombineKey(instruction, domain_map);
+  return AllReduceCombiner::GroupKey{
+      *key, /*extra_args*/ is_pipelined ? "pipelined" : "non-pipelined"};
 }
 
 }  // namespace
@@ -50,11 +53,6 @@ std::optional<AllReduceCombiner::GroupKey> PipelinedCombinerKey(
 absl::StatusOr<bool> GpuAllReduceCombiner::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  // Combiner threshold is specified. Running parent pass code.
-  if (combine_threshold_in_bytes_ != default_combine_threshold_in_bytes_) {
-    return AllReduceCombiner::Run(module, execution_threads);
-  }
-
   // If there are no pipelined instructions in the IR, the optimizations below
   // do not kick in anyway.
   // Exit early so we do not perform expensive scheduling dry run below.
@@ -63,19 +61,18 @@ absl::StatusOr<bool> GpuAllReduceCombiner::Run(
   }
 
   // Combine as much as possible for pipelined collectives.
-  int previous_combiner_threshold = combine_threshold_in_bytes_;
-  combine_threshold_in_bytes_ = ComputeSuggestedCombinerThreshold(
-      *module, device_info_, HloOpcode::kAllReduce, pointer_size_);
+  // Always respects the threshold users set if it doesn't increase
+  // memory pressure.
+  int64_t previous_combiner_threshold = combine_threshold_in_bytes_;
+  combine_threshold_in_bytes_ =
+      std::min(ComputeSuggestedCombinerThreshold(
+                   *module, device_info_, HloOpcode::kAllReduce, pointer_size_),
+               previous_combiner_threshold);
   TF_ASSIGN_OR_RETURN(
       bool combined_pipelined_instructions,
       RunWithKeyCombiner(module, execution_threads, PipelinedCombinerKey));
 
-  // Use previous combiner thresholds after we combine pipelined collectives.
-  // The rest is combined by the parent pass code.
-  combine_threshold_in_bytes_ = previous_combiner_threshold;
-  TF_ASSIGN_OR_RETURN(bool combined_rest,
-                      AllReduceCombiner::Run(module, execution_threads));
-  return combined_pipelined_instructions || combined_rest;
+  return combined_pipelined_instructions;
 }
 
 }  // namespace xla::gpu
