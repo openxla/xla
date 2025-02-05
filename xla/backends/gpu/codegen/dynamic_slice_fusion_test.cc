@@ -3131,13 +3131,13 @@ TEST_F(DynamicSliceFusionTest, ReduceScatterSlice) {
 
   auto module_new_opt_clone = module_new_opt->Clone();
   TF_ASSERT_OK_AND_ASSIGN(
-    std::unique_ptr<OpaqueExecutable> wrapped_executable,
+      std::unique_ptr<OpaqueExecutable> wrapped_executable,
       CreateExecutable(std::move(module_new_opt_clone), false));
   TF_ASSERT_OK_AND_ASSIGN(Executable* const exec,
                           test_runner_as_hlo_runner().ExecutableFromWrapped(
                               wrapped_executable.get()));
   GpuExecutable* gpu_exec = dynamic_cast<GpuExecutable*>(exec);
-  
+
   // The pattern we have here is a static slice along with reduce-scatter
   // operation. With this pattern, we can compute the offset at compile time and
   // we do not need to emit a dynamic slice thunk to compute the offset at
@@ -3353,9 +3353,9 @@ TEST_F(DynamicSliceFusionTest,
   const SequentialThunk* embedded_thunk = dynamic_cast<const SequentialThunk*>(
       dynamic_slice_thunk->embedded_thunk());
   ASSERT_NE(embedded_thunk, nullptr);
-  ASSERT_EQ(embedded_thunk->thunks().size(), 1);
-  EXPECT_EQ(embedded_thunk->thunks()[0]->kind(),
-            Thunk::kNcclReduceScatterStart);
+  EXPECT_THAT(
+      embedded_thunk->thunks(),
+      ::testing::ElementsAre(ThunkKindIs(Thunk::kNcclReduceScatterStart)));
 
   // Check that the offsets were propagated as constants, and not as device
   // allocated buffers.

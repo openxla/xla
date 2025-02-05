@@ -1844,9 +1844,13 @@ TEST_F(GpuCompilerTest,
                    kExpected),
       ::tsl::testing::IsOkAndHolds(true));
 
-  RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
-                                    /*run_hlo_passes=*/true,
-                                    /*use_threads=*/true, std::nullopt);
+  if (test_runner().device_count() < 2) {
+    GTEST_SKIP() << "Skipping test as it requires at least 2 devices.";
+  }
+  EXPECT_TRUE(RunAndCompareTwoModulesReplicated(std::move(m), std::move(m_ref),
+                                                /*run_hlo_passes=*/true,
+                                                /*use_threads=*/true,
+                                                std::nullopt));
 }
 
 }  // namespace

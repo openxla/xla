@@ -5932,7 +5932,7 @@ TEST_F(HloParserTest,
     a = s32[] parameter(0), origin={{"v1"}}
     b = s32[] parameter(1), origin={{"v2"}}
     add-start = ((s32[], s32[]), s32[], s32[]) add-start(a, b),
-                metadata={op_type="add" op_name="\"sample name\n" source_file="path/to/test.cc" source_line=68},
+                metadata={op_type="add" op_name="sample name" source_file="path/to/test.cc" source_line=68},
                 backend_config="foo\" bar",
                 frontend_attributes={attr_a="test_a",attr_b="b"},
                 statistics={visualizing_index=1,stat-1=33,stat-2=44}
@@ -5943,17 +5943,22 @@ TEST_F(HloParserTest,
   // Check the wrapped instruction.
   HloInstruction* wrapped_instr =
       m->entry_computation()->root_instruction()->async_wrapped_instruction();
-  EXPECT_EQ(wrapped_instr->metadata().DebugString(),
-            "op_type: \"add\"\nop_name: \"\\\"sample name\\n\"\nsource_file: "
-            "\"path/to/test.cc\"\nsource_line: 68\n");
+  EXPECT_EQ(wrapped_instr->metadata().op_name(), "sample name");
+  EXPECT_EQ(wrapped_instr->metadata().op_type(), "add");
+  EXPECT_EQ(wrapped_instr->metadata().source_file(), "path/to/test.cc");
+  EXPECT_EQ(wrapped_instr->metadata().source_line(), 68);
   EXPECT_EQ(wrapped_instr->raw_backend_config_string(), "foo\" bar");
-  EXPECT_EQ(wrapped_instr->frontend_attributes().DebugString(),
-            "map {\n  key: \"attr_a\"\n  value: \"test_a\"\n}\nmap {\n  key: "
-            "\"attr_b\"\n  value: \"b\"\n}\n");
-  EXPECT_EQ(wrapped_instr->statistics_viz().DebugString(),
-            "stat_index_to_visualize: 1\nstatistics {\n  stat_name: "
-            "\"stat-1\"\n  stat_val: 33\n}\nstatistics {\n  stat_name: "
-            "\"stat-2\"\n  stat_val: 44\n}\n");
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().size(), 2);
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().at("attr_a"), "test_a");
+  EXPECT_EQ(wrapped_instr->frontend_attributes().map().at("attr_b"), "b");
+  EXPECT_EQ(wrapped_instr->statistics_viz().stat_index_to_visualize(), 1);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics_size(), 2);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(0).stat_name(),
+            "stat-1");
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(0).stat_val(), 33);
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_name(),
+            "stat-2");
+  EXPECT_EQ(wrapped_instr->statistics_viz().statistics(1).stat_val(), 44);
   EXPECT_EQ(OriginalValueToString(*wrapped_instr->original_value()),
             "{\"v3\"}");
   // Check the async-start and async-done instructions.
