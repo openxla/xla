@@ -356,7 +356,7 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-        "@ml_dtypes//:float8",
+        "@ml_dtypes_py//ml_dtypes:float8",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
     ],
