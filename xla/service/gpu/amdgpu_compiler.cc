@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/service/gpu/amdgpu_compiler.h"
 
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -62,6 +63,7 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/statusor.h"
@@ -242,7 +244,8 @@ absl::StatusOr<GpuCompiler::BackendCompileResult>
 AMDGPUCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
     const se::DeviceDescription& device_description, bool relocatable,
-    const HloModule* debug_module, const CompileOptions& options) {
+    const HloModule* debug_module, const CompileOptions& options,
+    std::optional<int> shard_number) {
   if (relocatable) {
     return Unimplemented("relocatable target binary is not implemented");
   }
@@ -274,5 +277,9 @@ absl::Status AMDGPUCompiler::AddGemmFusionAutotuningPasses(
   return absl::OkStatus();
 }
 
+std::vector<std::string> AMDGPUCompiler::GetLLVMCommandLineOptions(
+    const DebugOptions& debug_options) const {
+  return amdgpu::GetAMDGPUBackendOptions(debug_options);
+}
 }  // namespace gpu
 }  // namespace xla

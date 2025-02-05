@@ -24,7 +24,7 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "pthreadpool.h"
-#include "xla/backends/cpu/runtime/xnnpack/parallel_loop_runner.h"
+#include "xla/backends/cpu/runtime/parallel_loop_runner.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -154,7 +154,7 @@ static void DestroyCustomPthreadpool(pthreadpool_t threadpool) {  // NOLINT
 
 static size_t GetThreadsCount(pthreadpool_t threadpool) {  // NOLINT
   if (ABSL_PREDICT_FALSE(threadpool == nullptr)) {
-    return 0;
+    return 1;
   }
 
   return Cast(threadpool)->runner()->num_threads();

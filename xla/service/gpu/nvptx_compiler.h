@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
@@ -90,7 +91,7 @@ class NVPTXCompiler : public GpuCompiler {
       const HloModuleConfig& module_config, llvm::Module* llvm_module,
       const stream_executor::DeviceDescription& device_description,
       bool relocatable, const HloModule* debug_module,
-      const CompileOptions& options) override;
+      const CompileOptions& options, std::optional<int> shard_number) override;
 
   absl::StatusOr<bool> CanUseLinkModules(
       const HloModuleConfig& module_config,
@@ -113,6 +114,9 @@ class NVPTXCompiler : public GpuCompiler {
 
   NVPTXCompiler(const NVPTXCompiler&) = delete;
   NVPTXCompiler& operator=(const NVPTXCompiler&) = delete;
+
+  std::vector<std::string> GetLLVMCommandLineOptions(
+      const DebugOptions& debug_options) const override;
 };
 
 }  // namespace gpu

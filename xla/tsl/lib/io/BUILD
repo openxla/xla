@@ -48,6 +48,7 @@ cc_library(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:status",
         "//xla/tsl/platform:types",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/platform:raw_coding",
@@ -111,6 +112,7 @@ cc_library(
     hdrs = ["iterator.h"],
     deps = [
         "//xla/tsl/platform:status",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:stringpiece",
     ],
     alwayslink = True,
@@ -237,6 +239,7 @@ cc_library(
         ":table_options",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
+        "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:coding",
     ],
     alwayslink = True,
@@ -450,7 +453,7 @@ tsl_cc_test(
         "//xla/tsl/platform:env_impl",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_googletest//:gtest_main",
+        "//xla/tsl/platform:test_main",
     ],
 )
 
@@ -587,6 +590,7 @@ tsl_cc_test(
         "//xla/tsl/platform:env_impl",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:strcat",
     ],

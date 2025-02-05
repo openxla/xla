@@ -76,8 +76,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/service/gpu/transforms/cudnn_custom_call_compiler.h"
 #include "xla/service/gpu/transforms/cudnn_fused_conv_rewriter.h"
-#include "xla/service/gpu/transforms/cudnn_fused_mha_rewriter.h"
-#include "xla/service/gpu/transforms/cudnn_fused_mha_transpose_fusion.h"
 #include "xla/service/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/service/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/service/gpu/transforms/cudnn_pad_for_convolutions.h"
@@ -274,48 +272,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
   // OptimizeHloPostLayoutAssignment().
   auto cuda_compute_capability = std::get<se::CudaComputeCapability>(
       gpu_target_config.device_description.gpu_compute_capability());
-
-  if (hlo_module->config().debug_options().xla_gpu_enable_cudnn_fmha() &&
-      !hlo_module->config()
-           .debug_options()
-           .xla_gpu_experimental_disable_binary_libraries()) {
-    HloPassPipeline mha_fusion_pipeline(
-        "nvptx cudnn multi-headed attention fusion");
-    // The LayoutAssignment pass may leave behind kCopy instructions which are
-    // duplicate or NOPs, so remove them with algebraic simplification and CSE.
-    AlgebraicSimplifierOptions alg_sim_options =
-        GetAlgebraicSimplifierOptions(hlo_module->config());
-    alg_sim_options.set_supports_non_canonical_dots(false);
-    alg_sim_options.set_is_layout_sensitive(true);
-    alg_sim_options.set_enable_conv_operand_swap(false);
-    alg_sim_options.set_enable_conv_add_multiply_reorder(true);
-    // "slow" minmax means we propagate nan.
-    alg_sim_options.set_minmax_propagate_nan(
-        !hlo_module->config().debug_options().xla_gpu_enable_fast_min_max());
-    alg_sim_options.set_enable_unconditional_reduce_of_concat_replacement(
-        false);
-
-    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
-    se::GpuComputeCapability gpu_version =
-        gpu_target_config.device_description.gpu_compute_capability();
-    mha_fusion_pipeline.AddPass<HloPassFix<GpuAlgebraicSimplifier>>(
-        alg_sim_options, gpu_version);
-    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
-    // Rewrite Multi-Headed Attention modules to Fused MHA custom-calls.
-    if (stream_exec) {
-      mha_fusion_pipeline.AddPass<CudnnFusedMHARewriter>(
-          cuda_compute_capability, stream_exec);
-    } else {
-      mha_fusion_pipeline.AddPass<CudnnFusedMHARewriter>(
-          cuda_compute_capability, gpu_target_config.dnn_version_info);
-    }
-    mha_fusion_pipeline.AddPass<GpuAlgebraicSimplifier>(alg_sim_options,
-                                                        gpu_version);
-    mha_fusion_pipeline.AddPass<CudnnFusedMHATransposeFusion>();
-    mha_fusion_pipeline.AddPass<HloDCE>();
-    mha_fusion_pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
-    TF_RETURN_IF_ERROR(mha_fusion_pipeline.Run(hlo_module).status());
-  }
 
   HloPassPipeline pre_pipeline("nvptx post-layout_assignment part 1");
   if (hlo_module->config().debug_options().xla_gpu_enable_cudnn_layer_norm() &&
@@ -583,7 +539,7 @@ NVPTXCompiler::CompileTargetBinary(
     const HloModuleConfig& module_config, llvm::Module* llvm_module,
     const stream_executor::DeviceDescription& device_description,
     bool relocatable, const HloModule* debug_module,
-    const CompileOptions& options) {
+    const CompileOptions& options, std::optional<int> shard_number) {
   std::unique_ptr<llvm::Module> loaded_module =
       MaybeLoadLLVMFromFile(debug_module, llvm_module);
   llvm::Module* selected_module = nullptr;
@@ -613,6 +569,22 @@ NVPTXCompiler::CompileTargetBinary(
     // This won't record values for calls that error out (because if they error
     // out we have no way of telling how far through the process we got).
     RecordLlvmPassesAndLlvmToPtxDuration(end_usecs - start_usecs);
+
+    if (DumpingEnabledForHloModule(debug_module ? debug_module->name() : "",
+                                   module_config.debug_options())) {
+      if (debug_module) {
+        DumpToFileInDirOrStdout(*debug_module, "",
+                                shard_number.has_value()
+                                    ? (std::to_string(*shard_number) + ".ptx")
+                                    : "ptx",
+                                ptx);
+      } else {
+        LOG(ERROR)
+            << "Dumping is not implemented since the file name cannot be "
+               "inferred. Please implement (potentially MLIR) module -> "
+               "filename heuristic.";
+      }
+    }
   }
 
   if (ptx.empty()) {
@@ -711,5 +683,9 @@ absl::StatusOr<std::vector<uint8_t>> NVPTXCompiler::LinkModules(
   return std::move(assembly.cubin);
 }
 
+std::vector<std::string> NVPTXCompiler::GetLLVMCommandLineOptions(
+    const DebugOptions& debug_options) const {
+  return nvptx::GetNVPTXBackendOptions(debug_options);
+}
 }  // namespace gpu
 }  // namespace xla

@@ -110,6 +110,7 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:UBDialect",
         "@stablehlo//:register",
         "@tsl//tsl/platform:errors",
     ],

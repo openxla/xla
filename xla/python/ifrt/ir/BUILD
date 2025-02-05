@@ -175,13 +175,13 @@ cc_library(
     visibility = ["//xla/python/ifrt:friends"],
     deps = [
         ":sharding_param_proto_cc",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:errors",
     ],
 )
 
@@ -203,6 +203,7 @@ cc_library(
         "//xla/python/ifrt",
         "//xla/python/ifrt:serdes",
         "//xla/python/pjrt_ifrt:xla_ifrt",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -210,7 +211,6 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -235,10 +235,10 @@ xla_cc_test(
         "//xla/client:executable_build_options",
         "//xla/pjrt:pjrt_executable",
         "//xla/service:computation_placer_hdr",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -256,6 +256,7 @@ cc_library(
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt/ir/transforms:passes",
         "//xla/python/ifrt/support:module_parsing",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -267,7 +268,6 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:statusor",
     ],
     alwayslink = True,
 )
@@ -281,14 +281,14 @@ xla_cc_test(
         ":version",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt/support:module_parsing",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@stablehlo//:version",
-        "@tsl//tsl/platform:status_matchers",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -484,6 +484,7 @@ tsl_pybind_extension(
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt/ir/transforms:utils",
         "//xla/python/ifrt/support:module_parsing",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:CAPIIRHeaders",
@@ -491,6 +492,5 @@ tsl_pybind_extension(
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@pybind11",
         "@pybind11_abseil//pybind11_abseil:absl_casters",
-        "@tsl//tsl/platform:statusor",
     ],
 )

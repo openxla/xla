@@ -2934,6 +2934,70 @@ ENTRY test {
   }
 }
 
+TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityLhs) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f16[] constant(inf)
+  y = f32[] parameter(0)
+  ROOT min = f32[] minimum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityLhsAndRhsF16Type) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f32[] constant(inf)
+  y = f16[] parameter(0)
+  ROOT min = f32[] minimum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityRhs) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f32[] parameter(0)
+  y = f16[] constant(inf)
+  ROOT min = f32[] minimum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, MinimumWithInfinityRhsAndLhsF16Type) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f16[] parameter(0)
+  y = f32[] constant(inf)
+  ROOT min = f32[] minimum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
 TEST_F(AlgebraicSimplifierTest, MinimumOfMinimum1) {
   const char* const hlo_string = R"(
 HloModule test
@@ -3004,6 +3068,70 @@ ENTRY main {
   ASSERT_TRUE(simplifier.Run(m.get()).value());
   EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Minimum(m::Parameter(0), m::Parameter(1))));
+}
+
+TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityLhs) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f16[] constant(-inf)
+  y = f32[] parameter(0)
+  ROOT max = f32[] maximum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityLhsAndRhsF16Type) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f32[] constant(-inf)
+  y = f16[] parameter(0)
+  ROOT max = f32[] maximum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityRhs) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f32[] parameter(0)
+  y = f16[] constant(-inf)
+  ROOT max = f32[] maximum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
+TEST_F(AlgebraicSimplifierTest, MaximumWithNegativeInfinityRhsAndLhsF16Type) {
+  const char* const kHloString = R"(
+HloModule test
+
+ENTRY main {
+  x = f16[] parameter(0)
+  y = f32[] constant(-inf)
+  ROOT max = f32[] maximum(x, y)
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHloString));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
 }
 
 TEST_F(AlgebraicSimplifierTest, MaximumOfMaximum1) {
@@ -4777,7 +4905,8 @@ TEST_F(AlgebraicSimplifierTest, RemoveNoopSliceOfPad) {
 
 TEST_F(AlgebraicSimplifierTest, NegativePadding) {
   // Verify that a pad instruction with negative padding is replaced with a
-  // pad with non-negative padding followed by a slice.
+  // pad with non-negative padding followed by a slice. Also verify that the
+  // type of the operand and the result can be different.
   HloComputation::Builder builder(TestName());
   HloInstruction* param =
       builder.AddInstruction(HloInstruction::CreateParameter(
@@ -4794,7 +4923,7 @@ TEST_F(AlgebraicSimplifierTest, NegativePadding) {
     dimension->set_interior_padding(0);
   }
   HloInstruction* pad = builder.AddInstruction(HloInstruction::CreatePad(
-      ShapeUtil::MakeShape(F32, {11, 5}), param, zero, padding));
+      ShapeUtil::MakeShape(BF16, {11, 5}), param, zero, padding));
 
   auto module = CreateNewVerifiedModule();
   HloComputation* computation =

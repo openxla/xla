@@ -649,12 +649,31 @@ absl::Status ShapeVerifier::HandleRaggedAllToAll(HloInstruction* hlo) {
 
   TF_RETURN_IF_ERROR(CheckReplicaGroups(hlo, group_mode));
 
+  const int64_t kNumRaggedOperands = 6;
   TF_RET_CHECK(all_to_all != nullptr);
-  TF_RET_CHECK(hlo->operand_count() == 6);
+  TF_RET_CHECK(hlo->operand_count() == kNumRaggedOperands);
   std::vector<const Shape*> operand_shapes;
   for (const HloInstruction* operand : hlo->operands()) {
     operand_shapes.push_back(&operand->shape());
   }
+
+  // Check that *_offsets/*_sizes operands all have the same shape and
+  // are rank 1 or rank 2.
+  const int64_t kOffsetsSizesOperandsStart = 2;
+  for (int64_t i = kOffsetsSizesOperandsStart + 1; i < kNumRaggedOperands;
+       ++i) {
+    if (operand_shapes[i - 1]->rank() != 1 &&
+        operand_shapes[i - 1]->rank() != 2) {
+      return Internal("RaggedAllToAll operand %d must be rank 1 or 2: %s",
+                      i - 1, hlo->ToString());
+    }
+    if (!ShapeUtil::Equal(*operand_shapes[i - 1], *operand_shapes[i])) {
+      return Internal(
+          "RaggedAllToAll operands have different shapes (%d, %d): %s", i - 1,
+          i, hlo->ToString());
+    }
+  }
+
   return CheckShape(hlo,
                     ShapeInference::InferRaggedAllToAllShape(operand_shapes));
 }
@@ -1359,8 +1378,9 @@ absl::Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
       }
     } else {
       TF_RET_CHECK(ShapeUtil::Compatible(output_subshape, operand_subshape))
-          << "Different aliasing shapes: " << operand_subshape.ToString()
-          << " vs " << output_subshape.ToString();
+          << "Different aliasing shapes: "
+          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+          << output_subshape.ToString(/*print_layout=*/true);
     }
   }
   return absl::OkStatus();
@@ -1440,12 +1460,14 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
         custom_call->operand(pair.second.first)->shape(), pair.second.second);
     if (opts_.layout_sensitive) {
       TF_RET_CHECK(operand_subshape == output_subshape)
-          << "Different aliasing shapes: " << operand_subshape.ToString()
-          << " vs " << output_subshape.ToString();
+          << "Different aliasing shapes: "
+          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+          << output_subshape.ToString(/*print_layout=*/true);
     } else {
       TF_RET_CHECK(ShapeUtil::Compatible(output_subshape, operand_subshape))
-          << "Different aliasing shapes: " << operand_subshape.ToString()
-          << " vs " << output_subshape.ToString();
+          << "Different aliasing shapes: "
+          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+          << output_subshape.ToString(/*print_layout=*/true);
     }
   }
   return absl::OkStatus();
@@ -1660,7 +1682,8 @@ absl::Status ShapeVerifier::CheckAsyncOpComputationShapes(
     return Internal(
         "The %s expects the async shape to be a tuple of at least two "
         "elements, found %s.",
-        HloOpcodeString(async_op->opcode()), async_shape.ToString());
+        HloOpcodeString(async_op->opcode()),
+        async_shape.ToString(/*print_layout=*/true));
   }
 
   ProgramShape computation_shape =
