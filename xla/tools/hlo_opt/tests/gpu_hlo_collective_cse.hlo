@@ -1,0 +1,14 @@
+// RUN: hlo-opt %s --platform=gpu --stage=hlo --passes=schedule-aware-collective-cse --xla_gpu_target_config_filename=%S/../gpu_specs/%{GPU}.txtpb | FileCheck %s
+
+HloModule m
+
+// CHECK: %custom-call.1 = s32[32]{0} custom-call(s32[32]{0} %all-gather.1), custom_call_target="my_custom_call1"
+
+ENTRY e {
+  param0 = s32[4] parameter(0)
+  all-gather.1 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=1
+  all-gather.2 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=2
+  all-gather.3 = s32[32] all-gather(param0), dimensions={0}, replica_groups=[1,8]<=[8], channel_id=3
+  custom-call.1 = s32[32] custom-call(all-gather.3), custom_call_target="my_custom_call1"
+  ROOT tuple = (s32[32]) tuple(custom-call.1)
+}
