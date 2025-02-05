@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/service/collective_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
+#include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/service/gpu/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/errors.h"
@@ -78,8 +79,11 @@ absl::Status AnnotateSyncCollectives(HloModule* module) {
 
 absl::flat_hash_set<std::string> SyncCollectiveIds(const HloModule& module) {
   absl::flat_hash_set<std::string> sync_collective_ids;
+  HloPredicate is_sync_collective = [](const HloInstruction* instr) {
+    return IsGPUSyncCollective(*instr);
+  };
   hlo_query::ForEachInstructionWithPred(
-      module, &IsSyncCollective,
+      module, is_sync_collective,
       [&sync_collective_ids](const HloInstruction* instr) {
         sync_collective_ids.insert(
             *instr->get_frontend_attribute(kCollectiveIdAttr));
