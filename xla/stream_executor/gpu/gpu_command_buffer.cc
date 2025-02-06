@@ -465,6 +465,8 @@ GpuCommandBuffer::CreateConditionalHandles(size_t num_handles) {
   handles.reserve(num_handles);
   for (size_t i = 0; i < num_handles; ++i) {
     TF_ASSIGN_OR_RETURN(handles.emplace_back(), CreateConditionalHandle());
+    VLOG(2) << "Creating conditional handle "
+            << reinterpret_cast<void*>(handles.back());
   }
   return handles;
 }
@@ -546,10 +548,12 @@ absl::Status GpuCommandBuffer::AddConditionalCommandNode(
     execution_scope.conditional_command_buffers.push_back(
         {std::move(handles), std::move(cmd_buffers)});
 
+    VLOG(2) << "Create conditional command buffers";
     return absl::OkStatus();
   }
 
   if (state_ == State::kUpdate) {
+    VLOG(2) << "Update conditional command buffers";
     ConditionalCommandBuffers& cond_cmd_buffers =
         execution_scope.conditional_command_buffers[execution_scope.update_state
                                                         .conditional_idx++];
@@ -607,7 +611,8 @@ absl::Status GpuCommandBuffer::IfElse(ExecutionScopeId execution_scope_id,
 }
 
 absl::Status GpuCommandBuffer::Case(ExecutionScopeId execution_scope_id,
-                                    DeviceMemory<int32_t> index,
+                                    DeviceMemory<uint8_t> index,
+                                    bool index_is_bool,
                                     std::vector<Builder> branches) {
   constexpr size_t kBranchBatchSize = 8;
   int32_t batch_offset = 0;
@@ -631,7 +636,8 @@ absl::Status GpuCommandBuffer::Case(ExecutionScopeId execution_scope_id,
     auto set_cond_fn = [&, batch_offset, enable_conditional_default](
                            ExecutionScopeId id,
                            GraphConditionalHandles conditionals) {
-      return LaunchSetCaseConditionKernel(id, conditionals, index, batch_offset,
+      return LaunchSetCaseConditionKernel(id, conditionals, index,
+                                          index_is_bool, batch_offset,
                                           enable_conditional_default);
     };
 

@@ -132,7 +132,7 @@ class GpuCommandBuffer : public CommandBuffer {
                       Builder else_builder) override;
 
   absl::Status Case(ExecutionScopeId execution_scope_id,
-                    DeviceMemory<int32_t> index,
+                    DeviceMemory<uint8_t> index, bool index_is_bool,
                     std::vector<Builder> branches) override;
 
   absl::Status For(ExecutionScopeId execution_scope_id, int32_t num_iteration,
@@ -262,7 +262,7 @@ class GpuCommandBuffer : public CommandBuffer {
   // conditionals
   virtual absl::Status LaunchSetCaseConditionKernel(
       ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-      DeviceMemory<int32_t> index, int32_t batch_offset,
+      DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
       bool enable_conditional_default) = 0;
   // Launches a kernel that updates the state of the given graph conditional
   // based on the loop counter and the total number of iterations. If the loop

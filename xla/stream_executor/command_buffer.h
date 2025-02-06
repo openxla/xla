@@ -283,13 +283,13 @@ class CommandBuffer {
   //
   // See: https://github.com/openxla/stablehlo/blob/main/docs/spec.md#case
   virtual absl::Status Case(ExecutionScopeId execution_scope_id,
-                            DeviceMemory<int32_t> index,
+                            DeviceMemory<uint8_t> index, bool index_is_bool,
                             std::vector<Builder> branches) = 0;
 
   // Adds a conditional Case operation to default execution scope.
-  absl::Status Case(DeviceMemory<int32_t> index,
+  absl::Status Case(DeviceMemory<uint8_t> index, bool index_is_bool,
                     std::vector<Builder> branches) {
-    return Case(kDefaultExecutionScope, index, branches);
+    return Case(kDefaultExecutionScope, index, index_is_bool, branches);
   }
 
   // Adds a conditional operation that will execute a command buffer constructed
