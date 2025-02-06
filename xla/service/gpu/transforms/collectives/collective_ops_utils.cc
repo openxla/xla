@@ -16,17 +16,17 @@ limitations under the License.
 #include "xla/service/gpu/transforms/collectives/collective_ops_utils.h"
 
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 
 namespace xla {
 namespace gpu {
 
 bool IsGPUSyncCollective(const HloInstruction& instr) {
-  if (!IsCollective(&instr)) return false;
-  GpuBackendConfig backend_config =
-      instr.backend_config<GpuBackendConfig>().value();
-  return backend_config.collective_backend_config().is_sync();
+  auto backend_config = instr.backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    return false;
+  }
+  return backend_config->collective_backend_config().is_sync();
 }
 
 }  // namespace gpu

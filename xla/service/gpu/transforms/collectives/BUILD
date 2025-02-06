@@ -54,7 +54,6 @@ cc_library(
     hdrs = ["collective_ops_utils.h"],
     deps = [
         "//xla/hlo/ir:hlo",
-        "//xla/service:collective_ops_utils",
         "//xla/service/gpu:backend_configs_cc",
     ],
 )
