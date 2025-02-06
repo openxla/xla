@@ -2999,9 +2999,9 @@ TEST_P(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
     HloModule test
 
     ENTRY test {
-      x = <<F8E4M3>>[16,32] parameter(0)
+      x = <<F8E4M3>>[32,16] parameter(0)
       y = <<F8E4M3>>[32,16] parameter(1)
-      ROOT out = <<F8E4M3>>[16,16] dot(x, y), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT out = <<F8E4M3>>[16,16] dot(x, y), lhs_contracting_dims={0}, rhs_contracting_dims={0}
           }
 
 )";
@@ -3010,8 +3010,8 @@ TEST_P(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
                             ErrorSpec{1e-2, 1e-2}));
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[16,32], {{.*}}: <<F8E4M3>>[32,16]) -> <<F8E4M3>>[16,16] {
-; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} parameter(0)
+; CHECK-LABEL: ENTRY %test ({{.*}}: <<F8E4M3>>[32,16], {{.*}}: <<F8E4M3>>[32,16]) -> <<F8E4M3>>[16,16] {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = <<F8E4M3>>[32,16]{1,0} parameter(0)
 ; CHECK-NEXT:    [[P1:%[^ ]+]] = <<F8E4M3>>[32,16]{1,0} parameter(1)
 ; CHECK-NEXT:    [[C1:[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[C1]], [[C1]]),
@@ -3021,7 +3021,7 @@ TEST_P(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
 ; CHECK-DAG:         "alpha_imag":0
 ; CHECK-DAG:         "beta":0
 ; CHECK-DAG:         "dot_dimension_numbers":{
-; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "lhs_contracting_dimensions":["0"]
 ; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
 ; CHECK-DAG:           "lhs_batch_dimensions":[]
 ; CHECK-DAG:           "rhs_batch_dimensions":[]

@@ -401,7 +401,6 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
                       (rhs.type == PrimitiveType::F8E4M3FN ||
                        rhs.type == PrimitiveType::F8E5M2FNUZ);
 
-  // Blackwell does not require the transposing of FP8 dot operands.
   const se::CudaComputeCapability* cc =
       std::get_if<se::CudaComputeCapability>(&gpu_version_);
   const bool both_operands_require_minor_contraction_dims =
