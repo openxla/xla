@@ -211,6 +211,8 @@ cc_library(
         "//xla/pjrt:exceptions",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt:pjrt_dtype",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
@@ -220,8 +222,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -268,8 +268,8 @@ cc_library(
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/pjrt:exceptions",
+        "//xla/tsl/platform:logging",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -285,11 +285,11 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//xla:util",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/protobuf:profile_proto_cc",
     ],
@@ -421,15 +421,14 @@ cc_library(
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/framework:allocator",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/platform:casts",
-        "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:fingerprint",
-        "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
@@ -508,13 +507,13 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_target_registry",
         "//xla/service:platform_util",
+        "//xla/tsl/platform:errors",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@nanobind",
-        "@tsl//tsl/platform:errors",
     ] + if_rocm(
         ["@local_config_rocm//rocm:rocm_headers"],
         ["@local_config_cuda//cuda:cuda_headers"],
@@ -548,6 +547,9 @@ cc_library(
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
         "//xla/python/pjrt_ifrt",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -557,9 +559,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "@nanobind",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -597,7 +596,7 @@ cc_library(
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_layout",
         "//xla/pjrt:status_casters",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -634,14 +633,14 @@ cc_library(
         "//xla/service:call_inliner",
         "//xla/service:custom_call_sharding_helper",
         "//xla/service/spmd:spmd_partitioner",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -671,8 +670,8 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_custom_partitioner_extension_hdrs",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -753,9 +752,9 @@ cc_library(
         "//xla/pjrt:pjrt_layout",
         "//xla/python/ifrt",
         "//xla/tsl/concurrency:ref_count",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -802,9 +801,9 @@ cc_library(
         "//xla/pjrt:status_casters",
         "//xla/python/ifrt",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/python/lib/core:numpy",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -855,7 +854,7 @@ cc_library(
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
         "//xla/pjrt:exceptions",
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
     ],
 )
 
@@ -879,7 +878,7 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@nanobind",
         "@local_config_python//:python_headers",  # buildcleaner: keep
-        "@tsl//tsl/platform:logging",
+        "//xla/tsl/platform:logging",
     ],
 )
 
@@ -940,9 +939,9 @@ cc_library(
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -953,6 +952,8 @@ cc_library(
     deps = [
         "//xla/mlir/utils:error_util",
         "//xla/mlir_hlo:stablehlo_extension_passes",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
@@ -967,8 +968,6 @@ cc_library(
         "@stablehlo//:base",
         "@stablehlo//:chlo_ops",
         "@stablehlo//:stablehlo_ops",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -1018,10 +1017,10 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_profiler_extension_hdrs",
         "//xla/python/profiler:profile_data_lib",
+        "//xla/tsl/platform:macros",
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
-        "@tsl//tsl/platform:macros",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:profiler_factory",
         "@tsl//tsl/profiler/lib:profiler_interface",
@@ -1158,10 +1157,10 @@ cc_library(
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",
         "//xla/tsl/lib/strings:proto_serialization",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:statusor",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:statusor",
     ],
 )
 
@@ -1316,12 +1315,12 @@ tsl_pybind_extension(
         "//xla/python/pjrt_ifrt:xla_ifrt",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
+        "//xla/tsl/platform:logging",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:statusor",
         "//xla/tsl/platform/cloud:gcs_file_system",
         "//xla/tsl/python/lib/core:numpy",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
     ] + select({
         # gloo tcp transport only builds on linux
         "//xla/tsl:macos": [
@@ -1352,6 +1351,8 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:types",
         "//xla/tsl/profiler/convert:xla_op_utils",
         "//xla/tsl/profiler/utils:file_system_utils",
         "//xla/tsl/profiler/utils:tf_xplane_visitor",
@@ -1362,8 +1363,6 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:optional",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:types",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -1376,13 +1375,14 @@ xla_cc_test(
         ":xplane_to_profile_instructions",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
         "//xla/tsl/profiler/convert:xla_op_utils",
         "//xla/tsl/profiler/rpc/client:save_profile",
         "//xla/tsl/profiler/utils:file_system_utils",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -1491,9 +1491,10 @@ xla_cc_test(
     srcs = ["aggregate_profile_test.cc"],
     deps = [
         ":aggregate_profile",
+        "//xla/tsl/platform:test",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:test",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
     ],
