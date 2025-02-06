@@ -1140,8 +1140,7 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
       custom_call = *scratch_add;
       auto aliases = custom_call->output_operand_aliasing();
       if (!aliases.empty()) {
-        custom_call->set_output_to_operand_aliasing(
-            {{{0}, {aliases[0].second.first, {}}}});
+        custom_call->set_output_to_operand_aliasing({{{0}, aliases[0].second}});
       }
     } else {
       VLOG(2) << scratch_add.status();

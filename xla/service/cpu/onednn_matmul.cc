@@ -283,6 +283,8 @@ ABSL_ATTRIBUTE_NO_SANITIZE_MEMORY void __xla_cpu_runtime_OneDnnMatMul(
   std::vector<memory::desc> fused_mds;
   std::vector<void*> fused_bufs;
   for (int64_t i = 0; i < num_fused_operands; ++i) {
+    // Skip the MemrefInfo object for the SUM operand, as oneDNN does not
+    // require an input and performs in-place accumulation.
     if (matmul_config.fusions().ops(i) == OneDnnFusionConfig::SUM) {
       arg_indx++;
       continue;
