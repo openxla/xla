@@ -3107,19 +3107,20 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
   // memory space.
   static absl::Status VerifyNoHostMemorySpace(
       const HloInstruction* instruction) {
-    if (LayoutUtil::IsDenseArray(instruction->shape()) &&
-        instruction->shape().has_layout()) {
-      const Shape& result_shape = instruction->shape();
-      const Layout& result_layout = result_shape.layout();
-      if (result_layout.memory_space() == Layout::kHostMemorySpace) {
-        return Internal(
-            "Instruction shouldn't have the layout of host memory "
-            "space: %s",
-            instruction->ToString());
-      }
-    }
-
-    return absl::OkStatus();
+    return ShapeUtil::ForEachSubshapeWithStatus(
+        instruction->shape(),
+        [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
+          if (subshape.has_layout()) {
+            const Layout& result_layout = subshape.layout();
+            if (result_layout.memory_space() == Layout::kHostMemorySpace) {
+              return absl::InternalError(absl::StrCat(
+                  "Instruction shouldn't have the layout of host memory "
+                  "space: ",
+                  instruction->ToString()));
+            }
+          }
+          return absl::OkStatus();
+        });
   }
 
   absl::flat_hash_map<std::string, const HloInstruction*> instructions_by_name_;
