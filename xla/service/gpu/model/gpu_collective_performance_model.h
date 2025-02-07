@@ -40,6 +40,10 @@ NVML_FUNCTOR(nvmlInit, nvmlReturn_t, ())
 NVML_FUNCTOR(nvmlShutdown, nvmlReturn_t, ())
 NVML_FUNCTOR(nvmlDeviceGetHandleByIndex, nvmlReturn_t,
              (unsigned int index, nvmlDevice_t* device))
+NVML_FUNCTOR(nvmlDeviceGetHandleByPciBusId_v2, nvmlReturn_t,
+             (const char* pciBusId, nvmlDevice_t* device))
+NVML_FUNCTOR(nvmlDeviceGetGpuFabricInfoV, nvmlReturn_t,
+             (nvmlDevice_t device, nvmlGpuFabricInfoV_t* gpuFabricInfo))
 NVML_FUNCTOR(nvmlDeviceGetNvLinkCapability, nvmlReturn_t,
              (nvmlDevice_t device, unsigned int link,
               nvmlNvLinkCapability_t capability, unsigned int* capResult))

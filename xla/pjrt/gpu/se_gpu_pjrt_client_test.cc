@@ -1074,6 +1074,20 @@ TEST(StreamExecutorGpuClientTest, DistributedInit) {
   }
 }
 
+TEST(StreamExecutorGpuClientTest, PopulateNVLinkKVStore) {
+  auto kv_store = std::make_shared<InMemoryKeyValueStore>();
+  int num_nodes = 4;
+  for (int i = 0; i < num_nodes; i++) {
+    PopulateNVLinkKVStore(kv_store, i);
+  }
+
+  for (int i = 0; i < num_nodes; i++) {
+    CHECK_EQ(
+        kv_store->Get(std::to_string(i), /*timeout=*/absl::Seconds(1)).value(),
+        "{clusterUuid: , cliqueId: 0}");
+  }
+}
+
 TEST(StreamExecutorGpuClientTest, GetAllocatorStatsTest) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));

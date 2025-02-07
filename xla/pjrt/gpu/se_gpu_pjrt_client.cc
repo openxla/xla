@@ -112,6 +112,7 @@ limitations under the License.
 #if GOOGLE_CUDA
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "xla/service/gpu/model/gpu_collective_performance_model.h"
 #include "xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #elif TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"
@@ -1377,6 +1378,35 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
     devices.push_back(std::move(device));
   }
   return devices;
+}
+
+void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                           const int device_id) {
+  CHECK_EQ(gpu::GpuPerformanceWithCollectiveModel::InitNvml(), true);
+
+  char pciBusId[] = "00000000:00:00.0";
+  cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
+  nvmlDevice_t device;
+  auto get_bus_id_status =
+      xla_nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
+  CHECK_EQ(get_bus_id_status, NVML_SUCCESS);
+
+  nvmlGpuFabricInfoV_t fabricInfo = {.version = nvmlGpuFabricInfo_v2};
+  fabricInfo.state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED;
+  // fabricInfo.version = nvmlGpuFabricInfo_v2;
+  auto get_fabric_info_status =
+      xla_nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
+  CHECK_EQ(get_fabric_info_status, NVML_SUCCESS);
+
+  if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
+    VLOG(0) << "NVL is not supported";
+    return;
+  }
+
+  std::stringstream ss;
+  ss << "{clusterUuid: " << fabricInfo.clusterUuid
+     << ", cliqueId: " << std::to_string(fabricInfo.cliqueId) << "}";
+  TF_CHECK_OK(kv_store->Set(std::to_string(device_id), ss.str()));
 }
 
 }  // namespace xla

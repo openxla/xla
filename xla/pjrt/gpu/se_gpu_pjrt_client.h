@@ -273,6 +273,9 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
     const GpuClientOptions& options);
 
+void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
+                           const int device_id);
+
 }  // namespace xla
 
 #endif  // XLA_PJRT_GPU_SE_GPU_PJRT_CLIENT_H_

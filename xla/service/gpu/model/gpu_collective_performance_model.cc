@@ -149,11 +149,18 @@ float GpuPerformanceWithCollectiveModel::GetNvlinkBw(
       {(void**)&xla_nvmlInit, "nvmlInit_v2"},
       {(void**)&xla_nvmlShutdown, "nvmlShutdown"},
       {(void**)&xla_nvmlDeviceGetHandleByIndex, "nvmlDeviceGetHandleByIndex"},
+      {(void**)&xla_nvmlDeviceGetHandleByPciBusId_v2,
+       "nvmlDeviceGetHandleByPciBusId_v2"},
+      {(void**)&xla_nvmlDeviceGetGpuFabricInfoV, "nvmlDeviceGetGpuFabricInfoV"},
       {(void**)&xla_nvmlDeviceGetNvLinkCapability,
        "nvmlDeviceGetNvLinkCapability"},
   };
   for (SymbolEntry se : symbols) {
     *se.functor = dlsym(libhandle, se.name);
+    const char* dlsym_error = dlerror();
+    if (dlsym_error) {
+      VLOG(0) << "Error: " << dlsym_error;
+    }
   }
   nvmlReturn_t init_result = xla_nvmlInit();
   return init_result == NVML_SUCCESS;
