@@ -62,6 +62,7 @@ cc_library(
         "@llvm-project//mlir:Support",
         "@shardy//shardy/common:file_utils",
         "@shardy//shardy/dialect/sdy/transforms/propagation:passes",
+        "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:path",
         "@tsl//tsl/platform:statusor",
