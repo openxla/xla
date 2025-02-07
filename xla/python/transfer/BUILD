@@ -1,6 +1,7 @@
 load("//xla:xla.bzl", "xla_cc_test")
 load(
     "//xla/tsl:tsl.bzl",
+    "if_oss",
     "internal_visibility",
 )
 load(
@@ -79,6 +80,7 @@ cc_library(
 xla_cc_test(
     name = "event_loop_test",
     srcs = ["event_loop_test.cc"],
+    tags = if_oss(["not_run:arm"]),
     deps = [
         ":event_loop",
         "@com_google_absl//absl/log",
@@ -172,6 +174,7 @@ cc_library(
 xla_cc_test(
     name = "socket_bulk_transport_test",
     srcs = ["socket_bulk_transport_test.cc"],
+    tags = if_oss(["not_run:arm"]),
     deps = [
         ":event_loop",
         ":socket_bulk_transport",
@@ -207,6 +210,7 @@ cc_library(
 xla_cc_test(
     name = "socket-server_test",
     srcs = ["socket-server_test.cc"],
+    tags = if_oss(["not_run:arm"]),
     deps = [
         ":event_loop",
         ":socket-server",
@@ -215,5 +219,42 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "py_socket_transfer",
+    srcs = ["py_socket_transfer.cc"],
+    hdrs = ["py_socket_transfer.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":event_loop",
+        ":socket-server",
+        ":socket_bulk_transport",
+        ":streaming",
+        ":streaming_ifrt",
+        "//xla:util",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:status_casters",
+        "//xla/python:nb_class_ptr",
+        "//xla/python:nb_numpy",
+        "//xla/python:py_client",
+        "//xla/python:traceback",
+        "//xla/python:types",
+        "//xla/python/ifrt",
+        "//xla/python/pjrt_ifrt",
+        "//xla/python/pjrt_ifrt:pjrt_dtype",
+        "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
     ],
 )

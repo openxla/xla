@@ -91,6 +91,7 @@ limitations under the License.
 #include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
+#include "xla/codegen/emitters/transforms/passes.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -116,6 +117,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/util.h"
@@ -962,6 +964,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                           block_level_parameters.output_tile_sizes,
                           /*constraints_are_known_satisfied=*/false,
                           /*compute_all_tile_offset_indexing_maps=*/true));
+  VLOG(3) << "Tiled HLO computation: " << tiled_hlo_computation.ToString();
 
   SmallVector<Value, 3> tile_multi_index =
       ir_emitter_triton_internal::ComputeDelinearizedTileIndex(
@@ -1069,7 +1072,7 @@ absl::Status CreateInternalError(absl::string_view message,
   return absl::InternalError(err);
 }
 
-absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
+absl::StatusOr<TritonModule> CreateTritonModule(
     absl::string_view fn_name, const HloFusionInstruction* fusion,
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
@@ -1129,9 +1132,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
       fusion->backend_config<GpuBackendConfig>()->fusion_backend_config();
   absl::string_view fusion_kind = backend_config.kind();
 
+  // It's okay for tma_metadata to be empty; it's only populated when used
+  // explicitly.
+  std::optional<stream_executor::gpu::TmaMetadata> tma_metadata = std::nullopt;
   if (fusion_kind == kTritonGemmFusionKind) {
-    TF_RETURN_IF_ERROR(EmitMatMul(b, libdevice_path, device_info, fusion, fn,
-                                  block_level_parameters));
+    TF_ASSIGN_OR_RETURN(tma_metadata,
+                        EmitMatMul(b, libdevice_path, device_info, fusion, fn,
+                                   block_level_parameters));
   } else if (fusion_kind == kTritonFusionKind) {
     TF_RETURN_IF_ERROR(EmitGeneric(b, libdevice_path, device_info, fusion, fn,
                                    block_level_parameters));
@@ -1181,7 +1188,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
                          .xla_gpu_unsupported_annotate_with_emitter_loc()));
   }
 
-  return std::move(triton_module);
+  return TritonModule{std::move(triton_module), tma_metadata};
 }
 
 absl::StatusOr<TritonWrapperResult> TritonWrapper(
@@ -1210,10 +1217,14 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
 
   // Compile Triton kernel to LLVM.
   const HloModule* hlo_module = fusion->GetModule();
-  return CompileTritonToLLVM(hlo_module->config(), hlo_module->name(),
-                             device_info, block_level_parameters,
-                             triton_module.get(), llvm_module, mlir_context,
-                             /*is_xla_fusion=*/true);
+  TF_ASSIGN_OR_RETURN(
+      TritonWrapperResult result,
+      CompileTritonToLLVM(hlo_module->config(), hlo_module->name(), device_info,
+                          block_level_parameters, triton_module.module.get(),
+                          llvm_module, mlir_context,
+                          /*is_xla_fusion=*/true));
+  result.tma_metadata = triton_module.tma_metadata;
+  return result;
 }
 
 absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
@@ -1223,8 +1234,13 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
     mlir::ModuleOp triton_module, llvm::Module* llvm_module,
     mlir::MLIRContext& mlir_context, bool is_xla_fusion, bool emit_kernel) {
   const auto& cc = device_info.gpu_compute_capability();
-  const std::string arch_name =
+  std::string arch_name =
       std::visit([](auto& cc) { return cc.ToString(); }, cc);
+  if (arch_name == "12.0") {
+    LOG(WARNING) << "Triton does not support sm_120 yet. Passing CC 10.0 to "
+                    "avoid spurious \"unsupported conversion\" errors";
+    arch_name = "10.0";
+  }
   if (std::holds_alternative<se::CudaComputeCapability>(cc)) {
     auto ccCuda = std::get<se::CudaComputeCapability>(cc);
     if (!ccCuda.IsAtLeastAmpere()) {
@@ -1281,7 +1297,7 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   pm.addPass(mlir::createLowerAffinePass());
 
   // Lower xla_gpu.apply_indexing into arithmetic ops.
-  pm.addPass(CreateSimplifyAffinePass());
+  pm.addPass(emitters::CreateSimplifyAffinePass());
   pm.addPass(CreateConvertIndexTypePass());
 
   mlir::triton::nvidia_gpu::ClusterInfo cluster_info;

@@ -69,14 +69,15 @@ bool IsTritonSupportedDataType(PrimitiveType type,
 absl::flat_hash_set<HloOpcode> TritonSupportedUnaryElementwiseOps(
     PrimitiveType element_type) {
   if (element_type == PrimitiveType::PRED) {
-    return {HloOpcode::kConvert, HloOpcode::kNot};
+    return {HloOpcode::kConvert, HloOpcode::kNot, HloOpcode::kCopy};
   }
 
   if (element_type == PrimitiveType::U16) {
     return {HloOpcode::kAbs};
   }
 
-  absl::flat_hash_set<HloOpcode> ret{HloOpcode::kAbs, HloOpcode::kConvert};
+  absl::flat_hash_set<HloOpcode> ret{HloOpcode::kAbs, HloOpcode::kConvert,
+                                     HloOpcode::kCopy};
 
   if (element_type != PrimitiveType::F8E5M2 &&
       element_type != PrimitiveType::F8E4M3FN) {
@@ -340,13 +341,10 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCall:
     case HloOpcode::kCholesky:
-    case HloOpcode::kCollectivePermuteDone:
-    case HloOpcode::kCollectivePermuteStart:
     case HloOpcode::kComplex:
     case HloOpcode::kConcatenate:
     case HloOpcode::kConditional:
     case HloOpcode::kConvolution:
-    case HloOpcode::kCopy:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCopyStart:
     case HloOpcode::kCustomCall:
@@ -365,13 +363,11 @@ bool IsTritonUnsupportedOpcode(HloOpcode opcode) {
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kOutfeed:
     case HloOpcode::kPad:
-    case HloOpcode::kPartitionId:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kRaggedDot:
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kReduceWindow:
-    case HloOpcode::kReplicaId:
     case HloOpcode::kReverse:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRngGetAndUpdateState:

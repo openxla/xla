@@ -264,6 +264,7 @@ cc_library(
     deps = [
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:status",
+        "@tsl//tsl/platform:str_util",
         "@tsl//tsl/platform:stringpiece",
     ],
 )
@@ -278,7 +279,8 @@ tsl_cc_test(
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_googletest//:gtest_main",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/strings",
         "@tsl//tsl/platform:strcat",
     ],
 )

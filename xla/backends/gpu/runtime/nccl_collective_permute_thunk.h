@@ -17,6 +17,8 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_NCCL_COLLECTIVE_PERMUTE_THUNK_H_
 
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/node_hash_map.h"
@@ -31,6 +33,7 @@ limitations under the License.
 #include "xla/core/collectives/communicator.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
@@ -105,7 +108,6 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
                                   CollectiveStreamId nccl_stream_id,
                                   bool p2p_memcpy_enabled);
   absl::Status Initialize(const InitializeParams& params) override;
-  absl::Status Cleanup(const CleanupParams& params) override;
 
   static const char* GetHloOpName() { return "collective-permute-start"; }
 
@@ -120,7 +122,8 @@ class NcclCollectivePermuteStartThunk : public NcclCollectiveThunk {
   std::vector<Buffer> buffers_;
   RecvPtrMap recv_ptr_map_;
   absl::Mutex barrier_mutex_;
-  std::unordered_map<int64_t, uint8_t> barrier_flags_;
+  std::unordered_map<int64_t, std::unique_ptr<se::MemoryAllocation>>
+      barrier_flags_;
   bool p2p_memcpy_enabled_ = false;
   int64_t device_count_;
 };
