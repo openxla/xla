@@ -1391,20 +1391,32 @@ void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
       xla_nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &device);
   CHECK_EQ(get_bus_id_status, NVML_SUCCESS);
 
-  nvmlGpuFabricInfoV_t fabricInfo = {.version = nvmlGpuFabricInfo_v2};
-  fabricInfo.state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED;
-  // fabricInfo.version = nvmlGpuFabricInfo_v2;
+  nvmlGpuFabricInfoV_t fabricInfo = {
+      .state = NVML_GPU_FABRIC_STATE_NOT_SUPPORTED,
+      .version = nvmlGpuFabricInfo_v2};
   auto get_fabric_info_status =
       xla_nvmlDeviceGetGpuFabricInfoV(device, &fabricInfo);
   CHECK_EQ(get_fabric_info_status, NVML_SUCCESS);
 
   if (fabricInfo.state == NVML_GPU_FABRIC_STATE_NOT_SUPPORTED) {
-    VLOG(0) << "NVL is not supported";
+    VLOG(2) << "NVL is not supported";
     return;
   }
 
+  char uuid_str[36];
+  sprintf(
+      (char*)uuid_str,
+      "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+      fabricInfo.clusterUuid[0], fabricInfo.clusterUuid[1],
+      fabricInfo.clusterUuid[2], fabricInfo.clusterUuid[3],
+      fabricInfo.clusterUuid[4], fabricInfo.clusterUuid[5],
+      fabricInfo.clusterUuid[6], fabricInfo.clusterUuid[7],
+      fabricInfo.clusterUuid[8], fabricInfo.clusterUuid[9],
+      fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
+      fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
+      fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
   std::stringstream ss;
-  ss << "{clusterUuid: " << fabricInfo.clusterUuid
+  ss << "{clusterUuid: " << uuid_str
      << ", cliqueId: " << std::to_string(fabricInfo.cliqueId) << "}";
   TF_CHECK_OK(kv_store->Set(std::to_string(device_id), ss.str()));
 }

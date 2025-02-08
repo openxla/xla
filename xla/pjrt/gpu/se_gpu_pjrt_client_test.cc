@@ -1084,7 +1084,7 @@ TEST(StreamExecutorGpuClientTest, PopulateNVLinkKVStore) {
   for (int i = 0; i < num_nodes; i++) {
     CHECK_EQ(
         kv_store->Get(std::to_string(i), /*timeout=*/absl::Seconds(1)).value(),
-        "{clusterUuid: , cliqueId: 0}");
+        "{clusterUuid: 00000000-0000-0000-0000-000000000000, cliqueId: 0}");
   }
 }
 
