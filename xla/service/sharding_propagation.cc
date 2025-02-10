@@ -1142,36 +1142,38 @@ bool InferDotShardingFromOperands(
     return true;
   }
   CHECK(improved_operand_0.has_value() && improved_operand_1.has_value());
-  std::optional<HloSharding> lookahead_sharding =
-      LookaheadUserSharding(instruction, is_spmd, call_graph);
+  // If one of the improved shardings is a sub-tiling or equal to the other, use
+  // the better sharding with more tiles.
+  if (hlo_sharding_util::IsSubTilingOrEqualSharding(
+          instruction->shape(), *improved_operand_0, *improved_operand_1)) {
+    instruction->set_sharding(*improved_operand_0);
+    return true;
+  }
+  if (hlo_sharding_util::IsSubTilingOrEqualSharding(
+          instruction->shape(), *improved_operand_1, *improved_operand_0)) {
+    instruction->set_sharding(*improved_operand_1);
+    return true;
+  }
+  // If the two improved shardings are mergeable, there is no conflict.
+  if (std::optional<HloSharding> improved_sharding =
+          hlo_sharding_util::ReturnImprovedShardingImpl(
+              *improved_operand_0, &improved_operand_1.value(),
+              instruction->shape(), may_combine_partial_sharding,
+              /*allow_aggressive_resharding=*/false)) {
+    instruction->set_sharding(*improved_sharding);
+    return true;
+  }
+  if (aggressiveness < 3) {
+    // We can improve the dot with different shardings. Pause the propagation
+    // and wait for the winner between the two operands.
+    return false;
+  }
+  // The two improved sharding are different and we are at the highest
+  // aggressiveness. Prioritize the operand with larger size.
   std::array<HloSharding, 2> sharding_priority = {*improved_operand_0,
                                                   *improved_operand_1};
-  bool priority_defined_with_lookahead = false;
-  // Found sharding from lookahead.
-  if (lookahead_sharding.has_value()) {
-    const bool operand_0_is_lookahead_subtiling =
-        hlo_sharding_util::IsSubTilingOrEqualSharding(
-            instruction->shape(), *lookahead_sharding, *improved_operand_0);
-    const bool operand_1_is_lookahead_subtiling =
-        hlo_sharding_util::IsSubTilingOrEqualSharding(
-            instruction->shape(), *lookahead_sharding, *improved_operand_1);
-    // If the sharding from operand 0 is a subtiling of the user, but not the
-    // one from operand 1 prioritize that sharding.
-    if (operand_0_is_lookahead_subtiling && !operand_1_is_lookahead_subtiling) {
-      priority_defined_with_lookahead = true;
-    }
-    // If the sharding from operand 1 is a subtiling of the user, but not the
-    // one from operand 0 prioritize that sharding.
-    if (!operand_0_is_lookahead_subtiling && operand_1_is_lookahead_subtiling) {
-      instruction->set_sharding(*improved_operand_1);
-      std::swap(sharding_priority[0], sharding_priority[1]);
-      priority_defined_with_lookahead = true;
-    }
-  }
-  // If lookahead didn't define a priority then use size.
-  if (!priority_defined_with_lookahead &&
-      ShapeUtil::ByteSizeOf(instruction->operand(0)->shape()) <
-          ShapeUtil::ByteSizeOf(instruction->operand(1)->shape())) {
+ if (ShapeUtil::ByteSizeOf(instruction->operand(0)->shape()) <
+      ShapeUtil::ByteSizeOf(instruction->operand(1)->shape())) {
     std::swap(sharding_priority[0], sharding_priority[1]);
   }
   // Set primary sharding to the instruction and then try to improve it with

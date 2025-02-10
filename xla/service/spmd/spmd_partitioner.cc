@@ -3122,15 +3122,20 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
       hlo_sharding_util::ReshapeSharding(hlo->operand(0)->shape(), hlo->shape(),
                                          operand.sharding());
   if (desired_output_sharding.has_value()) {
-    if (auto operand_hlo = desired_operand(*desired_output_sharding)) {
-      (*operand_hlo)->set_sharding(*desired_output_sharding);
+    std::optional<HloSharding> desired_source_sharding =
+        hlo_sharding_util::InferReshapeOperandSharding(
+            hlo->operand(0)->shape(), hlo->shape(), *desired_output_sharding);
+    if (desired_source_sharding.has_value()) {
+      auto reshape = b_.AddInstruction(hlo->CloneWithNewOperands(
+          MakePartitionedShape(hlo->shape(), *desired_output_sharding),
+          {operand.Reshard(*desired_source_sharding).hlo()}));
+      reshape->set_sharding(*desired_output_sharding);
       SetPartitionedHlo(hlo, [&] {
-        return PartitionedHlo(*operand_hlo, hlo->shape(),
-                              MakePartitioningState())
-            .Reshard(hlo->sharding())
+        return PartitionedHlo(reshape, hlo->shape(), MakePartitioningState())
+            .Reshard(sharding)
             .hlo();
       });
-      return absl::OkStatus();
+      return OkStatus();
     }
   }
 
