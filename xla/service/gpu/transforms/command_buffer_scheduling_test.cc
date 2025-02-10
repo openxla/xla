@@ -1290,8 +1290,11 @@ TEST_F(CommandBufferSchedulingTest,
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_opt,
                           GetOptimizedModule(m->Clone()));
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> exec,
+      std::unique_ptr<OpaqueExecutable> wrapped_exec,
       CreateExecutable(std::move(m_opt), /*run_hlo_passes=*/false));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          test_runner_as_hlo_runner().ExecutableFromWrapped(
+                              std::move(wrapped_exec)));
   HloInstruction* fusion_start =
       FindInstruction(&exec->module(), HloOpcode::kAsyncStart);
   HloInstruction* fusion_done =

@@ -1822,8 +1822,11 @@ TEST_F(GpuCompilerTest,
       .mutable_debug_options()
       .set_xla_gpu_enable_dynamic_slice_fusion(true);
   TF_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Executable> exec,
+      std::unique_ptr<OpaqueExecutable> wrapped_exec,
       CreateExecutable(m->Clone(), /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> exec,
+                          test_runner_as_hlo_runner().ExecutableFromWrapped(
+                              std::move(wrapped_exec)));
   const char* kExpected = R"(
     // CHECK:      dynamic-slice-fusion{{.+}} {
     // CHECK:        %[[slice:.+]] = {{.+}} slice({{.+}}), slice={[4:8], [0:32]}
