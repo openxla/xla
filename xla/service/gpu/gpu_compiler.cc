@@ -244,6 +244,7 @@ limitations under the License.
 #include "xla/service/select_and_scatter_expander.h"
 #include "xla/service/sharding_remover.h"
 #include "xla/service/slow_operation_alarm.h"
+#include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 #include "xla/service/topk_rewriter.h"
 #include "xla/service/transpose_folding.h"
 #include "xla/service/while_loop_all_reduce_code_motion.h"
@@ -856,6 +857,10 @@ absl::Status RunCollectiveOptimizationPasses(
       /*enable_reduce_scatter=*/debug_options
           .xla_gpu_enable_while_loop_reduce_scatter_code_motion());
 
+  collectives_pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(
+      /*distance_threshold=*/100,
+      /*for_replicas=*/false);
+
   // Moves collectives' subsequent quantization before the collective to
   // minimize data transfers.
   collectives_pipeline.AddPass<CollectiveQuantizer>();
@@ -963,7 +968,8 @@ absl::Status RunCollectiveOptimizationPasses(
   if (debug_options.xla_gpu_enable_pipelined_collectives() ||
       debug_options.xla_gpu_enable_pipelined_p2p() ||
       enable_partial_send_recv_pipelining) {
-    AddP2PPipeliner(collectives_pipeline, enable_partial_send_recv_pipelining);
+    collectives_pipeline.AddPass<GpuP2PPipeliner>(
+        enable_partial_send_recv_pipelining);
   }
 
   // Run algebraic simplifier to reshape(broadcast) into a broadcast when
