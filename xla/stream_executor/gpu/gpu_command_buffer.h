@@ -131,8 +131,14 @@ class GpuCommandBuffer : public CommandBuffer {
                       DeviceMemory<bool> predicate, Builder then_builder,
                       Builder else_builder) override;
 
+  // Case operation that uses bool value as branch index
   absl::Status Case(ExecutionScopeId execution_scope_id,
-                    DeviceMemory<uint8_t> index, bool index_is_bool,
+                    DeviceMemory<bool> index,
+                    std::vector<Builder> branches) override;
+
+  // Case operation that uses int32 value as branch index
+  absl::Status Case(ExecutionScopeId execution_scope_id,
+                    DeviceMemory<int32_t> index,
                     std::vector<Builder> branches) override;
 
   absl::Status For(ExecutionScopeId execution_scope_id, int32_t num_iteration,
@@ -363,6 +369,10 @@ class GpuCommandBuffer : public CommandBuffer {
   };
 
  private:
+  absl::Status Case(ExecutionScopeId execution_scope_id,
+                    DeviceMemory<uint8_t> index, bool index_is_bool,
+                    std::vector<Builder> branches);
+
   // Adds a new conditional node to the graph and creates a corresponding nested
   // command buffer.
   virtual absl::StatusOr<ConditionalNodeResult> CreateConditionalNode(

@@ -653,6 +653,24 @@ absl::Status GpuCommandBuffer::Case(ExecutionScopeId execution_scope_id,
   return absl::OkStatus();
 }
 
+absl::Status GpuCommandBuffer::Case(ExecutionScopeId execution_scope_id,
+                                    DeviceMemory<bool> index,
+                                    std::vector<Builder> branches) {
+  return Case(
+      execution_scope_id,
+      DeviceMemory<uint8_t>::MakeFromByteSize(index.opaque(), index.size()),
+      /*index_is_bool=*/true, branches);
+}
+
+absl::Status GpuCommandBuffer::Case(ExecutionScopeId execution_scope_id,
+                                    DeviceMemory<int32_t> index,
+                                    std::vector<Builder> branches) {
+  return Case(
+      execution_scope_id,
+      DeviceMemory<uint8_t>::MakeFromByteSize(index.opaque(), index.size()),
+      /*index_is_bool=*/false, branches);
+}
+
 absl::Status GpuCommandBuffer::For(ExecutionScopeId execution_scope_id,
                                    int32_t num_iteration,
                                    DeviceMemory<int32_t> loop_counter,

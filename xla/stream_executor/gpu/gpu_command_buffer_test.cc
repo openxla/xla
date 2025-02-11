@@ -993,7 +993,7 @@ TEST(GpuCommandBufferTest, ConditionalCaseEmptyGraph) {
 
   // Create a command buffer with a single conditional operation.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->Case(index, false, {branch0, branch1}));
+  TF_ASSERT_OK(cmd_buffer->Case(index, {branch0, branch1}));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
@@ -1088,7 +1088,7 @@ TEST_P(GpuCommandBufferCaseTest, ConditionalMultiCase) {
 
   // Create a command buffer with a single conditional operation.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->Case(index, false, branches));
+  TF_ASSERT_OK(cmd_buffer->Case(index, branches));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   // We test the out of bounds cases as well ( i < 0, i >= kNumCases).
@@ -1175,7 +1175,7 @@ TEST(GpuCommandBufferTest, ConditionalCase) {
 
   // Create a command buffer with a single conditional operation.
   auto cmd_buffer = executor->CreateCommandBuffer(primary).value();
-  TF_ASSERT_OK(cmd_buffer->Case(index, false, {branch0, branch1}));
+  TF_ASSERT_OK(cmd_buffer->Case(index, {branch0, branch1}));
   TF_ASSERT_OK(cmd_buffer->Finalize());
 
   TF_ASSERT_OK(cmd_buffer->Submit(stream.get()));
