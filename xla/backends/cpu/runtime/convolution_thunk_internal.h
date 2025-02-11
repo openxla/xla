@@ -338,7 +338,7 @@ void EigenGenericConv2D(
     auto num_tasks = Eigen::numext::div_ceil(feature_group_count, task_size);
 
     if (use_thunk_runtime) {
-      ScheduleAll(&device, num_tasks, [=, &device](Eigen::Index task_index) {
+      ScheduleAll(&device, num_tasks, [=, &device](Eigen::Index task_index) mutable {
         Eigen::Index start = task_index * task_size;
         Eigen::Index end = std::min(start + task_size, feature_group_count);
         for (Eigen::Index i = start; i < end; ++i) {
