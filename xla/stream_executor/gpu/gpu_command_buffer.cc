@@ -465,8 +465,6 @@ GpuCommandBuffer::CreateConditionalHandles(size_t num_handles) {
   handles.reserve(num_handles);
   for (size_t i = 0; i < num_handles; ++i) {
     TF_ASSIGN_OR_RETURN(handles.emplace_back(), CreateConditionalHandle());
-    VLOG(2) << "Creating conditional handle "
-            << reinterpret_cast<void*>(handles.back());
   }
   return handles;
 }
@@ -548,12 +546,10 @@ absl::Status GpuCommandBuffer::AddConditionalCommandNode(
     execution_scope.conditional_command_buffers.push_back(
         {std::move(handles), std::move(cmd_buffers)});
 
-    VLOG(2) << "Create conditional command buffers";
     return absl::OkStatus();
   }
 
   if (state_ == State::kUpdate) {
-    VLOG(2) << "Update conditional command buffers";
     ConditionalCommandBuffers& cond_cmd_buffers =
         execution_scope.conditional_command_buffers[execution_scope.update_state
                                                         .conditional_idx++];
