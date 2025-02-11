@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_SERVICE_SOURCE_TARGET_PAIRS_H_
-#define XLA_SERVICE_SOURCE_TARGET_PAIRS_H_
+#ifndef XLA_HLO_IR_SOURCE_TARGET_PAIRS_H_
+#define XLA_HLO_IR_SOURCE_TARGET_PAIRS_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -28,10 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/string_view.h"
-#include "xla/hlo/parser/hlo_parser.h"
-#include "xla/tsl/platform/statusor.h"
-#include "xla/util.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/xla_data.pb.h"
 
 //  Encapsulation of source-target pairs used in collective permute.
@@ -65,19 +62,12 @@ class SourceTargetPairs {
     }
   }
 
-  static absl::StatusOr<SourceTargetPairs> FromString(absl::string_view str) {
-    // reusing replica groups parsing.
-    TF_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> groups,
-                        // absl::StatusOr<std::vector<ReplicaGroup>> groups =
-                        ParseReplicaGroupsOnly(str));
-    SourceTargetPairs res;
-    for (const ReplicaGroup& group : groups) {
-      if (group.replica_ids_size() != 2) {
-        return Internal("Incorrect element size : %s", str);
-      }
-      res.emplace_back(group.replica_ids(0), group.replica_ids(1));
+  static SourceTargetPairs FromProto(const HloInstructionProto& instr_proto) {
+    SourceTargetPairs pairs;
+    for (auto& proto_pair : instr_proto.source_target_pairs()) {
+      pairs.emplace_back(proto_pair.source(), proto_pair.target());
     }
-    return res;
+    return pairs;
   }
 
   // Returns a cannoical string such as {{0,1},{1,2},{2,3},{3,0}}.
@@ -140,4 +130,4 @@ class SourceTargetPairs {
 };
 
 }  // namespace xla
-#endif  // XLA_SERVICE_SOURCE_TARGET_PAIRS_H_
+#endif  // XLA_HLO_IR_SOURCE_TARGET_PAIRS_H_

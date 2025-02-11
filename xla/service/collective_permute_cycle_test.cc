@@ -18,7 +18,7 @@ limitations under the License.
 #include <utility>
 
 #include <gtest/gtest.h>
-#include "xla/service/source_target_pairs.h"
+#include "xla/hlo/ir/source_target_pairs.h"
 
 namespace xla {
 namespace collective_permute_cycle {
