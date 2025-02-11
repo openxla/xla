@@ -2760,7 +2760,8 @@ absl::StatusOr<bool> LatencyHidingScheduler::Run(
   LOG(INFO) << "LatencyHidingScheduler current memory usage: "
             << scheduler_core_->GetMemoryPeak()
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
-  SetKVMetric(module, "peak_memory_usage", scheduler_core_->GetMemoryPeak());
+  SetKVMetric(module, std::string(kPeakMemoryUsage),
+              scheduler_core_->GetMemoryPeak());
   for (HloComputation* computation : computations_to_schedule) {
     VLOG(1) << "Statistics before scheduling:";
     LogScheduleStatistics(computation);

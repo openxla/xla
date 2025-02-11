@@ -3088,8 +3088,8 @@ ENTRY AddR2 {
 // Function to retrieve the value for a specific key from HloPassMetadata
 // for a given pass_name. Returns 0 if the key or pass_name is not found.
 int64_t GetKeyValueFromHloPassMetadata(const HloModuleMetadataProto& metadata,
-                                       const std::string& pass_name,
-                                       const std::string& target_key) {
+                                       absl::string_view pass_name,
+                                       absl::string_view target_key) {
   for (const auto& pass_metadata : metadata.pass_metadata()) {
     if (pass_metadata.pass_name() == pass_name) {
       for (const auto& kv_metric : pass_metadata.kv_metrics()) {
@@ -3104,7 +3104,7 @@ int64_t GetKeyValueFromHloPassMetadata(const HloModuleMetadataProto& metadata,
 
 TEST_F(LatencyHidingSchedulerTest, GetGPUPeakMemoryUsage) {
   // Retrieve GPU peak memory usage and verify it excludes host memory
-  absl::string_view kPeakMemoryUsageWithCpuOffload = R"(
+  absl::string_view hlo_string = R"(
   HloModule offloading, is_scheduled=true
   ENTRY main {
     param.1 = f32[1024]{0} parameter(1)
@@ -3116,8 +3116,7 @@ TEST_F(LatencyHidingSchedulerTest, GetGPUPeakMemoryUsage) {
     ROOT t = (f32[1024]{0}, f32[1024]{0:S(5)}) tuple(copy-done.h2d, copy-done.d2h)
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
-                          ParseHloText(kPeakMemoryUsageWithCpuOffload));
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module, ParseHloText(hlo_string));
   EXPECT_TRUE(hlo_module->has_entry_computation());
   auto sched_config = GetDefaultSchedConfig();
   TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,

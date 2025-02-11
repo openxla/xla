@@ -1164,6 +1164,8 @@ class LatencyHidingScheduler : public HloModulePass {
   absl::flat_hash_set<HloComputation*> computations_to_schedule_;
 };
 
+static constexpr absl::string_view kPeakMemoryUsage = "peak_memory_usage";
+
 }  // namespace xla
 
 #endif  // XLA_SERVICE_LATENCY_HIDING_SCHEDULER_H_
