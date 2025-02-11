@@ -35,8 +35,10 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -151,19 +153,30 @@ absl::StatusOr<bool> RunScheduler(
       /*convert_all_gather=*/HloPredicateTrue,
       /*convert_collective_broadcast=*/HloPredicateTrue,
       /*convert_collective_permute=*/HloPredicateTrue};
-  TF_ASSIGN_OR_RETURN(bool value,
-                      AsyncCollectiveCreator(std::move(config)).Run(module));
-  TF_ASSIGN_OR_RETURN(value, LegalizeSchedulingAnnotations(
-                                 LegalizeSchedulingAnnotations::Config())
-                                 .Run(module));
+  HloPassPipeline pipeline("latency_hiding_scheduler_pipeline");
+  pipeline.AddPass<AsyncCollectiveCreator>(std::move(config));
+  pipeline.AddPass<LegalizeSchedulingAnnotations>(
+      LegalizeSchedulingAnnotations::Config());
+
   HloCostAnalysis::ShapeSizeFunction shape_size_bytes =
       [&shape_size_bytes](const Shape& shape) -> int64_t {
+    if (shape.has_layout() &&
+        shape.layout().memory_space() == Layout::kHostMemorySpace) {
+      return 0;
+    }
     int64_t shape_size = 0;
     if (shape.IsToken()) {
       return 0;
     }
     if (shape.IsTuple()) {
       for (auto& sub_shape : shape.tuple_shapes()) {
+        if (sub_shape.has_layout() &&
+            sub_shape.layout().memory_space() == Layout::kHostMemorySpace) {
+          // The size of a tuple counts only the pointers, not the data.
+          // Therefore, the memory spaces of the contained shapes do not matter
+          // and we do not need to recurse here.
+          return ShapeUtil::ByteSizeOf(shape, /*pointer_size=*/8);
+        }
         shape_size += shape_size_bytes(sub_shape);
       }
       return shape_size;
@@ -176,13 +189,14 @@ absl::StatusOr<bool> RunScheduler(
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       shape_size_bytes, async_tracker.get(), latency_estimator.get(),
       sched_config);
-  TF_ASSIGN_OR_RETURN(
-      value, LatencyHidingScheduler(std::move(latency_estimator),
-                                    std::move(async_tracker),
-                                    std::move(scheduler_core), shape_size_bytes)
-                 .Run(module));
 
-  return value;
+  // Add the latency hiding scheduler pass in order to get the metadata of
+  // the peak memory usage from the pass.
+  pipeline.AddPass<LatencyHidingScheduler>(
+      std::move(latency_estimator), std::move(async_tracker),
+      std::move(scheduler_core), shape_size_bytes);
+
+  return pipeline.Run(module);
 }
 
 }  // namespace
@@ -3069,6 +3083,51 @@ ENTRY AddR2 {
   EXPECT_LT(PositionInVector(new_instruction_sequence, cps),
             PositionInVector(new_instruction_sequence, cpd2));
   XLA_VLOG_LINES(1, hlo_module->ToString());
+}
+
+// Function to retrieve the value for a specific key from HloPassMetadata
+// for a given pass_name. Returns 0 if the key or pass_name is not found.
+int64_t GetKeyValueFromHloPassMetadata(const HloModuleMetadataProto& metadata,
+                                       const std::string& pass_name,
+                                       const std::string& target_key) {
+  for (const auto& pass_metadata : metadata.pass_metadata()) {
+    if (pass_metadata.pass_name() == pass_name) {
+      for (const auto& kv_metric : pass_metadata.kv_metrics()) {
+        if (kv_metric.key() == target_key) {
+          return kv_metric.value();
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+TEST_F(LatencyHidingSchedulerTest, GetGPUPeakMemoryUsage) {
+  // Retrieve GPU peak memory usage and verify it excludes host memory
+  absl::string_view kPeakMemoryUsageWithCpuOffload = R"(
+  HloModule offloading, is_scheduled=true
+  ENTRY main {
+    param.1 = f32[1024]{0} parameter(1)
+    copy-start.d2h = (f32[1024]{0:S(5)}, f32[1024]{0}, u32[]) copy-start(param.1)
+    copy-done.d2h = f32[1024]{0:S(5)} copy-done(copy-start.d2h)
+    param.0 = f32[1024]{0:S(5)} parameter(0)
+    copy-start.h2d = (f32[1024]{0}, f32[1024]{0:S(5)}, u32[]) copy-start(param.0)
+    copy-done.h2d = f32[1024]{0} copy-done(copy-start.h2d)
+    ROOT t = (f32[1024]{0}, f32[1024]{0:S(5)}) tuple(copy-done.h2d, copy-done.d2h)
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                          ParseHloText(kPeakMemoryUsageWithCpuOffload));
+  EXPECT_TRUE(hlo_module->has_entry_computation());
+  auto sched_config = GetDefaultSchedConfig();
+  TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,
+                            std::make_unique<TestLatencyEstimator>(), nullptr));
+  const HloModuleMetadataProto& metadata = hlo_module->metadata()->proto();
+  std::string pass_name = "latency-hiding-scheduler";
+  std::string target_key = "peak_memory_usage";
+  int64_t peak_memory_bytes =
+      GetKeyValueFromHloPassMetadata(metadata, pass_name, target_key);
+  EXPECT_LT(peak_memory_bytes, 4200);
 }
 
 TEST_F(LatencyHidingSchedulerTest, ScheduleLoopPeeledSendDoneBeforeWhile) {
