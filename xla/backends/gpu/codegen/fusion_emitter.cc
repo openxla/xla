@@ -103,6 +103,9 @@ absl::Status AnnotateKernelLaunchDimensions(
   // Add __launch_bounds__ to metadata. This limits registers per thread to
   // avoid out-of-resources launching errors.
 
+  llvm::Triple target_triple = llvm::Triple(llvm_module->getTargetTriple());
+
+  if (target_triple.isNVPTX()) {
   // Our launch bounds are exact, so we can specify them as
   // reqntid[xyz] rather than maxntid[xyz].
   AnnotateWithInt32Value("reqntidx", launch_dims.thread_counts_per_block().x,
@@ -117,6 +120,17 @@ absl::Status AnnotateKernelLaunchDimensions(
   }
   // Maybe we want to set "reqnctapercluster" here, but not sure if needed or if
   // LLVM supports that yet. Let's do that later when needed.
+  } else if (target_triple.getArch() == llvm::Triple::amdgcn) {
+    kernel->addFnAttr("amdgpu-flat-work-group-size",
+                         absl::StrJoin({launch_dims.num_threads_per_block(),
+                                        launch_dims.num_threads_per_block()},
+                                       ","));
+    kernel->addFnAttr("amdgpu-max-num-workgroups",
+                         absl::StrJoin({launch_dims.block_counts().x,
+                                        launch_dims.block_counts().y,
+                                        launch_dims.block_counts().z},
+                                       ","));
+  }
   return absl::OkStatus();
 }
 
