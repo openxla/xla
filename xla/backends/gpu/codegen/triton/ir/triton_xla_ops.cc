@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 
+#include <cassert>
 #include <optional>
 
 #include "llvm/ADT/SmallVector.h"
@@ -30,6 +31,8 @@ limitations under the License.
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeUtilities.h"  // IWYU pragma: keep
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_dialect.cc.inc"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Types.h"
@@ -76,6 +79,8 @@ LogicalResult SparseDotOp::inferReturnTypes(
   }
   return success();
 }
+
+bool SparseDotOp::verifyDims() { return true; }
 
 LogicalResult SparseDotOp::verify() {
   // Implied properties of 2:4 sparse dots.
