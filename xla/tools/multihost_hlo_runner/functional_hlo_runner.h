@@ -417,12 +417,6 @@ class FunctionalHloRunner {
   static absl::StatusOr<HloModuleAndArguments> LoadHloModuleAndArguments(
       absl::string_view hlo_file, InputFormat input_format);
 
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromString(
-      absl::string_view hlo_text);
-
-  static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromProto(
-      const HloModuleProto& proto);
-
   // This would ideally be private, but we need it for the implementation of
   // MultihostHloRunner.
   static absl::Status PrepareHloModuleForCompilation(

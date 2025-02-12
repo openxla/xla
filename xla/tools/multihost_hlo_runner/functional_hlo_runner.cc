@@ -80,12 +80,6 @@ limitations under the License.
 namespace xla {
 
 namespace {
-// Creates an HloModule from the given proto.
-absl::StatusOr<std::unique_ptr<HloModule>> HloTextToModule(
-    absl::string_view hlo_text) {
-  return ParseAndReturnUnverifiedModule(hlo_text);
-}
-
 template <typename ElementType>
 void PopulateWithSameValue(Literal* literal, ElementType val) {
   for (ElementType& element : literal->data<ElementType>()) {
@@ -647,16 +641,6 @@ FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
     }
   }
   return hlo_module_and_arguments;
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromString(absl::string_view hlo_text) {
-  return HloTextToModule(hlo_text);
-}
-
-absl::StatusOr<std::unique_ptr<HloModule>>
-FunctionalHloRunner::ReadModuleFromProto(const HloModuleProto& proto) {
-  return HloRunnerInterface::HloProtoToModule(proto);
 }
 
 absl::StatusOr<FunctionalHloRunner::PerDeviceLiteralVecType>
