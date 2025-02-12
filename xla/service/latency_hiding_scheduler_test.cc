@@ -3122,10 +3122,9 @@ TEST_F(LatencyHidingSchedulerTest, GetGPUPeakMemoryUsage) {
   TF_EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,
                             std::make_unique<TestLatencyEstimator>(), nullptr));
   const HloModuleMetadataProto& metadata = hlo_module->metadata()->proto();
-  std::string pass_name = "latency-hiding-scheduler";
   std::string target_key = "peak_memory_usage";
-  int64_t peak_memory_bytes =
-      GetKeyValueFromHloPassMetadata(metadata, pass_name, target_key);
+  int64_t peak_memory_bytes = GetKeyValueFromHloPassMetadata(
+      metadata, LatencyHidingScheduler::kName, target_key);
   EXPECT_LT(peak_memory_bytes, 4200);
 }
 
