@@ -283,7 +283,7 @@ $L__BB0_3:
 // May have to include these compiler options: -arch sm_50
 // clang-format on
 inline constexpr absl::string_view kSetCaseConditionKernel = R"(
-.version 8.5
+.version 8.3
 .target sm_50
 .address_size 64
 
@@ -294,29 +294,9 @@ inline constexpr absl::string_view kSetCaseConditionKernel = R"(
 	.param .b32 cudaGraphSetConditional_param_1
 )
 ;
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo5beginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo3endE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo6cbeginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo4cendE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo6rbeginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo4rendE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo7crbeginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__45__cpo5crendE[1];
+.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std3__48in_placeE[1];
 .global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4swapE[1];
 .global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo9iter_moveE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo5beginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo3endE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo6cbeginE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4cendE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo7advanceE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo9iter_swapE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4nextE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4prevE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4dataE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo5cdataE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo4sizeE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo5ssizeE[1];
-.global .align 1 .b8 _ZN37_INTERNAL_d9baebcd_7_case_cu_50b664ab4cuda3std6ranges3__45__cpo8distanceE[1];
 
 .visible .entry set_case_condition(
 	.param .u64 set_case_condition_param_0,
