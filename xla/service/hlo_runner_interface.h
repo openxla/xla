@@ -222,7 +222,7 @@ class HloRunnerInterface {
   // HloModule.
   static absl::StatusOr<std::unique_ptr<HloModule>>
   ReadModuleFromBinaryProtoFile(absl::string_view filename,
-                                const DebugOptions& debug_options = {});
+                                const DebugOptions& debug_options = DebugOptions::default_instance());
 
   // Reads the proto file in xla.HloModule format, creates and returns the
   // HloModule.
