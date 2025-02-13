@@ -21,6 +21,7 @@ package(
         "@tsl//tsl/profiler:__subpackages__",
         "//tensorflow/core/profiler:__subpackages__",
         "//tensorflow/python/profiler/internal:__pkg__",
+        "//third_party/xprof/pywrap:__pkg__",
     ]),
     licenses = ["notice"],
 )
