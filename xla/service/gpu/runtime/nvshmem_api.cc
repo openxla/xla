@@ -204,7 +204,7 @@ absl::Status NvshmemApi::Initialize() {
   VLOG(3) << absl::StreamFormat(
       "Initialized NVSHMEM on process %d; num_processes=%llu", process_id_,
       num_processes_);
-  all_teams.reserve((int64_t)NvshmemApi::TEAMSKIND::kTOTAL_TEAMS_KIND);
+  all_teams.resize((int64_t)NvshmemApi::TEAMSKIND::kTOTAL_TEAMS_KIND);
   all_teams[(int64_t)NvshmemApi::TEAMSKIND::kWORLD] = NVSHMEM_TEAM_WORLD;
   all_teams[(int64_t)NvshmemApi::TEAMSKIND::kSHARED] = NVSHMEM_TEAM_SHARED;
   all_teams[(int64_t)NvshmemApi::TEAMSKIND::kNODE] = NVSHMEMX_TEAM_NODE;
@@ -259,6 +259,12 @@ absl::Status NvshmemApi::DoAllreduce(NvshmemApi::TEAMSKIND team_kind,
     }
     case PrimitiveType::F16: {
       CALL_NVSHMEM_REDUCTION_DATATYPE(half, __half, team, gpu_stream,
+                                      reduction_kind, dest_ptr, source_ptr,
+                                      num_elements);
+      break;
+    }
+    case PrimitiveType::F32: {
+      CALL_NVSHMEM_REDUCTION_DATATYPE(float, float, team, gpu_stream,
                                       reduction_kind, dest_ptr, source_ptr,
                                       num_elements);
       break;
