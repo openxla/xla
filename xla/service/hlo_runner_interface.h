@@ -233,7 +233,7 @@ class HloRunnerInterface {
   // Reads the hlo text dump file in HloModule::ToString format, creates and
   // returns the HloModule.
   static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromHloTextFile(
-      absl::string_view filename, const DebugOptions& = {},
+      absl::string_view filename, const DebugOptions& = DebugOptions::default_instance(),
       const HloParserOptions& options = HloParserOptions());
 
   // Creates a runner-internal executable object given an HLO module and returns
