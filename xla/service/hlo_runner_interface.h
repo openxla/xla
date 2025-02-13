@@ -216,7 +216,8 @@ class HloRunnerInterface {
 
   // Creates an HloModule from the given proto.
   static absl::StatusOr<std::unique_ptr<HloModule>> CreateModuleFromProto(
-      const HloModuleProto& proto, const DebugOptions& = {});
+      const HloModuleProto& proto,
+      const DebugOptions& debug_options = DebugOptions::default_instance());
 
   // Reads the proto file in xla.HloProto format, creates and returns the
   // HloModule.
