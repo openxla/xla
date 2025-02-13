@@ -1532,6 +1532,31 @@ TEST(XlaBuilderTest, RaggedDotContractingWithPreferredElementType) {
               GmockMatch(m::Op().WithShapeEqualTo(&expected)));
 }
 
+TEST(XlaBuilderTest, BlockScaledDot) {
+  XlaBuilder b(TestName());
+  auto lhs = Parameter(&b, 0, ShapeUtil::MakeShape(F8E4M3FN, {16, 128}), "lhs");
+  auto rhs = Parameter(&b, 1, ShapeUtil::MakeShape(F8E4M3FN, {32, 128}), "rhs");
+  auto lhs_scale =
+      Parameter(&b, 2, ShapeUtil::MakeShape(F8E8M0FNU, {16, 4}), "lhs_scale");
+  auto rhs_scale =
+      Parameter(&b, 3, ShapeUtil::MakeShape(F8E8M0FNU, {32, 4}), "rhs_scale");
+
+  DotDimensionNumbers dot_dnums;
+  dot_dnums.add_lhs_contracting_dimensions(1);
+  dot_dnums.add_rhs_contracting_dimensions(1);
+  BlockScaledDotConfig block_scaled_config;
+  *block_scaled_config.mutable_dot_dimension_numbers() = dot_dnums;
+  block_scaled_config.set_lhs_block_size(32);
+  block_scaled_config.set_rhs_block_size(32);
+
+  BlockScaledDot(lhs, rhs, lhs_scale, rhs_scale, block_scaled_config,
+                 /*preferred_element_type=*/F32);
+  TF_ASSERT_OK_AND_ASSIGN(const auto module, BuildHloModule(b));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[16, 32]"));
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
 TEST(XlaBuilderTest, ConvolutionWithPreferredElementType) {
   XlaBuilder b(TestName());
   const Shape p0_shape = ShapeUtil::MakeShape(S16, {1, 2, 2, 128});

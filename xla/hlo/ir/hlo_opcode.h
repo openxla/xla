@@ -68,6 +68,7 @@ namespace xla {
   V(kBatchNormTraining, "batch-norm-training", 3)                              \
   V(kBitcast, "bitcast", 1)                                                    \
   V(kBitcastConvert, "bitcast-convert", 1)                                     \
+  V(kBlockScaledDot, "block-scaled-dot", kHloOpcodeIsVariadic)                 \
   V(kBroadcast, "broadcast", 1)                                                \
   V(kCall, "call", kHloOpcodeIsVariadic)                                       \
   V(kCbrt, "cbrt", 1)                                                          \

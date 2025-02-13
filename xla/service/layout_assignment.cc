@@ -2885,6 +2885,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kBatchNormInference:
     case HloOpcode::kBatchNormTraining:
     case HloOpcode::kBitcast:
+    case HloOpcode::kBlockScaledDot:
     case HloOpcode::kBroadcast:
     case HloOpcode::kCall:
     case HloOpcode::kCollectivePermuteStart:

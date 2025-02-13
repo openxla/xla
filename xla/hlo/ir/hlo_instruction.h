@@ -469,6 +469,14 @@ class HloInstruction {
       const RaggedDotDimensionNumbers& dimension_numbers,
       const PrecisionConfig& precision_config);
 
+  // Create a block scaled dot op with operands 'lhs', 'rhs', and optional block
+  // scaling factors. Same arguments as `HloBlockScaledDotInstruction`
+  // constructor, see the comments there.
+  static std::unique_ptr<HloInstruction> CreateBlockScaledDot(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      const BlockScaledDotConfig& block_scaled_config,
+      absl::Span<HloInstruction* const> scales);
+
   // Creates a reduce-precision op, where operand is the data to reduce in
   // precision, and exponent_bits and mantissa_bits describe the precision to
   // reduce it to.

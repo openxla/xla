@@ -2675,6 +2675,88 @@ class HloRaggedDotInstruction : public HloInstruction {
   PrecisionConfig precision_config_;
 };
 
+class HloBlockScaledDotInstruction : public HloInstruction {
+ public:
+  static const int kOperands = 2;
+
+  // Create a block scaled dot op with operands 'lhs', 'rhs', and optional block
+  // scaling factors. If 'block_scaled_config' has both 'lhs_block_size' and
+  // 'rhs_block_size' set, then 'scales' must contain two operands (first for
+  // the LHS scaling factor, second for the RHS scaling factor). At least one
+  // of 'lhs_block_size' and 'rhs_block_size' must be set - in this case, the
+  // 'scales' must contain one operand for the corresponding side.
+  //
+  // Block scaled dot performs dequantization of input/scale tensors for
+  // LHS and/or RHS sides (by broadcasting the scale tensor and multiplying it
+  // by the input tensor), and uses the dequantized values as the (implied) dot
+  // op inputs.
+  //
+  // The shapes of the input/scale pairs must have the same dimensions, except
+  // one (the block scaled dimension) which must be divisible by the block size
+  // for the input tensor; the result of the division is the block scaled
+  // dimension size for the scale tensor.
+  // Example: input shape [N,K*B], scale shape [N,K] for block size B.
+  explicit HloBlockScaledDotInstruction(
+      const Shape& shape, HloInstruction* lhs, HloInstruction* rhs,
+      const BlockScaledDotConfig& block_scaled_config,
+      absl::Span<HloInstruction* const> scales);
+
+  const BlockScaledDotConfig& block_scaled_config() const {
+    return block_scaled_config_;
+  }
+
+  // Basic helpers for the block scaled config.
+  DotDimensionNumbers dot_dimension_numbers() const {
+    return block_scaled_config_.dot_dimension_numbers();
+  }
+  int64_t lhs_block_size() const {
+    return block_scaled_config_.lhs_block_size();
+  }
+  int64_t rhs_block_size() const {
+    return block_scaled_config_.rhs_block_size();
+  }
+
+  bool has_lhs_scale() const {
+    return block_scaled_config_.has_lhs_block_size();
+  }
+  bool has_rhs_scale() const {
+    return block_scaled_config_.has_rhs_block_size();
+  }
+  int num_scale_operands() const { return has_lhs_scale() + has_rhs_scale(); }
+
+  const HloInstruction* lhs_scale_operand() const {
+    CHECK(has_lhs_scale());
+    return operand(kOperands);
+  }
+  const HloInstruction* rhs_scale_operand() const {
+    CHECK(has_rhs_scale());
+    return operands().back();
+  }
+
+  // Returns a serialized representation of this instruction.
+  HloInstructionProto ToProto() const override;
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kBlockScaledDot;
+  }
+
+ private:
+  void PrintExtraAttributesImpl(AttributePrinter& printer,
+                                const HloPrintOptions& options) const override;
+  bool IdenticalSlowPath(
+      const HloInstruction& other,
+      absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+          eq_computations) const override;
+
+  // Implementation for non-common logic of CloneWithNewOperands.
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+
+  // Block scaled dot configuration.
+  BlockScaledDotConfig block_scaled_config_;
+};
+
 class HloDomainInstruction : public HloInstruction {
  public:
   explicit HloDomainInstruction(

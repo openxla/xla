@@ -192,6 +192,15 @@ absl::StatusOr<HloInstruction*> MakeRaggedDotHlo(
     const PrecisionConfig& precision_config,
     std::optional<PrimitiveType> preferred_element_type);
 
+// Creates a BlockScaledDot HLO instruction and adds it to the computation
+// containing `lhs`, `rhs`, and optionally `lhs_scale`, `rhs_scale` (all must
+// be in the same computation). An optional `preferred_element_type` can be
+// specified to override the element type.
+absl::StatusOr<HloInstruction*> MakeBlockScaledDotHlo(
+    HloInstruction* lhs, HloInstruction* rhs, HloInstruction* lhs_scale,
+    HloInstruction* rhs_scale, const BlockScaledDotConfig& block_scaled_config,
+    std::optional<PrimitiveType> preferred_element_type);
+
 // Creates a Map HLO instruction and adds it to the computation containing the
 // operands. All operands must be in the same computation.
 absl::StatusOr<HloInstruction*> MakeMapHlo(
