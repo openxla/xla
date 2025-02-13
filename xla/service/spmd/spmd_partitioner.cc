@@ -422,6 +422,12 @@ void SpmdBuilder::SetBroadcastDimsForElementwise(const HloInstruction& hlo) {
   }
 }
 
+void PartitionedHlo::AddReshardCache(const HloSharding& sharding,
+                                     const PartitionedHlo& phlo) {
+  state_.reshard_cache->per_hlo_cache[hlo_].reshard_cache.insert_or_assign(
+      sharding, phlo);
+};
+
 PartitionedHlo PartitionedHlo::Reshard(const HloSharding& target,
                                        std::optional<Literal> pad_value) const {
   if (sharding() == target) {
@@ -3091,10 +3097,6 @@ absl::Status SpmdPartitioningVisitor::HandleTranspose(HloInstruction* hlo) {
 
 absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
   const HloSharding& sharding = hlo->sharding();
-  if (sharding.IsTileMaximal()) {
-    return DefaultAction(hlo);
-  }
-
   const Shape& in_shape = hlo->operand(0)->shape();
   const Shape& out_shape = hlo->shape();
   auto operand = GetPartitionedHlo(hlo->operand(0));
@@ -3133,6 +3135,20 @@ absl::Status SpmdPartitioningVisitor::HandleReshape(HloInstruction* hlo) {
         PartitionedHlo(reshape, hlo->shape(), MakePartitioningState())
             .Reshard(sharding);
     SetPartitionedHlo(hlo, [&] { return reshard_reshape.hlo(); });
+
+    if (sharding_pairs.size() == 2 &&
+        sharding_pairs[1].first == operand.sharding()) {
+      // The first pair is used above. We add a reshard cache with the second
+      // pair.
+      const auto& out_sharding_cache = sharding_pairs[1].second;
+      HloInstruction* reshape = b_.AddInstruction(hlo->CloneWithNewOperands(
+          MakePartitionedShape(hlo->shape(), out_sharding_cache),
+          {operand.hlo()}));
+      reshape->set_sharding(out_sharding_cache);
+      reshard_reshape.AddReshardCache(
+          out_sharding_cache,
+          PartitionedHlo(reshape, hlo->shape(), MakePartitioningState()));
+    }
     return absl::OkStatus();
   }
 
