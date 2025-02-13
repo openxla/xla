@@ -575,7 +575,7 @@ FunctionalHloRunner::ReadModuleFromTextProtoFile(absl::string_view hlo_file) {
   HloProto proto;
   TF_RETURN_IF_ERROR(
       tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  return HloRunnerInterface::HloProtoToModule(proto.hlo_module());
+  return HloRunnerInterface::CreateModuleFromProto(proto.hlo_module());
 }
 
 absl::StatusOr<FunctionalHloRunner::HloModuleAndArguments>
@@ -593,7 +593,7 @@ FunctionalHloRunner::ReadModuleFromSnapshotBinaryProtoFile(
   }
   TF_ASSIGN_OR_RETURN(
       hlo_module_and_arguments.hlo_module,
-      HloRunnerInterface::HloProtoToModule(proto.hlo().hlo_module()));
+      HloRunnerInterface::CreateModuleFromProto(proto.hlo().hlo_module()));
   return hlo_module_and_arguments;
 }
 
@@ -604,8 +604,9 @@ FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotBinaryProtoFile(
   HloModuleAndArguments hlo_module_and_arguments;
   TF_RETURN_IF_ERROR(
       tsl::ReadBinaryProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                      HloRunnerInterface::HloProtoToModule(proto.hlo_module()));
+  TF_ASSIGN_OR_RETURN(
+      hlo_module_and_arguments.hlo_module,
+      HloRunnerInterface::CreateModuleFromProto(proto.hlo_module()));
 
   for (const auto& arguments : proto.partitions()) {
     hlo_module_and_arguments.arguments.emplace_back();
@@ -627,8 +628,9 @@ FunctionalHloRunner::ReadModuleFromUnoptimizedSnapshotTextProtoFile(
   HloModuleAndArguments hlo_module_and_arguments;
   TF_RETURN_IF_ERROR(
       tsl::ReadTextProto(tsl::Env::Default(), std::string(hlo_file), &proto));
-  TF_ASSIGN_OR_RETURN(hlo_module_and_arguments.hlo_module,
-                      HloRunnerInterface::HloProtoToModule(proto.hlo_module()));
+  TF_ASSIGN_OR_RETURN(
+      hlo_module_and_arguments.hlo_module,
+      HloRunnerInterface::CreateModuleFromProto(proto.hlo_module()));
 
   for (const auto& arguments : proto.partitions()) {
     hlo_module_and_arguments.arguments.emplace_back();

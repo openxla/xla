@@ -54,8 +54,9 @@ std::vector<T*> MakePointerVector(absl::Span<T> input_vec) {
 
 }  // namespace
 
-absl::StatusOr<std::unique_ptr<HloModule>> HloRunnerInterface::HloProtoToModule(
-    const HloModuleProto& proto, const DebugOptions& debug_options) {
+absl::StatusOr<std::unique_ptr<HloModule>>
+HloRunnerInterface::CreateModuleFromProto(const HloModuleProto& proto,
+                                          const DebugOptions& debug_options) {
   TF_ASSIGN_OR_RETURN(
       HloModuleConfig config,
       HloModule::CreateModuleConfigFromProto(proto, debug_options));
@@ -68,7 +69,7 @@ HloRunnerInterface::ReadModuleFromBinaryProtoFile(
   HloProto proto;
   TF_RETURN_IF_ERROR(
       tsl::ReadBinaryProto(tsl::Env::Default(), std::string(filename), &proto));
-  return HloProtoToModule(proto.hlo_module(), debug_options);
+  return CreateModuleFromProto(proto.hlo_module(), debug_options);
 }
 
 /*static*/ absl::StatusOr<std::unique_ptr<HloModule>>

@@ -215,14 +215,15 @@ class HloRunnerInterface {
       absl::string_view hlo_string, const DebugOptions& debug_options);
 
   // Creates an HloModule from the given proto.
-  static absl::StatusOr<std::unique_ptr<HloModule>> HloProtoToModule(
+  static absl::StatusOr<std::unique_ptr<HloModule>> CreateModuleFromProto(
       const HloModuleProto& proto, const DebugOptions& = {});
 
   // Reads the proto file in xla.HloProto format, creates and returns the
   // HloModule.
   static absl::StatusOr<std::unique_ptr<HloModule>>
-  ReadModuleFromBinaryProtoFile(absl::string_view filename,
-                                const DebugOptions& debug_options = DebugOptions::default_instance());
+  ReadModuleFromBinaryProtoFile(
+      absl::string_view filename,
+      const DebugOptions& debug_options = DebugOptions::default_instance());
 
   // Reads the proto file in xla.HloModule format, creates and returns the
   // HloModule.
@@ -233,7 +234,8 @@ class HloRunnerInterface {
   // Reads the hlo text dump file in HloModule::ToString format, creates and
   // returns the HloModule.
   static absl::StatusOr<std::unique_ptr<HloModule>> ReadModuleFromHloTextFile(
-      absl::string_view filename, const DebugOptions& = DebugOptions::default_instance(),
+      absl::string_view filename,
+      const DebugOptions& = DebugOptions::default_instance(),
       const HloParserOptions& options = HloParserOptions());
 
   // Creates a runner-internal executable object given an HLO module and returns
