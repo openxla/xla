@@ -624,7 +624,11 @@ int unsetenv(const char* name);
 /// underlying implementation may choose to ignore it.
 struct ThreadOptions {
   /// Thread stack size to use (in bytes).
-  size_t stack_size = 0;  // 0: use system default value
+  // On Mac OS the default stack size is 512KiB, which is too small for some
+  // BLAS and LAPACK functions (https://github.com/google/jax/issues/20428).
+  // On Linux we also observed that 2MB wasn't enough to run some OpenBLAS
+  // functions.
+  size_t stack_size = 8 * 1024 * 1024;  // 8 MB
   /// Guard area size to use near thread stacks to use (in bytes)
   size_t guard_size = 0;  // 0: use system default value
   int numa_node = port::kNUMANoAffinity;

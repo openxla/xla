@@ -608,17 +608,6 @@ absl::Span<xla::ifrt::Device* const> LoadedExecutable::addressable_devices()
   return addressable_devices_;
 }
 
-namespace {
-
-static tsl::ThreadOptions GetThreadOptions() {
-  tsl::ThreadOptions thread_options;
-  // Ensure the threads' stack is large enough for arbitrary Python code.
-  thread_options.stack_size = 2 * 1024 * 1024;  // 2 MiB
-  return thread_options;
-}
-
-}  // namespace
-
 void LoadedExecutable::PollLoadedHostCallback(
     uint64_t handle,
     tsl::RCReference<xla::ifrt::LoadedHostCallback> loaded_host_callback) {
@@ -674,7 +663,7 @@ void LoadedExecutable::PollLoadedHostCallback(
   };
 
   static auto* global_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), GetThreadOptions(), "XLAIFRTProxy",
+      tsl::Env::Default(), "XLAIFRTProxy",
       std::min(16, tsl::port::MaxParallelism()));
   global_pool->Schedule(std::move(f));
 }

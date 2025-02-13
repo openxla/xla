@@ -321,16 +321,6 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetTfrtCpuClient(
 // intensive operations that are supposed to run inside the intra-op threadpool.
 static const size_t kMaxIntraOpThreads = 256;
 
-static tsl::ThreadOptions GetThreadOptions() {
-  tsl::ThreadOptions thread_options;
-  // On Mac OS the default stack size is 512KiB, which is too small for some
-  // BLAS and LAPACK functions (https://github.com/google/jax/issues/20428).
-  // On Linux we also observed that 2MB wasn't enough to run some OpenBLAS
-  // functions.
-  thread_options.stack_size = 8 * 1024 * 1024;
-  return thread_options;
-}
-
 TfrtCpuClient::TfrtCpuClient(
     int process_index, std::vector<std::unique_ptr<TfrtCpuDevice>> devices,
     std::shared_ptr<cpu::CpuCollectives> collectives, size_t num_threads,
@@ -340,13 +330,13 @@ TfrtCpuClient::TfrtCpuClient(
       owned_devices_(std::move(devices)),
       computation_placer_(std::make_unique<ComputationPlacer>()),
       eigen_intraop_pool_(new tsl::thread::ThreadPool(
-          tsl::Env::Default(), GetThreadOptions(), "XLAEigen",
+          tsl::Env::Default(), "XLAEigen",
           std::min(num_threads, kMaxIntraOpThreads))),
       eigen_intraop_device_(
           new Eigen::ThreadPoolDevice(eigen_intraop_pool_->AsEigenThreadPool(),
                                       eigen_intraop_pool_->NumThreads())),
       pjrt_client_thread_pool_(
-          new tsl::thread::ThreadPool(tsl::Env::Default(), GetThreadOptions(),
+          new tsl::thread::ThreadPool(tsl::Env::Default(),
                                       "XLATfrtCpuClient", num_threads)),
       async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
           pjrt_client_thread_pool_.get())),

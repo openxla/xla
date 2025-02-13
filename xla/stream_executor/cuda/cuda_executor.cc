@@ -112,7 +112,7 @@ bool ShouldLaunchDelayKernel() {
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
   static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "cuda_driver", 1);
+      tsl::Env::Default(), "cuda_driver", 1);
   return thread_pool;
 }
 

@@ -132,7 +132,7 @@ int fpus_per_core(std::string gcn_arch_name) {
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
   static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), tsl::ThreadOptions(), "rocm_driver", 1);
+      tsl::Env::Default(), "rocm_driver", 1);
   return thread_pool;
 }
 

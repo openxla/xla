@@ -66,7 +66,6 @@ tsl::thread::ThreadPool* thread_pool() {
   static tsl::thread::ThreadPool* thread_pool = []() {
     constexpr int kMaxParallelism = 32;
     return new tsl::thread::ThreadPool(tsl::Env::Default(),
-                                       tsl::ThreadOptions(),
                                        "CompileAtomPrograms", kMaxParallelism);
   }();
   return thread_pool;
