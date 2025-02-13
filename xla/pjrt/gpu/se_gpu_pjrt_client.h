@@ -260,6 +260,8 @@ std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> BuildLocalDevices(
 
 std::string MakeComputeCapabilityString(const se::DeviceDescription* desc);
 
+std::string GetBootId();
+
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,

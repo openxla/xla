@@ -1081,10 +1081,13 @@ TEST(StreamExecutorGpuClientTest, PopulateNVLinkKVStore) {
     PopulateNVLinkKVStore(kv_store, i);
   }
 
-  for (int i = 0; i < num_nodes; i++) {
+  for (int device_id = 0; device_id < num_nodes; device_id++) {
     CHECK_EQ(
-        kv_store->Get(std::to_string(i), /*timeout=*/absl::Seconds(1)).value(),
-        "{clusterUuid: 00000000-0000-0000-0000-000000000000, cliqueId: 0}");
+        kv_store
+            ->Get(absl::StrCat(GetBootId(), "/", std::to_string(device_id)),
+                  /*timeout=*/absl::Seconds(1))
+            .value(),
+        "00000000-0000-0000-0000-000000000000/0");
   }
 }
 

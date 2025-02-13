@@ -1078,6 +1078,17 @@ void NameDeviceAndLauncherThread(const LocalTopologyProto& node,
 }
 }  // namespace
 
+std::string GetBootId() {
+  std::string boot_id_str;
+  auto boot_id_str_or_status = GetBootIdString();
+  if (!boot_id_str_or_status.ok()) {
+    LOG(INFO) << boot_id_str_or_status.status();
+  } else {
+    boot_id_str = boot_id_str_or_status.value();
+  }
+  return boot_id_str;
+}
+
 absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
     absl::string_view platform_name,
     std::map<int, std::unique_ptr<LocalDeviceState>> local_device_states,
@@ -1090,14 +1101,7 @@ absl::StatusOr<DeviceTopologyPair> BuildDistributedDevices(
   std::vector<std::unique_ptr<PjRtStreamExecutorDevice>> devices;
   LocalTopologyProto local_topology;
   local_topology.set_node_id(node_id);
-  std::string boot_id_str;
-  auto boot_id_str_or_status = GetBootIdString();
-  if (!boot_id_str_or_status.ok()) {
-    LOG(INFO) << boot_id_str_or_status.status();
-  } else {
-    boot_id_str = boot_id_str_or_status.value();
-  }
-  local_topology.set_boot_id(boot_id_str);
+  local_topology.set_boot_id(GetBootId());
   for (const auto& ordinal_and_device : local_device_states) {
     const se::Platform* platform =
         ordinal_and_device.second->executor()->GetPlatform();
@@ -1415,10 +1419,9 @@ void PopulateNVLinkKVStore(std::shared_ptr<KeyValueStoreInterface> kv_store,
       fabricInfo.clusterUuid[10], fabricInfo.clusterUuid[11],
       fabricInfo.clusterUuid[12], fabricInfo.clusterUuid[13],
       fabricInfo.clusterUuid[14], fabricInfo.clusterUuid[15]);
-  std::stringstream ss;
-  ss << "{clusterUuid: " << uuid_str
-     << ", cliqueId: " << std::to_string(fabricInfo.cliqueId) << "}";
-  TF_CHECK_OK(kv_store->Set(std::to_string(device_id), ss.str()));
+  TF_CHECK_OK(kv_store->Set(
+      absl::StrCat(GetBootId(), "/", std::to_string(device_id)),
+      absl::StrCat(uuid_str, "/", std::to_string(fabricInfo.cliqueId))));
 }
 
 }  // namespace xla
