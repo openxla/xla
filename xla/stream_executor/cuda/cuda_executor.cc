@@ -111,8 +111,8 @@ bool ShouldLaunchDelayKernel() {
 // thread::ThreadPool on some platforms), we run certain routines in this pool
 // and wait for completion.
 tsl::thread::ThreadPool* GetDriverExecutor() {
-  static tsl::thread::ThreadPool* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(), "cuda_driver", 1);
+  static tsl::thread::ThreadPool* thread_pool =
+      new tsl::thread::ThreadPool(tsl::Env::Default(), "cuda_driver", 1);
   return thread_pool;
 }
 

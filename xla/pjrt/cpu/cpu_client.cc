@@ -335,9 +335,8 @@ TfrtCpuClient::TfrtCpuClient(
       eigen_intraop_device_(
           new Eigen::ThreadPoolDevice(eigen_intraop_pool_->AsEigenThreadPool(),
                                       eigen_intraop_pool_->NumThreads())),
-      pjrt_client_thread_pool_(
-          new tsl::thread::ThreadPool(tsl::Env::Default(),
-                                      "XLATfrtCpuClient", num_threads)),
+      pjrt_client_thread_pool_(new tsl::thread::ThreadPool(
+          tsl::Env::Default(), "XLATfrtCpuClient", num_threads)),
       async_work_runner_(std::make_unique<ThreadPoolAsyncWorkRunner>(
           pjrt_client_thread_pool_.get())),
       last_collective_launch_event_(

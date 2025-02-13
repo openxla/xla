@@ -44,9 +44,8 @@ using ::tsl::profiler::TraceMe;
 using ::tsl::profiler::TraceMeEncode;
 
 NanoRtClient::NanoRtClient()
-    : intra_op_thread_pool_(
-          new tsl::thread::ThreadPool(tsl::Env::Default(),
-                                      "nanort", DefaultThreadPoolSize())) {}
+    : intra_op_thread_pool_(new tsl::thread::ThreadPool(
+          tsl::Env::Default(), "nanort", DefaultThreadPoolSize())) {}
 
 absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
     const XlaComputation& computation) {

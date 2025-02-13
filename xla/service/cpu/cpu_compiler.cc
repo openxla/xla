@@ -250,8 +250,7 @@ static tsl::thread::ThreadPool* GetCompilationThreadPool() {
   // to be enough to achieve maximum parallel compilation speedup.
   static constexpr int kMaxCompilationThreads = 32;
   static auto* thread_pool = new tsl::thread::ThreadPool(
-      tsl::Env::Default(),
-      "xla-cpu-llvm-codegen",
+      tsl::Env::Default(), "xla-cpu-llvm-codegen",
       std::min(kMaxCompilationThreads, tsl::port::MaxParallelism()));
   return thread_pool;
 }
