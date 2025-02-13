@@ -17,6 +17,8 @@ cc_library(
         "//xla/python:__pkg__",
     ],
     deps = [
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@nanobind",
         "@tsl//tsl/platform:env",
         "@tsl//tsl/platform:logging",
