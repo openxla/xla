@@ -59,8 +59,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloRunnerInterface::HloProtoToModule(
   TF_ASSIGN_OR_RETURN(
       HloModuleConfig config,
       HloModule::CreateModuleConfigFromProto(proto, debug_options));
-  TF_ASSIGN_OR_RETURN(auto module, HloModule::CreateFromProto(proto, config));
-  return std::move(module);
+  return HloModule::CreateFromProto(proto, config);
 }
 
 /*static*/ absl::StatusOr<std::unique_ptr<HloModule>>
