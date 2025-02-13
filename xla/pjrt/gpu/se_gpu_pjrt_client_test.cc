@@ -1599,7 +1599,7 @@ TEST(StreamExecutorGpuClientTest, NvshmemCollectiveTest) {
       }
 
       ENTRY test_computation {
-        id = u32[] replica-id()
+        id = u32[] constant(10)
         start = u32[] all-reduce-start(id), to_apply=apply_op, backend_config={"collective_backend_config":{"backend":"NVSHMEM"}}
         ROOT done = u32[] all-reduce-done(start)
       })";
@@ -1629,7 +1629,7 @@ TEST(StreamExecutorGpuClientTest, NvshmemCollectiveTest) {
   TF_ASSERT_OK(result_buffers[0]->GetReadyFuture().Await());
   TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<xla::Literal> literal,
                           result_buffers[0]->ToLiteralSync());
-  std::vector<uint32_t> ref_data{0};
+  std::vector<uint32_t> ref_data{10};
 
   EXPECT_THAT(literal->data<uint32_t>(), ElementsAreArray(ref_data));
 }
