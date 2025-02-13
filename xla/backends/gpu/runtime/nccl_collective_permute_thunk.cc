@@ -250,20 +250,25 @@ absl::Status NcclCollectivePermuteStartThunk::RunNcclCollective(
                     p2p_memcpy_enabled_;
 
   TF_ASSIGN_OR_RETURN(GpuCollectives * collectives, GetGpuCollectives(params));
-  std::optional<int64_t> source_id = source_target.source;
-  std::optional<int64_t> target_id = source_target.target;
   if (use_memcpy) {
-    // For receiving side, record an event.
+    std::optional<int64_t> source_id = source_target.source;
+    std::optional<int64_t> target_id = source_target.target;
+    // Due to the one-sided push mechanism of memcpy p2p, we need to make sure
+    // the buffer on the receiving side is ready before sender pushes the data.
+    // Receiving side will record an event and the sender will wait for the
+    // event before proceeding.
     if (source_id) {
       absl::MutexLock lock(&barrier_mutex_);
       auto receiver_event = receiver_barrier_events_.find(current_id);
       TF_RETURN_IF_ERROR(stream.RecordEvent(receiver_event->second.get()));
     }
-    auto rendezvous_name =
-        absl::StrFormat("rendezvous of cp; run_id=%d",
-                        params.collective_params->run_id.ToInt());
+    auto rendezvous_name = absl::StrFormat(
+        "rendezvous of collective-permute; run_id=%d; op id:%d",
+        params.collective_params->run_id.ToInt(), config_.config.op_id);
     auto rendezvous_key = CallRendezvousKey{params.collective_params->run_id};
 
+    // Perform a rendezvous to make sure all receivers have their events
+    // recorded.
     Rendezvous(rendezvous_name, rendezvous_key, device_count_,
                /*warn_stuck_timeout=*/absl::Seconds(20),
                /*terminate_timeout=*/absl::Seconds(40));
