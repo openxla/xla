@@ -858,6 +858,11 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
   return LookupPjRtDevice(pjrt_device);
 }
 
+tsl::RCReference<DeviceList> PjRtClient::MakeDeviceList(
+    absl::Span<Device* const> devices) const {
+  return xla::ifrt::BasicDeviceList::Create(devices);
+}
+
 const AttributeMap& PjRtClient::Attributes() const { return attributes_; }
 
 absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
@@ -947,12 +952,15 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
         return InvalidArgument("Cannot copy array to non-addressable device %s",
                                device->DebugString());
       }
-      TF_ASSIGN_OR_RETURN(
-          buffer,
-          pjrt_client_->BufferFromHostBuffer(
-              data, primitive_type, shape.dims(), byte_strides, semantics,
-              on_done_with_host_buffer_per_device,
-              tensorflow::down_cast<PjRtDevice*>(device)->pjrt_device()));
+      TF_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
+                          tensorflow::down_cast<PjRtDevice*>(device)
+                              ->pjrt_device()
+                              ->default_memory_space());
+      TF_ASSIGN_OR_RETURN(buffer,
+                          pjrt_client_->BufferFromHostBuffer(
+                              data, primitive_type, shape.dims(), byte_strides,
+                              semantics, on_done_with_host_buffer_per_device,
+                              memory_space, /*device_layout=*/nullptr));
     }
     buffers.push_back(std::move(buffer));
   }
@@ -967,7 +975,7 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
   DCHECK(this);
   return AssembleArrayFromSingleDeviceArrays(
       std::move(shape), std::move(sharding), arrays, semantics,
-      SingleDeviceShardSemantics::kAllShards);
+      SingleDeviceShardSemantics::kAddressableShards);
 }
 
 absl::StatusOr<tsl::RCReference<Array>>

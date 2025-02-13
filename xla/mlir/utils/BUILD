@@ -8,6 +8,8 @@ package(
     default_visibility = internal_visibility([
         "//third_party/golang/github_com/gomlx/gomlx:__subpackages__",
         "//xla:internal",
+        "//third_party/py/jax/_src/pallas/google/xla_export:__subpackages__",
+        "//learning/infra/mira/experimental/orbax_model:__subpackages__",  # For ConvertPrimitiveTypeToMlirType
     ]),
     licenses = ["notice"],
 )
@@ -18,6 +20,7 @@ cc_library(
     hdrs = ["error_util.h"],
     compatible_with = get_compatible_with_portable(),
     deps = [
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -25,7 +28,6 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:logging",
     ],
 )
 
@@ -35,12 +37,13 @@ cc_test(
     deps = [
         ":error_util",
         "//xla/tsl/lib/core:status_test_util",
+        "//xla/tsl/platform:status",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:status",
     ],
 )
 
@@ -53,10 +56,10 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:statusor",
     ],
 )
 
@@ -67,11 +70,12 @@ xla_cc_test(
         ":type_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:statusor",
     ],
 )

@@ -57,14 +57,14 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/map_util.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/status.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
 #include "tsl/platform/fingerprint.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -722,6 +722,10 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
         execution_options->exec_time_optimization_effort());
     module_config.set_memory_fitting_effort(
         execution_options->memory_fitting_effort());
+    module_config.set_optimization_level(
+        execution_options->optimization_level());
+    module_config.set_memory_fitting_level(
+        execution_options->memory_fitting_level());
     module_config.set_deduplicate_hlo(execution_options->deduplicate_hlo());
     if (!execution_options->allow_spmd_sharding_propagation_to_parameters()
              .empty()) {

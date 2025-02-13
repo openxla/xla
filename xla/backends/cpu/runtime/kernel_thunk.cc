@@ -118,7 +118,7 @@ KernelThunk<num_arguments, num_results>::KernelThunk(
     std::optional<absl::flat_hash_set<int64_t>> invariant_arguments,
     std::string kernel_name, se::ThreadDim thread_dim,
     std::optional<uint64_t> min_alignment)
-    : Thunk(Kind::kKernel, std::move(info)),
+    : KernelThunkBase(Kind::kKernel, std::move(info)),
       invariant_arguments_(std::move(invariant_arguments)),
       num_kernel_args_(arguments_buffers.size() + results_buffers.size()),
       kernel_name_(std::move(kernel_name)),
@@ -238,10 +238,7 @@ KernelThunk<num_arguments, num_results>::ExecuteInternal(
   // by scheduling tasks into it. HostKernel launch completion will
   // automatically signal KernelThunk execute completion.
   if (ABSL_PREDICT_TRUE(params.intra_op_threadpool)) {
-    return kernel->Launch(
-        thread_dim_, kernel_args, [&params](Kernel::Task task) {
-          params.intra_op_threadpool->getPool()->Schedule(std::move(task));
-        });
+    return kernel->Launch(thread_dim_, kernel_args, params.intra_op_threadpool);
   }
 
   TF_RETURN_IF_ERROR(kernel->Launch(thread_dim_, kernel_args));

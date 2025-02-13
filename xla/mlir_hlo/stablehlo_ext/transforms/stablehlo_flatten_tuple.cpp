@@ -139,19 +139,20 @@ class StablehloFlattenTuplePass
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
     patterns.add<FlattenCustomCallOp>(context);
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    GreedyRewriteConfig config;
+    config.useTopDownTraversal = true;
+    config.enableRegionSimplification =
+        mlir::GreedySimplifyRegionLevel::Disabled;
+    config.fold = false;
+    config.cseConstants = false;
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns),
+                                     config))) {
       signalPassFailure();
     }
   }
 };
 
-static PassRegistration<StablehloFlattenTuplePass> pass;
-
 }  // namespace
-
-std::unique_ptr<OperationPass<func::FuncOp>> createStablehloFlattenTuplePass() {
-  return std::make_unique<StablehloFlattenTuplePass>();
-}
 
 }  // namespace stablehlo_ext
 }  // namespace mlir

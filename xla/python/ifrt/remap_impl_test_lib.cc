@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -38,9 +39,9 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -110,7 +111,7 @@ absl::StatusOr<tsl::RCReference<Array>> CreateArray(
 
   std::vector<tsl::RCReference<Array>> shards;
   shards.reserve(base_values.size());
-  BasicDeviceList::Devices devices;
+  absl::InlinedVector<xla::ifrt::Device*, 1> devices;
   devices.reserve(device_indices.size());
 
   for (int i = 0; i < base_values.size(); ++i) {
@@ -132,7 +133,7 @@ absl::StatusOr<tsl::RCReference<Array>> CreateArray(
   }
 
   std::shared_ptr<const Sharding> assembled_sharding =
-      ConcreteEvenSharding::Create(BasicDeviceList::Create(std::move(devices)),
+      ConcreteEvenSharding::Create(client->MakeDeviceList(devices),
                                    MemoryKind(),
                                    /*shape=*/shape,
                                    /*shard_shape=*/std::move(shard_shape));

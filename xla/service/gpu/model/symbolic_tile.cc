@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <iterator>
 #include <optional>
 #include <ostream>
@@ -327,8 +328,10 @@ void SortByStride(std::vector<SizeAndStrideExpression>& sizes_and_strides,
                   bool reverse = false) {
   absl::c_sort(sizes_and_strides, [&](const SizeAndStrideExpression& sas1,
                                       const SizeAndStrideExpression& sas2) {
-    int64_t stride1 = llvm::cast<AffineConstantExpr>(sas1.stride).getValue();
-    int64_t stride2 = llvm::cast<AffineConstantExpr>(sas2.stride).getValue();
+    int64_t stride1 =
+        std::abs(llvm::cast<AffineConstantExpr>(sas1.stride).getValue());
+    int64_t stride2 =
+        std::abs(llvm::cast<AffineConstantExpr>(sas2.stride).getValue());
     if (reverse) {
       return stride1 > stride2;
     }
@@ -443,7 +446,8 @@ std::optional<AffineExpr> CombineStrides(
           llvm::cast<AffineConstantExpr>(previous_size_and_stride.stride)
               .getValue();
 
-      if (*previous_size_expression_range_size * previous_stride != stride) {
+      if (*previous_size_expression_range_size * std::abs(previous_stride) !=
+          std::abs(stride)) {
         VLOG(1) << "Attempted to combine strides but stride did not grow "
                 << "exactly as expected: got "
                 << *previous_size_expression_range_size << " * "
@@ -1045,20 +1049,6 @@ void ConstraintExpression::Simplify() {
     constraints = constraints && maybe_size_and_stride->constraints;
   }
 
-  // Eliminate negative strides and recalculate offsets.
-  // TODO(b/340555497): handle normalization of more complex expressions.
-  for (auto [offset, size, stride] :
-       llvm::zip(offset_expressions, size_expressions, stride_expressions)) {
-    auto constant = llvm::dyn_cast<AffineConstantExpr>(stride);
-    if (constant && constant.getValue() < 0) {
-      offset = offset + size * stride - stride;
-      stride = -stride;
-    } else if (!constant) {
-      VLOG(1) << "Unexpected non-constant stride expression: "
-              << xla::ToString(stride);
-    }
-  }
-
   // DimVars in `indexing_map` represent indices, but in `tile_map` they will
   // represent the size of the tile. So we need to add 1 to the bounds.
   // For example: indices: [0, 9] -> sizes: [1, 10].
@@ -1159,6 +1149,24 @@ AffineMap SymbolicTile::stride_map() const {
       /*results=*/
       affine_map.getResults().slice(2 * component_size, component_size),
       /*context=*/affine_map.getContext());
+}
+
+llvm::SmallVector<int64_t> EvaluateTileOffsets(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters) {
+  return EvaluateAffineMap(symbolic_tile.offset_map(),
+                           /*dim_values=*/parameters);
+}
+
+llvm::SmallVector<int64_t> EvaluateTileSizes(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters) {
+  return EvaluateAffineMap(symbolic_tile.size_map(),
+                           /*dim_values=*/parameters);
+}
+
+llvm::SmallVector<int64_t> EvaluateTileStrides(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters) {
+  return EvaluateAffineMap(symbolic_tile.stride_map(),
+                           /*dim_values=*/parameters);
 }
 
 }  // namespace gpu

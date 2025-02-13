@@ -193,17 +193,17 @@ inline ConstraintExpression operator||(
 // along each dimension can be expressed as a strided expression
 //     offset + stride * iota(size)
 //
-// where offset and stride are non-negative integers, size is a strictly
-// positive integer and `iota` is the usual range function.
+// where offset is a non-negative integer, stride is an integer, and size is a
+// strictly positive integer and `iota` is the usual range function.
 //
 // An *N-dimensional symbolic tile* is a function from an M-dimensional
 // tile to an N-dimensional tile. The input tile is assumed to have all offsets
 // equal to 0 and all strides equal to 1.
 //
 // It is represented with "tile_map()", which is an IndexingMap of this form:
-// (size0, ..., size{n-1}) ->  (offset0, ..., offset{n-1},
-//                              size'0, ..., size'{n-1},
-//                              stride0, ..., stride{n-1})
+// (size0, ..., size{M-1}) ->  (offset0, ..., offset{N-1},
+//                              size'0, ..., size'{N-1},
+//                              stride0, ..., stride{N-1})
 //
 // We can get three AffineMap projections of tile_map(), which are just
 // convenience methods to get the components that we need:
@@ -234,7 +234,7 @@ inline ConstraintExpression operator||(
 //
 // Def. An n-dimensional tile is a function:
 // t: Z^k -> P(N^n) =
-//    rt_vars -> CartesianProduct_{i=1, ..., n-1}({
+//    rt_vars -> CartesianProduct_{i=0, ..., n-1}({
 //           offsets(rt_vars)[i] + strides[i] * 0,
 //           ...,
 //           offsets(rt_vars)[i] + strides[i] * (sizes[i]-1)
@@ -248,11 +248,11 @@ inline ConstraintExpression operator||(
 //
 //    rt_vars: Z^k (so called "runtime variables")
 //    offsets: Z^k -> N^n
-//    strides: N^n
+//    strides: Z^n
 //    sizes: (N+)^n
 //
 // Notation. We can represent n-dimensional tiles as:
-//   (offsets, strides, sizes): (Z^k -> N^n) x N^n x (N+)^n
+//   (offsets, strides, sizes): (Z^k -> N^n) x Z^n x (N+)^n
 // where A x B means a Cartesian product.
 //
 // Def. Let Tiles(n) denote the set of n-dimensional tiles.
@@ -266,15 +266,15 @@ inline ConstraintExpression operator||(
 //   -> (offsets', strides', sizes') : Tiles(n)
 // as a vector of functions:
 //   (offset_map, stride_map, size_map) where:
-//     offset_map: ((Z^j -> N^m) x N^m x (N+)^m) -> (Z^k -> N^n)
-//     stride_map: ((Z^j -> N^m) x N^m x (N+)^m) -> N^n
-//     size_map: ((Z^j -> N^m) x N^m x (N+)^m) -> (N+)^n
+//     offset_map: ((Z^j -> N^m) x Z^m x (N+)^m) -> (Z^k -> N^n)
+//     stride_map: ((Z^j -> N^m) x Z^m x (N+)^m) -> Z^n
+//     size_map: ((Z^j -> N^m) x Z^m x (N+)^m) -> (N+)^n
 // where each "map" returns one component of the result Tile.
 //
 // If we assume that offsets=({} -> {0, ..., 0}) and strides={1, ..., 1}, then
 // we can simplify the definition:
 //     offset_map: (N+)^m -> (Z^k -> N^n)
-//     stride_map: (N+)^m -> N^n
+//     stride_map: (N+)^m -> Z^n
 //     size_map: (N+)^m -> (N+)^n
 //
 // As a notation, we can further simplify the structure of offset_map:
@@ -283,7 +283,7 @@ inline ConstraintExpression operator||(
 //
 // In the code we represent a symbolic tile with "tile_map()", which is an
 // IndexingMap of this form:
-// (size0, ..., size{n-1})
+// (size0, ..., size{m-1})
 // [rt_var0, ..., rt_var{k-1}] -> (offset0, ..., offset{n-1},
 //                                 size'0, ..., size'{n-1},
 //                                 stride0, ..., stride{n-1})
@@ -336,7 +336,7 @@ class SymbolicTile {
   // A map from one tile's sizes and RTVars to another tile's offsets, sizes,
   // and strides.
   //
-  // (size0, ..., size{n-1})
+  // (size0, ..., size{m-1})
   // [rt_var0, ..., rt_var{k-1}] -> (offset0, ..., offset{n-1},
   //                                 size'0, ..., size'{n-1},
   //                                 stride0, ..., stride{n-1})
@@ -358,6 +358,18 @@ class SymbolicTile {
   explicit SymbolicTile(IndexingMap tile_map, ConstraintExpression constraints)
       : tile_map_(std::move(tile_map)), constraints_(std::move(constraints)) {}
 };
+
+// Evaluates the tile offsets of `symbolic_tile` given tile parameters.
+llvm::SmallVector<int64_t> EvaluateTileOffsets(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters);
+
+// Evaluates the tile sizes of `symbolic_tile` given tile parameters.
+llvm::SmallVector<int64_t> EvaluateTileSizes(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters);
+
+// Evaluates the tile strides of `symbolic_tile` given tile parameters.
+llvm::SmallVector<int64_t> EvaluateTileStrides(
+    const SymbolicTile& symbolic_tile, absl::Span<int64_t const> parameters);
 
 }  // namespace gpu
 }  // namespace xla

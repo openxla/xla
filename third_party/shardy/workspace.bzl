@@ -3,8 +3,8 @@
 load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
 
 def repo():
-    SHARDY_COMMIT = "a45b0ae83803b4edb0602f3f5b342571a41b8e91"
-    SHARDY_SHA256 = "29f97d1838f463a6985f255fc29c80aa0517780a6b08fe1d01e3083a7f573942"
+    SHARDY_COMMIT = "e37c3e63b9df22864708430e82f60ce1c7ec3870"
+    SHARDY_SHA256 = "9cfde563dc027981d0a93fdc3afee550258b5620c90681546c52683b77bbe151"
 
     tf_http_archive(
         name = "shardy",

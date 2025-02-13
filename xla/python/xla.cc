@@ -72,6 +72,7 @@ limitations under the License.
 #include "gloo/transport/tcp/device.h"
 #include "xla/backends/cpu/collectives/gloo_collectives.h"
 #include "xla/backends/cpu/collectives/gloo_kv_store.h"
+#include "xla/python/transfer/py_socket_transfer.h"
 #elif defined(__APPLE__)
 #include "gloo/transport/uv/device.h"
 #include "xla/backends/cpu/collectives/gloo_collectives.h"  // NOLINT
@@ -121,8 +122,8 @@ limitations under the License.
 #include "xla/python/weakref_lru_cache.h"
 #include "xla/python/xla_compiler.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
+#include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
-#include "tsl/platform/status.h"
 
 // TODO(phawkins): remove host_id properties after JAX is update to avoid them.
 
@@ -449,7 +450,7 @@ NB_MODULE(xla_extension, m) {
                 "get_topology_for_devices requires >= 1 devices.");
           }
           auto client = py_devices[0]->client();
-          ifrt::BasicDeviceList::Devices ifrt_devices;
+          absl::InlinedVector<ifrt::Device*, 1> ifrt_devices;
           ifrt_devices.reserve(py_devices.size());
           for (const auto& py_device : py_devices) {
             if (py_device->client().get() != client.get()) {
@@ -460,7 +461,7 @@ NB_MODULE(xla_extension, m) {
             ifrt_devices.push_back(py_device->device());
           }
           tsl::RCReference<ifrt::DeviceList> device_list =
-              ifrt::BasicDeviceList::Create(std::move(ifrt_devices));
+              client->ifrt_client()->MakeDeviceList(ifrt_devices);
           return xla::ValueOrThrow(
               client->ifrt_client()->GetTopologyForDevices(device_list));
         });
@@ -599,6 +600,9 @@ NB_MODULE(xla_extension, m) {
   BuildTracebackSubmodule(m);
   BuildMlirSubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
+#if defined(__linux__)
+  aux::RegisterTransferServerTypes(m);
+#endif  // defined(__linux__)
 
   // The following uses python bindings for PyClient defined above using
   // pybind11, and hence needs pybind11::module_ (not just nanobind::module_).
@@ -930,6 +934,14 @@ NB_MODULE(xla_extension, m) {
       nb::arg("committed") = true, nb::arg("force_copy") = false,
       nb::arg("host_buffer_semantics") =
           PjRtClient::HostBufferSemantics::kImmutableZeroCopy);
+  m.def(
+      "reorder_shards",
+      [](PyArray x, nb::object dst_sharding,
+         ifrt::ArrayCopySemantics array_copy_semantics) {
+        return ValueOrThrow(PyArray::ReorderShards(
+            std::move(x), std::move(dst_sharding), array_copy_semantics));
+      },
+      nb::arg("x"), nb::arg("dst_sharding"), nb::arg("array_copy_semantics"));
 
   m.def("batched_block_until_ready", [](std::vector<nb::object> xs) {
     ThrowIfError(PyArray::BatchedBlockUntilReady(std::move(xs)));

@@ -35,9 +35,9 @@ limitations under the License.
 #include "xla/python/ifrt/remap_plan.pb.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -109,12 +109,13 @@ absl::Status CheckRange(int64_t num_shards,
     return InvalidArgument("start must be in [0, %d], but is %d",
                            num_shards - 1, interval.start);
   }
-  if (interval.end < 0 || interval.end > num_shards) {
-    return InvalidArgument("end must be in [0, %d], but is %d", num_shards,
-                           interval.end);
-  }
   if (interval.step <= 0) {
     return InvalidArgument("step must be positive, but is %d", interval.step);
+  }
+  if (interval.end < 0 || interval.end > num_shards + interval.step - 1) {
+    return InvalidArgument("end must be in [0, %d] if step is %d, but is %d",
+                           num_shards + interval.step - 1, interval.step,
+                           interval.end);
   }
   return absl::OkStatus();
 }

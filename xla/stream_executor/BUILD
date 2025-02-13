@@ -43,7 +43,10 @@ tf_proto_library(
     name = "device_description_proto",
     srcs = ["device_description.proto"],
     make_default_target_header_only = True,
-    protodeps = ["//xla:autotune_results_proto"],
+    protodeps = [
+        "//xla:autotune_results_proto",
+        "//xla/stream_executor/cuda:cuda_compute_capability_proto",
+    ],
 )
 
 cc_library(
@@ -59,6 +62,7 @@ cc_library(
         ":device_description_proto_cc",
         ":launch_dim",
         ":semantic_version",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/lib/math:math_util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/strings",
@@ -179,11 +183,13 @@ cc_library(
         ":device_memory",
         ":dnn",
         ":event",
+        ":event_based_timer",
         ":fft",
         ":kernel",
         ":kernel_spec",
         ":launch_dim",
         ":memory_allocation",
+        ":memory_allocator",
         ":module_spec",
         ":platform",
         ":stream",
@@ -244,16 +250,6 @@ cc_library(
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:numbers",
         "@tsl//tsl/platform:statusor",
-    ],
-)
-
-cc_library(
-    name = "host_memory_allocation",
-    srcs = ["host_memory_allocation.cc"],
-    hdrs = ["host_memory_allocation.h"],
-    deps = [
-        ":memory_allocation",
-        ":stream_executor_h",
     ],
 )
 
@@ -408,6 +404,7 @@ cc_library(
         ":kernel",
         ":kernel_spec",
         ":memory_allocation",
+        ":memory_allocator",
         ":module_spec",
         ":platform",
         ":stream",
@@ -600,7 +597,6 @@ cc_library(
     name = "allocator_stats",
     srcs = ["allocator_stats.cc"],
     hdrs = ["allocator_stats.h"],
-    visibility = [":internal"],
     deps = ["@com_google_absl//absl/strings:str_format"],
 )
 
@@ -706,7 +702,6 @@ cc_library(
         ":dnn",
         ":executor_cache",
         ":fft",
-        ":host_memory_allocation",  # build_cleaner: keep
         ":kernel",
         ":kernel_spec",
         ":launch_dim",
@@ -779,7 +774,7 @@ xla_cc_test(
         ":stream_executor_h",
         ":typed_kernel_factory",
         "//xla/stream_executor/host:host_platform",
-        "@com_google_googletest//:gtest_main",
+        "//xla/tsl/platform:test_main",
         "@tsl//tsl/platform:test",
         "@tsl//tsl/platform:test_benchmark",
     ],

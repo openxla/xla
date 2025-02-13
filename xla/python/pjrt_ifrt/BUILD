@@ -43,6 +43,7 @@ cc_library(
         "//xla/python/ifrt:serdes",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -81,6 +82,7 @@ tf_proto_library(
 cc_library(
     name = "xla_sharding_serdes",
     srcs = ["xla_sharding_serdes.cc"],
+    compatible_with = get_compatible_with_portable(),
     deps = [
         ":xla_ifrt",
         ":xla_sharding_proto_cc",

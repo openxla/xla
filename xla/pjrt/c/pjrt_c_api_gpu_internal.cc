@@ -38,8 +38,11 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_gpu_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_layouts_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_memory_descriptions_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_profiler_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_stream_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
+#include "xla/pjrt/c/pjrt_c_api_triton_internal.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/gpu/gpu_topology.h"
@@ -49,10 +52,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/custom_call_batch_partitioner.h"
 #include "xla/python/custom_partition_callback.h"
 #include "xla/service/compiler.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/stream_executor/device_description.h"
 
 namespace pjrt {
 namespace gpu_plugin {
@@ -106,7 +109,8 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
       allocator_config.kind = xla::GpuAllocatorConfig::Kind::kCudaAsync;
     } else {
       return new PJRT_Error{absl::UnimplementedError(absl::StrFormat(
-          "Allocator %s not supported for PJRT GPU plugin. Supported allocator "
+          "Allocator %s not supported for PJRT GPU plugin. Supported "
+          "allocator "
           "options are: 'default', 'platform', 'bfc' and 'cuda_async'.",
           allocator_name))};
     }
@@ -254,9 +258,10 @@ PJRT_Error* PJRT_GpuDeviceTopology_Create(
     // If the user did not specify the topology and we did not
     // get any devices from the client, then error out because
     // we do not know how many devices the topology should have.
-    return new PJRT_Error{absl::FailedPreconditionError(
-        "Cannot create topology without an explicit topology shape or without "
-        "a client")};
+    return new PJRT_Error{
+        absl::FailedPreconditionError("Cannot create topology without an "
+                                      "explicit topology shape or without "
+                                      "a client")};
   }
 
   if (sizes.GetDeviceCount() != device_ids.size()) {
@@ -315,11 +320,23 @@ PJRT_Error* PJRT_Register_Custom_Partitioner(
   return nullptr;
 }
 
+PJRT_Error* PJRT_Register_Batch_Partitionable(
+    PJRT_Register_Batch_Partitionable_Args* args) {
+  PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+      "PJRT_Register_Batch_Partitionable_Args",
+      PJRT_Register_Batch_Partitionable_Args_STRUCT_SIZE, args->struct_size));
+  std::string name(args->name, args->name_size);
+  RegisterCustomCallPartitioner(
+      name, std::make_unique<xla::CustomCallBatchPartitioner>());
+  return nullptr;
+}
+
 PJRT_Custom_Partitioner_Extension custom_partitioner{
     /*struct_size=*/PJRT_Custom_Partitioner_Extension_STRUCT_SIZE,
     /*type=*/PJRT_Extension_Type::PJRT_Extension_Type_Custom_Partitioner,
     /*next=*/reinterpret_cast<PJRT_Extension_Base*>(&profiler_extension),
     /*register_custom_partitioner=*/PJRT_Register_Custom_Partitioner,
+    /*register_batch_partitionable=*/PJRT_Register_Batch_Partitionable,
 };
 
 PJRT_Error* PJRT_Get_Stream_For_External_Ready_Events(
@@ -403,12 +420,15 @@ const PJRT_Api* GetGpuPjrtApi() {
       pjrt::CreateMemoryDescriptionsExtension(
           reinterpret_cast<PJRT_Extension_Base*>(&ffi_extension));
 
+  static PJRT_Triton_Extension triton_extension = pjrt::CreateTritonExtension(
+      reinterpret_cast<PJRT_Extension_Base*>(&memory_descriptions_extension));
+
   static const PJRT_Api pjrt_api = pjrt::CreatePjrtApi(
       pjrt::gpu_plugin::PJRT_Client_Create,
       pjrt::gpu_plugin::PJRT_ExecuteContext_Create,
       pjrt::gpu_plugin::PJRT_GpuDeviceTopology_Create,
       pjrt::PJRT_Plugin_Initialize_NoOp,
-      reinterpret_cast<PJRT_Extension_Base*>(&memory_descriptions_extension),
+      reinterpret_cast<PJRT_Extension_Base*>(&triton_extension),
       pjrt::PJRT_Plugin_Attributes_Xla);
 
   return &pjrt_api;

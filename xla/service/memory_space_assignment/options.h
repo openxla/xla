@@ -75,6 +75,8 @@ using DetermineSplitDimensionFunction =
     std::function<std::optional<SplitConfig>(
         const HloValue&,
         absl::flat_hash_map<const HloInstruction*, ShapeTree<int64_t>>*)>;
+using BitcastSplitFn = std::function<absl::StatusOr<int64_t>(
+    const HloInstruction* instruction, int64_t split_dim)>;
 using ShapeSizeFn = std::function<int64_t(const Shape&)>;
 
 // MSA allows for custom post-allocation transformations. When a post-allocation
@@ -90,6 +92,16 @@ struct PostAllocationTransformationUpdate {
   absl::flat_hash_map<HloUse, HloUse> update_use_map;
 
   std::string ToString() const;
+};
+
+// The different modes for window prefetch. kWindowExposure is currently the
+// default mode, where the window buffer is exposed from the reserved scoped
+// memory. kWindowPrefetch is a mode where the window buffer is not only exposed
+// from the reserved scoped memory, but also has the content prefetched into
+// alternate memory.
+enum class WindowPrefetchMode {
+  kWindowExposure,
+  kWindowPrefetch,
 };
 
 // The different options to be passed to the Run() API.
@@ -186,6 +198,10 @@ struct Options {
   // kAny as the default. Splitting will be disabled if this function is not
   // provided.
   InitSplitTreeFn init_split_tree_fn = nullptr;
+
+  // Determines the appropriate output split for a bitcast given an input split.
+  // Splitting will be disabled if this function is not provided.
+  BitcastSplitFn bitcast_split_fn = nullptr;
 
   // Dimension number indicating no split is present.
   int64_t replicated_split_dimension = -1;
@@ -353,6 +369,9 @@ struct Options {
   // and gives MSA more flexibility in choosing the prefetch time and how much
   // data to prefetch.
   bool enable_window_prefetch = false;
+
+  // The mode to use for window prefetching.
+  WindowPrefetchMode window_prefetch_mode = WindowPrefetchMode::kWindowExposure;
 
   MsaSortOrderOverrides msa_sort_order_overrides;
 };

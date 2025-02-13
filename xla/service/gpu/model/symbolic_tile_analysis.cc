@@ -61,7 +61,7 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
-#include "tsl/platform/statusor.h"
+#include "xla/util.h"
 
 namespace xla {
 namespace gpu {
@@ -73,13 +73,16 @@ using ::mlir::MLIRContext;
 
 struct OutputTilingInfo {
   // The number of output tiles for each dimension.
+  // E.g. if dimensions are [29, 16] and tile size is [4, 8] then
+  // `num_output_tiles_per_dim` will be [8, 2].
   llvm::SmallVector<int64_t> num_output_tiles_per_dim;
 
-  // An indexing map from a tile multi-index to tile offsets of the form:
-  //   `(d0, d1, ...) -> (tile_offset0, tile_offset1, ...)`
-  // where (d0, d1, ...) is the tile multi-index. The number of dimensions in
-  // the multi-index is equal to the number of elements in
-  // `num_output_tiles_per_dim`.
+  // An indexing map from an output tile multi-index to tile offsets.
+  //
+  // The dimensions of the indexing map correspond to the dimensions passed
+  // to `ComputeOutputTilingInfo` and the number of dimensions is equal to the
+  // size of `num_output_tiles_per_dim`. For example above it would look like:
+  //   `(tid_0, tid_1) -> (<tile 0 offset>, <tile 1 offset>)`.
   IndexingMap output_tile_offset_indexing;
 };
 
@@ -88,14 +91,10 @@ OutputTilingInfo ComputeOutputTilingInfo(absl::Span<const int64_t> dimensions,
                                          mlir::MLIRContext* mlir_context) {
   CHECK_EQ(dimensions.size(), tile_sizes.size());  // Crash OK
 
-  int64_t num_tiles = 1;
   llvm::SmallVector<int64_t> outer_loop_bounds;
   outer_loop_bounds.reserve(dimensions.size());
   for (auto [dim_size, tile_size] : llvm::zip(dimensions, tile_sizes)) {
-    int64_t num_tiles_per_dim = (dim_size + tile_size - 1) / tile_size;
-
-    num_tiles *= num_tiles_per_dim;
-    outer_loop_bounds.push_back(num_tiles_per_dim);
+    outer_loop_bounds.push_back(CeilOfRatio(dim_size, tile_size));
   }
 
   llvm::SmallVector<AffineExpr> tiled_dims;
@@ -111,6 +110,9 @@ OutputTilingInfo ComputeOutputTilingInfo(absl::Span<const int64_t> dimensions,
           /*dimCount=*/dimensions.size(), /*symbolCount=*/0, tiled_dims,
           mlir_context),
       /*dim_upper_bounds=*/outer_loop_bounds, /*symbol_upper_bounds=*/{});
+  for (int i = 0; i < output_tile_offset_indexing.GetDimVarsCount(); ++i) {
+    output_tile_offset_indexing.RenameDimVar(i, absl::StrCat("tid_", i));
+  }
   return {outer_loop_bounds, output_tile_offset_indexing};
 }
 
@@ -487,6 +489,21 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
     }
   }
 
+  // Check that all strides are >= 0. Our codegen doesn't support negative
+  // strides at the moment if padding is required. Also, for the Reverse op it
+  // might make sense to emit code for it, and normalizing strides to >= 0.
+  for (const std::unique_ptr<SymbolicTiledHloInstruction>& symbolic_tiled_hlo :
+       symbolic_tiled_hlo_instructions_) {
+    llvm::SmallVector<int64_t> tile_strides = EvaluateTileStrides(
+        symbolic_tiled_hlo->symbolic_tile(), tile_parameters);
+    if (absl::c_any_of(tile_strides,
+                       [](int64_t stride) { return stride < 0; })) {
+      return absl::UnimplementedError(
+          absl::StrCat("Full support for negative strides is not implemented ",
+                       symbolic_tiled_hlo->ToString()));
+    }
+  }
+
   // Offset indexing is needed to emit loads/stores and to deduplicate
   // instructions. In some cases, for example in Cost Model, we need to only
   // deduplicate instructions.
@@ -513,8 +530,8 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
         continue;
       }
 
-      llvm::SmallVector<int64_t> tile_sizes =
-          symbolic_tiled_hlo->TileSizes(tile_parameters);
+      llvm::SmallVector<int64_t> tile_sizes = EvaluateTileSizes(
+          symbolic_tiled_hlo->symbolic_tile(), tile_parameters);
       size_t hash_value = absl::HashOf(symbolic_tiled_hlo->hlo(),
                                        absl::Span<const int64_t>(tile_sizes));
       tile_sizes_map.emplace(symbolic_tiled_hlo.get(), std::move(tile_sizes));
@@ -548,11 +565,12 @@ SymbolicTileAnalysis::ComputeTiledHloInstructions(
     if (it != tile_sizes_map.end()) {
       tile_sizes = it->second;
     } else {
-      tile_sizes = symbolic_tiled_hlo->TileSizes(tile_parameters);
+      tile_sizes = EvaluateTileSizes(symbolic_tiled_hlo->symbolic_tile(),
+                                     tile_parameters);
     }
 
-    llvm::SmallVector<int64_t> tile_strides =
-        symbolic_tiled_hlo->TileStrides(tile_parameters);
+    llvm::SmallVector<int64_t> tile_strides = EvaluateTileStrides(
+        symbolic_tiled_hlo->symbolic_tile(), tile_parameters);
 
     std::optional<IndexingMap> tile_offset_indexing;
     if (compute_all_tile_offset_indexing_maps ||

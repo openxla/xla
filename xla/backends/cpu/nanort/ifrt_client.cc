@@ -1393,7 +1393,7 @@ absl::Span<xla::ifrt::Device* const> NanoIfrtClient::GetAllDevices() const {
 absl::StatusOr<ifrt::DeviceAssignment>
 NanoIfrtClient::GetDefaultDeviceAssignment(int num_replicas,
                                            int num_partitions) const {
-  return ifrt::DeviceAssignment(1, 1);
+  return ifrt::DeviceAssignment(num_replicas, num_partitions);
 }
 
 absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupDevice(
@@ -1404,6 +1404,11 @@ absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupDevice(
 absl::StatusOr<ifrt::Device*> NanoIfrtClient::LookupAddressableDevice(
     int local_hardware_id) const {
   return device_.get();
+}
+
+tsl::RCReference<ifrt::DeviceList> NanoIfrtClient::MakeDeviceList(
+    absl::Span<ifrt::Device* const> devices) const {
+  return xla::ifrt::BasicDeviceList::Create(devices);
 }
 
 ifrt::Compiler* NanoIfrtClient::GetDefaultCompiler() { return compiler_.get(); }

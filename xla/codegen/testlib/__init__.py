@@ -20,8 +20,10 @@ from xla.codegen.testlib import _extension
 # go/keep-sorted start
 BufferAssignment = _extension.BufferAssignment
 ComparisonDirection = _extension.ComparisonDirection
+DotDimensionNumbers = _extension.DotDimensionNumbers
 HloInstruction = _extension.HloInstruction
 HloModule = _extension.HloModule
+HloModuleConfig = _extension.HloModuleConfig
 HloOpcode = _extension.HloOpcode
 KernelDefinition = _extension.KernelDefinition
 KernelEmmitter = _extension.KernelEmitter
