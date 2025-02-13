@@ -1592,6 +1592,7 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:test",
     ],
+    alwayslink = True,  # Contains test cases instantiated in the cc_test targets.
 )
 
 xla_cc_test(

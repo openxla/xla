@@ -122,6 +122,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/zero_sized_hlo_elimination.h"
 #include "xla/hlo/transforms/while_loop_trip_count_annotator.h"
+#include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/maybe_owning.h"
 #include "xla/service/all_reduce_promotion.h"
 #include "xla/service/all_reduce_reassociate.h"
@@ -130,6 +131,7 @@ limitations under the License.
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/call_inliner.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_permute_decomposer.h"
 #include "xla/service/collective_pipeliner.h"
 #include "xla/service/collective_utils.h"
@@ -975,7 +977,8 @@ absl::Status RunCollectiveOptimizationPasses(
   if (debug_options.xla_gpu_enable_pipelined_collectives() ||
       debug_options.xla_gpu_enable_pipelined_p2p() ||
       enable_partial_send_recv_pipelining) {
-    AddP2PPipeliner(collectives_pipeline, enable_partial_send_recv_pipelining);
+    collectives_pipeline.AddPass<GpuP2PPipeliner>(
+        enable_partial_send_recv_pipelining);
   }
 
   // Run algebraic simplifier to reshape(broadcast) into a broadcast when
@@ -1254,6 +1257,17 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
     TF_ASSIGN_OR_RETURN(se::Platform * platform,
                         se::PlatformManager::PlatformWithId(platform_id));
     pipeline.AddPass<DynamicSliceFusionRewriter>(platform->Name());
+    pipeline.AddPass<AsyncWrapper>([](const HloInstruction* instr) {
+      if (!IsDynamicSliceFusion(instr)) {
+        return false;
+      }
+      std::optional<const HloInstruction*> hero_op = HloBfsFindIf(
+          {instr->fused_instructions_computation()->root_instruction()},
+          [](const HloInstruction* instr) -> bool {
+            return IsCollective(instr);
+          });
+      return hero_op.has_value();
+    });
     TF_RETURN_IF_ERROR(pipeline.Run(hlo_module).status());
   }
 

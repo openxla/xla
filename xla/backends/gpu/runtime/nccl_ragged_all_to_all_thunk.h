@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/stream_executor/device_memory.h"
+#include "xla/stream_executor/device_memory_handle.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 
@@ -40,7 +41,7 @@ namespace gpu {
 
 struct NcclRaggedAllToAllConfig {
   NcclCollectiveConfig config;
-  int64_t num_ragged_rows = 1;
+  int64_t num_total_updates = 1;
   int64_t ragged_row_element_size = 1;
 };
 
@@ -61,8 +62,6 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
       int64_t partition_count);
 
   absl::Status Initialize(const InitializeParams& params) override;
-
-  absl::Status Cleanup(const CleanupParams& params) override;
 
   static const char* GetHloOpName() { return "ragged-all-to-all-start"; }
 
@@ -93,7 +92,7 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
                       std::vector<std::unique_ptr<se::MemoryAllocation>>>
       host_buffer_allocs_ ABSL_GUARDED_BY(mutex_);
 
-  absl::flat_hash_map<se::StreamExecutor*, se::DeviceMemoryBase>
+  absl::flat_hash_map<se::StreamExecutor*, se::DeviceMemoryHandle>
       device_buffer_allocs_ ABSL_GUARDED_BY(mutex_);
 
   absl::Mutex pointers_mutex_;
@@ -114,15 +113,17 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
 
 absl::Status RunRaggedAllToAll(
     GpuCollectives* collectives, int64_t ragged_row_element_size,
-    const std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
-    Communicator* comm, const std::vector<int64_t*>& ragged_metadata_allocs,
+    int64_t num_total_updates, const std::vector<DeviceBufferPair>& buffers,
+    se::Stream& stream, Communicator* comm,
+    const std::vector<int64_t*>& ragged_metadata_allocs,
     const se::DeviceMemoryBase& output_offsets_device_buffer);
 
 absl::Status RunMemCpyRaggedAllToAll(
     GpuCollectives* collectives, int64_t ragged_row_element_size,
-    const std::vector<DeviceBufferPair>& buffers, se::Stream& stream,
-    Communicator* comm, const std::vector<int64_t*>& ragged_metadata_allocs,
-    uint64_t* send_pointer, uint64_t receive_pointer_map[]);
+    int64_t num_total_updates, const std::vector<DeviceBufferPair>& buffers,
+    se::Stream& stream, Communicator* comm,
+    const std::vector<int64_t*>& ragged_metadata_allocs, uint64_t* send_pointer,
+    uint64_t receive_pointer_map[]);
 
 }  // namespace gpu
 }  // namespace xla

@@ -1413,7 +1413,7 @@ xla_test(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
-        "@com_google_googletest//:gtest_main",
+        "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:test",
@@ -1671,7 +1671,7 @@ xla_test(
         "gpu_v100",
         "gpu_a100",
         "gpu_h100",
-        "gpu_b100",
+        "gpu_b200",
     ],
     data = ["data/cudnn_reproducer.hlo"],
     deps = [
@@ -3117,7 +3117,6 @@ xla_cc_test(
         "local_client_aot_test.cc",
         ":local_client_aot_test_computation.o",
     ],
-    linkstatic = 1,
     tags = [
         "not_run:arm",  # b/341355246
         "test_xla_cpu_no_thunks",

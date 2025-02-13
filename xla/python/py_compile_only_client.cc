@@ -258,6 +258,17 @@ class CompileOnlyIfRtClient final
         "AssembleArrayFromSingleDeviceArrays not available with compile-only "
         "client.");
   }
+  absl::StatusOr<tsl::RCReference<ifrt::Array>>
+  AssembleArrayFromSingleDeviceArrays(
+      ifrt::DType dtype, ifrt::Shape shape,
+      std::shared_ptr<const ifrt::Sharding> sharding,
+      absl::Span<tsl::RCReference<ifrt::Array>> arrays,
+      ifrt::ArrayCopySemantics array_copy_semantics,
+      ifrt::SingleDeviceShardSemantics single_device_shard_semantics) override {
+    return Unimplemented(
+        "AssembleArrayFromSingleDeviceArrays not available with compile-only "
+        "client.");
+  }
 
   absl::StatusOr<std::vector<tsl::RCReference<ifrt::Array>>> CopyArrays(
       absl::Span<tsl::RCReference<ifrt::Array>> arrays,
@@ -325,6 +336,11 @@ class CompileOnlyIfRtClient final
       int local_hardware_id) const override {
     return Unimplemented(
         "LookupAddressableDevice not available with compile-only client.");
+  }
+
+  tsl::RCReference<ifrt::DeviceList> MakeDeviceList(
+      absl::Span<ifrt::Device* const> devices) const override {
+    return ifrt::BasicDeviceList::Create(devices);
   }
 
   ifrt::Compiler* GetDefaultCompiler() override { return &default_compiler_; }

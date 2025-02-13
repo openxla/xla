@@ -292,8 +292,18 @@ absl::StatusOr<DevicePutResultFn> HandleStringNumpyArray(
 
   // Assemble all the parameters of MakeArrayFromHostBuffer
   void* data = cords.data();
-  ifrt::Shape shape(
-      absl::MakeSpan(static_cast<const int64_t*>(array.shape()), array.ndim()));
+
+  // Make an explicit copy of the shape elements so we won't run into complex
+  // endianness and precision issues that might arise if we reinterpret-casted
+  // from npy_intp, that can be just 32 bits-wide in some environments
+  // such as macos_arm64 to const int64_t* that must be 64 bits-wide.
+  ifrt::Shape::Dimensions dims;
+  dims.reserve(array.ndim());
+  for (int i = 0; i < array.ndim(); ++i) {
+    dims.push_back(array.shape(i));
+  }
+  ifrt::Shape shape(std::move(dims));
+
   std::shared_ptr<xla::ifrt::Sharding> sharding =
       xla::ifrt::SingleDeviceSharding::Create(to_device, to_memory_kind);
 
@@ -417,12 +427,12 @@ absl::StatusOr<DevicePutResultFn> HandlePyArray(
   } else {
     return [ifrt_array = tsl::FormRef(ifrt_array), to_device, to_memory_kind,
             owning_pybuffer = py_array.weak_type()]() mutable
-           -> absl::StatusOr<DevicePutResult> {
+               -> absl::StatusOr<DevicePutResult> {
       auto* ifrt_client = ifrt_array->client();
       TF_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
           ifrt_client->CopyArrays(absl::MakeSpan(&ifrt_array, 1),
-                                  ifrt::BasicDeviceList::Create({to_device}),
+                                  ifrt_client->MakeDeviceList({to_device}),
                                   to_memory_kind,
                                   ifrt::ArrayCopySemantics::kReuseInput));
       return DevicePutResult(std::move(copied_ifrt_arrays[0]),

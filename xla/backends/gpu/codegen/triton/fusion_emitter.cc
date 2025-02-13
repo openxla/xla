@@ -938,6 +938,9 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                          const HloFusionInstruction* fusion,
                          mlir::triton::FuncOp fn,
                          const BlockLevelParameters& block_level_parameters) {
+  if (block_level_parameters.output_tile_sizes.size() != 1) {
+    return absl::UnimplementedError("Codegen only supports 1 root right now");
+  }
   const HloComputation* computation = fusion->fused_instructions_computation();
   SymbolicTileAnalysisOrError symbolic_tile_analysis_or =
       SymbolicTileAnalysis::AnalyzeComputation(
@@ -961,7 +964,7 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
 
   TF_ASSIGN_OR_RETURN(TiledHloComputation tiled_hlo_computation,
                       symbolic_tile_analysis.ComputeTiledHloInstructions(
-                          block_level_parameters.output_tile_sizes,
+                          block_level_parameters.output_tile_sizes[0],
                           /*constraints_are_known_satisfied=*/false,
                           /*compute_all_tile_offset_indexing_maps=*/true));
   VLOG(3) << "Tiled HLO computation: " << tiled_hlo_computation.ToString();
@@ -1101,7 +1104,7 @@ absl::StatusOr<TritonModule> CreateTritonModule(
     if (type == U16) {
       ir_type = b.getI16Type();
     } else if (type == S4) {
-        ir_type = b.getI4Type();
+      ir_type = b.getI4Type();
     } else {
       TF_ASSIGN_OR_RETURN(ir_type, TritonType(b, type));
     }
@@ -1149,13 +1152,17 @@ absl::StatusOr<TritonModule> CreateTritonModule(
   b.create<ttir::ReturnOp>();
 
   if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
+    auto suffix = absl::StrCat(fusion->name(), ".before_validation.ttir");
     DumpToFileInDirOrStdout(
-        *hlo_computation->parent(), "triton_ir", "before_validation.ttir",
+        *hlo_computation->parent(), "", suffix,
         DumpTritonIR(triton_module.get(),
                      fusion->GetModule()
                          ->config()
                          .debug_options()
                          .xla_gpu_unsupported_annotate_with_emitter_loc()));
+    std::string fusion_suffix = absl::StrCat(hlo_computation->name(), ".hlo");
+    DumpToFileInDirOrStdout(*hlo_computation->parent(), "", fusion_suffix,
+                            hlo_computation->ToString());
   }
 
   if (mlir::failed(mlir::verify(*triton_module))) {
@@ -1179,8 +1186,9 @@ absl::StatusOr<TritonModule> CreateTritonModule(
   // TODO(loislo): Remove this dump once we have the Triton IR dump in
   // CompileTritonToLLVM after the Triton optimization passes.
   if (DumpingEnabledForHloModule(*hlo_computation->parent())) {
+    std::string suffix = absl::StrCat(fusion->name(), ".ttir");
     DumpToFileInDirOrStdout(
-        *hlo_computation->parent(), "triton_ir", "ttir",
+        *hlo_computation->parent(), "", suffix,
         DumpTritonIR(triton_module.get(),
                      fusion->GetModule()
                          ->config()

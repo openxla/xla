@@ -1,4 +1,4 @@
-/* Copyright 2017 The OpenXLA Authors.
+/* Copyright 2025 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,22 +13,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_CLIENT_GLOBAL_DATA_H_
-#define XLA_CLIENT_GLOBAL_DATA_H_
-
-#include <memory>
-#include <vector>
-
-#include "absl/types/span.h"
-#include "xla/service/service.h"
-#include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
-
-namespace xla {
-
-// TODO(cheshire): Remove.
-// Deprecated target for backwards compatibility.
-
-}  // namespace xla
-
-#endif  // XLA_CLIENT_GLOBAL_DATA_H_
+// Ensure that the header is self-contained.
+#include "xla/tsl/util/fixed_option_set_flag.h"
