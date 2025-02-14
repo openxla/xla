@@ -47,7 +47,9 @@ class NcclAllToAllStartThunk : public NcclCollectiveThunk {
  public:
   NcclAllToAllStartThunk(ThunkInfo thunk_info,
                          const HloAllToAllInstruction* instr,
-                         std::vector<Buffer> buffers, bool p2p_memcpy_enabled);
+                         std::vector<Buffer> buffers,
+                         CollectiveStreamId nccl_stream_id,
+                         bool p2p_memcpy_enabled);
 
   // Returns whether the given instruction can be lowered to a nccl all-to-all
   // call.

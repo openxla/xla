@@ -126,19 +126,43 @@ bool IsAsyncPair(const HloInstruction& from, const HloInstruction& target) {
   return IsGpuAsyncStart(from) && IsGpuAsyncDone(target);
 }
 
+// Util function for getting replica groups from different data structures.
+static std::vector<std::vector<int64_t>> get_replica_groups(
+    const HloInstruction* instruction) {
+  std::vector<std::vector<int64_t>> replica_groups;
+  if (instruction->opcode() == HloOpcode::kCollectivePermuteStart) {
+    absl::c_transform(instruction->source_target_pairs(),
+                      std::back_inserter(replica_groups),
+                      [](const std::pair<int64_t, int64_t>& pair) {
+                        std::vector<int64_t> ids({pair.first, pair.second});
+                        return ids;
+                      });
+  } else {
+    absl::c_transform(
+        instruction->replica_groups(), std::back_inserter(replica_groups),
+        [](const ReplicaGroup& group) {
+          std::vector<int64_t> ids;
+          absl::c_transform(group.replica_ids(), std::back_inserter(ids),
+                            [](auto id) { return id; });
+          return ids;
+        });
+  }
+  return replica_groups;
+}
+
 // Count the maximum overlapping count in subgroups of group and other
-size_t CountOverlappingRanks(const std::vector<ReplicaGroup>& group,
-                             const std::vector<ReplicaGroup>& other) {
+size_t CountOverlappingRanks(const std::vector<std::vector<int64_t>>& group,
+                             const std::vector<std::vector<int64_t>>& other) {
   size_t overlapping_count = 0;
   for (const auto& curr_replica_group : group) {
     absl::flat_hash_set<int> curr_replica_ids;
-    for (const auto curr_replica_id : curr_replica_group.replica_ids()) {
+    for (const auto curr_replica_id : curr_replica_group) {
       curr_replica_ids.insert(curr_replica_id);
     }
 
     for (const auto& replica_group : other) {
       size_t subgroup_count = 0;
-      for (const auto replica_id : replica_group.replica_ids()) {
+      for (const auto replica_id : replica_group) {
         if (curr_replica_ids.contains(replica_id)) ++subgroup_count;
       }
       overlapping_count = std::max(overlapping_count, subgroup_count);
@@ -206,20 +230,27 @@ bool GpuScheduleCrossesOverlapLimit(
       sched_state.resource_occupiers_in_flight.contains(resource_type) &&
       !sched_state.resource_occupiers_in_flight.at(resource_type).empty()) {
     const HloInstruction& curr_hlo_inst = node->GetInstr();
-    if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst)) {
-      CHECK(
-          hlo_query::IsAsyncCollectiveStartOp(curr_hlo_inst.operand(0), true));
+    if (sched_state.async_tracker->IsSupportedAsyncDone(curr_hlo_inst) &&
+        sched_state.async_tracker->IsSupportedAsyncStart(
+            *curr_hlo_inst.operand(0))) {
+      // Some async collectives are not wrapped inside async wrappers.
       const HloInstruction* curr_start_inst =
-          curr_hlo_inst.operand(0)->async_wrapped_instruction();
+          curr_hlo_inst.operand(0)->IsAsynchronous()
+              ? curr_hlo_inst.operand(0)->async_wrapped_instruction()
+              : curr_hlo_inst.operand(0);
 
       // If candidate can be overlapped with in-flight collectives
       bool can_overlap = true;
       for (const auto occupier :
            sched_state.resource_occupiers_in_flight.at(resource_type)) {
         if (sched_state.async_tracker->IsSupportedAsyncStart(*occupier)) {
+          const HloInstruction* occupier_start_inst =
+              occupier->IsAsynchronous() ? occupier->async_wrapped_instruction()
+                                         : occupier;
           // Number of overlapping ranks between this occupier and candidate
-          size_t overlapping_count = CountOverlappingRanks(
-              curr_start_inst->replica_groups(), occupier->replica_groups());
+          size_t overlapping_count =
+              CountOverlappingRanks(get_replica_groups(curr_start_inst),
+                                    get_replica_groups(occupier_start_inst));
           if (overlapping_count > 1) {
             can_overlap = false;
             VLOG(3) << "Collectives have " << overlapping_count

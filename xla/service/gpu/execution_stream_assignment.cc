@@ -36,6 +36,21 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 
 namespace xla::gpu {
+namespace {
+static bool is_async_collective(const HloInstruction* instruction) {
+  if (instruction->IsAsynchronous()) {
+    auto opcode = instruction->async_wrapped_opcode();
+    return opcode == HloOpcode::kAllGather || opcode == HloOpcode::kAllReduce ||
+           opcode == HloOpcode::kCollectiveBroadcast ||
+           opcode == HloOpcode::kCollectivePermute ||
+           opcode == HloOpcode::kReduceScatter;
+  }
+  auto opcode = instruction->opcode();
+  return opcode == HloOpcode::kAllGatherStart ||
+         opcode == HloOpcode::kAllReduceStart ||
+         opcode == HloOpcode::kCollectivePermuteStart;
+};
+}  // namespace
 
 ExecutionStreamAssignment::ExecutionStreamAssignment(
     const HloModule* module, ExecutionStreamAssignmentOptions options) {
@@ -45,7 +60,11 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
   // on the entrypoint computation will be assigned `ExecutionStreamId(0)`, and
   // each invocation of `async-start` will result in the target computation
   // being assigned a new `ExecutionStreamId`.
-  ExecutionStreamId next_stream_id = ExecutionStreamId(1);
+  ExecutionStreamId next_compute_stream_id = ExecutionStreamId(1);
+  ExecutionStreamId next_collective_stream_id =
+      ExecutionStreamId(options.number_of_compute_execution_streams + 1);
+  VLOG(3) << "Using " << options.number_of_collective_execution_streams
+          << " streams for collectives.";
 
   // Each `Pending` item represents an `HloComputation` that needs to be
   // processed. We start with the entrypoint and add callees as we discover
@@ -80,13 +99,26 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
           std::optional<ExecutionStreamId> dest_stream_id) {
         AsyncExecutionStreamIds streams;
         streams.source_stream_id = source_stream_id;
-        streams.destination_stream_id = dest_stream_id.value_or(next_stream_id);
-
-        CHECK(async_instructions_.try_emplace(instruction, streams).second);
-        if (!dest_stream_id.has_value()) {
-          next_stream_id++;
-          if (next_stream_id.value() > options.number_of_execution_streams) {
-            next_stream_id = ExecutionStreamId(1);
+        if (is_async_collective(instruction)) {
+          streams.destination_stream_id = next_collective_stream_id;
+          CHECK(async_instructions_.try_emplace(instruction, streams).second);
+          ++next_collective_stream_id;
+          if (next_collective_stream_id.value() >
+              options.number_of_compute_execution_streams +
+                  options.number_of_collective_execution_streams) {
+            next_collective_stream_id = ExecutionStreamId(
+                options.number_of_compute_execution_streams + 1);
+          }
+        } else {
+          streams.destination_stream_id =
+              dest_stream_id.value_or(next_compute_stream_id);
+          CHECK(async_instructions_.try_emplace(instruction, streams).second);
+          if (!dest_stream_id.has_value()) {
+            ++next_compute_stream_id;
+            if (next_compute_stream_id.value() >
+                options.number_of_compute_execution_streams) {
+              next_compute_stream_id = ExecutionStreamId(1);
+            }
           }
         }
       };
@@ -99,9 +131,9 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
     // instructions. Asynchronous instructions will be handled afterwards.
     for (HloInstruction* instruction : pending.node->instructions()) {
       if (instruction->IsAsynchronous()) continue;
-      if (instruction->opcode() == HloOpcode::kCopyStart) {
-        // CopyStart is morally an async instruction, let us treat it
-        // as an async instruction.
+      // Handle some async instructions that are not wrapped by async wrapper.
+      if (instruction->opcode() == HloOpcode::kCopyStart ||
+          is_async_collective(instruction)) {
         assign_async_execution_streams(instruction, pending.stream_id,
                                        std::nullopt);
       } else {
@@ -113,9 +145,9 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
     // Next, we'll process all callsites in the current computation.
     for (const CallSite& callsite :
          call_graph->GetNode(pending.node).callsites()) {
+      // Asynchronous calls will result in a new `ExecutionStreamId` being
+      // dispensed for the called computations.
       if (callsite.instruction()->IsAsynchronous()) {
-        // Asynchronous calls will result in a new `ExecutionStreamId` being
-        // dispensed for the called computations.
         // Special logic for explicit stream annotations.
         std::optional<ExecutionStreamId> optional_stream_id = std::nullopt;
         auto instruction = callsite.instruction();
@@ -127,7 +159,10 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(
           optional_stream_id = ExecutionStreamId(stream_id);
         }
         enqueue_called_computations(
-            callsite, optional_stream_id.value_or(next_stream_id));
+            callsite,
+            is_async_collective(callsite.instruction())
+                ? next_collective_stream_id
+                : optional_stream_id.value_or(next_compute_stream_id));
         assign_async_execution_streams(callsite.instruction(),
                                        pending.stream_id, optional_stream_id);
       } else {
@@ -178,15 +213,24 @@ ExecutionStreamAssignment::GetSyncExecutionStreamId(
   return stream->second;
 }
 
+bool ExecutionStreamAssignment::HasAsyncExecutionStreamIds(
+    const HloInstruction* instruction) const {
+  if (instruction->IsAsynchronous() ||
+      instruction->opcode() == HloOpcode::kCopyStart ||
+      is_async_collective(instruction)) {
+    auto streams = async_instructions_.find(instruction);
+    return streams != async_instructions_.end();
+  }
+  return false;
+}
+
 absl::StatusOr<ExecutionStreamAssignment::AsyncExecutionStreamIds>
 ExecutionStreamAssignment::GetAsyncExecutionStreamIds(
     const HloInstruction* instruction) const {
-  CHECK(instruction->IsAsynchronous() ||
-        instruction->opcode() == HloOpcode::kCopyStart);
-  auto streams = async_instructions_.find(instruction);
-  if (streams == async_instructions_.end()) {
+  if (!HasAsyncExecutionStreamIds(instruction)) {
     return StreamNotFoundError(instruction);
   }
+  auto streams = async_instructions_.find(instruction);
   return streams->second;
 }
 

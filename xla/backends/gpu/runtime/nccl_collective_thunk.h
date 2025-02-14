@@ -124,7 +124,8 @@ class NcclCollectiveDoneThunk;
 // Thunk base class for NCCL collective operations.
 class NcclCollectiveThunk : public Thunk {
  public:
-  NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync);
+  NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info, bool is_sync,
+                      CollectiveStreamId nccl_stream_id);
 
   struct Buffer {
     int64_t element_count;
@@ -171,6 +172,7 @@ class NcclCollectiveThunk : public Thunk {
   }
 
   CollectiveStreamId nccl_stream_id() const {
+    if (nccl_stream_id_ > 0) return nccl_stream_id_;
     return xla::gpu::GetCollectiveStreamId(IsAsync(), GetAsyncStreamKind());
   }
 
@@ -211,6 +213,10 @@ class NcclCollectiveThunk : public Thunk {
   // TODO(ezhulenev): Try to move this flag to NCCL clique as we need to make
   // sure that all NCCL resources are allocated just once.
   RendezvousFlag first_call_rendezvous_flag_;
+
+  // NCCL stream id assigned by execution stream assignment. Set to 0 if not
+  // assigned.
+  CollectiveStreamId nccl_stream_id_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -222,21 +228,28 @@ class NcclCollectiveDoneThunk : public Thunk {
   NcclCollectiveDoneThunk(
       Thunk::Kind kind, ThunkInfo thunk_info,
       std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
-      AsyncStreamKind async_stream_kind);
+      AsyncStreamKind async_stream_kind, CollectiveStreamId nccl_stream_id);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+
+  CollectiveStreamId nccl_stream_id() const {
+    if (nccl_stream_id_ > 0) return nccl_stream_id_;
+    return xla::gpu::GetCollectiveStreamId(true, async_stream_kind_);
+  }
 
   // return the execution stream id wheer previous async operator was launched
   // to.
   ExecutionStreamId nccl_execution_stream_id() const {
-    return ExecutionStreamId(
-        execution_stream_id().value() +
-        xla::gpu::GetCollectiveStreamId(true, async_stream_kind_).value());
+    return ExecutionStreamId(execution_stream_id().value() +
+                             nccl_stream_id().value());
   }
 
  private:
   std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events_;
   AsyncStreamKind async_stream_kind_ = AsyncStreamKind::kCollective;
+  // NCCL stream id assigned by execution stream assignment. Set to 0 if not
+  // assigned.
+  CollectiveStreamId nccl_stream_id_;
 };
 
 //===----------------------------------------------------------------------===//

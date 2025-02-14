@@ -93,9 +93,10 @@ bool IsLocalPeerTransfer(
 NcclCollectivePermuteStartThunk::NcclCollectivePermuteStartThunk(
     ThunkInfo thunk_info, const HloCollectivePermuteInstruction* instr,
     int64_t replica_count, int64_t partition_count,
-    const std::vector<Buffer>& buffers, bool p2p_memcpy_enabled)
+    const std::vector<Buffer>& buffers, CollectiveStreamId nccl_stream_id,
+    bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclCollectivePermuteStart, thunk_info,
-                          IsGPUSyncCollective(*instr)),
+                          IsGPUSyncCollective(*instr), nccl_stream_id),
       config_(GetNcclP2PConfig(instr, replica_count, partition_count)),
       buffers_(buffers),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {}

@@ -522,6 +522,10 @@ message DebugOptions {
   // xla_gpu_multi_streamed_windowed_einsum is set to true.
   bool xla_gpu_experimental_enable_alltoall_windowed_einsum = 360;
 
+  // If enabled, runtime will try to schedule overlapping collective on 
+  // multiple streams.
+  bool xla_gpu_experimental_enable_collective_multi_streaming = 370;
+
   // Enabling this flag will attempt to redirect every already-constructed
   // fusion possible to the Triton emitter.
   //

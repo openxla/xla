@@ -196,8 +196,22 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
           << results.buffer_assignment->StatsString(
                  /*report_total_fragmentation=*/true);
 
+  ExecutionStreamAssignment execution_stream_assignment(
+      hlo_module,
+      {
+          /*number_of_compute_execution_streams=*/4,
+          // Use 2 streams at maximum, beyond 2 might hit scenarios not
+          // well-assessed by LHS deadlock avoidance mechanism.
+          /*number_of_collective_execution_streams=*/
+          hlo_module->config()
+                  .debug_options()
+                  .xla_gpu_experimental_enable_collective_multi_streaming()
+              ? 2
+              : 1,
+      });
+
   results.execution_stream_assignment =
-      std::make_unique<ExecutionStreamAssignment>(hlo_module);
+      std::make_unique<ExecutionStreamAssignment>(execution_stream_assignment);
 
   struct GetCcStr {
     std::string operator()(const se::CudaComputeCapability& cc) const {

@@ -67,9 +67,10 @@ NcclAllToAllConfig GetNcclAllToAllConfig(const HloAllToAllInstruction* instr) {
 
 NcclAllToAllStartThunk::NcclAllToAllStartThunk(
     ThunkInfo thunk_info, const HloAllToAllInstruction* instr,
-    std::vector<NcclCollectiveThunk::Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<NcclCollectiveThunk::Buffer> buffers,
+    CollectiveStreamId nccl_stream_id, bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclAllToAllStart, thunk_info,
-                          IsGPUSyncCollective(*instr)),
+                          IsGPUSyncCollective(*instr), nccl_stream_id),
       config_(GetNcclAllToAllConfig(instr)),
       buffers_(std::move(buffers)),
       p2p_memcpy_enabled_(p2p_memcpy_enabled) {

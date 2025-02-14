@@ -183,6 +183,21 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
+namespace {
+absl::StatusOr<CollectiveStreamId> GetExecutionStreamId(
+    const ExecutionStreamAssignment& stream_assignment,
+    const HloInstruction* instr) {
+  CollectiveStreamId nccl_stream_id(0);
+  if (stream_assignment.HasAsyncExecutionStreamIds(instr)) {
+    TF_ASSIGN_OR_RETURN(
+        ExecutionStreamAssignment::AsyncExecutionStreamIds streams,
+        stream_assignment.GetAsyncExecutionStreamIds(instr));
+    return CollectiveStreamId(streams.destination_stream_id.value());
+  }
+  return nccl_stream_id;
+}
+}  // namespace
+
 IrEmitterUnnested::IrEmitterUnnested(IrEmitterContext* ir_emitter_context)
     : IrEmitter(ir_emitter_context, /*is_nested=*/false),
       send_recv_events_(std::make_shared<SendRecvAsyncEvents>()),
@@ -1904,9 +1919,13 @@ absl::Status IrEmitterUnnested::EmitCollectivePermute(
   }
   if (!NcclCollectivePermuteStartThunk::IsDegenerate(instr, replica_count,
                                                      partition_count)) {
+    TF_ASSIGN_OR_RETURN(
+        CollectiveStreamId nccl_stream_id,
+        GetExecutionStreamId(ir_emitter_context_->execution_stream_assignment(),
+                             instr));
     auto thunk = std::make_unique<NcclCollectivePermuteStartThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
-        partition_count, buffers,
+        partition_count, buffers, nccl_stream_id,
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().try_emplace(instr, thunk->async_events());
     AddThunkToThunkSequence(std::move(thunk));
@@ -2025,8 +2044,12 @@ absl::Status IrEmitterUnnested::EmitNcclThunk(
     if (ir_emitter_context_->debug_options().xla_syntax_sugar_async_ops()) {
       thunk_info.profile_annotation = async_start->name();
     }
+    TF_ASSIGN_OR_RETURN(
+        CollectiveStreamId nccl_stream_id,
+        GetExecutionStreamId(ir_emitter_context_->execution_stream_assignment(),
+                             inst));
     auto thunk = std::make_unique<NcclThunkType>(
-        thunk_info, inst, /*buffers=*/std::move(buffers),
+        thunk_info, inst, /*buffers=*/std::move(buffers), nccl_stream_id,
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
     GetCollectivesAsyncEvents().insert({async_start, thunk->async_events()});
     AddThunkToThunkSequence(std::move(thunk));
@@ -2212,9 +2235,13 @@ absl::Status IrEmitterUnnested::EmitNcclAsyncDone(Thunk::Kind kind,
   if (is_send_recv) {
     stream_kind = GetStreamKindForSendRecv(Cast<HloSendRecvInstruction>(start));
   }
+  TF_ASSIGN_OR_RETURN(
+      CollectiveStreamId nccl_stream_id,
+      GetExecutionStreamId(ir_emitter_context_->execution_stream_assignment(),
+                           start));
   AddThunkToThunkSequence(std::make_unique<NcclCollectiveDoneThunk>(
       kind, Thunk::ThunkInfo::WithProfileAnnotation(inst),
-      async_events_it->second, stream_kind));
+      async_events_it->second, stream_kind, nccl_stream_id));
   return absl::OkStatus();
 }
 
@@ -2454,9 +2481,13 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
         /*destination_buffer=*/buffer,
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
+    TF_ASSIGN_OR_RETURN(
+        CollectiveStreamId nccl_stream_id,
+        GetExecutionStreamId(ir_emitter_context_->execution_stream_assignment(),
+                             instr));
     auto thunk = std::make_unique<NcclSendThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
-        partition_count, nccl_buffer);
+        partition_count, nccl_buffer, nccl_stream_id);
     CollectivesAsyncEvents& collectives_async_events =
         GetCollectivesAsyncEvents();
 
@@ -2528,9 +2559,13 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
         /*destination_buffer=*/buffer,
         /*source_memory_space=*/memory_space,
         /*destination_memory_space=*/memory_space};
+    TF_ASSIGN_OR_RETURN(
+        CollectiveStreamId nccl_stream_id,
+        GetExecutionStreamId(ir_emitter_context_->execution_stream_assignment(),
+                             instr));
     auto thunk = std::make_unique<NcclRecvThunk>(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), instr, replica_count,
-        partition_count, nccl_buffer);
+        partition_count, nccl_buffer, nccl_stream_id);
     CollectivesAsyncEvents& collectives_async_events =
         GetCollectivesAsyncEvents();
 

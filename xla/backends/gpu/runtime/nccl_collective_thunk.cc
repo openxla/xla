@@ -210,9 +210,11 @@ NcclCollectiveConfig GetNcclCollectiveConfig(
 }
 
 NcclCollectiveThunk::NcclCollectiveThunk(Kind kind, ThunkInfo thunk_info,
-                                         bool is_sync)
+                                         bool is_sync,
+                                         CollectiveStreamId nccl_stream_id)
     : Thunk(kind, thunk_info),
-      async_events_(is_sync ? nullptr : new AsyncEvents()) {}
+      async_events_(is_sync ? nullptr : new AsyncEvents()),
+      nccl_stream_id_(nccl_stream_id) {}
 
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     GpuCollectives* collectives, const Thunk::CollectiveExecuteParams& params,
@@ -427,7 +429,9 @@ absl::Status NcclCollectiveThunk::ExecuteOnStream(const ExecuteParams& params) {
                   *params.collective_cliques, config().replica_groups,
                   config().group_mode, stream_id, stream_kind));
   se::StreamExecutor* executor = params.stream->parent();
-  int64_t async_stream_idx = static_cast<int64_t>(stream_kind);
+  int64_t async_stream_idx = (stream_id.value() > 0)
+                                 ? stream_id.value()
+                                 : static_cast<int64_t>(stream_kind);
 
   if (IsAsync()) {
     // Launch collective operation on an async stream.
@@ -504,7 +508,7 @@ std::string NcclCollectiveThunk::GetDeviceString(
 NcclCollectiveDoneThunk::NcclCollectiveDoneThunk(
     Thunk::Kind kind, ThunkInfo thunk_info,
     std::shared_ptr<NcclCollectiveThunk::AsyncEvents> async_events,
-    AsyncStreamKind async_stream_kind)
+    AsyncStreamKind async_stream_kind, CollectiveStreamId nccl_stream_id)
     : Thunk(kind, std::move(thunk_info)),
       async_events_(async_events),
       async_stream_kind_(async_stream_kind) {}

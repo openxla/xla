@@ -39,9 +39,10 @@ namespace xla::gpu {
 
 NcclCollectiveBroadcastStartThunk::NcclCollectiveBroadcastStartThunk(
     ThunkInfo thunk_info, const HloCollectiveBroadcastInstruction* instr,
-    std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<Buffer> buffers, CollectiveStreamId nccl_stream_id,
+    bool p2p_memcpy_enabled)
     : NcclCollectiveThunk(Thunk::kNcclCollectiveBroadcastStart, thunk_info,
-                          IsGPUSyncCollective(*instr)),
+                          IsGPUSyncCollective(*instr), nccl_stream_id),
       config_(GetNcclCollectiveConfig(instr, std::nullopt)),
       buffers_(std::move(buffers)) {}
 

@@ -97,8 +97,9 @@ CollectiveOpGroupMode GetGroupModeInst(HloInstType* inst) {
 
 NcclAllReduceReduceScatterThunkBase::NcclAllReduceReduceScatterThunkBase(
     Thunk::Kind kind, ThunkInfo thunk_info, NcclAllReduceConfig config,
-    std::vector<Buffer> buffers, bool is_sync)
-    : NcclCollectiveThunk(kind, thunk_info, is_sync),
+    std::vector<Buffer> buffers, bool is_sync,
+    CollectiveStreamId nccl_stream_id)
+    : NcclCollectiveThunk(kind, thunk_info, is_sync, nccl_stream_id),
       config_(std::move(config)),
       buffers_(std::move(buffers)) {
   CHECK_EQ(config_.config.operand_count, buffers_.size());
@@ -106,11 +107,12 @@ NcclAllReduceReduceScatterThunkBase::NcclAllReduceReduceScatterThunkBase(
 
 NcclAllReduceStartThunk::NcclAllReduceStartThunk(
     ThunkInfo thunk_info, const HloAllReduceInstruction* inst,
-    std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<Buffer> buffers, CollectiveStreamId nccl_stream_id,
+    bool p2p_memcpy_enabled)
     : NcclAllReduceReduceScatterThunkBase(
           Thunk::kNcclAllReduceStart, thunk_info,
           impl::GetNcclAllReduceConfigInst(inst), std::move(buffers),
-          IsGPUSyncCollective(*inst)) {}
+          IsGPUSyncCollective(*inst), nccl_stream_id) {}
 
 absl::Status NcclAllReduceStartThunk::CheckImplementable(
     const HloAllReduceInstruction* inst, int64_t replica_count,
@@ -139,11 +141,12 @@ absl::Status NcclAllReduceStartThunk::RunNcclCollective(
 
 NcclReduceScatterStartThunk::NcclReduceScatterStartThunk(
     ThunkInfo thunk_info, const HloReduceScatterInstruction* inst,
-    std::vector<Buffer> buffers, bool p2p_memcpy_enabled)
+    std::vector<Buffer> buffers, CollectiveStreamId nccl_stream_id,
+    bool p2p_memcpy_enabled)
     : NcclAllReduceReduceScatterThunkBase(
           Thunk::kNcclReduceScatterStart, thunk_info,
           impl::GetNcclAllReduceConfigInst(inst), std::move(buffers),
-          IsGPUSyncCollective(*inst)) {}
+          IsGPUSyncCollective(*inst), nccl_stream_id) {}
 
 /*static*/ absl::Status NcclReduceScatterStartThunk::CheckImplementable(
     const HloReduceScatterInstruction* inst, int64_t replica_count,

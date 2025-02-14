@@ -52,6 +52,7 @@ class NcclRaggedAllToAllStartThunk : public NcclCollectiveThunk {
   NcclRaggedAllToAllStartThunk(ThunkInfo thunk_info,
                                const HloRaggedAllToAllInstruction* instr,
                                std::vector<Buffer> buffers,
+                               CollectiveStreamId nccl_stream_id,
                                bool p2p_memcpy_enabled);
 
   // Returns whether the given instruction can be lowered to a nccl

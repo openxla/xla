@@ -65,6 +65,15 @@ DeviceAssignment MakeDeviceAssn(int64_t num_replicas) {
   return assn;
 }
 
+int GetIndexByName(absl::Span<HloInstruction* const> instruction_sequence,
+                   absl::string_view hlo_name) {
+  return absl::c_find_if(instruction_sequence,
+                         [hlo_name](HloInstruction* instruction) {
+                           return instruction->name() == hlo_name;
+                         }) -
+         instruction_sequence.begin();
+}
+
 class CollectiveOpsTestE2E : public HloTestBase {
  public:
   CollectiveOpsTestE2E() {
@@ -1863,6 +1872,67 @@ ENTRY entry {
   TF_ASSERT_OK_AND_ASSIGN(const HloModule* const hlo_module,
                           test_runner().HloModuleFromWrapped(executable.get()));
   EXPECT_NE(hlo_module, nullptr);
+}
+
+TEST_F(CollectiveOpsTestE2E, CollectiveMultiStreaming) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  ENTRY test_computation {
+    id = u32[] replica-id()
+    id_mat = u32[2,2] broadcast(id), dimensions={}
+    const.0 = u32[2,2] constant({{10,15}, {20,25}})
+    add.0 = u32[2,2] add(id_mat, const.0)
+
+    a2a = u32[2,2] all-to-all(u32[2,2] id_mat), replica_groups={{0,1},{2,3}}, dimensions={0}
+    ag_start = (u32[2,2], u32[4,2]) all-gather-start(u32[2,2] id_mat), replica_groups={{0,2},{1,3}}, dimensions={0}
+    add.1 = u32[2,2] add(id_mat, id_mat)
+    ag_done = u32[4,2] all-gather-done(ag_start)
+
+    a2a_reshape = u32[4] reshape(a2a)
+    ag_reshape = u32[8] reshape(ag_done)
+    add_reshape.1 = u32[4] reshape(add.1)
+    ROOT out = (u32[4], u32[8], u32[4]) tuple(a2a_reshape, ag_reshape, add_reshape.1)
+  }
+  )";
+  const int64_t kNumReplicas = 4;
+
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_gpu_enable_highest_priority_async_stream(true);
+  debug_options.set_xla_gpu_enable_latency_hiding_scheduler(true);
+  debug_options.set_xla_gpu_experimental_parallel_collective_overlap_limit(2);
+  debug_options.set_xla_gpu_experimental_enable_collective_multi_streaming(
+      true);
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.set_debug_options(debug_options);
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
+  TF_ASSERT_OK_AND_ASSIGN(const HloModule* const executable_module,
+                          test_runner().HloModuleFromWrapped(executable.get()));
+
+  auto schedule = executable_module->schedule();
+  std::vector<HloInstruction*> instruction_sequence =
+      schedule.sequence(executable_module->entry_computation()).instructions();
+  // Expecting a sequence of all-to-all-start, all-gather-start, fusion
+  // (contains an add), all-to-all-done, all-gather-done.
+  EXPECT_TRUE(
+      GetIndexByName(instruction_sequence, "all-to-all-start") <
+          GetIndexByName(instruction_sequence, "loop_broadcast_fusion") &&
+      GetIndexByName(instruction_sequence, "ag_start.1") <
+          GetIndexByName(instruction_sequence, "loop_broadcast_fusion") &&
+      GetIndexByName(instruction_sequence, "loop_broadcast_fusion") <
+          GetIndexByName(instruction_sequence, "all-to-all-done") &&
+      GetIndexByName(instruction_sequence, "loop_broadcast_fusion") <
+          GetIndexByName(instruction_sequence, "ag_done.1"));
+
+  TF_ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                          ExecuteReplicated(executable.get(), kNumReplicas));
+  ASSERT_EQ(results.size(), kNumReplicas);
 }
 
 class RaggedAllToAllTest : public AsyncMemcpyCollectiveOps {
