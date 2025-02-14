@@ -116,6 +116,7 @@ const CustomDtypes& GetCustomDtypes() {
 
 }  // namespace
 
+// 2DO Consider renaming this to NbDtypeToXlaPrimitiveType.
 absl::StatusOr<PrimitiveType> DtypeToPrimitiveType(const nb_dtype& np_type) {
   static auto& builtin_dtypes =
       *new absl::flat_hash_map<std::tuple<char, char, int>, PrimitiveType>({
