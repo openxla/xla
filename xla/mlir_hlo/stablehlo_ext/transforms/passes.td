@@ -65,3 +65,49 @@ def StablehloFlattenEntryFunctionTuplesPass : Pass<"stablehlo-ext-expand-flatten
   ];
   let dependentDialects = ["mlir::stablehlo::StablehloDialect"];
 }
+
+def StablehloLegalizeQuantCompositePass : Pass<"legalize-quant-composite", "ModuleOp"> {
+  let summary = "Lowers the quantization related composites op to native quantized ops.";
+  let description = [{
+    Legalizes the following composite ops to native quantized ops:
+    * stablehlo.composite "stablehlo.quantize" to `stablehlo.quantize`
+    * stablehlo.composite "stablehlo.dequantize" to `stablehlo.dequantize`
+    * stablehlo.composite "stablehlo.fake_quant" to `stablehlo.quantize` and `stablehlo.dequantize`
+
+    Only the following patterns are supported for legalization:
+    1.
+    ```
+    // before legalize
+    int_output = stablehlo.composite "stablehlo.quantize" float_input
+    float_output = stablehlo.composite "stablehlo.dequantize" int_output
+    // before legalize
+    qint_output = stablehlo.quantize float_input
+    float_output = stablehlo.dequantize qint_output
+    ```
+
+    2.
+    ```
+    // before legalize
+    int_output = stablehlo.composite "stablehlo.quantize" float_input
+    return int_output
+    // before legalize
+    qint_output = stablehlo.quantize float_input
+    return qint_output
+    ```
+
+    3.
+    ```
+    // before legalize
+    finc.func @main(int_argument)
+    float_output = stablehlo.composite "stablehlo.dequantize" int_argument
+    // after legalize
+    finc.func @main(qint_argument)
+    float_output = stablehlo.dequantize qint_argument
+    ```
+  }];
+  let constructor = "createStablehloLegalizeQuantCompositePass()";
+  let dependentDialects = [
+    "mlir::quant::QuantDialect",
+    "stablehlo::StablehloDialect"
+  ];
+}
