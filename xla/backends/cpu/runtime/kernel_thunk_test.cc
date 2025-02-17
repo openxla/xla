@@ -97,9 +97,9 @@ TEST(KernelThunkTest, AddF32Inline) {
   BufferAllocation::Slice slice = CreateBufferAllocationSlice(alloc);
 
   TF_ASSERT_OK_AND_ASSIGN(
-      auto thunk,
-      KernelThunk::Create({"add_f32"}, {slice}, {slice}, "add_f32",
-                          se::ThreadDim(4), /*invariant_arguments=*/{{}}));
+      auto thunk, KernelThunk::Create({"add_f32"}, {slice}, {slice}, "add_f32",
+                                      se::ThreadDim(4),
+                                      /*invariant_arguments=*/std::nullopt));
 
   AddF32HostKernel host_kernels;
   Thunk::ExecuteParams params = {&host_kernels, &allocations};
@@ -126,9 +126,9 @@ TEST(KernelThunkInvariantBuffersTest, MissingBufferSlice) {
 
   // Invariant buffer set is incorrect - should include in_slice, but is empty.
   TF_ASSERT_OK_AND_ASSIGN(
-      auto thunk,
-      KernelThunk::Create({"add_f32"}, {in_slice}, {out_slice}, "add_f32",
-                          se::ThreadDim(4), /*invariant_arguments=*/{{}}));
+      auto thunk, KernelThunk::Create({"add_f32"}, {in_slice}, {out_slice},
+                                      "add_f32", se::ThreadDim(4),
+                                      /*invariant_arguments=*/std::nullopt));
 
   AddF32HostKernel host_kernels;
   Thunk::ExecuteParams params = {&host_kernels, &allocations};
