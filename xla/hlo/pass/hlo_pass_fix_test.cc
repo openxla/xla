@@ -18,7 +18,10 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "testing/base/public/mock-log.h"
+#include "absl/base/log_severity.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
@@ -41,6 +44,13 @@ limitations under the License.
 
 namespace xla {
 namespace {
+
+using ::base_logging::WARNING;
+using ::testing::_;
+using ::testing::AtLeast;
+using ::testing::HasSubstr;
+using ::testing::kDoNotCaptureLogsYet;
+using ::testing::ScopedMockLog;
 
 // A module pass that decrements positive scalar signed integer constants.
 class DecrementPositiveConstants : public HloModulePass {
@@ -206,6 +216,35 @@ TEST_F(HloPassFixTest, OscillationsStillTerminate) {
 
   // We expect this to terminate and report that the module did not change.
   TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(HloPassFixTest, CycleReportedIfOptionSpecified) {
+  constexpr absl::string_view kModule = R"(
+    HloModule Oscillating
+
+    ENTRY main {
+      a = f32[4] parameter(0)
+      b = f32[4] parameter(1)
+      ROOT c = f32[4] add(a, b)
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModule));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_hlo_pass_fix_detect_cycles(true);
+  HloPassFix<FlipAddSubtract> pass;
+
+  // As OscillationsStillTerminate above, but also verify that a warning was
+  // logged about the detected cycle.
+  ScopedMockLog log(kDoNotCaptureLogsYet);
+  EXPECT_CALL(log, Log(WARNING, _, HasSubstr("Cycle detected")))
+      .Times(AtLeast(1));
+  log.StartCapturingLogs();
+
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
   EXPECT_FALSE(changed);
 }
 
