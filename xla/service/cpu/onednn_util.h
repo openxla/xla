@@ -34,6 +34,7 @@ namespace cpu {
 
 inline bool IsSupportedType(xla::PrimitiveType dtype) {
   using tsl::port::CPUFeature;
+
   // TODO(intel-tf): Enable more types.
   switch (dtype) {
     case F32:
@@ -41,7 +42,8 @@ inline bool IsSupportedType(xla::PrimitiveType dtype) {
     case BF16:
       return TestCPUFeature(CPUFeature::AVX512F) ||
              TestCPUFeature(CPUFeature::AVX_NE_CONVERT) ||
-             TestCPUFeature(CPUFeature::AMX_BF16);
+             TestCPUFeature(CPUFeature::AMX_BF16) ||
+             TestCPUFeature(CPUFeature::AARCH64_BF16);
     case F16:
       return (TestCPUFeature(CPUFeature::AVX512BW) &&
               (TestCPUFeature(CPUFeature::AVX512_FP16) ||
