@@ -204,5 +204,37 @@ TEST(StreamExecutorGpuCompilerTest, SuccessSerializeDeserialize) {
   EXPECT_EQ(deserialized_executable->name(), "Identity");
 }
 
+constexpr absl::string_view kProgramIncrement = R"(HloModule Increment
+
+ENTRY main {
+  param.1 = s32[] parameter(0)
+  constant.1 = s32[] constant(1)
+  ROOT add.1 = s32[] add(param.1, constant.1)
+})";
+
+TEST(StreamExecutorGpuCompilerTest, UnloadedExecutableMemoryStats) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  auto se_client = absl::WrapUnique(
+      tensorflow::down_cast<StreamExecutorGpuClient*>(client.release()));
+  StreamExecutorGpuCompiler compiler(se_client->client()->platform()->id());
+  xla::CompileOptions opts;
+  opts.target_config = Compiler::TargetConfig(
+      se_client->client()->backend().default_stream_executor());
+
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                          GetXlaComputation(kProgramIncrement));
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          se_client->GetTopologyDescription());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+
+  TF_ASSERT_OK_AND_ASSIGN(CompiledMemoryStats compiled_memory_stats,
+                          executable->GetCompiledMemoryStats());
+
+  EXPECT_EQ(compiled_memory_stats.argument_size_in_bytes, 4);
+}
+
 }  // namespace
 }  // namespace xla
