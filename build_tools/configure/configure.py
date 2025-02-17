@@ -432,7 +432,7 @@ def _parse_args():
       "--cuda_compiler",
       type=CudaCompiler.from_str,
       choices=list(CudaCompiler),
-      default="nvcc",
+      default="clang",
   )
   parser.add_argument(
       "--rocm_compiler",
