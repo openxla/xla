@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PYTHON_PY_EXECUTABLE_H_
 #define XLA_PYTHON_PY_EXECUTABLE_H_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -234,6 +235,9 @@ class PyLoadedExecutable {
   // same fingerprint. nullopt on platforms or executables where fingerprints
   // aren't implemented.
   std::optional<std::string> fingerprint_;
+
+  // Launch ID to use for the next execution.
+  std::atomic<int64_t> next_launch_id_;
 
   // The options to pass to `executable_.Execute`.
   ifrt::ExecuteOptions options_;
