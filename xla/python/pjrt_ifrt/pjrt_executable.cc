@@ -33,11 +33,13 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
+#include "xla/layout.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_future.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/basic_device_list.h"
@@ -659,6 +661,18 @@ PjRtLoadedExecutable::Execute(
   // memory_kind shares the same Sharding object.
   absl::flat_hash_map<MemoryKind, std::shared_ptr<const Sharding>>
       single_device_shardings;
+  auto maybe_layouts = GetOutputLayouts();
+  std::vector<std::shared_ptr<const xla::PjRtLayout>> layouts;
+  if (absl::IsUnimplemented(maybe_layouts.status())) {
+    layouts.reserve(num_outputs);
+    for (int i = 0; i < num_outputs; ++i) {
+      layouts.push_back(std::make_shared<xla::PjRtLayout>(xla::Layout()));
+    }
+  } else {
+    TF_RETURN_IF_ERROR(maybe_layouts.status());
+    layouts = *std::move(maybe_layouts);
+  }
+
   for (int i = 0; i < num_outputs; ++i) {
     PjRtArray::PjRtBuffers buffers;
     buffers.reserve(num_computations);
@@ -699,9 +713,9 @@ PjRtLoadedExecutable::Execute(
     } else {
       sharding = output_shardings_[i];
     }
-    outputs.push_back(*PjRtArray::Create(client_, output_dtypes_[i],
-                                         output_shapes_[i], std::move(sharding),
-                                         std::move(buffers)));
+    outputs.push_back(*PjRtArray::Create(
+        client_, output_dtypes_[i], output_shapes_[i], std::move(sharding),
+        std::move(buffers), std::move(layouts[i])));
   }
 
   ExecuteResult result;
