@@ -8665,9 +8665,14 @@ absl::StatusOr<bool> CudnnGraph::SupportsExplicitCommandBufferConstruction()
   std::vector<cudnn_frontend::BehaviorNote_t> notes;
   graph_.get_behavior_notes(notes).is_bad();
   RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.get_behavior_notes(notes));
-  return absl::c_any_of(notes, [](cudnn_frontend::BehaviorNote_t n) {
+  bool result = absl::c_any_of(notes, [](cudnn_frontend::BehaviorNote_t n) {
     return n == cudnn_frontend::BehaviorNote_t::SUPPORTS_CUDA_GRAPH_NATIVE_API;
   });
+  if (!result) {
+    VLOG(5) << "Graph does not support CUDA graph native API:\n"
+            << graph_.print();
+  }
+  return result;
 }
 
 absl::Status CudnnGraph::PopulateOrUpdateRawCommandBuffer(
