@@ -30,6 +30,9 @@ implementation. For example, the usual invocation to run an input file
 $ run_hlo_module --platform=CUDA --reference_platform=Interpreter computation.hlo
 ```
 
+The `--input_format` flag can be used to specify the input type. For example, to
+run a StableHLO module specify `--input_format=stablehlo`.
+
 As with all the tools, `--help` can be used to obtain the full list of options.
 
 ## Running HLO snippets with SPMD support: `multihost_hlo_runner`
