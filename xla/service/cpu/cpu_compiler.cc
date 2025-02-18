@@ -156,7 +156,6 @@ limitations under the License.
 #include "xla/service/conditional_simplifier.h"
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/cpu/buffer_info_util.h"
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_executable.h"
 #include "xla/service/cpu/cpu_instruction_fusion.h"
@@ -210,6 +209,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
@@ -1019,7 +1019,7 @@ CreateOrcJITPostCompilationHook(const HloModule* hlo_module,
     if (obj_files) obj_files->push_back(obj_file.getData().str());
 
     if (DumpingEnabledForHloModule(*hlo_module)) {
-      std::string_view id = llvm_module.getModuleIdentifier();
+      absl::string_view id = llvm_module.getModuleIdentifier();
       size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
       DumpToFileInDir(
           *hlo_module, /*file_prefix=*/"",
@@ -1783,8 +1783,10 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
   if (aot_options.PlatformId() != se::host::kHostPlatformId) {
     return InvalidArgument("Incompatible AOT compilation platform");
   }
+
   const CpuAotCompilationOptions& options =
       static_cast<const CpuAotCompilationOptions&>(aot_options);
+
   llvm::Triple triple(llvm::Triple::normalize(options.triple()));
   std::string error;
   const llvm::Target* target =
@@ -1823,6 +1825,7 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
       pie_level = llvm::PIELevel::Large;
       break;
   }
+
   llvm::CodeGenOptLevel opt_level =
       IrCompiler::GetCodeGenOptLevel(modules[0]->config());
   std::shared_ptr<llvm::TargetMachine> target_machine =
@@ -1831,176 +1834,276 @@ CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModuleGroup> module_group,
           CompilerTargetOptions(modules[0]->config()), reloc_model,
           std::nullopt, opt_level));
 
+  std::vector<std::unique_ptr<AotCompilationResult>> cpu_executable_results;
+
+  for (auto& hlo_module : modules) {
+    if (hlo_module->has_schedule()) {
+      continue;
+    }
+    TF_RETURN_IF_ERROR(RunHloPasses(hlo_module.get(), /*is_aot_compile=*/false,
+                                    target_machine.get(),
+                                    /*dummy*/ CompileOptions()));
+
+    TF_ASSIGN_OR_RETURN(
+        std::unique_ptr<Executable> executable,
+        CompileCpuExecutableAheadOfTime(std::move(hlo_module), target_machine,
+                                        options, triple, pic_level, pie_level));
+
+    TF_ASSIGN_OR_RETURN(cpu_executable_results.emplace_back(),
+                        Export(executable.get()));
+  }
+
+  return cpu_executable_results;
+}
+
+absl::StatusOr<std::unique_ptr<CpuExecutable>>
+CpuCompiler::CompileCpuExecutableAheadOfTime(
+    std::unique_ptr<HloModule> module,
+    std::shared_ptr<llvm::TargetMachine> target_machine,
+    const CpuAotCompilationOptions& aot_options, const llvm::Triple& triple,
+    const llvm::PICLevel::Level& pic_level,
+    const llvm::PIELevel::Level& pie_level) {
+  TraceMe trace([&] {
+    return TraceMeEncode("CpuCompiler::CompileCpuExecutableAheadOfTime",
+                         {{"name", module->name()}});
+  });
   // Compile must be thread-safe so create a new LLVM context for the module.
   mlir::MLIRContext mlir_context;
-  llvm::LLVMContext llvm_context;
+  auto llvm_context = std::make_unique<llvm::LLVMContext>();
 
-  std::vector<std::unique_ptr<AotCompilationResult>> results;
-  for (size_t i = 0; i < modules.size(); ++i) {
-    HloModule* module = modules[i].get();
-    VLOG(1) << "Compiling ahead-of-time: " << module->name();
+  const DebugOptions& debug_options = module->config().debug_options();
 
-    if (!module->has_schedule()) {
-      TF_RETURN_IF_ERROR(RunHloPasses(module, /*is_aot_compile=*/true,
-                                      target_machine.get(),
-                                      /*dummy*/ CompileOptions{}));
+  TF_ASSIGN_OR_RETURN(HloSchedule schedule, CreateHloSchedule(*module));
+  TF_RETURN_IF_ERROR(module->set_schedule(schedule));
 
-      TF_ASSIGN_OR_RETURN(HloSchedule schedule,
-                          ScheduleModule(module, BufferSizeBytesFunction()));
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> assignment,
+                      CreateBufferAssignment(*module));
+  DumpHloModuleIfEnabled(*module, *assignment,
+                         absl::StrCat("cpu_aot_", kAfterOptimizationsDumpName));
 
-      // Run buffer analysis on the HLO graph. This analysis figures out which
-      // temporary buffers are required to run the computation.
-      TF_ASSIGN_OR_RETURN(
-          std::unique_ptr<BufferAssignment> assignment,
-          BufferAssigner::Run(module,
-                              std::make_unique<SequentialHloOrdering>(schedule),
-                              BufferSizeBytesFunction(), memory_alignment,
-                              /*allocate_buffers_for_constants=*/true));
-      // BufferAssignment::ToString() includes a header, so no need for us to
-      // print one ourselves.
-      if (DumpingEnabledForHloModule(*module)) {
-        DumpToFileInDirOrStdout(*module, "", "buffer_assignment",
-                                assignment->ToString());
-      }
-      DumpHloModuleIfEnabled(*module, *assignment,
-                             absl::StrCat("cpu_", kAfterOptimizationsDumpName));
+  // TODO profiling related, probably delete this
+  absl::flat_hash_map<const HloInstruction*, int64_t>
+      instruction_to_profile_idx;
+  absl::flat_hash_map<const HloComputation*, int64_t>
+      computation_to_profile_idx;
+  std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map;
+  std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data;
+  if (module->config().hlo_profiling_enabled()) {
+    TF_RETURN_IF_ERROR(CreateHloProfilingArtifacts(
+        *module, &instruction_to_profile_idx, &computation_to_profile_idx,
+        &hlo_profile_index_map, &hlo_profile_printer_data));
+  }
+  // probably delete this end
 
-      absl::flat_hash_map<const HloInstruction*, int64_t>
-          instruction_to_profile_idx;
-      absl::flat_hash_map<const HloComputation*, int64_t>
-          computation_to_profile_idx;
-      std::unique_ptr<HloProfileIndexMap> hlo_profile_index_map;
-      std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data;
+  TargetMachineFeatures target_machine_features(target_machine.get());
 
-      if (module->config().hlo_profiling_enabled()) {
-        TF_RETURN_IF_ERROR(CreateHloProfilingArtifacts(
-            *module, &instruction_to_profile_idx, &computation_to_profile_idx,
-            &hlo_profile_index_map, &hlo_profile_printer_data));
-      }
+  auto llvm_module =
+      std::make_unique<llvm::Module>(kXlaModuleIdentifier, *llvm_context);
 
-      TargetMachineFeatures target_machine_features(target_machine.get());
-      std::vector<BufferInfo> buffer_infos =
-          CreateBufferInfosFromBufferAssignment(*module, *assignment);
-      HloComputation* computation = module->entry_computation();
+  llvm_module->setDataLayout(target_machine->createDataLayout());
+  llvm_module->setTargetTriple(triple.getTriple());
+  if (pic_level != llvm::PICLevel::NotPIC) {
+    llvm_module->setPICLevel(pic_level);
+  }
+  if (pie_level != llvm::PIELevel::Default) {
+    llvm_module->setPIELevel(pie_level);
+  }
 
-      // Set required information before emitting IR
-      auto llvm_module =
-          std::make_unique<llvm::Module>(kXlaModuleIdentifier, llvm_context);
-      llvm_module->setDataLayout(target_machine->createDataLayout());
-      llvm_module->setTargetTriple(triple.getTriple());
-      if (pic_level != llvm::PICLevel::NotPIC) {
-        llvm_module->setPICLevel(pic_level);
-      }
-      if (pie_level != llvm::PIELevel::Default) {
-        llvm_module->setPIELevel(pie_level);
-      }
-      IrEmitter ir_emitter(
-          &mlir_context, *module, *assignment, llvm_module.get(),
-          std::move(instruction_to_profile_idx),
-          std::move(computation_to_profile_idx),
-          ModuleComputationsTransitivelyContainCustomCall(*module),
-          &target_machine_features,
-          // TODO(b/66051036): Run full msan for AOT.
-          /*emit_code_for_msan=*/false);
+  // Emitting part
+  // TODO(ezhulenev): Once we fully migrate to Thunks current IrEmitter should
+  // be renamed to NestedIrEmitter and be used only for emitting nested (aka
+  // thread local or embedded) computations (reductions, maps, etc.).
 
-      TF_RETURN_IF_ERROR(ir_emitter.EmitAllConstantGlobals());
+  // (Nested) IrEmitter is responsible for building LLVM module with functions
+  // for all HLO computations. In thunk execution mode we only build LLVM
+  // functions for embedded computations (e.g. reduction computations) and all
+  // high-level operations (fusions, elementwise, etc.) are lowered to kernel
+  // functions (which are also LLVM functions, but use a HostKernel ABI).
+  IrEmitter nested_ir_emitter(
+      &mlir_context, *module, *assignment, llvm_module.get(),
+      std::move(instruction_to_profile_idx),
+      std::move(computation_to_profile_idx),
+      ModuleComputationsTransitivelyContainCustomCall(*module),
+      &target_machine_features,
+      // TODO(b/66051036): Run full msan for AOT.
+      /*emit_code_for_msan=*/false);
 
-      for (ComputationToEmit subcomputation :
-           SubcomputationEmissionOrder(computation)) {
-        if (subcomputation.computation->IsFusionComputation()) {
-          continue;
-        }
-        TF_RETURN_IF_ERROR(
-            ir_emitter
-                .EmitComputation(subcomputation.computation,
-                                 subcomputation.computation->name(),
-                                 /*is_top_level_computation=*/false,
-                                 schedule.sequence(subcomputation.computation)
-                                     .instructions(),
-                                 subcomputation.allow_reassociation)
-                .status());
-      }
-      const std::string& entry_point_name = options.entry_point_name();
-      TF_ASSIGN_OR_RETURN(llvm::Function * entry_function,
-                          ir_emitter.EmitComputation(
-                              computation, entry_point_name,
-                              /*is_top_level_computation=*/true,
-                              schedule.sequence(computation).instructions(),
-                              /*allow_reassociation=*/false));
+  // The thunk runtime manages large constants, therefore we only emit
+  // small ones.
+  TF_RETURN_IF_ERROR(nested_ir_emitter.EmitSmallConstantGlobals());
 
-      CHECK(entry_function->getName() == entry_point_name);
+  // IR emitter is responsible for building LLVM module with host kernels for
+  // corresponding HLO instructions (fusions, elemental instructions, etc.).
+  IrEmitter2 ir_emitter2(*module, llvm_module.get(), &nested_ir_emitter);
 
-      ModuleHook pre_optimization_ir_hook;
-      ModuleHook post_optimization_ir_hook;
-      std::tie(pre_optimization_ir_hook, post_optimization_ir_hook) =
-          GetIRModuleHooks(*module, user_pre_optimization_hook_,
-                           user_post_optimization_hook_);
+  // Thunk emitter is responsible for building a Thunk sequence that will
+  // resolved kernels in the compiled LLVM module and execute them together
+  // with Thunks implemented as library calls (e.g. oneDNN or Eigen).
+  ThunkEmitter thunk_emitter(ir_emitter2, *assignment, target_machine_features,
+                             module->config());
+  TF_ASSIGN_OR_RETURN(ThunkSequence thunks,
+                      thunk_emitter.EmitEntryComputation(*module));
 
-      // Run the LLVM verifier over the unoptimized LLVM IR.  If it fails, run
-      // the pre-optimization IR dump hook before returning.
-      {
-        absl::Status verify_status = VerifyLlvmModule(*llvm_module);
-        if (!verify_status.ok() && pre_optimization_ir_hook) {
-          pre_optimization_ir_hook(*llvm_module);
-        }
-        TF_RETURN_IF_ERROR(verify_status);
-      }
+  // Cache these flags here since we'll want to access them after the module's
+  // ownership is std::moved.
+  const bool embed_ir_in_executable =
+      debug_options.xla_embed_ir_in_executable();
 
-      auto post_codegen_hook = [&](const llvm::Module& llvm_module,
-                                   const llvm::object::ObjectFile& obj_file) {
-        if (!DumpingEnabledForHloModule(*module)) {
-          return;
-        }
-        std::string_view id = llvm_module.getModuleIdentifier();
-        size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
-        DumpToFileInDir(
-            *module, /*file_prefix=*/"",
-            /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
-            absl::string_view(obj_file.getData().data(),
-                              obj_file.getData().size()));
-      };
+  std::string ir_module_string;
+  if (embed_ir_in_executable) {
+    std::string emitter2_ir = llvm_ir::DumpToString(llvm_module.get());
 
-      IrCompiler::Options ir_compiler_options = {
-          /*optimization_level=*/opt_level,
-          /*optimize_for_size=*/
-          options::OptimizeForSizeRequested(module->config()),
-          /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
-          /*disable_expensive_passes=*/
-          module->config().debug_options().xla_llvm_disable_expensive_passes(),
-          /*disable_slp_vectorizer=*/
-          options::SlpVectorizerDisabled(module->config()),
-          /*disable_loop_unrolling=*/
-          options::DisableLoopUnrolling(module->config()),
-          /*dfsan_enabled=*/aot_options.sanitize_dataflow(),
-          /*dfsan_abilists_enabled=*/aot_options.sanitize_abilists_dataflow()};
+    auto thunk_kernel_fmt = [](std::string* out,
+                               const ThunkEmitter::EmittedKernel& kernel) {
+      absl::StrAppend(out,
+                      llvm_ir::DumpToString(kernel.module.getModuleUnlocked()));
+    };
+    std::string thunks_ir =
+        absl::StrJoin(thunk_emitter.kernels(), "\n", thunk_kernel_fmt);
 
-      IrCompiler::CompilationHooks ir_compiler_hooks = {
-          pre_optimization_ir_hook,
-          post_optimization_ir_hook,
-          post_codegen_hook,
-      };
+    ir_module_string = absl::StrCat(emitter2_ir, "\n", thunks_ir);
+  }
 
-      IrCompiler ir_compiler([&] { return target_machine; },
-                             std::move(ir_compiler_options),
-                             std::move(ir_compiler_hooks));
+  TF_RETURN_IF_ERROR(VerifyLlvmModule(*llvm_module));
+  for (const auto& [name, module] : thunk_emitter.kernels()) {
+    TF_RETURN_IF_ERROR(VerifyLlvmModule(*module.getModuleUnlocked()));
+  }
 
-      std::unique_ptr<llvm::MemoryBuffer> object_file =
-          cantFail(ir_compiler(*llvm_module));
-      ObjectFileData object_file_data(object_file->getBufferStart(),
-                                      object_file->getBufferEnd());
+  // Compilation part
+  ModuleHook pre_optimization_ir_hook;
+  ModuleHook post_optimization_ir_hook;
+  std::tie(pre_optimization_ir_hook, post_optimization_ir_hook) =
+      GetIRModuleHooks(*module, user_pre_optimization_hook_,
+                       user_post_optimization_hook_);
 
-      TF_ASSIGN_OR_RETURN(const BufferAllocation::Slice result_slice,
-                          assignment->GetUniqueTopLevelOutputSlice());
+  // TODO(basioli): is this hook needed? Currently needed to save obj_files, but
+  // we can probably do that from the object_files vector.
+  std::vector<std::string> obj_files;
+  auto post_codegen_hook = [&](const llvm::Module& llvm_module,
+                               const llvm::object::ObjectFile& obj_file) {
+    obj_files.push_back(obj_file.getData().str());
+    if (!DumpingEnabledForHloModule(*module)) {
+      return;
+    }
+    absl::string_view id = llvm_module.getModuleIdentifier();
+    size_t pos = std::min(id.size(), 1 + kXlaModuleIdentifier.size());
+    DumpToFileInDir(
+        *module, /*file_prefix=*/"",
+        /*file_suffix=*/absl::StrCat("obj-file.", id.substr(pos), ".o"),
+        absl::string_view(obj_file.getData().data(),
+                          obj_file.getData().size()));
+  };
 
-      results.emplace_back(std::make_unique<CpuAotCompilationResult>(
-          std::move(object_file_data), std::move(buffer_infos),
-          result_slice.index(), std::move(modules[i]),
-          std::move(hlo_profile_printer_data)));
+  IrCompiler::Options ir_compiler_options = {
+      /*optimization_level=*/target_machine->getOptLevel(),
+      /*optimize_for_size=*/
+      options::OptimizeForSizeRequested(module->config()),
+      /*fast_math_flags=*/llvm_ir::GetCpuFastMathFlags(module->config()),
+      /*disable_expensive_passes=*/
+      module->config().debug_options().xla_llvm_disable_expensive_passes(),
+      /*disable_slp_vectorizer=*/
+      options::SlpVectorizerDisabled(module->config()),
+      /*disable_loop_unrolling=*/
+      options::DisableLoopUnrolling(module->config()),
+      /*dfsan_enabled=*/aot_options.sanitize_dataflow(),
+      /*dfsan_abilists_enabled=*/aot_options.sanitize_abilists_dataflow()};
+
+  IrCompiler::CompilationHooks ir_compiler_hooks = {
+      pre_optimization_ir_hook,
+      post_optimization_ir_hook,
+      post_codegen_hook,
+  };
+
+  IrCompiler ir_compiler([&] { return target_machine; },
+                         std::move(ir_compiler_options),
+                         std::move(ir_compiler_hooks));
+
+  // For simplicity no parallel compilation is used.
+  std::vector<CompiledSymbolsPart> compiled_parts;
+  compiled_parts.push_back(
+      CollectCompiledSymbolsPart(ir_emitter2, *llvm_module));
+
+  std::vector<std::unique_ptr<llvm::MemoryBuffer>> object_files;
+  object_files.push_back(cantFail(ir_compiler(*llvm_module)));
+
+  // Collect compiled symbols from all LLVM module parts.
+  std::vector<FunctionLibrary::Symbol> compiled_symbols;
+
+  absl::flat_hash_map<FunctionLibrary::TypeId, SymbolProto::FunctionTypeId>
+      symbol_type_id_to_function_type_id;
+
+  VLOG(3) << "Compiling " << thunk_emitter.kernels().size()
+          << " thunk kernels.";
+  for (auto& [name, module] : thunk_emitter.kernels()) {
+    compiled_symbols.push_back(
+        FunctionLibrary::Sym<FunctionLibrary::Kernel>(name));
+    symbol_type_id_to_function_type_id.emplace(compiled_symbols.back().type_id,
+                                               SymbolProto::KERNEL);
+    object_files.push_back(cantFail(ir_compiler(*module.getModuleUnlocked())));
+  }
+
+  for (const CompiledSymbolsPart& part : compiled_parts) {
+    for (const IrEmitter2::KernelInfo& kernel : part.kernels) {
+      compiled_symbols.push_back(
+          FunctionLibrary::Sym<FunctionLibrary::Kernel>(kernel.name));
+      symbol_type_id_to_function_type_id.emplace(
+          compiled_symbols.back().type_id, SymbolProto::KERNEL);
+    }
+    for (const IrEmitter2::ComparatorInfo& comparator : part.comparators) {
+      compiled_symbols.push_back(
+          FunctionLibrary::Sym<FunctionLibrary::Comparator>(comparator.name));
+      symbol_type_id_to_function_type_id.emplace(
+          compiled_symbols.back().type_id, SymbolProto::COMPARATOR);
     }
   }
 
-  VLOG(1) << "Compilation finished";
-  return std::move(results);
+  VLOG(3) << "Collected " << compiled_symbols.size() << " compiled symbols";
+
+  // Create constant allocations from the buffer assignment.
+  TF_ASSIGN_OR_RETURN(std::vector<CpuExecutable::ConstantAllocation> constants,
+                      CreateConstantAllocations(*assignment));
+
+  TF_ASSIGN_OR_RETURN(
+      auto cpu_executable,
+      CpuExecutable::Create(
+          /*function_library=*/nullptr,  // NOTE: We don't need to generate a
+                                         // function library as the only purpose
+                                         // of this executable is to get
+                                         // exported.
+          std::move(assignment), std::move(module), std::move(thunks),
+          std::move(constants), std::move(hlo_profile_printer_data),
+          std::move(hlo_profile_index_map)));
+
+  // Save object files to be able to export them to AOT compilation
+  // result.
+  cpu_executable->set_obj_files(std::move(obj_files));
+
+  // Save compiled symbols to be able to export them to AOT compilation
+  // result.
+  cpu_executable->set_compiled_symbols(std::move(compiled_symbols));
+
+  // Save mapping between symbol type id and function type id to be able to
+  // export them to AOT compilation result.
+  cpu_executable->set_symbol_type_id_to_function_type_id(
+      symbol_type_id_to_function_type_id);
+
+  if (embed_ir_in_executable) {
+    cpu_executable->set_ir_module_string(ir_module_string);
+  }
+
+  // Dump computation proto state and buffer assignment for
+  // GetCompiledMemoryStats results.
+  auto with_hlo_proto = [&](std::unique_ptr<CpuExecutable> cpu_executable) {
+    auto hlo_proto = std::make_unique<HloProto>();
+    *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
+    *hlo_proto->mutable_buffer_assignment() =
+        cpu_executable->buffer_assignment().ToProto();
+    StripPayloadFromLiteralProto(*hlo_proto);
+    cpu_executable->set_hlo_proto(std::move(hlo_proto));
+    return cpu_executable;
+  };
+
+  return with_hlo_proto(std::move(cpu_executable));
 }
 
 se::Platform::Id CpuCompiler::PlatformId() const {
@@ -2010,99 +2113,6 @@ se::Platform::Id CpuCompiler::PlatformId() const {
 HloCostAnalysis::ShapeSizeFunction CpuCompiler::ShapeSizeBytesFunction() const {
   return CpuExecutable::ShapeSizeBytes;
 }
-
-namespace {
-
-// This is a result of exporting JIT compiled CpuExecutable to AOT compilation
-// result that can be saved on disk and shipped over the wire.
-class CpuExecutableAotCompilationResult : public AotCompilationResult {
- public:
-  static absl::StatusOr<std::unique_ptr<CpuExecutableAotCompilationResult>>
-  Create(const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
-         absl::string_view function_name, std::vector<std::string> obj_files,
-         std::vector<SymbolProto> symbols, const ThunkSequence* thunks,
-         CompilationResultProto::ObjFileKind obj_file_kind) {
-    std::optional<ThunkSequenceProto> thunk_proto;
-
-    if (thunks != nullptr) {
-      ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
-          &buffer_assignment->Allocations());
-      TF_ASSIGN_OR_RETURN(thunk_proto, thunk_sequence_serdes.ToProto(*thunks));
-    }
-
-    return absl::WrapUnique(new CpuExecutableAotCompilationResult(
-        hlo_module, buffer_assignment, function_name, std::move(obj_files),
-        std::move(symbols), thunk_proto, obj_file_kind));
-  }
-
-  absl::StatusOr<std::string> SerializeAsString() const override {
-    return proto_.SerializeAsString();
-  }
-
-  static absl::StatusOr<std::unique_ptr<CpuExecutableAotCompilationResult>>
-  FromString(const std::string& serialized) {
-    CompilationResultProto proto;
-    if (!proto.ParseFromString(serialized)) {
-      return Internal(
-          "Failed to parse serialized CpuExecutableAotCompilationResult.");
-    }
-
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<HloModule> module,
-        HloModule::CreateFromProtoWithConfig(proto.hlo_module()));
-
-    return std::unique_ptr<CpuExecutableAotCompilationResult>(
-        new CpuExecutableAotCompilationResult(proto, std::move(module)));
-  }
-
-  absl::StatusOr<std::unique_ptr<Executable>> LoadExecutable(
-      Compiler* compiler, const se::StreamExecutor* stream_exec) const override;
-
-  const HloModule* optimized_module() const override { return module_.get(); }
-
-  std::unique_ptr<HloModule> consume_optimized_module() override {
-    return std::move(module_);
-  }
-
- private:
-  CpuExecutableAotCompilationResult(
-      const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
-      absl::string_view function_name, std::vector<std::string> obj_files,
-      std::vector<SymbolProto> symbols,
-      const std::optional<ThunkSequenceProto>& thunks,
-      CompilationResultProto::ObjFileKind obj_file_kind) {
-    *proto_.mutable_hlo_module()->mutable_hlo_module() = hlo_module->ToProto();
-    *proto_.mutable_hlo_module()->mutable_config() =
-        hlo_module->config().ToProto();
-    *proto_.mutable_buffer_assignment() = buffer_assignment->ToProto();
-    proto_.set_entry_function_name(std::string(function_name));
-    for (std::string& obj_file : obj_files) {
-      proto_.add_obj_files(std::move(obj_file));
-    }
-
-    for (const auto& symbol : symbols) {
-      auto* symbol_proto = proto_.add_compiled_symbols();
-      *symbol_proto = symbol;
-    }
-    proto_.set_obj_files_kind(obj_file_kind);
-    module_ = hlo_module->Clone();
-
-    if (thunks.has_value()) {
-      ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
-          &buffer_assignment->Allocations());
-      *proto_.mutable_thunk_sequence() = *thunks;
-    }
-  }
-
-  explicit CpuExecutableAotCompilationResult(CompilationResultProto proto,
-                                             std::unique_ptr<HloModule> module)
-      : proto_(std::move(proto)), module_(std::move(module)) {}
-
-  CompilationResultProto proto_;
-  std::unique_ptr<HloModule> module_;
-};
-
-}  // namespace
 
 absl::StatusOr<std::unique_ptr<Executable>>
 CpuExecutableAotCompilationResult::LoadExecutable(
@@ -2262,16 +2272,30 @@ absl::StatusOr<std::unique_ptr<AotCompilationResult>> CpuCompiler::Export(
   std::vector<SymbolProto> compiled_symbols =
       cpu_executable->get_compiled_symbols_proto();
 
+  std::unique_ptr<HloProfilePrinterData> hlo_profile_printer_data =
+      cpu_executable->module().config().hlo_profiling_enabled()
+          ? std::make_unique<HloProfilePrinterData>(
+                cpu_executable->hlo_profile_printer_data())
+          : nullptr;
+
   return CpuExecutableAotCompilationResult::Create(
       &cpu_executable->module(), &cpu_executable->buffer_assignment(),
       cpu_executable->module_name(), std::move(obj_files),
-      std::move(compiled_symbols), thunk_sequence, kind);
+      std::move(compiled_symbols), thunk_sequence, kind,
+      std::move(hlo_profile_printer_data));
 }
 
 absl::StatusOr<std::unique_ptr<AotCompilationResult>>
 CpuCompiler::LoadAotCompilationResult(
     const std::string& serialized_aot_result) {
   return CpuExecutableAotCompilationResult::FromString(serialized_aot_result);
+}
+
+absl::StatusOr<std::unique_ptr<AotCompilationResult>>
+CpuCompiler::LoadAotCompilationResult(
+    const std::vector<std::byte>& serialized_aot_result) {
+  return CpuExecutableAotCompilationResult::FromByteVector(
+      serialized_aot_result);
 }
 
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(

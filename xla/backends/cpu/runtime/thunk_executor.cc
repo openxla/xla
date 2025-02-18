@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/thunk_executor.h"
 
-#include <sys/types.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstddef>

@@ -1,3 +1,4 @@
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/backends/cpu/nanort:package_groups.bzl", "xla_cpu_nanort_packages")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
@@ -72,6 +73,7 @@ cc_library(
     name = "nanort_executable",
     srcs = ["nanort_executable.cc"],
     hdrs = ["nanort_executable.h"],
+    compatible_with = ["//buildenv/target:non_prod"],
     visibility = internal_visibility([
         "//xla/backends/cpu/nanort:nanort_users",
     ]),
@@ -101,7 +103,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:traceme",
@@ -206,4 +207,11 @@ xla_cc_test(
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
     ],
+)
+
+bzl_library(
+    name = "package_groups_bzl",
+    srcs = ["package_groups.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
 )
