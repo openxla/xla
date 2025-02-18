@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
         failure_count++;
         std::cerr << result << "\n";
         if (result.code() == absl::StatusCode::kInvalidArgument) {
-          std::cerr << "Did you forget to specify the `--input_format` flag?" << "\n";
+          std::cerr << "Did you forget to specify the `--input_format` flag in case of StableHLO?" << "\n";
         }
       }
     }
