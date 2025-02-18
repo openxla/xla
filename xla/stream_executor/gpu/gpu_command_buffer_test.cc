@@ -1627,6 +1627,11 @@ TEST(GpuCommandBufferTest, CuDnnExplicitConstructionAndUpdateWork) {
   TF_ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
   dnn::DnnSupport& dnn_support = *executor->AsDnn();
 
+  if (dnn_support.GetVersion().value_or(dnn::VersionInfo{0, 0, 0}) <
+      dnn::VersionInfo(9, 7, 0)) {
+    GTEST_SKIP() << "Requires cuDNN 9.7.0 or later.";
+  }
+
   constexpr int dim_size = 32;
   constexpr int total_elements = dim_size * dim_size;
 
