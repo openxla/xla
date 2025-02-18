@@ -405,7 +405,8 @@ class HloModule {
 
   // Return a string representation of the module.
   //
-  // By default, we honor the debug options to determine the HloPrintOptions.
+  // By default, we take the default print options but adjust them based on
+  // debug options flags.
   std::string ToString() const;
   std::string ToString(const HloPrintOptions& options) const;
 
