@@ -48,11 +48,11 @@ typedef PJRT_Error* PJRT_FFI_TypeID_Register(
 
 // User-data that will be forwarded to the FFI handlers. Deleter is optional,
 // and can be nullptr. Deleter will be called when the context is destroyed.
-struct PJRT_FFI_UserData {
+typedef struct PJRT_FFI_UserData {
   int64_t type_id;
   void* data;
   void (*deleter)(void* data);
-};
+} PJRT_FFI_UserData;
 
 struct PJRT_FFI_UserData_Add_Args {
   size_t struct_size;
