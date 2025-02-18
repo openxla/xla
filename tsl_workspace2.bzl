@@ -1,5 +1,7 @@
 """TensorFlow workspace initialization. Consult the WORKSPACE on how to use it."""
 
+load("@bazel_features//:deps.bzl", "bazel_features_deps")
+
 # Import third party config rules.
 load("@bazel_skylib//lib:versions.bzl", "versions")
 
@@ -602,6 +604,8 @@ def workspace():
     # don't already exist (at least if the external repository macros were
     # written according to common practice to query native.existing_rule()).
     _tf_repositories()
+
+    bazel_features_deps()
 
 # Alias so it can be loaded without assigning to a different symbol to prevent
 # shadowing previous loads and trigger a buildifier warning.
