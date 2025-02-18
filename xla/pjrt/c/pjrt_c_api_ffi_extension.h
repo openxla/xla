@@ -17,8 +17,7 @@ limitations under the License.
 #define XLA_PJRT_C_PJRT_C_API_FFI_EXTENSION_H_
 
 #include <stddef.h>
-
-#include <cstdint>
+#include <stdint.h>
 
 #include "xla/pjrt/c/pjrt_c_api.h"
 
