@@ -1311,12 +1311,10 @@ static absl::StatusOr<std::unique_ptr<Thunk>> KernelThunkFromProto(
     min_alignment = proto.kernel_thunk().min_alignment().value();
   }
 
-  return KernelThunk::Create(
-      std::move(info), std::move(arguments_buffers), std::move(results_buffers),
-      proto.kernel_thunk().kernel_name(), thread_dim,
-      invariant_arguments.empty() ? std::nullopt
-                                  : std::make_optional(invariant_arguments),
-      min_alignment);
+  return KernelThunk::Create(std::move(info), std::move(arguments_buffers),
+                             std::move(results_buffers),
+                             proto.kernel_thunk().kernel_name(), thread_dim,
+                             invariant_arguments, min_alignment);
 }
 
 static absl::StatusOr<std::unique_ptr<OutfeedThunk>> OutfeedThunkFromProto(
