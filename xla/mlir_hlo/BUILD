@@ -1085,6 +1085,7 @@ cc_library(
     srcs = [
         "stablehlo_ext/transforms/chlo_recompose_ops.cpp",
         "stablehlo_ext/transforms/sdy_refine_shapes.cpp",
+        "stablehlo_ext/transforms/stablehlo_add_quant_dequant_conv.cpp",
         "stablehlo_ext/transforms/stablehlo_canonicalize_dynamism.cpp",
         "stablehlo_ext/transforms/stablehlo_flatten_entry_function_tuples.cpp",
         "stablehlo_ext/transforms/stablehlo_flatten_tuple.cpp",
@@ -1107,6 +1108,7 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:QuantOps",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",

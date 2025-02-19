@@ -65,3 +65,12 @@ def StablehloFlattenEntryFunctionTuplesPass : Pass<"stablehlo-ext-expand-flatten
   ];
   let dependentDialects = ["mlir::stablehlo::StablehloDialect"];
 }
+
+def StablehloAddQuantDeQuantConvPass : Pass<"add-quant-dequant-conv", "ModuleOp"> {
+  let summary = "Add quant and dequant ops after convolution op.";
+ let dependentDialects = [
+    "mlir::quant::QuantDialect",
+    "stablehlo::StablehloDialect"
+  ];
+} 
+
