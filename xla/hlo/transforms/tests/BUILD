@@ -26,6 +26,7 @@ lit_test_suite(
             "algebraic_simplifier.hlo",
             "validate_registered_passes_runs.hlo",
             "hlo_opt_expect_failure.hlo",
+            "rng_expander.hlo",
             "run_multiple_passes.hlo",
             "run_single_pass.hlo",
         ],
