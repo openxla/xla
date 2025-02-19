@@ -379,7 +379,6 @@ cc_library(
         "//xla/pjrt/gpu:gpu_helpers",
         "//xla/pjrt/gpu:gpu_topology",
         "//xla/pjrt/gpu:se_gpu_pjrt_client",
-        "//xla/pjrt/gpu:se_gpu_pjrt_compiler",  # To register GPU AOT compiler
         "//xla/python:custom_call_batch_partitioner",
         "//xla/python:custom_partition_callback",
         "//xla/python:inspect_sharding",  # To register "InspectSharding" custom partitioning handler.
@@ -485,6 +484,7 @@ xla_test(
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_future",
         "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
         "//xla/service:custom_call_target_registry",
         "//xla/stream_executor/gpu:gpu_init",
         "//xla/tests:literal_test_util",
