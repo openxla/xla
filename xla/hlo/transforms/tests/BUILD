@@ -13,6 +13,7 @@ lit_test_suite(
             # go/keep-sorted start
             "algebraic_simplifier.hlo",
             "cholesky_expander.hlo",
+            "rng_expander.hlo",
             # go/keep-sorted end
         ],
         include = [
