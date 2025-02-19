@@ -212,6 +212,30 @@ ENTRY main {
   EXPECT_FALSE(GemmFusionSwapOperands().Run(module->get()).value());
 }
 
+TEST_F(SwapOperandsTest, MultipleParameterIsFine) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+HloModule MultipleParameterIsFine
+
+fcomp {
+  %parameter_0.7 = bf16[1,8,8,640]{3,2,1,0} parameter(0)
+  %bitcast.67601 = bf16[8,5120]{1,0} bitcast(bf16[1,8,8,640]{3,2,1,0} %parameter_0.7)
+  %parameter_1.7 = s8[5120,5120]{1,0} parameter(1)
+  %parameter_2.2 = s8[5120,5120]{1,0} parameter(2)
+  %concatenate.2342 = s8[5120,10240]{1,0} concatenate(s8[5120,5120]{1,0} %parameter_1.7, s8[5120,5120]{1,0} %parameter_2.2), dimensions={1}
+  %convert.17053 = bf16[5120,10240]{1,0} convert(s8[5120,10240]{1,0} %concatenate.2342)
+  ROOT %dot.2515 = bf16[8,10240]{1,0} dot(bf16[8,5120]{1,0} %bitcast.67601, bf16[5120,10240]{1,0} %convert.17053), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY main {
+  %multiply.27185 = bf16[1,8,8,640]{3,2,1,0} parameter(0)
+  %param.391 = s8[5120,5120]{1,0} parameter(1)
+  %param.393 = s8[5120,5120]{1,0} parameter(2)
+  ROOT %micro_kernel = bf16[8,10240]{1,0} fusion(bf16[1,8,8,640]{3,2,1,0} %multiply.27185, s8[5120,5120]{1,0} %param.391, s8[5120,5120]{1,0} %param.393), kind=kCustom, calls=fcomp,
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+})");
+  EXPECT_TRUE(GemmFusionSwapOperands().Run(module->get()).value());
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
