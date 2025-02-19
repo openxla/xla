@@ -204,14 +204,17 @@ TEST(StreamExecutorGpuCompilerTest, SuccessSerializeDeserialize) {
   EXPECT_EQ(deserialized_executable->name(), "Identity");
 }
 
-constexpr absl::string_view kProgramIncrement = R"(HloModule Increment
+constexpr char const* kD2HProgramTupleOutput = R"(
+  HloModule f
 
-ENTRY main {
-  param.1 = s32[] parameter(0)
-  constant.1 = s32[] constant(1)
-  ROOT add.1 = s32[] add(param.1, constant.1)
-})";
-
+  ENTRY main.5 {
+    p = s32[4]{0} parameter(0)
+    cc = s32[4] custom-call(p),
+        custom_call_target="annotate_device_placement",
+        frontend_attributes={_xla_buffer_placement="pinned_host"}
+    ROOT tuple = (s32[4]{0}, s32[4]{0}) tuple(s32[4]{0} p, s32[4]{0} cc)
+  }
+)";
 TEST(StreamExecutorGpuCompilerTest, UnloadedExecutableMemoryStats) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -223,7 +226,7 @@ TEST(StreamExecutorGpuCompilerTest, UnloadedExecutableMemoryStats) {
       se_client->client()->backend().default_stream_executor());
 
   TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
-                          GetXlaComputation(kProgramIncrement));
+                          GetXlaComputation(kD2HProgramTupleOutput));
   TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
                           se_client->GetTopologyDescription());
   TF_ASSERT_OK_AND_ASSIGN(
@@ -233,7 +236,11 @@ TEST(StreamExecutorGpuCompilerTest, UnloadedExecutableMemoryStats) {
   TF_ASSERT_OK_AND_ASSIGN(CompiledMemoryStats compiled_memory_stats,
                           executable->GetCompiledMemoryStats());
 
-  EXPECT_EQ(compiled_memory_stats.argument_size_in_bytes, 4);
+  EXPECT_EQ(compiled_memory_stats.argument_size_in_bytes, 16);
+  EXPECT_EQ(compiled_memory_stats.output_size_in_bytes, 16);
+  EXPECT_EQ(compiled_memory_stats.temp_size_in_bytes, 0);
+  EXPECT_EQ(compiled_memory_stats.host_temp_size_in_bytes, 0);
+  EXPECT_EQ(compiled_memory_stats.host_output_size_in_bytes, 16);
 }
 
 }  // namespace
