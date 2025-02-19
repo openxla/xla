@@ -190,8 +190,12 @@ ComputationLayout getFlattenedComputationLayout(
     return computationLayout;
   }
   // Flatten the result layout.
-  ComputationLayout flattenedComputationLayout = ComputationLayout(
-      ShapeLayout(getFlattenedShape(computationLayout.result_shape())));
+  ComputationLayout flattenedComputationLayout =
+      ComputationLayout(computationLayout.result_layout());
+  if (computationLayout.result_shape().tuple_shapes_size() > 0) {
+    flattenedComputationLayout = ComputationLayout(
+        ShapeLayout(getFlattenedShape(computationLayout.result_shape())));
+  }
 
   // Flatten the parameter layout.
   // When `useTupleArgs` is true, we will use a single flattened tuple for the
