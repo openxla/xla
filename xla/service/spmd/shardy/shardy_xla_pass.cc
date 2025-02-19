@@ -386,10 +386,14 @@ absl::StatusOr<bool> ShardyXLA::Run(
   if (runSdyShardingPropagation) {
     // NOTE: if we are using auto-spmd, we will use conservative propagation
     // since the TOAST cost model cannot account for split axes or padding.
-    mlir::sdy::PropagationOptions options;
-    options.dumpDirectory = shardyDir;
-    options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
-    mlir::sdy::addPropagationPipeline(pm, options);
+    if (this->options) {
+      mlir::sdy::addPropagationPipeline(pm, *this->options);
+    } else {
+      mlir::sdy::PropagationOptions options;
+      options.dumpDirectory = shardyDir;
+      options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
+      mlir::sdy::addPropagationPipeline(pm, options);
+    }
   }
   addStablehloExportPipeline(pm);
   pm.addPass(mlir::sdy::createSaveModuleOpPass(shardyDir,
