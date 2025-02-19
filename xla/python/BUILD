@@ -1419,6 +1419,7 @@ tsl_pybind_extension(
         "//xla/tsl:macos": [
             "//xla/backends/cpu/collectives:gloo_collectives",
             "//xla/backends/cpu/collectives:gloo_kv_store",
+            "//xla/python/transfer:py_socket_transfer",
             "@gloo//:transport_uv",
         ],
         "//xla/tsl:windows": [],
