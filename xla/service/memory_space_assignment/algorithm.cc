@@ -3661,6 +3661,10 @@ void MsaAlgorithm::AllocateCrossProgramPrefetchBuffer(
       buffer_interval.size = allocation->chunk().size;
       buffer_interval.buffer = prefetch_candidate.buffer;
       AddToPendingChunks(buffer_interval, chunk_candidate);
+      for (const HloUse& use : allocation->uses()) {
+        operands_in_alternate_memory_map_[use.instruction].insert(
+            std::make_pair(use.operand_number, use.operand_index));
+      }
     }
     allocations_->push_back(std::move(allocation));
   }
