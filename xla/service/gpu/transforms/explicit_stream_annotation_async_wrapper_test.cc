@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/side_effect_util.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
@@ -104,7 +105,22 @@ TEST_F(ExplicitStreamAnnotationAsyncWrapperTest, OverlappingGemms) {
   )");
   TF_ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(*filecheck_result);
-
+  for (auto name : {"call-start", "call-done"}) {
+    EXPECT_EQ(FindInstruction(module.get(), name)
+                  ->frontend_attributes()
+                  .map()
+                  .find(kXlaStreamAnnotationAttr)
+                  ->second,
+              "1");
+  }
+  for (auto name : {"call-start.1", "call-done.1"}) {
+    EXPECT_EQ(FindInstruction(module.get(), name)
+                  ->frontend_attributes()
+                  .map()
+                  .find(kXlaStreamAnnotationAttr)
+                  ->second,
+              "2");
+  }
   ASSERT_TRUE(mutated);
 }
 }  // namespace
