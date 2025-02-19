@@ -58,6 +58,12 @@ class SourceTargetPairs {
 
   SourceTargetPairs() = default;
 
+  SourceTargetPairs(std::initializer_list<std::pair<int64_t, int64_t>> pairs) {
+    for (const auto& pair : pairs) {
+      emplace_back(pair.first, pair.second);
+    }
+  }
+
   explicit SourceTargetPairs(
       const std::vector<std::pair<int64_t, int64_t>>& pairs) {
     for (const auto& pair : pairs) {
