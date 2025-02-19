@@ -529,6 +529,7 @@ cc_library(
         "//xla/client:local_client",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/pjrt:pjrt_stream_executor_device_description",
         "//xla/pjrt/distributed:protocol_proto_cc",
         "//xla/pjrt/profiling:device_time_measurement",
         "//xla/service:compiler",
@@ -1125,5 +1126,16 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "pjrt_stream_executor_device_description",
+    hdrs = ["pjrt_stream_executor_device_description.h"],
+    deps = [
+        ":pjrt_device_description",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
     ],
 )

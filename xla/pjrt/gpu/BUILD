@@ -86,6 +86,7 @@ cc_library(
         "//xla/pjrt/distributed:in_memory_key_value_store",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed:topology_util",
+        "//xla/pjrt/gpu:se_gpu_topology_description",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/service:compiler",
@@ -452,5 +453,17 @@ xla_test(
         "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "se_gpu_topology_description",
+    hdrs = ["se_gpu_topology_description.h"],
+    deps = [
+        "//xla/pjrt:pjrt_compiler",
+        "//xla/pjrt:pjrt_device_description",
+        "//xla/pjrt:pjrt_stream_executor_device_description",
+        "//xla/pjrt/gpu:gpu_topology",
+        "//xla/tsl/lib/strings:proto_serialization",
     ],
 )
