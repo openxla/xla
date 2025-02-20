@@ -118,6 +118,16 @@ static absl::StatusOr<hipblasLtEpilogue_t> AsHipblasLtEpilogue(
     case gpu::BlasLt::Epilogue::kBiasThenGELUWithAux:
       return HIPBLASLT_EPILOGUE_GELU_AUX_BIAS;
 #endif
+#if TF_ROCM_VERSION >= 60400
+    case gpu::BlasLt::Epilogue::kSwish:
+      return HIPBLASLT_EPILOGUE_SWISH;
+    case gpu::BlasLt::Epilogue::kSwishAux:
+      return HIPBLASLT_EPILOGUE_SWISH_AUX;
+    case gpu::BlasLt::Epilogue::kBiasThenSwish:
+      return HIPBLASLT_EPILOGUE_SWISH_BIAS;
+    case gpu::BlasLt::Epilogue::kBiasThenSwishWithAux:
+      return HIPBLASLT_EPILOGUE_SWISH_AUX_BIAS;
+#endif
     default:
       return absl::InternalError("Unsupported epilogue: " +
                                  std::to_string((int)epilogue));
