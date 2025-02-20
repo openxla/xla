@@ -95,6 +95,10 @@ message GemmBackendConfig {
     GELU_AUX = 5;
     BIAS_GELU = 6;
     BIAS_GELU_AUX = 7;
+    SWISH = 8;
+    SWISH_AUX = 9;
+    BIAS_SWISH = 10;
+    BIAS_SWISH_AUX = 11;
   }
 
   Epilogue epilogue = 13;

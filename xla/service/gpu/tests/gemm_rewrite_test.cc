@@ -4072,6 +4072,51 @@ ENTRY test {
       )");
 }
 
+TEST_F(CublasLtGemmRewriteTest, MatrixBiasSwishActivationF16) {
+  const char* hlo_text = R"(
+HloModule test
+
+ENTRY test {
+  x = f32[8,8] parameter(0)
+  neg_x = f32[8,8] negate(x) 
+  exp_x = f32[8,8] exponential(neg_x)
+  one = f32[] constant(1)
+  one_bcast = f32[8,8] broadcast(one), dimensions={}
+  denom = f32[8,8] add(one_bcast, exp_x)
+  sigmoid = f32[8,8] divide(one_bcast, denom)
+  ROOT swish = f32[8,8] multiply(x, sigmoid)
+}
+
+)";
+
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+  MatchOptimizedHlo(hlo_text,
+                    R"(
+
+; CHECK-LABEL: ENTRY %test ({{.*}}: f16[8,16], {{.*}}: f16[16,8], {{.*}}: f16[8,8]) -> f16[8,8] {
+; CHECK-NEXT:    [[P0:%[^ ]+]] = f16[8,16]{1,0} parameter(0)
+; CHECK-NEXT:    [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
+; CHECK-NEXT:    [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
+; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
+; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           backend_config={
+; CHECK-DAG:         "alpha_real":1
+; CHECK-DAG:         "alpha_imag":0
+; CHECK-DAG:         "beta":1
+; CHECK-DAG:         "dot_dimension_numbers":{
+; CHECK-DAG:           "lhs_contracting_dimensions":["1"]
+; CHECK-DAG:           "rhs_contracting_dimensions":["0"]
+; CHECK-DAG:           "lhs_batch_dimensions":[]
+; CHECK-DAG:           "rhs_batch_dimensions":[]
+; CHECK-DAG:         }
+; CHECK-DAG:         "precision_config":{
+; CHECK-DAG:           "operand_precision":["DEFAULT","DEFAULT"]
+; CHECK-DAG:         }
+; CHECK-DAG:         "epilogue":"SWISH"
+; CHECK:           }
+      )");
+}
+
 // For F16, the operands are padded on GPUs with Tensor Cores (i.e. Volta and
 // newer architectures) so that the sizes of all dimensions are multiples of 8.
 TEST_F(CublasLtGemmRewriteTest, VectorBiasReluActivationF16Unpadded) {
