@@ -37,6 +37,18 @@ def xla_package_groups(name = "xla_package_groups"):
         packages = ["//..."],
     )
 
+def legacy_jit_users_package_group(name):
+    """Defines visibility group for //third_party/tensorflow/compiler/jit.
+
+    Args:
+      name: package group name
+    """
+
+    native.package_group(
+        name = name,
+        packages = ["//..."],
+    )
+
 def xla_tests_package_groups(name = "xla_tests_package_groups"):
     """Defines visibility groups for XLA tests.
 
