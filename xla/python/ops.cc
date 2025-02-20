@@ -649,10 +649,7 @@ void BuildOpsSubmodule(nb::module_& m) {
   ops.def("Reshape",
           static_cast<XlaOp (*)(XlaOp, absl::Span<const int64_t>,
                                 absl::Span<const int64_t>)>(&Reshape),
-          nb::arg("operand"), nb::arg("dimensions"), nb::arg("new_sizes"));
-  ops.def("Reshape",
-          static_cast<XlaOp (*)(XlaOp, absl::Span<const int64_t>)>(&Reshape),
-          nb::arg("operand"), nb::arg("new_sizes"));
+          nb::arg("operand"), nb::arg("dimensions"));
   ops.def("Rev", &Rev, nb::arg("operand"), nb::arg("dimensions"));
   ops.def("RngBitGenerator", &RngBitGenerator, nb::arg("algorithm"),
           nb::arg("initial_state"), nb::arg("shape"));
